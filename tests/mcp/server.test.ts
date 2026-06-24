@@ -1,0 +1,197 @@
+import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from 'vitest';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { initDb, closeDb } from '../../src/store/database.js';
+import * as repo from '../../src/store/repository.js';
+import { createMcpServer } from '../../src/mcp/server.js';
+import { ProjectConfig } from '../../src/core/types.js';
+
+// Mock AI functions
+vi.mock('../../src/ai/provider.js', () => {
+  return {
+    initAI: vi.fn(),
+    filterInput: vi.fn(),
+    extractKnowledge: vi.fn(),
+    compareKnowledge: vi.fn(),
+    askQuestion: vi.fn(),
+  };
+});
+
+const TEST_ROOT = path.resolve('./.knowl-mcp-test');
+const MOCK_CONFIG: ProjectConfig = {
+  version: 1,
+  project: { name: 'mcp-test' },
+  ai: {
+    provider: 'openai',
+    model: 'gpt-4o-mini',
+  },
+  security: {
+    rejectSecrets: true,
+    secretPatterns: [],
+  },
+};
+
+// In-Memory Transport for testing MCP Server
+class InMemoryTransport {
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: any) => void;
+  onSend?: (message: any) => void;
+
+  async start(): Promise<void> {}
+  async send(message: any): Promise<void> {
+    if (this.onSend) {
+      this.onSend(message);
+    }
+  }
+  async close(): Promise<void> {
+    if (this.onclose) this.onclose();
+  }
+}
+
+describe('MCP Server Layer', () => {
+  let projectId: string;
+  let mcpServer: any;
+
+  beforeAll(async () => {
+    try {
+      await fs.rm(TEST_ROOT, { recursive: true, force: true });
+    } catch {
+      // Ignore
+    }
+    await fs.mkdir(path.join(TEST_ROOT, '.knowl'), { recursive: true });
+    await initDb(TEST_ROOT);
+  });
+
+  afterAll(async () => {
+    await closeDb();
+    try {
+      await fs.rm(TEST_ROOT, { recursive: true, force: true });
+    } catch {
+      // Ignore
+    }
+  });
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+
+    const db = (await import('../../src/store/database.js')).getDb();
+    await db.run(sql`DELETE FROM knowledge_commits`);
+    await db.run(sql`DELETE FROM knowledge_items`);
+    await db.run(sql`DELETE FROM projects`);
+
+    const project = await repo.createProject(TEST_ROOT, 'MCP Test');
+    projectId = project.id;
+  });
+
+  // Helper to run a JSON-RPC request against the server through InMemoryTransport
+  async function runRpcRequest(method: string, params: any = {}) {
+    mcpServer = createMcpServer(projectId, TEST_ROOT, MOCK_CONFIG);
+    const transport = new InMemoryTransport();
+    await mcpServer.connect(transport);
+
+    // 1. Perform Handshake
+    const handshakePromise = new Promise<any>((resolve) => {
+      transport.onSend = (msg) => {
+        if (msg.id === 'init-id') {
+          resolve(msg);
+        }
+      };
+    });
+
+    transport.onmessage!({
+      jsonrpc: '2.0',
+      id: 'init-id',
+      method: 'initialize',
+      params: {
+        protocolVersion: '2024-11-05',
+        capabilities: {},
+        clientInfo: { name: 'test-client', version: '1.0' },
+      },
+    });
+
+    await handshakePromise;
+
+    // Send initialized notification
+    transport.onmessage!({
+      jsonrpc: '2.0',
+      method: 'notifications/initialized',
+    });
+
+    // 2. Send target request
+    const responsePromise = new Promise<any>((resolve) => {
+      transport.onSend = (msg) => {
+        if (msg.id === 'req-id') {
+          resolve(msg);
+        }
+      };
+    });
+
+    transport.onmessage!({
+      jsonrpc: '2.0',
+      id: 'req-id',
+      method,
+      params,
+    });
+
+    const res = await responsePromise;
+    await mcpServer.close();
+    return res;
+  }
+
+  it('should list tools', async () => {
+    const res = await runRpcRequest('tools/list');
+    expect(res.error).toBeUndefined();
+    expect(res.result.tools).toBeDefined();
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_state')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest')).toBe(true);
+  });
+
+  it('should list resources', async () => {
+    const res = await runRpcRequest('resources/list');
+    expect(res.error).toBeUndefined();
+    expect(res.result.resources).toBeDefined();
+    expect(res.result.resources[0].uri).toBe('knowl://brain');
+  });
+
+  it('should support creating decision directly via tool', async () => {
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_decide',
+      arguments: {
+        title: 'Use SQLite',
+        content: 'Use sqlite local db',
+        reasoning: 'easy and secure',
+        alternatives: ['PostgreSQL'],
+      },
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+    expect(res.result.content[0].text).toContain('Successfully recorded decision');
+
+    // Confirm it exists in DB
+    const db = (await import('../../src/store/database.js')).getDb();
+    const items = await db.select().from((await import('../../src/store/schema.js')).knowledgeItems);
+    expect(items).toHaveLength(1);
+    expect(items[0].title).toBe('Use SQLite');
+  });
+
+  it('should support reading brain state resource', async () => {
+    // Add one goal first
+    await repo.createKnowledgeItem(projectId, {
+      category: 'goal',
+      title: 'Offline Support',
+      content: 'Must support fully local offline usage',
+    });
+
+    const res = await runRpcRequest('resources/read', {
+      uri: 'knowl://brain',
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.contents[0].text).toContain('Offline Support');
+    expect(res.result.contents[0].text).toContain('GOALS');
+  });
+});
+
+import { sql } from 'drizzle-orm';
