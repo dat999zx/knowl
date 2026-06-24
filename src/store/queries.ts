@@ -111,7 +111,7 @@ export async function queryKnowledgeBase(
         or(
           like(schema.knowledgeItems.title, searchPattern),
           like(schema.knowledgeItems.content, searchPattern),
-          like(schema.knowledgeItems.reasoning ?? '', searchPattern)
+          like(schema.knowledgeItems.reasoning, searchPattern)
         )!
       );
     }

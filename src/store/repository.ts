@@ -1,5 +1,6 @@
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { getDb } from './database.js';
+import type { DbConnection } from './database.js';
 import * as schema from './schema.js';
 import {
   Project,
@@ -18,7 +19,7 @@ function generateId(): string {
   return crypto.randomUUID().replace(/-/g, '').substring(0, 16);
 }
 
-export async function createProject(rootPath: string, name: string, description?: string, dbConnection?: any): Promise<Project> {
+export async function createProject(rootPath: string, name: string, description?: string, dbConnection?: DbConnection): Promise<Project> {
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
   const id = generateId();
@@ -40,7 +41,7 @@ export async function createProject(rootPath: string, name: string, description?
   }
 }
 
-export async function getProjectByRootPath(rootPath: string, dbConnection?: any): Promise<Project | null> {
+export async function getProjectByRootPath(rootPath: string, dbConnection?: DbConnection): Promise<Project | null> {
   const conn = dbConnection || getDb();
   try {
     const result = await conn
@@ -68,7 +69,7 @@ export async function createKnowledgeItem(
     confidence?: number;
   },
   steps?: string[],
-  dbConnection?: any
+  dbConnection?: DbConnection
 ): Promise<KnowledgeItem> {
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
@@ -132,7 +133,7 @@ export async function createKnowledgeItem(
   }
 }
 
-export async function getKnowledgeItem(id: string, dbConnection?: any): Promise<KnowledgeItem | null> {
+export async function getKnowledgeItem(id: string, dbConnection?: DbConnection): Promise<KnowledgeItem | null> {
   const conn = dbConnection || getDb();
   try {
     const result = await conn
@@ -159,7 +160,7 @@ export async function updateKnowledgeItem(
   id: string,
   updates: Partial<Omit<KnowledgeItem, 'id' | 'projectId' | 'createdAt' | 'updatedAt'>>,
   steps?: string[],
-  dbConnection?: any
+  dbConnection?: DbConnection
 ): Promise<KnowledgeItem> {
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
@@ -236,7 +237,7 @@ export async function createKnowledgeCommit(
   projectId: string,
   message: string,
   changes: CommitChange[],
-  dbConnection?: any
+  dbConnection?: DbConnection
 ): Promise<KnowledgeCommit> {
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
@@ -264,7 +265,7 @@ export async function createKnowledgeCommit(
   }
 }
 
-export async function getKnowledgeCommits(projectId: string, limit = 50, dbConnection?: any): Promise<KnowledgeCommit[]> {
+export async function getKnowledgeCommits(projectId: string, limit = 50, dbConnection?: DbConnection): Promise<KnowledgeCommit[]> {
   const conn = dbConnection || getDb();
   try {
     const result = await conn
@@ -286,7 +287,7 @@ export async function getKnowledgeCommits(projectId: string, limit = 50, dbConne
   }
 }
 
-export async function getSkillSteps(itemId: string, dbConnection?: any): Promise<SkillStep[]> {
+export async function getSkillSteps(itemId: string, dbConnection?: DbConnection): Promise<SkillStep[]> {
   const conn = dbConnection || getDb();
   try {
     return await conn
@@ -299,7 +300,7 @@ export async function getSkillSteps(itemId: string, dbConnection?: any): Promise
   }
 }
 
-export async function getSkillMetadata(itemId: string, dbConnection?: any): Promise<SkillMetadata | null> {
+export async function getSkillMetadata(itemId: string, dbConnection?: DbConnection): Promise<SkillMetadata | null> {
   const conn = dbConnection || getDb();
   try {
     const result = await conn
@@ -314,7 +315,7 @@ export async function getSkillMetadata(itemId: string, dbConnection?: any): Prom
   }
 }
 
-export async function updateSkillMetadata(itemId: string, updates: Partial<SkillMetadata>, dbConnection?: any): Promise<SkillMetadata> {
+export async function updateSkillMetadata(itemId: string, updates: Partial<SkillMetadata>, dbConnection?: DbConnection): Promise<SkillMetadata> {
   const conn = dbConnection || getDb();
   try {
     await conn

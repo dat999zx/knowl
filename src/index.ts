@@ -10,7 +10,8 @@ import { getHierarchicalKnowledge, queryKnowledgeBase } from './store/queries.js
 import { initAI, askQuestion } from './ai/provider.js';
 import { runPipeline } from './pipeline/pipeline.js';
 import { startMcpServer } from './mcp/server.js';
-import { KnowledgeCategory, KnowledgeStatus } from './core/types.js';
+import { KnowledgeCategory } from './core/types.js';
+import { formatHierarchyToMarkdown } from './core/format.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -157,10 +158,6 @@ program
       if (!project) throw new Error('Project not found in database.');
 
       const hierarchy = await getHierarchicalKnowledge(project.id);
-      
-      // We can reuse the markdown formatting helper from server.ts
-      const { createMcpServer } = await import('./mcp/server.js');
-      // For simplicity, print active hierarchy directly to stdout
       const md = formatHierarchyToMarkdown(hierarchy);
       console.log(md);
 
@@ -425,78 +422,3 @@ program
 // Parse commands
 program.parse(process.argv);
 
-
-// Helper for Markdown output (identical logic to server.ts to format state)
-function formatHierarchyToMarkdown(hierarchy: {
-  state: any[];
-  knowledge: any[];
-  skills: any[];
-  archive: any[];
-}): string {
-  let md = `# KNOWL — PROJECT BRAIN STATE\n\n`;
-
-  const goals = hierarchy.knowledge.filter(x => x.category === 'goal');
-  const constraints = hierarchy.knowledge.filter(x => x.category === 'constraint');
-  
-  md += `## 🎯 GOALS\n\n`;
-  if (goals.length === 0) md += `No active goals recorded.\n\n`;
-  else goals.forEach(g => { md += `- **${g.title}**: ${g.content}\n`; });
-  md += `\n`;
-
-  md += `## ⚠️ CONSTRAINTS\n\n`;
-  if (constraints.length === 0) md += `No active constraints recorded.\n\n`;
-  else constraints.forEach(c => { md += `- **${c.title}**: ${c.content}\n`; });
-  md += `\n`;
-
-  md += `## ⚡ ACTIVE STATE\n\n`;
-  if (hierarchy.state.length === 0) md += `No active state updates recorded.\n\n`;
-  else {
-    hierarchy.state.forEach(s => {
-      md += `### ${s.title} (ID: ${s.id})\n${s.content}\n\n`;
-    });
-  }
-
-  const decisions = hierarchy.knowledge.filter(x => x.category === 'decision');
-  const arch = hierarchy.knowledge.filter(x => x.category === 'architecture');
-  const facts = hierarchy.knowledge.filter(x => x.category === 'fact');
-
-  md += `## 🏛️ ARCHITECTURE\n\n`;
-  if (arch.length === 0) md += `No active architecture specifications.\n\n`;
-  else {
-    arch.forEach(a => {
-      md += `### ${a.title}\n${a.content}\n\n`;
-    });
-  }
-
-  md += `## 💡 DECISIONS\n\n`;
-  if (decisions.length === 0) md += `No active decisions recorded.\n\n`;
-  else {
-    decisions.forEach(d => {
-      md += `### ${d.title} (ID: ${d.id})\n${d.content}\n`;
-      if (d.reasoning) md += `**Reasoning:** ${d.reasoning}\n`;
-      if (d.alternatives && d.alternatives.length > 0) {
-        md += `**Alternatives considered:** ${d.alternatives.join(', ')}\n`;
-      }
-      md += `\n`;
-    });
-  }
-
-  md += `## 📋 GENERAL FACTS\n\n`;
-  if (facts.length === 0) md += `No general facts recorded.\n\n`;
-  else {
-    facts.forEach(f => {
-      md += `- **${f.title}**: ${f.content}\n`;
-    });
-    md += `\n`;
-  }
-
-  md += `## 🛠️ LEARNED SKILLS\n\n`;
-  if (hierarchy.skills.length === 0) md += `No skills learned yet.\n\n`;
-  else {
-    hierarchy.skills.forEach(s => {
-      md += `### ${s.title} (ID: ${s.id})\n${s.content}\n\n`;
-    });
-  }
-
-  return md;
-}

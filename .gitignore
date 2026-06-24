@@ -4,11 +4,9 @@ node_modules/
 # Production Build Output
 dist/
 
-# Local databases and configs
+# Local databases, configs, and test instances
 .knowl/
-.knowl-test/
-.knowl-pipeline-test/
-.knowl-mcp-test/
+.knowl-*/
 
 # Environments
 .env

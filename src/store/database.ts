@@ -4,7 +4,10 @@ import { drizzle, LibSQLDatabase } from 'drizzle-orm/libsql';
 import * as schema from './schema.js';
 import { DatabaseError } from '../core/errors.js';
 
-let dbInstance: LibSQLDatabase<typeof schema> | null = null;
+/** Shared type for database connection or transaction context. */
+export type DbConnection = LibSQLDatabase<typeof schema>;
+
+let dbInstance: DbConnection | null = null;
 let clientInstance: Client | null = null;
 
 /**
