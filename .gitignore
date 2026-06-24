@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Production Build Output
+dist/
+
+# Local databases and configs
+.knowl/
+.knowl-test/
+.knowl-pipeline-test/
+.knowl-mcp-test/
+
+# Environments
+.env
+.env.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+eslint-debug.log*
+*.log
+
+# OS Metadata
+.DS_Store
+Thumbs.db
