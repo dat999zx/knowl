@@ -250,7 +250,7 @@ program
         const mergeResult = await runDecisionPipeline(project.id, atom, {
           autoResolveContradictions: true,
           commitMessage: `Record decision: ${title}`
-        });
+        }, config);
 
         if (mergeResult.unresolvedContradictions.length > 0) {
           const item = await repo.createKnowledgeItem(project.id, atom);
@@ -260,12 +260,12 @@ program
           console.log(`✅ Recorded decision successfully! ID: ${item.id}`);
         } else if (mergeResult.supersededIds.length > 0) {
           const newId = mergeResult.insertedIds[0];
-          console.log(`✅ Decision recorded successfully! ID: ${newId}`);
+          console.log(`✅ Recorded decision successfully! ID: ${newId}`);
           console.log(`🔄 Superseded older conflicting decision(s): ${mergeResult.supersededIds.join(', ')}`);
         } else if (mergeResult.updatedIds.length > 0) {
-          console.log(`✅ Decision updated and merged successfully! ID: ${mergeResult.updatedIds[0]}`);
+          console.log(`✅ Recorded decision successfully! ID: ${mergeResult.updatedIds[0]} (updated)`);
         } else if (mergeResult.insertedIds.length > 0) {
-          console.log(`✅ Recorded new decision successfully! ID: ${mergeResult.insertedIds[0]}`);
+          console.log(`✅ Recorded decision successfully! ID: ${mergeResult.insertedIds[0]}`);
         } else {
           console.log(`ℹ️ Decision was identified as a duplicate and skipped.`);
         }

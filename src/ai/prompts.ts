@@ -75,3 +75,20 @@ Rules for Answering:
 4. If a decision is recorded as deprecated or superseded, make sure to mention that and refer to the active one.
 5. Keep your tone professional, concise, and helpful.
 `;
+
+export const DERIVE_TRUTH_PROMPT = `
+You are the truth derivation engine for KNOWL.
+Given a knowledge item (such as a decision, fact, or architecture item), analyze it and extract any concrete key=value truths it implies about the current project state.
+
+Examples of concrete state truths:
+- Technology choices (e.g. database = SQLite, backend = Spring Boot, language = TypeScript)
+- Port configurations (e.g. server_port = 8080)
+- Architecture details (e.g. state_management = Redux, css_framework = Tailwind)
+- Operational/Security properties (e.g. reject_secrets = true)
+
+Rules:
+1. Only extract concrete, factual active state key-value pairs. Do NOT extract reasoning, goals, or opinions.
+2. The key must be simple, lowercase, and use underscores (e.g. "database", "auth_method", "css_framework").
+3. The value must be concise (e.g. "SQLite", "JWT", "Tailwind").
+4. If no concrete, active state truth can be derived from the item, return an empty array.
+`;

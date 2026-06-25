@@ -2,7 +2,9 @@ import { runFilter } from './filter.js';
 import { runExtract } from './extract.js';
 import { runVerify } from './verify.js';
 import { runMerge, MergeOptions, MergeResult } from './merge.js';
-import { ProjectConfig } from '../core/types.js';
+import { runDeriveTruth } from './derive.js';
+import { getKnowledgeItem } from '../store/repository.js';
+import { ProjectConfig, KnowledgeAtom } from '../core/types.js';
 
 export interface PipelineResult {
   passedFilter: boolean;
@@ -43,6 +45,18 @@ export async function runPipeline(
   // 4. Run Merge
   const mergeResult = await runMerge(projectId, verifiedActions, options);
 
+  // 5. Run Truth Derivation
+  const hasAiKey = config.ai.apiKey || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || config.ai.provider === 'ollama';
+  if (hasAiKey && (mergeResult.insertedIds.length > 0 || mergeResult.updatedIds.length > 0)) {
+    const ids = [...mergeResult.insertedIds, ...mergeResult.updatedIds];
+    const items: any[] = [];
+    for (const id of ids) {
+      const item = await getKnowledgeItem(id);
+      if (item) items.push(item);
+    }
+    await runDeriveTruth(projectId, items);
+  }
+
   return {
     passedFilter: true,
     extractedCount: atoms.length,
@@ -57,9 +71,24 @@ export async function runPipeline(
 export async function runDecisionPipeline(
   projectId: string,
   atom: KnowledgeAtom,
-  options: MergeOptions = {}
+  options: MergeOptions = {},
+  config?: ProjectConfig
 ): Promise<MergeResult> {
   const verifiedActions = await runVerify(projectId, [atom]);
-  return await runMerge(projectId, verifiedActions, options);
+  const mergeResult = await runMerge(projectId, verifiedActions, options);
+
+  // Run truth derivation if config/AI is available
+  const hasAiKey = config?.ai?.apiKey || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || config?.ai?.provider === 'ollama';
+  if (hasAiKey && (mergeResult.insertedIds.length > 0 || mergeResult.updatedIds.length > 0)) {
+    const ids = [...mergeResult.insertedIds, ...mergeResult.updatedIds];
+    const items: any[] = [];
+    for (const id of ids) {
+      const item = await getKnowledgeItem(id);
+      if (item) items.push(item);
+    }
+    await runDeriveTruth(projectId, items);
+  }
+
+  return mergeResult;
 }
 

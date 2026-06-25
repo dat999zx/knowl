@@ -4,6 +4,7 @@ import path from 'node:path';
 import { initDb, closeDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { runPipeline } from '../../src/pipeline/pipeline.js';
+import { getHierarchicalKnowledge } from '../../src/store/queries.js';
 import { ProjectConfig } from '../../src/core/types.js';
 
 // Mock the AI provider functions
@@ -14,10 +15,11 @@ vi.mock('../../src/ai/provider.js', () => {
     extractKnowledge: vi.fn(),
     compareKnowledge: vi.fn(),
     askQuestion: vi.fn(),
+    deriveTruth: vi.fn(),
   };
 });
 
-import { filterInput, extractKnowledge, compareKnowledge } from '../../src/ai/provider.js';
+import { filterInput, extractKnowledge, compareKnowledge, deriveTruth } from '../../src/ai/provider.js';
 
 const TEST_ROOT = path.resolve('./.knowl-pipeline-test');
 const MOCK_CONFIG: ProjectConfig = {
@@ -26,6 +28,7 @@ const MOCK_CONFIG: ProjectConfig = {
   ai: {
     provider: 'openai',
     model: 'gpt-4o-mini',
+    apiKey: 'mock-key',
   },
   security: {
     rejectSecrets: true,
@@ -210,6 +213,60 @@ describe('Pipeline Integration', () => {
     const firstItem = await repo.getKnowledgeItem(firstItemId);
     expect(firstItem?.status).toBe('superseded');
     expect(firstItem?.supersededById).toBe(result.mergeResult?.insertedIds[0]);
+  });
+
+  it('should derive truth from decisions/facts and insert them as active state items', async () => {
+    vi.mocked(filterInput).mockResolvedValue({ pass: true });
+    vi.mocked(extractKnowledge).mockResolvedValue([
+      {
+        category: 'decision',
+        title: 'Use SQLite',
+        content: 'We will use SQLite for local persistence.',
+      },
+    ]);
+    vi.mocked(deriveTruth).mockResolvedValue([
+      { key: 'database', value: 'SQLite' },
+    ]);
+
+    await runPipeline(projectId, 'Use SQLite database', MOCK_CONFIG);
+
+    // Verify derived state item was created
+    const hierarchy = await getHierarchicalKnowledge(projectId);
+    const dbState = hierarchy.state.find(s => s.title === 'database');
+    expect(dbState).toBeDefined();
+    expect(dbState?.content).toBe('SQLite');
+  });
+
+  it('should update derived state items if the truth changes', async () => {
+    // 1. Setup initial state item
+    const initialItem = await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'database',
+      content: 'SQLite',
+      tags: ['derived'],
+    });
+
+    vi.mocked(filterInput).mockResolvedValue({ pass: true });
+    vi.mocked(extractKnowledge).mockResolvedValue([
+      {
+        category: 'decision',
+        title: 'Use PostgreSQL',
+        content: 'We will use PostgreSQL for production.',
+      },
+    ]);
+    vi.mocked(deriveTruth).mockResolvedValue([
+      { key: 'database', value: 'PostgreSQL' },
+    ]);
+
+    await runPipeline(projectId, 'Use PostgreSQL database', MOCK_CONFIG);
+
+    // Verify derived state item was updated
+    const hierarchy = await getHierarchicalKnowledge(projectId);
+    const dbState = hierarchy.state.find(s => s.title === 'database');
+    expect(dbState).toBeDefined();
+    expect(dbState?.content).toBe('PostgreSQL');
+    // Ensure the ID remained the same (updated in place)
+    expect(dbState?.id).toBe(initialItem.id);
   });
 });
 

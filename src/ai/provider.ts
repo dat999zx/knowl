@@ -6,13 +6,15 @@ import { AIProviderError } from '../core/errors.js';
 import {
   FilterResultSchema,
   ExtractionResultSchema,
-  CompareResultSchema
+  CompareResultSchema,
+  DerivedTruthSchema
 } from './schemas.js';
 import {
   FILTER_SYSTEM_PROMPT,
   EXTRACT_SYSTEM_PROMPT,
   COMPARE_SYSTEM_PROMPT,
-  ASK_SYSTEM_PROMPT
+  ASK_SYSTEM_PROMPT,
+  DERIVE_TRUTH_PROMPT
 } from './prompts.js';
 
 let currentModel: LanguageModel | null = null;
@@ -207,6 +209,35 @@ ${question}
 
     return text;
   } catch (error: any) {
-    throw new AIProviderError(`Failed to answer question: ${error.message}`);
+     throw new AIProviderError(`Failed to answer question: ${error.message}`);
   }
 }
+
+/**
+ * Derives key=value active state truths from a given KnowledgeItem.
+ */
+export async function deriveTruth(item: KnowledgeItem): Promise<{ key: string; value: string }[]> {
+  const model = getModel();
+  try {
+    const { object } = await generateObject({
+      model,
+      schema: DerivedTruthSchema,
+      system: DERIVE_TRUTH_PROMPT,
+      prompt: `
+Analyze this knowledge item and extract any derived truths:
+Category: ${item.category}
+Title: ${item.title}
+Content: ${item.content}
+Reasoning: ${item.reasoning || 'N/A'}
+Alternatives: ${item.alternatives ? item.alternatives.join(', ') : 'N/A'}
+Tags: ${item.tags ? item.tags.join(', ') : 'N/A'}
+`,
+      temperature: 0.1,
+    });
+
+    return object.truths;
+  } catch (error: any) {
+    throw new AIProviderError(`Truth derivation failed: ${error.message}`);
+  }
+}
+

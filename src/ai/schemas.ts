@@ -30,3 +30,12 @@ export const CompareResultSchema = z.object({
   updatedTags: z.array(z.string()).optional().describe('The updated list of tags if applicable.'),
   updatedSteps: z.array(z.string()).optional().describe('The updated list of skill steps if applicable.'),
 });
+
+export const DerivedTruthSchema = z.object({
+  truths: z.array(
+    z.object({
+      key: z.string().describe('Lowercase key with underscores, e.g. "database", "auth_method".'),
+      value: z.string().describe('Concise value representing the derived truth, e.g. "SQLite", "JWT".'),
+    })
+  ).describe('List of derived state key-value pairs.'),
+});

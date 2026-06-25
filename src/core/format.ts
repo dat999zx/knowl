@@ -31,8 +31,9 @@ export function formatHierarchyToMarkdown(hierarchy: {
   if (hierarchy.state.length === 0) md += `No active state updates recorded.\n\n`;
   else {
     hierarchy.state.forEach(s => {
-      md += `### ${s.title} (ID: ${s.id})\n${s.content}\n\n`;
+      md += `${s.title.padEnd(20)} = ${s.content}\n`;
     });
+    md += `\n`;
   }
 
   // Decisions & Architecture
