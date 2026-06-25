@@ -14,6 +14,7 @@ vi.mock('../../src/ai/provider.js', () => {
     extractKnowledge: vi.fn(),
     compareKnowledge: vi.fn(),
     askQuestion: vi.fn(),
+    deriveTruth: vi.fn(),
   };
 });
 

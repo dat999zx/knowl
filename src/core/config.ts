@@ -99,3 +99,15 @@ export async function saveConfig(projectRoot: string, config: ProjectConfig): Pr
     throw new ConfigError(`Failed to save config to "${configPath}": ${error.message}`);
   }
 }
+
+/**
+ * Checks whether AI is configured via project config or environment variables.
+ */
+export function hasAiConfigured(config?: ProjectConfig): boolean {
+  return !!(
+    config?.ai?.apiKey ||
+    process.env.OPENAI_API_KEY ||
+    process.env.ANTHROPIC_API_KEY ||
+    config?.ai?.provider === 'ollama'
+  );
+}

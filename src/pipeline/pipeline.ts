@@ -4,7 +4,8 @@ import { runVerify } from './verify.js';
 import { runMerge, MergeOptions, MergeResult } from './merge.js';
 import { runDeriveTruth } from './derive.js';
 import { getKnowledgeItem } from '../store/repository.js';
-import { ProjectConfig, KnowledgeAtom } from '../core/types.js';
+import { ProjectConfig, KnowledgeAtom, KnowledgeItem } from '../core/types.js';
+import { hasAiConfigured } from '../core/config.js';
 
 export interface PipelineResult {
   passedFilter: boolean;
@@ -46,10 +47,9 @@ export async function runPipeline(
   const mergeResult = await runMerge(projectId, verifiedActions, options);
 
   // 5. Run Truth Derivation
-  const hasAiKey = config.ai.apiKey || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || config.ai.provider === 'ollama';
-  if (hasAiKey && (mergeResult.insertedIds.length > 0 || mergeResult.updatedIds.length > 0)) {
+  if (hasAiConfigured(config) && (mergeResult.insertedIds.length > 0 || mergeResult.updatedIds.length > 0)) {
     const ids = [...mergeResult.insertedIds, ...mergeResult.updatedIds];
-    const items: any[] = [];
+    const items: KnowledgeItem[] = [];
     for (const id of ids) {
       const item = await getKnowledgeItem(id);
       if (item) items.push(item);
@@ -78,10 +78,9 @@ export async function runDecisionPipeline(
   const mergeResult = await runMerge(projectId, verifiedActions, options);
 
   // Run truth derivation if config/AI is available
-  const hasAiKey = config?.ai?.apiKey || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || config?.ai?.provider === 'ollama';
-  if (hasAiKey && (mergeResult.insertedIds.length > 0 || mergeResult.updatedIds.length > 0)) {
+  if (hasAiConfigured(config) && (mergeResult.insertedIds.length > 0 || mergeResult.updatedIds.length > 0)) {
     const ids = [...mergeResult.insertedIds, ...mergeResult.updatedIds];
-    const items: any[] = [];
+    const items: KnowledgeItem[] = [];
     for (const id of ids) {
       const item = await getKnowledgeItem(id);
       if (item) items.push(item);

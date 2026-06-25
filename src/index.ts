@@ -3,7 +3,7 @@ import { Command } from 'commander';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
-import { findProjectRoot, loadConfig, saveConfig } from './core/config.js';
+import { findProjectRoot, loadConfig, saveConfig, hasAiConfigured } from './core/config.js';
 import { initDb, closeDb } from './store/database.js';
 import * as repo from './store/repository.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from './store/queries.js';
@@ -234,8 +234,6 @@ program
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not found in database.');
 
-      const hasAiKey = config.ai.apiKey || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || config.ai.provider === 'ollama';
-
       const atom = {
         category: 'decision' as const,
         title,
@@ -245,7 +243,7 @@ program
         tags,
       };
 
-      if (hasAiKey) {
+      if (hasAiConfigured(config)) {
         initAI(config.ai);
         const mergeResult = await runDecisionPipeline(project.id, atom, {
           autoResolveContradictions: true,
