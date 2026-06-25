@@ -9,7 +9,7 @@ import {
 import { z } from 'zod';
 import { getProjectByRootPath } from '../store/repository.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
-import { runPipeline } from '../pipeline/pipeline.js';
+import { runPipeline, runDecisionPipeline } from '../pipeline/pipeline.js';
 import { askQuestion, filterInput, extractKnowledge, compareKnowledge } from '../ai/provider.js';
 import * as repo from '../store/repository.js';
 import { ProjectConfig, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
@@ -207,22 +207,39 @@ export function createMcpServer(projectId: string, projectRoot: string, config: 
       
       else if (name === 'knowl_decide') {
         const { title, content, reasoning, alternatives, tags } = args as any;
-        const item = await repo.createKnowledgeItem(projectId, {
-          category: 'decision',
+        const atom = {
+          category: 'decision' as const,
           title,
           content,
           reasoning,
           alternatives,
           tags: tags || [],
+        };
+
+        const mergeResult = await runDecisionPipeline(projectId, atom, {
+          autoResolveContradictions: true,
+          commitMessage: `Record decision via MCP: ${title}`,
         });
 
-        // Record a commit for direct creation
-        await repo.createKnowledgeCommit(projectId, `Record decision: ${title}`, [
-          { itemId: item.id, action: 'insert', after: item }
-        ]);
+        let msg = '';
+        if (mergeResult.unresolvedContradictions.length > 0) {
+          const item = await repo.createKnowledgeItem(projectId, atom);
+          await repo.createKnowledgeCommit(projectId, `Record decision via MCP (fallback): ${title}`, [
+            { itemId: item.id, action: 'insert', after: item }
+          ]);
+          msg = `Recorded decision successfully (fallback)! ID: ${item.id}`;
+        } else if (mergeResult.supersededIds.length > 0) {
+          msg = `Decision recorded successfully! ID: ${mergeResult.insertedIds[0]}. Superseded older conflicting decision(s): ${mergeResult.supersededIds.join(', ')}`;
+        } else if (mergeResult.updatedIds.length > 0) {
+          msg = `Decision updated and merged successfully! ID: ${mergeResult.updatedIds[0]}`;
+        } else if (mergeResult.insertedIds.length > 0) {
+          msg = `Recorded new decision successfully! ID: ${mergeResult.insertedIds[0]}`;
+        } else {
+          msg = `Decision was identified as a duplicate and skipped.`;
+        }
 
         return {
-          content: [{ type: 'text', text: `Successfully recorded decision ${item.id}:\n\n${JSON.stringify(item, null, 2)}` }],
+          content: [{ type: 'text', text: msg }],
         };
       } 
       

@@ -8,7 +8,7 @@ import { initDb, closeDb } from './store/database.js';
 import * as repo from './store/repository.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from './store/queries.js';
 import { initAI, askQuestion } from './ai/provider.js';
-import { runPipeline } from './pipeline/pipeline.js';
+import { runPipeline, runDecisionPipeline } from './pipeline/pipeline.js';
 import { startMcpServer } from './mcp/server.js';
 import { KnowledgeCategory } from './core/types.js';
 import { formatHierarchyToMarkdown } from './core/format.js';
@@ -228,25 +228,56 @@ program
 
     try {
       const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
       await initDb(root);
 
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not found in database.');
 
-      const item = await repo.createKnowledgeItem(project.id, {
-        category: 'decision',
+      const hasAiKey = config.ai.apiKey || process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY || config.ai.provider === 'ollama';
+
+      const atom = {
+        category: 'decision' as const,
         title,
         content,
         reasoning,
         alternatives,
         tags,
-      });
+      };
 
-      await repo.createKnowledgeCommit(project.id, `Record decision: ${title}`, [
-        { itemId: item.id, action: 'insert', after: item }
-      ]);
+      if (hasAiKey) {
+        initAI(config.ai);
+        const mergeResult = await runDecisionPipeline(project.id, atom, {
+          autoResolveContradictions: true,
+          commitMessage: `Record decision: ${title}`
+        });
 
-      console.log(`✅ Recorded decision successfully! ID: ${item.id}`);
+        if (mergeResult.unresolvedContradictions.length > 0) {
+          const item = await repo.createKnowledgeItem(project.id, atom);
+          await repo.createKnowledgeCommit(project.id, `Record decision (fallback): ${title}`, [
+            { itemId: item.id, action: 'insert', after: item }
+          ]);
+          console.log(`✅ Recorded decision successfully! ID: ${item.id}`);
+        } else if (mergeResult.supersededIds.length > 0) {
+          const newId = mergeResult.insertedIds[0];
+          console.log(`✅ Decision recorded successfully! ID: ${newId}`);
+          console.log(`🔄 Superseded older conflicting decision(s): ${mergeResult.supersededIds.join(', ')}`);
+        } else if (mergeResult.updatedIds.length > 0) {
+          console.log(`✅ Decision updated and merged successfully! ID: ${mergeResult.updatedIds[0]}`);
+        } else if (mergeResult.insertedIds.length > 0) {
+          console.log(`✅ Recorded new decision successfully! ID: ${mergeResult.insertedIds[0]}`);
+        } else {
+          console.log(`ℹ️ Decision was identified as a duplicate and skipped.`);
+        }
+      } else {
+        console.log(`⚠️ No AI provider configured or API keys found. Falling back to direct insertion without conflict detection.`);
+        const item = await repo.createKnowledgeItem(project.id, atom);
+        await repo.createKnowledgeCommit(project.id, `Record decision: ${title}`, [
+          { itemId: item.id, action: 'insert', after: item }
+        ]);
+        console.log(`✅ Recorded decision successfully! ID: ${item.id}`);
+      }
+
       await closeDb();
     } catch (error: any) {
       console.error(`❌ Error recording decision: ${error.message}`);

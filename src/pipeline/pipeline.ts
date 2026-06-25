@@ -49,3 +49,17 @@ export async function runPipeline(
     mergeResult,
   };
 }
+
+/**
+ * Directly runs the verify and merge pipeline for a single pre-extracted knowledge atom.
+ * Used by direct input interfaces like CLI decide and MCP decide.
+ */
+export async function runDecisionPipeline(
+  projectId: string,
+  atom: KnowledgeAtom,
+  options: MergeOptions = {}
+): Promise<MergeResult> {
+  const verifiedActions = await runVerify(projectId, [atom]);
+  return await runMerge(projectId, verifiedActions, options);
+}
+
