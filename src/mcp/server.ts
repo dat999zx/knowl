@@ -21,7 +21,12 @@ import { formatHierarchyToMarkdown } from '../core/format.js';
 /**
  * Creates and configures the MCP Server.
  */
-export function createMcpServer(projectId: string, projectRoot: string, config: ProjectConfig): Server {
+export function createMcpServer(
+  projectId: string | null,
+  projectRoot: string | null,
+  config: ProjectConfig | null,
+  initError: string | null = null
+): Server {
   const server = new Server(
     {
       name: 'knowl-knowledge-server',
@@ -184,10 +189,21 @@ export function createMcpServer(projectId: string, projectRoot: string, config: 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
+    if (initError) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `❌ Knowl MCP Server is active but not initialized for the current directory.\nReason: ${initError}\n\nPlease run 'knowl init' in your project root to initialize this project.`,
+          },
+        ],
+      };
+    }
+
     try {
       if (name === 'knowl_ingest') {
         const { text, commitMessage, autoResolve } = args as any;
-        const result = await runPipeline(projectId, text, config, {
+        const result = await runPipeline(projectId!, text, config!, {
           autoResolveContradictions: autoResolve ?? false,
           commitMessage: commitMessage || 'Ingest via MCP tool',
         });
@@ -198,7 +214,7 @@ export function createMcpServer(projectId: string, projectRoot: string, config: 
       } 
       
       else if (name === 'knowl_state') {
-        const hierarchy = await getHierarchicalKnowledge(projectId);
+        const hierarchy = await getHierarchicalKnowledge(projectId!);
         const md = formatHierarchyToMarkdown(hierarchy);
         return {
           content: [{ type: 'text', text: md }],
@@ -216,15 +232,15 @@ export function createMcpServer(projectId: string, projectRoot: string, config: 
           tags: tags || [],
         };
 
-        const mergeResult = await runDecisionPipeline(projectId, atom, {
+        const mergeResult = await runDecisionPipeline(projectId!, atom, {
           autoResolveContradictions: true,
           commitMessage: `Record decision via MCP: ${title}`,
-        }, config);
+        }, config!);
 
         let msg = '';
         if (mergeResult.unresolvedContradictions.length > 0) {
-          const item = await repo.createKnowledgeItem(projectId, atom);
-          await repo.createKnowledgeCommit(projectId, `Record decision via MCP (fallback): ${title}`, [
+          const item = await repo.createKnowledgeItem(projectId!, atom);
+          await repo.createKnowledgeCommit(projectId!, `Record decision via MCP (fallback): ${title}`, [
             { itemId: item.id, action: 'insert', after: item }
           ]);
           msg = `Successfully recorded decision ${item.id} (fallback)`;
@@ -245,7 +261,7 @@ export function createMcpServer(projectId: string, projectRoot: string, config: 
       
       else if (name === 'knowl_query') {
         const { query, category, status, tags } = args as any;
-        const items = await queryKnowledgeBase(projectId, {
+        const items = await queryKnowledgeBase(projectId!, {
           query,
           category: category as KnowledgeCategory,
           status: status as KnowledgeStatus,
@@ -259,7 +275,7 @@ export function createMcpServer(projectId: string, projectRoot: string, config: 
       
       else if (name === 'knowl_ask') {
         const { question } = args as any;
-        const hierarchy = await getHierarchicalKnowledge(projectId);
+        const hierarchy = await getHierarchicalKnowledge(projectId!);
         const contextMarkdown = formatHierarchyToMarkdown(hierarchy);
         const answer = await askQuestion(question, contextMarkdown);
 
@@ -283,7 +299,7 @@ export function createMcpServer(projectId: string, projectRoot: string, config: 
           reasoning,
         });
 
-        await repo.createKnowledgeCommit(projectId, `Update item: ${updated.title}`, [
+        await repo.createKnowledgeCommit(projectId!, `Update item: ${updated.title}`, [
           {
             itemId: id,
             action: status && status !== beforeItem.status ? (status as any) : 'update',
@@ -326,9 +342,21 @@ export function createMcpServer(projectId: string, projectRoot: string, config: 
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
 
+    if (initError) {
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: 'text/plain',
+            text: `❌ Knowl MCP Server is active but not initialized for the current directory.\nReason: ${initError}\n\nPlease run 'knowl init' in your project root to initialize this project.`,
+          },
+        ],
+      };
+    }
+
     try {
       if (uri === 'knowl://brain') {
-        const hierarchy = await getHierarchicalKnowledge(projectId);
+        const hierarchy = await getHierarchicalKnowledge(projectId!);
         const md = formatHierarchyToMarkdown(hierarchy);
         return {
           contents: [
@@ -345,7 +373,7 @@ export function createMcpServer(projectId: string, projectRoot: string, config: 
       const categoryMatch = uri.match(/^knowl:\/\/category\/([a-z]+)$/);
       if (categoryMatch) {
         const category = categoryMatch[1] as KnowledgeCategory;
-        const items = await queryKnowledgeBase(projectId, {
+        const items = await queryKnowledgeBase(projectId!, {
           category,
           status: 'active',
         });
@@ -388,20 +416,34 @@ export function createMcpServer(projectId: string, projectRoot: string, config: 
  * Utility to start the stdio transport server.
  */
 export async function startMcpServer(): Promise<void> {
-  const projectRoot = await findProjectRoot(process.cwd());
-  const config = await loadConfig(projectRoot);
-  
-  // Init DB and AI
-  await initDb(projectRoot);
-  initAI(config.ai);
+  let projectRoot: string | null = null;
+  let config: ProjectConfig | null = null;
+  let project: any = null;
+  let initError: string | null = null;
 
-  // Get project details
-  const project = await getProjectByRootPath(projectRoot);
-  if (!project) {
-    throw new Error('Knowl project is not initialized. Run "knowl init" first.');
+  try {
+    projectRoot = await findProjectRoot(process.cwd());
+    config = await loadConfig(projectRoot);
+    
+    // Init DB and AI
+    await initDb(projectRoot);
+    initAI(config.ai);
+
+    // Get project details
+    project = await getProjectByRootPath(projectRoot);
+    if (!project) {
+      throw new Error('Knowl project is not initialized. Run "knowl init" first.');
+    }
+  } catch (error: any) {
+    initError = error.message;
   }
 
-  const server = createMcpServer(project.id, projectRoot, config);
+  const server = createMcpServer(
+    project ? project.id : null,
+    projectRoot,
+    config,
+    initError
+  );
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
