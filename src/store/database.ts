@@ -8,7 +8,7 @@ import { DatabaseError } from '../core/errors.js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type DbConnection = LibSQLDatabase<typeof schema> | Parameters<Parameters<LibSQLDatabase<typeof schema>['transaction']>[0]>[0];
 
-let dbInstance: DbConnection | null = null;
+let dbInstance: LibSQLDatabase<typeof schema> | null = null;
 let clientInstance: Client | null = null;
 
 /**
