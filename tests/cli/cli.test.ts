@@ -5,6 +5,7 @@ import path from 'node:path';
 
 const TEST_DIR = path.resolve('./.knowl-cli-test');
 const AGENTS_TEST_DIR = path.resolve('./.knowl-cli-agents-test');
+const AGENTS_REFRESH_TEST_DIR = path.resolve('./.knowl-cli-agents-refresh-test');
 const CLI_PATH = path.resolve('./dist/index.js');
 
 describe('CLI Integration', () => {
@@ -12,17 +13,20 @@ describe('CLI Integration', () => {
     try {
       await fs.rm(TEST_DIR, { recursive: true, force: true });
       await fs.rm(AGENTS_TEST_DIR, { recursive: true, force: true });
+      await fs.rm(AGENTS_REFRESH_TEST_DIR, { recursive: true, force: true });
     } catch {
       // Ignore
     }
     await fs.mkdir(TEST_DIR, { recursive: true });
     await fs.mkdir(AGENTS_TEST_DIR, { recursive: true });
+    await fs.mkdir(AGENTS_REFRESH_TEST_DIR, { recursive: true });
   });
 
   afterAll(async () => {
     try {
       await fs.rm(TEST_DIR, { recursive: true, force: true });
       await fs.rm(AGENTS_TEST_DIR, { recursive: true, force: true });
+      await fs.rm(AGENTS_REFRESH_TEST_DIR, { recursive: true, force: true });
     } catch {
       // Ignore
     }
@@ -52,6 +56,7 @@ describe('CLI Integration', () => {
     expect(content).toContain('knowl_query');
     expect(content).toContain('knowl_store');
     expect(content).toContain('knowl_decide');
+    expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
     expect(content).toContain('Do not store temporary debugging noise');
   });
 
@@ -68,6 +73,30 @@ describe('CLI Integration', () => {
     expect(content).toContain('# Existing Agent Rules');
     expect(content).toContain('Keep responses concise.');
     expect(content).toContain('## Knowl Project Memory');
+    expect((content.match(/## Knowl Project Memory/g) || []).length).toBe(1);
+  });
+
+  it('should refresh stale Knowl MCP guidance when init is rerun in an existing project', async () => {
+    const agentsPath = path.join(AGENTS_REFRESH_TEST_DIR, 'AGENTS.md');
+
+    execSync(`node "${CLI_PATH}" init "Refresh Agents Project"`, {
+      cwd: AGENTS_REFRESH_TEST_DIR,
+      encoding: 'utf-8',
+    });
+
+    await fs.writeFile(
+      agentsPath,
+      '# Agent Instructions\n\n<!-- KNOWL_PROJECT_MEMORY -->\n## Knowl Project Memory\n\n- Before answering project-specific questions, query Knowl first using `knowl_state` or `knowl_query`.\n',
+      'utf-8'
+    );
+
+    execSync(`node "${CLI_PATH}" init "Refresh Agents Project"`, {
+      cwd: AGENTS_REFRESH_TEST_DIR,
+      encoding: 'utf-8',
+    });
+
+    const content = await fs.readFile(agentsPath, 'utf-8');
+    expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
     expect((content.match(/## Knowl Project Memory/g) || []).length).toBe(1);
   });
 
