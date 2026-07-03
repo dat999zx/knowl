@@ -5,7 +5,8 @@ import * as schema from './schema.js';
 import { DatabaseError } from '../core/errors.js';
 
 /** Shared type for database connection or transaction context. */
-export type DbConnection = LibSQLDatabase<typeof schema>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type DbConnection = LibSQLDatabase<typeof schema> | Parameters<Parameters<LibSQLDatabase<typeof schema>['transaction']>[0]>[0];
 
 let dbInstance: DbConnection | null = null;
 let clientInstance: Client | null = null;
