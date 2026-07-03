@@ -4,21 +4,25 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const TEST_DIR = path.resolve('./.knowl-cli-test');
+const AGENTS_TEST_DIR = path.resolve('./.knowl-cli-agents-test');
 const CLI_PATH = path.resolve('./dist/index.js');
 
 describe('CLI Integration', () => {
   beforeAll(async () => {
     try {
       await fs.rm(TEST_DIR, { recursive: true, force: true });
+      await fs.rm(AGENTS_TEST_DIR, { recursive: true, force: true });
     } catch {
       // Ignore
     }
     await fs.mkdir(TEST_DIR, { recursive: true });
+    await fs.mkdir(AGENTS_TEST_DIR, { recursive: true });
   });
 
   afterAll(async () => {
     try {
       await fs.rm(TEST_DIR, { recursive: true, force: true });
+      await fs.rm(AGENTS_TEST_DIR, { recursive: true, force: true });
     } catch {
       // Ignore
     }
@@ -36,6 +40,35 @@ describe('CLI Integration', () => {
     // Verify files exist
     await expect(fs.access(path.join(TEST_DIR, '.knowl', 'config.json'))).resolves.toBeUndefined();
     await expect(fs.access(path.join(TEST_DIR, '.knowl', 'knowl.db'))).resolves.toBeUndefined();
+  });
+
+  it('should create AGENTS.md with Knowl MCP guidance during init', async () => {
+    const agentsPath = path.join(TEST_DIR, 'AGENTS.md');
+    const content = await fs.readFile(agentsPath, 'utf-8');
+
+    expect(content).toContain('## Knowl Project Memory');
+    expect(content).toContain('Before answering project-specific questions, query Knowl first');
+    expect(content).toContain('knowl_state');
+    expect(content).toContain('knowl_query');
+    expect(content).toContain('knowl_store');
+    expect(content).toContain('knowl_decide');
+    expect(content).toContain('Do not store temporary debugging noise');
+  });
+
+  it('should append Knowl MCP guidance to an existing AGENTS.md without overwriting it', async () => {
+    const agentsPath = path.join(AGENTS_TEST_DIR, 'AGENTS.md');
+    await fs.writeFile(agentsPath, '# Existing Agent Rules\n\nKeep responses concise.\n', 'utf-8');
+
+    execSync(`node "${CLI_PATH}" init "Existing Agents Project"`, {
+      cwd: AGENTS_TEST_DIR,
+      encoding: 'utf-8',
+    });
+
+    const content = await fs.readFile(agentsPath, 'utf-8');
+    expect(content).toContain('# Existing Agent Rules');
+    expect(content).toContain('Keep responses concise.');
+    expect(content).toContain('## Knowl Project Memory');
+    expect((content.match(/## Knowl Project Memory/g) || []).length).toBe(1);
   });
 
   it('should initialize without AI provider configuration by default', () => {

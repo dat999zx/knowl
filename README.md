@@ -47,7 +47,7 @@ Create a new directory (or navigate to an existing codebase) and initialize Know
 ```bash
 knowl init "My Awesome Project"
 ```
-This creates a local database and a configuration file under `.knowl/`.
+This creates a local database and a configuration file under `.knowl/`. It also creates or updates `AGENTS.md` with guidance telling Codex-style agents to query Knowl before answering project-specific questions and to save durable project knowledge back into Knowl.
 
 ### 2. Directly Record Decisions & Facts
 ```bash

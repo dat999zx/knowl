@@ -18,6 +18,38 @@ dotenv.config();
 
 const program = new Command();
 
+const KNOWL_AGENTS_SECTION_MARKER = '<!-- KNOWL_PROJECT_MEMORY -->';
+const KNOWL_AGENTS_SECTION = `${KNOWL_AGENTS_SECTION_MARKER}
+## Knowl Project Memory
+
+- Before answering project-specific questions, query Knowl first using \`knowl_state\` or \`knowl_query\`.
+- When the user confirms a durable fact, decision, constraint, architecture detail, current state, or reusable skill, save it to Knowl using \`knowl_store\`, \`knowl_decide\`, or \`knowl_ingest_atoms\`.
+- Do not store temporary debugging noise, failed attempts, secrets, credentials, or speculative ideas unless the user explicitly says they are durable project knowledge.
+- Prefer current active Knowl state over stale conversation memory when answering questions about this project.
+`;
+
+async function installKnowlAgentsGuidance(projectRoot: string): Promise<'created' | 'updated' | 'unchanged'> {
+  const agentsPath = path.join(projectRoot, 'AGENTS.md');
+
+  try {
+    const existing = await fs.readFile(agentsPath, 'utf-8');
+    if (existing.includes(KNOWL_AGENTS_SECTION_MARKER)) {
+      return 'unchanged';
+    }
+
+    const separator = existing.endsWith('\n') ? '\n' : '\n\n';
+    await fs.writeFile(agentsPath, `${existing}${separator}${KNOWL_AGENTS_SECTION}`, 'utf-8');
+    return 'updated';
+  } catch (error: any) {
+    if (error?.code !== 'ENOENT') {
+      throw error;
+    }
+
+    await fs.writeFile(agentsPath, `# Agent Instructions\n\n${KNOWL_AGENTS_SECTION}`, 'utf-8');
+    return 'created';
+  }
+}
+
 program
   .name('knowl')
   .description('KNOWL — A Knowledge Operating System for AI Agents')
@@ -68,9 +100,15 @@ program
       await initDb(cwd);
       const project = await repo.createProject(cwd, name);
       await closeDb();
+      const agentsStatus = await installKnowlAgentsGuidance(cwd);
 
       console.log(`🎉 Successfully initialized KNOWL repository!`);
       console.log(`📂 Created: ${knowlDir}`);
+      if (agentsStatus === 'created') {
+        console.log(`🧭 Created AGENTS.md with Knowl MCP guidance.`);
+      } else if (agentsStatus === 'updated') {
+        console.log(`🧭 Updated AGENTS.md with Knowl MCP guidance.`);
+      }
       console.log(`⚙️  Configured project: "${project.name}" (ID: ${project.id})`);
       console.log(`👉 Run "knowl status" to see repository status.`);
     } catch (error: any) {
