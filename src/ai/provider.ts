@@ -18,12 +18,14 @@ import {
 } from './prompts.js';
 
 let currentModel: LanguageModel | null = null;
-let currentConfig: ProjectConfig['ai'] | null = null;
+type AIConfig = NonNullable<ProjectConfig['ai']>;
+
+let currentConfig: AIConfig | null = null;
 
 /**
  * Initializes the AI provider model based on project configuration.
  */
-export function initAI(config: ProjectConfig['ai']): LanguageModel {
+export function initAI(config: AIConfig): LanguageModel {
   // If config hasn't changed and model is initialized, reuse it
   if (currentModel && JSON.stringify(currentConfig) === JSON.stringify(config)) {
     return currentModel;
@@ -240,4 +242,3 @@ Tags: ${item.tags ? item.tags.join(', ') : 'N/A'}
     throw new AIProviderError(`Truth derivation failed: ${error.message}`);
   }
 }
-

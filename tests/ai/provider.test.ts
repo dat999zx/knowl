@@ -31,7 +31,7 @@ const MOCK_CONFIG: ProjectConfig = {
 describe('AI Provider Layer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    initAI(MOCK_CONFIG.ai);
+    initAI(MOCK_CONFIG.ai!);
     
     // Set a default mock response for generateObject to prevent destructuring errors
     vi.mocked(generateObject).mockResolvedValue({

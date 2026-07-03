@@ -49,36 +49,30 @@ knowl init "My Awesome Project"
 ```
 This creates a local database and a configuration file under `.knowl/`.
 
-### 2. Configure AI Provider
-Provide API keys and select models using the CLI:
-```bash
-knowl config set ai.provider openai
-knowl config set ai.model gpt-4o-mini
-knowl config set ai.apiKey ${OPENAI_API_KEY}
-```
-*(Environment variables are automatically resolved at runtime).*
-
-### 3. Directly Record Decisions & Facts
+### 2. Directly Record Decisions & Facts
 ```bash
 knowl decide "Use SQLite" "We decided to use SQLite for lightweight, local persistence." -r "Serverless and zero-setup" -a MongoDB,PostgreSQL -t database,storage
 ```
 
-### 4. Ask Natural Language Questions
-Query your project's knowledge base using the AI assistant:
-```bash
-knowl ask "Why did we choose SQLite as our database?"
-```
-
-### 5. Ingest Raw Logs and Notes
-Ingest raw conversation transcripts or developer notes to extract knowledge:
-```bash
-knowl ingest developer_discussion.txt
-```
-
-### 6. Print Brain State
+### 3. Print Brain State
 See the complete hierarchical active project state:
 ```bash
 knowl state
+```
+
+### 4. Optional: Configure AI for Standalone Smart Commands
+Knowl's MCP server and direct storage commands do not require API keys. Configure an AI provider only if you want standalone raw-text extraction or natural-language answers from the CLI:
+```bash
+knowl config ai.provider openai
+knowl config ai.model gpt-4o-mini
+knowl config ai.apiKey ${OPENAI_API_KEY}
+```
+Environment variables are resolved at runtime.
+
+Then use AI-backed commands:
+```bash
+knowl ask "Why did we choose SQLite as our database?"
+knowl ingest "We switched to SQLite because the project must stay local-first."
 ```
 
 ---
@@ -86,6 +80,8 @@ knowl state
 ## 🔌 Connecting to Claude Desktop / Cursor (MCP Setup)
 
 To use Knowl as an MCP server with **Claude Desktop** or **Cursor**, add the following server configuration to your global settings:
+
+MCP mode is API-key free by default. The client model (for example Codex, Claude, or Cursor) should reason over project context and call Knowl's structured tools such as `knowl_store`, `knowl_decide`, `knowl_ingest_atoms`, `knowl_query`, and `knowl_state`.
 
 **Claude Desktop Configuration (`%APPDATA%\Claude\claude_desktop_config.json`):**
 ```json
@@ -115,7 +111,7 @@ Add a new MCP server under Settings -> Features -> MCP:
 | `knowl status` | Print current project info, metrics, and recent commit history |
 | `knowl state` | Print the full hierarchical active knowledge state of the project |
 | `knowl decide [title] [content]` | Record a project decision (runs interactively if parameters are missing) |
-| `knowl ask <question>` | Ask a natural language question about the project state |
-| `knowl ingest <file>` | Ingest raw text or chat log file to filter, extract, and merge project state |
-| `knowl config [action]` | Show, set, or get project configurations (e.g. `config set ai.provider openai`) |
+| `knowl ask <question>` | Ask a natural language question about the project state (requires explicit AI config) |
+| `knowl ingest <text>` | Ingest raw text to filter, extract, and merge project state (requires explicit AI config) |
+| `knowl config [key] [value]` | Show, set, or get project configuration (e.g. `knowl config ai.provider openai`) |
 | `knowl serve` | Run standard stdio Model Context Protocol (MCP) server |

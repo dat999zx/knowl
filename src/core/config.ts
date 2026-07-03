@@ -9,11 +9,6 @@ export const DEFAULT_CONFIG: ProjectConfig = {
     name: 'new-knowl-project',
     description: 'A Knowledge Operating System project',
   },
-  ai: {
-    provider: 'openai',
-    model: 'gpt-4o-mini',
-    temperature: 0.1,
-  },
   security: {
     rejectSecrets: true,
     secretPatterns: [
@@ -104,10 +99,10 @@ export async function saveConfig(projectRoot: string, config: ProjectConfig): Pr
  * Checks whether AI is configured via project config or environment variables.
  */
 export function hasAiConfigured(config?: ProjectConfig): boolean {
-  return !!(
-    config?.ai?.apiKey ||
-    process.env.OPENAI_API_KEY ||
-    process.env.ANTHROPIC_API_KEY ||
-    config?.ai?.provider === 'ollama'
-  );
+  if (!config?.ai?.provider || !config.ai.model) return false;
+  if (config.ai.provider === 'ollama') return true;
+  if (config.ai.apiKey) return true;
+  if (config.ai.provider === 'openai' && process.env.OPENAI_API_KEY) return true;
+  if (config.ai.provider === 'anthropic' && process.env.ANTHROPIC_API_KEY) return true;
+  return false;
 }

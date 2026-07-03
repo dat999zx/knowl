@@ -6,17 +6,18 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema
 } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
 import { getProjectByRootPath } from '../store/repository.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
-import { runPipeline, runDecisionPipeline } from '../pipeline/pipeline.js';
-import { askQuestion, filterInput, extractKnowledge, compareKnowledge } from '../ai/provider.js';
+import { runPipeline } from '../pipeline/pipeline.js';
+import { askQuestion } from '../ai/provider.js';
 import * as repo from '../store/repository.js';
 import { ProjectConfig, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
-import { findProjectRoot, loadConfig } from '../core/config.js';
+import { findProjectRoot, hasAiConfigured, loadConfig } from '../core/config.js';
 import { initDb } from '../store/database.js';
 import { initAI } from '../ai/provider.js';
 import { formatHierarchyToMarkdown } from '../core/format.js';
+
+const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
 /**
  * Creates and configures the MCP Server.
@@ -77,8 +78,91 @@ export function createMcpServer(
           },
         },
         {
+          name: 'knowl_store',
+          description: 'Store one structured knowledge item directly. This is deterministic and does not require Knowl AI configuration.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              category: {
+                type: 'string',
+                enum: KNOWLEDGE_CATEGORIES,
+                description: 'Knowledge category.',
+              },
+              title: {
+                type: 'string',
+                description: 'Concise title for the knowledge item.',
+              },
+              content: {
+                type: 'string',
+                description: 'Knowledge content in markdown or plain text.',
+              },
+              reasoning: {
+                type: 'string',
+                description: 'Optional reasoning or justification.',
+              },
+              alternatives: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Optional alternatives considered for decisions.',
+              },
+              tags: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Optional tags.',
+              },
+              source: {
+                type: 'string',
+                description: 'Optional source label.',
+              },
+              confidence: {
+                type: 'number',
+                description: 'Optional confidence from 0.0 to 1.0.',
+              },
+              steps: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Ordered steps when category is skill.',
+              },
+            },
+            required: ['category', 'title', 'content'],
+          },
+        },
+        {
+          name: 'knowl_ingest_atoms',
+          description: 'Store pre-extracted structured knowledge atoms from an MCP client. This is the preferred MCP ingestion path and does not require Knowl AI configuration.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              atoms: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    category: { type: 'string', enum: KNOWLEDGE_CATEGORIES },
+                    title: { type: 'string' },
+                    content: { type: 'string' },
+                    reasoning: { type: 'string' },
+                    alternatives: { type: 'array', items: { type: 'string' } },
+                    tags: { type: 'array', items: { type: 'string' } },
+                    source: { type: 'string' },
+                    confidence: { type: 'number' },
+                    steps: { type: 'array', items: { type: 'string' } },
+                  },
+                  required: ['category', 'title', 'content'],
+                },
+                description: 'Structured knowledge atoms extracted by the MCP client model.',
+              },
+              commitMessage: {
+                type: 'string',
+                description: 'Optional commit message for the batch.',
+              },
+            },
+            required: ['atoms'],
+          },
+        },
+        {
           name: 'knowl_decide',
-          description: 'Record a specific project decision directly into the knowledge base.',
+          description: 'Record a specific project decision directly into the knowledge base without requiring Knowl AI configuration.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -203,6 +287,19 @@ export function createMcpServer(
     try {
       if (name === 'knowl_ingest') {
         const { text, commitMessage, autoResolve } = args as any;
+        if (!config || !hasAiConfigured(config)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: 'Raw text ingestion requires explicit Knowl AI configuration. For MCP clients like Codex, extract knowledge with the client model and call knowl_ingest_atoms instead.',
+              },
+            ],
+          };
+        }
+
+        initAI(config.ai!);
         const result = await runPipeline(projectId!, text, config!, {
           autoResolveContradictions: autoResolve ?? false,
           commitMessage: commitMessage || 'Ingest via MCP tool',
@@ -220,6 +317,82 @@ export function createMcpServer(
           content: [{ type: 'text', text: md }],
         };
       } 
+
+      else if (name === 'knowl_store') {
+        const { category, title, content, reasoning, alternatives, tags, source, confidence, steps } = args as any;
+
+        if (!KNOWLEDGE_CATEGORIES.includes(category)) {
+          throw new Error(`Invalid knowledge category: ${category}`);
+        }
+
+        const item = await repo.createKnowledgeItem(
+          projectId!,
+          {
+            category,
+            title,
+            content,
+            reasoning,
+            alternatives,
+            tags,
+            source,
+            confidence,
+          },
+          steps
+        );
+
+        await repo.createKnowledgeCommit(projectId!, `Store ${category}: ${title}`, [
+          { itemId: item.id, action: 'insert', after: item },
+        ]);
+
+        return {
+          content: [{ type: 'text', text: `Successfully stored ${category} ${item.id}` }],
+        };
+      }
+
+      else if (name === 'knowl_ingest_atoms') {
+        const { atoms, commitMessage } = args as any;
+
+        if (!Array.isArray(atoms) || atoms.length === 0) {
+          throw new Error('atoms must be a non-empty array');
+        }
+
+        const changes = [];
+        const itemIds: string[] = [];
+
+        for (const atom of atoms) {
+          if (!KNOWLEDGE_CATEGORIES.includes(atom.category)) {
+            throw new Error(`Invalid knowledge category: ${atom.category}`);
+          }
+
+          const item = await repo.createKnowledgeItem(
+            projectId!,
+            {
+              category: atom.category,
+              title: atom.title,
+              content: atom.content,
+              reasoning: atom.reasoning,
+              alternatives: atom.alternatives,
+              tags: atom.tags,
+              source: atom.source,
+              confidence: atom.confidence,
+            },
+            atom.steps
+          );
+
+          itemIds.push(item.id);
+          changes.push({ itemId: item.id, action: 'insert' as const, after: item });
+        }
+
+        await repo.createKnowledgeCommit(
+          projectId!,
+          commitMessage || `Store ${atoms.length} structured knowledge atom(s)`,
+          changes
+        );
+
+        return {
+          content: [{ type: 'text', text: `Stored ${itemIds.length} knowledge atom(s): ${itemIds.join(', ')}` }],
+        };
+      }
       
       else if (name === 'knowl_decide') {
         const { title, content, reasoning, alternatives, tags } = args as any;
@@ -232,30 +405,13 @@ export function createMcpServer(
           tags: tags || [],
         };
 
-        const mergeResult = await runDecisionPipeline(projectId!, atom, {
-          autoResolveContradictions: true,
-          commitMessage: `Record decision via MCP: ${title}`,
-        }, config!);
-
-        let msg = '';
-        if (mergeResult.unresolvedContradictions.length > 0) {
-          const item = await repo.createKnowledgeItem(projectId!, atom);
-          await repo.createKnowledgeCommit(projectId!, `Record decision via MCP (fallback): ${title}`, [
-            { itemId: item.id, action: 'insert', after: item }
-          ]);
-          msg = `Successfully recorded decision ${item.id} (fallback)`;
-        } else if (mergeResult.supersededIds.length > 0) {
-          msg = `Successfully recorded decision ${mergeResult.insertedIds[0]}. Superseded older conflicting decision(s): ${mergeResult.supersededIds.join(', ')}`;
-        } else if (mergeResult.updatedIds.length > 0) {
-          msg = `Successfully recorded decision ${mergeResult.updatedIds[0]} (updated)`;
-        } else if (mergeResult.insertedIds.length > 0) {
-          msg = `Successfully recorded decision ${mergeResult.insertedIds[0]}`;
-        } else {
-          msg = `Decision was identified as a duplicate and skipped.`;
-        }
+        const item = await repo.createKnowledgeItem(projectId!, atom);
+        await repo.createKnowledgeCommit(projectId!, `Record decision via MCP: ${title}`, [
+          { itemId: item.id, action: 'insert', after: item }
+        ]);
 
         return {
-          content: [{ type: 'text', text: msg }],
+          content: [{ type: 'text', text: `Successfully recorded decision ${item.id}` }],
         };
       } 
       
@@ -275,6 +431,19 @@ export function createMcpServer(
       
       else if (name === 'knowl_ask') {
         const { question } = args as any;
+        if (!config || !hasAiConfigured(config)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: 'Natural-language ask requires explicit Knowl AI configuration. MCP clients can call knowl_state or knowl_query and answer using their own model.',
+              },
+            ],
+          };
+        }
+
+        initAI(config.ai!);
         const hierarchy = await getHierarchicalKnowledge(projectId!);
         const contextMarkdown = formatHierarchyToMarkdown(hierarchy);
         const answer = await askQuestion(question, contextMarkdown);
@@ -425,9 +594,8 @@ export async function startMcpServer(): Promise<void> {
     projectRoot = await findProjectRoot(process.cwd());
     config = await loadConfig(projectRoot);
     
-    // Init DB and AI
+    // Init DB. AI is optional and initialized lazily only for AI-backed tools.
     await initDb(projectRoot);
-    initAI(config.ai);
 
     // Get project details
     project = await getProjectByRootPath(projectRoot);
@@ -447,5 +615,3 @@ export async function startMcpServer(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
-
-

@@ -22,10 +22,6 @@ const TEST_ROOT = path.resolve('./.knowl-mcp-test');
 const MOCK_CONFIG: ProjectConfig = {
   version: 1,
   project: { name: 'mcp-test' },
-  ai: {
-    provider: 'openai',
-    model: 'gpt-4o-mini',
-  },
   security: {
     rejectSecrets: true,
     secretPatterns: [],
@@ -146,6 +142,8 @@ describe('MCP Server Layer', () => {
     expect(res.result.tools).toBeDefined();
     expect(res.result.tools.some((t: any) => t.name === 'knowl_state')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_store')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest_atoms')).toBe(true);
   });
 
   it('should list resources', async () => {
@@ -175,6 +173,59 @@ describe('MCP Server Layer', () => {
     const items = await db.select().from((await import('../../src/store/schema.js')).knowledgeItems);
     expect(items).toHaveLength(1);
     expect(items[0].title).toBe('Use SQLite');
+  });
+
+  it('should support storing structured knowledge directly without AI', async () => {
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_store',
+      arguments: {
+        category: 'fact',
+        title: 'Runtime',
+        content: 'Node.js 20+',
+        tags: ['runtime'],
+      },
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+    expect(res.result.content[0].text).toContain('Successfully stored fact');
+
+    const db = (await import('../../src/store/database.js')).getDb();
+    const items = await db.select().from((await import('../../src/store/schema.js')).knowledgeItems);
+    expect(items).toHaveLength(1);
+    expect(items[0].category).toBe('fact');
+    expect(items[0].title).toBe('Runtime');
+  });
+
+  it('should support ingesting pre-extracted atoms without AI', async () => {
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_ingest_atoms',
+      arguments: {
+        atoms: [
+          {
+            category: 'constraint',
+            title: 'Local First',
+            content: 'Knowl must work without cloud services by default.',
+            tags: ['local-first'],
+          },
+          {
+            category: 'architecture',
+            title: 'MCP Bridge',
+            content: 'Codex connects to Knowl through MCP tools.',
+            tags: ['mcp'],
+          },
+        ],
+        commitMessage: 'Store extracted atoms from MCP client',
+      },
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+    expect(res.result.content[0].text).toContain('Stored 2 knowledge atom(s)');
+
+    const db = (await import('../../src/store/database.js')).getDb();
+    const items = await db.select().from((await import('../../src/store/schema.js')).knowledgeItems);
+    expect(items).toHaveLength(2);
   });
 
   it('should support reading brain state resource', async () => {

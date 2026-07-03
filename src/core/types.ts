@@ -77,7 +77,7 @@ export interface ProjectConfig {
     name: string;
     description?: string;
   };
-  ai: {
+  ai?: {
     provider: 'openai' | 'anthropic' | 'ollama' | 'custom';
     model: string;
     temperature?: number;

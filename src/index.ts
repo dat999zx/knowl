@@ -52,11 +52,6 @@ program
       const defaultConfig = {
         version: 1,
         project: { name },
-        ai: {
-          provider: 'openai',
-          model: 'gpt-4o-mini',
-          apiKey: '',
-        },
         security: {
           rejectSecrets: true,
           secretPatterns: ['api_key', 'password', 'secret', 'token', 'private_key'],
@@ -115,7 +110,7 @@ program
       console.log(`Project Name:   ${project.name}`);
       console.log(`Project ID:     ${project.id}`);
       console.log(`Root Path:      ${project.rootPath}`);
-      console.log(`AI Config:      ${config.ai.provider} (${config.ai.model})`);
+      console.log(`AI Config:      ${config.ai ? `${config.ai.provider} (${config.ai.model})` : 'not configured'}`);
       console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       console.log(`📝 KNOWLEDGE ITEMS`);
       console.log(`  Active:        ${activeItems.length}`);
@@ -244,7 +239,7 @@ program
       };
 
       if (hasAiConfigured(config)) {
-        initAI(config.ai);
+        initAI(config.ai!);
         const mergeResult = await runDecisionPipeline(project.id, atom, {
           autoResolveContradictions: true,
           commitMessage: `Record decision: ${title}`
@@ -297,7 +292,11 @@ program
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not found in database.');
 
-      initAI(config.ai);
+      if (!hasAiConfigured(config)) {
+        throw new Error('AI is not configured. Set ai.provider and ai.model, then provide an API key or configure ollama for local models.');
+      }
+
+      initAI(config.ai!);
 
       const hierarchy = await getHierarchicalKnowledge(project.id);
       const contextMarkdown = formatHierarchyToMarkdown(hierarchy);
@@ -331,7 +330,11 @@ program
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not found in database.');
 
-      initAI(config.ai);
+      if (!hasAiConfigured(config)) {
+        throw new Error('AI is not configured for raw ingestion. Use MCP structured tools, or set ai.provider and ai.model with an API key/local model.');
+      }
+
+      initAI(config.ai!);
 
       console.log(`🌀 Processing text through KNOWL pipeline...`);
       const result = await runPipeline(project.id, text, config, {
@@ -450,4 +453,3 @@ program
 
 // Parse commands
 program.parse(process.argv);
-

@@ -38,22 +38,28 @@ describe('CLI Integration', () => {
     await expect(fs.access(path.join(TEST_DIR, '.knowl', 'knowl.db'))).resolves.toBeUndefined();
   });
 
-  it('should read and write configuration', () => {
-    // Read config
-    const provider = execSync(`node "${CLI_PATH}" config ai.provider`, {
+  it('should initialize without AI provider configuration by default', () => {
+    const aiConfig = execSync(`node "${CLI_PATH}" config ai`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     }).trim();
-    expect(provider).toBe('openai');
 
-    // Update config
-    const update = execSync(`node "${CLI_PATH}" config ai.model gpt-4-turbo`, {
+    expect(aiConfig).toBe('undefined');
+  });
+
+  it('should allow explicit AI provider configuration', () => {
+    const providerUpdate = execSync(`node "${CLI_PATH}" config ai.provider openai`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     }).trim();
-    expect(update).toContain('Set "ai.model" to: "gpt-4-turbo"');
+    expect(providerUpdate).toContain('Set "ai.provider" to: "openai"');
 
-    // Read back config
+    const modelUpdate = execSync(`node "${CLI_PATH}" config ai.model gpt-4-turbo`, {
+      cwd: TEST_DIR,
+      encoding: 'utf-8',
+    }).trim();
+    expect(modelUpdate).toContain('Set "ai.model" to: "gpt-4-turbo"');
+
     const model = execSync(`node "${CLI_PATH}" config ai.model`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
@@ -81,6 +87,7 @@ describe('CLI Integration', () => {
 
     expect(output).toContain('KNOWL REPOSITORY STATUS');
     expect(output).toContain('CLI Test Project');
+    expect(output).toContain('AI Config:      openai (gpt-4-turbo)');
     expect(output).toContain('Active:        1');
     expect(output).toContain('Use Drizzle ORM');
     expect(output).toContain('Record decision: Use Drizzle ORM');
