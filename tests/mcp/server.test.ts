@@ -144,6 +144,8 @@ describe('MCP Server Layer', () => {
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_store')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest_atoms')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_gc_preview')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_gc_apply')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ask')).toBe(false);
 
     const queryTool = res.result.tools.find((t: any) => t.name === 'knowl_query');
@@ -165,6 +167,9 @@ describe('MCP Server Layer', () => {
     expect(ingestAtomsTool.description).toContain('Do not store raw chat transcripts');
     expect(ingestAtomsTool.description).toContain('batch store implementation summaries');
     expect(updateTool.description).toContain('correct stale or contradicted memory');
+
+    const gcPreviewTool = res.result.tools.find((t: any) => t.name === 'knowl_gc_preview');
+    expect(gcPreviewTool.description).toContain('Preview knowledge garbage collection');
   });
 
   it('should list resources', async () => {
@@ -341,6 +346,46 @@ describe('MCP Server Layer', () => {
     expect(res.error).toBeUndefined();
     expect(res.result.contents[0].text).toContain('Offline Support');
     expect(res.result.contents[0].text).toContain('GOALS');
+  });
+
+  it('should preview and apply knowledge garbage collection via MCP tools', async () => {
+    const duplicateA = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Duplicate runtime fact',
+      content: 'The runtime uses Node.js.',
+      confidence: 0.3,
+    });
+    const duplicateB = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Duplicate runtime fact',
+      content: 'The runtime uses Node.js.',
+      confidence: 0.9,
+    });
+
+    const previewRes = await runRpcRequest('tools/call', {
+      name: 'knowl_gc_preview',
+      arguments: {},
+    });
+
+    expect(previewRes.error).toBeUndefined();
+    expect(previewRes.result.isError).toBeUndefined();
+    const preview = JSON.parse(previewRes.result.content[0].text);
+    expect(preview.summary.purge).toBe(1);
+    expect(preview.candidates[0].itemId).toBe(duplicateA.id);
+    expect(preview.candidates[0].duplicateOfId).toBe(duplicateB.id);
+
+    const applyRes = await runRpcRequest('tools/call', {
+      name: 'knowl_gc_apply',
+      arguments: {},
+    });
+
+    expect(applyRes.error).toBeUndefined();
+    expect(applyRes.result.isError).toBeUndefined();
+    const result = JSON.parse(applyRes.result.content[0].text);
+    expect(result.summary.purge).toBe(1);
+
+    expect(await repo.getKnowledgeItem(duplicateA.id)).toBeNull();
+    expect(await repo.getKnowledgeItem(duplicateB.id)).not.toBeNull();
   });
 });
 

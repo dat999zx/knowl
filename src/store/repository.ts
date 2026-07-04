@@ -233,6 +233,26 @@ export async function updateKnowledgeItem(
   }
 }
 
+export async function listKnowledgeItems(projectId: string, dbConnection?: DbConnection): Promise<KnowledgeItem[]> {
+  const conn = dbConnection || getDb();
+  try {
+    const result = await conn
+      .select()
+      .from(schema.knowledgeItems)
+      .where(eq(schema.knowledgeItems.projectId, projectId));
+
+    return result.map((row) => ({
+      ...row,
+      category: row.category as KnowledgeCategory,
+      status: row.status as KnowledgeStatus,
+      alternatives: row.alternatives as string[] | null,
+      tags: row.tags as string[] | null,
+    }));
+  } catch (error: any) {
+    throw new DatabaseError(`Failed to list knowledge items: ${error.message}`);
+  }
+}
+
 export async function createKnowledgeCommit(
   projectId: string,
   message: string,
@@ -262,6 +282,17 @@ export async function createKnowledgeCommit(
     return newCommit;
   } catch (error: any) {
     throw new DatabaseError(`Failed to create commit: ${error.message}`);
+  }
+}
+
+export async function deleteKnowledgeItem(id: string, dbConnection?: DbConnection): Promise<void> {
+  const conn = dbConnection || getDb();
+  try {
+    await conn
+      .delete(schema.knowledgeItems)
+      .where(eq(schema.knowledgeItems.id, id));
+  } catch (error: any) {
+    throw new DatabaseError(`Failed to delete knowledge item: ${error.message}`);
   }
 }
 

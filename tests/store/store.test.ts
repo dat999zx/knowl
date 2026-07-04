@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { initDb, closeDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
+import { applyKnowledgeGc, previewKnowledgeGc } from '../../src/store/gc.js';
 import * as queries from '../../src/store/queries.js';
 import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
 import { searchKnowledgeEmbeddings, upsertKnowledgeEmbedding } from '../../src/store/vector.js';
@@ -284,5 +285,141 @@ describe('Storage Layer', () => {
     });
 
     expect(matches.some(match => match.item.id === item.id)).toBe(true);
+  });
+
+  it('should preview duplicate purge, stale state archive, and stale archive compression', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const olderDuplicate = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'SQLite storage',
+      content: 'Knowl stores durable memory in SQLite.',
+      confidence: 0.6,
+      tags: ['database'],
+    });
+    await repo.updateKnowledgeItem(olderDuplicate.id, {
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as any);
+
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'SQLite storage',
+      content: 'Knowl stores durable memory in SQLite.',
+      confidence: 0.9,
+      tags: ['database'],
+    });
+
+    const staleState = await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Old migration task',
+      content: 'Working on schema migration sequencing.',
+    });
+    await repo.updateKnowledgeItem(staleState.id, {
+      updatedAt: '2026-01-15T00:00:00.000Z',
+    } as any);
+
+    const archived = await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Archived debug log',
+      content: 'This is a long debug note that should be compressed after it becomes archival context only. '.repeat(4).trim(),
+      reasoning: 'Detailed state snapshot',
+    });
+    await repo.updateKnowledgeItem(archived.id, {
+      status: 'archived',
+      updatedAt: '2026-01-10T00:00:00.000Z',
+    } as any);
+
+    const preview = await previewKnowledgeGc(projectId, {
+      now: '2026-07-05T00:00:00.000Z',
+      staleStateDays: 0,
+      compressArchivedDays: 0,
+    });
+
+    expect(preview.summary.purge).toBeGreaterThanOrEqual(1);
+    expect(preview.summary.archive).toBeGreaterThanOrEqual(1);
+    expect(preview.summary.compress).toBeGreaterThanOrEqual(1);
+    expect(preview.candidates.some(candidate => candidate.itemId === olderDuplicate.id && candidate.action === 'purge')).toBe(true);
+    expect(preview.candidates.some(candidate => candidate.itemId === staleState.id && candidate.action === 'archive')).toBe(true);
+    expect(preview.candidates.some(candidate => candidate.itemId === archived.id && candidate.action === 'compress')).toBe(true);
+  });
+
+  it('should apply gc changes transactionally and keep archived items out of default retrieval', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const olderDuplicate = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Duplicate auth fact',
+      content: 'Session tokens are persisted for authentication.',
+      confidence: 0.4,
+    });
+    await repo.updateKnowledgeItem(olderDuplicate.id, {
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as any);
+
+    const newerDuplicate = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Duplicate auth fact',
+      content: 'Session tokens are persisted for authentication.',
+      confidence: 0.9,
+    });
+
+    const staleState = await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Old rollout state',
+      content: 'Rollout paused pending validation.',
+    });
+    await repo.updateKnowledgeItem(staleState.id, {
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    } as any);
+
+    const archived = await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Verbose archived state',
+      content: 'Archived operational note with a lot of detail that should be shrunk for cold storage. '.repeat(4).trim(),
+      reasoning: 'Long-form archive',
+    });
+    await repo.updateKnowledgeItem(archived.id, {
+      status: 'archived',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    } as any);
+
+    const result = await applyKnowledgeGc(projectId, {
+      now: '2026-07-05T00:00:00.000Z',
+      staleStateDays: 0,
+      compressArchivedDays: 0,
+    });
+
+    expect(result.summary.purge).toBeGreaterThanOrEqual(1);
+    expect(result.summary.archive).toBeGreaterThanOrEqual(1);
+    expect(result.summary.compress).toBeGreaterThanOrEqual(1);
+
+    const deleted = await repo.getKnowledgeItem(olderDuplicate.id);
+    expect(deleted).toBeNull();
+
+    const stillThere = await repo.getKnowledgeItem(newerDuplicate.id);
+    expect(stillThere).not.toBeNull();
+
+    const archivedState = await repo.getKnowledgeItem(staleState.id);
+    expect(archivedState!.status).toBe('archived');
+
+    const compressed = await repo.getKnowledgeItem(archived.id);
+    expect(compressed!.content.length).toBeLessThan(archived.content.length);
+    expect(compressed!.content).toContain('Compressed summary:');
+
+    const defaultResults = await queries.queryKnowledgeBase(projectId, {
+      query: 'rollout paused',
+    });
+    expect(defaultResults.some(item => item.id === staleState.id)).toBe(false);
+
+    const archivedResults = await queries.queryKnowledgeBase(projectId, {
+      query: 'rollout paused',
+      status: 'archived',
+    });
+    expect(archivedResults.some(item => item.id === staleState.id)).toBe(true);
+
+    const commits = await repo.getKnowledgeCommits(projectId, 10);
+    expect(commits.some(commit => commit.message === 'Apply knowledge GC')).toBe(true);
   });
 });

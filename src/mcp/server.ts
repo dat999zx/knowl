@@ -18,6 +18,7 @@ import { initDb } from '../store/database.js';
 import { initAI } from '../ai/provider.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled, getVectorSearchConfig } from '../ai/embeddings.js';
 import { formatHierarchyToMarkdown } from '../core/format.js';
+import { applyKnowledgeGc, previewKnowledgeGc } from '../store/gc.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 export const KNOWL_MCP_TOOL_NAMES = [
@@ -28,6 +29,8 @@ export const KNOWL_MCP_TOOL_NAMES = [
   'knowl_decide',
   'knowl_query',
   'knowl_update',
+  'knowl_gc_preview',
+  'knowl_gc_apply',
 ] as const;
 
 /**
@@ -266,6 +269,22 @@ export function createMcpServer(
             required: ['id'],
           },
         },
+        {
+          name: 'knowl_gc_preview',
+          description: 'Preview knowledge garbage collection recommendations without changing the database. Use to find duplicate, stale, or cold memory before applying GC.',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
+          name: 'knowl_gc_apply',
+          description: 'Apply knowledge garbage collection transactionally: purge duplicates, archive stale state, compress cold archives, and record a knowledge commit.',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
       ],
     };
   });
@@ -432,6 +451,20 @@ export function createMcpServer(
 
         return {
           content: [{ type: 'text', text: `Successfully updated item ${id}:\n\n${JSON.stringify(updated, null, 2)}` }],
+        };
+      }
+
+      else if (name === 'knowl_gc_preview') {
+        const result = await previewKnowledgeGc(projectId!);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      else if (name === 'knowl_gc_apply') {
+        const result = await applyKnowledgeGc(projectId!);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
       }
 

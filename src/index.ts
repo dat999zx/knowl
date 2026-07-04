@@ -18,6 +18,7 @@ import { formatStatusReport } from './cli/status-report.js';
 import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
 import { reindexKnowledgeEmbeddings } from './store/vector-index.js';
+import { applyKnowledgeGc, previewKnowledgeGc } from './store/gc.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -529,7 +530,48 @@ program
     }
   });
 
-// --- 10. DOCTOR COMMAND ---
+// --- 10. GC COMMAND ---
+program
+  .command('gc')
+  .description('Preview or apply knowledge garbage collection')
+  .option('--apply', 'Apply the GC recommendations')
+  .action(async (options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const result = options.apply
+        ? await applyKnowledgeGc(project.id)
+        : await previewKnowledgeGc(project.id);
+
+      console.log(options.apply ? 'KNOWL GC APPLY' : 'KNOWL GC PREVIEW');
+      console.log(`Archive:  ${result.summary.archive}`);
+      console.log(`Compress: ${result.summary.compress}`);
+      console.log(`Purge:    ${result.summary.purge}`);
+
+      if (result.candidates.length === 0) {
+        console.log('No GC actions recommended.');
+      } else {
+        for (const candidate of result.candidates) {
+          console.log(`- ${candidate.action.toUpperCase()} ${candidate.itemId} ${candidate.title}`);
+          console.log(`  Reason: ${candidate.reason}`);
+          if (candidate.duplicateOfId) {
+            console.log(`  Duplicate of: ${candidate.duplicateOfId}`);
+          }
+          console.log(`  Bytes: ${candidate.beforeBytes} -> ${candidate.afterBytes}`);
+        }
+      }
+
+      await closeDb();
+    } catch (error: any) {
+      console.error(`Error running GC: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// --- 11. DOCTOR COMMAND ---
 program
   .command('doctor')
   .description('Check whether the current Knowl project is ready for agent memory usage')
@@ -541,7 +583,7 @@ program
     }
   });
 
-// --- 11. SERVE COMMAND ---
+// --- 12. SERVE COMMAND ---
 program
   .command('serve')
   .description('Start the Model Context Protocol (MCP) server for KNOWL')
