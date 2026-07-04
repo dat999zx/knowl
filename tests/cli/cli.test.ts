@@ -186,6 +186,28 @@ describe('CLI Integration', () => {
     await fs.rm(oldDbDir, { recursive: true, force: true });
   });
 
+  it('should run explicit upgrade for existing repositories', async () => {
+    const upgradeDir = path.resolve('./.knowl-cli-upgrade-test');
+    await fs.rm(upgradeDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(upgradeDir, { recursive: true });
+
+    execSync(`node "${CLI_PATH}" init "Upgrade Project"`, {
+      cwd: upgradeDir,
+      encoding: 'utf-8',
+    });
+
+    const output = execSync(`node "${CLI_PATH}" upgrade`, {
+      cwd: upgradeDir,
+      encoding: 'utf-8',
+    });
+
+    expect(output).toContain('KNOWL repository upgrade complete');
+    expect(output).toContain('AGENTS.md');
+    expect(output).toContain('.gitignore');
+
+    await fs.rm(upgradeDir, { recursive: true, force: true });
+  });
+
   it('should append Knowl MCP guidance to an existing AGENTS.md without overwriting it', async () => {
     const agentsPath = path.join(AGENTS_TEST_DIR, 'AGENTS.md');
     await fs.writeFile(agentsPath, '# Existing Agent Rules\n\nKeep responses concise.\n', 'utf-8');

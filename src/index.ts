@@ -39,6 +39,35 @@ function printAgentsGuidanceStatus(status: Awaited<ReturnType<typeof installKnow
   }
 }
 
+async function upgradeExistingRepository(projectRoot: string, fallbackName: string) {
+  const configStatus = await upgradeConfigDefaults(projectRoot);
+  const config = await loadConfig(projectRoot);
+  const agentsStatus = await installKnowlAgentsGuidance(projectRoot);
+  const gitignoreStatus = await installKnowlGitignoreEntry(projectRoot);
+
+  await initDb(projectRoot);
+  let project = await repo.getProjectByRootPath(projectRoot);
+  if (!project) {
+    project = await repo.createProject(projectRoot, config.project?.name || fallbackName);
+  }
+  await closeDb();
+
+  return {
+    project,
+    configStatus,
+    agentsStatus,
+    gitignoreStatus,
+  };
+}
+
+function printUpgradeStatus(result: Awaited<ReturnType<typeof upgradeExistingRepository>>) {
+  console.log(`KNOWL repository upgrade complete.`);
+  console.log(`Project: "${result.project.name}" (ID: ${result.project.id})`);
+  console.log(`Config: ${result.configStatus}`);
+  console.log(`AGENTS.md: ${result.agentsStatus}`);
+  console.log(`.gitignore: ${result.gitignoreStatus}`);
+}
+
 program
   .name('knowl')
   .description('KNOWL — A Knowledge Operating System for AI Agents')
@@ -63,33 +92,9 @@ program
       }
 
       if (isExisting) {
-        const configStatus = await upgradeConfigDefaults(cwd);
-        const agentsStatus = await installKnowlAgentsGuidance(cwd);
-        const gitignoreStatus = await installKnowlGitignoreEntry(cwd);
-        await initDb(cwd);
-        let project = await repo.getProjectByRootPath(cwd);
-        if (!project) {
-          project = await repo.createProject(cwd, name);
-          console.log(`Registered project: "${project.name}" (ID: ${project.id})`);
-        }
-        await closeDb();
+        const result = await upgradeExistingRepository(cwd, name);
         console.log(`⚠️  KNOWL repository already initialized in this directory: ${knowlDir}`);
-        if (configStatus === 'updated') {
-          console.log(`Updated .knowl/config.json with missing default settings.`);
-        }
-        if (gitignoreStatus === 'created') {
-          console.log(`Created .gitignore with .knowl/ entry.`);
-        } else if (gitignoreStatus === 'updated') {
-          console.log(`Updated .gitignore with .knowl/ entry.`);
-        }
-        if (agentsStatus === 'created') {
-          console.log(`🧭 Created AGENTS.md with Knowl MCP guidance.`);
-        } else if (agentsStatus === 'updated') {
-          console.log(`🧭 Updated AGENTS.md with Knowl MCP guidance.`);
-        }
-        if (agentsStatus === 'unchanged') {
-          printAgentsGuidanceStatus(agentsStatus);
-        }
+        printUpgradeStatus(result);
         printMcpSetupHint();
         process.exit(0);
       }
@@ -509,7 +514,22 @@ program
     }
   });
 
-// --- 9. DOCTOR COMMAND ---
+// --- 9. UPGRADE COMMAND ---
+program
+  .command('upgrade')
+  .description('Upgrade an existing KNOWL repository with the latest config, schema, and agent files')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const result = await upgradeExistingRepository(root, 'My Project');
+      printUpgradeStatus(result);
+    } catch (error: any) {
+      console.error(`❌ Error upgrading KNOWL: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// --- 10. DOCTOR COMMAND ---
 program
   .command('doctor')
   .description('Check whether the current Knowl project is ready for agent memory usage')
@@ -521,7 +541,7 @@ program
     }
   });
 
-// --- 10. SERVE COMMAND ---
+// --- 11. SERVE COMMAND ---
 program
   .command('serve')
   .description('Start the Model Context Protocol (MCP) server for KNOWL')
