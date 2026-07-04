@@ -67,13 +67,13 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 <!-- KNOWL_PROJECT_MEMORY -->
 ## Knowl Project Memory
 
-- At the start of any project-specific task, query Knowl for relevant facts, decisions, constraints, architecture, state, and skills before inspecting files or editing code.
-- For specific project questions, call `knowl_query` first. Use 2-6 concise search keywords from the user's question, not the whole question text.
-- Do not use `knowl_ask` for MCP first-pass lookup. MCP agents already have a model; use `knowl_query` and answer from the returned items.
+- At the start of a new project-specific session, call `knowl_recent` first to load recent active knowledge and knowledge commits before inspecting files or editing code.
+- After `knowl_recent`, use `knowl_query` for specific questions. Use 2-6 concise search keywords from the user's question, not the whole question text.
+- Do not use `knowl_ask` for MCP first-pass lookup. MCP agents already have a model; use `knowl_recent` and `knowl_query` for retrieval.
 - Omit category filters unless you are certain; an over-specific category can hide the correct memory item.
 - If the Knowl MCP tools are unavailable, stop and tell the user that Knowl MCP is not configured instead of silently inspecting the repository.
 - `Auth: Unsupported` on a local stdio MCP server is normal and does not mean Knowl is unavailable when `knowl_query` is listed.
-- Do not inspect repository files before this targeted Knowl query. If Knowl has a relevant active answer, use it and cite that it came from Knowl.
+- Do not inspect repository files before this Knowl lookup. If Knowl has a relevant active answer, use it and cite that it came from Knowl.
 - If `knowl_query` returns a relevant active item, answer from Knowl immediately.
 - Do not inspect repository files just to re-verify known facts already found in Knowl.
 - Only inspect repository files when Knowl misses, conflicts, looks stale or low-confidence, or the user asks for source verification.
