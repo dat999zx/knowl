@@ -18,6 +18,18 @@ It exposes this knowledge through a clean Command Line Interface (CLI) and a Mod
 
 ## 📦 Installation
 
+Install from npm:
+
+```bash
+npm install -g @dat999zx/knowl
+```
+
+Verify that it is installed:
+
+```bash
+knowl --version
+```
+
 To build and install the binary globally from source:
 
 ```bash
@@ -31,11 +43,6 @@ npm run build
 
 # Link the executable globally
 npm link
-```
-
-Verify that it is installed:
-```bash
-knowl --version
 ```
 
 ---

@@ -22,3 +22,6 @@ eslint-debug.log*
 # OS Metadata
 .DS_Store
 Thumbs.db
+
+# Temp
+.tmp/
