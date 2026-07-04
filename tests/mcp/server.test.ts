@@ -155,9 +155,13 @@ describe('MCP Server Layer', () => {
 
     const storeTool = res.result.tools.find((t: any) => t.name === 'knowl_store');
     const ingestAtomsTool = res.result.tools.find((t: any) => t.name === 'knowl_ingest_atoms');
+    const updateTool = res.result.tools.find((t: any) => t.name === 'knowl_update');
     expect(storeTool.description).toContain('concise structured knowledge atom');
     expect(storeTool.description).toContain('not raw chat transcripts');
+    expect(storeTool.description).toContain('Use after discovering durable project knowledge or completing work');
     expect(ingestAtomsTool.description).toContain('Do not store raw chat transcripts');
+    expect(ingestAtomsTool.description).toContain('batch store implementation summaries');
+    expect(updateTool.description).toContain('correct stale or contradicted memory');
   });
 
   it('should list resources', async () => {

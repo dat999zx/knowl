@@ -80,7 +80,7 @@ export function createMcpServer(
         },
         {
           name: 'knowl_store',
-          description: 'Store one concise structured knowledge atom directly, not raw chat transcripts. This is deterministic and does not require Knowl AI configuration.',
+          description: 'Store one concise structured knowledge atom directly, not raw chat transcripts. Use after discovering durable project knowledge or completing work. This is deterministic and does not require Knowl AI configuration.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -130,7 +130,7 @@ export function createMcpServer(
         },
         {
           name: 'knowl_ingest_atoms',
-          description: 'Store pre-extracted structured knowledge atoms from an MCP client. Do not store raw chat transcripts; extract durable facts, decisions, constraints, architecture, state, or skills first. This is the preferred MCP ingestion path and does not require Knowl AI configuration.',
+          description: 'Store pre-extracted structured knowledge atoms from an MCP client. Do not store raw chat transcripts; extract durable facts, decisions, constraints, architecture, state, skills, and batch store implementation summaries first. This is the preferred MCP ingestion path and does not require Knowl AI configuration.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -237,7 +237,7 @@ export function createMcpServer(
         },
         {
           name: 'knowl_update',
-          description: 'Update the metadata, status, or content of an existing knowledge item.',
+          description: 'Update the metadata, status, or content of an existing knowledge item. Use to correct stale or contradicted memory instead of adding duplicates.',
           inputSchema: {
             type: 'object',
             properties: {

@@ -8,6 +8,7 @@ const KNOWL_AGENTS_SECTION_END_MARKER = '<!-- /KNOWL_PROJECT_MEMORY -->';
 const KNOWL_AGENTS_SECTION = `${KNOWL_AGENTS_SECTION_MARKER}
 ## Knowl Project Memory
 
+- At the start of any project-specific task, query Knowl for relevant facts, decisions, constraints, architecture, state, and skills before inspecting files or editing code.
 - For specific project questions, call \`knowl_query\` first. Use 2-6 concise search keywords from the user's question, not the whole question text.
 - If the Knowl MCP tools are unavailable, stop and tell the user that Knowl MCP is not configured instead of silently inspecting the repository.
 - \`Auth: Unsupported\` on a local stdio MCP server is normal and does not mean Knowl is unavailable when \`knowl_query\` is listed.
@@ -16,8 +17,10 @@ const KNOWL_AGENTS_SECTION = `${KNOWL_AGENTS_SECTION_MARKER}
 - Do not inspect repository files just to re-verify known facts already found in Knowl.
 - Only inspect repository files when Knowl misses, conflicts, looks stale or low-confidence, or the user asks for source verification.
 - Only use \`knowl_state\` for broad project-memory summaries, status checks, or when the user asks for the full current state.
+- During work, keep Knowl current. If new findings contradict or replace existing memory, use \`knowl_update\` to correct stale or superseded items instead of adding duplicates.
 - When the user confirms a durable fact, decision, constraint, architecture detail, current state, or reusable skill, save it to Knowl using \`knowl_store\`, \`knowl_decide\`, or \`knowl_ingest_atoms\`.
 - After discovering and verifying durable project knowledge from repository files, store it in Knowl using \`knowl_store\` or \`knowl_ingest_atoms\` before giving the final answer, but only when the initial \`knowl_query\` did not already return the same knowledge.
+- Before the final answer, check whether the work produced durable knowledge: implemented feature summaries, setup steps, architecture changes, important commands, decisions, constraints, recurring bugs, gotchas, and verified project facts. Store useful outcomes in Knowl before responding.
 - Store durable knowledge as concise structured atoms, not raw chat transcripts. Use raw conversation only as optional source/evidence when it is useful.
 - Do not store temporary debugging noise, failed attempts, secrets, credentials, or speculative ideas unless the user explicitly says they are durable project knowledge.
 - Prefer current active Knowl state over stale conversation memory when answering questions about this project.

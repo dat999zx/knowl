@@ -52,6 +52,7 @@ describe('CLI Integration', () => {
     const content = await fs.readFile(agentsPath, 'utf-8');
 
     expect(content).toContain('## Knowl Project Memory');
+    expect(content).toContain('At the start of any project-specific task, query Knowl for relevant facts, decisions, constraints, architecture, state, and skills before inspecting files or editing code');
     expect(content).toContain('For specific project questions, call `knowl_query` first');
     expect(content).toContain('Use 2-6 concise search keywords');
     expect(content).toContain('Only use `knowl_state` for broad project-memory summaries');
@@ -65,6 +66,10 @@ describe('CLI Integration', () => {
     expect(content).toContain('knowl_query');
     expect(content).toContain('knowl_store');
     expect(content).toContain('knowl_decide');
+    expect(content).toContain('During work, keep Knowl current');
+    expect(content).toContain('If new findings contradict or replace existing memory, use `knowl_update`');
+    expect(content).toContain('Before the final answer, check whether the work produced durable knowledge');
+    expect(content).toContain('implemented feature summaries, setup steps, architecture changes, important commands, decisions, constraints, recurring bugs, gotchas, and verified project facts');
     expect(content).toContain('Store durable knowledge as concise structured atoms, not raw chat transcripts');
     expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
     expect(content).toContain('Do not store temporary debugging noise');
@@ -106,8 +111,10 @@ describe('CLI Integration', () => {
     });
 
     const content = await fs.readFile(agentsPath, 'utf-8');
+    expect(content).toContain('At the start of any project-specific task, query Knowl');
     expect(content).toContain('For specific project questions, call `knowl_query` first');
     expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');
+    expect(content).toContain('Before the final answer, check whether the work produced durable knowledge');
     expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
     expect((content.match(/## Knowl Project Memory/g) || []).length).toBe(1);
   });
