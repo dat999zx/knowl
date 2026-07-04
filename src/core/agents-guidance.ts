@@ -9,6 +9,8 @@ const KNOWL_AGENTS_SECTION = `${KNOWL_AGENTS_SECTION_MARKER}
 ## Knowl Project Memory
 
 - For specific project questions, call \`knowl_query\` first. Use 2-6 concise search keywords from the user's question, not the whole question text.
+- If the Knowl MCP tools are unavailable, stop and tell the user that Knowl MCP is not configured instead of silently inspecting the repository.
+- \`Auth: Unsupported\` on a local stdio MCP server is normal and does not mean Knowl is unavailable when \`knowl_query\` is listed.
 - Do not inspect repository files before this targeted Knowl query. If Knowl has a relevant active answer, use it and cite that it came from Knowl.
 - Only use \`knowl_state\` for broad project-memory summaries, status checks, or when the user asks for the full current state.
 - When the user confirms a durable fact, decision, constraint, architecture detail, current state, or reusable skill, save it to Knowl using \`knowl_store\`, \`knowl_decide\`, or \`knowl_ingest_atoms\`.

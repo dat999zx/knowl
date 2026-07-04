@@ -40,6 +40,7 @@ describe('CLI Integration', () => {
 
     expect(output).toContain('Successfully initialized KNOWL repository!');
     expect(output).toContain('CLI Test Project');
+    expect(output).toContain('codex mcp add knowl');
 
     // Verify files exist
     await expect(fs.access(path.join(TEST_DIR, '.knowl', 'config.json'))).resolves.toBeUndefined();
@@ -55,6 +56,8 @@ describe('CLI Integration', () => {
     expect(content).toContain('Use 2-6 concise search keywords');
     expect(content).toContain('Only use `knowl_state` for broad project-memory summaries');
     expect(content).toContain('Do not inspect repository files before this targeted Knowl query');
+    expect(content).toContain('If the Knowl MCP tools are unavailable');
+    expect(content).toContain('`Auth: Unsupported` on a local stdio MCP server is normal');
     expect(content).toContain('knowl_state');
     expect(content).toContain('knowl_query');
     expect(content).toContain('knowl_store');

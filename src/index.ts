@@ -20,6 +20,11 @@ dotenv.config();
 
 const program = new Command();
 
+function printMcpSetupHint() {
+  console.log(`🔌 To let Codex use Knowl memory, register the MCP server:`);
+  console.log(`   codex mcp add knowl -- knowl.cmd serve`);
+}
+
 program
   .name('knowl')
   .description('KNOWL — A Knowledge Operating System for AI Agents')
@@ -51,6 +56,7 @@ program
         } else if (agentsStatus === 'updated') {
           console.log(`🧭 Updated AGENTS.md with Knowl MCP guidance.`);
         }
+        printMcpSetupHint();
         process.exit(0);
       }
 
@@ -87,6 +93,7 @@ program
       }
       console.log(`⚙️  Configured project: "${project.name}" (ID: ${project.id})`);
       console.log(`👉 Run "knowl status" to see repository status.`);
+      printMcpSetupHint();
     } catch (error: any) {
       console.error(`❌ Error initializing KNOWL: ${error.message}`);
       process.exit(1);
