@@ -61,3 +61,17 @@ export async function installKnowlAgentsGuidance(projectRoot: string): Promise<A
     return 'created';
   }
 }
+
+export async function isKnowlAgentsGuidanceCurrent(projectRoot: string): Promise<boolean> {
+  const agentsPath = path.join(projectRoot, 'AGENTS.md');
+
+  try {
+    const existing = await fs.readFile(agentsPath, 'utf-8');
+    return existing.includes(KNOWL_AGENTS_SECTION) && existing.includes(KNOWL_AGENTS_SECTION_END_MARKER);
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') {
+      return false;
+    }
+    throw error;
+  }
+}

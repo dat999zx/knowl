@@ -14,6 +14,7 @@ import { runPipeline, runDecisionPipeline } from './pipeline/pipeline.js';
 import { startMcpServer } from './mcp/server.js';
 import { formatHierarchyToMarkdown } from './core/format.js';
 import { formatStatusReport } from './cli/status-report.js';
+import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -444,6 +445,18 @@ program
   });
 
 // --- 8. SERVE COMMAND ---
+program
+  .command('doctor')
+  .description('Check whether the current Knowl project is ready for agent memory usage')
+  .action(async () => {
+    const result = await runDoctor(process.cwd());
+    console.log(formatDoctorReport(result));
+    if (!result.ready) {
+      process.exit(1);
+    }
+  });
+
+// --- 9. SERVE COMMAND ---
 program
   .command('serve')
   .description('Start the Model Context Protocol (MCP) server for KNOWL')

@@ -173,6 +173,20 @@ describe('CLI Integration', () => {
     expect(output).toContain('Recorded decision successfully!');
   });
 
+  it('should report agent readiness with doctor', () => {
+    const output = execSync(`node "${CLI_PATH}" doctor`, {
+      cwd: TEST_DIR,
+      encoding: 'utf-8',
+    });
+
+    expect(output).toContain('KNOWL AGENT READINESS');
+    expect(output).toContain('[OK] Repository initialized');
+    expect(output).toContain('[OK] AGENTS.md Knowl guidance current');
+    expect(output).toContain('[OK] Agent query returned');
+    expect(output).toContain('[OK] MCP tools expose knowl_query and hide knowl_ask');
+    expect(output).toContain('Result: READY');
+  });
+
   it('should show repository status', () => {
     const output = execSync(`node "${CLI_PATH}" status`, {
       cwd: TEST_DIR,

@@ -19,6 +19,15 @@ import { initAI } from '../ai/provider.js';
 import { formatHierarchyToMarkdown } from '../core/format.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
+export const KNOWL_MCP_TOOL_NAMES = [
+  'knowl_ingest',
+  'knowl_state',
+  'knowl_store',
+  'knowl_ingest_atoms',
+  'knowl_decide',
+  'knowl_query',
+  'knowl_update',
+] as const;
 
 /**
  * Creates and configures the MCP Server.
