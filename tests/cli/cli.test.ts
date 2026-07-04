@@ -50,6 +50,43 @@ describe('CLI Integration', () => {
     expect(config.search.vector.provider).toBe('local');
   });
 
+  it('should create project .gitignore with .knowl during init', async () => {
+    const ignoreDir = path.resolve('./.knowl-cli-new-gitignore-test');
+    await fs.rm(ignoreDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(ignoreDir, { recursive: true });
+
+    execSync(`node "${CLI_PATH}" init "New Gitignore Project"`, {
+      cwd: ignoreDir,
+      encoding: 'utf-8',
+    });
+
+    const ignorePath = path.join(ignoreDir, '.gitignore');
+    const content = await fs.readFile(ignorePath, 'utf-8');
+    expect(content).toContain('.knowl/');
+
+    await fs.rm(ignoreDir, { recursive: true, force: true });
+  });
+
+  it('should append .knowl to existing project .gitignore without overwriting content', async () => {
+    const gitignoreDir = path.resolve('./.knowl-cli-gitignore-test');
+    await fs.rm(gitignoreDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(gitignoreDir, { recursive: true });
+    await fs.writeFile(path.join(gitignoreDir, '.gitignore'), 'node_modules/\n.env\n', 'utf-8');
+
+    execSync(`node "${CLI_PATH}" init "Gitignore Project"`, {
+      cwd: gitignoreDir,
+      encoding: 'utf-8',
+    });
+
+    const content = await fs.readFile(path.join(gitignoreDir, '.gitignore'), 'utf-8');
+    expect(content).toContain('node_modules/');
+    expect(content).toContain('.env');
+    expect(content).toContain('.knowl/');
+    expect((content.match(/\.knowl\//g) || []).length).toBe(1);
+
+    await fs.rm(gitignoreDir, { recursive: true, force: true });
+  });
+
   it('should create AGENTS.md with Knowl MCP guidance during init', async () => {
     const agentsPath = path.join(TEST_DIR, 'AGENTS.md');
     const content = await fs.readFile(agentsPath, 'utf-8');

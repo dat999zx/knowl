@@ -5,6 +5,7 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { findProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
 import { installKnowlAgentsGuidance } from './core/agents-guidance.js';
+import { installKnowlGitignoreEntry } from './core/gitignore.js';
 import { initDb, closeDb } from './store/database.js';
 import * as repo from './store/repository.js';
 import { recordDecisionDirect } from './store/knowledge-actions.js';
@@ -64,9 +65,15 @@ program
       if (isExisting) {
         const configStatus = await upgradeConfigDefaults(cwd);
         const agentsStatus = await installKnowlAgentsGuidance(cwd);
+        const gitignoreStatus = await installKnowlGitignoreEntry(cwd);
         console.log(`⚠️  KNOWL repository already initialized in this directory: ${knowlDir}`);
         if (configStatus === 'updated') {
           console.log(`Updated .knowl/config.json with missing default settings.`);
+        }
+        if (gitignoreStatus === 'created') {
+          console.log(`Created .gitignore with .knowl/ entry.`);
+        } else if (gitignoreStatus === 'updated') {
+          console.log(`Updated .gitignore with .knowl/ entry.`);
         }
         if (agentsStatus === 'created') {
           console.log(`🧭 Created AGENTS.md with Knowl MCP guidance.`);
@@ -111,6 +118,7 @@ program
       const project = await repo.createProject(cwd, name);
       await closeDb();
       const agentsStatus = await installKnowlAgentsGuidance(cwd);
+      const gitignoreStatus = await installKnowlGitignoreEntry(cwd);
 
       console.log(`🎉 Successfully initialized KNOWL repository!`);
       console.log(`📂 Created: ${knowlDir}`);
@@ -118,6 +126,11 @@ program
         console.log(`🧭 Created AGENTS.md with Knowl MCP guidance.`);
       } else if (agentsStatus === 'updated') {
         console.log(`🧭 Updated AGENTS.md with Knowl MCP guidance.`);
+      }
+      if (gitignoreStatus === 'created') {
+        console.log(`Created .gitignore with .knowl/ entry.`);
+      } else if (gitignoreStatus === 'updated') {
+        console.log(`Updated .gitignore with .knowl/ entry.`);
       }
       console.log(`⚙️  Configured project: "${project.name}" (ID: ${project.id})`);
       console.log(`👉 Run "knowl status" to see repository status.`);
