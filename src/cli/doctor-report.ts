@@ -1,8 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { sql } from 'drizzle-orm';
 import { findProjectRoot, loadConfig } from '../core/config.js';
 import { isKnowlAgentsGuidanceCurrent } from '../core/agents-guidance.js';
-import { closeDb, initDb } from '../store/database.js';
+import { closeDb, getDb, initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { queryKnowledgeForAgent } from '../store/agent-query.js';
 import { KNOWL_MCP_TOOL_NAMES } from '../mcp/server.js';
@@ -32,6 +33,12 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
 
     const config = await loadConfig(root);
     checks.push({ status: 'OK', message: 'Config loaded' });
+    checks.push({
+      status: config.search?.vector?.provider ? 'OK' : 'WARN',
+      message: config.search?.vector?.provider
+        ? 'Config includes vector search defaults'
+        : 'Config missing vector search defaults; run knowl upgrade',
+    });
 
     const guidanceCurrent = await isKnowlAgentsGuidanceCurrent(root);
     checks.push({
@@ -41,8 +48,32 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         : 'AGENTS.md Knowl guidance missing or stale; run knowl init',
     });
 
+    const gitignorePath = path.join(root, '.gitignore');
+    let ignoresKnowl = false;
+    try {
+      const gitignore = await fs.readFile(gitignorePath, 'utf-8');
+      ignoresKnowl = gitignore
+        .split(/\r?\n/)
+        .map(line => line.trim())
+        .some(line => line === '.knowl/' || line === '.knowl');
+    } catch {
+      ignoresKnowl = false;
+    }
+    checks.push({
+      status: ignoresKnowl ? 'OK' : 'WARN',
+      message: ignoresKnowl
+        ? '.gitignore ignores .knowl/'
+        : '.gitignore should ignore .knowl/; run knowl upgrade',
+    });
+
     await initDb(root);
     dbOpen = true;
+    try {
+      await (getDb() as any).all(sql`SELECT 1 FROM knowledge_embeddings LIMIT 1`);
+      checks.push({ status: 'OK', message: 'Database schema includes knowledge_embeddings' });
+    } catch {
+      checks.push({ status: 'WARN', message: 'Database schema missing knowledge_embeddings; run knowl upgrade' });
+    }
 
     const project = await getProjectByRootPath(root);
     if (!project) {

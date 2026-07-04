@@ -294,19 +294,39 @@ describe('CLI Integration', () => {
     expect(output).toContain('Recorded decision successfully!');
   });
 
-  it('should report agent readiness with doctor', () => {
+  it('should report agent readiness with doctor', async () => {
+    const doctorDir = path.resolve('./.knowl-cli-doctor-test');
+    await fs.rm(doctorDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(doctorDir, { recursive: true });
+    execSync(`node "${CLI_PATH}" init "Doctor Project"`, {
+      cwd: doctorDir,
+      encoding: 'utf-8',
+    });
+    execSync(
+      `node "${CLI_PATH}" decide "Doctor Ready" "Doctor has an active item to retrieve" -r "Agent readiness requires retrievable active memory"`,
+      {
+        cwd: doctorDir,
+        encoding: 'utf-8',
+      }
+    );
+
     const output = execSync(`node "${CLI_PATH}" doctor`, {
-      cwd: TEST_DIR,
+      cwd: doctorDir,
       encoding: 'utf-8',
     });
 
     expect(output).toContain('KNOWL AGENT READINESS');
     expect(output).toContain('[OK] Repository initialized');
     expect(output).toContain('[OK] AGENTS.md Knowl guidance current');
+    expect(output).toContain('[OK] Config includes vector search defaults');
+    expect(output).toContain('[OK] Database schema includes knowledge_embeddings');
+    expect(output).toContain('[OK] .gitignore ignores .knowl/');
     expect(output).toContain('[OK] Agent query returned');
     expect(output).toContain('[OK] MCP tools expose knowl_query and hide knowl_ask');
     expect(output).toContain('[OK] Vector search disabled; BM25 retrieval remains active');
     expect(output).toContain('Result: READY');
+
+    await fs.rm(doctorDir, { recursive: true, force: true });
   });
 
   it('should require vector search to be enabled before vector reindex', () => {
