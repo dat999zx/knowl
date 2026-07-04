@@ -144,6 +144,7 @@ describe('MCP Server Layer', () => {
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_store')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest_atoms')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_ask')).toBe(false);
 
     const queryTool = res.result.tools.find((t: any) => t.name === 'knowl_query');
     const stateTool = res.result.tools.find((t: any) => t.name === 'knowl_state');

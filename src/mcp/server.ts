@@ -12,7 +12,6 @@ import { queryKnowledgeForAgent } from '../store/agent-query.js';
 import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
 import { storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../store/knowledge-writer.js';
 import { runPipeline } from '../pipeline/pipeline.js';
-import { askQuestion } from '../ai/provider.js';
 import { ProjectConfig, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
 import { findProjectRoot, hasAiConfigured, loadConfig } from '../core/config.js';
 import { initDb } from '../store/database.js';
@@ -227,20 +226,6 @@ export function createMcpServer(
           },
         },
         {
-          name: 'knowl_ask',
-          description: 'Ask a natural language question about the project. Knowl will search the knowledge base and construct a comprehensive answer.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              question: {
-                type: 'string',
-                description: 'The question to ask.',
-              },
-            },
-            required: ['question'],
-          },
-        },
-        {
           name: 'knowl_update',
           description: 'Update the metadata, status, or content of an existing knowledge item. Use to correct stale or contradicted memory instead of adding duplicates.',
           inputSchema: {
@@ -409,30 +394,6 @@ export function createMcpServer(
 
         return {
           content: [{ type: 'text', text: JSON.stringify(items, null, 2) }],
-        };
-      } 
-      
-      else if (name === 'knowl_ask') {
-        const { question } = args as any;
-        if (!config || !hasAiConfigured(config)) {
-          return {
-            isError: true,
-            content: [
-              {
-                type: 'text',
-                text: 'Natural-language ask requires explicit Knowl AI configuration. MCP clients can call knowl_state or knowl_query and answer using their own model.',
-              },
-            ],
-          };
-        }
-
-        initAI(config.ai!);
-        const hierarchy = await getHierarchicalKnowledge(projectId!);
-        const contextMarkdown = formatHierarchyToMarkdown(hierarchy);
-        const answer = await askQuestion(question, contextMarkdown);
-
-        return {
-          content: [{ type: 'text', text: answer }],
         };
       } 
       

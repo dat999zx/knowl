@@ -63,3 +63,26 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+<!-- KNOWL_PROJECT_MEMORY -->
+## Knowl Project Memory
+
+- At the start of any project-specific task, query Knowl for relevant facts, decisions, constraints, architecture, state, and skills before inspecting files or editing code.
+- For specific project questions, call `knowl_query` first. Use 2-6 concise search keywords from the user's question, not the whole question text.
+- Do not use `knowl_ask` for MCP first-pass lookup. MCP agents already have a model; use `knowl_query` and answer from the returned items.
+- Omit category filters unless you are certain; an over-specific category can hide the correct memory item.
+- If the Knowl MCP tools are unavailable, stop and tell the user that Knowl MCP is not configured instead of silently inspecting the repository.
+- `Auth: Unsupported` on a local stdio MCP server is normal and does not mean Knowl is unavailable when `knowl_query` is listed.
+- Do not inspect repository files before this targeted Knowl query. If Knowl has a relevant active answer, use it and cite that it came from Knowl.
+- If `knowl_query` returns a relevant active item, answer from Knowl immediately.
+- Do not inspect repository files just to re-verify known facts already found in Knowl.
+- Only inspect repository files when Knowl misses, conflicts, looks stale or low-confidence, or the user asks for source verification.
+- Only use `knowl_state` for broad project-memory summaries, status checks, or when the user asks for the full current state.
+- During work, keep Knowl current. If new findings contradict or replace existing memory, use `knowl_update` to correct stale or superseded items instead of adding duplicates.
+- When the user confirms a durable fact, decision, constraint, architecture detail, current state, or reusable skill, save it to Knowl using `knowl_store`, `knowl_decide`, or `knowl_ingest_atoms`.
+- After discovering and verifying durable project knowledge from repository files, store it in Knowl using `knowl_store` or `knowl_ingest_atoms` before giving the final answer, but only when the initial `knowl_query` did not already return the same knowledge.
+- Before the final answer, check whether the work produced durable knowledge: implemented feature summaries, setup steps, architecture changes, important commands, decisions, constraints, recurring bugs, gotchas, and verified project facts. Store useful outcomes in Knowl before responding.
+- Store durable knowledge as concise structured atoms, not raw chat transcripts. Use raw conversation only as optional source/evidence when it is useful.
+- Do not store temporary debugging noise, failed attempts, secrets, credentials, or speculative ideas unless the user explicitly says they are durable project knowledge.
+- Prefer current active Knowl state over stale conversation memory when answering questions about this project.
+<!-- /KNOWL_PROJECT_MEMORY -->

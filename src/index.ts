@@ -25,6 +25,16 @@ function printMcpSetupHint() {
   console.log(`   codex mcp add knowl -- knowl.cmd serve`);
 }
 
+function printAgentsGuidanceStatus(status: Awaited<ReturnType<typeof installKnowlAgentsGuidance>>) {
+  if (status === 'created') {
+    console.log(`Created AGENTS.md with Knowl MCP guidance.`);
+  } else if (status === 'updated') {
+    console.log(`Updated AGENTS.md with Knowl MCP guidance.`);
+  } else {
+    console.log(`AGENTS.md Knowl MCP guidance is up to date.`);
+  }
+}
+
 program
   .name('knowl')
   .description('KNOWL — A Knowledge Operating System for AI Agents')
@@ -55,6 +65,9 @@ program
           console.log(`🧭 Created AGENTS.md with Knowl MCP guidance.`);
         } else if (agentsStatus === 'updated') {
           console.log(`🧭 Updated AGENTS.md with Knowl MCP guidance.`);
+        }
+        if (agentsStatus === 'unchanged') {
+          printAgentsGuidanceStatus(agentsStatus);
         }
         printMcpSetupHint();
         process.exit(0);
@@ -93,6 +106,9 @@ program
       }
       console.log(`⚙️  Configured project: "${project.name}" (ID: ${project.id})`);
       console.log(`👉 Run "knowl status" to see repository status.`);
+      if (agentsStatus === 'unchanged') {
+        printAgentsGuidanceStatus(agentsStatus);
+      }
       printMcpSetupHint();
     } catch (error: any) {
       console.error(`❌ Error initializing KNOWL: ${error.message}`);

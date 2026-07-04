@@ -54,6 +54,7 @@ describe('CLI Integration', () => {
     expect(content).toContain('## Knowl Project Memory');
     expect(content).toContain('At the start of any project-specific task, query Knowl for relevant facts, decisions, constraints, architecture, state, and skills before inspecting files or editing code');
     expect(content).toContain('For specific project questions, call `knowl_query` first');
+    expect(content).toContain('Do not use `knowl_ask` for MCP first-pass lookup');
     expect(content).toContain('Use 2-6 concise search keywords');
     expect(content).toContain('Omit category filters unless you are certain');
     expect(content).toContain('Only use `knowl_state` for broad project-memory summaries');
@@ -74,6 +75,16 @@ describe('CLI Integration', () => {
     expect(content).toContain('Store durable knowledge as concise structured atoms, not raw chat transcripts');
     expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
     expect(content).toContain('Do not store temporary debugging noise');
+  });
+
+  it('should report AGENTS.md guidance status when init is rerun in an existing repository', () => {
+    const output = execSync(`node "${CLI_PATH}" init "CLI Test Project"`, {
+      cwd: TEST_DIR,
+      encoding: 'utf-8',
+    });
+
+    expect(output).toContain('KNOWL repository already initialized');
+    expect(output).toContain('AGENTS.md Knowl MCP guidance is up to date.');
   });
 
   it('should append Knowl MCP guidance to an existing AGENTS.md without overwriting it', async () => {
@@ -114,6 +125,7 @@ describe('CLI Integration', () => {
     const content = await fs.readFile(agentsPath, 'utf-8');
     expect(content).toContain('At the start of any project-specific task, query Knowl');
     expect(content).toContain('For specific project questions, call `knowl_query` first');
+    expect(content).toContain('Do not use `knowl_ask` for MCP first-pass lookup');
     expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');
     expect(content).toContain('Before the final answer, check whether the work produced durable knowledge');
     expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
