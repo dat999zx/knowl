@@ -4,65 +4,21 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
 import { findProjectRoot, loadConfig, saveConfig, hasAiConfigured } from './core/config.js';
+import { installKnowlAgentsGuidance } from './core/agents-guidance.js';
 import { initDb, closeDb } from './store/database.js';
 import * as repo from './store/repository.js';
+import { recordDecisionDirect } from './store/knowledge-actions.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from './store/queries.js';
 import { initAI, askQuestion } from './ai/provider.js';
 import { runPipeline, runDecisionPipeline } from './pipeline/pipeline.js';
 import { startMcpServer } from './mcp/server.js';
-import { KnowledgeCategory } from './core/types.js';
 import { formatHierarchyToMarkdown } from './core/format.js';
+import { formatStatusReport } from './cli/status-report.js';
 
 // Load environment variables (.env file)
 dotenv.config();
 
 const program = new Command();
-
-const KNOWL_AGENTS_SECTION_MARKER = '<!-- KNOWL_PROJECT_MEMORY -->';
-const KNOWL_AGENTS_SECTION_END_MARKER = '<!-- /KNOWL_PROJECT_MEMORY -->';
-const KNOWL_AGENTS_SECTION = `${KNOWL_AGENTS_SECTION_MARKER}
-## Knowl Project Memory
-
-- Before answering project-specific questions, query Knowl first using \`knowl_state\` or \`knowl_query\`.
-- When the user confirms a durable fact, decision, constraint, architecture detail, current state, or reusable skill, save it to Knowl using \`knowl_store\`, \`knowl_decide\`, or \`knowl_ingest_atoms\`.
-- After discovering and verifying durable project knowledge from repository files, store it in Knowl using \`knowl_store\` or \`knowl_ingest_atoms\` before giving the final answer.
-- Do not store temporary debugging noise, failed attempts, secrets, credentials, or speculative ideas unless the user explicitly says they are durable project knowledge.
-- Prefer current active Knowl state over stale conversation memory when answering questions about this project.
-${KNOWL_AGENTS_SECTION_END_MARKER}
-`;
-
-async function installKnowlAgentsGuidance(projectRoot: string): Promise<'created' | 'updated' | 'unchanged'> {
-  const agentsPath = path.join(projectRoot, 'AGENTS.md');
-
-  try {
-    const existing = await fs.readFile(agentsPath, 'utf-8');
-    if (existing.includes(KNOWL_AGENTS_SECTION_MARKER)) {
-      if (existing.includes(KNOWL_AGENTS_SECTION) && existing.includes(KNOWL_AGENTS_SECTION_END_MARKER)) {
-        return 'unchanged';
-      }
-
-      const start = existing.indexOf(KNOWL_AGENTS_SECTION_MARKER);
-      const end = existing.indexOf(KNOWL_AGENTS_SECTION_END_MARKER, start);
-      const replacementEnd = end >= 0 ? end + KNOWL_AGENTS_SECTION_END_MARKER.length : existing.length;
-      const before = existing.slice(0, start).trimEnd();
-      const after = existing.slice(replacementEnd).trimStart();
-      const updated = [before, KNOWL_AGENTS_SECTION.trimEnd(), after].filter(Boolean).join('\n\n') + '\n';
-      await fs.writeFile(agentsPath, updated, 'utf-8');
-      return 'updated';
-    }
-
-    const separator = existing.endsWith('\n') ? '\n' : '\n\n';
-    await fs.writeFile(agentsPath, `${existing}${separator}${KNOWL_AGENTS_SECTION}`, 'utf-8');
-    return 'updated';
-  } catch (error: any) {
-    if (error?.code !== 'ENOENT') {
-      throw error;
-    }
-
-    await fs.writeFile(agentsPath, `# Agent Instructions\n\n${KNOWL_AGENTS_SECTION}`, 'utf-8');
-    return 'created';
-  }
-}
 
 program
   .name('knowl')
@@ -157,39 +113,14 @@ program
       const deprecatedItems = await queryKnowledgeBase(project.id, { status: 'deprecated' });
       const commits = await repo.getKnowledgeCommits(project.id, 5);
 
-      const countsByCategory = activeItems.reduce((acc, item) => {
-        acc[item.category] = (acc[item.category] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>);
-
-      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`🧠 KNOWL REPOSITORY STATUS`);
-      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`Project Name:   ${project.name}`);
-      console.log(`Project ID:     ${project.id}`);
-      console.log(`Root Path:      ${project.rootPath}`);
-      console.log(`AI Config:      ${config.ai ? `${config.ai.provider} (${config.ai.model})` : 'not configured'}`);
-      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`📝 KNOWLEDGE ITEMS`);
-      console.log(`  Active:        ${activeItems.length}`);
-      console.log(`  Superseded:    ${supersededItems.length}`);
-      console.log(`  Deprecated:    ${deprecatedItems.length}`);
-      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`📊 ACTIVE ITEMS BY CATEGORY`);
-      const categories: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
-      for (const cat of categories) {
-        console.log(`  ${cat.padEnd(14)}: ${countsByCategory[cat] || 0}`);
-      }
-      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-      console.log(`🪵  RECENT COMMITS`);
-      if (commits.length === 0) {
-        console.log(`  No commits recorded yet.`);
-      } else {
-        for (const commit of commits) {
-          console.log(`  [${commit.id}] ${new Date(commit.createdAt).toLocaleString()} - ${commit.message}`);
-        }
-      }
-      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(formatStatusReport({
+        project,
+        config,
+        activeItems,
+        supersededItems,
+        deprecatedItems,
+        commits,
+      }));
 
       await closeDb();
     } catch (error: any) {
@@ -304,10 +235,7 @@ program
         }, config);
 
         if (mergeResult.unresolvedContradictions.length > 0) {
-          const item = await repo.createKnowledgeItem(project.id, atom);
-          await repo.createKnowledgeCommit(project.id, `Record decision (fallback): ${title}`, [
-            { itemId: item.id, action: 'insert', after: item }
-          ]);
+          const item = await recordDecisionDirect(project.id, atom, `Record decision (fallback): ${title}`);
           console.log(`✅ Recorded decision successfully! ID: ${item.id}`);
         } else if (mergeResult.supersededIds.length > 0) {
           const newId = mergeResult.insertedIds[0];
@@ -322,10 +250,7 @@ program
         }
       } else {
         console.log(`⚠️ No AI provider configured or API keys found. Falling back to direct insertion without conflict detection.`);
-        const item = await repo.createKnowledgeItem(project.id, atom);
-        await repo.createKnowledgeCommit(project.id, `Record decision: ${title}`, [
-          { itemId: item.id, action: 'insert', after: item }
-        ]);
+        const item = await recordDecisionDirect(project.id, atom, `Record decision: ${title}`);
         console.log(`✅ Recorded decision successfully! ID: ${item.id}`);
       }
 

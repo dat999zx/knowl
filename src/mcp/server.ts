@@ -8,10 +8,10 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
+import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
 import { storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../store/knowledge-writer.js';
 import { runPipeline } from '../pipeline/pipeline.js';
 import { askQuestion } from '../ai/provider.js';
-import * as repo from '../store/repository.js';
 import { ProjectConfig, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
 import { findProjectRoot, hasAiConfigured, loadConfig } from '../core/config.js';
 import { initDb } from '../store/database.js';
@@ -379,19 +379,13 @@ export function createMcpServer(
       
       else if (name === 'knowl_decide') {
         const { title, content, reasoning, alternatives, tags } = args as any;
-        const atom = {
-          category: 'decision' as const,
+        const item = await recordDecisionDirect(projectId!, {
           title,
           content,
           reasoning,
           alternatives,
           tags: tags || [],
-        };
-
-        const item = await repo.createKnowledgeItem(projectId!, atom);
-        await repo.createKnowledgeCommit(projectId!, `Record decision via MCP: ${title}`, [
-          { itemId: item.id, action: 'insert', after: item }
-        ]);
+        }, `Record decision via MCP: ${title}`);
 
         return {
           content: [{ type: 'text', text: `Successfully recorded decision ${item.id}` }],
@@ -438,27 +432,12 @@ export function createMcpServer(
       
       else if (name === 'knowl_update') {
         const { id, title, content, status, reasoning } = args as any;
-        
-        const beforeItem = await repo.getKnowledgeItem(id);
-        if (!beforeItem) {
-          throw new Error(`Knowledge item not found with ID ${id}`);
-        }
-
-        const updated = await repo.updateKnowledgeItem(id, {
+        const updated = await updateKnowledgeItemWithCommit(projectId!, id, {
           title,
           content,
           status: status as KnowledgeStatus,
           reasoning,
         });
-
-        await repo.createKnowledgeCommit(projectId!, `Update item: ${updated.title}`, [
-          {
-            itemId: id,
-            action: status && status !== beforeItem.status ? (status as any) : 'update',
-            before: beforeItem,
-            after: updated,
-          }
-        ]);
 
         return {
           content: [{ type: 'text', text: `Successfully updated item ${id}:\n\n${JSON.stringify(updated, null, 2)}` }],
