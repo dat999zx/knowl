@@ -84,6 +84,15 @@ export interface ProjectConfig {
     baseUrl?: string;
     apiKey?: string;
   };
+  search?: {
+    vector?: {
+      enabled?: boolean;
+      provider?: 'local';
+      model?: string;
+      dtype?: 'q4' | 'q8' | 'fp32' | 'fp16';
+      cacheDir?: string;
+    };
+  };
   security: {
     rejectSecrets: boolean;
     secretPatterns: string[];

@@ -21,6 +21,14 @@ export const DEFAULT_CONFIG: ProjectConfig = {
       'db_password',
     ],
   },
+  search: {
+    vector: {
+      enabled: false,
+      provider: 'local',
+      model: 'Xenova/all-MiniLM-L6-v2',
+      dtype: 'q8',
+    },
+  },
 };
 
 /**
