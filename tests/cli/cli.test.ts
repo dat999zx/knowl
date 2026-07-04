@@ -55,6 +55,7 @@ describe('CLI Integration', () => {
     expect(content).toContain('At the start of any project-specific task, query Knowl for relevant facts, decisions, constraints, architecture, state, and skills before inspecting files or editing code');
     expect(content).toContain('For specific project questions, call `knowl_query` first');
     expect(content).toContain('Use 2-6 concise search keywords');
+    expect(content).toContain('Omit category filters unless you are certain');
     expect(content).toContain('Only use `knowl_state` for broad project-memory summaries');
     expect(content).toContain('Do not inspect repository files before this targeted Knowl query');
     expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');

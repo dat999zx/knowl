@@ -4,6 +4,7 @@ import path from 'node:path';
 import { initDb, closeDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import * as queries from '../../src/store/queries.js';
+import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
 
 const TEST_ROOT = path.resolve('./.knowl-test');
 
@@ -128,5 +129,42 @@ describe('Storage Layer', () => {
 
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].title).toBe('Project database uses SQLite');
+  });
+
+  it('should treat category as a ranking hint for agent text queries', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Database persistence fact',
+      content: 'The project database persistence uses SQLite with a local data.db file.',
+      tags: ['database', 'persistence'],
+    });
+
+    await repo.createKnowledgeItem(projectId, {
+      category: 'architecture',
+      title: 'Database persistence architecture',
+      content: 'The database persistence layer is wrapped by server DAO classes.',
+      tags: ['database', 'persistence'],
+    });
+
+    const architectureHintResults = await queryKnowledgeForAgent(projectId, {
+      query: 'database persistence',
+      category: 'architecture',
+    });
+
+    expect(architectureHintResults.length).toBeGreaterThanOrEqual(2);
+    expect(architectureHintResults[0].category).toBe('architecture');
+    expect(architectureHintResults.some(item => item.category === 'fact')).toBe(true);
+
+    const constraintHintResults = await queryKnowledgeForAgent(projectId, {
+      query: 'database persistence',
+      category: 'constraint',
+    });
+
+    expect(constraintHintResults.length).toBeGreaterThanOrEqual(2);
+    expect(constraintHintResults.some(item => item.category === 'fact')).toBe(true);
+    expect(constraintHintResults.some(item => item.category === 'architecture')).toBe(true);
   });
 });

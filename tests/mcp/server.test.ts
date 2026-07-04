@@ -151,6 +151,8 @@ describe('MCP Server Layer', () => {
     expect(queryTool.description).toContain('answer from Knowl without inspecting repository files');
     expect(queryTool.description).toContain('Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests');
     expect(queryTool.inputSchema.properties.query.description).toContain('2-6 concise keywords');
+    expect(queryTool.inputSchema.properties.category.description).toContain('Omit unless you are certain');
+    expect(queryTool.inputSchema.properties.limit.description).toContain('defaults to 3');
     expect(stateTool.description).toContain('broad project-memory summaries');
 
     const storeTool = res.result.tools.find((t: any) => t.name === 'knowl_store');
@@ -213,6 +215,55 @@ describe('MCP Server Layer', () => {
     expect(items).toHaveLength(1);
     expect(items[0].category).toBe('fact');
     expect(items[0].title).toBe('Runtime');
+  });
+
+  it('should recover relevant query hits when the MCP client guesses the wrong category', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Project uses SQLite persistence',
+      content: 'Bidify uses SQLite for server persistence with a jdbc:sqlite connection and data.db file.',
+      tags: ['database', 'sqlite', 'persistence'],
+    });
+
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_query',
+      arguments: {
+        query: 'database persistence storage',
+        category: 'architecture',
+        status: 'active',
+      },
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+    const items = JSON.parse(res.result.content[0].text);
+    expect(items).toHaveLength(1);
+    expect(items[0].category).toBe('fact');
+    expect(items[0].title).toBe('Project uses SQLite persistence');
+  });
+
+  it('should return at most three knowledge hits by default for MCP queries', async () => {
+    for (let i = 1; i <= 4; i++) {
+      await repo.createKnowledgeItem(projectId, {
+        category: 'fact',
+        title: `Database fact ${i}`,
+        content: `Database persistence storage detail ${i}.`,
+        tags: ['database', 'persistence'],
+      });
+    }
+
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_query',
+      arguments: {
+        query: 'database persistence storage',
+        status: 'active',
+      },
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+    const items = JSON.parse(res.result.content[0].text);
+    expect(items).toHaveLength(3);
   });
 
   it('should skip duplicate structured knowledge when BM25 finds an existing match', async () => {

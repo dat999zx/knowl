@@ -8,6 +8,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
+import { queryKnowledgeForAgent } from '../store/agent-query.js';
 import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
 import { storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../store/knowledge-writer.js';
 import { runPipeline } from '../pipeline/pipeline.js';
@@ -206,7 +207,7 @@ export function createMcpServer(
               category: {
                 type: 'string',
                 enum: ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'],
-                description: 'Filter by specific knowledge category.',
+                description: 'Optional category hint. Omit unless you are certain; MCP queries retry without it on miss to avoid false negatives.',
               },
               status: {
                 type: 'string',
@@ -217,6 +218,10 @@ export function createMcpServer(
                 type: 'array',
                 items: { type: 'string' },
                 description: 'Filter items that contain all of these tags.',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum results to return; defaults to 3 for MCP queries.',
               },
             },
           },
@@ -393,12 +398,13 @@ export function createMcpServer(
       } 
       
       else if (name === 'knowl_query') {
-        const { query, category, status, tags } = args as any;
-        const items = await queryKnowledgeBase(projectId!, {
+        const { query, category, status, tags, limit } = args as any;
+        const items = await queryKnowledgeForAgent(projectId!, {
           query,
           category: category as KnowledgeCategory,
           status: status as KnowledgeStatus,
           tags,
+          limit,
         });
 
         return {
