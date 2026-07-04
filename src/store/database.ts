@@ -94,6 +94,18 @@ async function bootstrapSchema(client: Client): Promise<void> {
       updated_at TEXT NOT NULL
     );`,
 
+    // Full-text search table for BM25-ranked retrieval over knowledge items.
+    `CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_items_fts USING fts5(
+      item_id UNINDEXED,
+      project_id UNINDEXED,
+      category UNINDEXED,
+      status UNINDEXED,
+      title,
+      content,
+      reasoning,
+      tags
+    );`,
+
     // Knowledge Commits table
     `CREATE TABLE IF NOT EXISTS knowledge_commits (
       id TEXT PRIMARY KEY,
@@ -123,7 +135,29 @@ async function bootstrapSchema(client: Client): Promise<void> {
     // Indexes
     `CREATE INDEX IF NOT EXISTS idx_ki_project_cat_status ON knowledge_items(project_id, category, status);`,
     `CREATE INDEX IF NOT EXISTS idx_ki_project_status ON knowledge_items(project_id, status);`,
-    `CREATE INDEX IF NOT EXISTS idx_ki_project_updated ON knowledge_items(project_id, updated_at);`
+    `CREATE INDEX IF NOT EXISTS idx_ki_project_updated ON knowledge_items(project_id, updated_at);`,
+
+    // Keep the FTS table synchronized with knowledge_items.
+    `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
+      INSERT INTO knowledge_items_fts(item_id, project_id, category, status, title, content, reasoning, tags)
+      VALUES (new.id, new.project_id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));
+    END;`,
+
+    `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ad AFTER DELETE ON knowledge_items BEGIN
+      DELETE FROM knowledge_items_fts WHERE item_id = old.id;
+    END;`,
+
+    `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_au AFTER UPDATE ON knowledge_items BEGIN
+      DELETE FROM knowledge_items_fts WHERE item_id = old.id;
+      INSERT INTO knowledge_items_fts(item_id, project_id, category, status, title, content, reasoning, tags)
+      VALUES (new.id, new.project_id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));
+    END;`,
+
+    // Backfill/repair for databases created before FTS existed.
+    `DELETE FROM knowledge_items_fts;`,
+    `INSERT INTO knowledge_items_fts(item_id, project_id, category, status, title, content, reasoning, tags)
+      SELECT id, project_id, category, status, title, content, coalesce(reasoning, ''), coalesce(tags, '')
+      FROM knowledge_items;`
   ];
 
   for (const statement of statements) {

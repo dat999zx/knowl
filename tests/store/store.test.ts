@@ -109,4 +109,24 @@ describe('Storage Layer', () => {
     });
     expect(tagResults.length).toBe(1);
   });
+
+  it('should use full-text search to find relevant knowledge when query wording differs', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Project database uses SQLite',
+      content: 'The server persists durable data with SQLite through the sqlite-jdbc driver.',
+      tags: ['database', 'sqlite', 'persistence'],
+    });
+
+    const results = await queries.queryKnowledgeBase(projectId, {
+      query: 'what db does this project use',
+      category: 'fact',
+    });
+
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].title).toBe('Project database uses SQLite');
+  });
 });

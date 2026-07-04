@@ -197,6 +197,34 @@ describe('MCP Server Layer', () => {
     expect(items[0].title).toBe('Runtime');
   });
 
+  it('should skip duplicate structured knowledge when BM25 finds an existing match', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Project database uses SQLite',
+      content: 'The server persists durable data with SQLite through sqlite-jdbc.',
+      tags: ['database', 'sqlite', 'persistence'],
+    });
+
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_store',
+      arguments: {
+        category: 'fact',
+        title: 'Database is SQLite',
+        content: 'This project uses SQLite for persistent server-side storage.',
+        tags: ['db', 'sqlite'],
+      },
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+    expect(res.result.content[0].text).toContain('Matched existing fact');
+
+    const db = (await import('../../src/store/database.js')).getDb();
+    const items = await db.select().from((await import('../../src/store/schema.js')).knowledgeItems);
+    expect(items).toHaveLength(1);
+    expect(items[0].title).toBe('Project database uses SQLite');
+  });
+
   it('should support ingesting pre-extracted atoms without AI', async () => {
     const res = await runRpcRequest('tools/call', {
       name: 'knowl_ingest_atoms',

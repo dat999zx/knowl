@@ -8,6 +8,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
+import { storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../store/knowledge-writer.js';
 import { runPipeline } from '../pipeline/pipeline.js';
 import { askQuestion } from '../ai/provider.js';
 import * as repo from '../store/repository.js';
@@ -325,7 +326,7 @@ export function createMcpServer(
           throw new Error(`Invalid knowledge category: ${category}`);
         }
 
-        const item = await repo.createKnowledgeItem(
+        const result = await storeKnowledgeItemDeduped(
           projectId!,
           {
             category,
@@ -336,16 +337,19 @@ export function createMcpServer(
             tags,
             source,
             confidence,
+            steps,
           },
-          steps
+          `Store ${category}: ${title}`
         );
 
-        await repo.createKnowledgeCommit(projectId!, `Store ${category}: ${title}`, [
-          { itemId: item.id, action: 'insert', after: item },
-        ]);
+        if (result.action === 'duplicate') {
+          return {
+            content: [{ type: 'text', text: `Matched existing ${category} ${result.item.id}; skipped duplicate insert` }],
+          };
+        }
 
         return {
-          content: [{ type: 'text', text: `Successfully stored ${category} ${item.id}` }],
+          content: [{ type: 'text', text: `Successfully stored ${category} ${result.item.id}` }],
         };
       }
 
@@ -356,41 +360,20 @@ export function createMcpServer(
           throw new Error('atoms must be a non-empty array');
         }
 
-        const changes = [];
-        const itemIds: string[] = [];
-
         for (const atom of atoms) {
           if (!KNOWLEDGE_CATEGORIES.includes(atom.category)) {
             throw new Error(`Invalid knowledge category: ${atom.category}`);
           }
-
-          const item = await repo.createKnowledgeItem(
-            projectId!,
-            {
-              category: atom.category,
-              title: atom.title,
-              content: atom.content,
-              reasoning: atom.reasoning,
-              alternatives: atom.alternatives,
-              tags: atom.tags,
-              source: atom.source,
-              confidence: atom.confidence,
-            },
-            atom.steps
-          );
-
-          itemIds.push(item.id);
-          changes.push({ itemId: item.id, action: 'insert' as const, after: item });
         }
 
-        await repo.createKnowledgeCommit(
+        const result = await storeKnowledgeAtomsDeduped(
           projectId!,
-          commitMessage || `Store ${atoms.length} structured knowledge atom(s)`,
-          changes
+          atoms,
+          commitMessage || `Store ${atoms.length} structured knowledge atom(s)`
         );
 
         return {
-          content: [{ type: 'text', text: `Stored ${itemIds.length} knowledge atom(s): ${itemIds.join(', ')}` }],
+          content: [{ type: 'text', text: `Stored ${result.itemIds.length} knowledge atom(s): ${result.itemIds.join(', ')}` }],
         };
       }
       

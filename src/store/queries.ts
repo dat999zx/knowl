@@ -1,6 +1,7 @@
-import { eq, and, or, like, sql } from 'drizzle-orm';
+import { eq, and, or, like } from 'drizzle-orm';
 import { getDb } from './database.js';
 import * as schema from './schema.js';
+import { searchKnowledgeItems } from './search.js';
 import { KnowledgeItem, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 
@@ -88,10 +89,25 @@ export async function queryKnowledgeBase(
     status?: KnowledgeStatus;
     tags?: string[];
     query?: string;
+    limit?: number;
   }
 ): Promise<KnowledgeItem[]> {
   const db = getDb();
   try {
+    if (options.query) {
+      const ftsResults = await searchKnowledgeItems(projectId, {
+        category: options.category,
+        status: options.status,
+        tags: options.tags,
+        query: options.query,
+        limit: options.limit,
+      });
+
+      if (ftsResults.length > 0) {
+        return ftsResults;
+      }
+    }
+
     const conditions = [eq(schema.knowledgeItems.projectId, projectId)];
 
     if (options.category) {
