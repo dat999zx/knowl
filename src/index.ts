@@ -66,6 +66,13 @@ program
         const configStatus = await upgradeConfigDefaults(cwd);
         const agentsStatus = await installKnowlAgentsGuidance(cwd);
         const gitignoreStatus = await installKnowlGitignoreEntry(cwd);
+        await initDb(cwd);
+        let project = await repo.getProjectByRootPath(cwd);
+        if (!project) {
+          project = await repo.createProject(cwd, name);
+          console.log(`Registered project: "${project.name}" (ID: ${project.id})`);
+        }
+        await closeDb();
         console.log(`⚠️  KNOWL repository already initialized in this directory: ${knowlDir}`);
         if (configStatus === 'updated') {
           console.log(`Updated .knowl/config.json with missing default settings.`);

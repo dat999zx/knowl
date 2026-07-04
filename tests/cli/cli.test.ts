@@ -156,6 +156,36 @@ describe('CLI Integration', () => {
     await fs.rm(oldProjectDir, { recursive: true, force: true });
   });
 
+  it('should bootstrap missing database tables when init is rerun in an existing repository', async () => {
+    const oldDbDir = path.resolve('./.knowl-cli-old-db-test');
+    await fs.rm(oldDbDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(oldDbDir, '.knowl'), { recursive: true });
+    await fs.writeFile(
+      path.join(oldDbDir, '.knowl', 'config.json'),
+      JSON.stringify({
+        version: 1,
+        project: { name: 'Old DB Project' },
+        security: { rejectSecrets: true, secretPatterns: [] },
+      }, null, 2),
+      'utf-8'
+    );
+
+    execSync(`node "${CLI_PATH}" init "Old DB Project"`, {
+      cwd: oldDbDir,
+      encoding: 'utf-8',
+    });
+
+    const output = execSync(`node "${CLI_PATH}" status`, {
+      cwd: oldDbDir,
+      encoding: 'utf-8',
+    });
+
+    expect(output).toContain('KNOWL REPOSITORY STATUS');
+    expect(output).toContain('Old DB Project');
+
+    await fs.rm(oldDbDir, { recursive: true, force: true });
+  });
+
   it('should append Knowl MCP guidance to an existing AGENTS.md without overwriting it', async () => {
     const agentsPath = path.join(AGENTS_TEST_DIR, 'AGENTS.md');
     await fs.writeFile(agentsPath, '# Existing Agent Rules\n\nKeep responses concise.\n', 'utf-8');
