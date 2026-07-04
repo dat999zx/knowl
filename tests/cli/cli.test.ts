@@ -124,7 +124,8 @@ describe('CLI Integration', () => {
     });
 
     expect(output).toContain('KNOWL repository already initialized');
-    expect(output).toContain('AGENTS.md Knowl MCP guidance is up to date.');
+    expect(output).toContain('KNOWL repository upgrade complete.');
+    expect(output).toContain('AGENTS.md: unchanged');
   });
 
   it('should merge missing default config keys when init is rerun in an existing repository', async () => {
