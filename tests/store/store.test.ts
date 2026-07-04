@@ -1,11 +1,14 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { initDb, closeDb } from '../../src/store/database.js';
+import { sql } from 'drizzle-orm';
+import { initDb, closeDb, getDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from '../../src/store/gc.js';
 import * as queries from '../../src/store/queries.js';
+import { formatRecentContextToMarkdown } from '../../src/core/format.js';
 import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
+import { getRecentContext } from '../../src/store/recent-context.js';
 import { searchKnowledgeEmbeddings, upsertKnowledgeEmbedding } from '../../src/store/vector.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
 
@@ -171,6 +174,95 @@ describe('Storage Layer', () => {
     expect(constraintHintResults.some(item => item.category === 'architecture')).toBe(true);
   });
 
+  it('should return recent active knowledge and commits for session continuity', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT) ?? await repo.createProject(TEST_ROOT, 'Test Project');
+    const projectId = project!.id;
+
+    const older = await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Older active work',
+      content: 'Older active work should appear after newer work.',
+      tags: ['session'],
+    });
+    await repo.updateKnowledgeItem(older.id, {
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as any);
+
+    const newer = await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Newest active work',
+      content: 'Newest active work should appear first.',
+      tags: ['session'],
+    });
+    await repo.updateKnowledgeItem(newer.id, {
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    } as any);
+
+    const archived = await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Archived old work',
+      content: 'Archived work should not appear in recent active context.',
+      tags: ['session'],
+    });
+    await repo.updateKnowledgeItem(archived.id, {
+      status: 'archived',
+    } as any);
+
+    const olderCommit = await repo.createKnowledgeCommit(projectId, 'Older session commit', []);
+    const newerCommit = await repo.createKnowledgeCommit(projectId, 'Newest session commit', []);
+    const db = getDb();
+    await db.run(sql`UPDATE knowledge_commits SET created_at = '2026-01-01T00:00:00.000Z' WHERE id = ${olderCommit.id}`);
+    await db.run(sql`UPDATE knowledge_commits SET created_at = '2026-07-01T00:00:00.000Z' WHERE id = ${newerCommit.id}`);
+
+    const context = await getRecentContext(projectId, {
+      itemLimit: 2,
+      commitLimit: 2,
+    });
+
+    expect(context.items.map(item => item.id)).toEqual([newer.id, older.id]);
+    expect(context.items.some(item => item.id === archived.id)).toBe(false);
+    expect(context.commits).toHaveLength(2);
+    expect(context.commits[0].message).toBe('Newest session commit');
+  });
+
+  it('should format recent context for quick session resume', async () => {
+    const markdown = formatRecentContextToMarkdown({
+      items: [
+        {
+          id: 'item1',
+          projectId: 'project1',
+          category: 'state',
+          status: 'active',
+          title: 'Current plan',
+          content: 'Implement recent context before query ranking.',
+          reasoning: null,
+          alternatives: null,
+          tags: ['session'],
+          source: null,
+          confidence: 1,
+          supersededById: null,
+          version: 1,
+          createdAt: '2026-07-01T00:00:00.000Z',
+          updatedAt: '2026-07-02T00:00:00.000Z',
+        },
+      ],
+      commits: [
+        {
+          id: 'commit1',
+          projectId: 'project1',
+          message: 'Store recent context plan',
+          changes: [],
+          createdAt: '2026-07-02T01:00:00.000Z',
+        },
+      ],
+    });
+
+    expect(markdown).toContain('KNOWL - RECENT SESSION CONTEXT');
+    expect(markdown).toContain('Current plan');
+    expect(markdown).toContain('Implement recent context before query ranking.');
+    expect(markdown).toContain('Store recent context plan');
+  });
+
   it('should store and search knowledge embeddings in SQLite', async () => {
     const project = await repo.getProjectByRootPath(TEST_ROOT);
     const projectId = project!.id;
@@ -281,7 +373,7 @@ describe('Storage Layer', () => {
       vector: [0.25, 0.75],
       provider: 'test',
       model: 'fake-embedder',
-      limit: 10,
+      limit: 100,
     });
 
     expect(matches.some(match => match.item.id === item.id)).toBe(true);

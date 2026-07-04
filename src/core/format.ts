@@ -1,4 +1,4 @@
-import { KnowledgeItem } from './types.js';
+import { KnowledgeCommit, KnowledgeItem } from './types.js';
 
 /**
  * Formats a hierarchical knowledge object into clean readable markdown.
@@ -78,6 +78,38 @@ export function formatHierarchyToMarkdown(hierarchy: {
     hierarchy.skills.forEach(s => {
       md += `### ${s.title} (ID: ${s.id})\n${s.content}\n\n`;
     });
+  }
+
+  return md;
+}
+
+export function formatRecentContextToMarkdown(context: {
+  items: KnowledgeItem[];
+  commits: KnowledgeCommit[];
+}): string {
+  let md = '# KNOWL - RECENT SESSION CONTEXT\n\n';
+
+  md += '## Recent Active Knowledge\n\n';
+  if (context.items.length === 0) {
+    md += 'No recent active knowledge recorded.\n\n';
+  } else {
+    for (const item of context.items) {
+      md += `- **${item.title}** (${item.category}, updated ${item.updatedAt})\n`;
+      md += `  ${item.content}\n`;
+      if (item.tags && item.tags.length > 0) {
+        md += `  Tags: ${item.tags.join(', ')}\n`;
+      }
+    }
+    md += '\n';
+  }
+
+  md += '## Recent Knowledge Commits\n\n';
+  if (context.commits.length === 0) {
+    md += 'No recent knowledge commits recorded.\n';
+  } else {
+    for (const commit of context.commits) {
+      md += `- ${commit.createdAt}: ${commit.message}\n`;
+    }
   }
 
   return md;

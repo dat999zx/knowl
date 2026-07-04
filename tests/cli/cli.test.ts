@@ -92,19 +92,20 @@ describe('CLI Integration', () => {
     const content = await fs.readFile(agentsPath, 'utf-8');
 
     expect(content).toContain('## Knowl Project Memory');
-    expect(content).toContain('At the start of any project-specific task, query Knowl for relevant facts, decisions, constraints, architecture, state, and skills before inspecting files or editing code');
-    expect(content).toContain('For specific project questions, call `knowl_query` first');
+    expect(content).toContain('At the start of a new project-specific session, call `knowl_recent` first');
+    expect(content).toContain('After `knowl_recent`, use `knowl_query` for specific questions');
     expect(content).toContain('Do not use `knowl_ask` for MCP first-pass lookup');
     expect(content).toContain('Use 2-6 concise search keywords');
     expect(content).toContain('Omit category filters unless you are certain');
     expect(content).toContain('Only use `knowl_state` for broad project-memory summaries');
-    expect(content).toContain('Do not inspect repository files before this targeted Knowl query');
+    expect(content).toContain('Do not inspect repository files before this Knowl lookup');
     expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');
     expect(content).toContain('Do not inspect repository files just to re-verify known facts');
     expect(content).toContain('Only inspect repository files when Knowl misses, conflicts, looks stale or low-confidence, or the user asks for source verification');
     expect(content).toContain('If the Knowl MCP tools are unavailable');
     expect(content).toContain('`Auth: Unsupported` on a local stdio MCP server is normal');
     expect(content).toContain('knowl_state');
+    expect(content).toContain('knowl_recent');
     expect(content).toContain('knowl_query');
     expect(content).toContain('knowl_store');
     expect(content).toContain('knowl_decide');
@@ -245,8 +246,8 @@ describe('CLI Integration', () => {
     });
 
     const content = await fs.readFile(agentsPath, 'utf-8');
-    expect(content).toContain('At the start of any project-specific task, query Knowl');
-    expect(content).toContain('For specific project questions, call `knowl_query` first');
+    expect(content).toContain('At the start of a new project-specific session, call `knowl_recent` first');
+    expect(content).toContain('After `knowl_recent`, use `knowl_query` for specific questions');
     expect(content).toContain('Do not use `knowl_ask` for MCP first-pass lookup');
     expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');
     expect(content).toContain('Before the final answer, check whether the work produced durable knowledge');

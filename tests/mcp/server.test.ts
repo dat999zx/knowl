@@ -141,6 +141,7 @@ describe('MCP Server Layer', () => {
     expect(res.error).toBeUndefined();
     expect(res.result.tools).toBeDefined();
     expect(res.result.tools.some((t: any) => t.name === 'knowl_state')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_recent')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_store')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest_atoms')).toBe(true);
@@ -177,6 +178,43 @@ describe('MCP Server Layer', () => {
     expect(res.error).toBeUndefined();
     expect(res.result.resources).toBeDefined();
     expect(res.result.resources[0].uri).toBe('knowl://brain');
+    expect(res.result.resources.some((r: any) => r.uri === 'knowl://recent')).toBe(true);
+  });
+
+  it('should return recent session context through knowl_recent', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Resume target',
+      content: 'Continue from recent context work.',
+      tags: ['session'],
+    });
+
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_recent',
+      arguments: {},
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+    expect(res.result.content[0].text).toContain('KNOWL - RECENT SESSION CONTEXT');
+    expect(res.result.content[0].text).toContain('Resume target');
+  });
+
+  it('should read recent session context resource', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Recent resource target',
+      content: 'Resource exposes the same recent context.',
+      tags: ['session'],
+    });
+
+    const res = await runRpcRequest('resources/read', {
+      uri: 'knowl://recent',
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.contents[0].text).toContain('KNOWL - RECENT SESSION CONTEXT');
+    expect(res.result.contents[0].text).toContain('Recent resource target');
   });
 
   it('should support creating decision directly via tool', async () => {

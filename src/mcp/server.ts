@@ -9,6 +9,7 @@ import {
 import { getProjectByRootPath } from '../store/repository.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { queryKnowledgeForAgent } from '../store/agent-query.js';
+import { getRecentContext } from '../store/recent-context.js';
 import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
 import { storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../store/knowledge-writer.js';
 import { runPipeline } from '../pipeline/pipeline.js';
@@ -17,13 +18,14 @@ import { findProjectRoot, hasAiConfigured, loadConfig } from '../core/config.js'
 import { initDb } from '../store/database.js';
 import { initAI } from '../ai/provider.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled, getVectorSearchConfig } from '../ai/embeddings.js';
-import { formatHierarchyToMarkdown } from '../core/format.js';
+import { formatHierarchyToMarkdown, formatRecentContextToMarkdown } from '../core/format.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from '../store/gc.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 export const KNOWL_MCP_TOOL_NAMES = [
   'knowl_ingest',
   'knowl_state',
+  'knowl_recent',
   'knowl_store',
   'knowl_ingest_atoms',
   'knowl_decide',
@@ -89,6 +91,23 @@ export function createMcpServer(
           inputSchema: {
             type: 'object',
             properties: {},
+          },
+        },
+        {
+          name: 'knowl_recent',
+          description: 'Get compact recent session context for starting or resuming work: recent active knowledge plus recent knowledge commits. Use this at the start of a new project-specific session before targeted knowl_query calls.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              itemLimit: {
+                type: 'number',
+                description: 'Maximum recent active knowledge items to return; defaults to 12.',
+              },
+              commitLimit: {
+                type: 'number',
+                description: 'Maximum recent knowledge commits to return; defaults to 8.',
+              },
+            },
           },
         },
         {
@@ -328,7 +347,7 @@ export function createMcpServer(
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
-      } 
+      }
       
       else if (name === 'knowl_state') {
         const hierarchy = await getHierarchicalKnowledge(projectId!);
@@ -336,7 +355,18 @@ export function createMcpServer(
         return {
           content: [{ type: 'text', text: md }],
         };
-      } 
+      }
+
+      else if (name === 'knowl_recent') {
+        const { itemLimit, commitLimit } = args as any;
+        const context = await getRecentContext(projectId!, {
+          itemLimit,
+          commitLimit,
+        });
+        return {
+          content: [{ type: 'text', text: formatRecentContextToMarkdown(context) }],
+        };
+      }
 
       else if (name === 'knowl_store') {
         const { category, title, content, reasoning, alternatives, tags, source, confidence, steps } = args as any;
@@ -489,6 +519,12 @@ export function createMcpServer(
           description: 'A markdown document summarizing the full active goals, constraints, architecture, decisions, and tasks.',
           mimeType: 'text/markdown',
         },
+        {
+          uri: 'knowl://recent',
+          name: 'Recent Session Context',
+          description: 'Compact recent active knowledge and knowledge commits for quickly resuming a project session.',
+          mimeType: 'text/markdown',
+        },
       ],
     };
   });
@@ -510,6 +546,19 @@ export function createMcpServer(
     }
 
     try {
+      if (uri === 'knowl://recent') {
+        const context = await getRecentContext(projectId!);
+        return {
+          contents: [
+            {
+              uri,
+              mimeType: 'text/markdown',
+              text: formatRecentContextToMarkdown(context),
+            },
+          ],
+        };
+      }
+
       if (uri === 'knowl://brain') {
         const hierarchy = await getHierarchicalKnowledge(projectId!);
         const md = formatHierarchyToMarkdown(hierarchy);
