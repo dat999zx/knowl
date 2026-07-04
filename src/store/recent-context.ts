@@ -3,7 +3,7 @@ import { KnowledgeCommit, KnowledgeItem, KnowledgeCategory, KnowledgeStatus } fr
 import { DatabaseError } from '../core/errors.js';
 import { getDb } from './database.js';
 import * as schema from './schema.js';
-import { getKnowledgeCommits } from './repository.js';
+import { getKnowledgeCommits, mapRowToKnowledgeItem } from './repository.js';
 
 export type RecentContext = {
   items: KnowledgeItem[];
@@ -32,13 +32,7 @@ export async function getRecentContext(
       .orderBy(desc(schema.knowledgeItems.updatedAt))
       .limit(itemLimit);
 
-    const items = rows.map(row => ({
-      ...row,
-      category: row.category as KnowledgeCategory,
-      status: row.status as KnowledgeStatus,
-      alternatives: row.alternatives as string[] | null,
-      tags: row.tags as string[] | null,
-    }));
+    const items = rows.map(mapRowToKnowledgeItem);
 
     const commits = await getKnowledgeCommits(projectId, commitLimit);
     return { items, commits };

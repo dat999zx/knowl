@@ -67,7 +67,7 @@ export async function searchKnowledgeItems(
     WHERE knowledge_items_fts MATCH ${ftsQuery}
       AND project_id = ${projectId}
     ORDER BY score ASC
-    LIMIT ${Math.max(options.limit ?? 20, 50)}
+    LIMIT ${options.limit ?? 20}
   `) as { itemId: string; score: number }[];
 
   const status = options.status || 'active';

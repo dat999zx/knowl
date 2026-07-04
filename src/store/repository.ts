@@ -19,6 +19,16 @@ function generateId(): string {
   return crypto.randomUUID().replace(/-/g, '').substring(0, 16);
 }
 
+export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSelect): KnowledgeItem {
+  return {
+    ...row,
+    category: row.category as KnowledgeCategory,
+    status: row.status as KnowledgeStatus,
+    alternatives: row.alternatives as string[] | null,
+    tags: row.tags as string[] | null,
+  };
+}
+
 export async function createProject(rootPath: string, name: string, description?: string, dbConnection?: DbConnection): Promise<Project> {
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
@@ -144,13 +154,7 @@ export async function getKnowledgeItem(id: string, dbConnection?: DbConnection):
     
     if (!result[0]) return null;
 
-    return {
-      ...result[0],
-      category: result[0].category as KnowledgeCategory,
-      status: result[0].status as KnowledgeStatus,
-      alternatives: result[0].alternatives as string[] | null,
-      tags: result[0].tags as string[] | null,
-    };
+    return mapRowToKnowledgeItem(result[0]);
   } catch (error: any) {
     throw new DatabaseError(`Failed to get knowledge item: ${error.message}`);
   }
@@ -211,13 +215,7 @@ export async function updateKnowledgeItem(
       .where(eq(schema.knowledgeItems.id, id))
       .limit(1);
 
-    return {
-      ...updated[0],
-      category: updated[0].category as KnowledgeCategory,
-      status: updated[0].status as KnowledgeStatus,
-      alternatives: updated[0].alternatives as string[] | null,
-      tags: updated[0].tags as string[] | null,
-    };
+    return mapRowToKnowledgeItem(updated[0]);
   };
 
   try {
@@ -241,13 +239,7 @@ export async function listKnowledgeItems(projectId: string, dbConnection?: DbCon
       .from(schema.knowledgeItems)
       .where(eq(schema.knowledgeItems.projectId, projectId));
 
-    return result.map((row) => ({
-      ...row,
-      category: row.category as KnowledgeCategory,
-      status: row.status as KnowledgeStatus,
-      alternatives: row.alternatives as string[] | null,
-      tags: row.tags as string[] | null,
-    }));
+    return result.map(mapRowToKnowledgeItem);
   } catch (error: any) {
     throw new DatabaseError(`Failed to list knowledge items: ${error.message}`);
   }

@@ -1,5 +1,8 @@
-import { CommitChange, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
+import { ProjectConfig, CommitChange, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import * as repo from './repository.js';
+import { findLikelyDuplicateKnowledgeItem } from './knowledge-writer.js';
+import { hasAiConfigured } from '../core/config.js';
+import { initAI } from '../ai/provider.js';
 
 export type DirectDecisionInput = {
   title: string;
@@ -12,8 +15,17 @@ export type DirectDecisionInput = {
 export async function recordDecisionDirect(
   projectId: string,
   input: DirectDecisionInput,
-  commitMessage = `Record decision: ${input.title}`
+  commitMessage = `Record decision: ${input.title}`,
+  config?: ProjectConfig
 ): Promise<KnowledgeItem> {
+  const existing = await findLikelyDuplicateKnowledgeItem(projectId, {
+    category: 'decision',
+    title: input.title,
+    content: input.content,
+    reasoning: input.reasoning,
+    tags: input.tags,
+  });
+
   const item = await repo.createKnowledgeItem(projectId, {
     category: 'decision',
     title: input.title,
@@ -23,9 +35,30 @@ export async function recordDecisionDirect(
     tags: input.tags,
   });
 
-  await repo.createKnowledgeCommit(projectId, commitMessage, [
-    { itemId: item.id, action: 'insert', after: item },
-  ]);
+  if (existing) {
+    await repo.updateKnowledgeItem(existing.id, {
+      status: 'superseded',
+      supersededById: item.id,
+    });
+  }
+
+  const changes: CommitChange[] = [];
+  if (existing) {
+    changes.push({ itemId: existing.id, action: 'supersede', before: existing });
+  }
+  changes.push({ itemId: item.id, action: 'insert', after: item });
+
+  await repo.createKnowledgeCommit(projectId, commitMessage, changes);
+
+  if (config && hasAiConfigured(config)) {
+    try {
+      initAI(config.ai!);
+      const { runDeriveTruth } = await import('../pipeline/derive.js');
+      await runDeriveTruth(projectId, [item]);
+    } catch {
+      // Best-effort
+    }
+  }
 
   return item;
 }
@@ -48,7 +81,17 @@ export async function updateKnowledgeItemWithCommit(
   const updated = await repo.updateKnowledgeItem(id, updates);
   let action: CommitChange['action'] = 'update';
   if (updates.status && updates.status !== beforeItem.status) {
-    action = updates.status === 'active' ? 'restore' : updates.status;
+    if (updates.status === 'active') {
+      action = 'restore';
+    } else if (updates.status === 'archived') {
+      action = 'archive';
+    } else if (updates.status === 'deprecated') {
+      action = 'deprecate';
+    } else if (updates.status === 'rejected') {
+      action = 'reject';
+    } else if (updates.status === 'superseded') {
+      action = 'supersede';
+    }
   }
 
   await repo.createKnowledgeCommit(projectId, `Update item: ${updated.title}`, [

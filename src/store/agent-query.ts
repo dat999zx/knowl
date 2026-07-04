@@ -23,7 +23,7 @@ function textMatchScore(item: KnowledgeItem, tokens: string[]): number {
     item.title,
     item.content,
     item.reasoning ?? '',
-    item.tags.join(' '),
+    (item.tags ?? []).join(' '),
   ].join(' ');
 
   return tokens.reduce((score, token) => score + countOccurrences(searchableText, token), 0);

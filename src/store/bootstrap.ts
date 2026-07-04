@@ -100,10 +100,11 @@ export async function bootstrapSchema(client: Client): Promise<void> {
       VALUES (new.id, new.project_id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));
     END;`,
 
-    `DELETE FROM knowledge_items_fts;`,
     `INSERT INTO knowledge_items_fts(item_id, project_id, category, status, title, content, reasoning, tags)
       SELECT id, project_id, category, status, title, content, coalesce(reasoning, ''), coalesce(tags, '')
-      FROM knowledge_items;`,
+      FROM knowledge_items
+      WHERE NOT EXISTS (SELECT 1 FROM knowledge_items_fts LIMIT 1)
+        AND EXISTS (SELECT 1 FROM knowledge_items LIMIT 1);`,
   ];
 
   for (const statement of statements) {

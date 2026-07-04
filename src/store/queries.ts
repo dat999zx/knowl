@@ -4,6 +4,7 @@ import * as schema from './schema.js';
 import { searchKnowledgeItems } from './search.js';
 import { KnowledgeItem, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
+import { mapRowToKnowledgeItem } from './repository.js';
 
 /**
  * Fetch active items for a project in a specific category.
@@ -25,13 +26,7 @@ export async function getActiveKnowledgeByCategory(
         )
       );
 
-    return results.map(row => ({
-      ...row,
-      category: row.category as KnowledgeCategory,
-      status: row.status as KnowledgeStatus,
-      alternatives: row.alternatives as string[] | null,
-      tags: row.tags as string[] | null,
-    }));
+    return results.map(mapRowToKnowledgeItem);
   } catch (error: any) {
     throw new DatabaseError(`Failed to fetch category "${category}": ${error.message}`);
   }
@@ -48,13 +43,7 @@ export async function getHierarchicalKnowledge(projectId: string) {
       .from(schema.knowledgeItems)
       .where(eq(schema.knowledgeItems.projectId, projectId));
 
-    const mapped = results.map(row => ({
-      ...row,
-      category: row.category as KnowledgeCategory,
-      status: row.status as KnowledgeStatus,
-      alternatives: row.alternatives as string[] | null,
-      tags: row.tags as string[] | null,
-    }));
+    const mapped = results.map(mapRowToKnowledgeItem);
 
     const state: KnowledgeItem[] = [];
     const knowledge: KnowledgeItem[] = [];
@@ -121,6 +110,9 @@ export async function queryKnowledgeBase(
       conditions.push(eq(schema.knowledgeItems.status, 'active'));
     }
 
+    // Fallback: If FTS returned no results (or wasn't matched due to FTS5 stripping special characters 
+    // like '/' or '.' in queries like '/mcp' or 'package.json'), we fall back to a standard SQL LIKE 
+    // substring search which is highly resilient for literal substring matching of code-specific terms.
     if (options.query) {
       const searchPattern = `%${options.query}%`;
       conditions.push(
@@ -137,13 +129,7 @@ export async function queryKnowledgeBase(
       .from(schema.knowledgeItems)
       .where(and(...conditions));
 
-    let mapped = results.map(row => ({
-      ...row,
-      category: row.category as KnowledgeCategory,
-      status: row.status as KnowledgeStatus,
-      alternatives: row.alternatives as string[] | null,
-      tags: row.tags as string[] | null,
-    }));
+    let mapped = results.map(mapRowToKnowledgeItem);
 
     // Local filter for tags if specified (SQLite stored JSON arrays are easier filtered locally or via JSON1 extensions,
     // local filtering is highly robust and database-agnostic).
