@@ -174,6 +174,73 @@ describe('Storage Layer', () => {
     expect(constraintHintResults.some(item => item.category === 'architecture')).toBe(true);
   });
 
+  it('should prefer newer active knowledge when agent query relevance is similar', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const older = await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Recency ranking alpha beta older',
+      content: 'recency-ranking-alpha-beta equivalent retrieval text',
+      tags: ['recency-ranking-alpha-beta'],
+    });
+    await repo.updateKnowledgeItem(older.id, {
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as any);
+
+    const newer = await repo.createKnowledgeItem(projectId, {
+      category: 'state',
+      title: 'Recency ranking alpha beta newer',
+      content: 'recency-ranking-alpha-beta equivalent retrieval text',
+      tags: ['recency-ranking-alpha-beta'],
+    });
+    await repo.updateKnowledgeItem(newer.id, {
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    } as any);
+
+    const results = await queryKnowledgeForAgent(projectId, {
+      query: 'recency-ranking-alpha-beta',
+      status: 'active',
+      limit: 2,
+    });
+
+    expect(results.map(item => item.id)).toEqual([newer.id, older.id]);
+  });
+
+  it('should keep stronger relevance ahead of weak newer matches', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const strongOlder = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Strong relevance gamma delta exact',
+      content: 'strong-relevance-gamma-delta strong-relevance-gamma-delta strong-relevance-gamma-delta exact agent answer.',
+      tags: ['strong-relevance-gamma-delta'],
+    });
+    await repo.updateKnowledgeItem(strongOlder.id, {
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    } as any);
+
+    const weakNewer = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Weak newer gamma note',
+      content: 'strong-relevance-gamma-delta appears once in a broader unrelated note.',
+      tags: ['weak-newer-gamma-note'],
+    });
+    await repo.updateKnowledgeItem(weakNewer.id, {
+      updatedAt: '2026-07-01T00:00:00.000Z',
+    } as any);
+
+    const results = await queryKnowledgeForAgent(projectId, {
+      query: 'strong-relevance-gamma-delta',
+      status: 'active',
+      limit: 2,
+    });
+
+    expect(results[0].id).toBe(strongOlder.id);
+    expect(results.some(item => item.id === weakNewer.id)).toBe(true);
+  });
+
   it('should return recent active knowledge and commits for session continuity', async () => {
     const project = await repo.getProjectByRootPath(TEST_ROOT) ?? await repo.createProject(TEST_ROOT, 'Test Project');
     const projectId = project!.id;
