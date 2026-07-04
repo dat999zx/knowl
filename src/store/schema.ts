@@ -49,3 +49,13 @@ export const skillMetadata = sqliteTable('skill_metadata', {
   successCount: integer('success_count').notNull().default(0),
   lastUsed: text('last_used'),
 });
+
+export const knowledgeEmbeddings = sqliteTable('knowledge_embeddings', {
+  knowledgeItemId: text('knowledge_item_id').primaryKey().references(() => knowledgeItems.id, { onDelete: 'cascade' }),
+  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
+  provider: text('provider').notNull(),
+  model: text('model').notNull(),
+  dimensions: integer('dimensions').notNull(),
+  vector: text('vector', { mode: 'json' }).notNull(),
+  updatedAt: text('updated_at').notNull(),
+});

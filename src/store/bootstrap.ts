@@ -70,9 +70,20 @@ export async function bootstrapSchema(client: Client): Promise<void> {
       last_used TEXT
     );`,
 
+    `CREATE TABLE IF NOT EXISTS knowledge_embeddings (
+      knowledge_item_id TEXT PRIMARY KEY REFERENCES knowledge_items(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      dimensions INTEGER NOT NULL,
+      vector TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );`,
+
     `CREATE INDEX IF NOT EXISTS idx_ki_project_cat_status ON knowledge_items(project_id, category, status);`,
     `CREATE INDEX IF NOT EXISTS idx_ki_project_status ON knowledge_items(project_id, status);`,
     `CREATE INDEX IF NOT EXISTS idx_ki_project_updated ON knowledge_items(project_id, updated_at);`,
+    `CREATE INDEX IF NOT EXISTS idx_ke_project_model ON knowledge_embeddings(project_id, provider, model);`,
 
     `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
       INSERT INTO knowledge_items_fts(item_id, project_id, category, status, title, content, reasoning, tags)

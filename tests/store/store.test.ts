@@ -5,6 +5,8 @@ import { initDb, closeDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import * as queries from '../../src/store/queries.js';
 import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
+import { searchKnowledgeEmbeddings, upsertKnowledgeEmbedding } from '../../src/store/vector.js';
+import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
 
 const TEST_ROOT = path.resolve('./.knowl-test');
 
@@ -166,5 +168,121 @@ describe('Storage Layer', () => {
     expect(constraintHintResults.length).toBeGreaterThanOrEqual(2);
     expect(constraintHintResults.some(item => item.category === 'fact')).toBe(true);
     expect(constraintHintResults.some(item => item.category === 'architecture')).toBe(true);
+  });
+
+  it('should store and search knowledge embeddings in SQLite', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const authItem = await repo.createKnowledgeItem(projectId, {
+      category: 'architecture',
+      title: 'Authentication flow',
+      content: 'Login validates credentials and issues a session token.',
+      tags: ['auth'],
+    });
+    const storageItem = await repo.createKnowledgeItem(projectId, {
+      category: 'architecture',
+      title: 'Storage layer',
+      content: 'SQLite stores project memory and search indexes.',
+      tags: ['storage'],
+    });
+
+    await upsertKnowledgeEmbedding({
+      projectId,
+      knowledgeItemId: authItem.id,
+      provider: 'test',
+      model: 'unit-vector',
+      dimensions: 3,
+      vector: [1, 0, 0],
+    });
+    await upsertKnowledgeEmbedding({
+      projectId,
+      knowledgeItemId: storageItem.id,
+      provider: 'test',
+      model: 'unit-vector',
+      dimensions: 3,
+      vector: [0, 1, 0],
+    });
+
+    const results = await searchKnowledgeEmbeddings(projectId, {
+      vector: [0.9, 0.1, 0],
+      status: 'active',
+      limit: 1,
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].item.title).toBe('Authentication flow');
+    expect(results[0].score).toBeGreaterThan(0.9);
+  });
+
+  it('should merge BM25 and optional vector hits for agent queries', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const keywordItem = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'BM25 payment fact',
+      content: 'Payment settlement uses wallet transactions and searchable keyword text.',
+      tags: ['payment'],
+    });
+    const semanticItem = await repo.createKnowledgeItem(projectId, {
+      category: 'architecture',
+      title: 'Semantic runtime architecture',
+      content: 'Live session state is coordinated outside persistent storage.',
+      tags: ['runtime'],
+    });
+
+    await upsertKnowledgeEmbedding({
+      projectId,
+      knowledgeItemId: semanticItem.id,
+      provider: 'test',
+      model: 'unit-vector',
+      dimensions: 3,
+      vector: [0, 1, 0],
+    });
+
+    const results = await queryKnowledgeForAgent(projectId, {
+      query: 'payment settlement',
+      status: 'active',
+      limit: 3,
+      vector: {
+        enabled: true,
+        provider: 'test',
+        model: 'unit-vector',
+        embedding: [0, 0.95, 0.05],
+      },
+    });
+
+    expect(results.some(item => item.id === keywordItem.id)).toBe(true);
+    expect(results.some(item => item.id === semanticItem.id)).toBe(true);
+  });
+
+  it('should reindex active knowledge embeddings with an injected embedder', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Vector reindex target',
+      content: 'This item should receive an embedding.',
+      tags: ['vector'],
+    });
+
+    const result = await reindexKnowledgeEmbeddings(projectId, {
+      provider: 'test',
+      model: 'fake-embedder',
+      embed: async (texts) => texts.map(() => [0.25, 0.75]),
+    });
+
+    expect(result.indexed).toBeGreaterThan(0);
+
+    const matches = await searchKnowledgeEmbeddings(projectId, {
+      vector: [0.25, 0.75],
+      provider: 'test',
+      model: 'fake-embedder',
+      limit: 10,
+    });
+
+    expect(matches.some(match => match.item.id === item.id)).toBe(true);
   });
 });

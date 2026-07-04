@@ -1,0 +1,123 @@
+import { and, eq } from 'drizzle-orm';
+import { KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
+import { DatabaseError } from '../core/errors.js';
+import { getDb } from './database.js';
+import { getKnowledgeItem } from './repository.js';
+import * as schema from './schema.js';
+
+export type KnowledgeEmbeddingInput = {
+  projectId: string;
+  knowledgeItemId: string;
+  provider: string;
+  model: string;
+  dimensions: number;
+  vector: number[];
+};
+
+export type VectorSearchResult = {
+  item: KnowledgeItem;
+  score: number;
+};
+
+function cosineSimilarity(left: number[], right: number[]): number {
+  if (left.length !== right.length || left.length === 0) return 0;
+
+  let dot = 0;
+  let leftMagnitude = 0;
+  let rightMagnitude = 0;
+
+  for (let i = 0; i < left.length; i++) {
+    dot += left[i] * right[i];
+    leftMagnitude += left[i] * left[i];
+    rightMagnitude += right[i] * right[i];
+  }
+
+  if (leftMagnitude === 0 || rightMagnitude === 0) return 0;
+  return dot / (Math.sqrt(leftMagnitude) * Math.sqrt(rightMagnitude));
+}
+
+export async function upsertKnowledgeEmbedding(input: KnowledgeEmbeddingInput): Promise<void> {
+  if (input.dimensions !== input.vector.length) {
+    throw new DatabaseError(`Embedding dimensions ${input.dimensions} do not match vector length ${input.vector.length}`);
+  }
+
+  const db = getDb();
+  const now = new Date().toISOString();
+  const row = {
+    knowledgeItemId: input.knowledgeItemId,
+    projectId: input.projectId,
+    provider: input.provider,
+    model: input.model,
+    dimensions: input.dimensions,
+    vector: input.vector,
+    updatedAt: now,
+  };
+
+  try {
+    await db
+      .insert(schema.knowledgeEmbeddings)
+      .values(row)
+      .onConflictDoUpdate({
+        target: schema.knowledgeEmbeddings.knowledgeItemId,
+        set: row,
+      });
+  } catch (error: any) {
+    throw new DatabaseError(`Failed to upsert knowledge embedding: ${error.message}`);
+  }
+}
+
+export async function searchKnowledgeEmbeddings(
+  projectId: string,
+  options: {
+    vector: number[];
+    category?: KnowledgeCategory;
+    status?: KnowledgeStatus;
+    tags?: string[];
+    provider?: string;
+    model?: string;
+    limit?: number;
+  }
+): Promise<VectorSearchResult[]> {
+  const db = getDb();
+  const status = options.status || 'active';
+  const limit = options.limit ?? 20;
+
+  try {
+    const conditions = [eq(schema.knowledgeEmbeddings.projectId, projectId)];
+    if (options.provider) {
+      conditions.push(eq(schema.knowledgeEmbeddings.provider, options.provider));
+    }
+    if (options.model) {
+      conditions.push(eq(schema.knowledgeEmbeddings.model, options.model));
+    }
+
+    const rows = await db
+      .select()
+      .from(schema.knowledgeEmbeddings)
+      .where(and(...conditions));
+
+    const results: VectorSearchResult[] = [];
+    for (const row of rows) {
+      const vector = row.vector as number[];
+      const score = cosineSimilarity(options.vector, vector);
+      if (score <= 0) continue;
+
+      const item = await getKnowledgeItem(row.knowledgeItemId);
+      if (!item) continue;
+      if (item.projectId !== projectId) continue;
+      if (item.status !== status) continue;
+      if (options.category && item.category !== options.category) continue;
+      if (options.tags && options.tags.length > 0) {
+        if (!item.tags || !options.tags.every(tag => item.tags!.includes(tag))) continue;
+      }
+
+      results.push({ item, score });
+    }
+
+    return results
+      .sort((left, right) => right.score - left.score)
+      .slice(0, limit);
+  } catch (error: any) {
+    throw new DatabaseError(`Failed to search knowledge embeddings: ${error.message}`);
+  }
+}
