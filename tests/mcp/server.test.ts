@@ -148,8 +148,16 @@ describe('MCP Server Layer', () => {
     const queryTool = res.result.tools.find((t: any) => t.name === 'knowl_query');
     const stateTool = res.result.tools.find((t: any) => t.name === 'knowl_state');
     expect(queryTool.description).toContain('Use this first for specific project questions');
+    expect(queryTool.description).toContain('answer from Knowl without inspecting repository files');
+    expect(queryTool.description).toContain('Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests');
     expect(queryTool.inputSchema.properties.query.description).toContain('2-6 concise keywords');
     expect(stateTool.description).toContain('broad project-memory summaries');
+
+    const storeTool = res.result.tools.find((t: any) => t.name === 'knowl_store');
+    const ingestAtomsTool = res.result.tools.find((t: any) => t.name === 'knowl_ingest_atoms');
+    expect(storeTool.description).toContain('concise structured knowledge atom');
+    expect(storeTool.description).toContain('not raw chat transcripts');
+    expect(ingestAtomsTool.description).toContain('Do not store raw chat transcripts');
   });
 
   it('should list resources', async () => {

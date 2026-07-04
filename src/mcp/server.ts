@@ -80,7 +80,7 @@ export function createMcpServer(
         },
         {
           name: 'knowl_store',
-          description: 'Store one structured knowledge item directly. This is deterministic and does not require Knowl AI configuration.',
+          description: 'Store one concise structured knowledge atom directly, not raw chat transcripts. This is deterministic and does not require Knowl AI configuration.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -130,7 +130,7 @@ export function createMcpServer(
         },
         {
           name: 'knowl_ingest_atoms',
-          description: 'Store pre-extracted structured knowledge atoms from an MCP client. This is the preferred MCP ingestion path and does not require Knowl AI configuration.',
+          description: 'Store pre-extracted structured knowledge atoms from an MCP client. Do not store raw chat transcripts; extract durable facts, decisions, constraints, architecture, state, or skills first. This is the preferred MCP ingestion path and does not require Knowl AI configuration.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -195,7 +195,7 @@ export function createMcpServer(
         },
         {
           name: 'knowl_query',
-          description: 'Use this first for specific project questions. Query the knowledge base with concise keywords plus optional category, tag, or status filters.',
+          description: 'Use this first for specific project questions. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests.',
           inputSchema: {
             type: 'object',
             properties: {

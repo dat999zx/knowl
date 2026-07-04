@@ -56,12 +56,16 @@ describe('CLI Integration', () => {
     expect(content).toContain('Use 2-6 concise search keywords');
     expect(content).toContain('Only use `knowl_state` for broad project-memory summaries');
     expect(content).toContain('Do not inspect repository files before this targeted Knowl query');
+    expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');
+    expect(content).toContain('Do not inspect repository files just to re-verify known facts');
+    expect(content).toContain('Only inspect repository files when Knowl misses, conflicts, looks stale or low-confidence, or the user asks for source verification');
     expect(content).toContain('If the Knowl MCP tools are unavailable');
     expect(content).toContain('`Auth: Unsupported` on a local stdio MCP server is normal');
     expect(content).toContain('knowl_state');
     expect(content).toContain('knowl_query');
     expect(content).toContain('knowl_store');
     expect(content).toContain('knowl_decide');
+    expect(content).toContain('Store durable knowledge as concise structured atoms, not raw chat transcripts');
     expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
     expect(content).toContain('Do not store temporary debugging noise');
   });
@@ -103,6 +107,7 @@ describe('CLI Integration', () => {
 
     const content = await fs.readFile(agentsPath, 'utf-8');
     expect(content).toContain('For specific project questions, call `knowl_query` first');
+    expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');
     expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
     expect((content.match(/## Knowl Project Memory/g) || []).length).toBe(1);
   });
