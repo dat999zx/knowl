@@ -51,7 +51,10 @@ describe('CLI Integration', () => {
     const content = await fs.readFile(agentsPath, 'utf-8');
 
     expect(content).toContain('## Knowl Project Memory');
-    expect(content).toContain('Before answering project-specific questions, query Knowl first');
+    expect(content).toContain('For specific project questions, call `knowl_query` first');
+    expect(content).toContain('Use 2-6 concise search keywords');
+    expect(content).toContain('Only use `knowl_state` for broad project-memory summaries');
+    expect(content).toContain('Do not inspect repository files before this targeted Knowl query');
     expect(content).toContain('knowl_state');
     expect(content).toContain('knowl_query');
     expect(content).toContain('knowl_store');
@@ -96,6 +99,7 @@ describe('CLI Integration', () => {
     });
 
     const content = await fs.readFile(agentsPath, 'utf-8');
+    expect(content).toContain('For specific project questions, call `knowl_query` first');
     expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
     expect((content.match(/## Knowl Project Memory/g) || []).length).toBe(1);
   });

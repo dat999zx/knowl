@@ -144,6 +144,12 @@ describe('MCP Server Layer', () => {
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_store')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest_atoms')).toBe(true);
+
+    const queryTool = res.result.tools.find((t: any) => t.name === 'knowl_query');
+    const stateTool = res.result.tools.find((t: any) => t.name === 'knowl_state');
+    expect(queryTool.description).toContain('Use this first for specific project questions');
+    expect(queryTool.inputSchema.properties.query.description).toContain('2-6 concise keywords');
+    expect(stateTool.description).toContain('broad project-memory summaries');
   });
 
   it('should list resources', async () => {

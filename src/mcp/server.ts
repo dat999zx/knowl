@@ -72,7 +72,7 @@ export function createMcpServer(
         },
         {
           name: 'knowl_state',
-          description: 'Get the full current active state of the project, including goals, constraints, architecture, decisions, and active tasks.',
+          description: 'Get the full current active state of the project. Use for broad project-memory summaries, status checks, or full-state requests; prefer knowl_query for specific factual questions.',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -195,13 +195,13 @@ export function createMcpServer(
         },
         {
           name: 'knowl_query',
-          description: 'Query the knowledge base using search term, category, tag, or status filters.',
+          description: 'Use this first for specific project questions. Query the knowledge base with concise keywords plus optional category, tag, or status filters.',
           inputSchema: {
             type: 'object',
             properties: {
               query: {
                 type: 'string',
-                description: 'Text search term to match titles, content, or reasoning.',
+                description: 'Use 2-6 concise keywords from the user question, not the whole sentence. Example: "database sqlite persistence".',
               },
               category: {
                 type: 'string',
