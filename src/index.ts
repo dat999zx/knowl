@@ -3,7 +3,7 @@ import { Command } from 'commander';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
-import { findProjectRoot, loadConfig, saveConfig, hasAiConfigured } from './core/config.js';
+import { findProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
 import { installKnowlAgentsGuidance } from './core/agents-guidance.js';
 import { initDb, closeDb } from './store/database.js';
 import * as repo from './store/repository.js';
@@ -62,8 +62,12 @@ program
       }
 
       if (isExisting) {
+        const configStatus = await upgradeConfigDefaults(cwd);
         const agentsStatus = await installKnowlAgentsGuidance(cwd);
         console.log(`⚠️  KNOWL repository already initialized in this directory: ${knowlDir}`);
+        if (configStatus === 'updated') {
+          console.log(`Updated .knowl/config.json with missing default settings.`);
+        }
         if (agentsStatus === 'created') {
           console.log(`🧭 Created AGENTS.md with Knowl MCP guidance.`);
         } else if (agentsStatus === 'updated') {

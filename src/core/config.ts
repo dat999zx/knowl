@@ -31,6 +31,31 @@ export const DEFAULT_CONFIG: ProjectConfig = {
   },
 };
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function mergeConfigDefaults<T extends Record<string, any>>(
+  config: T,
+  defaults: Record<string, any> = DEFAULT_CONFIG
+): T {
+  const merged: Record<string, any> = { ...config };
+
+  for (const [key, defaultValue] of Object.entries(defaults)) {
+    const currentValue = merged[key];
+    if (currentValue === undefined) {
+      merged[key] = defaultValue;
+      continue;
+    }
+
+    if (isPlainObject(currentValue) && isPlainObject(defaultValue)) {
+      merged[key] = mergeConfigDefaults(currentValue, defaultValue);
+    }
+  }
+
+  return merged as T;
+}
+
 /**
  * Traverses up from the starting path to find the directory containing `.knowl` directory.
  */
@@ -101,6 +126,18 @@ export async function saveConfig(projectRoot: string, config: ProjectConfig): Pr
   } catch (error: any) {
     throw new ConfigError(`Failed to save config to "${configPath}": ${error.message}`);
   }
+}
+
+export async function upgradeConfigDefaults(projectRoot: string): Promise<'updated' | 'unchanged'> {
+  const config = await loadConfig(projectRoot);
+  const upgraded = mergeConfigDefaults(config as Record<string, any>) as ProjectConfig;
+
+  if (JSON.stringify(config) === JSON.stringify(upgraded)) {
+    return 'unchanged';
+  }
+
+  await saveConfig(projectRoot, upgraded);
+  return 'updated';
 }
 
 /**

@@ -90,6 +90,35 @@ describe('CLI Integration', () => {
     expect(output).toContain('AGENTS.md Knowl MCP guidance is up to date.');
   });
 
+  it('should merge missing default config keys when init is rerun in an existing repository', async () => {
+    const oldProjectDir = path.resolve('./.knowl-cli-old-config-test');
+    await fs.rm(oldProjectDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(oldProjectDir, '.knowl'), { recursive: true });
+    await fs.writeFile(
+      path.join(oldProjectDir, '.knowl', 'config.json'),
+      JSON.stringify({
+        version: 1,
+        project: { name: 'Old Config Project' },
+        ai: { provider: 'openai', model: 'gpt-4o-mini', apiKey: '${OPENAI_API_KEY}' },
+        security: { rejectSecrets: true, secretPatterns: ['password'] },
+      }, null, 2),
+      'utf-8'
+    );
+
+    execSync(`node "${CLI_PATH}" init "Old Config Project"`, {
+      cwd: oldProjectDir,
+      encoding: 'utf-8',
+    });
+
+    const config = JSON.parse(await fs.readFile(path.join(oldProjectDir, '.knowl', 'config.json'), 'utf-8'));
+    expect(config.ai.provider).toBe('openai');
+    expect(config.security.secretPatterns).toEqual(['password']);
+    expect(config.search.vector.enabled).toBe(false);
+    expect(config.search.vector.provider).toBe('local');
+
+    await fs.rm(oldProjectDir, { recursive: true, force: true });
+  });
+
   it('should append Knowl MCP guidance to an existing AGENTS.md without overwriting it', async () => {
     const agentsPath = path.join(AGENTS_TEST_DIR, 'AGENTS.md');
     await fs.writeFile(agentsPath, '# Existing Agent Rules\n\nKeep responses concise.\n', 'utf-8');
