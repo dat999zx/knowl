@@ -45,6 +45,9 @@ describe('CLI Integration', () => {
     // Verify files exist
     await expect(fs.access(path.join(TEST_DIR, '.knowl', 'config.json'))).resolves.toBeUndefined();
     await expect(fs.access(path.join(TEST_DIR, '.knowl', 'knowl.db'))).resolves.toBeUndefined();
+    const config = JSON.parse(await fs.readFile(path.join(TEST_DIR, '.knowl', 'config.json'), 'utf-8'));
+    expect(config.search.vector.enabled).toBe(false);
+    expect(config.search.vector.provider).toBe('local');
   });
 
   it('should create AGENTS.md with Knowl MCP guidance during init', async () => {
@@ -184,7 +187,16 @@ describe('CLI Integration', () => {
     expect(output).toContain('[OK] AGENTS.md Knowl guidance current');
     expect(output).toContain('[OK] Agent query returned');
     expect(output).toContain('[OK] MCP tools expose knowl_query and hide knowl_ask');
+    expect(output).toContain('[OK] Vector search disabled; BM25 retrieval remains active');
     expect(output).toContain('Result: READY');
+  });
+
+  it('should require vector search to be enabled before vector reindex', () => {
+    expect(() => execSync(`node "${CLI_PATH}" reindex --vectors`, {
+      cwd: TEST_DIR,
+      encoding: 'utf-8',
+      stdio: 'pipe',
+    })).toThrow(/Vector search is not enabled/);
   });
 
   it('should show repository status', () => {

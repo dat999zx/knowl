@@ -15,6 +15,8 @@ import { startMcpServer } from './mcp/server.js';
 import { formatHierarchyToMarkdown } from './core/format.js';
 import { formatStatusReport } from './cli/status-report.js';
 import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
+import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
+import { reindexKnowledgeEmbeddings } from './store/vector-index.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -83,6 +85,14 @@ program
         security: {
           rejectSecrets: true,
           secretPatterns: ['api_key', 'password', 'secret', 'token', 'private_key'],
+        },
+        search: {
+          vector: {
+            enabled: false,
+            provider: 'local',
+            model: 'Xenova/all-MiniLM-L6-v2',
+            dtype: 'q8',
+          },
         },
       };
 
@@ -444,7 +454,38 @@ program
     }
   });
 
-// --- 8. SERVE COMMAND ---
+// --- 8. REINDEX COMMAND ---
+program
+  .command('reindex')
+  .description('Rebuild derived search indexes')
+  .option('--vectors', 'Rebuild optional vector embeddings')
+  .action(async (options) => {
+    try {
+      if (!options.vectors) {
+        throw new Error('Nothing to reindex. Pass --vectors to rebuild vector embeddings.');
+      }
+
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      if (!isVectorSearchEnabled(config)) {
+        throw new Error('Vector search is not enabled. Set search.vector.enabled true before running vector reindex.');
+      }
+
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const embedder = await createLocalEmbeddingProvider(config, root);
+      const result = await reindexKnowledgeEmbeddings(project.id, embedder);
+      console.log(`Indexed ${result.indexed} vector embedding(s).`);
+      await closeDb();
+    } catch (error: any) {
+      console.error(`Error reindexing: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// --- 9. DOCTOR COMMAND ---
 program
   .command('doctor')
   .description('Check whether the current Knowl project is ready for agent memory usage')
@@ -456,7 +497,7 @@ program
     }
   });
 
-// --- 9. SERVE COMMAND ---
+// --- 10. SERVE COMMAND ---
 program
   .command('serve')
   .description('Start the Model Context Protocol (MCP) server for KNOWL')

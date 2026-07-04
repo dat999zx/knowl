@@ -16,6 +16,7 @@ import { ProjectConfig, KnowledgeCategory, KnowledgeStatus } from '../core/types
 import { findProjectRoot, hasAiConfigured, loadConfig } from '../core/config.js';
 import { initDb } from '../store/database.js';
 import { initAI } from '../ai/provider.js';
+import { createLocalEmbeddingProvider, isVectorSearchEnabled, getVectorSearchConfig } from '../ai/embeddings.js';
 import { formatHierarchyToMarkdown } from '../core/format.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
@@ -393,12 +394,26 @@ export function createMcpServer(
       
       else if (name === 'knowl_query') {
         const { query, category, status, tags, limit } = args as any;
+        let vector;
+        if (config && projectRoot && query && isVectorSearchEnabled(config)) {
+          const embedder = await createLocalEmbeddingProvider(config, projectRoot);
+          const [embedding] = await embedder.embed([query]);
+          const vectorConfig = getVectorSearchConfig(config);
+          vector = {
+            enabled: true,
+            provider: embedder.provider,
+            model: vectorConfig.model,
+            embedding,
+          };
+        }
+
         const items = await queryKnowledgeForAgent(projectId!, {
           query,
           category: category as KnowledgeCategory,
           status: status as KnowledgeStatus,
           tags,
           limit,
+          vector,
         });
 
         return {

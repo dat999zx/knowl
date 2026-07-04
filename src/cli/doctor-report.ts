@@ -6,6 +6,7 @@ import { closeDb, initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { queryKnowledgeForAgent } from '../store/agent-query.js';
 import { KNOWL_MCP_TOOL_NAMES } from '../mcp/server.js';
+import { getVectorSearchConfig, isVectorSearchEnabled } from '../ai/embeddings.js';
 
 type DoctorStatus = 'OK' | 'WARN' | 'FAIL';
 
@@ -29,7 +30,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     await fs.access(knowlDir);
     checks.push({ status: 'OK', message: `Repository initialized at ${knowlDir}` });
 
-    await loadConfig(root);
+    const config = await loadConfig(root);
     checks.push({ status: 'OK', message: 'Config loaded' });
 
     const guidanceCurrent = await isKnowlAgentsGuidanceCurrent(root);
@@ -69,6 +70,19 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         ? 'MCP tools expose knowl_query and hide knowl_ask'
         : 'MCP tool surface should expose knowl_query and hide knowl_ask',
     });
+
+    if (isVectorSearchEnabled(config)) {
+      const vector = getVectorSearchConfig(config);
+      checks.push({
+        status: 'OK',
+        message: `Vector search enabled with ${vector.provider}/${vector.model}`,
+      });
+    } else {
+      checks.push({
+        status: 'OK',
+        message: 'Vector search disabled; BM25 retrieval remains active',
+      });
+    }
   } catch (error: any) {
     checks.push({ status: 'FAIL', message: error.message });
   } finally {
