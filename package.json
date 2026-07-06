@@ -6,7 +6,8 @@
   "type": "module",
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "bin": {
     "knowl": "./dist/index.js"
@@ -31,7 +32,7 @@
     "sqlite"
   ],
   "author": "",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "dependencies": {
     "@ai-sdk/anthropic": "^1.1.0",
     "@ai-sdk/openai": "^1.1.0",

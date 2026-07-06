@@ -1,0 +1,33 @@
+Knowl Source-Available License
+
+Copyright (c) 2026 Knowl contributors.
+All rights reserved.
+
+Permission is granted to use this software for personal, internal, or
+evaluation purposes, subject to the restrictions below.
+
+You may make only the copies that are technically necessary to install,
+backup, and run the software for the permitted uses above.
+
+You may not:
+
+1. copy, publish, distribute, sublicense, lease, rent, or otherwise make the
+   software available to any third party;
+2. modify, adapt, translate, reverse engineer, decompile, disassemble, or
+   create derivative works based on the software;
+3. sell, monetize, commercially exploit, or use the software as part of a paid
+   product, hosted service, consulting deliverable, or revenue-generating
+   offering;
+4. remove or alter copyright, license, or proprietary notices.
+
+This license applies only to the Knowl software and documentation in this
+repository. Third-party dependencies remain governed by their own licenses.
+
+Any use outside this license requires prior written permission from the
+copyright holder.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE.

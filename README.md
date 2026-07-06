@@ -1,96 +1,115 @@
-# Knowl — A Knowledge Operating System for AI Agents
+# Knowl
 
-Knowl is a local-first, model-agnostic knowledge operating system built specifically for AI developers and agents. Instead of storing messy, raw conversation transcripts, Knowl extracts, verifies, and maintains structured, versioned project understanding (decisions, architecture, goals, constraints, facts, states, and skills) in a local SQLite database.
+A local-first knowledge operating system for AI agents.
 
-It exposes this knowledge through a clean Command Line Interface (CLI) and a Model Context Protocol (MCP) server bridge.
+Knowl gives an AI coding agent durable project memory without sending that memory to a hosted service by default. It stores structured knowledge atoms in a per-project SQLite database under `.knowl/`, exposes that memory through a CLI, and provides an MCP server so tools such as Codex, Cursor, or Claude Desktop can retrieve and update project context while they work.
 
----
+Knowl is designed for durable engineering context: decisions, architecture, goals, constraints, facts, current state, and reusable skills. It is not meant to archive raw chat logs.
 
-## 🚀 Key Features
+## What It Does
 
-*   **Model-Agnostic Ingestion:** Extract structured knowledge atoms from unstructured transcripts, chats, or documentation.
-*   **Active Conflict Detection & Verification:** Compares incoming knowledge against existing entries using title-based Jaccard similarity and LLMs, auto-superseding outdated facts or warning about contradictions.
-*   **Hierarchical Project Memory:** Organizes memory layers (Goals, Constraints, Active State, Architecture, Decisions, General Facts, and Skills) to supply context to AI models.
-*   **Model Context Protocol (MCP) Integration:** Direct bridge for AI systems like Cursor, Claude Desktop, or custom agent systems.
-*   **100% Local Storage:** Programmatic SQLite database powered by Drizzle ORM initialized on a per-project basis under `.knowl/`.
+- Stores project memory locally in `.knowl/knowl.db`.
+- Organizes memory into `fact`, `decision`, `goal`, `constraint`, `architecture`, `state`, and `skill` categories.
+- Provides deterministic MCP tools for storing and querying structured knowledge without a Knowl-side AI provider.
+- Generates or refreshes `AGENTS.md` guidance so agents know to query Knowl before inspecting files.
+- Adds `.knowl/` to `.gitignore` during project initialization.
+- Supports optional AI-backed CLI commands for raw text ingestion and natural-language answers.
+- Supports BM25 retrieval by default, with optional local vector search.
+- Tracks memory changes as knowledge commits so project memory has history.
 
----
+## Install
 
-## 📦 Installation
-
-Install from npm:
+Install the published CLI:
 
 ```bash
 npm install -g @dat999zx/knowl
-```
-
-Verify that it is installed:
-
-```bash
 knowl --version
 ```
 
-To build and install the binary globally from source:
+Build and link from source:
 
 ```bash
-# Clone the repository
 git clone <repo-url>
 cd knowl
-
-# Install dependencies and build project
 npm install
 npm run build
-
-# Link the executable globally
 npm link
 ```
 
----
+## Quick Start
 
-## 📖 Quick Start
+Initialize a project from the project root:
 
-### 1. Initialize a Project
-Create a new directory (or navigate to an existing codebase) and initialize Knowl:
 ```bash
-knowl init "My Awesome Project"
-```
-This creates a local database and a configuration file under `.knowl/`. It also creates or updates `AGENTS.md` with guidance telling Codex-style agents to query Knowl before answering project-specific questions and to save durable project knowledge back into Knowl.
-
-### 2. Directly Record Decisions & Facts
-```bash
-knowl decide "Use SQLite" "We decided to use SQLite for lightweight, local persistence." -r "Serverless and zero-setup" -a MongoDB,PostgreSQL -t database,storage
+knowl init "My Project"
 ```
 
-### 3. Print Brain State
-See the complete hierarchical active project state:
+This creates `.knowl/config.json`, bootstraps `.knowl/knowl.db`, installs Knowl guidance into `AGENTS.md`, and ensures `.knowl/` is ignored by git.
+
+Record a decision:
+
 ```bash
+knowl decide "Use SQLite" "Use SQLite for local project memory." \
+  --reasoning "It keeps Knowl local-first and simple to install." \
+  --alternatives PostgreSQL MongoDB \
+  --tags database local-first
+```
+
+Inspect the project memory:
+
+```bash
+knowl status
 knowl state
+knowl doctor
 ```
 
-### 4. Optional: Configure AI for Standalone Smart Commands
-Knowl's MCP server and direct storage commands do not require API keys. Configure an AI provider only if you want standalone raw-text extraction or natural-language answers from the CLI:
+Register the MCP server for Codex:
+
 ```bash
-knowl config ai.provider openai
-knowl config ai.model gpt-4o-mini
-knowl config ai.apiKey ${OPENAI_API_KEY}
-```
-Environment variables are resolved at runtime.
-
-Then use AI-backed commands:
-```bash
-knowl ask "Why did we choose SQLite as our database?"
-knowl ingest "We switched to SQLite because the project must stay local-first."
+codex mcp add knowl -- knowl.cmd serve
 ```
 
----
+On Unix-like shells, use `knowl serve` instead of `knowl.cmd serve`.
 
-## 🔌 Connecting to Claude Desktop / Cursor (MCP Setup)
+## MCP Workflow
 
-To use Knowl as an MCP server with **Claude Desktop** or **Cursor**, add the following server configuration to your global settings:
+MCP is the preferred way for agents to use Knowl. The MCP tools do not require Knowl-side AI configuration for normal structured memory workflows. The client model should extract durable knowledge and call Knowl's structured tools.
 
-MCP mode is API-key free by default. The client model (for example Codex, Claude, or Cursor) should reason over project context and call Knowl's structured tools such as `knowl_store`, `knowl_decide`, `knowl_ingest_atoms`, `knowl_query`, and `knowl_state`.
+Recommended agent flow:
 
-**Claude Desktop Configuration (`%APPDATA%\Claude\claude_desktop_config.json`):**
+1. Call `knowl_recent` at the start of a project-specific session.
+2. Use `knowl_query` for specific questions, with 2-6 concise keywords.
+3. Use `knowl_state` only for broad full-state summaries.
+4. Store durable new facts, decisions, constraints, architecture notes, state, and skills with `knowl_store`, `knowl_decide`, or `knowl_ingest_atoms`.
+5. Use `knowl_update` to correct stale or contradicted memory.
+
+Available MCP tools:
+
+| Tool | Purpose |
+| --- | --- |
+| `knowl_recent` | Return recent active knowledge and recent knowledge commits for session startup. |
+| `knowl_query` | Search active or historical project memory. Defaults to active items and returns up to three hits. |
+| `knowl_state` | Return the full active project memory as markdown. |
+| `knowl_store` | Store one structured knowledge atom without AI configuration. |
+| `knowl_ingest_atoms` | Store a batch of structured knowledge atoms without AI configuration. |
+| `knowl_decide` | Record a decision with required reasoning. |
+| `knowl_update` | Update item content, title, reasoning, or status. |
+| `knowl_ingest` | Run raw text through Knowl's AI-backed extraction pipeline. Requires explicit AI config. |
+| `knowl_gc_preview` | Preview duplicate, stale, or cold memory cleanup recommendations. |
+| `knowl_gc_apply` | Apply garbage collection transactionally and record a knowledge commit. |
+
+Readable MCP resources:
+
+| Resource | Purpose |
+| --- | --- |
+| `knowl://recent` | Compact recent session context. |
+| `knowl://brain` | Full active project brain state. |
+| `knowl://category/<name>` | Active items for a category such as `decision`, `architecture`, or `state`. This URI form is readable even though only `knowl://recent` and `knowl://brain` are listed during resource discovery. |
+
+## Claude Desktop and Cursor
+
+Claude Desktop configuration:
+
 ```json
 {
   "mcpServers": {
@@ -102,23 +121,147 @@ MCP mode is API-key free by default. The client model (for example Codex, Claude
 }
 ```
 
-**Cursor Configuration:**
-Add a new MCP server under Settings -> Features -> MCP:
-*   Name: `knowl`
-*   Type: `command`
-*   Command: `knowl serve`
+Cursor configuration:
 
----
+- Name: `knowl`
+- Type: `command`
+- Command: `knowl serve`
 
-## 🛠️ CLI Commands Reference
+If an MCP client shows `Auth: Unsupported` for this local stdio server, that is expected and does not mean Knowl is unavailable.
+
+## CLI Commands
 
 | Command | Description |
-|---|---|
-| `knowl init [name]` | Initialize a Knowl project in the current directory |
-| `knowl status` | Print current project info, metrics, and recent commit history |
-| `knowl state` | Print the full hierarchical active knowledge state of the project |
-| `knowl decide [title] [content]` | Record a project decision (runs interactively if parameters are missing) |
-| `knowl ask <question>` | Ask a natural language question about the project state (requires explicit AI config) |
-| `knowl ingest <text>` | Ingest raw text to filter, extract, and merge project state (requires explicit AI config) |
-| `knowl config [key] [value]` | Show, set, or get project configuration (e.g. `knowl config ai.provider openai`) |
-| `knowl serve` | Run standard stdio Model Context Protocol (MCP) server |
+| --- | --- |
+| `knowl init [name]` | Initialize the current directory as a Knowl project. If already initialized, upgrade config, schema, AGENTS guidance, and `.gitignore`. |
+| `knowl upgrade` | Upgrade an existing Knowl repository with current defaults and agent files. |
+| `knowl status` | Show project metadata, item counts, category counts, AI config status, and recent knowledge commits. |
+| `knowl doctor` | Check whether the project is ready for agent memory usage. |
+| `knowl state` | Print the full active hierarchical project memory. |
+| `knowl decide [title] [content]` | Record a decision. Runs interactively when title or content is omitted. |
+| `knowl ask <question>` | Ask a natural-language question over project memory. Requires AI config. |
+| `knowl ingest <text>` | Extract and merge knowledge from raw text. Requires AI config. |
+| `knowl config [key] [value]` | Print config, read a dot-notation key, or set a config value. |
+| `knowl reindex --vectors` | Rebuild optional vector embeddings. Requires vector search to be enabled. |
+| `knowl gc` | Preview memory garbage collection recommendations. |
+| `knowl gc --apply` | Apply memory garbage collection recommendations. |
+| `knowl serve` | Start the stdio MCP server. |
+
+Useful command examples:
+
+```bash
+knowl config
+knowl config ai.provider openai
+knowl config ai.model gpt-4o-mini
+knowl config ai.apiKey '${OPENAI_API_KEY}'
+knowl config search.vector.enabled true
+knowl reindex --vectors
+knowl gc
+knowl gc --apply
+```
+
+## Optional AI Configuration
+
+Knowl does not require AI configuration for MCP structured tools such as `knowl_store`, `knowl_ingest_atoms`, `knowl_decide`, `knowl_query`, `knowl_recent`, or `knowl_state`.
+
+Configure AI only when you want:
+
+- `knowl ask`
+- `knowl ingest`
+- MCP `knowl_ingest`
+- AI-assisted decision conflict handling in the CLI
+
+Supported providers are `openai`, `anthropic`, `ollama`, and `custom`.
+
+OpenAI example:
+
+```bash
+knowl config ai.provider openai
+knowl config ai.model gpt-4o-mini
+knowl config ai.apiKey '${OPENAI_API_KEY}'
+```
+
+Anthropic example:
+
+```bash
+knowl config ai.provider anthropic
+knowl config ai.model claude-3-5-sonnet-latest
+knowl config ai.apiKey '${ANTHROPIC_API_KEY}'
+```
+
+Ollama example:
+
+```bash
+knowl config ai.provider ollama
+knowl config ai.model llama3.1
+```
+
+For `custom`, set an OpenAI-compatible `ai.baseUrl`:
+
+```bash
+knowl config ai.provider custom
+knowl config ai.model my-model
+knowl config ai.baseUrl http://localhost:8080/v1
+knowl config ai.apiKey my-key
+```
+
+Environment variable placeholders such as `${OPENAI_API_KEY}` are resolved at runtime.
+
+## Local Data
+
+Knowl stores project data under `.knowl/`:
+
+- `.knowl/config.json` contains project, security, AI, and search configuration.
+- `.knowl/knowl.db` contains project memory, knowledge commits, search indexes, and optional embeddings.
+
+By default, `knowl init` and `knowl upgrade` ensure `.knowl/` is ignored by git.
+
+## Development
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run tests:
+
+```bash
+npm test
+```
+
+Build the CLI:
+
+```bash
+npm run build
+```
+
+Validate the npm package contents:
+
+```bash
+npm pack --dry-run
+```
+
+On Windows, if the default npm cache has permission issues, use a workspace-local cache:
+
+```bash
+npm pack --dry-run --cache .tmp\npm-cache
+```
+
+## Package
+
+The npm package is published as `@dat999zx/knowl`. The installed binary is still named `knowl`.
+
+The package payload is limited to:
+
+- `dist`
+- `README.md`
+- `LICENSE`
+
+`prepublishOnly` runs `npm run build` before publish.
+
+## License
+
+Knowl is source-available under a custom restrictive license. You may use the software, but you may not copy, redistribute, modify, sublicense, sell, monetize, or use it as part of a paid product, hosted service, consulting deliverable, or revenue-generating offering, except for copies technically necessary to install, back up, and run it.
+
+See [LICENSE](LICENSE) for the full terms.
