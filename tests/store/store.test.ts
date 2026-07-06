@@ -14,6 +14,10 @@ import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
 
 const TEST_ROOT = path.resolve('./.knowl-test');
 
+async function setKnowledgeItemUpdatedAt(itemId: string, updatedAt: string): Promise<void> {
+  await getDb().run(sql`UPDATE knowledge_items SET updated_at = ${updatedAt} WHERE id = ${itemId}`);
+}
+
 describe('Storage Layer', () => {
   beforeAll(async () => {
     // Ensure fresh test directory on startup
@@ -184,9 +188,7 @@ describe('Storage Layer', () => {
       content: 'recency-ranking-alpha-beta equivalent retrieval text',
       tags: ['recency-ranking-alpha-beta'],
     });
-    await repo.updateKnowledgeItem(older.id, {
-      updatedAt: '2026-01-01T00:00:00.000Z',
-    } as any);
+    await setKnowledgeItemUpdatedAt(older.id, '2026-01-01T00:00:00.000Z');
 
     const newer = await repo.createKnowledgeItem(projectId, {
       category: 'state',
@@ -194,9 +196,7 @@ describe('Storage Layer', () => {
       content: 'recency-ranking-alpha-beta equivalent retrieval text',
       tags: ['recency-ranking-alpha-beta'],
     });
-    await repo.updateKnowledgeItem(newer.id, {
-      updatedAt: '2026-07-01T00:00:00.000Z',
-    } as any);
+    await setKnowledgeItemUpdatedAt(newer.id, '2026-07-01T00:00:00.000Z');
 
     const results = await queryKnowledgeForAgent(projectId, {
       query: 'recency-ranking-alpha-beta',
@@ -217,9 +217,7 @@ describe('Storage Layer', () => {
       content: 'strong-relevance-gamma-delta strong-relevance-gamma-delta strong-relevance-gamma-delta exact agent answer.',
       tags: ['strong-relevance-gamma-delta'],
     });
-    await repo.updateKnowledgeItem(strongOlder.id, {
-      updatedAt: '2026-01-01T00:00:00.000Z',
-    } as any);
+    await setKnowledgeItemUpdatedAt(strongOlder.id, '2026-01-01T00:00:00.000Z');
 
     const weakNewer = await repo.createKnowledgeItem(projectId, {
       category: 'fact',
@@ -227,9 +225,7 @@ describe('Storage Layer', () => {
       content: 'strong-relevance-gamma-delta appears once in a broader unrelated note.',
       tags: ['weak-newer-gamma-note'],
     });
-    await repo.updateKnowledgeItem(weakNewer.id, {
-      updatedAt: '2026-07-01T00:00:00.000Z',
-    } as any);
+    await setKnowledgeItemUpdatedAt(weakNewer.id, '2026-07-01T00:00:00.000Z');
 
     const results = await queryKnowledgeForAgent(projectId, {
       query: 'strong-relevance-gamma-delta',
@@ -251,9 +247,7 @@ describe('Storage Layer', () => {
       content: 'Older active work should appear after newer work.',
       tags: ['session'],
     });
-    await repo.updateKnowledgeItem(older.id, {
-      updatedAt: '2026-01-01T00:00:00.000Z',
-    } as any);
+    await setKnowledgeItemUpdatedAt(older.id, '2099-01-01T00:00:00.000Z');
 
     const newer = await repo.createKnowledgeItem(projectId, {
       category: 'state',
@@ -261,9 +255,7 @@ describe('Storage Layer', () => {
       content: 'Newest active work should appear first.',
       tags: ['session'],
     });
-    await repo.updateKnowledgeItem(newer.id, {
-      updatedAt: '2026-07-01T00:00:00.000Z',
-    } as any);
+    await setKnowledgeItemUpdatedAt(newer.id, '2099-01-02T00:00:00.000Z');
 
     const archived = await repo.createKnowledgeItem(projectId, {
       category: 'state',
@@ -278,8 +270,8 @@ describe('Storage Layer', () => {
     const olderCommit = await repo.createKnowledgeCommit(projectId, 'Older session commit', []);
     const newerCommit = await repo.createKnowledgeCommit(projectId, 'Newest session commit', []);
     const db = getDb();
-    await db.run(sql`UPDATE knowledge_commits SET created_at = '2026-01-01T00:00:00.000Z' WHERE id = ${olderCommit.id}`);
-    await db.run(sql`UPDATE knowledge_commits SET created_at = '2026-07-01T00:00:00.000Z' WHERE id = ${newerCommit.id}`);
+    await db.run(sql`UPDATE knowledge_commits SET created_at = '2099-01-01T00:00:00.000Z' WHERE id = ${olderCommit.id}`);
+    await db.run(sql`UPDATE knowledge_commits SET created_at = '2099-01-02T00:00:00.000Z' WHERE id = ${newerCommit.id}`);
 
     const context = await getRecentContext(projectId, {
       itemLimit: 2,
@@ -457,9 +449,7 @@ describe('Storage Layer', () => {
       confidence: 0.6,
       tags: ['database'],
     });
-    await repo.updateKnowledgeItem(olderDuplicate.id, {
-      updatedAt: '2026-01-01T00:00:00.000Z',
-    } as any);
+    await setKnowledgeItemUpdatedAt(olderDuplicate.id, '2026-01-01T00:00:00.000Z');
 
     await repo.createKnowledgeItem(projectId, {
       category: 'fact',
@@ -474,9 +464,7 @@ describe('Storage Layer', () => {
       title: 'Old migration task',
       content: 'Working on schema migration sequencing.',
     });
-    await repo.updateKnowledgeItem(staleState.id, {
-      updatedAt: '2026-01-15T00:00:00.000Z',
-    } as any);
+    await setKnowledgeItemUpdatedAt(staleState.id, '2026-01-15T00:00:00.000Z');
 
     const archived = await repo.createKnowledgeItem(projectId, {
       category: 'state',
@@ -486,8 +474,8 @@ describe('Storage Layer', () => {
     });
     await repo.updateKnowledgeItem(archived.id, {
       status: 'archived',
-      updatedAt: '2026-01-10T00:00:00.000Z',
     } as any);
+    await setKnowledgeItemUpdatedAt(archived.id, '2026-01-10T00:00:00.000Z');
 
     const preview = await previewKnowledgeGc(projectId, {
       now: '2026-07-05T00:00:00.000Z',
@@ -513,9 +501,7 @@ describe('Storage Layer', () => {
       content: 'Session tokens are persisted for authentication.',
       confidence: 0.4,
     });
-    await repo.updateKnowledgeItem(olderDuplicate.id, {
-      updatedAt: '2026-01-01T00:00:00.000Z',
-    } as any);
+    await setKnowledgeItemUpdatedAt(olderDuplicate.id, '2026-01-01T00:00:00.000Z');
 
     const newerDuplicate = await repo.createKnowledgeItem(projectId, {
       category: 'fact',
@@ -529,9 +515,7 @@ describe('Storage Layer', () => {
       title: 'Old rollout state',
       content: 'Rollout paused pending validation.',
     });
-    await repo.updateKnowledgeItem(staleState.id, {
-      updatedAt: '2026-01-02T00:00:00.000Z',
-    } as any);
+    await setKnowledgeItemUpdatedAt(staleState.id, '2026-01-02T00:00:00.000Z');
 
     const archived = await repo.createKnowledgeItem(projectId, {
       category: 'state',
@@ -541,8 +525,8 @@ describe('Storage Layer', () => {
     });
     await repo.updateKnowledgeItem(archived.id, {
       status: 'archived',
-      updatedAt: '2026-01-03T00:00:00.000Z',
     } as any);
+    await setKnowledgeItemUpdatedAt(archived.id, '2026-01-03T00:00:00.000Z');
 
     const result = await applyKnowledgeGc(projectId, {
       now: '2026-07-05T00:00:00.000Z',

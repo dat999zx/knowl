@@ -1,6 +1,6 @@
 {
   "name": "@dat999zx/knowl",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Knowledge Operating System for AI Agents",
   "main": "dist/index.js",
   "type": "module",
@@ -10,7 +10,7 @@
     "LICENSE"
   ],
   "bin": {
-    "knowl": "./dist/index.js"
+    "knowl": "dist/index.js"
   },
   "publishConfig": {
     "access": "public"
