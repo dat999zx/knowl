@@ -15,6 +15,8 @@ export interface StoreKnowledgeInput {
   alternatives?: string[] | null;
   tags?: string[] | null;
   source?: string | null;
+  sourceCommit?: string | null;
+  affectedPaths?: string[] | null;
   confidence?: number;
   steps?: string[];
 }
@@ -112,6 +114,8 @@ export async function storeKnowledgeItemDeduped(
       alternatives: input.alternatives,
       tags: input.tags,
       source: input.source,
+      sourceCommit: input.sourceCommit,
+      affectedPaths: input.affectedPaths,
       confidence: input.confidence,
     },
     input.steps
@@ -158,6 +162,8 @@ export async function storeKnowledgeAtomsDeduped(
         alternatives: atom.alternatives,
         tags: atom.tags,
         source: atom.source,
+        sourceCommit: atom.sourceCommit,
+        affectedPaths: atom.affectedPaths,
         confidence: atom.confidence,
       },
       atom.steps

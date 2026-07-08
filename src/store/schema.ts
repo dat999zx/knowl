@@ -10,6 +10,10 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
   alternatives: text('alternatives', { mode: 'json' }), // string[]
   tags: text('tags', { mode: 'json' }), // string[]
   source: text('source'),
+  sourceCommit: text('source_commit'),
+  affectedPaths: text('affected_paths', { mode: 'json' }), // string[]
+  contentHash: text('content_hash'),
+  freshness: text('freshness').notNull().default('fresh'), // 'fresh', 'stale', 'needs_review'
   confidence: real('confidence').notNull().default(1.0),
   supersededById: text('superseded_by_id'),
   version: integer('version').notNull().default(1),

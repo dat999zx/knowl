@@ -22,6 +22,7 @@ import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embedd
 import { reindexKnowledgeEmbeddings } from './store/vector-index.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from './store/gc.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } from './store/work-loop.js';
+import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince } from './store/drift.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -52,6 +53,20 @@ function printRelevantMemory(items: WorkLoopMemoryHit[]) {
 
   for (const item of items) {
     console.log(`- ${item.title} (${item.category}, ${item.id})`);
+  }
+}
+
+function printPrCheckResult(result: DriftCheckResult) {
+  console.log('KNOWL PR CHECK');
+  console.log(`Since: ${result.sinceCommit}`);
+  console.log(`Current: ${result.currentCommit || 'working tree'}`);
+  console.log(`Changed files: ${result.changedFiles.length}`);
+  console.log(`Review candidates: ${result.candidates.length}`);
+  console.log(`Marked: ${result.updatedCount}`);
+
+  for (const candidate of result.candidates) {
+    console.log(`- NEEDS_REVIEW ${candidate.itemId} ${candidate.title}`);
+    console.log(`  Paths: ${candidate.matchedPaths.join(', ')}`);
   }
 }
 
@@ -844,7 +859,46 @@ taskCommand
     }
   });
 
-// --- 13. DOCTOR COMMAND ---
+// --- 13. PR COMMAND ---
+const prCommand = program
+  .command('pr')
+  .description('Check git changes against stored knowledge provenance');
+
+prCommand
+  .command('check')
+  .description('Mark knowledge tied to changed files as needing review')
+  .requiredOption('--since <commit>', 'Base commit to compare against')
+  .option('--dry-run', 'Preview impacted knowledge without marking it')
+  .action(async (options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const currentCommit = getCurrentGitCommit(root);
+      const changedFiles = listChangedFilesSince(root, options.since, currentCommit);
+      const result = await checkKnowledgeDrift(project.id, {
+        sinceCommit: options.since,
+        currentCommit,
+        changedFiles,
+        apply: !options.dryRun,
+      });
+
+      printPrCheckResult(result);
+      await closeDb();
+    } catch (error: any) {
+      try {
+        await closeDb();
+      } catch {
+        // Ignore close errors while reporting the root cause.
+      }
+      console.error(`Error checking PR drift: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// --- 14. DOCTOR COMMAND ---
 program
   .command('doctor')
   .description('Check whether the current Knowl project is ready for agent memory usage')
@@ -856,7 +910,7 @@ program
     }
   });
 
-// --- 14. SERVE COMMAND ---
+// --- 15. SERVE COMMAND ---
 program
   .command('serve')
   .description('Start the Model Context Protocol (MCP) server for KNOWL')

@@ -11,9 +11,11 @@ import {
   SkillMetadata,
   CommitChange,
   KnowledgeCategory,
+  KnowledgeFreshness,
   KnowledgeStatus
 } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
+import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
 
 export const LOCAL_PROJECT_ID = 'local';
 
@@ -77,8 +79,10 @@ export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSe
     ...row,
     category: row.category as KnowledgeCategory,
     status: row.status as KnowledgeStatus,
+    freshness: (row.freshness || DEFAULT_FRESHNESS) as KnowledgeFreshness,
     alternatives: row.alternatives as string[] | null,
     tags: row.tags as string[] | null,
+    affectedPaths: row.affectedPaths as string[] | null,
   };
 }
 
@@ -100,6 +104,10 @@ export async function createKnowledgeItem(
     alternatives?: string[] | null;
     tags?: string[] | null;
     source?: string | null;
+    sourceCommit?: string | null;
+    affectedPaths?: string[] | null;
+    contentHash?: string | null;
+    freshness?: KnowledgeFreshness;
     confidence?: number;
   },
   steps?: string[],
@@ -108,6 +116,7 @@ export async function createKnowledgeItem(
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
   const id = generateId();
+  const affectedPaths = normalizeAffectedPaths(item.affectedPaths);
 
   const newItem = {
     id,
@@ -119,6 +128,16 @@ export async function createKnowledgeItem(
     alternatives: item.alternatives || null,
     tags: item.tags || null,
     source: item.source || null,
+    sourceCommit: item.sourceCommit || null,
+    affectedPaths,
+    contentHash: item.contentHash || hashKnowledgeContent({
+      title: item.title,
+      content: item.content,
+      reasoning: item.reasoning,
+      source: item.source,
+      affectedPaths,
+    }),
+    freshness: item.freshness || DEFAULT_FRESHNESS,
     confidence: item.confidence ?? 1.0,
     supersededById: null,
     version: 1,
@@ -204,9 +223,28 @@ export async function updateKnowledgeItem(
     }
 
     const nextVersion = (updates.version ?? current[0].version) + (updates.content || updates.title ? 1 : 0);
+    const affectedPaths = updates.affectedPaths !== undefined
+      ? normalizeAffectedPaths(updates.affectedPaths)
+      : current[0].affectedPaths as string[] | null;
+    const merged = {
+      title: updates.title ?? current[0].title,
+      content: updates.content ?? current[0].content,
+      reasoning: updates.reasoning ?? current[0].reasoning,
+      source: updates.source ?? current[0].source,
+      affectedPaths,
+    };
+    const shouldRefreshHash = updates.contentHash === undefined && (
+      updates.title !== undefined ||
+      updates.content !== undefined ||
+      updates.reasoning !== undefined ||
+      updates.source !== undefined ||
+      updates.affectedPaths !== undefined
+    );
 
     const dbUpdates = {
       ...updates,
+      ...(updates.affectedPaths !== undefined ? { affectedPaths } : {}),
+      ...(shouldRefreshHash ? { contentHash: hashKnowledgeContent(merged) } : {}),
       version: nextVersion,
       updatedAt: now,
     };

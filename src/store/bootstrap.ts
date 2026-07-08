@@ -1,4 +1,5 @@
 import { Client } from '@libsql/client';
+import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
 
 const BASE_STATEMENTS = [
   'PRAGMA foreign_keys = ON;',
@@ -16,6 +17,10 @@ const SCHEMA_STATEMENTS = [
     alternatives TEXT,
     tags TEXT,
     source TEXT,
+    source_commit TEXT,
+    affected_paths TEXT,
+    content_hash TEXT,
+    freshness TEXT NOT NULL DEFAULT 'fresh',
     confidence REAL NOT NULL DEFAULT 1.0,
     superseded_by_id TEXT,
     version INTEGER NOT NULL DEFAULT 1,
@@ -124,6 +129,16 @@ function normalizeCommitChanges(value: unknown): string {
   return JSON.stringify(stripProjectFields(unwrapJson(value)));
 }
 
+function parseStringArray(value: unknown): string[] | null {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(String(value));
+    return Array.isArray(parsed) ? parsed.filter(entry => typeof entry === 'string') : null;
+  } catch {
+    return null;
+  }
+}
+
 async function executeAll(client: Client, statements: string[]) {
   for (const statement of statements) {
     await client.execute(statement);
@@ -205,6 +220,54 @@ async function repairSkillForeignKeys(client: Client): Promise<void> {
   }
 
   await client.execute('PRAGMA foreign_keys = ON;');
+}
+
+async function ensureFreshnessColumns(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'knowledge_items'))) {
+    return;
+  }
+
+  const columns = await tableColumns(client, 'knowledge_items');
+  if (!columns.includes('source_commit')) {
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN source_commit TEXT;');
+  }
+  if (!columns.includes('affected_paths')) {
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN affected_paths TEXT;');
+  }
+  if (!columns.includes('content_hash')) {
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN content_hash TEXT;');
+  }
+  if (!columns.includes('freshness')) {
+    await client.execute(`ALTER TABLE knowledge_items ADD COLUMN freshness TEXT NOT NULL DEFAULT '${DEFAULT_FRESHNESS}';`);
+  }
+
+  await client.execute('CREATE INDEX IF NOT EXISTS idx_ki_freshness ON knowledge_items(freshness);');
+
+  await client.execute(`UPDATE knowledge_items SET freshness = '${DEFAULT_FRESHNESS}' WHERE freshness IS NULL OR freshness = '';`);
+
+  const rows = await client.execute(`
+    SELECT id, title, content, reasoning, source, affected_paths
+    FROM knowledge_items
+    WHERE content_hash IS NULL OR content_hash = '';
+  `);
+
+  for (const row of rows.rows) {
+    const affectedPaths = normalizeAffectedPaths(parseStringArray(row.affected_paths));
+    await client.execute({
+      sql: 'UPDATE knowledge_items SET content_hash = ?, affected_paths = ? WHERE id = ?',
+      args: [
+        hashKnowledgeContent({
+          title: String(row.title),
+          content: String(row.content),
+          reasoning: row.reasoning ? String(row.reasoning) : null,
+          source: row.source ? String(row.source) : null,
+          affectedPaths,
+        }),
+        affectedPaths ? JSON.stringify(affectedPaths) : null,
+        String(row.id),
+      ],
+    });
+  }
 }
 
 async function migrateLegacyProjectSchema(client: Client): Promise<void> {
@@ -325,5 +388,6 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await executeAll(client, BASE_STATEMENTS);
   await migrateLegacyProjectSchema(client);
   await executeAll(client, SCHEMA_STATEMENTS);
+  await ensureFreshnessColumns(client);
   await repairSkillForeignKeys(client);
 }

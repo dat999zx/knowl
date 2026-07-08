@@ -340,6 +340,37 @@ describe('MCP Server Layer', () => {
     expect(items[0].title).toBe('Project database uses SQLite');
   });
 
+  it('should refresh freshness metadata through knowl_update', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'architecture',
+      title: 'MCP update target',
+      content: 'Old MCP-facing knowledge.',
+      sourceCommit: 'old1111',
+      affectedPaths: ['src/mcp/tools.ts'],
+    });
+    await repo.updateKnowledgeItem(item.id, {
+      freshness: 'needs_review',
+    } as any);
+
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_update',
+      arguments: {
+        id: item.id,
+        content: 'Reviewed MCP-facing knowledge.',
+        sourceCommit: 'new2222',
+      },
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+
+    const updated = await repo.getKnowledgeItem(item.id);
+    expect(updated!.freshness).toBe('fresh');
+    expect(updated!.sourceCommit).toBe('new2222');
+    expect(updated!.affectedPaths).toEqual(['src/mcp/tools.ts']);
+    expect(updated!.contentHash).not.toBe(item.contentHash);
+  });
+
   it('should support ingesting pre-extracted atoms without AI', async () => {
     const res = await runRpcRequest('tools/call', {
       name: 'knowl_ingest_atoms',

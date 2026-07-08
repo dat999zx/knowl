@@ -111,6 +111,15 @@ export function registerTools(
                 type: 'string',
                 description: 'Optional source label.',
               },
+              sourceCommit: {
+                type: 'string',
+                description: 'Optional git commit where this knowledge was last reviewed.',
+              },
+              affectedPaths: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Optional repository-relative file paths that this knowledge depends on.',
+              },
               confidence: {
                 type: 'number',
                 description: 'Optional confidence from 0.0 to 1.0.',
@@ -142,6 +151,8 @@ export function registerTools(
                     alternatives: { type: 'array', items: { type: 'string' } },
                     tags: { type: 'array', items: { type: 'string' } },
                     source: { type: 'string' },
+                    sourceCommit: { type: 'string' },
+                    affectedPaths: { type: 'array', items: { type: 'string' } },
                     confidence: { type: 'number' },
                     steps: { type: 'array', items: { type: 'string' } },
                   },
@@ -247,6 +258,24 @@ export function registerTools(
               reasoning: {
                 type: 'string',
                 description: 'Updated reasoning.',
+              },
+              source: {
+                type: 'string',
+                description: 'Updated source label.',
+              },
+              sourceCommit: {
+                type: 'string',
+                description: 'Updated git commit for the reviewed knowledge.',
+              },
+              affectedPaths: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Updated repository-relative file paths tied to this knowledge.',
+              },
+              freshness: {
+                type: 'string',
+                enum: ['fresh', 'stale', 'needs_review'],
+                description: 'Optional freshness override. Defaults to fresh when updating reviewed knowledge content or provenance.',
               },
             },
             required: ['id'],
@@ -391,7 +420,7 @@ export function registerTools(
       }
 
       else if (name === 'knowl_store') {
-        const { category, title, content, reasoning, alternatives, tags, source, confidence, steps } = args as any;
+        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, steps } = args as any;
 
         if (!KNOWLEDGE_CATEGORIES.includes(category)) {
           throw new Error(`Invalid knowledge category: ${category}`);
@@ -407,6 +436,8 @@ export function registerTools(
             alternatives,
             tags,
             source,
+            sourceCommit,
+            affectedPaths,
             confidence,
             steps,
           },
@@ -493,12 +524,18 @@ export function registerTools(
       } 
       
       else if (name === 'knowl_update') {
-        const { id, title, content, status, reasoning } = args as any;
+        const { id, title, content, status, reasoning, source, sourceCommit, affectedPaths, freshness } = args as any;
         const updated = await updateKnowledgeItemWithCommit(projectId!, id, {
           title,
           content,
           status: status as KnowledgeStatus,
           reasoning,
+          source,
+          sourceCommit,
+          affectedPaths,
+        }, {
+          projectRoot,
+          freshness,
         });
 
         return {

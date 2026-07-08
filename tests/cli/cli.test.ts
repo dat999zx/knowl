@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync, execSync } from 'node:child_process';
+import { createClient } from '@libsql/client';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -486,6 +487,73 @@ describe('CLI Integration', () => {
     expect(output).toContain('KNOWL WORK LOOP FINISH');
 
     await fs.rm(workLoopPathDir, { recursive: true, force: true });
+  });
+
+  it('should mark changed PR knowledge for review from git diff', async () => {
+    const prDir = path.resolve('./.knowl-cli-pr-check-test');
+    await fs.rm(prDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(prDir, 'src'), { recursive: true });
+
+    try {
+      execSync('git init', { cwd: prDir, encoding: 'utf-8' });
+      execSync('git config user.email knowl@example.test', { cwd: prDir, encoding: 'utf-8' });
+      execSync('git config user.name "Knowl Test"', { cwd: prDir, encoding: 'utf-8' });
+      await fs.writeFile(path.join(prDir, 'src', 'billing.ts'), 'export const version = 1;\n', 'utf-8');
+      execSync('git add src/billing.ts', { cwd: prDir, encoding: 'utf-8' });
+      execSync('git commit -m "base"', { cwd: prDir, encoding: 'utf-8' });
+      const baseCommit = execSync('git rev-parse HEAD', { cwd: prDir, encoding: 'utf-8' }).trim();
+
+      execSync(`node "${CLI_PATH}" init "PR Check Project"`, {
+        cwd: prDir,
+        encoding: 'utf-8',
+      });
+      execSync(
+        `node "${CLI_PATH}" decide "Billing module" "Billing knowledge follows src/billing.ts." -r "PR checks should review file-bound memory." -t "billing"`,
+        {
+          cwd: prDir,
+          encoding: 'utf-8',
+        }
+      );
+
+      const client = createClient({ url: `file:${path.join(prDir, '.knowl', 'knowl.db')}` });
+      try {
+        const rows = await client.execute({
+          sql: 'SELECT id FROM knowledge_items WHERE title = ?',
+          args: ['Billing module'],
+        });
+        const itemId = String(rows.rows[0].id);
+        await client.execute({
+          sql: 'UPDATE knowledge_items SET affected_paths = ?, source_commit = ?, freshness = ? WHERE id = ?',
+          args: [JSON.stringify(['src/billing.ts']), baseCommit, 'fresh', itemId],
+        });
+
+        await fs.writeFile(path.join(prDir, 'src', 'billing.ts'), 'export const version = 2;\n', 'utf-8');
+        execSync('git add src/billing.ts', { cwd: prDir, encoding: 'utf-8' });
+        execSync('git commit -m "change billing"', { cwd: prDir, encoding: 'utf-8' });
+
+        const output = execSync(`node "${CLI_PATH}" pr check --since ${baseCommit}`, {
+          cwd: prDir,
+          encoding: 'utf-8',
+        });
+
+        expect(output).toContain('KNOWL PR CHECK');
+        expect(output).toContain('Changed files: 1');
+        expect(output).toContain('Review candidates: 1');
+        expect(output).toContain('NEEDS_REVIEW');
+        expect(output).toContain('Billing module');
+
+        const updated = await client.execute({
+          sql: 'SELECT freshness, source_commit FROM knowledge_items WHERE id = ?',
+          args: [itemId],
+        });
+        expect(updated.rows[0].freshness).toBe('needs_review');
+        expect(updated.rows[0].source_commit).toBe(baseCommit);
+      } finally {
+        client.close();
+      }
+    } finally {
+      await fs.rm(prDir, { recursive: true, force: true }).catch(() => {});
+    }
   });
 
   it('should report agent readiness with doctor', async () => {

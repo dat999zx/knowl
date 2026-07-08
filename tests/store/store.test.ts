@@ -13,6 +13,8 @@ import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
 import { getRecentContext } from '../../src/store/recent-context.js';
 import { searchKnowledgeEmbeddings, upsertKnowledgeEmbedding } from '../../src/store/vector.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
+import { updateKnowledgeItemWithCommit } from '../../src/store/knowledge-actions.js';
+import { checkKnowledgeDrift } from '../../src/store/drift.js';
 
 const TEST_ROOT = path.resolve('./.knowl-test');
 
@@ -60,6 +62,14 @@ describe('Storage Layer', () => {
       const columns = await db.all(sql.raw(`PRAGMA table_info(${table})`));
       expect(columns.map((column: any) => column.name)).not.toContain('project_id');
     }
+
+    const itemColumns = await db.all(sql`PRAGMA table_info(knowledge_items)`);
+    expect(itemColumns.map((column: any) => column.name)).toEqual(expect.arrayContaining([
+      'source_commit',
+      'affected_paths',
+      'content_hash',
+      'freshness',
+    ]));
   });
 
   it('should migrate legacy project-scoped schema without stale foreign keys', async () => {
@@ -200,6 +210,58 @@ describe('Storage Layer', () => {
     }
   });
 
+  it('should add freshness columns to older compact-schema databases', async () => {
+    const legacyRoot = path.resolve('./.knowl-freshness-migration-test');
+    await fs.rm(legacyRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(legacyRoot, '.knowl'), { recursive: true });
+
+    const client = createClient({ url: `file:${path.join(legacyRoot, '.knowl', 'knowl.db')}` });
+    try {
+      await client.execute(`CREATE TABLE knowledge_items (
+        id TEXT PRIMARY KEY,
+        category TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        reasoning TEXT,
+        alternatives TEXT,
+        tags TEXT,
+        source TEXT,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        superseded_by_id TEXT,
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`);
+      await client.execute(`INSERT INTO knowledge_items (
+        id, category, status, title, content, confidence, version, created_at, updated_at
+      ) VALUES (
+        'item1', 'architecture', 'active', 'Old compact item', 'Old compact content', 1.0, 1,
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );`);
+
+      await bootstrapSchema(client);
+
+      const columns = await client.execute('PRAGMA table_info(knowledge_items)');
+      expect(columns.rows.map(row => row.name)).toEqual(expect.arrayContaining([
+        'source_commit',
+        'affected_paths',
+        'content_hash',
+        'freshness',
+      ]));
+
+      const rows = await client.execute({
+        sql: 'SELECT freshness, content_hash FROM knowledge_items WHERE id = ?',
+        args: ['item1'],
+      });
+      expect(rows.rows[0].freshness).toBe('fresh');
+      expect(rows.rows[0].content_hash).toBeTruthy();
+    } finally {
+      client.close();
+      await fs.rm(legacyRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it('should create and retrieve knowledge items', async () => {
     const project = await repo.getProjectByRootPath(TEST_ROOT);
     expect(project).not.toBeNull();
@@ -242,6 +304,92 @@ describe('Storage Layer', () => {
 
     expect(updated.version).toBe(2);
     expect(updated.content).toBe('Auth flow completed with JWT.');
+  });
+
+  it('should store provenance and freshness metadata on knowledge items', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'architecture',
+      title: 'Auction service flow',
+      content: 'AuctionService coordinates bid validation and settlement.',
+      source: 'src/server/AuctionService.ts',
+      sourceCommit: 'abc1234',
+      affectedPaths: ['src/server/AuctionService.ts'],
+    });
+
+    expect(item.sourceCommit).toBe('abc1234');
+    expect(item.affectedPaths).toEqual(['src/server/AuctionService.ts']);
+    expect(item.freshness).toBe('fresh');
+    expect(item.contentHash).toMatch(/^[a-f0-9]{64}$/);
+
+    const retrieved = await repo.getKnowledgeItem(item.id);
+    expect(retrieved!.sourceCommit).toBe('abc1234');
+    expect(retrieved!.affectedPaths).toEqual(['src/server/AuctionService.ts']);
+  });
+
+  it('should refresh provenance when committed updates replace reviewed knowledge', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'architecture',
+      title: 'Checkout flow',
+      content: 'Checkout uses the old cart flow.',
+      sourceCommit: 'old1111',
+      affectedPaths: ['src/checkout.ts'],
+    });
+    const stale = await repo.updateKnowledgeItem(item.id, {
+      freshness: 'needs_review',
+    } as any);
+
+    const updated = await updateKnowledgeItemWithCommit(projectId, stale.id, {
+      content: 'Checkout uses the reviewed cart flow.',
+    }, {
+      sourceCommit: 'new2222',
+    });
+
+    expect(updated.freshness).toBe('fresh');
+    expect(updated.sourceCommit).toBe('new2222');
+    expect(updated.affectedPaths).toEqual(['src/checkout.ts']);
+    expect(updated.contentHash).not.toBe(stale.contentHash);
+
+    const commits = await repo.getKnowledgeCommits(projectId, 1);
+    expect(commits[0].changes[0].after?.freshness).toBe('fresh');
+    expect(commits[0].changes[0].after?.sourceCommit).toBe('new2222');
+  });
+
+  it('should mark changed-path knowledge as needing review during drift checks', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const impacted = await repo.createKnowledgeItem(projectId, {
+      category: 'architecture',
+      title: 'Billing module',
+      content: 'Billing module details are tied to the service implementation.',
+      sourceCommit: 'base000',
+      affectedPaths: ['src/billing.ts'],
+    });
+    const unrelated = await repo.createKnowledgeItem(projectId, {
+      category: 'architecture',
+      title: 'Search module',
+      content: 'Search module details are tied to search implementation.',
+      sourceCommit: 'base000',
+      affectedPaths: ['src/search.ts'],
+    });
+
+    const result = await checkKnowledgeDrift(projectId, {
+      sinceCommit: 'base000',
+      currentCommit: 'head111',
+      changedFiles: ['src/billing.ts'],
+      apply: true,
+    });
+
+    expect(result.changedFiles).toEqual(['src/billing.ts']);
+    expect(result.candidates.map(candidate => candidate.itemId)).toEqual([impacted.id]);
+    expect((await repo.getKnowledgeItem(impacted.id))!.freshness).toBe('needs_review');
+    expect((await repo.getKnowledgeItem(unrelated.id))!.freshness).toBe('fresh');
   });
 
   it('should retrieve items hierarchically', async () => {
@@ -537,6 +685,8 @@ describe('Storage Layer', () => {
   });
 
   it('should merge BM25 and optional vector hits for agent queries', async () => {
+    await getDb().run(sql`DELETE FROM knowledge_embeddings`);
+
     const project = await repo.getProjectByRootPath(TEST_ROOT);
     const projectId = project!.id;
 

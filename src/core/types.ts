@@ -14,6 +14,11 @@ export type KnowledgeStatus =
   | 'archived'
   | 'superseded';
 
+export type KnowledgeFreshness =
+  | 'fresh'
+  | 'stale'
+  | 'needs_review';
+
 export interface KnowledgeItem {
   id: string;
   category: KnowledgeCategory;
@@ -24,6 +29,10 @@ export interface KnowledgeItem {
   alternatives?: string[] | null; // stored as JSON array of strings
   tags?: string[] | null;         // stored as JSON array of strings
   source?: string | null;
+  sourceCommit?: string | null;
+  affectedPaths?: string[] | null; // stored as JSON array of repository-relative paths
+  contentHash?: string | null;
+  freshness: KnowledgeFreshness;
   confidence: number;
   supersededById?: string | null;
   version: number;
@@ -109,6 +118,9 @@ export interface KnowledgeAtom {
   reasoning?: string | null;
   alternatives?: string[] | null;
   tags?: string[] | null;
+  source?: string | null;
+  sourceCommit?: string | null;
+  affectedPaths?: string[] | null;
   confidence?: number;
   steps?: string[]; // If category is 'skill'
 }

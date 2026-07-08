@@ -3,6 +3,7 @@ import * as repo from './repository.js';
 import { findLikelyDuplicateKnowledgeItem } from './knowledge-writer.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
+import { getCurrentGitCommit } from './drift.js';
 
 export type DirectDecisionInput = {
   title: string;
@@ -71,6 +72,14 @@ export async function updateKnowledgeItemWithCommit(
     content?: string;
     status?: KnowledgeStatus;
     reasoning?: string;
+    source?: string | null;
+    sourceCommit?: string | null;
+    affectedPaths?: string[] | null;
+  },
+  options?: {
+    projectRoot?: string | null;
+    sourceCommit?: string | null;
+    freshness?: 'fresh' | 'stale' | 'needs_review';
   }
 ): Promise<KnowledgeItem> {
   const beforeItem = await repo.getKnowledgeItem(id);
@@ -78,7 +87,25 @@ export async function updateKnowledgeItemWithCommit(
     throw new Error(`Knowledge item not found with ID ${id}`);
   }
 
-  const updated = await repo.updateKnowledgeItem(id, updates);
+  const shouldRefreshFreshness = updates.title !== undefined ||
+    updates.content !== undefined ||
+    updates.reasoning !== undefined ||
+    updates.source !== undefined ||
+    updates.sourceCommit !== undefined ||
+    updates.affectedPaths !== undefined;
+  const autoSourceCommit = shouldRefreshFreshness
+    ? getCurrentGitCommit(options?.projectRoot || process.cwd()) ?? undefined
+    : undefined;
+  const resolvedSourceCommit = updates.sourceCommit !== undefined
+    ? updates.sourceCommit
+    : (options?.sourceCommit !== undefined ? options.sourceCommit
+    : autoSourceCommit);
+
+  const updated = await repo.updateKnowledgeItem(id, {
+    ...updates,
+    ...(resolvedSourceCommit !== undefined ? { sourceCommit: resolvedSourceCommit } : {}),
+    ...(shouldRefreshFreshness || options?.freshness ? { freshness: options?.freshness || 'fresh' } : {}),
+  });
   let action: CommitChange['action'] = 'update';
   if (updates.status && updates.status !== beforeItem.status) {
     if (updates.status === 'active') {
