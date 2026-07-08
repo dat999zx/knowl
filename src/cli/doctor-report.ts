@@ -117,6 +117,17 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         : 'MCP tool surface should expose knowl_task_start, knowl_task_checkpoint, and knowl_task_finish',
     });
 
+    const hasSkills =
+      KNOWL_MCP_TOOL_NAMES.includes('knowl_skill_list') &&
+      KNOWL_MCP_TOOL_NAMES.includes('knowl_skill_read') &&
+      KNOWL_MCP_TOOL_NAMES.includes('knowl_skill_run');
+    checks.push({
+      status: hasSkills ? 'OK' : 'WARN',
+      message: hasSkills
+        ? 'MCP tools expose learned skill bridge tools'
+        : 'MCP tool surface should expose knowl_skill_list, knowl_skill_read, and knowl_skill_run',
+    });
+
     if (isVectorSearchEnabled(config)) {
       const vector = getVectorSearchConfig(config);
       checks.push({

@@ -19,6 +19,9 @@ const KNOWL_AGENTS_SECTION = `${KNOWL_AGENTS_SECTION_MARKER}
 - Do not inspect repository files just to re-verify known facts already found in Knowl.
 - Only inspect repository files when Knowl misses, conflicts, looks stale or low-confidence, or the user asks for source verification.
 - Only use \`knowl_state\` for broad project-memory summaries, status checks, or when the user asks for the full current state.
+- Learned executable skills live under \`.knowl/skills/<name>/\` with \`SKILL.md\`, \`skill.json\`, and optional scripts. Use \`knowl_skill_list\`, \`knowl_skill_read\`, and \`knowl_skill_run\` to discover, inspect, and auto-run them.
+- Do not expect one MCP tool per learned skill. The fixed \`knowl_skill_*\` tools scan \`.knowl/skills\` dynamically, so newly created skills are usable in old sessions without an MCP tool reload.
+- Prefer learned skill scripts stored inside \`.knowl/skills/<name>/\`; shell fallback entrypoints are allowed when the skill defines them.
 - During work, keep Knowl current. If new findings contradict or replace existing memory, use \`knowl_update\` to correct stale or superseded items instead of adding duplicates.
 - For multi-step tasks, do not wait until the end to use Knowl. Before each new subtask or when switching areas, run a focused \`knowl_query\` for relevant prior decisions, constraints, facts, or current state.
 - After each completed subtask or newly verified durable finding, update Knowl immediately with \`knowl_store\`, \`knowl_decide\`, \`knowl_ingest_atoms\`, or \`knowl_update\` before continuing. If later subtasks depend on new memory you just stored, query Knowl again before continuing.

@@ -148,6 +148,10 @@ describe('MCP Server Layer', () => {
     expect(res.result.tools.some((t: any) => t.name === 'knowl_task_finish')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_gc_preview')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_gc_apply')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_skill_list')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_skill_read')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_skill_create')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_skill_run')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ask')).toBe(false);
 
     const queryTool = res.result.tools.find((t: any) => t.name === 'knowl_query');
@@ -457,6 +461,70 @@ describe('MCP Server Layer', () => {
     expect(items.some(item => item.title === 'Work Loop: Implement search UI')).toBe(true);
     expect(items.some(item => item.title === 'Work Loop checkpoint')).toBe(true);
     expect(items.some(item => item.title === 'Work Loop finish')).toBe(true);
+  });
+
+  it('should create, read, list, and run learned skills through stable MCP tools', async () => {
+    const createRes = await runRpcRequest('tools/call', {
+      name: 'knowl_skill_create',
+      arguments: {
+        name: 'run_app',
+        purpose: 'Start the app locally',
+        markdown: '# Run App\n\nUse this to start the app.\n',
+        files: [
+          {
+            path: 'run.cmd',
+            content: '@echo off\r\necho mcp-skill-ok\r\n',
+          },
+        ],
+        entrypoints: {
+          default: {
+            type: 'script',
+            path: 'run.cmd',
+            autoRun: true,
+          },
+        },
+      },
+    });
+
+    expect(createRes.error).toBeUndefined();
+    expect(createRes.result.isError).toBeUndefined();
+    expect(createRes.result.content[0].text).toContain('Successfully created skill');
+
+    const listRes = await runRpcRequest('tools/call', {
+      name: 'knowl_skill_list',
+      arguments: {},
+    });
+    expect(listRes.error).toBeUndefined();
+    const listed = JSON.parse(listRes.result.content[0].text);
+    expect(listed).toHaveLength(1);
+    expect(listed[0].name).toBe('run_app');
+
+    const readRes = await runRpcRequest('tools/call', {
+      name: 'knowl_skill_read',
+      arguments: {
+        name: 'run_app',
+      },
+    });
+    expect(readRes.error).toBeUndefined();
+    const read = JSON.parse(readRes.result.content[0].text);
+    expect(read.manifest.name).toBe('run_app');
+    expect(read.markdown).toContain('# Run App');
+
+    const runRes = await runRpcRequest('tools/call', {
+      name: 'knowl_skill_run',
+      arguments: {
+        name: 'run_app',
+      },
+    });
+    expect(runRes.error).toBeUndefined();
+    const run = JSON.parse(runRes.result.content[0].text);
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toContain('mcp-skill-ok');
+
+    const items = await repo.listKnowledgeItems(projectId);
+    const indexed = items.find(item => item.category === 'skill' && item.title === 'run_app');
+    expect(indexed).toBeTruthy();
+    expect(indexed!.content).toContain('.knowl/skills/run_app/SKILL.md');
   });
 
   it('should support reading brain state resource', async () => {

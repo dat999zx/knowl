@@ -23,6 +23,8 @@ import { reindexKnowledgeEmbeddings } from './store/vector-index.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from './store/gc.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } from './store/work-loop.js';
 import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince } from './store/drift.js';
+import { indexSkillPackage, recordSkillRun } from './skills/knowledge-index.js';
+import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage, SkillEntrypoint } from './skills/registry.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -120,6 +122,46 @@ function spawnWorkLoopCommand(command: string, args: string[]) {
   return spawnSync(command, args, spawnOptions);
 }
 
+function collectOption(value: string, previous: string[]) {
+  previous.push(value);
+  return previous;
+}
+
+function parseSkillFiles(values: string[]): { path: string; content: string }[] {
+  return values.map(value => {
+    const index = value.indexOf('=');
+    if (index <= 0) {
+      throw new Error(`Invalid --file value "${value}". Use path=content.`);
+    }
+    return {
+      path: value.slice(0, index),
+      content: value.slice(index + 1),
+    };
+  });
+}
+
+function createSkillEntrypoints(options: {
+  script?: string;
+  fallbackShell?: string;
+}): Record<string, SkillEntrypoint> {
+  const entrypoints: Record<string, SkillEntrypoint> = {};
+  if (options.script) {
+    entrypoints.default = {
+      type: 'script',
+      path: options.script,
+      autoRun: true,
+    };
+  }
+  if (options.fallbackShell) {
+    entrypoints.fallback = {
+      type: 'shell',
+      command: options.fallbackShell,
+      autoRun: true,
+    };
+  }
+  return entrypoints;
+}
+
 function printConnectInstructions(target: string) {
   const normalized = target.toLowerCase();
   console.log('KNOWL CONNECT');
@@ -164,6 +206,7 @@ async function upgradeExistingRepository(projectRoot: string, fallbackName: stri
   const config = await loadConfig(projectRoot);
   const agentsStatus = await installKnowlAgentsGuidance(projectRoot);
   const gitignoreStatus = await installKnowlGitignoreEntry(projectRoot);
+  await fs.mkdir(path.join(projectRoot, '.knowl', 'skills'), { recursive: true });
 
   await initDb(projectRoot);
   let project = await repo.getProjectByRootPath(projectRoot);
@@ -220,6 +263,7 @@ program
       }
 
       await fs.mkdir(knowlDir, { recursive: true });
+      await fs.mkdir(path.join(knowlDir, 'skills'), { recursive: true });
 
       // Create default config.json
       const defaultConfig = {
@@ -859,7 +903,123 @@ taskCommand
     }
   });
 
-// --- 13. PR COMMAND ---
+// --- 13. SKILL COMMAND ---
+const skillCommand = program
+  .command('skill')
+  .description('Manage learned file-backed skill packages under .knowl/skills');
+
+skillCommand
+  .command('list')
+  .description('List learned skill packages')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const skills = await listSkillPackages(root);
+      if (skills.length === 0) {
+        console.log('No learned skills.');
+        return;
+      }
+      for (const skill of skills) {
+        console.log(`${skill.name}\t${skill.purpose}`);
+      }
+    } catch (error: any) {
+      console.error(`Error listing skills: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+skillCommand
+  .command('read')
+  .description('Read one learned skill package')
+  .argument('<name>', 'Skill name')
+  .action(async (name) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const skill = await readSkillPackage(root, name);
+      console.log(JSON.stringify(skill.manifest, null, 2));
+      console.log('');
+      console.log(skill.markdown);
+    } catch (error: any) {
+      console.error(`Error reading skill: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+skillCommand
+  .command('create')
+  .description('Create a learned file-backed skill package and index it in Knowl')
+  .argument('<name>', 'Skill name')
+  .requiredOption('--purpose <purpose>', 'One-sentence purpose for the skill')
+  .option('--markdown <markdown>', 'Content for SKILL.md')
+  .option('--trigger <phrase>', 'Trigger phrase for discovery', collectOption, [])
+  .option('--file <path=content>', 'File to create inside the skill package', collectOption, [])
+  .option('--script <path>', 'Default script entrypoint path')
+  .option('--fallback-shell <command>', 'Fallback shell command entrypoint')
+  .action(async (name, options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const skill = await createSkillPackage(root, {
+        name,
+        purpose: options.purpose,
+        markdown: options.markdown,
+        triggers: options.trigger || [],
+        files: parseSkillFiles(options.file || []),
+        entrypoints: createSkillEntrypoints({
+          script: options.script,
+          fallbackShell: options.fallbackShell,
+        }),
+      });
+
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+      await indexSkillPackage(project.id, skill.manifest);
+      await closeDb();
+
+      console.log(`Created skill ${skill.manifest.name}`);
+    } catch (error: any) {
+      try {
+        await closeDb();
+      } catch {
+        // Ignore close errors while reporting the root cause.
+      }
+      console.error(`Error creating skill: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+skillCommand
+  .command('run')
+  .description('Run a learned skill package entrypoint')
+  .argument('<name>', 'Skill name')
+  .argument('[args...]', 'Optional runtime args')
+  .option('-e, --entrypoint <entrypoint>', 'Entrypoint name', 'default')
+  .action(async (name, args: string[], options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const result = await runSkillPackage(root, name, options.entrypoint, args || []);
+      await recordSkillRun(project.id, name, result.exitCode === 0);
+      await closeDb();
+
+      if (result.stdout) process.stdout.write(result.stdout);
+      if (result.stderr) process.stderr.write(result.stderr);
+      process.exit(result.exitCode);
+    } catch (error: any) {
+      try {
+        await closeDb();
+      } catch {
+        // Ignore close errors while reporting the root cause.
+      }
+      console.error(`Error running skill: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// --- 14. PR COMMAND ---
 const prCommand = program
   .command('pr')
   .description('Check git changes against stored knowledge provenance');
@@ -898,7 +1058,7 @@ prCommand
     }
   });
 
-// --- 14. DOCTOR COMMAND ---
+// --- 15. DOCTOR COMMAND ---
 program
   .command('doctor')
   .description('Check whether the current Knowl project is ready for agent memory usage')
@@ -910,7 +1070,7 @@ program
     }
   });
 
-// --- 15. SERVE COMMAND ---
+// --- 16. SERVE COMMAND ---
 program
   .command('serve')
   .description('Start the Model Context Protocol (MCP) server for KNOWL')

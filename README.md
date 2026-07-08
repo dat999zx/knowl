@@ -14,6 +14,8 @@ Knowl is designed for durable engineering context: decisions, architecture, goal
 - Generates or refreshes `AGENTS.md` guidance so agents know to query Knowl before inspecting files.
 - Records work-loop starts, checkpoints, and finishes as structured state atoms with knowledge commits.
 - Wraps shell commands with an automatic work loop so agents query memory before execution and write back success or failure state.
+- Stores learned executable skill packages under `.knowl/skills/<name>/` with `SKILL.md`, `skill.json`, and optional scripts.
+- Exposes stable MCP and CLI skill bridges so new learned skills work without adding one new tool per skill.
 - Prints MCP connection instructions for Codex, Cursor, and Claude Desktop.
 - Adds `.knowl/` to `.gitignore` during project initialization.
 - Supports optional AI-backed CLI commands for raw text ingestion and natural-language answers.
@@ -86,6 +88,20 @@ knowl task checkpoint <task-id> "Added search UI tests"
 knowl task finish <task-id> "Verified search UI implementation"
 ```
 
+Create and run a learned skill package:
+
+```bash
+knowl skill create run_app \
+  --purpose "Start the app locally" \
+  --markdown "# Run App\n\nUse this to start the app.\n" \
+  --file "run.ps1=Write-Output 'run-app'" \
+  --script run.ps1
+
+knowl skill list
+knowl skill read run_app
+knowl skill run run_app
+```
+
 ## MCP Workflow
 
 MCP is the preferred way for agents to use Knowl. The MCP tools do not require Knowl-side AI configuration for normal structured memory workflows. The client model should extract durable knowledge and call Knowl's structured tools.
@@ -113,6 +129,10 @@ Available MCP tools:
 | `knowl_task_start` | Start a manual work loop, query relevant memory, and store active task state. |
 | `knowl_task_checkpoint` | Store durable progress during a work loop. |
 | `knowl_task_finish` | Store durable completion state for a work loop. |
+| `knowl_skill_list` | List learned file-backed skill packages from `.knowl/skills`. |
+| `knowl_skill_read` | Read one learned skill package (`skill.json` and `SKILL.md`). |
+| `knowl_skill_create` | Create a learned skill package and index it as a `skill` knowledge item. |
+| `knowl_skill_run` | Auto-run a learned skill entrypoint, preferring repo-local scripts with optional shell fallback. |
 | `knowl_ingest` | Run raw text through Knowl's AI-backed extraction pipeline. Requires explicit AI config. |
 | `knowl_gc_preview` | Preview duplicate, stale, or cold memory cleanup recommendations. |
 | `knowl_gc_apply` | Apply garbage collection transactionally and record a knowledge commit. |
@@ -170,6 +190,10 @@ knowl connect claude
 | `knowl task checkpoint <task-id> <summary>` | Store durable progress for an active work loop. |
 | `knowl task finish <task-id> <summary>` | Store durable completion state for a work loop. |
 | `knowl task run <title> -- <command...>` | Start a work loop, run a command, then finish on success or checkpoint on failure with the child exit code. |
+| `knowl skill list` | List learned file-backed skill packages under `.knowl/skills`. |
+| `knowl skill read <name>` | Print `skill.json` and `SKILL.md` for a learned skill package. |
+| `knowl skill create <name> --purpose ...` | Create a learned skill package and index it as a `skill` knowledge item. |
+| `knowl skill run <name>` | Run a learned skill entrypoint and update usage metadata for the indexed skill item. |
 | `knowl decide [title] [content]` | Record a decision. Runs interactively when title or content is omitted. |
 | `knowl ask <question>` | Ask a natural-language question over project memory. Requires AI config. |
 | `knowl ingest <text>` | Extract and merge knowledge from raw text. Requires AI config. |
@@ -248,6 +272,9 @@ Knowl stores project data under `.knowl/`:
 
 - `.knowl/config.json` contains security, AI, and search configuration.
 - `.knowl/knowl.db` contains project memory, knowledge commits, search indexes, and optional embeddings. The project scope is implicit from the database location, so Knowl does not persist separate project-name or root-path metadata inside the database.
+- `.knowl/skills/` contains file-backed learned skill packages with `SKILL.md`, `skill.json`, and optional scripts.
+
+`skill.json` defines path-safe learned skill metadata plus entrypoints. The `default` entrypoint should usually point at a repo-local script inside the skill package such as `run.ps1`, `run.sh`, or `run.cmd`. A `fallback` shell command is allowed when the skill needs a direct shell invocation.
 
 By default, `knowl init` and `knowl upgrade` ensure `.knowl/` is ignored by git.
 

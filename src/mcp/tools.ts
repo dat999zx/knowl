@@ -13,6 +13,8 @@ import { isVectorSearchEnabled, createLocalEmbeddingProvider, getVectorSearchCon
 import { queryKnowledgeForAgent } from '../store/agent-query.js';
 import { previewKnowledgeGc, applyKnowledgeGc } from '../store/gc.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop } from '../store/work-loop.js';
+import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
+import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage } from '../skills/registry.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
@@ -351,6 +353,97 @@ export function registerTools(
             properties: {},
           },
         },
+        {
+          name: 'knowl_skill_list',
+          description: 'List learned file-backed skills from `.knowl/skills`. This is a stable MCP bridge so old sessions can discover newly created skills.',
+          inputSchema: {
+            type: 'object',
+            properties: {},
+          },
+        },
+        {
+          name: 'knowl_skill_read',
+          description: 'Read one learned skill package from `.knowl/skills/<name>/`, including `skill.json` and `SKILL.md`.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              name: {
+                type: 'string',
+                description: 'Skill package name.',
+              },
+            },
+            required: ['name'],
+          },
+        },
+        {
+          name: 'knowl_skill_create',
+          description: 'Create a learned file-backed skill package under `.knowl/skills/<name>/` and index it as a `skill` knowledge item.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              name: {
+                type: 'string',
+                description: 'Path-safe skill name using lowercase letters, numbers, underscores, and hyphens.',
+              },
+              purpose: {
+                type: 'string',
+                description: 'One-sentence purpose for the skill.',
+              },
+              markdown: {
+                type: 'string',
+                description: 'Content for `SKILL.md`.',
+              },
+              triggers: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Optional trigger phrases for discovery.',
+              },
+              files: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    path: { type: 'string' },
+                    content: { type: 'string' },
+                  },
+                  required: ['path', 'content'],
+                },
+                description: 'Optional files to create inside the skill package, such as `run.ps1` or `run.cmd`.',
+              },
+              entrypoints: {
+                type: 'object',
+                description: 'Entrypoints keyed by name, for example `default` or `fallback`.',
+                additionalProperties: {
+                  type: 'object',
+                },
+              },
+            },
+            required: ['name', 'purpose'],
+          },
+        },
+        {
+          name: 'knowl_skill_run',
+          description: 'Auto-run a learned skill package entrypoint from `.knowl/skills`. Prefer repo-local scripts; shell fallbacks are allowed when the skill defines them.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              name: {
+                type: 'string',
+                description: 'Skill package name.',
+              },
+              entrypoint: {
+                type: 'string',
+                description: 'Entrypoint name; defaults to `default`.',
+              },
+              args: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Optional runtime arguments passed to the entrypoint.',
+              },
+            },
+            required: ['name'],
+          },
+        },
       ],
     };
   });
@@ -576,6 +669,46 @@ export function registerTools(
 
       else if (name === 'knowl_gc_apply') {
         const result = await applyKnowledgeGc(projectId!);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      else if (name === 'knowl_skill_list') {
+        const skills = await listSkillPackages(projectRoot!);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(skills, null, 2) }],
+        };
+      }
+
+      else if (name === 'knowl_skill_read') {
+        const { name: skillName } = args as any;
+        const skill = await readSkillPackage(projectRoot!, skillName);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(skill, null, 2) }],
+        };
+      }
+
+      else if (name === 'knowl_skill_create') {
+        const { name: skillName, purpose, markdown, triggers, files, entrypoints } = args as any;
+        const skill = await createSkillPackage(projectRoot!, {
+          name: skillName,
+          purpose,
+          markdown,
+          triggers,
+          files,
+          entrypoints,
+        });
+        await indexSkillPackage(projectId!, skill.manifest);
+        return {
+          content: [{ type: 'text', text: `Successfully created skill ${skill.manifest.name}` }],
+        };
+      }
+
+      else if (name === 'knowl_skill_run') {
+        const { name: skillName, entrypoint, args: runtimeArgs } = args as any;
+        const result = await runSkillPackage(projectRoot!, skillName, entrypoint || 'default', runtimeArgs || []);
+        await recordSkillRun(projectId!, skillName, result.exitCode === 0);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };
