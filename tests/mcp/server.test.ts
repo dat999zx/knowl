@@ -152,6 +152,7 @@ describe('MCP Server Layer', () => {
     const queryTool = res.result.tools.find((t: any) => t.name === 'knowl_query');
     const stateTool = res.result.tools.find((t: any) => t.name === 'knowl_state');
     expect(queryTool.description).toContain('Use this first for specific project questions');
+    expect(queryTool.description).toContain('before each new subtask');
     expect(queryTool.description).toContain('answer from Knowl without inspecting repository files');
     expect(queryTool.description).toContain('Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests');
     expect(queryTool.inputSchema.properties.query.description).toContain('2-6 concise keywords');
@@ -164,10 +165,10 @@ describe('MCP Server Layer', () => {
     const updateTool = res.result.tools.find((t: any) => t.name === 'knowl_update');
     expect(storeTool.description).toContain('concise structured knowledge atom');
     expect(storeTool.description).toContain('not raw chat transcripts');
-    expect(storeTool.description).toContain('Use after discovering durable project knowledge or completing work');
+    expect(storeTool.description).toContain('completing each subtask');
     expect(ingestAtomsTool.description).toContain('Do not store raw chat transcripts');
-    expect(ingestAtomsTool.description).toContain('batch store implementation summaries');
-    expect(updateTool.description).toContain('correct stale or contradicted memory');
+    expect(ingestAtomsTool.description).toContain('during execution or after each completed subtask');
+    expect(updateTool.description).toContain('Use immediately when execution reveals stale or contradicted memory');
 
     const gcPreviewTool = res.result.tools.find((t: any) => t.name === 'knowl_gc_preview');
     expect(gcPreviewTool.description).toContain('Preview knowledge garbage collection');

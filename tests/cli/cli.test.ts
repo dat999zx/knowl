@@ -110,6 +110,10 @@ describe('CLI Integration', () => {
     expect(content).toContain('knowl_store');
     expect(content).toContain('knowl_decide');
     expect(content).toContain('During work, keep Knowl current');
+    expect(content).toContain('For multi-step tasks, do not wait until the end to use Knowl');
+    expect(content).toContain('Before each new subtask or when switching areas, run a focused `knowl_query`');
+    expect(content).toContain('After each completed subtask or newly verified durable finding, update Knowl immediately');
+    expect(content).toContain('If later subtasks depend on new memory you just stored, query Knowl again before continuing');
     expect(content).toContain('If new findings contradict or replace existing memory, use `knowl_update`');
     expect(content).toContain('Before the final answer, check whether the work produced durable knowledge');
     expect(content).toContain('implemented feature summaries, setup steps, architecture changes, important commands, decisions, constraints, recurring bugs, gotchas, and verified project facts');
@@ -250,6 +254,9 @@ describe('CLI Integration', () => {
     expect(content).toContain('After `knowl_recent`, use `knowl_query` for specific questions');
     expect(content).toContain('Do not use `knowl_ask` for MCP first-pass lookup');
     expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');
+    expect(content).toContain('For multi-step tasks, do not wait until the end to use Knowl');
+    expect(content).toContain('Before each new subtask or when switching areas, run a focused `knowl_query`');
+    expect(content).toContain('After each completed subtask or newly verified durable finding, update Knowl immediately');
     expect(content).toContain('Before the final answer, check whether the work produced durable knowledge');
     expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
     expect((content.match(/## Knowl Project Memory/g) || []).length).toBe(1);

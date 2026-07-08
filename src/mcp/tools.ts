@@ -75,7 +75,7 @@ export function registerTools(
         },
         {
           name: 'knowl_store',
-          description: 'Store one concise structured knowledge atom directly, not raw chat transcripts. Use after discovering durable project knowledge or completing work. This is deterministic and does not require Knowl AI configuration.',
+          description: 'Store one concise structured knowledge atom directly, not raw chat transcripts. Use immediately after discovering durable project knowledge or completing each subtask, not only at the end. This is deterministic and does not require Knowl AI configuration.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -125,7 +125,7 @@ export function registerTools(
         },
         {
           name: 'knowl_ingest_atoms',
-          description: 'Store pre-extracted structured knowledge atoms from an MCP client. Do not store raw chat transcripts; extract durable facts, decisions, constraints, architecture, state, skills, and batch store implementation summaries first. This is the preferred MCP ingestion path and does not require Knowl AI configuration.',
+          description: 'Store pre-extracted structured knowledge atoms from an MCP client. Do not store raw chat transcripts; extract durable facts, decisions, constraints, architecture, state, skills, and batch store implementation summaries during execution or after each completed subtask. This is the preferred MCP ingestion path and does not require Knowl AI configuration.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -190,7 +190,7 @@ export function registerTools(
         },
         {
           name: 'knowl_query',
-          description: 'Use this first for specific project questions. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests.',
+          description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -222,7 +222,7 @@ export function registerTools(
         },
         {
           name: 'knowl_update',
-          description: 'Update the metadata, status, or content of an existing knowledge item. Use to correct stale or contradicted memory instead of adding duplicates.',
+          description: 'Update the metadata, status, or content of an existing knowledge item. Use immediately when execution reveals stale or contradicted memory instead of adding duplicates.',
           inputSchema: {
             type: 'object',
             properties: {

@@ -80,8 +80,9 @@ Recommended agent flow:
 1. Call `knowl_recent` at the start of a project-specific session.
 2. Use `knowl_query` for specific questions, with 2-6 concise keywords.
 3. Use `knowl_state` only for broad full-state summaries.
-4. Store durable new facts, decisions, constraints, architecture notes, state, and skills with `knowl_store`, `knowl_decide`, or `knowl_ingest_atoms`.
-5. Use `knowl_update` to correct stale or contradicted memory.
+4. For multi-step tasks, query Knowl again before each new subtask or when switching areas.
+5. Store durable new facts, decisions, constraints, architecture notes, state, and skills immediately after each completed subtask or verified finding with `knowl_store`, `knowl_decide`, or `knowl_ingest_atoms`.
+6. Use `knowl_update` as soon as you find stale or contradicted memory.
 
 Available MCP tools:
 
