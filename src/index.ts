@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
@@ -51,6 +53,56 @@ function printRelevantMemory(items: WorkLoopMemoryHit[]) {
   for (const item of items) {
     console.log(`- ${item.title} (${item.category}, ${item.id})`);
   }
+}
+
+function formatCommand(command: string, args: string[]) {
+  return [command, ...args].join(' ');
+}
+
+function hasPathSeparator(command: string) {
+  return command.includes('/') || command.includes('\\');
+}
+
+function resolveWindowsCommand(command: string) {
+  const ext = path.extname(command);
+  if (ext) return command;
+
+  const pathEntries = (process.env.Path || process.env.PATH || '').split(path.delimiter).filter(Boolean);
+  const pathExts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+  const searchDirs = hasPathSeparator(command) ? [''] : [process.cwd(), ...pathEntries];
+
+  for (const dir of searchDirs) {
+    for (const pathExt of pathExts) {
+      const candidate = dir ? path.join(dir, `${command}${pathExt}`) : `${command}${pathExt}`;
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+
+  return command;
+}
+
+function isWindowsBatchCommand(command: string) {
+  const resolved = resolveWindowsCommand(command);
+  const ext = path.extname(resolved).toLowerCase();
+  return ext === '.cmd' || ext === '.bat';
+}
+
+function spawnWorkLoopCommand(command: string, args: string[]) {
+  const spawnOptions = {
+    cwd: process.cwd(),
+    env: process.env,
+    stdio: 'inherit' as const,
+  };
+
+  if (process.platform !== 'win32') {
+    return spawnSync(command, args, spawnOptions);
+  }
+
+  if (isWindowsBatchCommand(command)) {
+    return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', command, ...args], spawnOptions);
+  }
+
+  return spawnSync(command, args, spawnOptions);
 }
 
 function printConnectInstructions(target: string) {
@@ -711,6 +763,84 @@ taskCommand
       await closeDb();
     } catch (error: any) {
       console.error(`Error finishing work loop: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+taskCommand
+  .command('run')
+  .description('Start a work loop, run a command, then finish on success or checkpoint on failure')
+  .argument('<title>', 'Task title')
+  .argument('[command...]', 'Command and arguments to run after --')
+  .option('-q, --query <query>', 'Focused query for relevant memory lookup')
+  .action(async (title, commandParts: string[], options) => {
+    const command = commandParts[0];
+    const commandArgs = commandParts.slice(1);
+
+    if (!command) {
+      console.error('Error running work loop command: missing command after --');
+      process.exit(1);
+    }
+
+    let root = '';
+    let taskId = '';
+    try {
+      root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const startResult = await startWorkLoop(project.id, title, options.query);
+      taskId = startResult.taskId;
+      console.log('KNOWL WORK LOOP START');
+      console.log(`Task ID: ${startResult.taskId}`);
+      console.log(`Query: ${startResult.query}`);
+      printRelevantMemory(startResult.relevantMemory);
+      await closeDb();
+
+      const child = spawnWorkLoopCommand(command, commandArgs);
+
+      await initDb(root);
+      const reopenedProject = await repo.getProjectByRootPath(root);
+      if (!reopenedProject) throw new Error('Project not found in database.');
+
+      const commandText = formatCommand(command, commandArgs);
+      if (child.error) {
+        const summary = `Command failed to start: ${commandText} (${child.error.message})`;
+        const checkpoint = await checkpointWorkLoop(reopenedProject.id, taskId, summary);
+        console.log('KNOWL WORK LOOP CHECKPOINT');
+        console.log(`Task ID: ${checkpoint.taskId}`);
+        console.log(`Checkpoint ID: ${checkpoint.itemId}`);
+        console.log(summary);
+        await closeDb();
+        process.exit(1);
+      }
+
+      const exitCode = child.status ?? 1;
+      if (exitCode === 0) {
+        const finish = await finishWorkLoop(reopenedProject.id, taskId, `Command succeeded: ${commandText}`);
+        console.log('KNOWL WORK LOOP FINISH');
+        console.log(`Task ID: ${finish.taskId}`);
+        console.log(`Finish ID: ${finish.itemId}`);
+        await closeDb();
+        process.exit(0);
+      }
+
+      const summary = `Command failed with exit code ${exitCode}: ${commandText}`;
+      const checkpoint = await checkpointWorkLoop(reopenedProject.id, taskId, summary);
+      console.log('KNOWL WORK LOOP CHECKPOINT');
+      console.log(`Task ID: ${checkpoint.taskId}`);
+      console.log(`Checkpoint ID: ${checkpoint.itemId}`);
+      console.log(summary);
+      await closeDb();
+      process.exit(exitCode);
+    } catch (error: any) {
+      try {
+        await closeDb();
+      } catch {
+        // Ignore close errors while reporting the root cause.
+      }
+      console.error(`Error running work loop command: ${error.message}`);
       process.exit(1);
     }
   });

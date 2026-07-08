@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -355,6 +355,135 @@ describe('CLI Integration', () => {
     expect(stateOutput).toContain('Work Loop finish');
 
     await fs.rm(workLoopDir, { recursive: true, force: true });
+  });
+
+  it('should run a command inside an automatic work loop', async () => {
+    const workLoopRunDir = path.resolve('./.knowl-cli-work-loop-run-test');
+    await fs.rm(workLoopRunDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(workLoopRunDir, { recursive: true });
+
+    execSync(`node "${CLI_PATH}" init "Work Loop Run Project"`, {
+      cwd: workLoopRunDir,
+      encoding: 'utf-8',
+    });
+    execSync(
+      `node "${CLI_PATH}" decide "Use BM25 retrieval" "Use BM25 retrieval for concise project-memory lookups." -r "Automatic work-loop runs should surface relevant memory before execution." -t "search" "retrieval"`,
+      {
+        cwd: workLoopRunDir,
+        encoding: 'utf-8',
+      }
+    );
+
+    const output = execFileSync(process.execPath, [
+      CLI_PATH,
+      'task',
+      'run',
+      'Implement search UI',
+      '--query',
+      'search retrieval',
+      '--',
+      process.execPath,
+      '-e',
+      "console.log('wrapped output')",
+    ], {
+      cwd: workLoopRunDir,
+      encoding: 'utf-8',
+    });
+
+    expect(output).toContain('KNOWL WORK LOOP START');
+    expect(output).toContain('Relevant memory:');
+    expect(output).toContain('Use BM25 retrieval');
+    expect(output).toContain('wrapped output');
+    expect(output).toContain('KNOWL WORK LOOP FINISH');
+
+    const stateOutput = execSync(`node "${CLI_PATH}" state`, {
+      cwd: workLoopRunDir,
+      encoding: 'utf-8',
+    });
+    expect(stateOutput).toContain('Work Loop: Implement search UI');
+    expect(stateOutput).toContain('Work Loop finish');
+    expect(stateOutput).toContain('Command succeeded:');
+
+    await fs.rm(workLoopRunDir, { recursive: true, force: true });
+  });
+
+  it('should checkpoint failed automatic work loop commands and preserve the exit code', async () => {
+    const workLoopFailureDir = path.resolve('./.knowl-cli-work-loop-run-failure-test');
+    await fs.rm(workLoopFailureDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(workLoopFailureDir, { recursive: true });
+
+    execSync(`node "${CLI_PATH}" init "Work Loop Failure Project"`, {
+      cwd: workLoopFailureDir,
+      encoding: 'utf-8',
+    });
+
+    let output = '';
+    let status: number | undefined;
+    try {
+      execFileSync(process.execPath, [
+        CLI_PATH,
+        'task',
+        'run',
+        'Fail wrapped command',
+        '--',
+        process.execPath,
+        '-e',
+        "console.error('wrapped failure'); process.exit(7)",
+      ], {
+        cwd: workLoopFailureDir,
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
+    } catch (error: any) {
+      status = error.status;
+      output = `${error.stdout.toString()}${error.stderr.toString()}`;
+    }
+
+    expect(status).toBe(7);
+    expect(output).toContain('KNOWL WORK LOOP START');
+    expect(output).toContain('wrapped failure');
+    expect(output).toContain('KNOWL WORK LOOP CHECKPOINT');
+    expect(output).toContain('Command failed with exit code 7');
+
+    const stateOutput = execSync(`node "${CLI_PATH}" state`, {
+      cwd: workLoopFailureDir,
+      encoding: 'utf-8',
+    });
+    expect(stateOutput).toContain('Work Loop: Fail wrapped command');
+    expect(stateOutput).toContain('Work Loop checkpoint');
+    expect(stateOutput).toContain('Command failed with exit code 7');
+
+    await fs.rm(workLoopFailureDir, { recursive: true, force: true });
+  });
+
+  it('should run automatic work loop commands resolved from PATH', async () => {
+    const workLoopPathDir = path.resolve('./.knowl-cli-work-loop-run-path-test');
+    await fs.rm(workLoopPathDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(workLoopPathDir, { recursive: true });
+
+    execSync(`node "${CLI_PATH}" init "Work Loop Path Project"`, {
+      cwd: workLoopPathDir,
+      encoding: 'utf-8',
+    });
+
+    const output = execFileSync(process.execPath, [
+      CLI_PATH,
+      'task',
+      'run',
+      'Check npm shim',
+      '--',
+      'npm',
+      '--version',
+    ], {
+      cwd: workLoopPathDir,
+      encoding: 'utf-8',
+    });
+
+    expect(output).toContain('KNOWL WORK LOOP START');
+    expect(output).toMatch(/\d+\.\d+\.\d+/);
+    expect(output).toContain('KNOWL WORK LOOP FINISH');
+
+    await fs.rm(workLoopPathDir, { recursive: true, force: true });
   });
 
   it('should report agent readiness with doctor', async () => {

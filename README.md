@@ -12,7 +12,8 @@ Knowl is designed for durable engineering context: decisions, architecture, goal
 - Organizes memory into `fact`, `decision`, `goal`, `constraint`, `architecture`, `state`, and `skill` categories.
 - Provides deterministic MCP tools for storing and querying structured knowledge without a Knowl-side AI provider.
 - Generates or refreshes `AGENTS.md` guidance so agents know to query Knowl before inspecting files.
-- Records manual work-loop starts, checkpoints, and finishes as structured state atoms with knowledge commits.
+- Records work-loop starts, checkpoints, and finishes as structured state atoms with knowledge commits.
+- Wraps shell commands with an automatic work loop so agents query memory before execution and write back success or failure state.
 - Prints MCP connection instructions for Codex, Cursor, and Claude Desktop.
 - Adds `.knowl/` to `.gitignore` during project initialization.
 - Supports optional AI-backed CLI commands for raw text ingestion and natural-language answers.
@@ -71,7 +72,13 @@ Register the MCP server for Codex:
 knowl connect codex
 ```
 
-Wrap multi-step work with a manual Knowl work loop:
+Wrap work with an automatic Knowl work loop:
+
+```bash
+knowl task run "Implement search UI" --query "search retrieval" -- npm test
+```
+
+Or record manual checkpoints:
 
 ```bash
 knowl task start "Implement search UI" --query "search retrieval"
@@ -162,6 +169,7 @@ knowl connect claude
 | `knowl task start <title>` | Start a work loop, query relevant memory, and store active task state. |
 | `knowl task checkpoint <task-id> <summary>` | Store durable progress for an active work loop. |
 | `knowl task finish <task-id> <summary>` | Store durable completion state for a work loop. |
+| `knowl task run <title> -- <command...>` | Start a work loop, run a command, then finish on success or checkpoint on failure with the child exit code. |
 | `knowl decide [title] [content]` | Record a decision. Runs interactively when title or content is omitted. |
 | `knowl ask <question>` | Ask a natural-language question over project memory. Requires AI config. |
 | `knowl ingest <text>` | Extract and merge knowledge from raw text. Requires AI config. |
@@ -182,6 +190,7 @@ knowl config search.vector.enabled true
 knowl reindex --vectors
 knowl connect codex
 knowl task start "Fix auction settlement bug" --query "auction settlement wallet"
+knowl task run "Run tests" --query "test verification" -- npm test
 knowl gc
 knowl gc --apply
 ```
