@@ -145,6 +145,9 @@ describe('MCP Server Layer', () => {
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_store')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest_atoms')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_task_start')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_task_checkpoint')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_task_finish')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_gc_preview')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_gc_apply')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ask')).toBe(false);
@@ -368,6 +371,63 @@ describe('MCP Server Layer', () => {
     const db = (await import('../../src/store/database.js')).getDb();
     const items = await db.select().from((await import('../../src/store/schema.js')).knowledgeItems);
     expect(items).toHaveLength(2);
+  });
+
+  it('should support a work loop through MCP tools', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'decision',
+      title: 'Use BM25 retrieval',
+      content: 'Use BM25 retrieval for concise project-memory lookups.',
+      tags: ['search', 'retrieval'],
+    });
+
+    const startRes = await runRpcRequest('tools/call', {
+      name: 'knowl_task_start',
+      arguments: {
+        title: 'Implement search UI',
+        query: 'search retrieval',
+      },
+    });
+
+    expect(startRes.error).toBeUndefined();
+    expect(startRes.result.isError).toBeUndefined();
+    const startPayload = JSON.parse(startRes.result.content[0].text);
+    expect(startPayload.taskId).toBeTruthy();
+    expect(startPayload.relevantMemory).toHaveLength(1);
+    expect(startPayload.relevantMemory[0].title).toBe('Use BM25 retrieval');
+
+    const checkpointRes = await runRpcRequest('tools/call', {
+      name: 'knowl_task_checkpoint',
+      arguments: {
+        taskId: startPayload.taskId,
+        summary: 'Added search UI tests',
+      },
+    });
+
+    expect(checkpointRes.error).toBeUndefined();
+    expect(checkpointRes.result.isError).toBeUndefined();
+    const checkpointPayload = JSON.parse(checkpointRes.result.content[0].text);
+    expect(checkpointPayload.taskId).toBe(startPayload.taskId);
+    expect(checkpointPayload.itemId).toBeTruthy();
+
+    const finishRes = await runRpcRequest('tools/call', {
+      name: 'knowl_task_finish',
+      arguments: {
+        taskId: startPayload.taskId,
+        summary: 'Verified search UI implementation',
+      },
+    });
+
+    expect(finishRes.error).toBeUndefined();
+    expect(finishRes.result.isError).toBeUndefined();
+    const finishPayload = JSON.parse(finishRes.result.content[0].text);
+    expect(finishPayload.taskId).toBe(startPayload.taskId);
+    expect(finishPayload.itemId).toBeTruthy();
+
+    const items = await repo.listKnowledgeItems(projectId);
+    expect(items.some(item => item.title === 'Work Loop: Implement search UI')).toBe(true);
+    expect(items.some(item => item.title === 'Work Loop checkpoint')).toBe(true);
+    expect(items.some(item => item.title === 'Work Loop finish')).toBe(true);
   });
 
   it('should support reading brain state resource', async () => {

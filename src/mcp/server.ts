@@ -16,6 +16,9 @@ export const KNOWL_MCP_TOOL_NAMES = [
   'knowl_decide',
   'knowl_query',
   'knowl_update',
+  'knowl_task_start',
+  'knowl_task_checkpoint',
+  'knowl_task_finish',
   'knowl_gc_preview',
   'knowl_gc_apply',
 ] as const;

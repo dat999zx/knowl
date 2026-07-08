@@ -12,6 +12,8 @@ Knowl is designed for durable engineering context: decisions, architecture, goal
 - Organizes memory into `fact`, `decision`, `goal`, `constraint`, `architecture`, `state`, and `skill` categories.
 - Provides deterministic MCP tools for storing and querying structured knowledge without a Knowl-side AI provider.
 - Generates or refreshes `AGENTS.md` guidance so agents know to query Knowl before inspecting files.
+- Records manual work-loop starts, checkpoints, and finishes as structured state atoms with knowledge commits.
+- Prints MCP connection instructions for Codex, Cursor, and Claude Desktop.
 - Adds `.knowl/` to `.gitignore` during project initialization.
 - Supports optional AI-backed CLI commands for raw text ingestion and natural-language answers.
 - Supports BM25 retrieval by default, with optional local vector search.
@@ -66,10 +68,16 @@ knowl doctor
 Register the MCP server for Codex:
 
 ```bash
-codex mcp add knowl -- knowl.cmd serve
+knowl connect codex
 ```
 
-On Unix-like shells, use `knowl serve` instead of `knowl.cmd serve`.
+Wrap multi-step work with a manual Knowl work loop:
+
+```bash
+knowl task start "Implement search UI" --query "search retrieval"
+knowl task checkpoint <task-id> "Added search UI tests"
+knowl task finish <task-id> "Verified search UI implementation"
+```
 
 ## MCP Workflow
 
@@ -95,6 +103,9 @@ Available MCP tools:
 | `knowl_ingest_atoms` | Store a batch of structured knowledge atoms without AI configuration. |
 | `knowl_decide` | Record a decision with required reasoning. |
 | `knowl_update` | Update item content, title, reasoning, or status. |
+| `knowl_task_start` | Start a manual work loop, query relevant memory, and store active task state. |
+| `knowl_task_checkpoint` | Store durable progress during a work loop. |
+| `knowl_task_finish` | Store durable completion state for a work loop. |
 | `knowl_ingest` | Run raw text through Knowl's AI-backed extraction pipeline. Requires explicit AI config. |
 | `knowl_gc_preview` | Preview duplicate, stale, or cold memory cleanup recommendations. |
 | `knowl_gc_apply` | Apply garbage collection transactionally and record a knowledge commit. |
@@ -130,15 +141,27 @@ Cursor configuration:
 
 If an MCP client shows `Auth: Unsupported` for this local stdio server, that is expected and does not mean Knowl is unavailable.
 
+You can print client-specific setup instructions with:
+
+```bash
+knowl connect codex
+knowl connect cursor
+knowl connect claude
+```
+
 ## CLI Commands
 
 | Command | Description |
 | --- | --- |
 | `knowl init [name]` | Initialize the current directory as a Knowl project. If already initialized, upgrade config, schema, AGENTS guidance, and `.gitignore`. |
 | `knowl upgrade` | Upgrade an existing Knowl repository with current defaults and agent files. |
+| `knowl connect <target>` | Print MCP setup instructions for `codex`, `cursor`, or `claude`. |
 | `knowl status` | Show project metadata, item counts, category counts, AI config status, and recent knowledge commits. |
 | `knowl doctor` | Check whether the project is ready for agent memory usage. |
 | `knowl state` | Print the full active hierarchical project memory. |
+| `knowl task start <title>` | Start a work loop, query relevant memory, and store active task state. |
+| `knowl task checkpoint <task-id> <summary>` | Store durable progress for an active work loop. |
+| `knowl task finish <task-id> <summary>` | Store durable completion state for a work loop. |
 | `knowl decide [title] [content]` | Record a decision. Runs interactively when title or content is omitted. |
 | `knowl ask <question>` | Ask a natural-language question over project memory. Requires AI config. |
 | `knowl ingest <text>` | Extract and merge knowledge from raw text. Requires AI config. |
@@ -157,6 +180,8 @@ knowl config ai.model gpt-4o-mini
 knowl config ai.apiKey '${OPENAI_API_KEY}'
 knowl config search.vector.enabled true
 knowl reindex --vectors
+knowl connect codex
+knowl task start "Fix auction settlement bug" --query "auction settlement wallet"
 knowl gc
 knowl gc --apply
 ```

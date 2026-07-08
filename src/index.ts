@@ -19,6 +19,7 @@ import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
 import { reindexKnowledgeEmbeddings } from './store/vector-index.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from './store/gc.js';
+import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } from './store/work-loop.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -38,6 +39,57 @@ function printAgentsGuidanceStatus(status: Awaited<ReturnType<typeof installKnow
   } else {
     console.log(`AGENTS.md Knowl MCP guidance is up to date.`);
   }
+}
+
+function printRelevantMemory(items: WorkLoopMemoryHit[]) {
+  console.log(`Relevant memory:`);
+  if (items.length === 0) {
+    console.log(`- none`);
+    return;
+  }
+
+  for (const item of items) {
+    console.log(`- ${item.title} (${item.category}, ${item.id})`);
+  }
+}
+
+function printConnectInstructions(target: string) {
+  const normalized = target.toLowerCase();
+  console.log('KNOWL CONNECT');
+  console.log(`Target: ${normalized}`);
+  console.log('');
+
+  if (normalized === 'codex') {
+    console.log('Run:');
+    console.log('  codex mcp add knowl -- knowl.cmd serve');
+    console.log('');
+    console.log('Then:');
+    console.log('  Start a new Codex session so the MCP tools are loaded.');
+    return;
+  }
+
+  if (normalized === 'cursor') {
+    console.log('Add this MCP server in Cursor:');
+    console.log('  Name: `knowl`');
+    console.log('  Type: `command`');
+    console.log('  Command: `knowl serve`');
+    return;
+  }
+
+  if (normalized === 'claude') {
+    console.log('Add this to Claude Desktop MCP configuration:');
+    console.log(JSON.stringify({
+      mcpServers: {
+        knowl: {
+          command: 'knowl',
+          args: ['serve'],
+        },
+      },
+    }, null, 2));
+    return;
+  }
+
+  throw new Error('Unsupported connect target. Use codex, cursor, or claude.');
 }
 
 async function upgradeExistingRepository(projectRoot: string, fallbackName: string) {
@@ -530,7 +582,21 @@ program
     }
   });
 
-// --- 10. GC COMMAND ---
+// --- 10. CONNECT COMMAND ---
+program
+  .command('connect')
+  .description('Print MCP setup instructions for an agent client')
+  .argument('<target>', 'Agent client: codex, cursor, or claude')
+  .action((target) => {
+    try {
+      printConnectInstructions(target);
+    } catch (error: any) {
+      console.error(`Error printing connection instructions: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// --- 11. GC COMMAND ---
 program
   .command('gc')
   .description('Preview or apply knowledge garbage collection')
@@ -571,7 +637,85 @@ program
     }
   });
 
-// --- 11. DOCTOR COMMAND ---
+// --- 12. TASK COMMAND ---
+const taskCommand = program
+  .command('task')
+  .description('Run a manual Knowl work loop around multi-step execution');
+
+taskCommand
+  .command('start')
+  .description('Start a work loop, query relevant memory, and store active task state')
+  .argument('<title>', 'Task title')
+  .option('-q, --query <query>', 'Focused query for relevant memory lookup')
+  .action(async (title, options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const result = await startWorkLoop(project.id, title, options.query);
+      console.log('KNOWL WORK LOOP START');
+      console.log(`Task ID: ${result.taskId}`);
+      console.log(`Query: ${result.query}`);
+      printRelevantMemory(result.relevantMemory);
+
+      await closeDb();
+    } catch (error: any) {
+      console.error(`Error starting work loop: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+taskCommand
+  .command('checkpoint')
+  .description('Store durable progress for an active work loop')
+  .argument('<taskId>', 'Task ID returned by knowl task start')
+  .argument('<summary>', 'Checkpoint summary')
+  .action(async (taskId, summary) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const result = await checkpointWorkLoop(project.id, taskId, summary);
+      console.log('KNOWL WORK LOOP CHECKPOINT');
+      console.log(`Task ID: ${result.taskId}`);
+      console.log(`Checkpoint ID: ${result.itemId}`);
+
+      await closeDb();
+    } catch (error: any) {
+      console.error(`Error recording work loop checkpoint: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+taskCommand
+  .command('finish')
+  .description('Store durable completion state for a work loop')
+  .argument('<taskId>', 'Task ID returned by knowl task start')
+  .argument('<summary>', 'Completion summary')
+  .action(async (taskId, summary) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const result = await finishWorkLoop(project.id, taskId, summary);
+      console.log('KNOWL WORK LOOP FINISH');
+      console.log(`Task ID: ${result.taskId}`);
+      console.log(`Finish ID: ${result.itemId}`);
+
+      await closeDb();
+    } catch (error: any) {
+      console.error(`Error finishing work loop: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// --- 13. DOCTOR COMMAND ---
 program
   .command('doctor')
   .description('Check whether the current Knowl project is ready for agent memory usage')
@@ -583,7 +727,7 @@ program
     }
   });
 
-// --- 12. SERVE COMMAND ---
+// --- 14. SERVE COMMAND ---
 program
   .command('serve')
   .description('Start the Model Context Protocol (MCP) server for KNOWL')

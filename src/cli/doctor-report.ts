@@ -14,6 +14,7 @@ type DoctorStatus = 'OK' | 'WARN' | 'FAIL';
 export type DoctorCheck = {
   status: DoctorStatus;
   message: string;
+  fix?: string;
 };
 
 export type DoctorResult = {
@@ -46,6 +47,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       message: guidanceCurrent
         ? 'AGENTS.md Knowl guidance current'
         : 'AGENTS.md Knowl guidance missing or stale; run knowl init',
+      fix: guidanceCurrent ? undefined : 'run `knowl init`',
     });
 
     const gitignorePath = path.join(root, '.gitignore');
@@ -64,6 +66,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       message: ignoresKnowl
         ? '.gitignore ignores .knowl/'
         : '.gitignore should ignore .knowl/; run knowl upgrade',
+      fix: ignoresKnowl ? undefined : 'add `.knowl/` to `.gitignore` or run `knowl upgrade`',
     });
 
     await initDb(root);
@@ -90,6 +93,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         message: queryResults.length > 0
           ? `Agent query returned ${queryResults.length} item(s)`
           : 'Agent query returned no active items; store durable project knowledge',
+        fix: queryResults.length > 0 ? undefined : 'store at least one durable fact, decision, constraint, architecture note, state item, or skill',
       });
     }
 
@@ -100,6 +104,17 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       message: hasQuery && !hasAsk
         ? 'MCP tools expose knowl_query and hide knowl_ask'
         : 'MCP tool surface should expose knowl_query and hide knowl_ask',
+    });
+
+    const hasWorkLoop =
+      KNOWL_MCP_TOOL_NAMES.includes('knowl_task_start') &&
+      KNOWL_MCP_TOOL_NAMES.includes('knowl_task_checkpoint') &&
+      KNOWL_MCP_TOOL_NAMES.includes('knowl_task_finish');
+    checks.push({
+      status: hasWorkLoop ? 'OK' : 'WARN',
+      message: hasWorkLoop
+        ? 'MCP tools expose work-loop task tools'
+        : 'MCP tool surface should expose knowl_task_start, knowl_task_checkpoint, and knowl_task_finish',
     });
 
     if (isVectorSearchEnabled(config)) {
@@ -133,6 +148,9 @@ export function formatDoctorReport(result: DoctorResult): string {
 
   for (const check of result.checks) {
     lines.push(`[${check.status}] ${check.message}`);
+    if (check.fix) {
+      lines.push(`      Fix: ${check.fix}`);
+    }
   }
 
   lines.push('');

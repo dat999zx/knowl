@@ -12,6 +12,7 @@ import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/kn
 import { isVectorSearchEnabled, createLocalEmbeddingProvider, getVectorSearchConfig } from '../ai/embeddings.js';
 import { queryKnowledgeForAgent } from '../store/agent-query.js';
 import { previewKnowledgeGc, applyKnowledgeGc } from '../store/gc.js';
+import { checkpointWorkLoop, finishWorkLoop, startWorkLoop } from '../store/work-loop.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
@@ -260,6 +261,60 @@ export function registerTools(
           },
         },
         {
+          name: 'knowl_task_start',
+          description: 'Start a manual Knowl work loop for a multi-step task. Stores active task state and returns relevant memory before execution begins.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              title: {
+                type: 'string',
+                description: 'Short task title.',
+              },
+              query: {
+                type: 'string',
+                description: 'Optional focused retrieval query for pre-task memory lookup. Defaults to the task title.',
+              },
+            },
+            required: ['title'],
+          },
+        },
+        {
+          name: 'knowl_task_checkpoint',
+          description: 'Record a work-loop checkpoint during execution so the task writes durable progress before the final summary.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              taskId: {
+                type: 'string',
+                description: 'The taskId returned by knowl_task_start.',
+              },
+              summary: {
+                type: 'string',
+                description: 'Durable checkpoint summary.',
+              },
+            },
+            required: ['taskId', 'summary'],
+          },
+        },
+        {
+          name: 'knowl_task_finish',
+          description: 'Finish a work loop by storing a durable completion summary for the task.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              taskId: {
+                type: 'string',
+                description: 'The taskId returned by knowl_task_start.',
+              },
+              summary: {
+                type: 'string',
+                description: 'Durable completion summary.',
+              },
+            },
+            required: ['taskId', 'summary'],
+          },
+        },
+        {
           name: 'knowl_gc_apply',
           description: 'Apply knowledge garbage collection transactionally: purge duplicates, archive stale state, compress cold archives, and record a knowledge commit.',
           inputSchema: {
@@ -453,6 +508,30 @@ export function registerTools(
 
       else if (name === 'knowl_gc_preview') {
         const result = await previewKnowledgeGc(projectId!);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      else if (name === 'knowl_task_start') {
+        const { title, query } = args as any;
+        const result = await startWorkLoop(projectId!, title, query);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      else if (name === 'knowl_task_checkpoint') {
+        const { taskId, summary } = args as any;
+        const result = await checkpointWorkLoop(projectId!, taskId, summary);
+        return {
+          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+        };
+      }
+
+      else if (name === 'knowl_task_finish') {
+        const { taskId, summary } = args as any;
+        const result = await finishWorkLoop(projectId!, taskId, summary);
         return {
           content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
         };

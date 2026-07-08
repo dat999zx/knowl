@@ -303,6 +303,60 @@ describe('CLI Integration', () => {
     expect(output).toContain('Recorded decision successfully!');
   });
 
+  it('should run a work loop with start, checkpoint, and finish commands', async () => {
+    const workLoopDir = path.resolve('./.knowl-cli-work-loop-test');
+    await fs.rm(workLoopDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(workLoopDir, { recursive: true });
+
+    execSync(`node "${CLI_PATH}" init "Work Loop Project"`, {
+      cwd: workLoopDir,
+      encoding: 'utf-8',
+    });
+    execSync(
+      `node "${CLI_PATH}" decide "Use BM25 retrieval" "Use BM25 retrieval for concise project-memory lookups." -r "Work-loop start should surface relevant memory before execution." -t "search" "retrieval"`,
+      {
+        cwd: workLoopDir,
+        encoding: 'utf-8',
+      }
+    );
+
+    const startOutput = execSync(`node "${CLI_PATH}" task start "Implement search UI" --query "search retrieval"`, {
+      cwd: workLoopDir,
+      encoding: 'utf-8',
+    });
+    expect(startOutput).toContain('KNOWL WORK LOOP START');
+    expect(startOutput).toContain('Task ID:');
+    expect(startOutput).toContain('Relevant memory:');
+    expect(startOutput).toContain('Use BM25 retrieval');
+
+    const taskId = startOutput.match(/Task ID:\s+([a-f0-9]+)/)?.[1];
+    expect(taskId).toBeTruthy();
+
+    const checkpointOutput = execSync(`node "${CLI_PATH}" task checkpoint ${taskId} "Added search UI tests"`, {
+      cwd: workLoopDir,
+      encoding: 'utf-8',
+    });
+    expect(checkpointOutput).toContain('KNOWL WORK LOOP CHECKPOINT');
+    expect(checkpointOutput).toContain('Checkpoint ID:');
+
+    const finishOutput = execSync(`node "${CLI_PATH}" task finish ${taskId} "Verified search UI implementation"`, {
+      cwd: workLoopDir,
+      encoding: 'utf-8',
+    });
+    expect(finishOutput).toContain('KNOWL WORK LOOP FINISH');
+    expect(finishOutput).toContain('Finish ID:');
+
+    const stateOutput = execSync(`node "${CLI_PATH}" state`, {
+      cwd: workLoopDir,
+      encoding: 'utf-8',
+    });
+    expect(stateOutput).toContain('Work Loop: Implement search UI');
+    expect(stateOutput).toContain('Work Loop checkpoint');
+    expect(stateOutput).toContain('Work Loop finish');
+
+    await fs.rm(workLoopDir, { recursive: true, force: true });
+  });
+
   it('should report agent readiness with doctor', async () => {
     const doctorDir = path.resolve('./.knowl-cli-doctor-test');
     await fs.rm(doctorDir, { recursive: true, force: true }).catch(() => {});
@@ -332,10 +386,63 @@ describe('CLI Integration', () => {
     expect(output).toContain('[OK] .gitignore ignores .knowl/');
     expect(output).toContain('[OK] Agent query returned');
     expect(output).toContain('[OK] MCP tools expose knowl_query and hide knowl_ask');
+    expect(output).toContain('[OK] MCP tools expose work-loop task tools');
     expect(output).toContain('[OK] Vector search disabled; BM25 retrieval remains active');
     expect(output).toContain('Result: READY');
 
     await fs.rm(doctorDir, { recursive: true, force: true });
+  });
+
+  it('should print Codex MCP connection instructions', async () => {
+    const output = execSync(`node "${CLI_PATH}" connect codex`, {
+      cwd: TEST_DIR,
+      encoding: 'utf-8',
+    });
+
+    expect(output).toContain('KNOWL CONNECT');
+    expect(output).toContain('Target: codex');
+    expect(output).toContain('codex mcp add knowl -- knowl.cmd serve');
+    expect(output).toContain('Start a new Codex session');
+  });
+
+  it('should print Cursor MCP connection instructions', async () => {
+    const output = execSync(`node "${CLI_PATH}" connect cursor`, {
+      cwd: TEST_DIR,
+      encoding: 'utf-8',
+    });
+
+    expect(output).toContain('KNOWL CONNECT');
+    expect(output).toContain('Target: cursor');
+    expect(output).toContain('Command: `knowl serve`');
+  });
+
+  it('should print doctor fix hints when guidance and gitignore are stale', async () => {
+    const staleDir = path.resolve('./.knowl-cli-doctor-stale-test');
+    await fs.rm(staleDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(staleDir, { recursive: true });
+    execSync(`node "${CLI_PATH}" init "Stale Doctor Project"`, {
+      cwd: staleDir,
+      encoding: 'utf-8',
+    });
+
+    await fs.writeFile(path.join(staleDir, 'AGENTS.md'), '# Agent Instructions\n', 'utf-8');
+    await fs.writeFile(path.join(staleDir, '.gitignore'), 'node_modules/\n', 'utf-8');
+
+    let output = '';
+    try {
+      execSync(`node "${CLI_PATH}" doctor`, {
+        cwd: staleDir,
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
+    } catch (error: any) {
+      output = error.stdout.toString();
+    }
+
+    expect(output).toContain('Fix: run `knowl init`');
+    expect(output).toContain('Fix: add `.knowl/` to `.gitignore` or run `knowl upgrade`');
+
+    await fs.rm(staleDir, { recursive: true, force: true });
   });
 
   it('should require vector search to be enabled before vector reindex', () => {
