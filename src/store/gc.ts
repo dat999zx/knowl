@@ -54,7 +54,6 @@ function normalizeText(value: string): string {
 
 function duplicateKey(item: KnowledgeItem): string {
   return [
-    item.projectId,
     item.category,
     normalizeText(item.title),
     normalizeText(item.content),

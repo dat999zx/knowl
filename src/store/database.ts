@@ -11,6 +11,7 @@ export type DbConnection = LibSQLDatabase<typeof schema> | Parameters<Parameters
 
 let dbInstance: LibSQLDatabase<typeof schema> | null = null;
 let clientInstance: Client | null = null;
+let projectRootInstance: string | null = null;
 
 /**
  * Initializes the database connection and runs schema bootstrap.
@@ -27,6 +28,7 @@ export async function initDb(projectRoot: string): Promise<LibSQLDatabase<typeof
     await bootstrapSchema(client);
 
     dbInstance = drizzle(client, { schema });
+    projectRootInstance = path.resolve(projectRoot);
     return dbInstance;
   } catch (error: any) {
     throw new DatabaseError(`Failed to initialize database at "${dbPath}": ${error.message}`);
@@ -43,6 +45,13 @@ export function getDb(): LibSQLDatabase<typeof schema> {
   return dbInstance;
 }
 
+export function getProjectRoot(): string {
+  if (!projectRootInstance) {
+    throw new DatabaseError('Project root has not been initialized. Run initDb() first.');
+  }
+  return projectRootInstance;
+}
+
 /**
  * Closes the database connection.
  */
@@ -51,5 +60,6 @@ export async function closeDb(): Promise<void> {
     clientInstance.close();
     clientInstance = null;
     dbInstance = null;
+    projectRootInstance = null;
   }
 }

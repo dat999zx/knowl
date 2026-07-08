@@ -61,7 +61,6 @@ export async function runDeriveTruth(
       .from(schema.knowledgeItems)
       .where(
         and(
-          eq(schema.knowledgeItems.projectId, projectId),
           eq(schema.knowledgeItems.category, 'state'),
           eq(schema.knowledgeItems.status, 'active')
         )

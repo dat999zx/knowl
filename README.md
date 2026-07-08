@@ -44,7 +44,7 @@ npm link
 Initialize a project from the project root:
 
 ```bash
-knowl init "My Project"
+knowl init
 ```
 
 This creates `.knowl/config.json`, bootstraps `.knowl/knowl.db`, installs Knowl guidance into `AGENTS.md`, and ensures `.knowl/` is ignored by git.
@@ -160,10 +160,10 @@ knowl connect claude
 
 | Command | Description |
 | --- | --- |
-| `knowl init [name]` | Initialize the current directory as a Knowl project. If already initialized, upgrade config, schema, AGENTS guidance, and `.gitignore`. |
+| `knowl init [name]` | Initialize the current directory as a Knowl project. The optional name is accepted for backward compatibility and is not persisted. If already initialized, upgrade config, schema, AGENTS guidance, and `.gitignore`. |
 | `knowl upgrade` | Upgrade an existing Knowl repository with current defaults and agent files. |
 | `knowl connect <target>` | Print MCP setup instructions for `codex`, `cursor`, or `claude`. |
-| `knowl status` | Show project metadata, item counts, category counts, AI config status, and recent knowledge commits. |
+| `knowl status` | Show repository path, item counts, category counts, AI config status, and recent knowledge commits. |
 | `knowl doctor` | Check whether the project is ready for agent memory usage. |
 | `knowl state` | Print the full active hierarchical project memory. |
 | `knowl task start <title>` | Start a work loop, query relevant memory, and store active task state. |
@@ -246,8 +246,8 @@ Environment variable placeholders such as `${OPENAI_API_KEY}` are resolved at ru
 
 Knowl stores project data under `.knowl/`:
 
-- `.knowl/config.json` contains project, security, AI, and search configuration.
-- `.knowl/knowl.db` contains project memory, knowledge commits, search indexes, and optional embeddings.
+- `.knowl/config.json` contains security, AI, and search configuration.
+- `.knowl/knowl.db` contains project memory, knowledge commits, search indexes, and optional embeddings. The project scope is implicit from the database location, so Knowl does not persist separate project-name or root-path metadata inside the database.
 
 By default, `knowl init` and `knowl upgrade` ensure `.knowl/` is ignored by git.
 

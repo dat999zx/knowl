@@ -1,113 +1,329 @@
 import { Client } from '@libsql/client';
 
-/**
- * Directly bootstraps the schema using SQL commands.
- * This keeps the binary self-contained and free from file migration dependencies.
- */
-export async function bootstrapSchema(client: Client): Promise<void> {
-  const statements = [
-    'PRAGMA foreign_keys = ON;',
-    'PRAGMA journal_mode = WAL;',
+const BASE_STATEMENTS = [
+  'PRAGMA foreign_keys = ON;',
+  'PRAGMA journal_mode = WAL;',
+];
 
-    `CREATE TABLE IF NOT EXISTS projects (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      description TEXT,
-      root_path TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );`,
+const SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS knowledge_items (
+    id TEXT PRIMARY KEY,
+    category TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    reasoning TEXT,
+    alternatives TEXT,
+    tags TEXT,
+    source TEXT,
+    confidence REAL NOT NULL DEFAULT 1.0,
+    superseded_by_id TEXT,
+    version INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );`,
 
-    `CREATE TABLE IF NOT EXISTS knowledge_items (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      category TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'active',
-      title TEXT NOT NULL,
-      content TEXT NOT NULL,
-      reasoning TEXT,
-      alternatives TEXT,
-      tags TEXT,
-      source TEXT,
-      confidence REAL NOT NULL DEFAULT 1.0,
-      superseded_by_id TEXT,
-      version INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );`,
+  `CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_items_fts USING fts5(
+    item_id UNINDEXED,
+    category UNINDEXED,
+    status UNINDEXED,
+    title,
+    content,
+    reasoning,
+    tags
+  );`,
 
-    `CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_items_fts USING fts5(
-      item_id UNINDEXED,
-      project_id UNINDEXED,
-      category UNINDEXED,
-      status UNINDEXED,
-      title,
-      content,
-      reasoning,
-      tags
-    );`,
+  `CREATE TABLE IF NOT EXISTS knowledge_commits (
+    id TEXT PRIMARY KEY,
+    message TEXT NOT NULL,
+    changes TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );`,
 
-    `CREATE TABLE IF NOT EXISTS knowledge_commits (
-      id TEXT PRIMARY KEY,
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      message TEXT NOT NULL,
-      changes TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );`,
+  `CREATE TABLE IF NOT EXISTS skill_steps (
+    id TEXT PRIMARY KEY,
+    knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
+    step_order INTEGER NOT NULL,
+    instruction TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );`,
 
-    `CREATE TABLE IF NOT EXISTS skill_steps (
+  `CREATE TABLE IF NOT EXISTS skill_metadata (
+    knowledge_item_id TEXT PRIMARY KEY REFERENCES knowledge_items(id) ON DELETE CASCADE,
+    usage_count INTEGER NOT NULL DEFAULT 0,
+    success_count INTEGER NOT NULL DEFAULT 0,
+    last_used TEXT
+  );`,
+
+  `CREATE TABLE IF NOT EXISTS knowledge_embeddings (
+    knowledge_item_id TEXT PRIMARY KEY REFERENCES knowledge_items(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    dimensions INTEGER NOT NULL,
+    vector TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  );`,
+
+  `CREATE INDEX IF NOT EXISTS idx_ki_cat_status ON knowledge_items(category, status);`,
+  `CREATE INDEX IF NOT EXISTS idx_ki_status ON knowledge_items(status);`,
+  `CREATE INDEX IF NOT EXISTS idx_ki_updated ON knowledge_items(updated_at);`,
+  `CREATE INDEX IF NOT EXISTS idx_ke_model ON knowledge_embeddings(provider, model);`,
+
+  `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
+    INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
+    VALUES (new.id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));
+  END;`,
+
+  `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ad AFTER DELETE ON knowledge_items BEGIN
+    DELETE FROM knowledge_items_fts WHERE item_id = old.id;
+  END;`,
+
+  `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_au AFTER UPDATE ON knowledge_items BEGIN
+    DELETE FROM knowledge_items_fts WHERE item_id = old.id;
+    INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
+    VALUES (new.id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));
+  END;`,
+
+  `INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
+    SELECT id, category, status, title, content, coalesce(reasoning, ''), coalesce(tags, '')
+    FROM knowledge_items
+    WHERE NOT EXISTS (SELECT 1 FROM knowledge_items_fts LIMIT 1)
+      AND EXISTS (SELECT 1 FROM knowledge_items LIMIT 1);`,
+];
+
+function unwrapJson(value: unknown): unknown {
+  let current = value;
+  while (typeof current === 'string') {
+    try {
+      current = JSON.parse(current);
+    } catch {
+      break;
+    }
+  }
+  return current;
+}
+
+function stripProjectFields(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stripProjectFields);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const normalized: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'projectId' || key === 'project_id') continue;
+    normalized[key] = stripProjectFields(entry);
+  }
+  return normalized;
+}
+
+function normalizeCommitChanges(value: unknown): string {
+  return JSON.stringify(stripProjectFields(unwrapJson(value)));
+}
+
+async function executeAll(client: Client, statements: string[]) {
+  for (const statement of statements) {
+    await client.execute(statement);
+  }
+}
+
+async function tableExists(client: Client, name: string): Promise<boolean> {
+  const result = await client.execute({
+    sql: `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`,
+    args: [name],
+  });
+  return result.rows.length > 0;
+}
+
+async function tableColumns(client: Client, name: string): Promise<string[]> {
+  const result = await client.execute(`PRAGMA table_info(${name})`);
+  return result.rows.map(row => String(row.name));
+}
+
+async function dropLegacySearchArtifacts(client: Client) {
+  await client.execute('DROP TRIGGER IF EXISTS knowledge_items_fts_ai;');
+  await client.execute('DROP TRIGGER IF EXISTS knowledge_items_fts_ad;');
+  await client.execute('DROP TRIGGER IF EXISTS knowledge_items_fts_au;');
+  await client.execute('DROP TABLE IF EXISTS knowledge_items_fts;');
+}
+
+async function foreignKeyTargets(client: Client, table: string): Promise<string[]> {
+  if (!(await tableExists(client, table))) {
+    return [];
+  }
+
+  const rows = await client.execute(`PRAGMA foreign_key_list(${table})`);
+  return rows.rows.map(row => String(row.table));
+}
+
+async function repairSkillForeignKeys(client: Client): Promise<void> {
+  const staleSteps = (await foreignKeyTargets(client, 'skill_steps'))
+    .some(target => target !== 'knowledge_items');
+  const staleMetadata = (await foreignKeyTargets(client, 'skill_metadata'))
+    .some(target => target !== 'knowledge_items');
+
+  if (!staleSteps && !staleMetadata) {
+    return;
+  }
+
+  await client.execute('PRAGMA foreign_keys = OFF;');
+
+  if (staleSteps) {
+    await client.execute('ALTER TABLE skill_steps RENAME TO skill_steps_stale_fk;');
+    await client.execute(`CREATE TABLE skill_steps (
       id TEXT PRIMARY KEY,
       knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
       step_order INTEGER NOT NULL,
       instruction TEXT NOT NULL,
       created_at TEXT NOT NULL
-    );`,
+    );`);
+    await client.execute(`
+      INSERT INTO skill_steps (id, knowledge_item_id, step_order, instruction, created_at)
+      SELECT id, knowledge_item_id, step_order, instruction, created_at
+      FROM skill_steps_stale_fk;
+    `);
+    await client.execute('DROP TABLE skill_steps_stale_fk;');
+  }
 
-    `CREATE TABLE IF NOT EXISTS skill_metadata (
+  if (staleMetadata) {
+    await client.execute('ALTER TABLE skill_metadata RENAME TO skill_metadata_stale_fk;');
+    await client.execute(`CREATE TABLE skill_metadata (
       knowledge_item_id TEXT PRIMARY KEY REFERENCES knowledge_items(id) ON DELETE CASCADE,
       usage_count INTEGER NOT NULL DEFAULT 0,
       success_count INTEGER NOT NULL DEFAULT 0,
       last_used TEXT
-    );`,
-
-    `CREATE TABLE IF NOT EXISTS knowledge_embeddings (
-      knowledge_item_id TEXT PRIMARY KEY REFERENCES knowledge_items(id) ON DELETE CASCADE,
-      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      provider TEXT NOT NULL,
-      model TEXT NOT NULL,
-      dimensions INTEGER NOT NULL,
-      vector TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );`,
-
-    `CREATE INDEX IF NOT EXISTS idx_ki_project_cat_status ON knowledge_items(project_id, category, status);`,
-    `CREATE INDEX IF NOT EXISTS idx_ki_project_status ON knowledge_items(project_id, status);`,
-    `CREATE INDEX IF NOT EXISTS idx_ki_project_updated ON knowledge_items(project_id, updated_at);`,
-    `CREATE INDEX IF NOT EXISTS idx_ke_project_model ON knowledge_embeddings(project_id, provider, model);`,
-
-    `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
-      INSERT INTO knowledge_items_fts(item_id, project_id, category, status, title, content, reasoning, tags)
-      VALUES (new.id, new.project_id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));
-    END;`,
-
-    `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ad AFTER DELETE ON knowledge_items BEGIN
-      DELETE FROM knowledge_items_fts WHERE item_id = old.id;
-    END;`,
-
-    `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_au AFTER UPDATE ON knowledge_items BEGIN
-      DELETE FROM knowledge_items_fts WHERE item_id = old.id;
-      INSERT INTO knowledge_items_fts(item_id, project_id, category, status, title, content, reasoning, tags)
-      VALUES (new.id, new.project_id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));
-    END;`,
-
-    `INSERT INTO knowledge_items_fts(item_id, project_id, category, status, title, content, reasoning, tags)
-      SELECT id, project_id, category, status, title, content, coalesce(reasoning, ''), coalesce(tags, '')
-      FROM knowledge_items
-      WHERE NOT EXISTS (SELECT 1 FROM knowledge_items_fts LIMIT 1)
-        AND EXISTS (SELECT 1 FROM knowledge_items LIMIT 1);`,
-  ];
-
-  for (const statement of statements) {
-    await client.execute(statement);
+    );`);
+    await client.execute(`
+      INSERT INTO skill_metadata (knowledge_item_id, usage_count, success_count, last_used)
+      SELECT knowledge_item_id, usage_count, success_count, last_used
+      FROM skill_metadata_stale_fk;
+    `);
+    await client.execute('DROP TABLE skill_metadata_stale_fk;');
   }
+
+  await client.execute('PRAGMA foreign_keys = ON;');
+}
+
+async function migrateLegacyProjectSchema(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'knowledge_items'))) {
+    return;
+  }
+
+  const columns = await tableColumns(client, 'knowledge_items');
+  if (!columns.includes('project_id')) {
+    return;
+  }
+
+  await client.execute('PRAGMA foreign_keys = OFF;');
+  await dropLegacySearchArtifacts(client);
+
+  await client.execute('ALTER TABLE knowledge_items RENAME TO knowledge_items_legacy;');
+
+  const hasLegacyCommits = await tableExists(client, 'knowledge_commits');
+  if (hasLegacyCommits) {
+    await client.execute('ALTER TABLE knowledge_commits RENAME TO knowledge_commits_legacy;');
+  }
+
+  const hasLegacyEmbeddings = await tableExists(client, 'knowledge_embeddings');
+  if (hasLegacyEmbeddings) {
+    await client.execute('ALTER TABLE knowledge_embeddings RENAME TO knowledge_embeddings_legacy;');
+  }
+
+  const hasLegacySkillSteps = await tableExists(client, 'skill_steps');
+  if (hasLegacySkillSteps) {
+    await client.execute('ALTER TABLE skill_steps RENAME TO skill_steps_legacy;');
+  }
+
+  const hasLegacySkillMetadata = await tableExists(client, 'skill_metadata');
+  if (hasLegacySkillMetadata) {
+    await client.execute('ALTER TABLE skill_metadata RENAME TO skill_metadata_legacy;');
+  }
+
+  await executeAll(client, SCHEMA_STATEMENTS);
+
+  await client.execute(`
+    INSERT INTO knowledge_items (
+      id, category, status, title, content, reasoning, alternatives, tags, source,
+      confidence, superseded_by_id, version, created_at, updated_at
+    )
+    SELECT
+      id, category, status, title, content, reasoning, alternatives, tags, source,
+      confidence, superseded_by_id, version, created_at, updated_at
+    FROM knowledge_items_legacy;
+  `);
+
+  if (hasLegacyCommits) {
+    const commits = await client.execute('SELECT id, message, changes, created_at FROM knowledge_commits_legacy ORDER BY created_at ASC;');
+    for (const row of commits.rows) {
+      await client.execute({
+        sql: 'INSERT INTO knowledge_commits (id, message, changes, created_at) VALUES (?, ?, ?, ?)',
+        args: [
+          String(row.id),
+          String(row.message),
+          normalizeCommitChanges(row.changes),
+          String(row.created_at),
+        ],
+      });
+    }
+  }
+
+  if (hasLegacyEmbeddings) {
+    await client.execute(`
+      INSERT INTO knowledge_embeddings (
+        knowledge_item_id, provider, model, dimensions, vector, updated_at
+      )
+      SELECT knowledge_item_id, provider, model, dimensions, vector, updated_at
+      FROM knowledge_embeddings_legacy;
+    `);
+  }
+
+  if (hasLegacySkillSteps) {
+    await client.execute(`
+      INSERT INTO skill_steps (
+        id, knowledge_item_id, step_order, instruction, created_at
+      )
+      SELECT id, knowledge_item_id, step_order, instruction, created_at
+      FROM skill_steps_legacy;
+    `);
+  }
+
+  if (hasLegacySkillMetadata) {
+    await client.execute(`
+      INSERT INTO skill_metadata (
+        knowledge_item_id, usage_count, success_count, last_used
+      )
+      SELECT knowledge_item_id, usage_count, success_count, last_used
+      FROM skill_metadata_legacy;
+    `);
+  }
+
+  await client.execute('DROP TABLE knowledge_items_legacy;');
+  if (hasLegacyCommits) {
+    await client.execute('DROP TABLE knowledge_commits_legacy;');
+  }
+  if (hasLegacyEmbeddings) {
+    await client.execute('DROP TABLE knowledge_embeddings_legacy;');
+  }
+  if (hasLegacySkillSteps) {
+    await client.execute('DROP TABLE skill_steps_legacy;');
+  }
+  if (hasLegacySkillMetadata) {
+    await client.execute('DROP TABLE skill_metadata_legacy;');
+  }
+  await client.execute('DROP TABLE IF EXISTS projects;');
+  await client.execute('PRAGMA foreign_keys = ON;');
+}
+
+/**
+ * Directly bootstraps the schema using SQL commands.
+ * This keeps the binary self-contained and free from file migration dependencies.
+ */
+export async function bootstrapSchema(client: Client): Promise<void> {
+  await executeAll(client, BASE_STATEMENTS);
+  await migrateLegacyProjectSchema(client);
+  await executeAll(client, SCHEMA_STATEMENTS);
+  await repairSkillForeignKeys(client);
 }

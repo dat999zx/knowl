@@ -1,17 +1,7 @@
 import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 
-export const projects = sqliteTable('projects', {
-  id: text('id').primaryKey(),
-  name: text('name').notNull(),
-  description: text('description'),
-  rootPath: text('root_path').notNull().unique(),
-  createdAt: text('created_at').notNull(),
-  updatedAt: text('updated_at').notNull(),
-});
-
 export const knowledgeItems = sqliteTable('knowledge_items', {
   id: text('id').primaryKey(),
-  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
   category: text('category').notNull(), // 'fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'
   status: text('status').notNull().default('active'), // 'active', 'deprecated', 'rejected', 'archived', 'superseded'
   title: text('title').notNull(),
@@ -29,7 +19,6 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
 
 export const knowledgeCommits = sqliteTable('knowledge_commits', {
   id: text('id').primaryKey(),
-  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
   message: text('message').notNull(),
   changes: text('changes', { mode: 'json' }).notNull(), // CommitChange[]
   createdAt: text('created_at').notNull(),
@@ -52,7 +41,6 @@ export const skillMetadata = sqliteTable('skill_metadata', {
 
 export const knowledgeEmbeddings = sqliteTable('knowledge_embeddings', {
   knowledgeItemId: text('knowledge_item_id').primaryKey().references(() => knowledgeItems.id, { onDelete: 'cascade' }),
-  projectId: text('project_id').notNull().references(() => projects.id, { onDelete: 'cascade' }),
   provider: text('provider').notNull(),
   model: text('model').notNull(),
   dimensions: integer('dimensions').notNull(),

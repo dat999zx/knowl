@@ -25,10 +25,7 @@ export async function getRecentContext(
     const rows = await db
       .select()
       .from(schema.knowledgeItems)
-      .where(and(
-        eq(schema.knowledgeItems.projectId, projectId),
-        eq(schema.knowledgeItems.status, 'active')
-      ))
+      .where(eq(schema.knowledgeItems.status, 'active'))
       .orderBy(desc(schema.knowledgeItems.updatedAt))
       .limit(itemLimit);
 

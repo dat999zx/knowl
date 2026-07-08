@@ -1,8 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { createClient } from '@libsql/client';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
 import { initDb, closeDb, getDb } from '../../src/store/database.js';
+import { bootstrapSchema } from '../../src/store/bootstrap.js';
 import * as repo from '../../src/store/repository.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from '../../src/store/gc.js';
 import * as queries from '../../src/store/queries.js';
@@ -39,15 +41,163 @@ describe('Storage Layer', () => {
     }
   });
 
-  it('should create and retrieve a project', async () => {
+  it('should use local project identity without persisted project metadata', async () => {
     const project = await repo.createProject(TEST_ROOT, 'Test Project', 'A test description');
     expect(project).toBeDefined();
-    expect(project.name).toBe('Test Project');
+    expect(project.id).toBe('local');
+    expect(project.name).toBe(path.basename(TEST_ROOT));
     expect(project.rootPath).toBe(TEST_ROOT);
 
     const retrieved = await repo.getProjectByRootPath(TEST_ROOT);
     expect(retrieved).not.toBeNull();
     expect(retrieved!.id).toBe(project.id);
+
+    const db = getDb() as any;
+    const projectTables = await db.all(sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'projects'`);
+    expect(projectTables).toHaveLength(0);
+
+    for (const table of ['knowledge_items', 'knowledge_commits', 'knowledge_embeddings']) {
+      const columns = await db.all(sql.raw(`PRAGMA table_info(${table})`));
+      expect(columns.map((column: any) => column.name)).not.toContain('project_id');
+    }
+  });
+
+  it('should migrate legacy project-scoped schema without stale foreign keys', async () => {
+    const legacyRoot = path.resolve('./.knowl-legacy-schema-test');
+    await fs.rm(legacyRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(legacyRoot, '.knowl'), { recursive: true });
+
+    const client = createClient({ url: `file:${path.join(legacyRoot, '.knowl', 'knowl.db')}` });
+    try {
+      await client.execute('PRAGMA foreign_keys = ON;');
+      await client.execute(`CREATE TABLE projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        root_path TEXT NOT NULL UNIQUE,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`);
+      await client.execute(`CREATE TABLE knowledge_items (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        category TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        reasoning TEXT,
+        alternatives TEXT,
+        tags TEXT,
+        source TEXT,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        superseded_by_id TEXT,
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`);
+      await client.execute(`CREATE TABLE skill_steps (
+        id TEXT PRIMARY KEY,
+        knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
+        step_order INTEGER NOT NULL,
+        instruction TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`);
+      await client.execute(`CREATE TABLE skill_metadata (
+        knowledge_item_id TEXT PRIMARY KEY REFERENCES knowledge_items(id) ON DELETE CASCADE,
+        usage_count INTEGER NOT NULL DEFAULT 0,
+        success_count INTEGER NOT NULL DEFAULT 0,
+        last_used TEXT
+      );`);
+      await client.execute({
+        sql: `INSERT INTO projects (id, name, root_path, created_at, updated_at)
+          VALUES ('project1', 'Legacy', ?, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');`,
+        args: [legacyRoot],
+      });
+      await client.execute(`INSERT INTO knowledge_items (
+        id, project_id, category, status, title, content, confidence, version, created_at, updated_at
+      ) VALUES (
+        'item1', 'project1', 'skill', 'active', 'Legacy skill', 'Legacy skill content', 1.0, 1,
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );`);
+      await client.execute(`INSERT INTO skill_steps (id, knowledge_item_id, step_order, instruction, created_at)
+        VALUES ('step1', 'item1', 1, 'Do the thing', '2026-01-01T00:00:00.000Z');`);
+      await client.execute(`INSERT INTO skill_metadata (knowledge_item_id, usage_count, success_count)
+        VALUES ('item1', 0, 0);`);
+
+      await bootstrapSchema(client);
+
+      const stepForeignKeys = await client.execute('PRAGMA foreign_key_list(skill_steps)');
+      const metadataForeignKeys = await client.execute('PRAGMA foreign_key_list(skill_metadata)');
+      expect(stepForeignKeys.rows.map(row => row.table)).toEqual(['knowledge_items']);
+      expect(metadataForeignKeys.rows.map(row => row.table)).toEqual(['knowledge_items']);
+
+      const itemColumns = await client.execute('PRAGMA table_info(knowledge_items)');
+      expect(itemColumns.rows.map(row => row.name)).not.toContain('project_id');
+
+      const steps = await client.execute({
+        sql: 'SELECT instruction FROM skill_steps WHERE knowledge_item_id = ?',
+        args: ['item1'],
+      });
+      expect(steps.rows[0].instruction).toBe('Do the thing');
+    } finally {
+      client.close();
+      await fs.rm(legacyRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('should repair stale skill foreign keys from an older compact-schema migration', async () => {
+    const repairRoot = path.resolve('./.knowl-stale-fk-test');
+    await fs.rm(repairRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(repairRoot, '.knowl'), { recursive: true });
+
+    const client = createClient({ url: `file:${path.join(repairRoot, '.knowl', 'knowl.db')}` });
+    try {
+      await client.execute('PRAGMA foreign_keys = OFF;');
+      await client.execute(`CREATE TABLE knowledge_items (
+        id TEXT PRIMARY KEY,
+        category TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        reasoning TEXT,
+        alternatives TEXT,
+        tags TEXT,
+        source TEXT,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        superseded_by_id TEXT,
+        version INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`);
+      await client.execute(`CREATE TABLE skill_steps (
+        id TEXT PRIMARY KEY,
+        knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items_legacy(id) ON DELETE CASCADE,
+        step_order INTEGER NOT NULL,
+        instruction TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );`);
+      await client.execute(`INSERT INTO knowledge_items (
+        id, category, status, title, content, confidence, version, created_at, updated_at
+      ) VALUES (
+        'item1', 'skill', 'active', 'Migrated skill', 'Migrated skill content', 1.0, 1,
+        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+      );`);
+      await client.execute(`INSERT INTO skill_steps (id, knowledge_item_id, step_order, instruction, created_at)
+        VALUES ('step1', 'item1', 1, 'Still linked', '2026-01-01T00:00:00.000Z');`);
+
+      await bootstrapSchema(client);
+
+      const stepForeignKeys = await client.execute('PRAGMA foreign_key_list(skill_steps)');
+      expect(stepForeignKeys.rows.map(row => row.table)).toEqual(['knowledge_items']);
+
+      const steps = await client.execute({
+        sql: 'SELECT instruction FROM skill_steps WHERE knowledge_item_id = ?',
+        args: ['item1'],
+      });
+      expect(steps.rows[0].instruction).toBe('Still linked');
+    } finally {
+      client.close();
+      await fs.rm(repairRoot, { recursive: true, force: true }).catch(() => {});
+    }
   });
 
   it('should create and retrieve knowledge items', async () => {
@@ -284,12 +434,32 @@ describe('Storage Layer', () => {
     expect(context.commits[0].message).toBe('Newest session commit');
   });
 
+  it('should store commit changes without project ids or double-encoded JSON', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Compact commit payload',
+      content: 'Commit history should not repeat local project metadata.',
+    });
+
+    const commit = await repo.createKnowledgeCommit(projectId, 'Store compact payload', [
+      { itemId: item.id, action: 'insert', after: item },
+    ]);
+
+    const rows = await (getDb() as any).all(sql`SELECT changes FROM knowledge_commits WHERE id = ${commit.id}`);
+    const parsed = JSON.parse(rows[0].changes);
+
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed[0].after).not.toHaveProperty('projectId');
+  });
+
   it('should format recent context for quick session resume', async () => {
     const markdown = formatRecentContextToMarkdown({
       items: [
         {
           id: 'item1',
-          projectId: 'project1',
           category: 'state',
           status: 'active',
           title: 'Current plan',
@@ -308,7 +478,6 @@ describe('Storage Layer', () => {
       commits: [
         {
           id: 'commit1',
-          projectId: 'project1',
           message: 'Store recent context plan',
           changes: [],
           createdAt: '2026-07-02T01:00:00.000Z',

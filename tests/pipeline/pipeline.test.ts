@@ -24,7 +24,6 @@ import { filterInput, extractKnowledge, compareKnowledge, deriveTruth } from '..
 const TEST_ROOT = path.resolve('./.knowl-pipeline-test');
 const MOCK_CONFIG: ProjectConfig = {
   version: 1,
-  project: { name: 'pipeline-test' },
   ai: {
     provider: 'openai',
     model: 'gpt-4o-mini',
@@ -65,7 +64,6 @@ describe('Pipeline Integration', () => {
     const db = (await import('../../src/store/database.js')).getDb();
     await db.run(sql`DELETE FROM knowledge_commits`);
     await db.run(sql`DELETE FROM knowledge_items`);
-    await db.run(sql`DELETE FROM projects`);
 
     const project = await repo.createProject(TEST_ROOT, 'Pipeline Test');
     projectId = project.id;

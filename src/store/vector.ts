@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, SQL } from 'drizzle-orm';
 import { KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 import { getDb } from './database.js';
@@ -6,7 +6,7 @@ import { getKnowledgeItem } from './repository.js';
 import * as schema from './schema.js';
 
 export type KnowledgeEmbeddingInput = {
-  projectId: string;
+  projectId?: string;
   knowledgeItemId: string;
   provider: string;
   model: string;
@@ -45,7 +45,6 @@ export async function upsertKnowledgeEmbedding(input: KnowledgeEmbeddingInput): 
   const now = new Date().toISOString();
   const row = {
     knowledgeItemId: input.knowledgeItemId,
-    projectId: input.projectId,
     provider: input.provider,
     model: input.model,
     dimensions: input.dimensions,
@@ -83,7 +82,7 @@ export async function searchKnowledgeEmbeddings(
   const limit = options.limit ?? 20;
 
   try {
-    const conditions = [eq(schema.knowledgeEmbeddings.projectId, projectId)];
+    const conditions: SQL[] = [];
     if (options.provider) {
       conditions.push(eq(schema.knowledgeEmbeddings.provider, options.provider));
     }
@@ -91,10 +90,12 @@ export async function searchKnowledgeEmbeddings(
       conditions.push(eq(schema.knowledgeEmbeddings.model, options.model));
     }
 
-    const rows = await db
+    const baseQuery = db
       .select()
-      .from(schema.knowledgeEmbeddings)
-      .where(and(...conditions));
+      .from(schema.knowledgeEmbeddings);
+    const rows = conditions.length > 0
+      ? await baseQuery.where(and(...conditions))
+      : await baseQuery;
 
     const results: VectorSearchResult[] = [];
     for (const row of rows) {
@@ -104,7 +105,6 @@ export async function searchKnowledgeEmbeddings(
 
       const item = await getKnowledgeItem(row.knowledgeItemId);
       if (!item) continue;
-      if (item.projectId !== projectId) continue;
       if (item.status !== status) continue;
       if (options.category && item.category !== options.category) continue;
       if (options.tags && options.tags.length > 0) {

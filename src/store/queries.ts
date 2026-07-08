@@ -1,4 +1,4 @@
-import { eq, and, or, like } from 'drizzle-orm';
+import { eq, and, or, like, SQL } from 'drizzle-orm';
 import { getDb } from './database.js';
 import * as schema from './schema.js';
 import { searchKnowledgeItems } from './search.js';
@@ -20,7 +20,6 @@ export async function getActiveKnowledgeByCategory(
       .from(schema.knowledgeItems)
       .where(
         and(
-          eq(schema.knowledgeItems.projectId, projectId),
           eq(schema.knowledgeItems.category, category),
           eq(schema.knowledgeItems.status, 'active')
         )
@@ -40,8 +39,7 @@ export async function getHierarchicalKnowledge(projectId: string) {
   try {
     const results = await db
       .select()
-      .from(schema.knowledgeItems)
-      .where(eq(schema.knowledgeItems.projectId, projectId));
+      .from(schema.knowledgeItems);
 
     const mapped = results.map(mapRowToKnowledgeItem);
 
@@ -97,7 +95,7 @@ export async function queryKnowledgeBase(
       }
     }
 
-    const conditions = [eq(schema.knowledgeItems.projectId, projectId)];
+    const conditions: SQL[] = [];
 
     if (options.category) {
       conditions.push(eq(schema.knowledgeItems.category, options.category));
@@ -124,10 +122,12 @@ export async function queryKnowledgeBase(
       );
     }
 
-    let results = await db
+    const baseQuery = db
       .select()
-      .from(schema.knowledgeItems)
-      .where(and(...conditions));
+      .from(schema.knowledgeItems);
+    let results = conditions.length > 0
+      ? await baseQuery.where(and(...conditions))
+      : await baseQuery;
 
     let mapped = results.map(mapRowToKnowledgeItem);
 

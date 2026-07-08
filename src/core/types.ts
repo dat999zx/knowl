@@ -16,7 +16,6 @@ export type KnowledgeStatus =
 
 export interface KnowledgeItem {
   id: string;
-  projectId: string;
   category: KnowledgeCategory;
   status: KnowledgeStatus;
   title: string;
@@ -34,7 +33,6 @@ export interface KnowledgeItem {
 
 export interface KnowledgeCommit {
   id: string;
-  projectId: string;
   message: string;
   changes: CommitChange[]; // stored as JSON
   createdAt: string;
@@ -73,8 +71,8 @@ export interface Project {
 
 export interface ProjectConfig {
   version: number;
-  project: {
-    name: string;
+  project?: {
+    name?: string;
     description?: string;
   };
   ai?: {

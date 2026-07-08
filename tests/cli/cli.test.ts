@@ -39,13 +39,14 @@ describe('CLI Integration', () => {
     });
 
     expect(output).toContain('Successfully initialized KNOWL repository!');
-    expect(output).toContain('CLI Test Project');
+    expect(output).toContain('Local project store ready');
     expect(output).toContain('codex mcp add knowl');
 
     // Verify files exist
     await expect(fs.access(path.join(TEST_DIR, '.knowl', 'config.json'))).resolves.toBeUndefined();
     await expect(fs.access(path.join(TEST_DIR, '.knowl', 'knowl.db'))).resolves.toBeUndefined();
     const config = JSON.parse(await fs.readFile(path.join(TEST_DIR, '.knowl', 'config.json'), 'utf-8'));
+    expect(config.project).toBeUndefined();
     expect(config.search.vector.enabled).toBe(false);
     expect(config.search.vector.provider).toBe('local');
   });
@@ -154,6 +155,7 @@ describe('CLI Integration', () => {
     });
 
     const config = JSON.parse(await fs.readFile(path.join(oldProjectDir, '.knowl', 'config.json'), 'utf-8'));
+    expect(config.project).toBeUndefined();
     expect(config.ai.provider).toBe('openai');
     expect(config.security.secretPatterns).toEqual(['password']);
     expect(config.search.vector.enabled).toBe(false);
@@ -187,7 +189,7 @@ describe('CLI Integration', () => {
     });
 
     expect(output).toContain('KNOWL REPOSITORY STATUS');
-    expect(output).toContain('Old DB Project');
+    expect(output).not.toContain('Old DB Project');
 
     await fs.rm(oldDbDir, { recursive: true, force: true });
   });
@@ -589,7 +591,8 @@ describe('CLI Integration', () => {
     });
 
     expect(output).toContain('KNOWL REPOSITORY STATUS');
-    expect(output).toContain('CLI Test Project');
+    expect(output).not.toContain('Project Name:');
+    expect(output).not.toContain('Project ID:');
     expect(output).toContain('AI Config:      openai (gpt-4-turbo)');
     expect(output).toContain('Active:        1');
     expect(output).toContain('Use Drizzle ORM');

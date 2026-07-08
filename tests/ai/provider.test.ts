@@ -16,7 +16,6 @@ import { generateObject, generateText } from 'ai';
 
 const MOCK_CONFIG: ProjectConfig = {
   version: 1,
-  project: { name: 'test' },
   ai: {
     provider: 'openai',
     model: 'gpt-4o-mini',
@@ -96,7 +95,6 @@ describe('AI Provider Layer', () => {
       },
       {
         id: '1',
-        projectId: 'test',
         category: 'fact',
         status: 'active',
         title: 'TS Version',

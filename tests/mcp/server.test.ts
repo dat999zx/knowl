@@ -21,7 +21,6 @@ vi.mock('../../src/ai/provider.js', () => {
 const TEST_ROOT = path.resolve('./.knowl-mcp-test');
 const MOCK_CONFIG: ProjectConfig = {
   version: 1,
-  project: { name: 'mcp-test' },
   security: {
     rejectSecrets: true,
     secretPatterns: [],
@@ -75,7 +74,6 @@ describe('MCP Server Layer', () => {
     const db = (await import('../../src/store/database.js')).getDb();
     await db.run(sql`DELETE FROM knowledge_commits`);
     await db.run(sql`DELETE FROM knowledge_items`);
-    await db.run(sql`DELETE FROM projects`);
 
     const project = await repo.createProject(TEST_ROOT, 'MCP Test');
     projectId = project.id;

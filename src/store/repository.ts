@@ -1,4 +1,5 @@
-import { eq, and, desc, sql } from 'drizzle-orm';
+import path from 'node:path';
+import { eq, desc } from 'drizzle-orm';
 import { getDb } from './database.js';
 import type { DbConnection } from './database.js';
 import * as schema from './schema.js';
@@ -14,9 +15,61 @@ import {
 } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 
+export const LOCAL_PROJECT_ID = 'local';
+
 // Helper to generate IDs without external packages
 function generateId(): string {
   return crypto.randomUUID().replace(/-/g, '').substring(0, 16);
+}
+
+function localProject(rootPath: string): Project {
+  const now = new Date().toISOString();
+  return {
+    id: LOCAL_PROJECT_ID,
+    name: path.basename(rootPath),
+    description: null,
+    rootPath,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function unwrapJson(value: unknown): unknown {
+  let current = value;
+  while (typeof current === 'string') {
+    try {
+      current = JSON.parse(current);
+    } catch {
+      break;
+    }
+  }
+  return current;
+}
+
+function stripProjectFields(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(stripProjectFields);
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const normalized: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'projectId' || key === 'project_id') continue;
+    normalized[key] = stripProjectFields(entry);
+  }
+  return normalized;
+}
+
+function compactCommitChanges(changes: CommitChange[]): CommitChange[] {
+  return stripProjectFields(changes) as CommitChange[];
+}
+
+function parseCommitChanges(value: unknown): CommitChange[] {
+  const parsed = unwrapJson(value);
+  return Array.isArray(parsed) ? parsed as CommitChange[] : [];
 }
 
 export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSelect): KnowledgeItem {
@@ -30,40 +83,11 @@ export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSe
 }
 
 export async function createProject(rootPath: string, name: string, description?: string, dbConnection?: DbConnection): Promise<Project> {
-  const conn = dbConnection || getDb();
-  const now = new Date().toISOString();
-  const id = generateId();
-
-  const newProject = {
-    id,
-    name,
-    description: description || null,
-    rootPath,
-    createdAt: now,
-    updatedAt: now,
-  };
-
-  try {
-    await conn.insert(schema.projects).values(newProject);
-    return newProject;
-  } catch (error: any) {
-    throw new DatabaseError(`Failed to create project: ${error.message}`);
-  }
+  return localProject(rootPath);
 }
 
 export async function getProjectByRootPath(rootPath: string, dbConnection?: DbConnection): Promise<Project | null> {
-  const conn = dbConnection || getDb();
-  try {
-    const result = await conn
-      .select()
-      .from(schema.projects)
-      .where(eq(schema.projects.rootPath, rootPath))
-      .limit(1);
-    
-    return result[0] || null;
-  } catch (error: any) {
-    throw new DatabaseError(`Failed to find project by root path: ${error.message}`);
-  }
+  return localProject(rootPath);
 }
 
 export async function createKnowledgeItem(
@@ -87,7 +111,6 @@ export async function createKnowledgeItem(
 
   const newItem = {
     id,
-    projectId,
     category: item.category,
     status: 'active' as KnowledgeStatus,
     title: item.title,
@@ -162,7 +185,7 @@ export async function getKnowledgeItem(id: string, dbConnection?: DbConnection):
 
 export async function updateKnowledgeItem(
   id: string,
-  updates: Partial<Omit<KnowledgeItem, 'id' | 'projectId' | 'createdAt' | 'updatedAt'>>,
+  updates: Partial<Omit<KnowledgeItem, 'id' | 'createdAt' | 'updatedAt'>>,
   steps?: string[],
   dbConnection?: DbConnection
 ): Promise<KnowledgeItem> {
@@ -236,8 +259,7 @@ export async function listKnowledgeItems(projectId: string, dbConnection?: DbCon
   try {
     const result = await conn
       .select()
-      .from(schema.knowledgeItems)
-      .where(eq(schema.knowledgeItems.projectId, projectId));
+      .from(schema.knowledgeItems);
 
     return result.map(mapRowToKnowledgeItem);
   } catch (error: any) {
@@ -257,18 +279,16 @@ export async function createKnowledgeCommit(
 
   const newCommit = {
     id,
-    projectId,
     message,
-    changes,
+    changes: compactCommitChanges(changes),
     createdAt: now,
   };
 
   try {
     await conn.insert(schema.knowledgeCommits).values({
       id,
-      projectId,
       message,
-      changes: JSON.stringify(changes),
+      changes: newCommit.changes,
       createdAt: now,
     });
     return newCommit;
@@ -294,15 +314,13 @@ export async function getKnowledgeCommits(projectId: string, limit = 50, dbConne
     const result = await conn
       .select()
       .from(schema.knowledgeCommits)
-      .where(eq(schema.knowledgeCommits.projectId, projectId))
       .orderBy(desc(schema.knowledgeCommits.createdAt))
       .limit(limit);
 
     return result.map((row) => ({
       id: row.id,
-      projectId: row.projectId,
       message: row.message,
-      changes: typeof row.changes === 'string' ? JSON.parse(row.changes) : row.changes,
+      changes: parseCommitChanges(row.changes),
       createdAt: row.createdAt,
     })) as KnowledgeCommit[];
   } catch (error: any) {

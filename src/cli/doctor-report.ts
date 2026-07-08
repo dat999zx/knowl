@@ -82,7 +82,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     if (!project) {
       checks.push({ status: 'FAIL', message: 'Project not registered in Knowl database' });
     } else {
-      checks.push({ status: 'OK', message: `Project registered: ${project.name}` });
+      checks.push({ status: 'OK', message: 'Local project store ready' });
 
       const queryResults = await queryKnowledgeForAgent(project.id, {
         status: 'active',

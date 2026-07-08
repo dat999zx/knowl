@@ -153,7 +153,7 @@ async function upgradeExistingRepository(projectRoot: string, fallbackName: stri
   await initDb(projectRoot);
   let project = await repo.getProjectByRootPath(projectRoot);
   if (!project) {
-    project = await repo.createProject(projectRoot, config.project?.name || fallbackName);
+    project = await repo.createProject(projectRoot, fallbackName);
   }
   await closeDb();
 
@@ -167,7 +167,7 @@ async function upgradeExistingRepository(projectRoot: string, fallbackName: stri
 
 function printUpgradeStatus(result: Awaited<ReturnType<typeof upgradeExistingRepository>>) {
   console.log(`KNOWL repository upgrade complete.`);
-  console.log(`Project: "${result.project.name}" (ID: ${result.project.id})`);
+  console.log(`Repository: ${result.project.rootPath}`);
   console.log(`Config: ${result.configStatus}`);
   console.log(`AGENTS.md: ${result.agentsStatus}`);
   console.log(`.gitignore: ${result.gitignoreStatus}`);
@@ -209,7 +209,6 @@ program
       // Create default config.json
       const defaultConfig = {
         version: 1,
-        project: { name },
         security: {
           rejectSecrets: true,
           secretPatterns: ['api_key', 'password', 'secret', 'token', 'private_key'],
@@ -249,7 +248,7 @@ program
       } else if (gitignoreStatus === 'updated') {
         console.log(`Updated .gitignore with .knowl/ entry.`);
       }
-      console.log(`⚙️  Configured project: "${project.name}" (ID: ${project.id})`);
+      console.log(`⚙️  Local project store ready.`);
       console.log(`👉 Run "knowl status" to see repository status.`);
       if (agentsStatus === 'unchanged') {
         printAgentsGuidanceStatus(agentsStatus);

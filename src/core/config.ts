@@ -5,10 +5,6 @@ import { ConfigError, ProjectNotFoundError } from './errors.js';
 
 export const DEFAULT_CONFIG: ProjectConfig = {
   version: 1,
-  project: {
-    name: 'new-knowl-project',
-    description: 'A Knowledge Operating System project',
-  },
   security: {
     rejectSecrets: true,
     secretPatterns: [
@@ -54,6 +50,12 @@ export function mergeConfigDefaults<T extends Record<string, any>>(
   }
 
   return merged as T;
+}
+
+function stripDeprecatedConfigFields(config: ProjectConfig): ProjectConfig {
+  const normalized = { ...config } as Record<string, any>;
+  delete normalized.project;
+  return normalized as ProjectConfig;
 }
 
 /**
@@ -107,7 +109,7 @@ export async function loadConfig(projectRoot: string): Promise<ProjectConfig> {
       parsed.ai.apiKey = process.env[envVarName] || '';
     }
 
-    return parsed;
+    return stripDeprecatedConfigFields(parsed);
   } catch (error: any) {
     throw new ConfigError(`Failed to load config from "${configPath}": ${error.message}`);
   }
@@ -119,20 +121,22 @@ export async function loadConfig(projectRoot: string): Promise<ProjectConfig> {
 export async function saveConfig(projectRoot: string, config: ProjectConfig): Promise<void> {
   const configDir = path.join(projectRoot, '.knowl');
   const configPath = path.join(configDir, 'config.json');
+  const normalized = stripDeprecatedConfigFields(config);
   
   try {
     await fs.mkdir(configDir, { recursive: true });
-    await fs.writeFile(configPath, JSON.stringify(config, null, 2), 'utf8');
+    await fs.writeFile(configPath, JSON.stringify(normalized, null, 2), 'utf8');
   } catch (error: any) {
     throw new ConfigError(`Failed to save config to "${configPath}": ${error.message}`);
   }
 }
 
 export async function upgradeConfigDefaults(projectRoot: string): Promise<'updated' | 'unchanged'> {
-  const config = await loadConfig(projectRoot);
-  const upgraded = mergeConfigDefaults(config as Record<string, any>) as ProjectConfig;
+  const configPath = path.join(projectRoot, '.knowl', 'config.json');
+  const raw = JSON.parse(await fs.readFile(configPath, 'utf8')) as ProjectConfig;
+  const upgraded = stripDeprecatedConfigFields(mergeConfigDefaults(raw as Record<string, any>) as ProjectConfig);
 
-  if (JSON.stringify(config) === JSON.stringify(upgraded)) {
+  if (JSON.stringify(raw) === JSON.stringify(upgraded)) {
     return 'unchanged';
   }
 

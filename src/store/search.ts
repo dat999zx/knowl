@@ -65,7 +65,6 @@ export async function searchKnowledgeItems(
     SELECT item_id AS itemId, bm25(knowledge_items_fts) AS score
     FROM knowledge_items_fts
     WHERE knowledge_items_fts MATCH ${ftsQuery}
-      AND project_id = ${projectId}
     ORDER BY score ASC
     LIMIT ${options.limit ?? 20}
   `) as { itemId: string; score: number }[];
@@ -80,7 +79,6 @@ export async function searchKnowledgeItems(
 
     const item = await getKnowledgeItem(row.itemId);
     if (!item) continue;
-    if (item.projectId !== projectId) continue;
     if (item.status !== status) continue;
     if (options.category && item.category !== options.category) continue;
     if (options.tags && options.tags.length > 0) {
