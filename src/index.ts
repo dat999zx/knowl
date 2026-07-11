@@ -40,6 +40,7 @@ import { finalizeMemorySession } from './store/session-finalizer.js';
 import { isLifecycleEvent, isSessionEventType, readLifecyclePayload, stringPayloadValue } from './cli/agents/lifecycle.js';
 import { bootstrapAgentSession } from './store/context-bootstrap.js';
 import { listAssertions } from './store/assertions.js';
+import { listActiveConflictKeys } from './store/conflicts.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -355,6 +356,10 @@ program.command('timeline').argument('<itemId>').action(async itemId => {
 
 program.command('query').argument('[query]').option('--as-of <timestamp>').option('--limit <count>').action(async (query, options) => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); const items = await queryKnowledgeBase(project.id, { query, limit: options.limit === undefined ? undefined : Number(options.limit), asOf: options.asOf }); console.log(JSON.stringify(items, null, 2)); await closeDb(); } catch (error: any) { console.error(`Error querying knowledge: ${error.message}`); process.exit(1); }
+});
+
+program.command('conflicts').action(async () => {
+  try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify((await listActiveConflictKeys()).map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness })), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error listing conflicts: ${error.message}`); process.exit(1); }
 });
 
 // --- 4. DECIDE COMMAND ---

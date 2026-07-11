@@ -257,6 +257,11 @@ export function registerTools(
           inputSchema: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
         },
         {
+          name: 'knowl_conflicts',
+          description: 'List active exclusive conflict identities without dumping full item content.',
+          inputSchema: { type: 'object', properties: {} },
+        },
+        {
           name: 'knowl_evidence_list',
           description: 'List inspectable evidence linked to one knowledge item.',
           inputSchema: {
@@ -692,6 +697,12 @@ export function registerTools(
         const { itemId } = args as any;
         const { listAssertions } = await import('../store/assertions.js');
         return { content: [{ type: 'text', text: JSON.stringify(await listAssertions(itemId), null, 2) }] };
+      }
+
+      else if (name === 'knowl_conflicts') {
+        const { listActiveConflictKeys } = await import('../store/conflicts.js');
+        const items = await listActiveConflictKeys();
+        return { content: [{ type: 'text', text: JSON.stringify(items.map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness })), null, 2) }] };
       }
 
       else if (name === 'knowl_evidence_list') {

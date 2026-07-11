@@ -16,6 +16,7 @@ export const KNOWL_MCP_TOOL_NAMES = [
   'knowl_decide',
   'knowl_query',
   'knowl_timeline',
+  'knowl_conflicts',
   'knowl_evidence_list',
   'knowl_update',
   'knowl_task_start',

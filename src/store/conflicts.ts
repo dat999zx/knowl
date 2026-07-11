@@ -19,3 +19,8 @@ export async function checkKnowledgeConflict(input: { conflictKey?: string | nul
   const rows = await getDb().select().from(schema.knowledgeItems).where(and(eq(schema.knowledgeItems.status, 'active'), eq(schema.knowledgeItems.conflictExclusive, true), eq(schema.knowledgeItems.conflictKey, key), eq(schema.knowledgeItems.conflictScope, scope)));
   return rows.map(mapRowToKnowledgeItem);
 }
+
+export async function listActiveConflictKeys() {
+  const rows = await getDb().select().from(schema.knowledgeItems).where(and(eq(schema.knowledgeItems.status, 'active'), eq(schema.knowledgeItems.conflictExclusive, true)));
+  return rows.map(mapRowToKnowledgeItem);
+}
