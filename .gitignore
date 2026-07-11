@@ -26,3 +26,5 @@ Thumbs.db
 # Temp
 .tmp/
 .npm-cache
+
+.codex/
