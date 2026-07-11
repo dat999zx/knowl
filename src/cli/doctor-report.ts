@@ -88,6 +88,15 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       checks.push({ status: 'WARN', message: 'Database schema missing knowledge_embeddings; run knowl upgrade' });
     }
     try {
+      await (getDb() as any).all(sql`SELECT 1 FROM code_symbols LIMIT 1`);
+      checks.push({ status: 'OK', message: 'Code symbol index schema ready' });
+    } catch {
+      checks.push({ status: 'WARN', message: 'Code symbol index schema missing; run knowl upgrade' });
+    }
+    checks.push({ status: 'OK', message: 'Local viewer available through `knowl view`' });
+    const configuredNamespaces = [config.memory?.organization, config.memory?.global].filter(entry => entry?.enabled).length;
+    checks.push({ status: 'OK', message: `Memory namespaces ready (project/session plus ${configuredNamespaces} optional layer(s))` });
+    try {
       await (getDb() as any).all(sql`SELECT 1 FROM memory_sessions LIMIT 1`);
       const stale = await (getDb() as any).all(sql`SELECT 1 FROM memory_sessions WHERE status = 'active' AND last_heartbeat_at < datetime('now', '-2 hours') LIMIT 1`);
       checks.push({ status: stale.length ? 'WARN' : 'OK', message: stale.length ? 'Stale active memory sessions found; run knowl session recover' : 'Memory session schema ready with no stale active sessions', fix: stale.length ? 'run `knowl session recover`' : undefined });

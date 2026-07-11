@@ -21,6 +21,9 @@ Knowl is designed for durable engineering context: decisions, architecture, goal
 - Supports optional AI-backed CLI commands for raw text ingestion and natural-language answers.
 - Supports BM25 plus default-on local vector search with a lazy first-use model download.
 - Tracks memory changes as knowledge commits so project memory has history.
+- Indexes TypeScript/JavaScript symbols locally with Tree-sitter and can attach durable evidence to `symbol://` locators.
+- Supports temporal assertions, exclusive conflict identities, bounded context packs, layered memory namespaces, and verified JSONL portability.
+- Includes a read-only localhost viewer via `knowl view`.
 
 ## Install
 
@@ -193,6 +196,12 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl conflicts` | List active exclusive conflict identities. |
 | `knowl supersede <item-id> <replacement-id>` | Mark one item superseded by an explicit replacement. |
 | `knowl context --token-budget <n>` | Compose a compact task context pack with pinned constraints and exclusions. |
+| `knowl code index` | Incrementally index TypeScript/JavaScript symbols and import/export edges. |
+| `knowl code symbols <path>` | Print indexed symbols for one repository-relative file. |
+| `knowl synthesize --scope <tag>` | Create or refresh deterministic evidence-backed architecture understanding. |
+| `knowl export <path>` | Write a versioned, manifest-verified JSONL memory export. |
+| `knowl import <path> [--dry-run]` | Validate and import JSONL memory without auto-resolving conflicts. |
+| `knowl view` | Start the read-only local viewer on `127.0.0.1`. |
 | `knowl agent-event <event>` | Receive bounded host lifecycle events; accepts structured flags or JSON on stdin. |
 | `knowl session start|event|finish|recover` | Manage bounded, expiring scratch session events and recover stale sessions. |
 | `knowl skill list` | List learned file-backed skill packages under `.knowl/skills`. |
