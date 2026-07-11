@@ -30,6 +30,7 @@ import { indexSkillPackage, recordSkillRun } from './skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage, SkillEntrypoint } from './skills/registry.js';
 import { auditKnowledgeStore } from './store/integrity.js';
 import { createSnapshot, restoreSnapshot } from './store/snapshots.js';
+import { isEvidenceStale, listEvidenceForItem } from './store/evidence-repository.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -978,6 +979,34 @@ skillCommand
         // Ignore close errors while reporting the root cause.
       }
       console.error(`Error running skill: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+const evidenceCommand = program
+  .command('evidence')
+  .description('Inspect provenance evidence linked to knowledge');
+
+evidenceCommand
+  .command('list')
+  .description('List evidence linked to one knowledge item')
+  .argument('<item-id>', 'Knowledge item ID')
+  .action(async (itemId) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const evidence = await Promise.all((await listEvidenceForItem(itemId)).map(async item => ({
+        ...item,
+        stale: await isEvidenceStale(item, root),
+      })));
+      for (const item of evidence) {
+        console.log(`${item.relationship}\t${item.type}\t${item.locator}\t${item.stale ? 'stale' : 'current'}${item.excerpt ? `\t${item.excerpt}` : ''}`);
+      }
+      if (evidence.length === 0) console.log('No evidence.');
+      await closeDb();
+    } catch (error: any) {
+      await closeDb().catch(() => {});
+      console.error(`Error listing evidence: ${error.message}`);
       process.exit(1);
     }
   });

@@ -15,6 +15,7 @@ export const KNOWL_MCP_TOOL_NAMES = [
   'knowl_ingest_atoms',
   'knowl_decide',
   'knowl_query',
+  'knowl_evidence_list',
   'knowl_update',
   'knowl_task_start',
   'knowl_task_checkpoint',

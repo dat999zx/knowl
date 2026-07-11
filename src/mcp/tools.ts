@@ -16,6 +16,7 @@ import { checkpointWorkLoop, finishWorkLoop, startWorkLoop } from '../store/work
 import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage } from '../skills/registry.js';
 import { KnowledgeValidationError } from '../core/knowledge-validation.js';
+import { isEvidenceStale, listEvidenceForItem } from '../store/evidence-repository.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
@@ -232,7 +233,20 @@ export function registerTools(
                 type: 'number',
                 description: 'Maximum results to return; defaults to 3 for MCP queries.',
               },
+              includeEvidence: {
+                type: 'boolean',
+                description: 'Include linked evidence. Omit for compact results.',
+              },
             },
+          },
+        },
+        {
+          name: 'knowl_evidence_list',
+          description: 'List inspectable evidence linked to one knowledge item.',
+          inputSchema: {
+            type: 'object',
+            properties: { itemId: { type: 'string', description: 'Knowledge item ID.' } },
+            required: ['itemId'],
           },
         },
         {
@@ -591,7 +605,7 @@ export function registerTools(
       } 
       
       else if (name === 'knowl_query') {
-        const { query, category, status, tags, limit } = args as any;
+        const { query, category, status, tags, limit, includeEvidence } = args as any;
         let vector;
         if (config && projectRoot && query && isVectorSearchEnabled(config)) {
           const embedder = await createLocalEmbeddingProvider(config, projectRoot);
@@ -614,10 +628,24 @@ export function registerTools(
           vector,
         });
 
-        return {
-          content: [{ type: 'text', text: JSON.stringify(items, null, 2) }],
-        };
+        const withStaleStatus = async (itemId: string) => Promise.all((await listEvidenceForItem(itemId)).map(async evidence => ({
+          ...evidence,
+          stale: projectRoot ? await isEvidenceStale(evidence, projectRoot) : false,
+        })));
+        const payload = includeEvidence
+          ? await Promise.all(items.map(async item => ({ ...item, evidence: await withStaleStatus(item.id) })))
+          : items;
+        return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
       } 
+
+      else if (name === 'knowl_evidence_list') {
+        const { itemId } = args as any;
+        const evidence = await Promise.all((await listEvidenceForItem(itemId)).map(async item => ({
+          ...item,
+          stale: projectRoot ? await isEvidenceStale(item, projectRoot) : false,
+        })));
+        return { content: [{ type: 'text', text: JSON.stringify(evidence, null, 2) }] };
+      }
       
       else if (name === 'knowl_update') {
         const { id, title, content, status, reasoning, source, sourceCommit, affectedPaths, freshness } = args as any;

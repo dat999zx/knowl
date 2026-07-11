@@ -652,6 +652,24 @@ describe('CLI Integration', () => {
     await fs.rm(snapshotDir, { recursive: true, force: true });
   }, 15_000);
 
+  it('should list inspectable evidence for a knowledge item', async () => {
+    const evidenceDir = path.resolve('./.knowl-cli-evidence-test');
+    await fs.rm(evidenceDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(evidenceDir, { recursive: true });
+    execSync(`node "${CLI_PATH}" init --yes`, { cwd: evidenceDir, encoding: 'utf-8' });
+    execSync(`node "${CLI_PATH}" decide "Evidence list target" "This item has inspectable evidence." -r "Evidence test"`, { cwd: evidenceDir, encoding: 'utf-8' });
+    const client = createClient({ url: `file:${path.join(evidenceDir, '.knowl', 'knowl.db')}` });
+    const itemId = String((await client.execute({ sql: 'SELECT id FROM knowledge_items WHERE title = ?', args: ['Evidence list target'] })).rows[0].id);
+    await client.execute({ sql: 'INSERT INTO evidence (id, type, locator, observed_at) VALUES (?, ?, ?, ?)', args: ['cli-evidence', 'test', 'tests/evidence.test.ts', '2026-07-11T00:00:00.000Z'] });
+    await client.execute({ sql: 'INSERT INTO knowledge_evidence (knowledge_item_id, evidence_id, relationship) VALUES (?, ?, ?)', args: [itemId, 'cli-evidence', 'supports'] });
+    client.close();
+
+    const output = execSync(`node "${CLI_PATH}" evidence list ${itemId}`, { cwd: evidenceDir, encoding: 'utf-8' });
+    expect(output).toContain('tests/evidence.test.ts');
+    expect(output).toContain('supports');
+    await fs.rm(evidenceDir, { recursive: true, force: true }).catch(() => {});
+  });
+
   it('should show repository status', () => {
     const output = execSync(`node "${CLI_PATH}" status`, {
       cwd: TEST_DIR,
