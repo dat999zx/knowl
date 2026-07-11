@@ -19,7 +19,7 @@ export const DEFAULT_CONFIG: ProjectConfig = {
   },
   search: {
     vector: {
-      enabled: false,
+      enabled: true,
       provider: 'local',
       model: 'Xenova/all-MiniLM-L6-v2',
       dtype: 'q8',

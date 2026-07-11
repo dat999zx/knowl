@@ -10,6 +10,11 @@ type TransformersPipeline = (texts: string[], options: { pooling: 'mean'; normal
   dims: number[];
 }>;
 
+export interface LocalEmbeddingProviderOptions {
+  loadPipeline?: (model: string, dtype: string, cacheDir: string) => Promise<TransformersPipeline>;
+  onFirstLoad?: (details: { model: string; cacheDir: string }) => void;
+}
+
 let localPipeline: TransformersPipeline | null = null;
 let localPipelineKey: string | null = null;
 
@@ -30,7 +35,8 @@ export function getVectorSearchConfig(config: ProjectConfig) {
 
 export async function createLocalEmbeddingProvider(
   config: ProjectConfig,
-  projectRoot: string
+  projectRoot: string,
+  options: LocalEmbeddingProviderOptions = {}
 ): Promise<KnowledgeEmbedder> {
   const vector = getVectorSearchConfig(config);
   if (!vector.enabled) {
@@ -44,11 +50,16 @@ export async function createLocalEmbeddingProvider(
   const pipelineKey = `${vector.model}:${vector.dtype}:${cacheDir}`;
 
   if (!localPipeline || localPipelineKey !== pipelineKey) {
-    const transformers = await import('@huggingface/transformers');
-    transformers.env.cacheDir = cacheDir;
-    localPipeline = await transformers.pipeline('feature-extraction', vector.model, {
-      dtype: vector.dtype as any,
-    }) as TransformersPipeline;
+    options.onFirstLoad?.({ model: vector.model, cacheDir });
+    if (options.loadPipeline) {
+      localPipeline = await options.loadPipeline(vector.model, vector.dtype, cacheDir);
+    } else {
+      const transformers = await import('@huggingface/transformers');
+      transformers.env.cacheDir = cacheDir;
+      localPipeline = await transformers.pipeline('feature-extraction', vector.model, {
+        dtype: vector.dtype as any,
+      }) as TransformersPipeline;
+    }
     localPipelineKey = pipelineKey;
   }
 
