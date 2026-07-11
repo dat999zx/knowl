@@ -64,7 +64,7 @@ Then:
 - [x] Plan 2: Evidence and Provenance
 - [x] Plan 3: Retrieval Quality
 - [x] Plan 4: Automatic Memory Core
-- [ ] Plan 5: Session Candidate Promotion
+- [x] Plan 5: Session Candidate Promotion
 - [ ] Plan 6: Agent Automation
 - [ ] Plan 7: Knowledge Intelligence
 - [ ] Plan 8: Product Layer

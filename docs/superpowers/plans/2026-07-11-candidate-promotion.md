@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript, existing knowledge writer/pipeline, Git CLI, evidence repository, session repository, optional existing AI provider, Vitest.
 
+**Status:** Complete — verified 2026-07-11.
+
 ---
 
 ### Task 1: Define candidate types and deterministic extraction

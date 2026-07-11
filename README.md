@@ -100,6 +100,8 @@ knowl session finish <session-id> --status finished --summary "implementation ve
 knowl session recover
 ```
 
+When a terminal session is finished normally, Knowl deterministically promotes at most five candidates: decisions, verified commands, outcomes, and task state. Each promoted candidate requires session or file evidence. Optional synthesis is never required for promotion; deterministic candidates remain the fallback. Promotion stores its item IDs on the session, so retries are idempotent.
+
 Create and run a learned skill package:
 
 ```bash
