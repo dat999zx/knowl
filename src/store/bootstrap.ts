@@ -76,7 +76,8 @@ const SCHEMA_STATEMENTS = [
 
   `CREATE TABLE IF NOT EXISTS memory_sessions (
     id TEXT PRIMARY KEY, agent TEXT, title TEXT NOT NULL, query TEXT, status TEXT NOT NULL CHECK (status IN ('active', 'finished', 'failed', 'abandoned', 'recovered')),
-    started_at TEXT NOT NULL, last_heartbeat_at TEXT NOT NULL, finished_at TEXT, baseline_commit TEXT, expires_at TEXT NOT NULL
+    started_at TEXT NOT NULL, last_heartbeat_at TEXT NOT NULL, finished_at TEXT, baseline_commit TEXT, expires_at TEXT NOT NULL,
+    finalized_at TEXT, promotion_status TEXT NOT NULL DEFAULT 'pending', promotion_items TEXT, promotion_error_code TEXT
   );`,
   `CREATE TABLE IF NOT EXISTS memory_session_events (
     id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
@@ -319,6 +320,15 @@ async function ensureFreshnessColumns(client: Client): Promise<void> {
   }
 }
 
+async function ensureMemorySessionColumns(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'memory_sessions'))) return;
+  const columns = await tableColumns(client, 'memory_sessions');
+  if (!columns.includes('finalized_at')) await client.execute('ALTER TABLE memory_sessions ADD COLUMN finalized_at TEXT;');
+  if (!columns.includes('promotion_status')) await client.execute("ALTER TABLE memory_sessions ADD COLUMN promotion_status TEXT NOT NULL DEFAULT 'pending';");
+  if (!columns.includes('promotion_items')) await client.execute('ALTER TABLE memory_sessions ADD COLUMN promotion_items TEXT;');
+  if (!columns.includes('promotion_error_code')) await client.execute('ALTER TABLE memory_sessions ADD COLUMN promotion_error_code TEXT;');
+}
+
 async function migrateLegacyProjectSchema(client: Client): Promise<void> {
   if (!(await tableExists(client, 'knowledge_items'))) {
     return;
@@ -438,5 +448,6 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await migrateLegacyProjectSchema(client);
   await executeAll(client, SCHEMA_STATEMENTS);
   await ensureFreshnessColumns(client);
+  await ensureMemorySessionColumns(client);
   await repairSkillForeignKeys(client);
 }
