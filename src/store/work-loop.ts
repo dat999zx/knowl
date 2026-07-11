@@ -3,6 +3,7 @@ import { queryKnowledgeForAgent } from './agent-query.js';
 import * as repo from './repository.js';
 import { captureMemorySessionEvent } from './session-capture.js';
 import { finishMemorySession, startMemorySession } from './session-repository.js';
+import { finalizeMemorySession } from './session-finalizer.js';
 
 export type WorkLoopMemoryHit = {
   id: string;
@@ -126,7 +127,7 @@ async function recordWorkLoopStep(
   const sessionId = memorySessionId(task);
   if (sessionId) {
     try {
-      if (stepTag === 'finish') await finishMemorySession(sessionId, 'finished', summary);
+      if (stepTag === 'finish') { await finishMemorySession(sessionId, 'finished', summary); await finalizeMemorySession(projectId, sessionId); }
       else await captureMemorySessionEvent(sessionId, 'checkpoint', { summary });
     } catch (error: any) {
       console.error(`Warning: session capture unavailable: ${error.message}`);

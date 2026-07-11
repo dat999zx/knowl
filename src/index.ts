@@ -36,6 +36,7 @@ import { evaluateRetrieval, RetrievalEvaluationCase } from './store/retrieval-ev
 import { getKnowledgeAccessReport } from './store/access-feedback.js';
 import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions, startMemorySession } from './store/session-repository.js';
 import { captureMemorySessionEvent } from './store/session-capture.js';
+import { finalizeMemorySession } from './store/session-finalizer.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -842,7 +843,7 @@ sessionCommand.command('event').argument('<id>').argument('<type>').option('--ex
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await captureMemorySessionEvent(id, type, { exitCode: options.exitCode === undefined ? undefined : Number(options.exitCode), summary: options.summary, command: options.command }); console.log(options.json ? JSON.stringify(result) : `Session event recorded: ${result.id}`); await closeDb(); } catch (error: any) { console.error(`Error recording session event: ${error.message}`); process.exit(1); }
 });
 sessionCommand.command('finish').argument('<id>').requiredOption('--status <status>', 'finished or failed').option('--summary <summary>').option('--json').action(async (id, options) => {
-  try { if (options.status !== 'finished' && options.status !== 'failed') throw new Error('Status must be finished or failed.'); const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await finishMemorySession(id, options.status, options.summary); console.log(options.json ? JSON.stringify(result) : `Session ${result.status}: ${result.id}`); await closeDb(); } catch (error: any) { console.error(`Error finishing session: ${error.message}`); process.exit(1); }
+  try { if (options.status !== 'finished' && options.status !== 'failed') throw new Error('Status must be finished or failed.'); const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await finishMemorySession(id, options.status, options.summary); const project = await repo.getProjectByRootPath(root); const promotion = project ? await finalizeMemorySession(project.id, id) : null; console.log(options.json ? JSON.stringify({ ...result, promotion }) : `Session ${result.status}: ${result.id}`); await closeDb(); } catch (error: any) { console.error(`Error finishing session: ${error.message}`); process.exit(1); }
 });
 sessionCommand.command('recover').option('--json').action(async (options) => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); const recovered = await recoverAbandonedSessions(); const purgedEventCount = await purgeExpiredSessionEvents(); const result = { recoveredCount: recovered.length, purgedEventCount }; console.log(options.json ? JSON.stringify(result) : `Recovered: ${result.recoveredCount}; purged events: ${result.purgedEventCount}`); await closeDb(); } catch (error: any) { console.error(`Error recovering sessions: ${error.message}`); process.exit(1); }

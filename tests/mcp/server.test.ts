@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { initDb, closeDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
+import { startMemorySession } from '../../src/store/session-repository.js';
 import { createMcpServer } from '../../src/mcp/server.js';
 import { ProjectConfig } from '../../src/core/types.js';
 
@@ -144,6 +145,7 @@ describe('MCP Server Layer', () => {
     expect(res.result.tools.some((t: any) => t.name === 'knowl_store')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest_atoms')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_feedback')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_session_finish')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_task_start')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_task_checkpoint')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_task_finish')).toBe(true);
@@ -337,6 +339,15 @@ describe('MCP Server Layer', () => {
     const db = (await import('../../src/store/database.js')).getDb();
     const access = await db.select().from((await import('../../src/store/schema.js')).knowledgeAccess);
     expect(access).toEqual([expect.objectContaining({ knowledgeItemId: item.id, useful: true, used: true })]);
+  });
+
+  it('should finish and promote sessions through MCP', async () => {
+    const session = await startMemorySession({ title: 'MCP promotion' });
+    const res = await runRpcRequest('tools/call', { name: 'knowl_session_finish', arguments: { sessionId: session.id, status: 'finished', summary: 'MCP summary' } });
+    expect(res.error).toBeUndefined();
+    const payload = JSON.parse(res.result.content[0].text);
+    expect(payload.session).toMatchObject({ id: session.id, status: 'finished' });
+    expect(payload.promotion.status).toBe('promoted');
   });
 
   it('should skip duplicate structured knowledge when BM25 finds an existing match', async () => {

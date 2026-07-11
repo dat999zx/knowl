@@ -18,6 +18,8 @@ import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackag
 import { KnowledgeValidationError } from '../core/knowledge-validation.js';
 import { isEvidenceStale, listEvidenceForItem } from '../store/evidence-repository.js';
 import { recordKnowledgeFeedback } from '../store/access-feedback.js';
+import { finishMemorySession } from '../store/session-repository.js';
+import { finalizeMemorySession } from '../store/session-finalizer.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
@@ -266,6 +268,15 @@ export function registerTools(
               causedCorrection: { type: 'boolean', description: 'Whether the result caused a correction.' },
             },
             required: ['itemId'],
+          },
+        },
+        {
+          name: 'knowl_session_finish',
+          description: 'Finish a memory session and promote its bounded durable candidates.',
+          inputSchema: {
+            type: 'object', properties: {
+              sessionId: { type: 'string', description: 'Memory session ID.' }, status: { type: 'string', enum: ['finished', 'failed'] }, summary: { type: 'string' }, promote: { type: 'boolean' },
+            }, required: ['sessionId', 'status'],
           },
         },
         {
@@ -674,6 +685,13 @@ export function registerTools(
         const { itemId, used, useful, causedCorrection } = args as any;
         const feedback = await recordKnowledgeFeedback({ itemId, used, useful, causedCorrection });
         return { content: [{ type: 'text', text: `Recorded feedback for ${itemId}:\n\n${JSON.stringify(feedback, null, 2)}` }] };
+      }
+
+      else if (name === 'knowl_session_finish') {
+        const { sessionId, status, summary, promote = true } = args as any;
+        const session = await finishMemorySession(sessionId, status, summary);
+        const promotion = promote ? await finalizeMemorySession(projectId!, sessionId) : { status: 'skipped', itemIds: [], candidateCount: 0, usedAi: false };
+        return { content: [{ type: 'text', text: JSON.stringify({ session, promotion }, null, 2) }] };
       }
       
       else if (name === 'knowl_update') {

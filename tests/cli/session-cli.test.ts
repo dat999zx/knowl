@@ -22,7 +22,7 @@ describe('session CLI', () => {
     expect(event).toMatchObject({ sessionId: started.id, type: 'command', payload: { exitCode: 1, summary: 'test command failed' } });
 
     const finished = JSON.parse(execSync(`node "${CLI_PATH}" session finish ${started.id} --status failed --summary "failure recorded" --json`, { cwd: TEST_DIR, encoding: 'utf-8' }));
-    expect(finished).toMatchObject({ id: started.id, status: 'failed' });
+    expect(finished).toMatchObject({ id: started.id, status: 'failed', promotion: { status: 'promoted', itemIds: expect.any(Array) } });
 
     const recovered = JSON.parse(execSync(`node "${CLI_PATH}" session recover --json`, { cwd: TEST_DIR, encoding: 'utf-8' }));
     expect(recovered).toMatchObject({ recoveredCount: expect.any(Number), purgedEventCount: expect.any(Number) });
