@@ -19,17 +19,17 @@
 - Create: `src/store/assertions.ts`
 - Test: `tests/store/assertions.test.ts`
 
-- [ ] **Step 1: Write failing assertion tests**
+- [x] **Step 1: Write failing assertion tests**
 
 Assert new knowledge creates one open assertion, content updates close the previous assertion and open another atomically, metadata-only retrieval access does not create assertions, and bootstrap backfills one assertion for every existing item.
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run: `rtk npm.cmd test -- tests/store/assertions.test.ts`
 
 Expected: FAIL because assertion storage does not exist.
 
-- [ ] **Step 3: Define assertion schema and types**
+- [x] **Step 3: Define assertion schema and types**
 
 ```ts
 export interface KnowledgeAssertion {
@@ -47,11 +47,11 @@ export interface KnowledgeAssertion {
 
 Create `knowledge_assertions` with indexes on item, validity interval, and recorded time. Backfill existing rows using item creation/update timestamps without changing current item content.
 
-- [ ] **Step 4: Implement assertion repository operations**
+- [x] **Step 4: Implement assertion repository operations**
 
 Expose create-current, replace-current, list timeline, and find as-of. Reject overlapping open assertions for one item. Keep operations transaction-aware so item update and assertion replacement commit together.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `rtk npm.cmd test -- tests/store/assertions.test.ts`
 
