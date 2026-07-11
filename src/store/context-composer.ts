@@ -1,17 +1,21 @@
 import { KnowledgeItem } from '../core/types.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
 import { queryKnowledgeBase } from './queries.js';
+import { queryLayeredKnowledge } from './namespaces.js';
 
-export type ContextRequest = { query?: string; task?: string; changedFiles?: string[]; tokenBudget: number; includeEvidence?: boolean };
-export type ContextPack = { sections: Array<{ name: string; items: KnowledgeItem[]; estimatedTokens: number }>; excluded: Array<{ itemId: string; reason: 'duplicate' | 'budget' | 'stale' | 'lower-rank' }>; estimatedTokens: number };
+export type ContextKnowledgeItem = KnowledgeItem & { namespace?: string };
+export type ContextRequest = { query?: string; task?: string; changedFiles?: string[]; tokenBudget: number; includeEvidence?: boolean; namespaceRoot?: string };
+export type ContextPack = { sections: Array<{ name: string; items: ContextKnowledgeItem[]; estimatedTokens: number }>; excluded: Array<{ itemId: string; reason: 'duplicate' | 'budget' | 'stale' | 'lower-rank' }>; estimatedTokens: number };
 const tokens = (item: KnowledgeItem) => Math.ceil(`${item.title}\n${item.content}`.length / 4);
 
 export async function composeContext(projectId: string, request: ContextRequest): Promise<ContextPack> {
   if (!Number.isFinite(request.tokenBudget) || request.tokenBudget < 1) throw new Error('tokenBudget must be positive.');
-  const candidates = await queryKnowledgeForAgent(projectId, { query: request.query ?? request.task, limit: 30, surface: 'context_composer' });
+  const candidates: ContextKnowledgeItem[] = request.namespaceRoot
+    ? await queryLayeredKnowledge(request.namespaceRoot, request.query ?? request.task ?? '')
+    : await queryKnowledgeForAgent(projectId, { query: request.query ?? request.task, limit: 30, surface: 'context_composer' });
   const pinned = await queryKnowledgeBase(projectId, { category: 'constraint', status: 'active' });
   const rest = candidates.filter(item => item.category !== 'constraint' && !pinned.some(constraint => constraint.id === item.id));
-  const selected: KnowledgeItem[] = []; const excluded: ContextPack['excluded'] = [];
+  const selected: ContextKnowledgeItem[] = []; const excluded: ContextPack['excluded'] = [];
   let used = 0;
   for (const item of [...pinned, ...rest]) {
     const cost = tokens(item);

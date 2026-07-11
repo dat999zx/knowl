@@ -20,6 +20,7 @@ import { isEvidenceStale, listEvidenceForItem } from '../store/evidence-reposito
 import { recordKnowledgeFeedback } from '../store/access-feedback.js';
 import { finishMemorySession } from '../store/session-repository.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
+import { namespaceDescriptor, withNamespaceDatabase } from '../store/namespaces.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
@@ -139,6 +140,7 @@ export function registerTools(
                 items: { type: 'string' },
                 description: 'Ordered steps when category is skill.',
               },
+              namespace: { type: 'string', enum: ['session', 'project', 'organization', 'global'], description: 'Write target; project is default. Non-project namespaces must be configured.' },
             },
             required: ['category', 'title', 'content'],
           },
@@ -583,13 +585,13 @@ export function registerTools(
       }
 
       else if (name === 'knowl_store') {
-        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, steps, conflictKey, conflictScope, conflictExclusive } = args as any;
+        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, steps, conflictKey, conflictScope, conflictExclusive, namespace = 'project' } = args as any;
 
         if (!KNOWLEDGE_CATEGORIES.includes(category)) {
           throw new Error(`Invalid knowledge category: ${category}`);
         }
 
-        const result = await storeKnowledgeItemDeduped(
+        const store = () => storeKnowledgeItemDeduped(
           projectId!,
           {
             category,
@@ -610,6 +612,9 @@ export function registerTools(
           `Store ${category}: ${title}`,
           config?.security,
         );
+        const result = namespace === 'project'
+          ? await store()
+          : await withNamespaceDatabase(namespaceDescriptor(projectRoot!, namespace, config ?? undefined), store);
 
         if (result.action === 'duplicate') {
           return {
@@ -719,7 +724,7 @@ export function registerTools(
       else if (name === 'knowl_context') {
         const { composeContext } = await import('../store/context-composer.js');
         const { query, task, tokenBudget } = args as any;
-        return { content: [{ type: 'text', text: JSON.stringify(await composeContext(projectId!, { query, task, tokenBudget }), null, 2) }] };
+        return { content: [{ type: 'text', text: JSON.stringify(await composeContext(projectId!, { query, task, tokenBudget, namespaceRoot: projectRoot ?? undefined }), null, 2) }] };
       }
 
       else if (name === 'knowl_synthesize') {

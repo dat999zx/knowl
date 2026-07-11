@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, initDb } from '../../src/store/database.js';
 import { composeContext } from '../../src/store/context-composer.js';
 import { createKnowledgeItem } from '../../src/store/repository.js';
+import { sessionNamespace, withNamespaceDatabase } from '../../src/store/namespaces.js';
 
 const ROOT = path.resolve('./.knowl-context-composer-test');
 
@@ -16,5 +17,12 @@ describe('context composer', () => {
     expect(pack.sections[0]).toMatchObject({ name: 'Pinned constraints', items: [expect.objectContaining({ title: 'No secrets' })] });
     expect(pack.estimatedTokens).toBeLessThanOrEqual(18);
     expect(pack.excluded).toEqual(expect.any(Array));
+  });
+
+  it('includes labelled session knowledge when namespace composition is requested', async () => {
+    await withNamespaceDatabase(sessionNamespace(ROOT), () => createKnowledgeItem('local', { category: 'state', title: 'Session migration', content: 'Current storage migration is running.' }));
+    await initDb(ROOT);
+    const pack = await composeContext('local', { query: 'migration', tokenBudget: 100, namespaceRoot: ROOT } as any);
+    expect(pack.sections.flatMap(section => section.items)).toEqual(expect.arrayContaining([expect.objectContaining({ title: 'Session migration', namespace: 'session' })]));
   });
 });

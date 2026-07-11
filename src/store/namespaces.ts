@@ -33,6 +33,12 @@ export function configuredNamespaces(root: string, config?: ProjectConfig): Name
   return [...defaultNamespaces(root), ...(organization ? [organization] : []), ...(global ? [global] : [])];
 }
 
+export function namespaceDescriptor(root: string, namespace: MemoryNamespace, config?: ProjectConfig): NamespaceDescriptor {
+  const descriptor = configuredNamespaces(root, config).find(entry => entry.namespace === namespace);
+  if (!descriptor) throw new Error(`Namespace "${namespace}" is not enabled.`);
+  return descriptor;
+}
+
 export async function withNamespaceDatabase<T>(descriptor: NamespaceDescriptor, run: () => Promise<T>): Promise<T> {
   return withDbPath(descriptor.databasePath, run);
 }
