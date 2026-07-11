@@ -38,7 +38,9 @@ import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSession
 import { captureMemorySessionEvent } from './store/session-capture.js';
 import { finalizeMemorySession } from './store/session-finalizer.js';
 import { isLifecycleEvent, isSessionEventType, readLifecyclePayload, stringPayloadValue } from './cli/agents/lifecycle.js';
+import { normalizeHostHook } from './cli/agents/host-hook.js';
 import { bootstrapAgentSession } from './store/context-bootstrap.js';
+import { handleHostLifecycleEvent } from './store/host-lifecycle.js';
 import { listAssertions } from './store/assertions.js';
 import { listActiveConflictKeys } from './store/conflicts.js';
 import { composeContext } from './store/context-composer.js';
@@ -953,6 +955,31 @@ program
         return;
       }
       console.error(`Error handling agent lifecycle event: ${error.message}`);
+      await closeDb().catch(() => {});
+      process.exit(1);
+    }
+  });
+
+program
+  .command('agent-hook')
+  .description('Translate a project-local agent host hook into bounded Knowl memory events')
+  .argument('<host>', 'codex, claude, cursor, claude-desktop, or generic')
+  .argument('<event>', 'host lifecycle event name')
+  .option('--json')
+  .action(async (host, event) => {
+    try {
+      const payload = await readLifecyclePayload();
+      const normalized = normalizeHostHook(host, event, payload);
+      const root = await findProjectRoot(normalized.projectRoot);
+      normalized.projectRoot = root;
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+      const result = await handleHostLifecycleEvent(project.id, normalized);
+      console.log(JSON.stringify(result.hostOutput ?? result));
+      await closeDb();
+    } catch (error: any) {
+      console.error(`Error handling agent hook: ${error.message}`);
       await closeDb().catch(() => {});
       process.exit(1);
     }

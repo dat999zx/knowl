@@ -70,4 +70,32 @@ describe('agent lifecycle CLI', () => {
 
     expect(JSON.parse(run(['agent-event', 'session-recover', '--json']))).toMatchObject({ recoveredCount: 1 });
   }, 15_000);
+
+  it('accepts the host-neutral hook contract and promotes a completed turn', () => {
+    const started = JSON.parse(run(['agent-hook', 'generic', 'turn-start', '--json'], JSON.stringify({
+      sessionId: 'generic-session',
+      turnId: 'generic-turn',
+      cwd: TEST_DIR,
+      title: 'Generic host turn',
+    })));
+    expect(started).toMatchObject({ accepted: true, sessionId: expect.any(String) });
+
+    const event = JSON.parse(run(['agent-hook', 'generic', 'session-event', '--json'], JSON.stringify({
+      sessionId: 'generic-session',
+      turnId: 'generic-turn',
+      cwd: TEST_DIR,
+      type: 'command',
+      command: 'npm test',
+      exitCode: 0,
+    })));
+    expect(event).toMatchObject({ accepted: true, sessionId: started.sessionId });
+
+    const stopped = JSON.parse(run(['agent-hook', 'generic', 'turn-stop', '--json'], JSON.stringify({
+      sessionId: 'generic-session',
+      turnId: 'generic-turn',
+      cwd: TEST_DIR,
+      status: 'finished',
+    })));
+    expect(stopped).toMatchObject({ accepted: true, sessionId: started.sessionId, promotion: expect.any(Object) });
+  }, 15_000);
 });

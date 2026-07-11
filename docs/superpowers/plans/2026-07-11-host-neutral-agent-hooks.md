@@ -136,11 +136,13 @@ rtk git commit -m "feat: normalize agent host lifecycle events"
 ### Task 2: Persist external-host session correlation
 
 **Files:**
-- Modify: `src/store/database.ts`
+- Modify: `src/store/bootstrap.ts`
+- Modify: `src/store/schema.ts`
+- Modify: `src/store/session-repository.ts`
 - Create: `src/store/host-session-bindings.ts`
 - Test: `tests/store/host-session-bindings.test.ts`
 
-- [ ] **Step 1: Write failing binding tests**
+- [x] **Step 1: Write failing binding tests**
 
 Assert `(host, project root, external session, external turn)` resolves idempotently to one active internal session, `turn-stop` closes the binding, the next turn gets a new session, and abandoned bindings recover safely.
 
@@ -164,13 +166,13 @@ const reused = await getOrCreateHostSession({
 expect(reused.session.id).toBe(first.session.id);
 ```
 
-- [ ] **Step 2: Run test and verify RED**
+- [x] **Step 2: Run test and verify RED**
 
 Run: `rtk npm.cmd test -- tests/store/host-session-bindings.test.ts --maxWorkers=1`
 
 Expected: FAIL because binding storage does not exist.
 
-- [ ] **Step 3: Add schema and repository**
+- [x] **Step 3: Add schema and repository**
 
 Add idempotent schema:
 
@@ -190,7 +192,7 @@ CREATE TABLE IF NOT EXISTS host_session_bindings (
 
 Expose `getOrCreateHostSession`, `findHostSession`, `closeHostSessionBinding`, and `closeHostSessionBindings`. Use existing `bootstrapAgentSession` for creation/reuse; never accept an external ID as the internal primary key.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `rtk npm.cmd test -- tests/store/host-session-bindings.test.ts --maxWorkers=1`
 
@@ -209,7 +211,7 @@ rtk git commit -m "feat: correlate host turns with memory sessions"
 - Test: `tests/store/host-lifecycle.test.ts`
 - Modify: `tests/cli/agent-lifecycle.test.ts`
 
-- [ ] **Step 1: Write failing orchestration tests**
+- [x] **Step 1: Write failing orchestration tests**
 
 Feed a sequence of normalized events and assert:
 
@@ -230,13 +232,13 @@ expect(result.hostOutput).toEqual({
 });
 ```
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `rtk npm.cmd test -- tests/store/host-lifecycle.test.ts tests/cli/agent-lifecycle.test.ts --maxWorkers=1`
 
 Expected: FAIL because orchestration and `agent-hook` CLI do not exist.
 
-- [ ] **Step 3: Implement orchestration and CLI**
+- [x] **Step 3: Implement orchestration and CLI**
 
 Expose:
 
@@ -257,7 +259,7 @@ The command reads one bounded JSON object from stdin, normalizes it, resolves th
 
 Codex and Claude context output uses `hookSpecificOutput.hookEventName/additionalContext`. Cursor/generic output includes `{ accepted, sessionId, context? }` without vendor-specific control fields.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `rtk npm.cmd test -- tests/store/host-lifecycle.test.ts tests/cli/agent-lifecycle.test.ts --maxWorkers=1`
 
