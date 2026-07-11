@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { createClient } from '@libsql/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { isLifecycleCapability, isLifecycleEvent } from '../../src/cli/agents/lifecycle.js';
 
@@ -60,4 +61,13 @@ describe('agent lifecycle CLI', () => {
     expect(rejected.stderr.toString()).toContain('secret material was detected');
     expect(rejected.stderr.toString()).not.toContain(secret);
   });
+
+  it('recovers a session left active when a hook process crashes', async () => {
+    const started = JSON.parse(run(['agent-event', 'session-start', '--title', 'Interrupted hook', '--json']));
+    const client = createClient({ url: `file:${path.join(TEST_DIR, '.knowl', 'knowl.db')}` });
+    await client.execute({ sql: "UPDATE memory_sessions SET last_heartbeat_at = '2020-01-01T00:00:00.000Z' WHERE id = ?", args: [started.id] });
+    client.close();
+
+    expect(JSON.parse(run(['agent-event', 'session-recover', '--json']))).toMatchObject({ recoveredCount: 1 });
+  }, 15_000);
 });

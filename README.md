@@ -102,6 +102,12 @@ knowl session recover
 
 When a terminal session is finished normally, Knowl deterministically promotes at most five candidates: decisions, verified commands, outcomes, and task state. Each promoted candidate requires session or file evidence. Optional synthesis is never required for promotion; deterministic candidates remain the fallback. Promotion stores its item IDs on the session, so retries are idempotent.
 
+### Agent lifecycle automation
+
+Hosts with a verified lifecycle-hook format can invoke one bounded command: `knowl agent-event session-start|session-event|session-stop|session-recover`. A start event creates or reuses a session and returns compact context; events never retain raw transcripts. Malformed or secret-bearing payloads are rejected, while a late event from a crashed hook is safely dropped and stale sessions recover on the next recovery event.
+
+Hook support is host-specific. Knowl never guesses or writes an unverified host-hook configuration. When lifecycle status is `unsupported` or `degraded`, MCP remains available and `knowl task run` is the universal fallback.
+
 Create and run a learned skill package:
 
 ```bash
@@ -182,6 +188,7 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl task checkpoint <task-id> <summary>` | Store durable progress for an active work loop. |
 | `knowl task finish <task-id> <summary>` | Store durable completion state for a work loop. |
 | `knowl task run <title> -- <command...>` | Start a work loop, run a command, then finish on success or checkpoint on failure with the child exit code. |
+| `knowl agent-event <event>` | Receive bounded host lifecycle events; accepts structured flags or JSON on stdin. |
 | `knowl session start|event|finish|recover` | Manage bounded, expiring scratch session events and recover stale sessions. |
 | `knowl skill list` | List learned file-backed skill packages under `.knowl/skills`. |
 | `knowl skill read <name>` | Print `skill.json` and `SKILL.md` for a learned skill package. |
