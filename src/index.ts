@@ -30,7 +30,7 @@ import { indexSkillPackage, recordSkillRun } from './skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage, SkillEntrypoint } from './skills/registry.js';
 import { auditKnowledgeStore } from './store/integrity.js';
 import { createSnapshot, restoreSnapshot } from './store/snapshots.js';
-import { isEvidenceStale, listEvidenceForItem } from './store/evidence-repository.js';
+import { isEvidenceStale, listEvidenceForItem, resolveSymbolEvidence } from './store/evidence-repository.js';
 import { queryKnowledgeForAgent } from './store/agent-query.js';
 import { evaluateRetrieval, RetrievalEvaluationCase } from './store/retrieval-evaluation.js';
 import { getKnowledgeAccessReport } from './store/access-feedback.js';
@@ -1235,12 +1235,12 @@ evidenceCommand
     try {
       const root = await findProjectRoot(process.cwd());
       await initDb(root);
-      const evidence = await Promise.all((await listEvidenceForItem(itemId)).map(async item => ({
-        ...item,
-        stale: await isEvidenceStale(item, root),
-      })));
+      const evidence = await Promise.all((await listEvidenceForItem(itemId)).map(async item => {
+        const symbol = item.type === 'symbol' ? await resolveSymbolEvidence(item) : null;
+        return { ...item, stale: symbol?.stale ?? await isEvidenceStale(item, root), suggestedLocator: symbol?.suggestedLocator };
+      }));
       for (const item of evidence) {
-        console.log(`${item.relationship}\t${item.type}\t${item.locator}\t${item.stale ? 'stale' : 'current'}${item.excerpt ? `\t${item.excerpt}` : ''}`);
+        console.log(`${item.relationship}\t${item.type}\t${item.locator}\t${item.stale ? 'stale' : 'current'}${item.suggestedLocator ? `\tsuggested: ${item.suggestedLocator}` : ''}${item.excerpt ? `\t${item.excerpt}` : ''}`);
       }
       if (evidence.length === 0) console.log('No evidence.');
       await closeDb();

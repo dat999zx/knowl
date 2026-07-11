@@ -704,6 +704,40 @@ describe('CLI Integration', () => {
     await fs.rm(evidenceDir, { recursive: true, force: true }).catch(() => {});
   }, 15_000);
 
+  it('should index symbols and report stale symbol evidence with an unambiguous replacement', async () => {
+    const symbolDir = path.resolve('./.knowl-cli-symbol-test');
+    await fs.rm(symbolDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(symbolDir, 'src'), { recursive: true });
+    try {
+      let itemId = '';
+      execSync(`node "${CLI_PATH}" init --yes`, { cwd: symbolDir, encoding: 'utf-8' });
+      const source = path.join(symbolDir, 'src', 'auth.ts');
+      await fs.writeFile(source, 'export function createToken() { return "token"; }\n');
+      expect(execSync(`node "${CLI_PATH}" code index`, { cwd: symbolDir, encoding: 'utf-8' })).toContain('Code symbols indexed.');
+      execSync(`node "${CLI_PATH}" decide "Symbol evidence target" "Symbol evidence should be inspectable."`, { cwd: symbolDir, encoding: 'utf-8' });
+      const client = createClient({ url: `file:${path.join(symbolDir, '.knowl', 'knowl.db')}` });
+      try {
+        const original = await client.execute({ sql: 'SELECT signature_hash FROM code_symbols WHERE locator = ?', args: ['symbol://src/auth.ts#createToken'] });
+        const item = await client.execute({ sql: 'SELECT id FROM knowledge_items WHERE title = ?', args: ['Symbol evidence target'] });
+        itemId = String(item.rows[0].id);
+        await client.execute({ sql: 'INSERT INTO evidence (id, type, locator, content_hash, observed_at, metadata) VALUES (?, ?, ?, ?, ?, ?)', args: ['symbol-evidence', 'symbol', 'symbol://src/auth.ts#createToken', String(original.rows[0].signature_hash), '2026-07-11T00:00:00.000Z', JSON.stringify({ symbolKind: 'function' })] });
+        await client.execute({ sql: 'INSERT INTO knowledge_evidence (knowledge_item_id, evidence_id, relationship) VALUES (?, ?, ?)', args: [itemId, 'symbol-evidence', 'supports'] });
+      } finally {
+        client.close();
+      }
+      await fs.writeFile(source, 'export function createAccessToken() { return "token"; }\n');
+      execSync(`node "${CLI_PATH}" code index`, { cwd: symbolDir, encoding: 'utf-8' });
+      const symbols = execSync(`node "${CLI_PATH}" code symbols src/auth.ts`, { cwd: symbolDir, encoding: 'utf-8' });
+      expect(symbols).toContain('createAccessToken');
+      const evidence = execSync(`node "${CLI_PATH}" evidence list ${itemId}`, { cwd: symbolDir, encoding: 'utf-8' });
+      expect(evidence).toContain('symbol://src/auth.ts#createToken');
+      expect(evidence).toContain('stale');
+      expect(evidence).toContain('suggested: symbol://src/auth.ts#createAccessToken');
+    } finally {
+      await fs.rm(symbolDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15_000);
+
   it('should show repository status', () => {
     const output = execSync(`node "${CLI_PATH}" status`, {
       cwd: TEST_DIR,

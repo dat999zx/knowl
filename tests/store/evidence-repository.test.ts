@@ -4,6 +4,8 @@ import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { closeDb, getDb, initDb } from '../../src/store/database.js';
+import { indexCode, listCodeSymbols } from '../../src/code/symbol-index.js';
+import { checkKnowledgeDrift } from '../../src/store/drift.js';
 import * as repo from '../../src/store/repository.js';
 import { recordDecisionDirect } from '../../src/store/knowledge-actions.js';
 import { storeKnowledgeAtomsDeduped } from '../../src/store/knowledge-writer.js';
@@ -15,6 +17,7 @@ import {
   listItemsForEvidence,
   unlinkKnowledgeEvidence,
 } from '../../src/store/evidence-repository.js';
+import * as evidenceRepository from '../../src/store/evidence-repository.js';
 
 const TEST_ROOT = path.resolve('./.knowl-evidence-test');
 
@@ -80,6 +83,66 @@ describe('evidence repository', () => {
     });
 
     expect(await isEvidenceStale(evidence, TEST_ROOT)).toBe(true);
+  });
+
+  it('detects symbol evidence that no longer resolves after an incremental reindex', async () => {
+    const filePath = path.join(TEST_ROOT, 'src', 'auth.ts');
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, 'export function createToken() { return "token"; }\n');
+    await indexCode(TEST_ROOT);
+    const original = (await listCodeSymbols('src/auth.ts')).find(symbol => symbol.locator === 'symbol://src/auth.ts#createToken')!;
+    const evidence = await createEvidence({
+      type: 'symbol', locator: original.locator, contentHash: original.signatureHash,
+      observedAt: '2026-07-11T00:00:00.000Z',
+    });
+
+    await fs.writeFile(filePath, 'export function createAccessToken() { return "token"; }\n');
+    await indexCode(TEST_ROOT);
+
+    expect(await isEvidenceStale(evidence, TEST_ROOT)).toBe(true);
+  });
+
+  it('suggests one same-file same-kind replacement for renamed symbol evidence', async () => {
+    const filePath = path.join(TEST_ROOT, 'src', 'auth.ts');
+    await fs.writeFile(filePath, 'export function createToken() { return "token"; }\n');
+    await indexCode(TEST_ROOT);
+    const original = (await listCodeSymbols('src/auth.ts')).find(symbol => symbol.locator === 'symbol://src/auth.ts#createToken')!;
+    const evidence = await createEvidence({
+      type: 'symbol', locator: original.locator, contentHash: original.signatureHash,
+      metadata: { symbolKind: 'function' }, observedAt: '2026-07-11T00:00:00.000Z',
+    });
+    await fs.writeFile(filePath, 'export function createAccessToken() { return "token"; }\n');
+    await indexCode(TEST_ROOT);
+
+    const resolve = (evidenceRepository as any).resolveSymbolEvidence;
+    expect(resolve).toBeTypeOf('function');
+    expect(await resolve(evidence)).toEqual({ stale: true, suggestedLocator: 'symbol://src/auth.ts#createAccessToken' });
+  });
+
+  it('includes stale linked symbol evidence in drift candidates without changing knowledge content', async () => {
+    const filePath = path.join(TEST_ROOT, 'src', 'auth.ts');
+    await fs.writeFile(filePath, 'export function createToken() { return "token"; }\n');
+    await indexCode(TEST_ROOT);
+    const original = (await listCodeSymbols('src/auth.ts')).find(symbol => symbol.locator === 'symbol://src/auth.ts#createToken')!;
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'architecture', title: 'Token creation', content: 'Auth creates a token through the documented symbol.',
+    });
+    const evidence = await createEvidence({
+      type: 'symbol', locator: original.locator, contentHash: original.signatureHash,
+      metadata: { symbolKind: 'function' }, observedAt: '2026-07-11T00:00:00.000Z',
+    });
+    await linkKnowledgeEvidence({ knowledgeItemId: item.id, evidenceId: evidence.id, relationship: 'supports' });
+    await fs.writeFile(filePath, 'export function createAccessToken() { return "token"; }\n');
+    await indexCode(TEST_ROOT);
+
+    const drift = await checkKnowledgeDrift(projectId, { sinceCommit: 'base', changedFiles: ['src/auth.ts'], apply: false });
+
+    expect(drift.candidates).toEqual([expect.objectContaining({
+      itemId: item.id,
+      matchedPaths: ['src/auth.ts'],
+      symbolEvidence: [expect.objectContaining({ locator: original.locator, suggestedLocator: 'symbol://src/auth.ts#createAccessToken' })],
+    })]);
+    expect((await repo.getKnowledgeItem(item.id))!.freshness).toBe('fresh');
   });
 
   it('attaches explicit and compatibility evidence during direct and batch writes', async () => {

@@ -8,6 +8,11 @@ import { getKnowledgeItem } from './repository.js';
 
 const MAX_EXCERPT_LENGTH = 2_000;
 
+export type SymbolEvidenceResolution = {
+  stale: boolean;
+  suggestedLocator?: string;
+};
+
 function generateId(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 }
@@ -37,6 +42,31 @@ function mapEvidence(row: any): Evidence {
     observedAt: String(row.observed_at),
     metadata: parseMetadata(row.metadata),
   };
+}
+
+function parseSymbolLocator(locator: string): { filePath: string; qualifiedName: string } | null {
+  const match = /^symbol:\/\/(.+)#([^#]+)$/.exec(locator);
+  return match ? { filePath: match[1], qualifiedName: match[2] } : null;
+}
+
+function normalizedName(value: string): string {
+  return value.replace(/[^a-z0-9]/gi, '').toLowerCase();
+}
+
+function nameSimilarity(left: string, right: string): number {
+  const a = normalizedName(left);
+  const b = normalizedName(right);
+  if (!a || !b) return 0;
+  const row = Array.from({ length: b.length + 1 }, () => 0);
+  for (let i = 1; i <= a.length; i += 1) {
+    let previous = 0;
+    for (let j = 1; j <= b.length; j += 1) {
+      const next = row[j];
+      row[j] = a[i - 1] === b[j - 1] ? previous + 1 : Math.max(row[j], row[j - 1]);
+      previous = next;
+    }
+  }
+  return row[b.length] / Math.max(a.length, b.length);
 }
 
 export async function createEvidence(input: Omit<Evidence, 'id'>): Promise<Evidence> {
@@ -112,7 +142,34 @@ export async function attachEvidenceToKnowledge(
   }
 }
 
+export async function resolveSymbolEvidence(evidence: Evidence): Promise<SymbolEvidenceResolution> {
+  const exact = await getClient().execute({
+    sql: 'SELECT signature_hash FROM code_symbols WHERE locator = ?',
+    args: [evidence.locator],
+  });
+  if (exact.rows[0]) {
+    return { stale: Boolean(evidence.contentHash && String(exact.rows[0].signature_hash ?? '') !== evidence.contentHash) };
+  }
+
+  const original = parseSymbolLocator(evidence.locator);
+  const symbolKind = typeof evidence.metadata?.symbolKind === 'string' ? evidence.metadata.symbolKind : null;
+  if (!original || !symbolKind) return { stale: true };
+
+  const candidates = await getClient().execute({
+    sql: 'SELECT locator, qualified_name FROM code_symbols WHERE file_path = ? AND kind = ?',
+    args: [original.filePath, symbolKind],
+  });
+  const plausible = candidates.rows
+    .map(row => ({ locator: String(row.locator), score: nameSimilarity(original.qualifiedName, String(row.qualified_name)) }))
+    .filter(candidate => candidate.score >= 0.6);
+
+  return plausible.length === 1 ? { stale: true, suggestedLocator: plausible[0].locator } : { stale: true };
+}
+
 export async function isEvidenceStale(evidence: Evidence, projectRoot: string): Promise<boolean> {
+  if (evidence.type === 'symbol') {
+    return (await resolveSymbolEvidence(evidence)).stale;
+  }
   if (evidence.type !== 'file' || !evidence.contentHash) return false;
   try {
     const content = await fs.readFile(path.resolve(projectRoot, evidence.locator));
