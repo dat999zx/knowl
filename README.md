@@ -165,6 +165,7 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl audit` | Read-only validation, reference, JSON, status, and FTS integrity audit. |
 | `knowl snapshot create` | Create a timestamped SQLite snapshot plus SHA-256 manifest. |
 | `knowl snapshot restore <path> --confirm` | Restore a snapshot transactionally; creates a pre-restore snapshot first. |
+| `knowl evidence list <item-id>` | List linked file, commit, test, command, URL, user, agent, or symbol evidence. |
 | `knowl state` | Print the full active hierarchical project memory. |
 | `knowl task start <title>` | Start a work loop, query relevant memory, and store active task state. |
 | `knowl task checkpoint <task-id> <summary>` | Store durable progress for an active work loop. |
@@ -206,6 +207,8 @@ knowl snapshot restore .knowl/snapshots/<snapshot>.db --confirm
 ```
 
 All structured and raw knowledge writes pass deterministic secret, sensitive-path, and size validation. `knowl audit` never mutates data. Restore requires `--confirm`, verifies a snapshot manifest when present, creates a pre-restore snapshot, then audits the restored store.
+
+Evidence is opt-in in MCP query results (`includeEvidence`). Each item can link multiple `supports`, `contradicts`, or `derived_from` records. Example: `src/auth/token.ts:18-55` supports a JWT decision; commit `a18f7c2` derives it; `tests/auth-token.spec.ts` supports it. File evidence reports stale when its stored hash no longer matches disk.
 
 ## Optional AI Configuration
 
