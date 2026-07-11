@@ -9,6 +9,7 @@ import { queryKnowledgeForAgent } from '../store/agent-query.js';
 import { KNOWL_MCP_TOOL_NAMES } from '../mcp/server.js';
 import { getVectorSearchConfig, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
+import { createAgentRegistry } from './agents/registry.js';
 
 type DoctorStatus = 'OK' | 'WARN' | 'FAIL';
 
@@ -132,6 +133,17 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         ? 'MCP tools expose work-loop task tools'
         : 'MCP tool surface should expose knowl_task_start, knowl_task_checkpoint, and knowl_task_finish',
     });
+
+    const lifecycleCapabilities = await Promise.all([...createAgentRegistry().values()].map(async adapter => {
+      try { return await adapter.lifecycleCapability?.(root) ?? 'unsupported'; } catch { return 'degraded'; }
+    }));
+    if (lifecycleCapabilities.every(capability => capability === 'unsupported')) {
+      checks.push({ status: 'OK', message: 'Agent lifecycle hooks are unsupported; `knowl task run` remains available' });
+    } else if (lifecycleCapabilities.some(capability => capability === 'degraded')) {
+      checks.push({ status: 'WARN', message: 'Some agent lifecycle hooks are degraded; `knowl task run` remains available' });
+    } else {
+      checks.push({ status: 'OK', message: 'Agent lifecycle hooks are supported by at least one configured host' });
+    }
 
     const hasSkills =
       KNOWL_MCP_TOOL_NAMES.includes('knowl_skill_list') &&

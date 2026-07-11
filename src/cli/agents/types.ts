@@ -17,6 +17,11 @@ export interface AgentIntegrationResult {
   scope: IntegrationScope;
   configPath: string;
   message?: string;
+  lifecycle?: {
+    capability: LifecycleCapability;
+    status: IntegrationStatus;
+    message?: string;
+  };
 }
 
 export interface AgentLifecycleAdapter {

@@ -67,19 +67,40 @@ export async function runAgentInitFlow(
       if (!(await adapter.verify(projectRoot))) {
         results.push({ ...result, status: 'failed', message: 'Configuration verification failed' });
       } else {
-        results.push(result);
+        const lifecycle = await configureLifecycle(adapter, projectRoot);
+        results.push({ ...result, lifecycle });
       }
     } catch (error: any) {
       results.push({ agent: name, status: 'failed', scope: detection.scope, configPath: detection.configPath, message: error.message });
     }
   }
-  return { results, exitCode: results.some(result => result.status === 'failed') ? 1 : 0 };
+  return { results, exitCode: results.some(result => result.status === 'failed' || result.lifecycle?.status === 'failed') ? 1 : 0 };
+}
+
+async function configureLifecycle(adapter: AgentAdapter, projectRoot: string): Promise<NonNullable<AgentIntegrationResult['lifecycle']>> {
+  if (!adapter.lifecycleCapability || !adapter.configureLifecycle || !adapter.verifyLifecycle) {
+    return { capability: 'unsupported', status: 'skipped', message: 'Lifecycle hooks are unavailable; use `knowl task run`.' };
+  }
+
+  try {
+    const capability = await adapter.lifecycleCapability(projectRoot);
+    const result = await adapter.configureLifecycle(projectRoot);
+    if (capability === 'supported' && !(await adapter.verifyLifecycle(projectRoot))) {
+      return { capability, status: 'failed', message: 'Lifecycle configuration verification failed' };
+    }
+    return { capability, status: result.status, message: result.message };
+  } catch (error: any) {
+    return { capability: 'degraded', status: 'failed', message: error.message };
+  }
 }
 
 export function formatAgentInitSummary(results: AgentIntegrationResult[]) {
-  if (results.length === 0) return 'No agent integrations selected.';
+  if (results.length === 0) return 'MCP: no agent integrations selected.\nLifecycle: no hooks configured; `knowl task run` remains available.\nResult: ready';
   const width = Math.max(...results.map(result => result.agent.length));
-  const lines = results.map(result => `${result.agent.padEnd(width)}: ${result.status} (${result.scope})${result.message ? ` - ${result.message}` : ''}`);
-  lines.push(`Result: ${results.some(result => result.status === 'failed') ? 'needs attention' : 'ready'}`);
+  const lines = results.flatMap(result => [
+    `${result.agent.padEnd(width)} MCP: ${result.status} (${result.scope})${result.message ? ` - ${result.message}` : ''}`,
+    `${result.agent.padEnd(width)} lifecycle: ${result.lifecycle?.capability ?? 'unsupported'} (${result.lifecycle?.status ?? 'skipped'})${result.lifecycle?.message ? ` - ${result.lifecycle.message}` : ''}`,
+  ]);
+  lines.push(`Result: ${results.some(result => result.status === 'failed' || result.lifecycle?.status === 'failed') ? 'needs attention' : 'ready'}`);
   return lines.join('\n');
 }

@@ -92,4 +92,19 @@ describe('agent init flow', () => {
     });
     expect(result).toEqual({ results: [], exitCode: 0 });
   });
+
+  it('keeps MCP configured when lifecycle hooks are unsupported', async () => {
+    const adapter: AgentAdapter = {
+      ...fakeAdapter('codex', { installed: true, configured: false, scope: 'project', configPath: 'codex' }),
+      lifecycleCapability: async () => 'unsupported',
+      configureLifecycle: async () => ({ agent: 'codex', status: 'skipped', scope: 'project', configPath: 'codex', message: 'Use `knowl task run`.' }),
+      verifyLifecycle: async () => false,
+    };
+    const result = await runAgentInitFlow(ROOT, {
+      agentNames: ['codex'], yes: false, interactive: false, registry: new Map([['codex', adapter]]), prompts: prompts(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.results[0]).toMatchObject({ status: 'configured', lifecycle: { capability: 'unsupported', status: 'skipped' } });
+  });
 });
