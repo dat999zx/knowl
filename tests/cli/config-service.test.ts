@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DEFAULT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
 import { getConfigValue, resetConfigValue, setConfigValue } from '../../src/cli/config/service.js';
+import { ConfigPrompts, runConfigUi } from '../../src/cli/config/ui.js';
 
 const ROOT = path.resolve('.knowl-config-service-test');
 
@@ -80,5 +81,52 @@ describe('config service', () => {
     const raw = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
     expect(raw.ai.apiKey).toBe('${OPENAI_API_KEY}');
     expect(await getConfigValue(ROOT, 'ai.apiKey')).toBe('********');
+  });
+});
+
+describe('config UI', () => {
+  it('edits a selected field and confirms the diff', async () => {
+    await writeConfig();
+    const prompts: ConfigPrompts = {
+      selectCategory: async () => 'Search',
+      selectField: async () => 'search.vector.enabled',
+      inputValue: async () => 'false',
+      confirmSave: async changes => changes[0]?.key === 'search.vector.enabled',
+      continueEditing: async () => false,
+    };
+
+    const result = await runConfigUi(ROOT, prompts);
+
+    expect(result.saved).toBe(true);
+    expect(await getConfigValue(ROOT, 'search.vector.enabled')).toBe(false);
+  });
+
+  it('does not save when confirmation is rejected', async () => {
+    await writeConfig();
+    const before = await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8');
+    const prompts: ConfigPrompts = {
+      selectCategory: async () => 'Search',
+      selectField: async () => 'search.vector.enabled',
+      inputValue: async () => 'false',
+      confirmSave: async () => false,
+      continueEditing: async () => false,
+    };
+    expect((await runConfigUi(ROOT, prompts)).saved).toBe(false);
+    expect(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8')).toBe(before);
+  });
+
+  it('redacts secret values in the confirmation diff', async () => {
+    await writeConfig({ ...DEFAULT_CONFIG, ai: { provider: 'openai', model: 'gpt-4o-mini' } });
+    let displayed: unknown;
+    const prompts: ConfigPrompts = {
+      selectCategory: async () => 'AI provider',
+      selectField: async () => 'ai.apiKey',
+      inputValue: async () => 'super-secret',
+      confirmSave: async changes => { displayed = changes; return false; },
+      continueEditing: async () => false,
+    };
+    await runConfigUi(ROOT, prompts);
+    expect(JSON.stringify(displayed)).not.toContain('super-secret');
+    expect(JSON.stringify(displayed)).toContain('********');
   });
 });
