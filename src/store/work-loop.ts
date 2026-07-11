@@ -1,6 +1,8 @@
 import type { KnowledgeItem } from '../core/types.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
 import * as repo from './repository.js';
+import { captureMemorySessionEvent } from './session-capture.js';
+import { finishMemorySession, startMemorySession } from './session-repository.js';
 
 export type WorkLoopMemoryHit = {
   id: string;
@@ -15,6 +17,7 @@ export type WorkLoopStartResult = {
   title: string;
   query: string;
   relevantMemory: WorkLoopMemoryHit[];
+  memorySessionId?: string;
 };
 
 export type WorkLoopStepResult = {
@@ -40,6 +43,10 @@ async function requireWorkLoopTask(taskId: string): Promise<KnowledgeItem> {
   return task;
 }
 
+function memorySessionId(task: KnowledgeItem): string | undefined {
+  return task.tags?.find(tag => tag.startsWith('memory-session:'))?.slice('memory-session:'.length);
+}
+
 export async function startWorkLoop(
   projectId: string,
   title: string,
@@ -52,6 +59,12 @@ export async function startWorkLoop(
     limit: 3,
   });
   const now = new Date().toISOString();
+  let sessionId: string | undefined;
+  try {
+    sessionId = (await startMemorySession({ title, query: effectiveQuery, agent: 'work-loop' })).id;
+  } catch (error: any) {
+    console.error(`Warning: session capture unavailable: ${error.message}`);
+  }
 
   const item = await repo.createKnowledgeItem(projectId, {
     category: 'state',
@@ -63,7 +76,7 @@ export async function startWorkLoop(
       `Pre-task query: ${effectiveQuery}`,
       `Relevant memory hits: ${relevantMemory.length}`,
     ].join('\n'),
-    tags: ['work-loop', 'task-start'],
+    tags: ['work-loop', 'task-start', ...(sessionId ? [`memory-session:${sessionId}`] : [])],
     source: 'knowl work loop',
     confidence: 1.0,
   });
@@ -78,6 +91,7 @@ export async function startWorkLoop(
     title,
     query: effectiveQuery,
     relevantMemory: relevantMemory.map(compactMemoryHit),
+    memorySessionId: sessionId,
   };
 }
 
@@ -108,6 +122,16 @@ async function recordWorkLoopStep(
   await repo.createKnowledgeCommit(projectId, commitMessage, [
     { itemId: item.id, action: 'insert', after: item },
   ]);
+
+  const sessionId = memorySessionId(task);
+  if (sessionId) {
+    try {
+      if (stepTag === 'finish') await finishMemorySession(sessionId, 'finished', summary);
+      else await captureMemorySessionEvent(sessionId, 'checkpoint', { summary });
+    } catch (error: any) {
+      console.error(`Warning: session capture unavailable: ${error.message}`);
+    }
+  }
 
   return {
     taskId,

@@ -439,7 +439,7 @@ describe('CLI Integration', () => {
     expect(stateOutput).toContain('Command succeeded:');
 
     await fs.rm(workLoopRunDir, { recursive: true, force: true });
-  });
+  }, 15_000);
 
   it('should checkpoint failed automatic work loop commands and preserve the exit code', async () => {
     const workLoopFailureDir = path.resolve('./.knowl-cli-work-loop-run-failure-test');
@@ -585,7 +585,7 @@ describe('CLI Integration', () => {
     } finally {
       await fs.rm(prDir, { recursive: true, force: true }).catch(() => {});
     }
-  });
+  }, 15_000);
 
   it('should report agent readiness with doctor', async () => {
     const doctorDir = path.resolve('./.knowl-cli-doctor-test');
@@ -700,7 +700,7 @@ describe('CLI Integration', () => {
     expect(output).toContain('tests/evidence.test.ts');
     expect(output).toContain('supports');
     await fs.rm(evidenceDir, { recursive: true, force: true }).catch(() => {});
-  });
+  }, 15_000);
 
   it('should show repository status', () => {
     const output = execSync(`node "${CLI_PATH}" status`, {

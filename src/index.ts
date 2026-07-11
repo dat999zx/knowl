@@ -965,6 +965,7 @@ taskCommand
 
       const commandText = formatCommand(command, commandArgs);
       if (child.error) {
+        if (startResult.memorySessionId) await captureMemorySessionEvent(startResult.memorySessionId, 'command', { command: commandText, exitCode: 1, summary: 'Command failed to start.' });
         const summary = `Command failed to start: ${commandText} (${child.error.message})`;
         const checkpoint = await checkpointWorkLoop(reopenedProject.id, taskId, summary);
         console.log('KNOWL WORK LOOP CHECKPOINT');
@@ -976,6 +977,7 @@ taskCommand
       }
 
       const exitCode = child.status ?? 1;
+      if (startResult.memorySessionId) await captureMemorySessionEvent(startResult.memorySessionId, 'command', { command: commandText, exitCode, summary: exitCode === 0 ? 'Command succeeded.' : 'Command failed.' });
       if (exitCode === 0) {
         const finish = await finishWorkLoop(reopenedProject.id, taskId, `Command succeeded: ${commandText}`);
         console.log('KNOWL WORK LOOP FINISH');
