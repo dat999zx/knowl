@@ -17,7 +17,7 @@
 - Modify: `src/cli/agents/types.ts`
 - Test: `tests/cli/host-hook.test.ts`
 
-- [ ] **Step 1: Write failing normalization tests**
+- [x] **Step 1: Write failing normalization tests**
 
 Create fixtures for documented Codex, Claude Code, Cursor, and generic payloads. Assert they produce the same internal shape:
 
@@ -51,13 +51,13 @@ expect(normalizeHostHook('cursor', 'afterShellExecution', {
 
 Also assert unknown fields, prompt bodies, transcripts, stdout/stderr, environment variables, and oversized values are not returned.
 
-- [ ] **Step 2: Run test and verify RED**
+- [x] **Step 2: Run test and verify RED**
 
 Run: `rtk npm.cmd test -- tests/cli/host-hook.test.ts --maxWorkers=1`
 
 Expected: FAIL because `host-hook.ts` does not exist.
 
-- [ ] **Step 3: Implement the minimal contract**
+- [x] **Step 3: Implement the minimal contract**
 
 Add:
 
@@ -122,7 +122,7 @@ const CURSOR_EVENTS = {
 
 All strings are bounded before validation; only allowlisted metadata enters `payload`.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `rtk npm.cmd test -- tests/cli/host-hook.test.ts --maxWorkers=1`
 

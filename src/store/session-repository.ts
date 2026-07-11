@@ -13,7 +13,7 @@ const plusHours = (now: string, hours: number) => new Date(new Date(now).getTime
 const mapSession = (row: any): MemorySession => ({ id: String(row.id), agent: row.agent ? String(row.agent) : null, title: String(row.title), query: row.query ? String(row.query) : null, status: row.status as SessionStatus, startedAt: String(row.started_at), lastHeartbeatAt: String(row.last_heartbeat_at), finishedAt: row.finished_at ? String(row.finished_at) : null, baselineCommit: row.baseline_commit ? String(row.baseline_commit) : null, expiresAt: String(row.expires_at) });
 const mapEvent = (row: any): MemorySessionEvent => ({ id: String(row.id), sessionId: String(row.session_id), type: row.type as SessionEventType, payload: JSON.parse(String(row.payload)), observedAt: String(row.observed_at), expiresAt: String(row.expires_at) });
 
-async function getSession(id: string): Promise<MemorySession> {
+export async function getMemorySession(id: string): Promise<MemorySession> {
   const row = (await getClient().execute({ sql: 'SELECT * FROM memory_sessions WHERE id = ?', args: [id] })).rows[0];
   if (!row) throw new Error(`Memory session not found: ${id}`);
   return mapSession(row);
@@ -29,13 +29,13 @@ export async function startMemorySession(input: { title: string; query?: string;
 }
 
 export async function heartbeatMemorySession(sessionId: string): Promise<MemorySession> {
-  const session = await getSession(sessionId); if (session.status !== 'active') throw new Error('Cannot heartbeat a terminal memory session.');
+  const session = await getMemorySession(sessionId); if (session.status !== 'active') throw new Error('Cannot heartbeat a terminal memory session.');
   const now = new Date().toISOString(); await getClient().execute({ sql: 'UPDATE memory_sessions SET last_heartbeat_at = ? WHERE id = ?', args: [now, sessionId] });
   return { ...session, lastHeartbeatAt: now };
 }
 
 export async function appendMemorySessionEvent(sessionId: string, type: SessionEventType, payload: Record<string, unknown>): Promise<MemorySessionEvent> {
-  const session = await getSession(sessionId); if (session.status !== 'active') throw new Error('Cannot append an event to a terminal memory session.');
+  const session = await getMemorySession(sessionId); if (session.status !== 'active') throw new Error('Cannot append an event to a terminal memory session.');
   const safePayload = Object.fromEntries(Object.entries(payload).filter(([key]) => key !== 'stdout' && key !== 'stderr'));
   const serialized = JSON.stringify(safePayload); validateKnowledgeWrite({ content: serialized });
   if (serialized.length > 4_000) throw new Error('Memory session event payload exceeds the allowed length.');
@@ -45,7 +45,7 @@ export async function appendMemorySessionEvent(sessionId: string, type: SessionE
 }
 
 export async function finishMemorySession(sessionId: string, status: 'finished' | 'failed', summary?: string): Promise<MemorySession> {
-  const session = await getSession(sessionId); if (session.status !== 'active') return session;
+  const session = await getMemorySession(sessionId); if (session.status !== 'active') return session;
   validateKnowledgeWrite({ content: summary }); const now = new Date().toISOString();
   await getClient().execute({ sql: 'UPDATE memory_sessions SET status = ?, finished_at = ?, last_heartbeat_at = ? WHERE id = ?', args: [status, now, now, sessionId] });
   await getClient().execute({ sql: 'INSERT INTO memory_session_events (id, session_id, type, payload, observed_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)', args: [id(), sessionId, 'stop', JSON.stringify({ status, summary: summary ?? null }), now, plusHours(now, EVENT_TTL_HOURS)] });

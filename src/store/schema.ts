@@ -105,6 +105,20 @@ export const memorySessionEvents = sqliteTable('memory_session_events', {
   type: text('type').notNull(), payload: text('payload', { mode: 'json' }).notNull(), observedAt: text('observed_at').notNull(), expiresAt: text('expires_at').notNull(),
 }, (table) => [index('idx_memory_session_events_expiry').on(table.expiresAt), index('idx_memory_session_events_session').on(table.sessionId)]);
 
+export const hostSessionBindings = sqliteTable('host_session_bindings', {
+  host: text('host').notNull(),
+  projectRoot: text('project_root').notNull(),
+  externalSessionId: text('external_session_id').notNull(),
+  externalTurnId: text('external_turn_id').notNull().default(''),
+  memorySessionId: text('memory_session_id').notNull().references(() => memorySessions.id, { onDelete: 'cascade' }),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  updatedAt: text('updated_at').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.host, table.projectRoot, table.externalSessionId, table.externalTurnId] }),
+  index('idx_host_session_bindings_memory').on(table.memorySessionId),
+  index('idx_host_session_bindings_session').on(table.host, table.projectRoot, table.externalSessionId, table.active),
+]);
+
 export const knowledgeEmbeddings = sqliteTable('knowledge_embeddings', {
   knowledgeItemId: text('knowledge_item_id').primaryKey().references(() => knowledgeItems.id, { onDelete: 'cascade' }),
   provider: text('provider').notNull(),
