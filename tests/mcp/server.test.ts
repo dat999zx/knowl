@@ -358,6 +358,15 @@ describe('MCP Server Layer', () => {
     expect(JSON.parse(res.result.content[0].text)).toEqual([expect.objectContaining({ content: 'Updated content.' }), expect.objectContaining({ content: 'Initial content.' })]);
   });
 
+  it('accepts conflict identity on structured MCP writes', async () => {
+    const args = { category: 'decision', title: 'MCP production engine', content: 'PostgreSQL.', conflictKey: 'database.production.engine', conflictScope: { environment: 'production' }, conflictExclusive: true };
+    const first = await runRpcRequest('tools/call', { name: 'knowl_store', arguments: args });
+    const second = await runRpcRequest('tools/call', { name: 'knowl_store', arguments: { ...args, title: 'MCP production engine alternative', content: 'SQLite.' } });
+    expect(first.result.isError).toBeUndefined();
+    expect(second.result.isError).toBe(true);
+    expect(second.result.content[0].text).toContain('KNOWLEDGE_CONFLICT');
+  });
+
   it('should skip duplicate structured knowledge when BM25 finds an existing match', async () => {
     await repo.createKnowledgeItem(projectId, {
       category: 'fact',

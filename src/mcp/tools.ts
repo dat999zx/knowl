@@ -131,6 +131,9 @@ export function registerTools(
                 type: 'number',
                 description: 'Optional confidence from 0.0 to 1.0.',
               },
+              conflictKey: { type: 'string', description: 'Optional normalized semantic identity key.' },
+              conflictScope: { type: 'object', description: 'Optional scope for the conflict key.' },
+              conflictExclusive: { type: 'boolean', description: 'Whether only one active value may exist for this key/scope.' },
               steps: {
                 type: 'array',
                 items: { type: 'string' },
@@ -564,7 +567,7 @@ export function registerTools(
       }
 
       else if (name === 'knowl_store') {
-        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, steps } = args as any;
+        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, steps, conflictKey, conflictScope, conflictExclusive } = args as any;
 
         if (!KNOWLEDGE_CATEGORIES.includes(category)) {
           throw new Error(`Invalid knowledge category: ${category}`);
@@ -583,6 +586,9 @@ export function registerTools(
             sourceCommit,
             affectedPaths,
             confidence,
+            conflictKey,
+            conflictScope,
+            conflictExclusive,
             steps,
           },
           `Store ${category}: ${title}`,

@@ -1,6 +1,8 @@
 import { CommitChange, EvidenceInput, KnowledgeCategory, KnowledgeItem, KnowledgeWriteValidationOptions } from '../core/types.js';
 import { searchKnowledgeItems } from './search.js';
 import * as repo from './repository.js';
+import { checkKnowledgeConflict } from './conflicts.js';
+import { KnowledgeConflictError } from '../core/errors.js';
 import { attachEvidenceToKnowledge } from './evidence-repository.js';
 
 const DUPLICATE_STOP_WORDS = new Set([
@@ -102,6 +104,8 @@ export async function storeKnowledgeItemDeduped(
   commitMessage?: string,
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<StoreKnowledgeResult> {
+  const conflicts = await checkKnowledgeConflict(input);
+  if (conflicts.length) throw new KnowledgeConflictError(conflicts.map(item => ({ id: item.id, title: item.title })));
   const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, input);
   if (duplicate) {
     return { action: 'duplicate', item: duplicate };
@@ -120,6 +124,9 @@ export async function storeKnowledgeItemDeduped(
       sourceCommit: input.sourceCommit,
       affectedPaths: input.affectedPaths,
       confidence: input.confidence,
+      conflictKey: input.conflictKey,
+      conflictScope: input.conflictScope,
+      conflictExclusive: input.conflictExclusive,
     },
     input.steps,
     undefined,

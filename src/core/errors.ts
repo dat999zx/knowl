@@ -42,6 +42,6 @@ export class ProjectNotFoundError extends KnowlError {
 
 export class KnowledgeConflictError extends KnowlError {
   constructor(public readonly conflicts: Array<{ id: string; title: string }>) {
-    super(`Exclusive knowledge conflict: ${conflicts.map(item => item.title).join(', ')}`, 'KNOWLEDGE_CONFLICT');
+    super(`KNOWLEDGE_CONFLICT: ${conflicts.map(item => item.title).join(', ')}`, 'KNOWLEDGE_CONFLICT');
   }
 }
