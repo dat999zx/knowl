@@ -670,16 +670,40 @@ program
     try {
       const root = await findProjectRoot(process.cwd());
       const datasetPath = path.resolve(options.dataset);
-      const dataset = JSON.parse(await fs.readFile(datasetPath, 'utf-8')) as { cases?: RetrievalEvaluationCase[] };
+      const dataset = JSON.parse(await fs.readFile(datasetPath, 'utf-8')) as {
+        cases?: RetrievalEvaluationCase[];
+        fixtures?: Array<{ id: string; category: any; title: string; content: string; tags?: string[]; freshness?: any; status?: any }>;
+      };
       if (!Array.isArray(dataset.cases)) {
         throw new Error('Retrieval dataset must contain a cases array.');
       }
 
-      await initDb(root);
-      const project = await repo.getProjectByRootPath(root);
-      if (!project) throw new Error('Project not found in database.');
+      let fixtureRoot: string | null = null;
+      let cases = dataset.cases;
+      let project;
+      if (dataset.fixtures?.length) {
+        fixtureRoot = await fs.mkdtemp(path.join(process.env.TEMP || root, 'knowl-eval-'));
+        await fs.mkdir(path.join(fixtureRoot, '.knowl'), { recursive: true });
+        await initDb(fixtureRoot);
+        project = await repo.createProject(fixtureRoot, 'Retrieval evaluation fixture');
+        const ids = new Map<string, string>();
+        for (const fixture of dataset.fixtures) {
+          const item = await repo.createKnowledgeItem(project.id, fixture);
+          ids.set(fixture.id, item.id);
+          if (fixture.status) await repo.updateKnowledgeItem(item.id, { status: fixture.status } as any);
+        }
+        cases = dataset.cases.map(testCase => ({
+          ...testCase,
+          expectedItemIds: testCase.expectedItemIds.map(id => ids.get(id) ?? id),
+          mustNotReturn: testCase.mustNotReturn.map(id => ids.get(id) ?? id),
+        }));
+      } else {
+        await initDb(root);
+        project = await repo.getProjectByRootPath(root);
+        if (!project) throw new Error('Project not found in database.');
+      }
 
-      const evaluation = await evaluateRetrieval(dataset.cases, async (testCase) => {
+      const evaluation = await evaluateRetrieval(cases, async (testCase) => {
         const startedAt = Date.now();
         const items = await queryKnowledgeForAgent(project.id, {
           query: testCase.query,
@@ -712,6 +736,7 @@ program
         console.log(`Failed cases: ${result.failedCaseIds.join(', ') || 'none'}`);
       }
       await closeDb();
+      if (fixtureRoot) await fs.rm(fixtureRoot, { recursive: true, force: true }).catch(() => {});
     } catch (error: any) {
       console.error(`Error evaluating retrieval: ${error.message}`);
       process.exit(1);

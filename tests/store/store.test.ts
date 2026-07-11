@@ -594,7 +594,7 @@ describe('Storage Layer', () => {
     });
     await setKnowledgeItemUpdatedAt(weakNewer.id, '2026-07-01T00:00:00.000Z');
 
-    const results = await queryKnowledgeForAgent(projectId, {
+    const results = await queryKnowledgeForAgentExplained(projectId, {
       query: 'strong-relevance-gamma-delta',
       status: 'active',
       limit: 2,
@@ -602,6 +602,46 @@ describe('Storage Layer', () => {
 
     expect(results[0].id).toBe(strongOlder.id);
     expect(results.some(item => item.id === weakNewer.id)).toBe(true);
+  });
+
+  it('keeps a stronger text match ahead of a category hint', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+    const strong = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Strong category ranking match',
+      content: 'category-boundary-unique category-boundary-unique category-boundary-unique',
+    });
+    await repo.createKnowledgeItem(projectId, {
+      category: 'architecture', title: 'Weak category ranking match',
+      content: 'category-boundary-unique',
+    });
+
+    const results = await queryKnowledgeForAgent(projectId, {
+      query: 'category-boundary-unique', category: 'architecture', limit: 2,
+    });
+
+    expect(results[0].id).toBe(strong.id);
+  });
+
+  it('diversifies near-duplicate retrieval results', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+    await repo.createKnowledgeItem(projectId, {
+      category: 'skill', title: 'Deploy shard checklist',
+      content: 'mmrdiversityqz deploy shard checklist rollout',
+    });
+    await repo.createKnowledgeItem(projectId, {
+      category: 'skill', title: 'Deploy shard checklist',
+      content: 'mmrdiversityqz deploy shard checklist rollout',
+    });
+    const distinct = await repo.createKnowledgeItem(projectId, {
+      category: 'skill', title: 'Shard recovery runbook',
+      content: 'mmrdiversityqz recovery rollback safeguards',
+    });
+
+    const results = await queryKnowledgeForAgent(projectId, { query: 'mmrdiversityqz deploy shard', limit: 2 });
+
+    expect(results.map(item => item.id)).toContain(distinct.id);
   });
 
   it('should return recent active knowledge and commits for session continuity', async () => {

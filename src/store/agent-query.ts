@@ -4,8 +4,13 @@ import { searchKnowledgeEmbeddings } from './vector.js';
 import { recordKnowledgeAccessBestEffort } from './access-feedback.js';
 
 const DEFAULT_AGENT_QUERY_LIMIT = 3;
-const CATEGORY_HINT_BOOST = 10;
-const SIMILAR_RELEVANCE_RECENCY_BOOST = 0.75;
+const RRF_K = 60;
+const CATEGORY_HINT_BOOST = 0.015;
+const RECENCY_BOOST = 0.005;
+const CONFIDENCE_BOOST = 0.005;
+const EXACT_IDENTIFIER_BOOST = 0.02;
+const MMR_RELEVANCE_WEIGHT = 0.2;
+const MMR_SIMILARITY_WEIGHT = 0.8;
 
 function queryTokens(query?: string): string[] {
   return [...new Set((query ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length > 1))];
@@ -28,6 +33,29 @@ function textMatchScore(item: KnowledgeItem, tokens: string[]): number {
   ].join(' ');
 
   return tokens.reduce((score, token) => score + countOccurrences(searchableText, token), 0);
+}
+
+function itemTokens(item: KnowledgeItem): Set<string> {
+  return new Set(queryTokens([item.title, item.content, ...(item.tags ?? [])].join(' ')));
+}
+
+function tokenOverlap(left: Set<string>, right: Set<string>): number {
+  const union = new Set([...left, ...right]);
+  if (union.size === 0) return 0;
+  return [...left].filter(token => right.has(token)).length / union.size;
+}
+
+function exactIdentifierScore(item: KnowledgeItem, query?: string): number {
+  const identifier = query?.trim().toLowerCase();
+  if (!identifier || identifier.length < 3 || !/[./#:_-]/.test(identifier)) return 0;
+  const text = [item.title, item.content, ...(item.tags ?? [])].join(' ').toLowerCase();
+  return text.includes(identifier) ? EXACT_IDENTIFIER_BOOST : 0;
+}
+
+function freshnessScore(item: KnowledgeItem): number {
+  if (item.freshness === 'fresh') return 0.006;
+  if (item.freshness === 'needs_review') return -0.006;
+  return -0.012;
 }
 
 function normalizedRecencyScore(item: KnowledgeItem, timestamps: number[]): number {
@@ -80,17 +108,18 @@ export async function queryKnowledgeForAgentExplained(
 ): Promise<ExplainedKnowledgeItem[]> {
   const limit = options.limit ?? DEFAULT_AGENT_QUERY_LIMIT;
   const { vector, ...textOptions } = options;
+  const candidateLimit = Math.max(limit * 3, 10);
   const bm25Results = await queryKnowledgeBase(projectId, {
     ...textOptions,
     category: undefined,
-    limit: vector?.enabled ? Math.max(limit * 3, 10) : limit,
+    limit: candidateLimit,
   });
 
   const ranked = new Map<string, { item: KnowledgeItem; score: number; bm25Rank?: number; vectorRank?: number }>();
   bm25Results.forEach((item, index) => {
     ranked.set(item.id, {
       item,
-      score: 1 / (index + 1),
+      score: 1 / (RRF_K + index + 1),
       bm25Rank: index + 1,
     });
   });
@@ -103,12 +132,12 @@ export async function queryKnowledgeForAgentExplained(
       tags: options.tags,
       provider: vector.provider,
       model: vector.model,
-      limit: Math.max(limit * 3, 10),
+      limit: candidateLimit,
     });
 
     vectorResults.forEach((result, index) => {
       const existing = ranked.get(result.item.id);
-      const score = 1 / (index + 1);
+      const score = 1 / (RRF_K + index + 1);
       ranked.set(result.item.id, {
         item: result.item,
         score: (existing?.score ?? 0) + score,
@@ -121,43 +150,57 @@ export async function queryKnowledgeForAgentExplained(
   const tokens = queryTokens(options.query);
   const timestamps = [...ranked.values()].map(result => new Date(result.item.updatedAt).getTime());
 
-  const items = [...ranked.values()]
-    .sort((left, right) => {
-      const leftCategoryBoost = options.category && left.item.category === options.category ? CATEGORY_HINT_BOOST : 0;
-      const rightCategoryBoost = options.category && right.item.category === options.category ? CATEGORY_HINT_BOOST : 0;
-      const leftTextScore = textMatchScore(left.item, tokens);
-      const rightTextScore = textMatchScore(right.item, tokens);
-      const similarRelevance = leftTextScore === rightTextScore;
-      const leftScore =
-        leftCategoryBoost +
-        left.score +
-        (similarRelevance ? normalizedRecencyScore(left.item, timestamps) * SIMILAR_RELEVANCE_RECENCY_BOOST : 0);
-      const rightScore =
-        rightCategoryBoost +
-        right.score +
-        (similarRelevance ? normalizedRecencyScore(right.item, timestamps) * SIMILAR_RELEVANCE_RECENCY_BOOST : 0);
-
-      return rightScore - leftScore;
-    })
-    .slice(0, limit)
+  const scored = [...ranked.values()]
     .map(result => {
       const category = options.category && result.item.category === options.category ? CATEGORY_HINT_BOOST : 0;
-      const text = textMatchScore(result.item, tokens);
-      const recency = normalizedRecencyScore(result.item, timestamps) * SIMILAR_RELEVANCE_RECENCY_BOOST;
-      const confidence = result.item.confidence * 0.01;
-      const freshness = result.item.freshness === 'fresh' ? 0.05 : result.item.freshness === 'needs_review' ? -0.05 : -0.1;
-      const contributions = { rank: result.score, text, category, recency, confidence, freshness };
+      const text = Math.min(textMatchScore(result.item, tokens), 20) * 0.01;
+      const recency = normalizedRecencyScore(result.item, timestamps) * RECENCY_BOOST;
+      const confidence = result.item.confidence * CONFIDENCE_BOOST;
+      const freshness = freshnessScore(result.item);
+      const exactIdentifier = exactIdentifierScore(result.item, options.query);
+      const contributions = { rank: result.score, text, category, recency, confidence, freshness, exactIdentifier };
       return {
-        ...result.item,
-        explanation: {
-          finalScore: Object.values(contributions).reduce((sum, value) => sum + value, 0),
-          bm25Rank: result.bm25Rank,
-          vectorRank: result.vectorRank,
-          contributions,
-          reason: `rank=${result.score.toFixed(3)}, text=${text}, category=${category}, recency=${recency.toFixed(3)}`,
-        },
+        result,
+        score: Object.values(contributions).reduce((sum, value) => sum + value, 0),
+        contributions,
       };
-    });
+    })
+    .sort((left, right) => right.score - left.score);
+
+  const selected: Array<typeof scored[number] & { diversity: number }> = [];
+  const candidateTokens = new Map(scored.map(candidate => [candidate.result.item.id, itemTokens(candidate.result.item)]));
+  const highestScore = scored[0]?.score || 1;
+  while (selected.length < limit && selected.length < scored.length) {
+    const next = scored
+      .filter(candidate => !selected.some(chosen => chosen.result.item.id === candidate.result.item.id))
+      .map(candidate => {
+        const overlap = selected.length === 0 ? 0 : Math.max(...selected.map(chosen => tokenOverlap(
+          candidateTokens.get(candidate.result.item.id)!, candidateTokens.get(chosen.result.item.id)!,
+        )));
+        return {
+          ...candidate,
+          diversity: -overlap * MMR_SIMILARITY_WEIGHT,
+          mmr: (candidate.score / highestScore) * MMR_RELEVANCE_WEIGHT - overlap * MMR_SIMILARITY_WEIGHT,
+        };
+      })
+      .sort((left, right) => right.mmr - left.mmr)[0];
+    if (!next) break;
+    selected.push(next);
+  }
+
+  const items = selected.map(({ result, score, contributions, diversity }) => {
+    const explanationContributions = { ...contributions, diversity };
+    return {
+      ...result.item,
+      explanation: {
+        finalScore: score + diversity,
+        bm25Rank: result.bm25Rank,
+        vectorRank: result.vectorRank,
+        contributions: explanationContributions,
+        reason: `rrf=${contributions.rank.toFixed(3)}, text=${contributions.text.toFixed(3)}, category=${contributions.category.toFixed(3)}, diversity=${diversity.toFixed(3)}`,
+      },
+    };
+  });
 
   await Promise.all(items.map((item, index) => recordKnowledgeAccessBestEffort({
     itemId: item.id,

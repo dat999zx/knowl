@@ -66,6 +66,7 @@ describe('CLI Integration', () => {
       p95LatencyMs: expect.any(Number),
       averageContextChars: expect.any(Number),
     }));
+    expect(result.metrics.recallAt3).toBeGreaterThan(0);
     expect(result.failedCaseIds).toEqual(expect.any(Array));
   });
 

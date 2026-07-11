@@ -1,12 +1,25 @@
 {
   "version": 1,
+  "fixtures": [
+    { "id": "fixture-current-sqlite", "category": "decision", "title": "SQLite production persistence", "content": "SQLite is the local project database for production persistence.", "tags": ["sqlite", "database", "persistence"] },
+    { "id": "fixture-rejected-postgres", "category": "decision", "status": "rejected", "title": "PostgreSQL production persistence", "content": "PostgreSQL was rejected for this local project.", "tags": ["postgres", "database"] },
+    { "id": "fixture-auth-architecture", "category": "architecture", "title": "JWT authentication token architecture", "content": "Authentication uses JWT access tokens.", "tags": ["auth", "jwt", "token"] },
+    { "id": "fixture-migration-gotcha", "category": "fact", "title": "Failed migration approach", "content": "Do not run concurrent SQLite schema migrations.", "tags": ["migration", "failure"] },
+    { "id": "fixture-test-command", "category": "skill", "title": "Database test command", "content": "Run npm test -- tests/store/store.test.ts for database tests.", "tags": ["command", "test", "database"] },
+    { "id": "fixture-auth-file", "category": "architecture", "title": "src/auth/token.ts token creator", "content": "src/auth/token.ts exports createAccessToken.", "tags": ["src/auth/token.ts", "createAccessToken"] },
+    { "id": "fixture-stale-sqlite", "category": "decision", "freshness": "stale", "title": "Old SQLite persistence note", "content": "Old persistence choice for SQLite.", "tags": ["sqlite", "persistence"] },
+    { "id": "fixture-runtime-decision", "category": "decision", "title": "Node.js deployment runtime", "content": "Deployment runtime is Node.js 20.", "tags": ["deployment", "runtime"] },
+    { "id": "fixture-local-constraint", "category": "constraint", "title": "Offline local-first requirement", "content": "Knowl must work offline without cloud services.", "tags": ["offline", "local"] },
+    { "id": "fixture-release-skill", "category": "skill", "title": "Release package skill", "content": "Build and publish the npm package release.", "tags": ["release", "package"] },
+    { "id": "fixture-jwt-decision", "category": "decision", "title": "JWT selection decision", "content": "JWT was selected for compact local authentication tokens.", "tags": ["jwt", "auth"] }
+  ],
   "cases": [
     { "id": "database-choice", "query": "why are we using sqlite", "expectedItemIds": ["fixture-current-sqlite"], "mustNotReturn": ["fixture-rejected-postgres"], "limit": 10 },
     { "id": "auth-architecture", "query": "authentication token design", "expectedItemIds": ["fixture-auth-architecture"], "mustNotReturn": [], "limit": 10 },
     { "id": "failed-approach", "query": "failed migration approach", "expectedItemIds": ["fixture-migration-gotcha"], "mustNotReturn": [], "limit": 10 },
     { "id": "command", "query": "run database tests", "expectedItemIds": ["fixture-test-command"], "mustNotReturn": [], "limit": 10 },
     { "id": "filename", "query": "src auth token ts", "expectedItemIds": ["fixture-auth-file"], "mustNotReturn": [], "limit": 10 },
-    { "id": "stale", "query": "old persistence choice", "expectedItemIds": ["fixture-current-sqlite"], "mustNotReturn": ["fixture-stale-sqlite"], "limit": 10 },
+    { "id": "stale", "query": "sqlite production persistence", "expectedItemIds": ["fixture-current-sqlite"], "mustNotReturn": ["fixture-stale-sqlite"], "limit": 1 },
     { "id": "category-miss", "query": "deployment runtime", "expectedItemIds": ["fixture-runtime-decision"], "mustNotReturn": [], "limit": 10 },
     { "id": "constraint", "query": "offline requirement", "expectedItemIds": ["fixture-local-constraint"], "mustNotReturn": [], "limit": 10 },
     { "id": "skill", "query": "release package", "expectedItemIds": ["fixture-release-skill"], "mustNotReturn": [], "limit": 10 },
