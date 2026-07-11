@@ -1,6 +1,6 @@
 # Knowledge Intelligence Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Preserve historical truth, detect deterministic conflicts, and compose diversified task context within an explicit token budget.
 
@@ -113,25 +113,25 @@ rtk git commit -m "feat: query temporal knowledge history"
 - Modify: `src/store/knowledge-writer.ts`
 - Test: `tests/store/conflicts.test.ts`
 
-- [ ] **Step 1: Write failing conflict tests**
+- [x] **Step 1: Write failing conflict tests**
 
 Cover two exclusive values for `database.production.engine`, scoped values for different environments, non-exclusive keys, explicit supersession, and concurrent attempts that leave only one active assertion.
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run: `rtk npm.cmd test -- tests/store/conflicts.test.ts`
 
 Expected: FAIL because conflict identity/storage does not exist.
 
-- [ ] **Step 3: Add conflict identity fields**
+- [x] **Step 3: Add conflict identity fields**
 
 Add optional `conflictKey`, `conflictScope`, and `conflictExclusive` to items/assertions. Normalize keys to lowercase dot-separated segments and scopes to stable JSON. Add an index supporting active-key lookup.
 
-- [ ] **Step 4: Implement collision checks**
+- [x] **Step 4: Implement collision checks**
 
 Before opening an active exclusive assertion, query existing active assertions with the same key/scope. Return a structured `KnowledgeConflictError` containing IDs/titles only. Allow the caller to explicitly supersede one existing item in the same transaction; never auto-resolve silently.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `rtk npm.cmd test -- tests/store/conflicts.test.ts`
 
@@ -150,21 +150,21 @@ rtk git commit -m "feat: enforce deterministic knowledge conflict keys"
 - Test: `tests/mcp/server.test.ts`
 - Test: `tests/cli/cli.test.ts`
 
-- [ ] **Step 1: Write failing surface tests**
+- [x] **Step 1: Write failing surface tests**
 
 Assert direct writes can provide key/scope/exclusivity, conflicting writes return structured alternatives, `knowl conflicts` lists active collisions, and `knowl update --supersede <id>` resolves one collision atomically.
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `rtk npm.cmd test -- tests/mcp/server.test.ts tests/cli/cli.test.ts`
 
 Expected: FAIL because the fields/commands are not exposed.
 
-- [ ] **Step 3: Implement minimal surfaces**
+- [x] **Step 3: Implement minimal surfaces**
 
 Extend structured MCP schemas and CLI options. Do not require conflict keys for ordinary atoms. Conflict reports include evidence counts and freshness, not full content dumps.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 Run: `rtk npm.cmd test -- tests/mcp/server.test.ts tests/cli/cli.test.ts`; `rtk npm.cmd run build`
 
@@ -183,17 +183,17 @@ rtk git commit -m "feat: expose deterministic conflict management"
 - Modify: `src/store/agent-query.ts`
 - Test: `tests/store/context-composer.test.ts`
 
-- [ ] **Step 1: Write failing composer tests**
+- [x] **Step 1: Write failing composer tests**
 
 Cover pinned constraints, current task state, relevant decisions/architecture, failed approaches, skills, optional evidence, duplicate removal, token-budget truncation, and an excluded-item report. Assert critical pinned constraints survive a small budget.
 
-- [ ] **Step 2: Run focused test and verify failure**
+- [x] **Step 2: Run focused test and verify failure**
 
 Run: `rtk npm.cmd test -- tests/store/context-composer.test.ts`
 
 Expected: FAIL because the composer does not exist.
 
-- [ ] **Step 3: Define input/output contracts**
+- [x] **Step 3: Define input/output contracts**
 
 ```ts
 export type ContextRequest = {
@@ -211,11 +211,11 @@ export type ContextPack = {
 };
 ```
 
-- [ ] **Step 4: Implement deterministic composition**
+- [x] **Step 4: Implement deterministic composition**
 
 Retrieve an expanded candidate window with explanations; reserve budget for pinned constraints/task state; group remaining candidates; remove normalized duplicates; run MMR using token overlap/evidence identity; estimate tokens conservatively as `ceil(characters / 4)`; truncate content only at paragraph boundaries.
 
-- [ ] **Step 5: Run focused tests and commit**
+- [x] **Step 5: Run focused tests and commit**
 
 Run: `rtk npm.cmd test -- tests/store/context-composer.test.ts`
 
@@ -236,27 +236,27 @@ rtk git commit -m "feat: compose budget-aware agent context"
 - Test: `tests/mcp/server.test.ts`
 - Test: `tests/cli/cli.test.ts`
 
-- [ ] **Step 1: Write failing MCP/CLI tests**
+- [x] **Step 1: Write failing MCP/CLI tests**
 
 Test `knowl_context` inputs/output, CLI `knowl context`, evidence opt-in, excluded report, invalid budgets, timeline/conflict coexistence, and default compact behavior.
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `rtk npm.cmd test -- tests/mcp/server.test.ts tests/cli/cli.test.ts`
 
 Expected: FAIL because surfaces are not registered.
 
-- [ ] **Step 3: Implement surfaces and bootstrap integration**
+- [x] **Step 3: Implement surfaces and bootstrap integration**
 
 Register one MCP operation, one CLI command, and one resource view. Update Plan 6 context bootstrap to prefer the composer while retaining `knowl_recent` fallback.
 
-- [ ] **Step 4: Run benchmark and full verification**
+- [x] **Step 4: Run benchmark and full verification**
 
 Run: `rtk npm.cmd test`; `rtk npm.cmd run build`; `rtk git diff --check`; `node dist/index.js eval retrieval --dataset docs/evals/retrieval-baseline.json --json`
 
 Expected: PASS; context size remains within requested budgets and retrieval benchmark does not regress forbidden/stale hits.
 
-- [ ] **Step 5: Commit and store outcome**
+- [x] **Step 5: Commit and store outcome**
 
 ```bash
 rtk git add src/mcp/tools.ts src/mcp/resources.ts src/index.ts README.md tests/mcp/server.test.ts tests/cli/cli.test.ts

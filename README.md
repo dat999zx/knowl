@@ -188,6 +188,11 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl task checkpoint <task-id> <summary>` | Store durable progress for an active work loop. |
 | `knowl task finish <task-id> <summary>` | Store durable completion state for a work loop. |
 | `knowl task run <title> -- <command...>` | Start a work loop, run a command, then finish on success or checkpoint on failure with the child exit code. |
+| `knowl timeline <item-id>` | Print immutable content assertions for one knowledge item. |
+| `knowl query <query> --as-of <timestamp>` | Query historically valid content at an ISO-8601 time. |
+| `knowl conflicts` | List active exclusive conflict identities. |
+| `knowl supersede <item-id> <replacement-id>` | Mark one item superseded by an explicit replacement. |
+| `knowl context --token-budget <n>` | Compose a compact task context pack with pinned constraints and exclusions. |
 | `knowl agent-event <event>` | Receive bounded host lifecycle events; accepts structured flags or JSON on stdin. |
 | `knowl session start|event|finish|recover` | Manage bounded, expiring scratch session events and recover stale sessions. |
 | `knowl skill list` | List learned file-backed skill packages under `.knowl/skills`. |
