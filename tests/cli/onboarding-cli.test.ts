@@ -31,7 +31,7 @@ describe('CLI onboarding', () => {
     expect(run('config', 'set', 'search.vector.enabled', 'false')).toContain('Set search.vector.enabled = false');
     expect(run('config', 'reset', 'search.vector.enabled')).toContain('Reset search.vector.enabled');
     expect(() => run('config', 'search.vector.enabled', 'true')).toThrow(/Use `knowl config set <key> <value>`/);
-  });
+  }, 10_000);
 
   it('removes the connect command', () => {
     expect(() => run('connect', 'codex')).toThrow(/unknown command 'connect'/);

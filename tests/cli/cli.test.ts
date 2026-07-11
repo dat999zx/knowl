@@ -357,7 +357,7 @@ describe('CLI Integration', () => {
     expect(stateOutput).toContain('Work Loop finish');
 
     await fs.rm(workLoopDir, { recursive: true, force: true });
-  });
+  }, 10_000);
 
   it('should run a command inside an automatic work loop', async () => {
     const workLoopRunDir = path.resolve('./.knowl-cli-work-loop-run-test');

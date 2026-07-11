@@ -1,4 +1,3 @@
-import { checkbox, confirm } from '@inquirer/prompts';
 import { createAgentRegistry, detectAgents, parseAgentNames } from './agents/registry.js';
 import { AgentAdapter, AgentIntegrationResult, AgentName } from './agents/types.js';
 
@@ -23,11 +22,11 @@ export interface InitFlowOptions {
 
 function defaultPrompts(): InitPrompts {
   return {
-    selectAgents: choices => checkbox({
+    selectAgents: async choices => (await import('@inquirer/prompts')).checkbox({
       message: 'Select agents to connect',
       choices: choices.map(choice => ({ name: choice.name, value: choice.value, checked: choice.checked })),
     }),
-    confirmGlobal: (agent, configPath) => confirm({
+    confirmGlobal: async (agent, configPath) => (await import('@inquirer/prompts')).confirm({
       message: `${agent} uses global MCP config at ${configPath}. Continue?`,
       default: false,
     }),

@@ -16,10 +16,10 @@ Knowl is designed for durable engineering context: decisions, architecture, goal
 - Wraps shell commands with an automatic work loop so agents query memory before execution and write back success or failure state.
 - Stores learned executable skill packages under `.knowl/skills/<name>/` with `SKILL.md`, `skill.json`, and optional scripts.
 - Exposes stable MCP and CLI skill bridges so new learned skills work without adding one new tool per skill.
-- Prints MCP connection instructions for Codex, Cursor, and Claude Desktop.
+- Detects supported agents and installs MCP registrations from `knowl init`.
 - Adds `.knowl/` to `.gitignore` during project initialization.
 - Supports optional AI-backed CLI commands for raw text ingestion and natural-language answers.
-- Supports BM25 retrieval by default, with optional local vector search.
+- Supports BM25 plus default-on local vector search with a lazy first-use model download.
 - Tracks memory changes as knowledge commits so project memory has history.
 
 ## Install
@@ -68,11 +68,14 @@ knowl state
 knowl doctor
 ```
 
-Register the MCP server for Codex:
+Choose detected agents interactively, or configure them explicitly:
 
 ```bash
-knowl connect codex
+knowl init
+knowl init codex claude
 ```
+
+Project-local MCP config is preferred. Global-only clients require confirmation unless `--yes` is supplied.
 
 Wrap work with an automatic Knowl work loop:
 
@@ -145,44 +148,18 @@ Readable MCP resources:
 | `knowl://brain` | Full active project brain state. |
 | `knowl://category/<name>` | Active items for a category such as `decision`, `architecture`, or `state`. This URI form is readable even though only `knowl://recent` and `knowl://brain` are listed during resource discovery. |
 
-## Claude Desktop and Cursor
+## Agent Setup
 
-Claude Desktop configuration:
-
-```json
-{
-  "mcpServers": {
-    "knowl": {
-      "command": "knowl",
-      "args": ["serve"]
-    }
-  }
-}
-```
-
-Cursor configuration:
-
-- Name: `knowl`
-- Type: `command`
-- Command: `knowl serve`
+`knowl init` detects Codex, Claude Code, Cursor, and Claude Desktop, then presents a multi-select UI. Re-run it at any time to add another agent or repair a stale Knowl registration. It preserves unrelated MCP servers, writes a backup before changing an existing agent config, and does not duplicate correct entries.
 
 If an MCP client shows `Auth: Unsupported` for this local stdio server, that is expected and does not mean Knowl is unavailable.
-
-You can print client-specific setup instructions with:
-
-```bash
-knowl connect codex
-knowl connect cursor
-knowl connect claude
-```
 
 ## CLI Commands
 
 | Command | Description |
 | --- | --- |
-| `knowl init [name]` | Initialize the current directory as a Knowl project. The optional name is accepted for backward compatibility and is not persisted. If already initialized, upgrade config, schema, AGENTS guidance, and `.gitignore`. |
+| `knowl init [agents...]` | Initialize or upgrade this project, then interactively select detected agents. Pass `codex`, `claude`, `cursor`, or `claude-desktop` to configure explicitly. |
 | `knowl upgrade` | Upgrade an existing Knowl repository with current defaults and agent files. |
-| `knowl connect <target>` | Print MCP setup instructions for `codex`, `cursor`, or `claude`. |
 | `knowl status` | Show repository path, item counts, category counts, AI config status, and recent knowledge commits. |
 | `knowl doctor` | Check whether the project is ready for agent memory usage. |
 | `knowl state` | Print the full active hierarchical project memory. |
@@ -197,8 +174,11 @@ knowl connect claude
 | `knowl decide [title] [content]` | Record a decision. Runs interactively when title or content is omitted. |
 | `knowl ask <question>` | Ask a natural-language question over project memory. Requires AI config. |
 | `knowl ingest <text>` | Extract and merge knowledge from raw text. Requires AI config. |
-| `knowl config [key] [value]` | Print config, read a dot-notation key, or set a config value. |
-| `knowl reindex --vectors` | Rebuild optional vector embeddings. Requires vector search to be enabled. |
+| `knowl config` | Open the interactive categorized configuration UI. |
+| `knowl config get <key>` | Print one validated configuration value. |
+| `knowl config set <key> <value>` | Set one validated configuration value. |
+| `knowl config reset [key]` | Reset one setting, or all settings after confirmation. |
+| `knowl reindex --vectors` | Rebuild local vector embeddings. |
 | `knowl gc` | Preview memory garbage collection recommendations. |
 | `knowl gc --apply` | Apply memory garbage collection recommendations. |
 | `knowl serve` | Start the stdio MCP server. |
@@ -207,12 +187,12 @@ Useful command examples:
 
 ```bash
 knowl config
-knowl config ai.provider openai
-knowl config ai.model gpt-4o-mini
-knowl config ai.apiKey '${OPENAI_API_KEY}'
-knowl config search.vector.enabled true
+knowl config set ai.provider openai
+knowl config set ai.model gpt-4o-mini
+knowl config set ai.apiKey '${OPENAI_API_KEY}'
+knowl config set search.vector.enabled false
 knowl reindex --vectors
-knowl connect codex
+knowl init codex
 knowl task start "Fix auction settlement bug" --query "auction settlement wallet"
 knowl task run "Run tests" --query "test verification" -- npm test
 knowl gc
@@ -235,33 +215,33 @@ Supported providers are `openai`, `anthropic`, `ollama`, and `custom`.
 OpenAI example:
 
 ```bash
-knowl config ai.provider openai
-knowl config ai.model gpt-4o-mini
-knowl config ai.apiKey '${OPENAI_API_KEY}'
+knowl config set ai.provider openai
+knowl config set ai.model gpt-4o-mini
+knowl config set ai.apiKey '${OPENAI_API_KEY}'
 ```
 
 Anthropic example:
 
 ```bash
-knowl config ai.provider anthropic
-knowl config ai.model claude-3-5-sonnet-latest
-knowl config ai.apiKey '${ANTHROPIC_API_KEY}'
+knowl config set ai.provider anthropic
+knowl config set ai.model claude-3-5-sonnet-latest
+knowl config set ai.apiKey '${ANTHROPIC_API_KEY}'
 ```
 
 Ollama example:
 
 ```bash
-knowl config ai.provider ollama
-knowl config ai.model llama3.1
+knowl config set ai.provider ollama
+knowl config set ai.model llama3.1
 ```
 
 For `custom`, set an OpenAI-compatible `ai.baseUrl`:
 
 ```bash
-knowl config ai.provider custom
-knowl config ai.model my-model
-knowl config ai.baseUrl http://localhost:8080/v1
-knowl config ai.apiKey my-key
+knowl config set ai.provider custom
+knowl config set ai.model my-model
+knowl config set ai.baseUrl http://localhost:8080/v1
+knowl config set ai.apiKey my-key
 ```
 
 Environment variable placeholders such as `${OPENAI_API_KEY}` are resolved at runtime.

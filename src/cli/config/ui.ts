@@ -1,4 +1,3 @@
-import { confirm, input, password, select } from '@inquirer/prompts';
 import { CONFIG_FIELDS, ConfigCategory, ConfigField, getConfigField } from './schema.js';
 import { getConfigValue, setConfigValue } from './service.js';
 
@@ -40,16 +39,16 @@ function fieldView(field: ConfigField, current: unknown): ConfigFieldView {
 
 export function createInquirerPrompts(): ConfigPrompts {
   return {
-    selectCategory: categories => select({ message: 'Category', choices: categories }),
-    selectField: fields => select({ message: 'Setting', choices: fields.map(field => ({ name: field.label, value: field.key })) }),
+    selectCategory: async categories => (await import('@inquirer/prompts')).select({ message: 'Category', choices: categories }),
+    selectField: async fields => (await import('@inquirer/prompts')).select({ message: 'Setting', choices: fields.map(field => ({ name: field.label, value: field.key })) }),
     inputValue: async (field, current) => field.secret
-      ? password({ message: field.key })
-      : input({ message: field.key, default: typeof current === 'string' ? current : String(current ?? '') }),
-    confirmSave: changes => confirm({
+      ? (await import('@inquirer/prompts')).password({ message: field.key })
+      : (await import('@inquirer/prompts')).input({ message: field.key, default: typeof current === 'string' ? current : String(current ?? '') }),
+    confirmSave: async changes => (await import('@inquirer/prompts')).confirm({
       message: `Save changes?\n${changes.map(change => `- ${change.key}: ${String(change.before)} -> ${String(change.after)}`).join('\n')}`,
       default: true,
     }),
-    continueEditing: () => confirm({ message: 'Edit another setting?', default: false }),
+    continueEditing: async () => (await import('@inquirer/prompts')).confirm({ message: 'Edit another setting?', default: false }),
   };
 }
 

@@ -15,7 +15,7 @@ describe('CLI learned skills', () => {
     await fs.rm(TEST_DIR, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(TEST_DIR, { recursive: true });
 
-    execSync(`node "${CLI_PATH}" init "Skill Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     });

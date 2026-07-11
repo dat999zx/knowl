@@ -19,7 +19,6 @@ import { formatHierarchyToMarkdown } from './core/format.js';
 import { formatStatusReport } from './cli/status-report.js';
 import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
-import { confirm } from '@inquirer/prompts';
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue } from './cli/config/service.js';
 import { runConfigUi } from './cli/config/ui.js';
 import { formatAgentInitSummary, runAgentInitFlow } from './cli/init-flow.js';
@@ -601,7 +600,7 @@ configCommand
   .action(async (key, options) => {
     try {
       if (!key && !options.yes) {
-        if (!process.stdin.isTTY || !process.stdout.isTTY || !(await confirm({ message: 'Reset all configuration to defaults?', default: false }))) {
+        if (!process.stdin.isTTY || !process.stdout.isTTY || !(await (await import('@inquirer/prompts')).confirm({ message: 'Reset all configuration to defaults?', default: false }))) {
           throw new Error('Reset cancelled. Use `--yes` for non-interactive full reset.');
         }
       }
