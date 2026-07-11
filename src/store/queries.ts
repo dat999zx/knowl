@@ -5,6 +5,7 @@ import { searchKnowledgeItems } from './search.js';
 import { KnowledgeItem, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 import { mapRowToKnowledgeItem } from './repository.js';
+import { findAssertionAsOf } from './assertions.js';
 
 /**
  * Fetch active items for a project in a specific category.
@@ -77,6 +78,7 @@ export async function queryKnowledgeBase(
     tags?: string[];
     query?: string;
     limit?: number;
+    asOf?: string;
   }
 ): Promise<KnowledgeItem[]> {
   const db = getDb();
@@ -91,7 +93,7 @@ export async function queryKnowledgeBase(
       });
 
       if (ftsResults.length > 0) {
-        return ftsResults;
+        if (!options.asOf) return ftsResults;
       }
     }
 
@@ -141,7 +143,12 @@ export async function queryKnowledgeBase(
       });
     }
 
-    return mapped;
+    if (!options.asOf) return mapped;
+    const historical = await Promise.all(mapped.map(async item => {
+      const assertion = await findAssertionAsOf(item.id, options.asOf!);
+      return assertion ? { ...item, content: assertion.content, confidence: assertion.confidence } : null;
+    }));
+    return historical.filter((item): item is KnowledgeItem => item !== null);
   } catch (error: any) {
     throw new DatabaseError(`Failed to query knowledge base: ${error.message}`);
   }

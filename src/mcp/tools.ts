@@ -244,8 +244,14 @@ export function registerTools(
                 type: 'boolean',
                 description: 'Include ranking explanations. Omit for compact results.',
               },
+              asOf: { type: 'string', description: 'ISO-8601 timestamp for historically valid content.' },
             },
           },
+        },
+        {
+          name: 'knowl_timeline',
+          description: 'List immutable content assertions for one knowledge item.',
+          inputSchema: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
         },
         {
           name: 'knowl_evidence_list',
@@ -635,7 +641,11 @@ export function registerTools(
       } 
       
       else if (name === 'knowl_query') {
-        const { query, category, status, tags, limit, includeEvidence, explain } = args as any;
+        const { query, category, status, tags, limit, includeEvidence, explain, asOf } = args as any;
+        if (asOf) {
+          const items = await queryKnowledgeBase(projectId!, { query, category, status, tags, limit, asOf });
+          return { content: [{ type: 'text', text: JSON.stringify(items, null, 2) }] };
+        }
         let vector;
         if (config && projectRoot && query && isVectorSearchEnabled(config)) {
           const embedder = await createLocalEmbeddingProvider(config, projectRoot);
@@ -671,6 +681,12 @@ export function registerTools(
           : items;
         return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
       } 
+
+      else if (name === 'knowl_timeline') {
+        const { itemId } = args as any;
+        const { listAssertions } = await import('../store/assertions.js');
+        return { content: [{ type: 'text', text: JSON.stringify(await listAssertions(itemId), null, 2) }] };
+      }
 
       else if (name === 'knowl_evidence_list') {
         const { itemId } = args as any;

@@ -350,6 +350,14 @@ describe('MCP Server Layer', () => {
     expect(payload.promotion.status).toBe('promoted');
   });
 
+  it('returns immutable history through knowl_timeline', async () => {
+    const item = await repo.createKnowledgeItem(projectId, { category: 'fact', title: 'Timeline target', content: 'Initial content.' });
+    await repo.updateKnowledgeItem(item.id, { content: 'Updated content.' });
+    const res = await runRpcRequest('tools/call', { name: 'knowl_timeline', arguments: { itemId: item.id } });
+    expect(res.error).toBeUndefined();
+    expect(JSON.parse(res.result.content[0].text)).toEqual([expect.objectContaining({ content: 'Updated content.' }), expect.objectContaining({ content: 'Initial content.' })]);
+  });
+
   it('should skip duplicate structured knowledge when BM25 finds an existing match', async () => {
     await repo.createKnowledgeItem(projectId, {
       category: 'fact',
