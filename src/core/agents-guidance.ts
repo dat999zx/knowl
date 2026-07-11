@@ -30,6 +30,8 @@ const KNOWL_AGENTS_SECTION = `${KNOWL_AGENTS_SECTION_MARKER}
 - Before the final answer, check whether the work produced durable knowledge: implemented feature summaries, setup steps, architecture changes, important commands, decisions, constraints, recurring bugs, gotchas, and verified project facts. Store useful outcomes in Knowl before responding.
 - Store durable knowledge as concise structured atoms, not raw chat transcripts. Use raw conversation only as optional source/evidence when it is useful.
 - Do not store temporary debugging noise, failed attempts, secrets, credentials, or speculative ideas unless the user explicitly says they are durable project knowledge.
+- All Knowl writes are secret-validated. If a write is rejected, do not retry with redacted secret material; store only the durable non-sensitive fact.
+- Use \`knowl audit\` to inspect memory integrity. Snapshot restore requires \`--confirm\` and creates a pre-restore snapshot.
 - Prefer current active Knowl state over stale conversation memory when answering questions about this project.
 ${KNOWL_AGENTS_SECTION_END_MARKER}
 `;

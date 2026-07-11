@@ -45,6 +45,13 @@ export function getDb(): LibSQLDatabase<typeof schema> {
   return dbInstance;
 }
 
+export function getClient(): Client {
+  if (!clientInstance) {
+    throw new DatabaseError('Database has not been initialized. Run initDb() first.');
+  }
+  return clientInstance;
+}
+
 export function getProjectRoot(): string {
   if (!projectRootInstance) {
     throw new DatabaseError('Project root has not been initialized. Run initDb() first.');

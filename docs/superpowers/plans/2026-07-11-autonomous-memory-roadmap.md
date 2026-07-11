@@ -60,7 +60,7 @@ Then:
 
 ## Progress
 
-- [ ] Plan 1: Memory Trust Foundation
+- [x] Plan 1: Memory Trust Foundation
 - [ ] Plan 2: Evidence and Provenance
 - [ ] Plan 3: Retrieval Quality
 - [ ] Plan 4: Automatic Memory Core

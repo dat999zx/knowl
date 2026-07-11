@@ -28,6 +28,8 @@ import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } 
 import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince } from './store/drift.js';
 import { indexSkillPackage, recordSkillRun } from './skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage, SkillEntrypoint } from './skills/registry.js';
+import { auditKnowledgeStore } from './store/integrity.js';
+import { createSnapshot, restoreSnapshot } from './store/snapshots.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -1020,6 +1022,77 @@ prCommand
   });
 
 // --- 15. DOCTOR COMMAND ---
+program
+  .command('audit')
+  .description('Read-only integrity audit for stored knowledge')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      await initDb(root);
+      const report = await auditKnowledgeStore(config.security);
+      console.log('KNOWL INTEGRITY AUDIT');
+      if (report.findings.length === 0) {
+        console.log('No integrity findings.');
+      } else {
+        for (const finding of report.findings) {
+          console.log(`[${finding.severity.toUpperCase()}] ${finding.code}${finding.itemId ? ` ${finding.itemId}` : ''}: ${finding.detail}`);
+        }
+      }
+      await closeDb();
+      if (report.findings.some(finding => finding.severity === 'error')) process.exitCode = 1;
+    } catch (error: any) {
+      await closeDb().catch(() => {});
+      console.error(`Error auditing knowledge: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+const snapshotCommand = program
+  .command('snapshot')
+  .description('Create and restore safe local database snapshots');
+
+snapshotCommand
+  .command('create')
+  .description('Create a timestamped snapshot with a checksum manifest')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const snapshot = await createSnapshot(root);
+      await closeDb();
+      console.log('KNOWL SNAPSHOT CREATED');
+      console.log(`Snapshot: ${snapshot.path}`);
+      console.log(`Manifest: ${snapshot.manifestPath}`);
+      console.log(`SHA-256: ${snapshot.manifest.sha256}`);
+    } catch (error: any) {
+      await closeDb().catch(() => {});
+      console.error(`Error creating snapshot: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+snapshotCommand
+  .command('restore')
+  .description('Restore a snapshot after creating a pre-restore snapshot')
+  .argument('<path>', 'Snapshot database path')
+  .requiredOption('--confirm', 'Confirm the destructive restore operation')
+  .action(async (snapshotPath, options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const result = await restoreSnapshot(root, snapshotPath, { confirm: options.confirm });
+      await closeDb();
+      console.log('Snapshot restored.');
+      console.log(`Pre-restore snapshot: ${result.preRestore.path}`);
+      console.log(`Integrity findings: ${result.findings.length}`);
+    } catch (error: any) {
+      await closeDb().catch(() => {});
+      console.error(`Error restoring snapshot: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 program
   .command('doctor')
   .description('Check whether the current Knowl project is ready for agent memory usage')

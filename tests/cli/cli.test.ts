@@ -620,6 +620,38 @@ describe('CLI Integration', () => {
     await fs.rm(staleDir, { recursive: true, force: true });
   });
 
+  it('should audit and safely restore snapshots through the CLI', async () => {
+    const snapshotDir = path.resolve('./.knowl-cli-snapshot-test');
+    await fs.rm(snapshotDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(snapshotDir, { recursive: true });
+    execSync(`node "${CLI_PATH}" init --yes`, { cwd: snapshotDir, encoding: 'utf-8' });
+    execSync(`node "${CLI_PATH}" decide "Snapshot baseline" "This item exists before the snapshot." -r "Snapshot test"`, {
+      cwd: snapshotDir, encoding: 'utf-8',
+    });
+
+    const audit = execSync(`node "${CLI_PATH}" audit`, { cwd: snapshotDir, encoding: 'utf-8' });
+    expect(audit).toContain('KNOWL INTEGRITY AUDIT');
+    expect(audit).toContain('No integrity findings.');
+
+    const created = execSync(`node "${CLI_PATH}" snapshot create`, { cwd: snapshotDir, encoding: 'utf-8' });
+    const snapshotPath = created.match(/Snapshot:\s+(.+\.db)/)?.[1];
+    expect(snapshotPath).toBeTruthy();
+    await expect(fs.access(snapshotPath!)).resolves.toBeUndefined();
+
+    execSync(`node "${CLI_PATH}" decide "After snapshot" "This item must be removed by restore." -r "Snapshot test"`, {
+      cwd: snapshotDir, encoding: 'utf-8',
+    });
+    const restored = execSync(`node "${CLI_PATH}" snapshot restore "${snapshotPath}" --confirm`, {
+      cwd: snapshotDir, encoding: 'utf-8',
+    });
+    expect(restored).toContain('Snapshot restored');
+    const state = execSync(`node "${CLI_PATH}" state`, { cwd: snapshotDir, encoding: 'utf-8' });
+    expect(state).toContain('Snapshot baseline');
+    expect(state).not.toContain('After snapshot');
+
+    await fs.rm(snapshotDir, { recursive: true, force: true });
+  }, 15_000);
+
   it('should show repository status', () => {
     const output = execSync(`node "${CLI_PATH}" status`, {
       cwd: TEST_DIR,

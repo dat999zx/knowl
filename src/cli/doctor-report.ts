@@ -8,6 +8,7 @@ import { getProjectByRootPath } from '../store/repository.js';
 import { queryKnowledgeForAgent } from '../store/agent-query.js';
 import { KNOWL_MCP_TOOL_NAMES } from '../mcp/server.js';
 import { getVectorSearchConfig, isVectorSearchEnabled } from '../ai/embeddings.js';
+import { auditKnowledgeStore } from '../store/integrity.js';
 
 type DoctorStatus = 'OK' | 'WARN' | 'FAIL';
 
@@ -71,6 +72,14 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
 
     await initDb(root);
     dbOpen = true;
+    const integrity = await auditKnowledgeStore(config.security);
+    checks.push({
+      status: integrity.findings.some(finding => finding.severity === 'error') ? 'FAIL' : 'OK',
+      message: integrity.findings.length === 0
+        ? 'Knowledge integrity audit passed'
+        : `Knowledge integrity audit found ${integrity.findings.length} warning(s)`,
+      fix: integrity.findings.length === 0 ? undefined : 'run `knowl audit` and repair reported records',
+    });
     try {
       await (getDb() as any).all(sql`SELECT 1 FROM knowledge_embeddings LIMIT 1`);
       checks.push({ status: 'OK', message: 'Database schema includes knowledge_embeddings' });

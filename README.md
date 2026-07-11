@@ -162,6 +162,9 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl upgrade` | Upgrade an existing Knowl repository with current defaults and agent files. |
 | `knowl status` | Show repository path, item counts, category counts, AI config status, and recent knowledge commits. |
 | `knowl doctor` | Check whether the project is ready for agent memory usage. |
+| `knowl audit` | Read-only validation, reference, JSON, status, and FTS integrity audit. |
+| `knowl snapshot create` | Create a timestamped SQLite snapshot plus SHA-256 manifest. |
+| `knowl snapshot restore <path> --confirm` | Restore a snapshot transactionally; creates a pre-restore snapshot first. |
 | `knowl state` | Print the full active hierarchical project memory. |
 | `knowl task start <title>` | Start a work loop, query relevant memory, and store active task state. |
 | `knowl task checkpoint <task-id> <summary>` | Store durable progress for an active work loop. |
@@ -197,7 +200,12 @@ knowl task start "Fix auction settlement bug" --query "auction settlement wallet
 knowl task run "Run tests" --query "test verification" -- npm test
 knowl gc
 knowl gc --apply
+knowl audit
+knowl snapshot create
+knowl snapshot restore .knowl/snapshots/<snapshot>.db --confirm
 ```
+
+All structured and raw knowledge writes pass deterministic secret, sensitive-path, and size validation. `knowl audit` never mutates data. Restore requires `--confirm`, verifies a snapshot manifest when present, creates a pre-restore snapshot, then audits the restored store.
 
 ## Optional AI Configuration
 
