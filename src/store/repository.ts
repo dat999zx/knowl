@@ -328,6 +328,10 @@ export async function updateKnowledgeItem(
   }
 }
 
+export async function supersedeKnowledgeItem(id: string, supersededById: string): Promise<KnowledgeItem> {
+  return updateKnowledgeItem(id, { status: 'superseded', supersededById });
+}
+
 export async function listKnowledgeItems(projectId: string, dbConnection?: DbConnection): Promise<KnowledgeItem[]> {
   const conn = dbConnection || getDb();
   try {
