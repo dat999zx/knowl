@@ -62,7 +62,7 @@ Then:
 
 - [x] Plan 1: Memory Trust Foundation
 - [x] Plan 2: Evidence and Provenance
-- [ ] Plan 3: Retrieval Quality
+- [x] Plan 3: Retrieval Quality
 - [ ] Plan 4: Automatic Memory Core
 - [ ] Plan 5: Session Candidate Promotion
 - [ ] Plan 6: Agent Automation

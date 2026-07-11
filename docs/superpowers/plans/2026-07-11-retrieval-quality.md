@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript, JSON fixtures, existing FTS5/BM25 and SQLite vector search, Commander, MCP, Vitest.
 
+**Status:** Complete — verified 2026-07-11.
+
 ---
 
 ### Task 1: Create the evaluation dataset and metrics runner
