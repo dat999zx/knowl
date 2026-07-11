@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+﻿import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync, execSync } from 'node:child_process';
 import { createClient } from '@libsql/client';
 import fs from 'node:fs/promises';
@@ -34,21 +34,20 @@ describe('CLI Integration', () => {
   });
 
   it('should initialize a repository', async () => {
-    const output = execSync(`node "${CLI_PATH}" init "CLI Test Project"`, {
+    const output = execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     });
 
     expect(output).toContain('Successfully initialized KNOWL repository!');
     expect(output).toContain('Local project store ready');
-    expect(output).toContain('codex mcp add knowl');
 
     // Verify files exist
     await expect(fs.access(path.join(TEST_DIR, '.knowl', 'config.json'))).resolves.toBeUndefined();
     await expect(fs.access(path.join(TEST_DIR, '.knowl', 'knowl.db'))).resolves.toBeUndefined();
     const config = JSON.parse(await fs.readFile(path.join(TEST_DIR, '.knowl', 'config.json'), 'utf-8'));
     expect(config.project).toBeUndefined();
-    expect(config.search.vector.enabled).toBe(false);
+    expect(config.search.vector.enabled).toBe(true);
     expect(config.search.vector.provider).toBe('local');
   });
 
@@ -57,7 +56,7 @@ describe('CLI Integration', () => {
     await fs.rm(ignoreDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(ignoreDir, { recursive: true });
 
-    execSync(`node "${CLI_PATH}" init "New Gitignore Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: ignoreDir,
       encoding: 'utf-8',
     });
@@ -75,7 +74,7 @@ describe('CLI Integration', () => {
     await fs.mkdir(gitignoreDir, { recursive: true });
     await fs.writeFile(path.join(gitignoreDir, '.gitignore'), 'node_modules/\n.env\n', 'utf-8');
 
-    execSync(`node "${CLI_PATH}" init "Gitignore Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: gitignoreDir,
       encoding: 'utf-8',
     });
@@ -125,7 +124,7 @@ describe('CLI Integration', () => {
   });
 
   it('should report AGENTS.md guidance status when init is rerun in an existing repository', () => {
-    const output = execSync(`node "${CLI_PATH}" init "CLI Test Project"`, {
+    const output = execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     });
@@ -150,7 +149,7 @@ describe('CLI Integration', () => {
       'utf-8'
     );
 
-    execSync(`node "${CLI_PATH}" init "Old Config Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: oldProjectDir,
       encoding: 'utf-8',
     });
@@ -159,7 +158,7 @@ describe('CLI Integration', () => {
     expect(config.project).toBeUndefined();
     expect(config.ai.provider).toBe('openai');
     expect(config.security.secretPatterns).toEqual(['password']);
-    expect(config.search.vector.enabled).toBe(false);
+    expect(config.search.vector.enabled).toBe(true);
     expect(config.search.vector.provider).toBe('local');
 
     await fs.rm(oldProjectDir, { recursive: true, force: true });
@@ -179,7 +178,7 @@ describe('CLI Integration', () => {
       'utf-8'
     );
 
-    execSync(`node "${CLI_PATH}" init "Old DB Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: oldDbDir,
       encoding: 'utf-8',
     });
@@ -200,7 +199,7 @@ describe('CLI Integration', () => {
     await fs.rm(upgradeDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(upgradeDir, { recursive: true });
 
-    execSync(`node "${CLI_PATH}" init "Upgrade Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: upgradeDir,
       encoding: 'utf-8',
     });
@@ -221,7 +220,7 @@ describe('CLI Integration', () => {
     const agentsPath = path.join(AGENTS_TEST_DIR, 'AGENTS.md');
     await fs.writeFile(agentsPath, '# Existing Agent Rules\n\nKeep responses concise.\n', 'utf-8');
 
-    execSync(`node "${CLI_PATH}" init "Existing Agents Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: AGENTS_TEST_DIR,
       encoding: 'utf-8',
     });
@@ -236,7 +235,7 @@ describe('CLI Integration', () => {
   it('should refresh stale Knowl MCP guidance when init is rerun in an existing project', async () => {
     const agentsPath = path.join(AGENTS_REFRESH_TEST_DIR, 'AGENTS.md');
 
-    execSync(`node "${CLI_PATH}" init "Refresh Agents Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: AGENTS_REFRESH_TEST_DIR,
       encoding: 'utf-8',
     });
@@ -247,7 +246,7 @@ describe('CLI Integration', () => {
       'utf-8'
     );
 
-    execSync(`node "${CLI_PATH}" init "Refresh Agents Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: AGENTS_REFRESH_TEST_DIR,
       encoding: 'utf-8',
     });
@@ -266,7 +265,7 @@ describe('CLI Integration', () => {
   });
 
   it('should initialize without AI provider configuration by default', () => {
-    const aiConfig = execSync(`node "${CLI_PATH}" config ai`, {
+    const aiConfig = execSync(`node "${CLI_PATH}" config get ai.provider`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     }).trim();
@@ -275,19 +274,19 @@ describe('CLI Integration', () => {
   });
 
   it('should allow explicit AI provider configuration', () => {
-    const providerUpdate = execSync(`node "${CLI_PATH}" config ai.provider openai`, {
+    const providerUpdate = execSync(`node "${CLI_PATH}" config set ai.provider openai`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     }).trim();
-    expect(providerUpdate).toContain('Set "ai.provider" to: "openai"');
+    expect(providerUpdate).toContain('Set ai.provider = "openai"');
 
-    const modelUpdate = execSync(`node "${CLI_PATH}" config ai.model gpt-4-turbo`, {
+    const modelUpdate = execSync(`node "${CLI_PATH}" config set ai.model gpt-4-turbo`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     }).trim();
-    expect(modelUpdate).toContain('Set "ai.model" to: "gpt-4-turbo"');
+    expect(modelUpdate).toContain('Set ai.model = "gpt-4-turbo"');
 
-    const model = execSync(`node "${CLI_PATH}" config ai.model`, {
+    const model = execSync(`node "${CLI_PATH}" config get ai.model`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     }).trim();
@@ -311,7 +310,7 @@ describe('CLI Integration', () => {
     await fs.rm(workLoopDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(workLoopDir, { recursive: true });
 
-    execSync(`node "${CLI_PATH}" init "Work Loop Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: workLoopDir,
       encoding: 'utf-8',
     });
@@ -365,7 +364,7 @@ describe('CLI Integration', () => {
     await fs.rm(workLoopRunDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(workLoopRunDir, { recursive: true });
 
-    execSync(`node "${CLI_PATH}" init "Work Loop Run Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: workLoopRunDir,
       encoding: 'utf-8',
     });
@@ -415,7 +414,7 @@ describe('CLI Integration', () => {
     await fs.rm(workLoopFailureDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(workLoopFailureDir, { recursive: true });
 
-    execSync(`node "${CLI_PATH}" init "Work Loop Failure Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: workLoopFailureDir,
       encoding: 'utf-8',
     });
@@ -464,7 +463,7 @@ describe('CLI Integration', () => {
     await fs.rm(workLoopPathDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(workLoopPathDir, { recursive: true });
 
-    execSync(`node "${CLI_PATH}" init "Work Loop Path Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: workLoopPathDir,
       encoding: 'utf-8',
     });
@@ -503,7 +502,7 @@ describe('CLI Integration', () => {
       execSync('git commit -m "base"', { cwd: prDir, encoding: 'utf-8' });
       const baseCommit = execSync('git rev-parse HEAD', { cwd: prDir, encoding: 'utf-8' }).trim();
 
-      execSync(`node "${CLI_PATH}" init "PR Check Project"`, {
+      execSync(`node "${CLI_PATH}" init --yes`, {
         cwd: prDir,
         encoding: 'utf-8',
       });
@@ -560,7 +559,7 @@ describe('CLI Integration', () => {
     const doctorDir = path.resolve('./.knowl-cli-doctor-test');
     await fs.rm(doctorDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(doctorDir, { recursive: true });
-    execSync(`node "${CLI_PATH}" init "Doctor Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: doctorDir,
       encoding: 'utf-8',
     });
@@ -586,40 +585,17 @@ describe('CLI Integration', () => {
     expect(output).toContain('[OK] Agent query returned');
     expect(output).toContain('[OK] MCP tools expose knowl_query and hide knowl_ask');
     expect(output).toContain('[OK] MCP tools expose work-loop task tools');
-    expect(output).toContain('[OK] Vector search disabled; BM25 retrieval remains active');
+    expect(output).toContain('[OK] Vector search enabled with local/Xenova/all-MiniLM-L6-v2');
     expect(output).toContain('Result: READY');
 
     await fs.rm(doctorDir, { recursive: true, force: true });
-  });
-
-  it('should print Codex MCP connection instructions', async () => {
-    const output = execSync(`node "${CLI_PATH}" connect codex`, {
-      cwd: TEST_DIR,
-      encoding: 'utf-8',
-    });
-
-    expect(output).toContain('KNOWL CONNECT');
-    expect(output).toContain('Target: codex');
-    expect(output).toContain('codex mcp add knowl -- knowl.cmd serve');
-    expect(output).toContain('Start a new Codex session');
-  });
-
-  it('should print Cursor MCP connection instructions', async () => {
-    const output = execSync(`node "${CLI_PATH}" connect cursor`, {
-      cwd: TEST_DIR,
-      encoding: 'utf-8',
-    });
-
-    expect(output).toContain('KNOWL CONNECT');
-    expect(output).toContain('Target: cursor');
-    expect(output).toContain('Command: `knowl serve`');
   });
 
   it('should print doctor fix hints when guidance and gitignore are stale', async () => {
     const staleDir = path.resolve('./.knowl-cli-doctor-stale-test');
     await fs.rm(staleDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(staleDir, { recursive: true });
-    execSync(`node "${CLI_PATH}" init "Stale Doctor Project"`, {
+    execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: staleDir,
       encoding: 'utf-8',
     });
@@ -642,14 +618,6 @@ describe('CLI Integration', () => {
     expect(output).toContain('Fix: add `.knowl/` to `.gitignore` or run `knowl upgrade`');
 
     await fs.rm(staleDir, { recursive: true, force: true });
-  });
-
-  it('should require vector search to be enabled before vector reindex', () => {
-    expect(() => execSync(`node "${CLI_PATH}" reindex --vectors`, {
-      cwd: TEST_DIR,
-      encoding: 'utf-8',
-      stdio: 'pipe',
-    })).toThrow(/Vector search is not enabled/);
   });
 
   it('should show repository status', () => {

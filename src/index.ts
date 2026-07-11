@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
-import { findProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
+import { DEFAULT_CONFIG, findProjectRoot, loadConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
 import { installKnowlAgentsGuidance } from './core/agents-guidance.js';
 import { installKnowlGitignoreEntry } from './core/gitignore.js';
 import { initDb, closeDb } from './store/database.js';
@@ -19,6 +19,10 @@ import { formatHierarchyToMarkdown } from './core/format.js';
 import { formatStatusReport } from './cli/status-report.js';
 import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
+import { confirm } from '@inquirer/prompts';
+import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue } from './cli/config/service.js';
+import { runConfigUi } from './cli/config/ui.js';
+import { formatAgentInitSummary, runAgentInitFlow } from './cli/init-flow.js';
 import { reindexKnowledgeEmbeddings } from './store/vector-index.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from './store/gc.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } from './store/work-loop.js';
@@ -30,11 +34,6 @@ import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackag
 dotenv.config();
 
 const program = new Command();
-
-function printMcpSetupHint() {
-  console.log(`🔌 To let Codex use Knowl memory, register the MCP server:`);
-  console.log(`   codex mcp add knowl -- knowl.cmd serve`);
-}
 
 function printAgentsGuidanceStatus(status: Awaited<ReturnType<typeof installKnowlAgentsGuidance>>) {
   if (status === 'created') {
@@ -162,45 +161,6 @@ function createSkillEntrypoints(options: {
   return entrypoints;
 }
 
-function printConnectInstructions(target: string) {
-  const normalized = target.toLowerCase();
-  console.log('KNOWL CONNECT');
-  console.log(`Target: ${normalized}`);
-  console.log('');
-
-  if (normalized === 'codex') {
-    console.log('Run:');
-    console.log('  codex mcp add knowl -- knowl.cmd serve');
-    console.log('');
-    console.log('Then:');
-    console.log('  Start a new Codex session so the MCP tools are loaded.');
-    return;
-  }
-
-  if (normalized === 'cursor') {
-    console.log('Add this MCP server in Cursor:');
-    console.log('  Name: `knowl`');
-    console.log('  Type: `command`');
-    console.log('  Command: `knowl serve`');
-    return;
-  }
-
-  if (normalized === 'claude') {
-    console.log('Add this to Claude Desktop MCP configuration:');
-    console.log(JSON.stringify({
-      mcpServers: {
-        knowl: {
-          command: 'knowl',
-          args: ['serve'],
-        },
-      },
-    }, null, 2));
-    return;
-  }
-
-  throw new Error('Unsupported connect target. Use codex, cursor, or claude.');
-}
-
 async function upgradeExistingRepository(projectRoot: string, fallbackName: string) {
   const configStatus = await upgradeConfigDefaults(projectRoot);
   const config = await loadConfig(projectRoot);
@@ -240,10 +200,12 @@ program
 program
   .command('init')
   .description('Initialize a new KNOWL repository in the current directory')
-  .argument('[name]', 'Name of the project', 'My Project')
-  .action(async (name) => {
+  .argument('[agents...]', 'Agent integrations to configure')
+  .option('-y, --yes', 'Accept global configuration confirmations')
+  .action(async (agents: string[], options) => {
     const cwd = process.cwd();
     const knowlDir = path.join(cwd, '.knowl');
+    const name = path.basename(cwd) || 'My Project';
 
     try {
       let isExisting = false;
@@ -258,29 +220,21 @@ program
         const result = await upgradeExistingRepository(cwd, name);
         console.log(`⚠️  KNOWL repository already initialized in this directory: ${knowlDir}`);
         printUpgradeStatus(result);
-        printMcpSetupHint();
-        process.exit(0);
+        const flow = await runAgentInitFlow(cwd, {
+          agentNames: agents,
+          yes: options.yes,
+          interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+        });
+        console.log(formatAgentInitSummary(flow.results));
+        process.exitCode = flow.exitCode;
+        return;
       }
 
       await fs.mkdir(knowlDir, { recursive: true });
       await fs.mkdir(path.join(knowlDir, 'skills'), { recursive: true });
 
       // Create default config.json
-      const defaultConfig = {
-        version: 1,
-        security: {
-          rejectSecrets: true,
-          secretPatterns: ['api_key', 'password', 'secret', 'token', 'private_key'],
-        },
-        search: {
-          vector: {
-            enabled: false,
-            provider: 'local',
-            model: 'Xenova/all-MiniLM-L6-v2',
-            dtype: 'q8',
-          },
-        },
-      };
+      const defaultConfig = DEFAULT_CONFIG;
 
       await fs.writeFile(
         path.join(knowlDir, 'config.json'),
@@ -312,7 +266,13 @@ program
       if (agentsStatus === 'unchanged') {
         printAgentsGuidanceStatus(agentsStatus);
       }
-      printMcpSetupHint();
+      const flow = await runAgentInitFlow(cwd, {
+        agentNames: agents,
+        yes: options.yes,
+        interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+      });
+      console.log(formatAgentInitSummary(flow.results));
+      process.exitCode = flow.exitCode;
     } catch (error: any) {
       console.error(`❌ Error initializing KNOWL: ${error.message}`);
       process.exit(1);
@@ -587,64 +547,78 @@ program
   });
 
 // --- 7. CONFIG COMMAND ---
-program
+const configCommand = program
   .command('config')
-  .description('View or edit repository configuration parameters')
-  .argument('[key]', 'The configuration key (e.g., ai.model)')
-  .argument('[value]', 'The new value to set')
-  .action(async (key, value) => {
+  .description('Interactively view or edit repository configuration');
+
+configCommand.action(async () => {
+  try {
+    const commandIndex = process.argv.lastIndexOf('config');
+    if (commandIndex >= 0 && process.argv.slice(commandIndex + 1).length > 0) {
+      throw new Error('Use `knowl config set <key> <value>` or `knowl config get <key>`.');
+    }
+    if (!process.stdin.isTTY || !process.stdout.isTTY) {
+      throw new Error('Interactive config requires a TTY. Use `knowl config get`, `set`, or `reset`.');
+    }
+    await runConfigUi(await findProjectRoot(process.cwd()));
+  } catch (error: any) {
+    console.error(`❌ Configuration error: ${error.message}`);
+    process.exitCode = 1;
+  }
+});
+
+configCommand
+  .command('get')
+  .argument('<key>')
+  .action(async (key) => {
     try {
-      const root = await findProjectRoot(process.cwd());
-      const config = await loadConfig(root);
-
-      if (!key) {
-        console.log(JSON.stringify(config, null, 2));
-        process.exit(0);
-      }
-
-      // Helper to traverse dot notation keys
-      const keys = key.split('.');
-      
-      if (value === undefined) {
-        // Read key
-        let current: any = config;
-        for (const k of keys) {
-          if (current[k] === undefined) {
-            console.log(`undefined`);
-            process.exit(0);
-          }
-          current = current[k];
-        }
-        console.log(typeof current === 'object' ? JSON.stringify(current, null, 2) : current);
-      } else {
-        // Write key
-        let current: any = config;
-        for (let i = 0; i < keys.length - 1; i++) {
-          const k = keys[i];
-          if (current[k] === undefined) {
-            current[k] = {};
-          }
-          current = current[k];
-        }
-
-        const lastKey = keys[keys.length - 1];
-        
-        // Simple type conversion
-        let typedValue: any = value;
-        if (value.toLowerCase() === 'true') typedValue = true;
-        else if (value.toLowerCase() === 'false') typedValue = false;
-        else if (!isNaN(Number(value))) typedValue = Number(value);
-
-        current[lastKey] = typedValue;
-
-        await saveConfig(root, config);
-        console.log(`✅ Set "${key}" to: ${JSON.stringify(typedValue)}`);
-      }
+      const value = await getConfigValue(await findProjectRoot(process.cwd()), key);
+      console.log(typeof value === 'string' ? value : JSON.stringify(value));
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
     }
   });
+
+configCommand
+  .command('set')
+  .argument('<key>')
+  .argument('<value>')
+  .action(async (key, value) => {
+    try {
+      const typedValue = await setConfigValue(await findProjectRoot(process.cwd()), key, value);
+      console.log(`Set ${key} = ${JSON.stringify(typedValue)}`);
+    } catch (error: any) {
+      console.error(`❌ Configuration error: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+configCommand
+  .command('reset')
+  .argument('[key]')
+  .option('-y, --yes', 'Confirm resetting all settings')
+  .action(async (key, options) => {
+    try {
+      if (!key && !options.yes) {
+        if (!process.stdin.isTTY || !process.stdout.isTTY || !(await confirm({ message: 'Reset all configuration to defaults?', default: false }))) {
+          throw new Error('Reset cancelled. Use `--yes` for non-interactive full reset.');
+        }
+      }
+      const root = await findProjectRoot(process.cwd());
+      if (key) await resetConfigValue(root, key);
+      else await resetAllConfig(root);
+      console.log(key ? `Reset ${key}` : 'Reset all configuration to defaults');
+    } catch (error: any) {
+      console.error(`❌ Configuration error: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+configCommand.on('command:*', () => {
+  console.error('Use `knowl config get <key>`, `set <key> <value>`, or `reset [key]`.');
+  process.exitCode = 1;
+});
 
 // --- 8. REINDEX COMMAND ---
 program
@@ -667,7 +641,9 @@ program
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not found in database.');
 
-      const embedder = await createLocalEmbeddingProvider(config, root);
+      const embedder = await createLocalEmbeddingProvider(config, root, {
+        onFirstLoad: ({ model }) => console.log(`Downloading local embedding model ${model}...`),
+      });
       const result = await reindexKnowledgeEmbeddings(project.id, embedder);
       console.log(`Indexed ${result.indexed} vector embedding(s).`);
       await closeDb();
@@ -688,20 +664,6 @@ program
       printUpgradeStatus(result);
     } catch (error: any) {
       console.error(`❌ Error upgrading KNOWL: ${error.message}`);
-      process.exit(1);
-    }
-  });
-
-// --- 10. CONNECT COMMAND ---
-program
-  .command('connect')
-  .description('Print MCP setup instructions for an agent client')
-  .argument('<target>', 'Agent client: codex, cursor, or claude')
-  .action((target) => {
-    try {
-      printConnectInstructions(target);
-    } catch (error: any) {
-      console.error(`Error printing connection instructions: ${error.message}`);
       process.exit(1);
     }
   });
