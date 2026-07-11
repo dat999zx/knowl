@@ -66,8 +66,8 @@ Then:
 - [x] Plan 4: Automatic Memory Core
 - [x] Plan 5: Session Candidate Promotion
 - [x] Plan 6: Agent Automation
-- [ ] Plan 7: Knowledge Intelligence
-- [ ] Plan 8: Product Layer
+- [x] Plan 7: Knowledge Intelligence
+- [x] Plan 8: Product Layer
 
 ## Scope Guard
 
