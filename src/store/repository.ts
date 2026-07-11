@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { eq, desc } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { getDb } from './database.js';
 import type { DbConnection } from './database.js';
 import * as schema from './schema.js';
@@ -264,6 +264,17 @@ export async function updateKnowledgeItem(
       .update(schema.knowledgeItems)
       .set(dbUpdates)
       .where(eq(schema.knowledgeItems.id, id));
+
+    if (updates.title !== undefined || updates.content !== undefined || updates.reasoning !== undefined || updates.confidence !== undefined) {
+      const openAssertions = await exec.select().from(schema.knowledgeAssertions)
+        .where(and(eq(schema.knowledgeAssertions.knowledgeItemId, id), isNull(schema.knowledgeAssertions.validTo))).limit(1);
+      if (!openAssertions[0]) throw new Error(`Knowledge item has no open assertion: ${id}`);
+      await exec.update(schema.knowledgeAssertions).set({ validTo: now, replacedAt: now }).where(eq(schema.knowledgeAssertions.id, openAssertions[0].id));
+      await exec.insert(schema.knowledgeAssertions).values({
+        id: generateId(), knowledgeItemId: id, content: merged.content, validFrom: now, validTo: null,
+        recordedAt: now, replacedAt: null, confidence: updates.confidence ?? current[0].confidence, sourceEvidenceId: null,
+      });
+    }
 
     if (current[0].category === 'skill' && steps) {
       // Delete old steps

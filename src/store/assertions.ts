@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, gte, isNull, lte, or } from 'drizzle-orm';
 import { KnowledgeAssertion } from '../core/types.js';
 import { getDb } from './database.js';
 import * as schema from './schema.js';
@@ -37,4 +37,13 @@ export async function replaceCurrentAssertion(input: { knowledgeItemId: string; 
 export async function listAssertions(knowledgeItemId: string): Promise<KnowledgeAssertion[]> {
   const rows = await getDb().select().from(schema.knowledgeAssertions).where(eq(schema.knowledgeAssertions.knowledgeItemId, knowledgeItemId)).orderBy(desc(schema.knowledgeAssertions.recordedAt));
   return rows.map(map);
+}
+
+export async function findAssertionAsOf(knowledgeItemId: string, asOf: string): Promise<KnowledgeAssertion | null> {
+  const rows = await getDb().select().from(schema.knowledgeAssertions).where(and(
+    eq(schema.knowledgeAssertions.knowledgeItemId, knowledgeItemId),
+    lte(schema.knowledgeAssertions.validFrom, asOf),
+    or(isNull(schema.knowledgeAssertions.validTo), gte(schema.knowledgeAssertions.validTo, asOf)),
+  )).orderBy(desc(schema.knowledgeAssertions.recordedAt)).limit(1);
+  return rows[0] ? map(rows[0]) : null;
 }
