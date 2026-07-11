@@ -19,6 +19,18 @@ export type KnowledgeFreshness =
   | 'stale'
   | 'needs_review';
 
+export type SessionStatus = 'active' | 'finished' | 'failed' | 'abandoned' | 'recovered';
+export type SessionEventType = 'start' | 'command' | 'test' | 'error' | 'git' | 'decision' | 'checkpoint' | 'stop';
+
+export interface MemorySession {
+  id: string; agent?: string | null; title: string; query?: string | null; status: SessionStatus;
+  startedAt: string; lastHeartbeatAt: string; finishedAt?: string | null; baselineCommit?: string | null; expiresAt: string;
+}
+
+export interface MemorySessionEvent {
+  id: string; sessionId: string; type: SessionEventType; payload: Record<string, unknown>; observedAt: string; expiresAt: string;
+}
+
 export interface KnowledgeItem {
   id: string;
   category: KnowledgeCategory;

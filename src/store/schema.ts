@@ -81,6 +81,16 @@ export const skillMetadata = sqliteTable('skill_metadata', {
   lastUsed: text('last_used'),
 });
 
+export const memorySessions = sqliteTable('memory_sessions', {
+  id: text('id').primaryKey(), agent: text('agent'), title: text('title').notNull(), query: text('query'), status: text('status').notNull(),
+  startedAt: text('started_at').notNull(), lastHeartbeatAt: text('last_heartbeat_at').notNull(), finishedAt: text('finished_at'), baselineCommit: text('baseline_commit'), expiresAt: text('expires_at').notNull(),
+}, (table) => [index('idx_memory_sessions_status_heartbeat').on(table.status, table.lastHeartbeatAt), index('idx_memory_sessions_expiry').on(table.expiresAt)]);
+
+export const memorySessionEvents = sqliteTable('memory_session_events', {
+  id: text('id').primaryKey(), sessionId: text('session_id').notNull().references(() => memorySessions.id, { onDelete: 'cascade' }),
+  type: text('type').notNull(), payload: text('payload', { mode: 'json' }).notNull(), observedAt: text('observed_at').notNull(), expiresAt: text('expires_at').notNull(),
+}, (table) => [index('idx_memory_session_events_expiry').on(table.expiresAt), index('idx_memory_session_events_session').on(table.sessionId)]);
+
 export const knowledgeEmbeddings = sqliteTable('knowledge_embeddings', {
   knowledgeItemId: text('knowledge_item_id').primaryKey().references(() => knowledgeItems.id, { onDelete: 'cascade' }),
   provider: text('provider').notNull(),
