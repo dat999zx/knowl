@@ -43,6 +43,7 @@ import { listAssertions } from './store/assertions.js';
 import { listActiveConflictKeys } from './store/conflicts.js';
 import { composeContext } from './store/context-composer.js';
 import { indexCode, listCodeSymbols } from './code/symbol-index.js';
+import { exportKnowledge } from './store/portability.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -375,6 +376,8 @@ program.command('context').option('--query <query>').option('--task <task>').req
 const codeCommand = program.command('code').description('Index and inspect project code symbols');
 codeCommand.command('index').action(async () => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); await indexCode(root); console.log('Code symbols indexed.'); await closeDb(); } catch (error: any) { console.error(`Error indexing code: ${error.message}`); process.exit(1); } });
 codeCommand.command('symbols').argument('<path>').action(async filePath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listCodeSymbols(filePath), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading code symbols: ${error.message}`); process.exit(1); } });
+
+program.command('export').argument('<path>').action(async outputPath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await exportKnowledge(project.id, path.resolve(outputPath)), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error exporting knowledge: ${error.message}`); process.exit(1); } });
 
 // --- 4. DECIDE COMMAND ---
 program
