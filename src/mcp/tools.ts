@@ -20,7 +20,7 @@ import { isEvidenceStale, listEvidenceForItem } from '../store/evidence-reposito
 import { recordKnowledgeFeedback } from '../store/access-feedback.js';
 import { finishMemorySession } from '../store/session-repository.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
-import { namespaceDescriptor, withNamespaceDatabase } from '../store/namespaces.js';
+import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
@@ -695,7 +695,9 @@ export function registerTools(
           surface: 'mcp',
           vector,
         };
-        const items = explain
+        const items = projectRoot && !explain && !vector?.enabled
+          ? await queryLayeredKnowledge(projectRoot, query ?? '', configuredNamespaces(projectRoot, config ?? undefined), limit ?? 3, 'mcp')
+          : explain
           ? await queryKnowledgeForAgentExplained(projectId!, queryOptions)
           : await queryKnowledgeForAgent(projectId!, queryOptions);
 

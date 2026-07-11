@@ -47,12 +47,14 @@ export async function queryLayeredKnowledge(
   root: string,
   query: string,
   descriptors = defaultNamespaces(root),
+  limit = 3,
+  surface = 'namespace_query',
 ): Promise<NamespacedKnowledgeItem[]> {
   const results: NamespacedKnowledgeItem[] = [];
   const seen = new Set<string>();
   for (const descriptor of namespacePrecedence(descriptors)) {
     try {
-      const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgent('local', { query, limit: 10, surface: `namespace:${descriptor.namespace}` }));
+      const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgent('local', { query, limit, surface }));
       for (const item of items) {
         const key = item.contentHash ?? `${item.title}\n${item.content}`;
         if (!seen.has(key)) {

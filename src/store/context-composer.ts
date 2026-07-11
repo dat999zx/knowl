@@ -11,7 +11,7 @@ const tokens = (item: KnowledgeItem) => Math.ceil(`${item.title}\n${item.content
 export async function composeContext(projectId: string, request: ContextRequest): Promise<ContextPack> {
   if (!Number.isFinite(request.tokenBudget) || request.tokenBudget < 1) throw new Error('tokenBudget must be positive.');
   const candidates: ContextKnowledgeItem[] = request.namespaceRoot
-    ? await queryLayeredKnowledge(request.namespaceRoot, request.query ?? request.task ?? '')
+    ? await queryLayeredKnowledge(request.namespaceRoot, request.query ?? request.task ?? '', undefined, 30, 'context_composer')
     : await queryKnowledgeForAgent(projectId, { query: request.query ?? request.task, limit: 30, surface: 'context_composer' });
   const pinned = await queryKnowledgeBase(projectId, { category: 'constraint', status: 'active' });
   const rest = candidates.filter(item => item.category !== 'constraint' && !pinned.some(constraint => constraint.id === item.id));
