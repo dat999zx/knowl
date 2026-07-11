@@ -60,6 +60,14 @@ describe('config service', () => {
     await expect(fs.access(path.join(ROOT, '.knowl', 'config.json.backup'))).resolves.toBeUndefined();
   });
 
+  it('configures optional namespace paths without storing credentials', async () => {
+    await writeConfig();
+    await setConfigValue(ROOT, 'memory.organization.enabled', 'true');
+    await setConfigValue(ROOT, 'memory.organization.path', 'D:/knowl/org.db');
+    expect(await getConfigValue(ROOT, 'memory.organization.enabled')).toBe(true);
+    expect(await getConfigValue(ROOT, 'memory.organization.path')).toBe('D:/knowl/org.db');
+  });
+
   it('rejects invalid enum values', async () => {
     await writeConfig();
     await expect(setConfigValue(ROOT, 'search.vector.dtype', 'q2')).rejects.toThrow('Expected one of');

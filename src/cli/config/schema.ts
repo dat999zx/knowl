@@ -12,9 +12,13 @@ export type ConfigKey =
   | 'ai.model'
   | 'ai.temperature'
   | 'ai.baseUrl'
-  | 'ai.apiKey';
+  | 'ai.apiKey'
+  | 'memory.organization.enabled'
+  | 'memory.organization.path'
+  | 'memory.global.enabled'
+  | 'memory.global.path';
 
-export type ConfigCategory = 'Search' | 'Security' | 'AI provider';
+export type ConfigCategory = 'Search' | 'Security' | 'AI provider' | 'Memory namespaces';
 
 export interface ConfigField {
   key: ConfigKey;
@@ -56,6 +60,10 @@ export const CONFIG_FIELDS: ConfigField[] = [
   { key: 'ai.temperature', category: 'AI provider', parse: optionalNumber },
   { key: 'ai.baseUrl', category: 'AI provider', parse: String },
   { key: 'ai.apiKey', category: 'AI provider', parse: String, secret: true },
+  { key: 'memory.organization.enabled', category: 'Memory namespaces', parse: booleanValue, defaultValue: false },
+  { key: 'memory.organization.path', category: 'Memory namespaces', parse: String },
+  { key: 'memory.global.enabled', category: 'Memory namespaces', parse: booleanValue, defaultValue: false },
+  { key: 'memory.global.path', category: 'Memory namespaces', parse: String },
 ];
 
 export function getConfigField(key: string): ConfigField {
