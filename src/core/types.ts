@@ -31,6 +31,12 @@ export interface MemorySessionEvent {
   id: string; sessionId: string; type: SessionEventType; payload: Record<string, unknown>; observedAt: string; expiresAt: string;
 }
 
+export interface MemoryCandidate extends KnowledgeAtom {
+  candidateType: 'outcome' | 'decision' | 'error' | 'verified-command' | 'task-state';
+  sessionId: string;
+  evidence: EvidenceInput[];
+}
+
 export interface KnowledgeItem {
   id: string;
   category: KnowledgeCategory;
