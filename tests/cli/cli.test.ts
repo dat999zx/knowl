@@ -754,6 +754,22 @@ describe('CLI Integration', () => {
     }
   }, 15_000);
 
+  it('should export and dry-run import portable JSONL memory', async () => {
+    const portabilityDir = path.resolve('./.knowl-cli-portability-test');
+    const exportPath = path.join(portabilityDir, 'memory.jsonl');
+    await fs.rm(portabilityDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(portabilityDir, { recursive: true });
+    try {
+      execSync(`node "${CLI_PATH}" init --yes`, { cwd: portabilityDir, encoding: 'utf-8' });
+      execSync(`node "${CLI_PATH}" decide "Portable CLI decision" "CLI export should be importable."`, { cwd: portabilityDir, encoding: 'utf-8' });
+      expect(execSync(`node "${CLI_PATH}" export "${exportPath}"`, { cwd: portabilityDir, encoding: 'utf-8' })).toContain('sha256');
+      const output = execSync(`node "${CLI_PATH}" import "${exportPath}" --dry-run`, { cwd: portabilityDir, encoding: 'utf-8' });
+      expect(output).toContain('"applied": false');
+    } finally {
+      await fs.rm(portabilityDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15_000);
+
   it('should show repository status', () => {
     const output = execSync(`node "${CLI_PATH}" status`, {
       cwd: TEST_DIR,

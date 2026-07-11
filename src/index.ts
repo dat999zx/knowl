@@ -43,7 +43,7 @@ import { listAssertions } from './store/assertions.js';
 import { listActiveConflictKeys } from './store/conflicts.js';
 import { composeContext } from './store/context-composer.js';
 import { indexCode, listCodeSymbols } from './code/symbol-index.js';
-import { exportKnowledge } from './store/portability.js';
+import { exportKnowledge, importKnowledge } from './store/portability.js';
 import { synthesizeKnowledge } from './store/synthesis.js';
 
 // Load environment variables (.env file)
@@ -379,6 +379,8 @@ codeCommand.command('index').action(async () => { try { const root = await findP
 codeCommand.command('symbols').argument('<path>').action(async filePath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listCodeSymbols(filePath), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading code symbols: ${error.message}`); process.exit(1); } });
 
 program.command('export').argument('<path>').action(async outputPath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await exportKnowledge(project.id, path.resolve(outputPath)), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error exporting knowledge: ${error.message}`); process.exit(1); } });
+
+program.command('import').argument('<path>').option('--dry-run').action(async (inputPath, options) => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await importKnowledge(path.resolve(inputPath), { dryRun: options.dryRun }), null, 2)); await closeDb(); } catch (error: any) { await closeDb().catch(() => {}); console.error(`Error importing knowledge: ${error.message}`); process.exit(1); } });
 
 program.command('synthesize').requiredOption('--scope <path-or-tag>').action(async options => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await synthesizeKnowledge(project.id, options.scope), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error synthesizing knowledge: ${error.message}`); process.exit(1); } });
 
