@@ -262,6 +262,11 @@ export function registerTools(
           inputSchema: { type: 'object', properties: {} },
         },
         {
+          name: 'knowl_context',
+          description: 'Compose a diversified token-budgeted context pack.',
+          inputSchema: { type: 'object', properties: { query: { type: 'string' }, task: { type: 'string' }, tokenBudget: { type: 'number' } }, required: ['tokenBudget'] },
+        },
+        {
           name: 'knowl_evidence_list',
           description: 'List inspectable evidence linked to one knowledge item.',
           inputSchema: {
@@ -704,6 +709,12 @@ export function registerTools(
         const { listActiveConflictKeys } = await import('../store/conflicts.js');
         const items = await listActiveConflictKeys();
         return { content: [{ type: 'text', text: JSON.stringify(items.map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness })), null, 2) }] };
+      }
+
+      else if (name === 'knowl_context') {
+        const { composeContext } = await import('../store/context-composer.js');
+        const { query, task, tokenBudget } = args as any;
+        return { content: [{ type: 'text', text: JSON.stringify(await composeContext(projectId!, { query, task, tokenBudget }), null, 2) }] };
       }
 
       else if (name === 'knowl_evidence_list') {

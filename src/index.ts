@@ -41,6 +41,7 @@ import { isLifecycleEvent, isSessionEventType, readLifecyclePayload, stringPaylo
 import { bootstrapAgentSession } from './store/context-bootstrap.js';
 import { listAssertions } from './store/assertions.js';
 import { listActiveConflictKeys } from './store/conflicts.js';
+import { composeContext } from './store/context-composer.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -364,6 +365,10 @@ program.command('conflicts').action(async () => {
 
 program.command('supersede').argument('<itemId>').argument('<replacementId>').action(async (itemId, replacementId) => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await repo.supersedeKnowledgeItem(itemId, replacementId), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error superseding knowledge: ${error.message}`); process.exit(1); }
+});
+
+program.command('context').option('--query <query>').option('--task <task>').requiredOption('--token-budget <budget>').action(async options => {
+  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await composeContext(project.id, { query: options.query, task: options.task, tokenBudget: Number(options.tokenBudget) }), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error composing context: ${error.message}`); process.exit(1); }
 });
 
 // --- 4. DECIDE COMMAND ---
