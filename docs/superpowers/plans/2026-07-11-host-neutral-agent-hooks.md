@@ -279,7 +279,7 @@ rtk git commit -m "feat: process automatic agent lifecycle hooks"
 - Modify: `src/cli/agents/cursor.ts`
 - Test: `tests/cli/agent-adapters.test.ts`
 
-- [ ] **Step 1: Replace unsupported fixture test with failing supported-host tests**
+- [x] **Step 1: Replace unsupported fixture test with failing supported-host tests**
 
 Assert exact project-local files:
 
@@ -290,13 +290,13 @@ Assert exact project-local files:
 
 For every supported file, assert unrelated entries survive, `.backup` is created before updates, repeated initialization is unchanged, and partial/wrong Knowl entries fail verification.
 
-- [ ] **Step 2: Run test and verify RED**
+- [x] **Step 2: Run test and verify RED**
 
 Run: `rtk npm.cmd test -- tests/cli/agent-adapters.test.ts --maxWorkers=1`
 
 Expected: FAIL because adapters report lifecycle `unsupported`.
 
-- [ ] **Step 3: Implement merge helpers and entries**
+- [x] **Step 3: Implement merge helpers and entries**
 
 Add a JSON hook merge helper that owns entries tagged with a stable command prefix:
 
@@ -315,7 +315,7 @@ Install only bounded capture events:
 
 Do not install pre-tool blocking hooks, transcript readers, response/thought capture, or global configuration.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `rtk npm.cmd test -- tests/cli/agent-adapters.test.ts --maxWorkers=1`
 

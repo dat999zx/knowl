@@ -4,6 +4,7 @@ import { parse } from 'smol-toml';
 import { mergeCodexTomlConfig, mergeJsonMcpConfig, McpEntry } from './files.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentIntegrationResult } from './types.js';
 import { unsupportedLifecycleResult } from './lifecycle-config.js';
+import { mergeNestedHookConfig, verifyNestedHookConfig } from './hook-config.js';
 
 function commandEntry(environment: AgentEnvironment): McpEntry {
   return { command: environment.platform === 'win32' ? 'knowl.cmd' : 'knowl', args: ['serve'] };
@@ -31,6 +32,7 @@ function statusFromMerge(status: 'configured' | 'updated' | 'unchanged') {
 
 export function createCodexAdapter(environment: AgentEnvironment): AgentAdapter {
   const configPath = (root: string) => path.join(root, '.codex', 'config.toml');
+  const lifecyclePath = (root: string) => path.join(root, '.codex', 'hooks.json');
   return {
     name: 'codex',
     label: 'Codex',
@@ -48,9 +50,13 @@ export function createCodexAdapter(environment: AgentEnvironment): AgentAdapter 
     async verify(root) {
       return (await this.detect(root)).configured;
     },
-    async lifecycleCapability() { return 'unsupported'; },
-    async configureLifecycle(root) { return unsupportedLifecycleResult('codex', 'project', configPath(root)); },
-    async verifyLifecycle() { return false; },
+    async lifecycleCapability() { return 'supported'; },
+    async configureLifecycle(root) {
+      const pathname = lifecyclePath(root);
+      const status = await mergeNestedHookConfig(pathname, environment.platform, 'codex');
+      return { agent: 'codex', status, scope: 'project', configPath: pathname };
+    },
+    async verifyLifecycle(root) { return verifyNestedHookConfig(lifecyclePath(root), environment.platform, 'codex'); },
   };
 }
 
@@ -61,6 +67,7 @@ function createJsonProjectAdapter(
   configPath: (root: string) => string,
   environment: AgentEnvironment,
 ): AgentAdapter {
+  const lifecyclePath = (root: string) => path.join(root, '.claude', 'settings.local.json');
   return {
     name,
     label,
@@ -78,9 +85,16 @@ function createJsonProjectAdapter(
     async verify(root) {
       return (await this.detect(root)).configured;
     },
-    async lifecycleCapability() { return 'unsupported'; },
-    async configureLifecycle(root) { return unsupportedLifecycleResult(name, 'project', configPath(root)); },
-    async verifyLifecycle() { return false; },
+    async lifecycleCapability() { return name === 'claude' ? 'supported' : 'unsupported'; },
+    async configureLifecycle(root) {
+      if (name !== 'claude') return unsupportedLifecycleResult(name, 'project', configPath(root));
+      const pathname = lifecyclePath(root);
+      const status = await mergeNestedHookConfig(pathname, environment.platform, 'claude');
+      return { agent: name, status, scope: 'project', configPath: pathname };
+    },
+    async verifyLifecycle(root) {
+      return name === 'claude' && verifyNestedHookConfig(lifecyclePath(root), environment.platform, 'claude');
+    },
   };
 }
 

@@ -93,17 +93,59 @@ describe('agent adapters', () => {
     expect(() => parseAgentNames(['unknown'])).toThrow('Unsupported agent "unknown"');
   });
 
-  it('reports unverified lifecycle hook formats as unsupported without mutating configs', async () => {
-    const adapters = [createCodexAdapter(environment), createClaudeCodeAdapter(environment), createCursorAdapter(environment), createClaudeDesktopAdapter(environment)];
-    for (const adapter of adapters) {
-      expect(await adapter.lifecycleCapability(PROJECT)).toBe('unsupported');
-      expect(await adapter.configureLifecycle(PROJECT)).toMatchObject({ agent: adapter.name, status: 'skipped' });
-      expect(await adapter.verifyLifecycle(PROJECT)).toBe(false);
-    }
+  it('configures verified project-local lifecycle hooks for Codex, Claude Code, and Cursor', async () => {
+    const codex = createCodexAdapter(environment);
+    const claude = createClaudeCodeAdapter(environment);
+    const cursor = createCursorAdapter(environment);
 
-    await expect(fs.access(path.join(PROJECT, '.codex', 'config.toml'))).rejects.toThrow();
-    await expect(fs.access(path.join(PROJECT, '.mcp.json'))).rejects.toThrow();
-    await expect(fs.access(path.join(PROJECT, '.cursor', 'mcp.json'))).rejects.toThrow();
-    await expect(fs.access(path.join(HOME, 'AppData', 'Roaming', 'Claude', 'claude_desktop_config.json'))).rejects.toThrow();
+    expect(await codex.lifecycleCapability(PROJECT)).toBe('supported');
+    expect(await claude.lifecycleCapability(PROJECT)).toBe('supported');
+    expect(await cursor.lifecycleCapability(PROJECT)).toBe('supported');
+
+    await fs.mkdir(path.join(PROJECT, '.codex'), { recursive: true });
+    await fs.mkdir(path.join(PROJECT, '.claude'), { recursive: true });
+    await fs.mkdir(path.join(PROJECT, '.cursor'), { recursive: true });
+    await writeJson(path.join(PROJECT, '.codex', 'hooks.json'), { hooks: { Stop: [{ matcher: 'existing', hooks: [{ type: 'command', command: 'existing' }] }] } });
+    await writeJson(path.join(PROJECT, '.claude', 'settings.local.json'), { permissions: { allow: ['Bash(npm test)'] } });
+    await writeJson(path.join(PROJECT, '.cursor', 'hooks.json'), { version: 1, hooks: { afterFileEdit: [{ command: 'existing' }] } });
+
+    expect(await codex.configureLifecycle(PROJECT)).toMatchObject({ agent: 'codex', status: 'configured' });
+    expect(await claude.configureLifecycle(PROJECT)).toMatchObject({ agent: 'claude', status: 'configured' });
+    expect(await cursor.configureLifecycle(PROJECT)).toMatchObject({ agent: 'cursor', status: 'configured' });
+
+    const codexHooks = await readJson(path.join(PROJECT, '.codex', 'hooks.json'));
+    const claudeSettings = await readJson(path.join(PROJECT, '.claude', 'settings.local.json'));
+    const cursorHooks = await readJson(path.join(PROJECT, '.cursor', 'hooks.json'));
+    expect(codexHooks.hooks.Stop[0].hooks[0].command).toBe('existing');
+    expect(JSON.stringify(codexHooks)).toContain('knowl.cmd agent-hook codex SessionStart --json');
+    expect(claudeSettings.permissions.allow).toEqual(['Bash(npm test)']);
+    expect(JSON.stringify(claudeSettings)).toContain('knowl.cmd agent-hook claude SessionStart --json');
+    expect(cursorHooks.hooks.afterFileEdit[0].command).toBe('existing');
+    expect(JSON.stringify(cursorHooks)).toContain('knowl.cmd agent-hook cursor sessionStart --json');
+
+    expect(await codex.verifyLifecycle(PROJECT)).toBe(true);
+    expect(await claude.verifyLifecycle(PROJECT)).toBe(true);
+    expect(await cursor.verifyLifecycle(PROJECT)).toBe(true);
+    expect((await codex.configureLifecycle(PROJECT)).status).toBe('unchanged');
+    expect((await claude.configureLifecycle(PROJECT)).status).toBe('unchanged');
+    expect((await cursor.configureLifecycle(PROJECT)).status).toBe('unchanged');
+
+    await expect(fs.access(path.join(PROJECT, '.codex', 'hooks.json.backup'))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(PROJECT, '.claude', 'settings.local.json.backup'))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(PROJECT, '.cursor', 'hooks.json.backup'))).resolves.toBeUndefined();
+  });
+
+  it('keeps Claude Desktop lifecycle unsupported and rejects partial hook configuration', async () => {
+    const desktop = createClaudeDesktopAdapter(environment);
+    expect(await desktop.lifecycleCapability(PROJECT)).toBe('unsupported');
+    expect(await desktop.configureLifecycle(PROJECT)).toMatchObject({ agent: 'claude-desktop', status: 'skipped' });
+    expect(await desktop.verifyLifecycle(PROJECT)).toBe(false);
+
+    const codex = createCodexAdapter(environment);
+    await fs.mkdir(path.join(PROJECT, '.codex'), { recursive: true });
+    await writeJson(path.join(PROJECT, '.codex', 'hooks.json'), {
+      hooks: { SessionStart: [{ matcher: 'startup|resume', hooks: [{ type: 'command', command: 'knowl.cmd agent-hook codex SessionStart --json' }] }] },
+    });
+    expect(await codex.verifyLifecycle(PROJECT)).toBe(false);
   });
 });

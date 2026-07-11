@@ -18,7 +18,7 @@ function equalEntry(value: unknown, entry: McpEntry) {
     && candidate.args.every((arg, index) => arg === entry.args[index]);
 }
 
-async function readTextIfExists(configPath: string) {
+export async function readTextIfExists(configPath: string) {
   try {
     return await fs.readFile(configPath, 'utf8');
   } catch (error: any) {
@@ -27,7 +27,7 @@ async function readTextIfExists(configPath: string) {
   }
 }
 
-async function writeWithBackup(configPath: string, content: string, existing?: string) {
+export async function writeWithBackup(configPath: string, content: string, existing?: string) {
   await fs.mkdir(path.dirname(configPath), { recursive: true });
   if (existing !== undefined) await fs.copyFile(configPath, `${configPath}.backup`);
   const temporary = `${configPath}.tmp`;
