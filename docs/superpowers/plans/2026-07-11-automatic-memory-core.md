@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript, SQLite/libSQL, Drizzle schema/bootstrap, Commander, Git CLI, Vitest.
 
+**Status:** Complete — verified 2026-07-11.
+
 ---
 
 ### Task 1: Add session and event schema

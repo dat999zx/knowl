@@ -86,6 +86,13 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     } catch {
       checks.push({ status: 'WARN', message: 'Database schema missing knowledge_embeddings; run knowl upgrade' });
     }
+    try {
+      await (getDb() as any).all(sql`SELECT 1 FROM memory_sessions LIMIT 1`);
+      const stale = await (getDb() as any).all(sql`SELECT 1 FROM memory_sessions WHERE status = 'active' AND last_heartbeat_at < datetime('now', '-2 hours') LIMIT 1`);
+      checks.push({ status: stale.length ? 'WARN' : 'OK', message: stale.length ? 'Stale active memory sessions found; run knowl session recover' : 'Memory session schema ready with no stale active sessions', fix: stale.length ? 'run `knowl session recover`' : undefined });
+    } catch {
+      checks.push({ status: 'WARN', message: 'Database schema missing memory sessions; run knowl upgrade' });
+    }
 
     const project = await getProjectByRootPath(root);
     if (!project) {

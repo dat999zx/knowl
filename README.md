@@ -91,6 +91,15 @@ knowl task checkpoint <task-id> "Added search UI tests"
 knowl task finish <task-id> "Verified search UI implementation"
 ```
 
+Session events are temporary scratch memory, not transcript archives. They retain only bounded command/test/error/git/decision metadata, expire after 48 hours, and stale active sessions can be recovered safely:
+
+```bash
+knowl session start "Implement search UI" --query "search retrieval"
+knowl session event <session-id> test --summary "store tests passed"
+knowl session finish <session-id> --status finished --summary "implementation verified"
+knowl session recover
+```
+
 Create and run a learned skill package:
 
 ```bash
@@ -171,6 +180,7 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl task checkpoint <task-id> <summary>` | Store durable progress for an active work loop. |
 | `knowl task finish <task-id> <summary>` | Store durable completion state for a work loop. |
 | `knowl task run <title> -- <command...>` | Start a work loop, run a command, then finish on success or checkpoint on failure with the child exit code. |
+| `knowl session start|event|finish|recover` | Manage bounded, expiring scratch session events and recover stale sessions. |
 | `knowl skill list` | List learned file-backed skill packages under `.knowl/skills`. |
 | `knowl skill read <name>` | Print `skill.json` and `SKILL.md` for a learned skill package. |
 | `knowl skill create <name> --purpose ...` | Create a learned skill package and index it as a `skill` knowledge item. |
