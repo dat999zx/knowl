@@ -23,7 +23,7 @@ export function registerResources(
         {
           uri: 'knowl://recent',
           name: 'Recent Session Context',
-          description: 'Compact recent active knowledge and knowledge commits for quickly resuming a project session.',
+          description: 'Compact fallback context for resuming a project session; lifecycle bootstrap returns the same bounded source automatically when supported.',
           mimeType: 'text/markdown',
         },
       ],

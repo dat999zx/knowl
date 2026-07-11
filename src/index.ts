@@ -38,6 +38,7 @@ import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSession
 import { captureMemorySessionEvent } from './store/session-capture.js';
 import { finalizeMemorySession } from './store/session-finalizer.js';
 import { isLifecycleEvent, isSessionEventType, readLifecyclePayload, stringPayloadValue } from './cli/agents/lifecycle.js';
+import { bootstrapAgentSession } from './store/context-bootstrap.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -877,7 +878,10 @@ program
       if (event === 'session-start') {
         const title = options.title ?? stringPayloadValue(payload, 'title');
         if (!title) throw new Error('Agent lifecycle session-start requires a title.');
-        result = await startMemorySession({ title, query: options.query ?? stringPayloadValue(payload, 'query'), agent: options.agent ?? stringPayloadValue(payload, 'agent') });
+        const project = await repo.getProjectByRootPath(root);
+        if (!project) throw new Error('Project not found in database.');
+        const bootstrap = await bootstrapAgentSession({ projectId: project.id, title, query: options.query ?? stringPayloadValue(payload, 'query'), agent: options.agent ?? stringPayloadValue(payload, 'agent'), sessionId });
+        result = { ...bootstrap.session, context: bootstrap.context, contextTruncated: bootstrap.truncated };
       } else if (event === 'session-event') {
         if (!sessionId) throw new Error('Agent lifecycle session-event requires --session.');
         const type = options.type ?? stringPayloadValue(payload, 'type');

@@ -125,6 +125,7 @@ describe('CLI Integration', () => {
     const content = await fs.readFile(agentsPath, 'utf-8');
 
     expect(content).toContain('## Knowl Project Memory');
+    expect(content).toContain('`knowl init` installs automatic lifecycle capture when a host supports a verified hook format');
     expect(content).toContain('At the start of a new project-specific session, call `knowl_recent` first');
     expect(content).toContain('After `knowl_recent`, use `knowl_query` for specific questions');
     expect(content).toContain('Do not use `knowl_ask` for MCP first-pass lookup');
