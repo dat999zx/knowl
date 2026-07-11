@@ -143,15 +143,37 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         : 'MCP tool surface should expose knowl_task_start, knowl_task_checkpoint, and knowl_task_finish',
     });
 
-    const lifecycleCapabilities = await Promise.all([...createAgentRegistry().values()].map(async adapter => {
-      try { return await adapter.lifecycleCapability?.(root) ?? 'unsupported'; } catch { return 'degraded'; }
-    }));
-    if (lifecycleCapabilities.every(capability => capability === 'unsupported')) {
-      checks.push({ status: 'OK', message: 'Agent lifecycle hooks are unsupported; `knowl task run` remains available' });
-    } else if (lifecycleCapabilities.some(capability => capability === 'degraded')) {
-      checks.push({ status: 'WARN', message: 'Some agent lifecycle hooks are degraded; `knowl task run` remains available' });
-    } else {
-      checks.push({ status: 'OK', message: 'Agent lifecycle hooks are supported by at least one configured host' });
+    let configuredAgentCount = 0;
+    for (const adapter of createAgentRegistry().values()) {
+      try {
+        const detection = await adapter.detect(root);
+        if (!detection.configured) continue;
+        configuredAgentCount += 1;
+        const capability = await adapter.lifecycleCapability?.(root) ?? 'unsupported';
+        if (capability === 'supported') {
+          const verified = await adapter.verifyLifecycle?.(root) ?? false;
+          checks.push({
+            status: verified ? 'OK' : 'WARN',
+            message: verified
+              ? `${adapter.name} lifecycle hooks configured`
+              : `${adapter.name} lifecycle hooks missing or stale`,
+            fix: verified ? undefined : `run \`knowl init ${adapter.name}\``,
+          });
+        } else if (capability === 'degraded') {
+          checks.push({
+            status: 'WARN',
+            message: `${adapter.name} lifecycle hooks degraded; MCP remains available`,
+            fix: `run \`knowl init ${adapter.name}\``,
+          });
+        } else {
+          checks.push({ status: 'OK', message: `${adapter.name} lifecycle hooks unsupported; MCP remains available` });
+        }
+      } catch (error: any) {
+        checks.push({ status: 'WARN', message: `${adapter.name} lifecycle check failed: ${error.message}`, fix: `run \`knowl init ${adapter.name}\`` });
+      }
+    }
+    if (configuredAgentCount === 0) {
+      checks.push({ status: 'OK', message: 'No agent MCP integration selected; run `knowl init` to configure one' });
     }
 
     const hasSkills =

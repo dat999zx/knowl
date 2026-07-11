@@ -107,4 +107,34 @@ describe('agent init flow', () => {
     expect(result.exitCode).toBe(0);
     expect(result.results[0]).toMatchObject({ status: 'configured', lifecycle: { capability: 'unsupported', status: 'skipped' } });
   });
+
+  it('reports verified supported lifecycle configuration separately from MCP', async () => {
+    const adapter: AgentAdapter = {
+      ...fakeAdapter('codex', { installed: true, configured: false, scope: 'project', configPath: 'codex' }),
+      lifecycleCapability: async () => 'supported',
+      configureLifecycle: async () => ({ agent: 'codex', status: 'configured', scope: 'project', configPath: 'hooks' }),
+      verifyLifecycle: async () => true,
+    };
+    const result = await runAgentInitFlow(ROOT, {
+      agentNames: ['codex'], yes: false, interactive: false, registry: new Map([['codex', adapter]]), prompts: prompts(),
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(result.results[0]).toMatchObject({ status: 'configured', lifecycle: { capability: 'supported', status: 'configured' } });
+  });
+
+  it('keeps MCP configured but fails readiness when supported hooks do not verify', async () => {
+    const adapter: AgentAdapter = {
+      ...fakeAdapter('cursor', { installed: true, configured: false, scope: 'project', configPath: 'cursor' }),
+      lifecycleCapability: async () => 'supported',
+      configureLifecycle: async () => ({ agent: 'cursor', status: 'configured', scope: 'project', configPath: 'hooks' }),
+      verifyLifecycle: async () => false,
+    };
+    const result = await runAgentInitFlow(ROOT, {
+      agentNames: ['cursor'], yes: false, interactive: false, registry: new Map([['cursor', adapter]]), prompts: prompts(),
+    });
+
+    expect(result.exitCode).toBe(1);
+    expect(result.results[0]).toMatchObject({ status: 'configured', lifecycle: { capability: 'supported', status: 'failed' } });
+  });
 });

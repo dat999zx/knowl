@@ -592,7 +592,7 @@ describe('CLI Integration', () => {
     const doctorDir = path.resolve('./.knowl-cli-doctor-test');
     await fs.rm(doctorDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(doctorDir, { recursive: true });
-    execSync(`node "${CLI_PATH}" init --yes`, {
+    execSync(`node "${CLI_PATH}" init codex --yes`, {
       cwd: doctorDir,
       encoding: 'utf-8',
     });
@@ -618,7 +618,7 @@ describe('CLI Integration', () => {
     expect(output).toContain('[OK] Agent query returned');
     expect(output).toContain('[OK] MCP tools expose knowl_query and hide knowl_ask');
     expect(output).toContain('[OK] MCP tools expose work-loop task tools');
-    expect(output).toContain('[OK] Agent lifecycle hooks are unsupported; `knowl task run` remains available');
+    expect(output).toContain('[OK] codex lifecycle hooks configured');
     expect(output).toContain('[OK] Vector search enabled with local/Xenova/all-MiniLM-L6-v2');
     expect(output).toContain('Result: READY');
 

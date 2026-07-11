@@ -334,7 +334,7 @@ rtk git commit -m "feat: install project-local agent hooks"
 - Modify: `tests/cli/init-flow.test.ts`
 - Modify: `tests/cli/cli.test.ts`
 
-- [ ] **Step 1: Write failing init/doctor tests**
+- [x] **Step 1: Write failing init/doctor tests**
 
 Assert:
 
@@ -344,17 +344,17 @@ Assert:
 - Doctor reports each host as supported/configured, supported/missing, unsupported, or degraded.
 - Missing hooks produce `WARN` with `run knowl init <host>`; verified hooks produce `OK`.
 
-- [ ] **Step 2: Run tests and verify RED**
+- [x] **Step 2: Run tests and verify RED**
 
 Run: `rtk npm.cmd test -- tests/cli/init-flow.test.ts tests/cli/cli.test.ts --maxWorkers=1`
 
 Expected: FAIL because init/doctor still report all lifecycle adapters unsupported.
 
-- [ ] **Step 3: Implement exact reporting**
+- [x] **Step 3: Implement exact reporting**
 
 Keep MCP success independent from hook success. A supported-but-unconfigured hook is a warning, not a reason to corrupt or remove MCP configuration. `knowl upgrade` continues schema/config maintenance; `knowl init` is the operation that detects and installs host integrations.
 
-- [ ] **Step 4: Verify GREEN and commit**
+- [x] **Step 4: Verify GREEN and commit**
 
 Run: `rtk npm.cmd test -- tests/cli/init-flow.test.ts tests/cli/cli.test.ts --maxWorkers=1`
 
