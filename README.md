@@ -304,6 +304,4 @@ The package payload is limited to:
 
 ## License
 
-Knowl is source-available under a custom restrictive license. You may use the software, but you may not copy, redistribute, modify, sublicense, sell, monetize, or use it as part of a paid product, hosted service, consulting deliverable, or revenue-generating offering, except for copies technically necessary to install, back up, and run it.
-
-See [LICENSE](LICENSE) for the full terms.
+Knowl is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for the full terms.

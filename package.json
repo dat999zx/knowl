@@ -32,7 +32,7 @@
     "sqlite"
   ],
   "author": "",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "Apache-2.0",
   "dependencies": {
     "@ai-sdk/anthropic": "^1.1.0",
     "@ai-sdk/openai": "^1.1.0",
