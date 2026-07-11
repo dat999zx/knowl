@@ -67,6 +67,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 <!-- KNOWL_PROJECT_MEMORY -->
 ## Knowl Project Memory
 
+- `knowl init` installs automatic lifecycle capture when a host supports a verified hook format. Unsupported hosts use `knowl task run` as the manual fallback; neither path stores raw transcripts.
 - At the start of a new project-specific session, call `knowl_recent` first to load recent active knowledge and knowledge commits before inspecting files or editing code.
 - After `knowl_recent`, use `knowl_query` for specific questions. Use 2-6 concise search keywords from the user's question, not the whole question text.
 - Do not use `knowl_ask` for MCP first-pass lookup. MCP agents already have a model; use `knowl_recent` and `knowl_query` for retrieval.
@@ -89,5 +90,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - Before the final answer, check whether the work produced durable knowledge: implemented feature summaries, setup steps, architecture changes, important commands, decisions, constraints, recurring bugs, gotchas, and verified project facts. Store useful outcomes in Knowl before responding.
 - Store durable knowledge as concise structured atoms, not raw chat transcripts. Use raw conversation only as optional source/evidence when it is useful.
 - Do not store temporary debugging noise, failed attempts, secrets, credentials, or speculative ideas unless the user explicitly says they are durable project knowledge.
+- All Knowl writes are secret-validated. If a write is rejected, do not retry with redacted secret material; store only the durable non-sensitive fact.
+- Use `knowl audit` to inspect memory integrity. Snapshot restore requires `--confirm` and creates a pre-restore snapshot.
 - Prefer current active Knowl state over stale conversation memory when answering questions about this project.
 <!-- /KNOWL_PROJECT_MEMORY -->
