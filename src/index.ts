@@ -34,6 +34,8 @@ import { isEvidenceStale, listEvidenceForItem } from './store/evidence-repositor
 import { queryKnowledgeForAgent } from './store/agent-query.js';
 import { evaluateRetrieval, RetrievalEvaluationCase } from './store/retrieval-evaluation.js';
 import { getKnowledgeAccessReport } from './store/access-feedback.js';
+import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions, startMemorySession } from './store/session-repository.js';
+import { captureMemorySessionEvent } from './store/session-capture.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -831,7 +833,22 @@ program
     }
   });
 
-// --- 12. TASK COMMAND ---
+// --- 12. SESSION COMMAND ---
+const sessionCommand = program.command('session').description('Capture bounded temporary session memory');
+sessionCommand.command('start').argument('<title>').option('-q, --query <query>').option('--agent <agent>').option('--json').action(async (title, options) => {
+  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await startMemorySession({ title, query: options.query, agent: options.agent }); console.log(options.json ? JSON.stringify(result) : `Session started: ${result.id}`); await closeDb(); } catch (error: any) { console.error(`Error starting session: ${error.message}`); process.exit(1); }
+});
+sessionCommand.command('event').argument('<id>').argument('<type>').option('--exit-code <code>').option('--summary <summary>').option('--command <command>').option('--json').action(async (id, type, options) => {
+  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await captureMemorySessionEvent(id, type, { exitCode: options.exitCode === undefined ? undefined : Number(options.exitCode), summary: options.summary, command: options.command }); console.log(options.json ? JSON.stringify(result) : `Session event recorded: ${result.id}`); await closeDb(); } catch (error: any) { console.error(`Error recording session event: ${error.message}`); process.exit(1); }
+});
+sessionCommand.command('finish').argument('<id>').requiredOption('--status <status>', 'finished or failed').option('--summary <summary>').option('--json').action(async (id, options) => {
+  try { if (options.status !== 'finished' && options.status !== 'failed') throw new Error('Status must be finished or failed.'); const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await finishMemorySession(id, options.status, options.summary); console.log(options.json ? JSON.stringify(result) : `Session ${result.status}: ${result.id}`); await closeDb(); } catch (error: any) { console.error(`Error finishing session: ${error.message}`); process.exit(1); }
+});
+sessionCommand.command('recover').option('--json').action(async (options) => {
+  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const recovered = await recoverAbandonedSessions(); const purgedEventCount = await purgeExpiredSessionEvents(); const result = { recoveredCount: recovered.length, purgedEventCount }; console.log(options.json ? JSON.stringify(result) : `Recovered: ${result.recoveredCount}; purged events: ${result.purgedEventCount}`); await closeDb(); } catch (error: any) { console.error(`Error recovering sessions: ${error.message}`); process.exit(1); }
+});
+
+// --- 13. TASK COMMAND ---
 const taskCommand = program
   .command('task')
   .description('Run a manual Knowl work loop around multi-step execution');

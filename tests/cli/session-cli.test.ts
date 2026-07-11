@@ -1,0 +1,30 @@
+import { execSync } from 'node:child_process';
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+
+const TEST_DIR = path.resolve('./.knowl-session-cli-test');
+const CLI_PATH = path.resolve('./dist/index.js');
+
+describe('session CLI', () => {
+  beforeAll(async () => {
+    await fs.rm(TEST_DIR, { recursive: true, force: true });
+    await fs.mkdir(TEST_DIR, { recursive: true });
+    execSync(`node "${CLI_PATH}" init --yes`, { cwd: TEST_DIR, encoding: 'utf-8' });
+  }, 15_000);
+  afterAll(async () => { await fs.rm(TEST_DIR, { recursive: true, force: true }).catch(() => {}); });
+
+  it('starts, records, finishes, and recovers sessions with JSON output', () => {
+    const started = JSON.parse(execSync(`node "${CLI_PATH}" session start "Implement search" --query "retrieval" --json`, { cwd: TEST_DIR, encoding: 'utf-8' }));
+    expect(started).toMatchObject({ id: expect.any(String), status: 'active', title: 'Implement search' });
+
+    const event = JSON.parse(execSync(`node "${CLI_PATH}" session event ${started.id} command --exit-code 1 --summary "test command failed" --json`, { cwd: TEST_DIR, encoding: 'utf-8' }));
+    expect(event).toMatchObject({ sessionId: started.id, type: 'command', payload: { exitCode: 1, summary: 'test command failed' } });
+
+    const finished = JSON.parse(execSync(`node "${CLI_PATH}" session finish ${started.id} --status failed --summary "failure recorded" --json`, { cwd: TEST_DIR, encoding: 'utf-8' }));
+    expect(finished).toMatchObject({ id: started.id, status: 'failed' });
+
+    const recovered = JSON.parse(execSync(`node "${CLI_PATH}" session recover --json`, { cwd: TEST_DIR, encoding: 'utf-8' }));
+    expect(recovered).toMatchObject({ recoveredCount: expect.any(Number), purgedEventCount: expect.any(Number) });
+  }, 15_000);
+});
