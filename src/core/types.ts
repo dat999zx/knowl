@@ -192,6 +192,10 @@ export interface ProjectConfig {
       cacheDir?: string;
     };
   };
+  memory?: {
+    organization?: { enabled?: boolean; path?: string };
+    global?: { enabled?: boolean; path?: string };
+  };
   security: {
     rejectSecrets: boolean;
     secretPatterns: string[];

@@ -12,12 +12,17 @@ export type DbConnection = LibSQLDatabase<typeof schema> | Parameters<Parameters
 let dbInstance: LibSQLDatabase<typeof schema> | null = null;
 let clientInstance: Client | null = null;
 let projectRootInstance: string | null = null;
+let databasePathInstance: string | null = null;
 
 /**
  * Initializes the database connection and runs schema bootstrap.
  */
 export async function initDb(projectRoot: string): Promise<LibSQLDatabase<typeof schema>> {
   const dbPath = path.join(projectRoot, '.knowl', 'knowl.db');
+  return initDbPath(dbPath, projectRoot);
+}
+
+export async function initDbPath(dbPath: string, projectRoot = path.dirname(path.dirname(dbPath))): Promise<LibSQLDatabase<typeof schema>> {
   const fileUrl = `file:${dbPath}`;
 
   try {
@@ -29,9 +34,23 @@ export async function initDb(projectRoot: string): Promise<LibSQLDatabase<typeof
 
     dbInstance = drizzle(client, { schema });
     projectRootInstance = path.resolve(projectRoot);
+    databasePathInstance = path.resolve(dbPath);
     return dbInstance;
   } catch (error: any) {
     throw new DatabaseError(`Failed to initialize database at "${dbPath}": ${error.message}`);
+  }
+}
+
+export async function withDbPath<T>(dbPath: string, run: () => Promise<T>): Promise<T> {
+  const previousPath = databasePathInstance;
+  const previousRoot = projectRootInstance;
+  await closeDb();
+  await initDbPath(dbPath);
+  try {
+    return await run();
+  } finally {
+    await closeDb();
+    if (previousPath) await initDbPath(previousPath, previousRoot ?? path.dirname(path.dirname(previousPath)));
   }
 }
 
@@ -68,5 +87,6 @@ export async function closeDb(): Promise<void> {
     clientInstance = null;
     dbInstance = null;
     projectRootInstance = null;
+    databasePathInstance = null;
   }
 }
