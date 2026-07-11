@@ -42,6 +42,7 @@ import { bootstrapAgentSession } from './store/context-bootstrap.js';
 import { listAssertions } from './store/assertions.js';
 import { listActiveConflictKeys } from './store/conflicts.js';
 import { composeContext } from './store/context-composer.js';
+import { indexCode, listCodeSymbols } from './code/symbol-index.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -370,6 +371,10 @@ program.command('supersede').argument('<itemId>').argument('<replacementId>').ac
 program.command('context').option('--query <query>').option('--task <task>').requiredOption('--token-budget <budget>').action(async options => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await composeContext(project.id, { query: options.query, task: options.task, tokenBudget: Number(options.tokenBudget) }), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error composing context: ${error.message}`); process.exit(1); }
 });
+
+const codeCommand = program.command('code').description('Index and inspect project code symbols');
+codeCommand.command('index').action(async () => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); await indexCode(root); console.log('Code symbols indexed.'); await closeDb(); } catch (error: any) { console.error(`Error indexing code: ${error.message}`); process.exit(1); } });
+codeCommand.command('symbols').argument('<path>').action(async filePath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listCodeSymbols(filePath), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading code symbols: ${error.message}`); process.exit(1); } });
 
 // --- 4. DECIDE COMMAND ---
 program
