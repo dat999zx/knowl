@@ -111,6 +111,22 @@ export interface FilterResult {
   reason?: string;
 }
 
+export type KnowledgeWriteInput = {
+  title?: string | null;
+  content?: string | null;
+  reasoning?: string | null;
+  source?: string | null;
+  affectedPaths?: string[] | null;
+  rawOutput?: string | null;
+};
+
+export type KnowledgeWriteValidationOptions = {
+  rejectSecrets?: boolean;
+  secretPatterns?: string[];
+  maxFieldLength?: number;
+  maxRawOutputLength?: number;
+};
+
 export interface KnowledgeAtom {
   category: KnowledgeCategory;
   title: string;
