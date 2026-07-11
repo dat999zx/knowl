@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { index, primaryKey, sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 
 export const knowledgeItems = sqliteTable('knowledge_items', {
   id: text('id').primaryKey(),
@@ -27,6 +27,29 @@ export const knowledgeCommits = sqliteTable('knowledge_commits', {
   changes: text('changes', { mode: 'json' }).notNull(), // CommitChange[]
   createdAt: text('created_at').notNull(),
 });
+
+export const evidence = sqliteTable('evidence', {
+  id: text('id').primaryKey(),
+  type: text('type').notNull(),
+  locator: text('locator').notNull(),
+  contentHash: text('content_hash'),
+  excerpt: text('excerpt'),
+  observedAt: text('observed_at').notNull(),
+  metadata: text('metadata', { mode: 'json' }),
+}, (table) => [
+  index('idx_evidence_locator').on(table.locator),
+  index('idx_evidence_type').on(table.type),
+  index('idx_evidence_observed').on(table.observedAt),
+]);
+
+export const knowledgeEvidence = sqliteTable('knowledge_evidence', {
+  knowledgeItemId: text('knowledge_item_id').notNull().references(() => knowledgeItems.id, { onDelete: 'cascade' }),
+  evidenceId: text('evidence_id').notNull().references(() => evidence.id, { onDelete: 'cascade' }),
+  relationship: text('relationship').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.knowledgeItemId, table.evidenceId] }),
+  index('idx_knowledge_evidence_relationship').on(table.relationship),
+]);
 
 export const skillSteps = sqliteTable('skill_steps', {
   id: text('id').primaryKey(),

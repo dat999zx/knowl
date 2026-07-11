@@ -47,6 +47,25 @@ export interface KnowledgeCommit {
   createdAt: string;
 }
 
+export type EvidenceType = 'file' | 'symbol' | 'commit' | 'test' | 'command' | 'url' | 'user' | 'agent';
+export type EvidenceRelationship = 'supports' | 'contradicts' | 'derived_from';
+
+export interface Evidence {
+  id: string;
+  type: EvidenceType;
+  locator: string;
+  contentHash?: string | null;
+  excerpt?: string | null;
+  observedAt: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface KnowledgeEvidence {
+  knowledgeItemId: string;
+  evidenceId: string;
+  relationship: EvidenceRelationship;
+}
+
 export interface CommitChange {
   itemId: string;
   action: 'insert' | 'update' | 'delete' | 'supersede' | 'deprecate' | 'archive' | 'reject' | 'restore';

@@ -287,6 +287,29 @@ describe('Storage Layer', () => {
     expect(retrieved!.alternatives).toEqual(['MongoDB', 'MySQL']);
   });
 
+  it('creates idempotent evidence tables with constrained cascading links', async () => {
+    const db = getDb() as any;
+    const tables = await db.all(sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('evidence', 'knowledge_evidence')`);
+    expect(tables.map((row: any) => row.name)).toEqual(expect.arrayContaining(['evidence', 'knowledge_evidence']));
+
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const first = await repo.createKnowledgeItem(project!.id, {
+      category: 'fact', title: 'Evidence cascade first', content: 'First evidence target.',
+    });
+    await db.run(sql`INSERT INTO evidence (id, type, locator, observed_at) VALUES ('evidence-cascade', 'file', 'src/auth.ts', '2026-07-11T00:00:00.000Z')`);
+    await db.run(sql`INSERT INTO knowledge_evidence (knowledge_item_id, evidence_id, relationship) VALUES (${first.id}, 'evidence-cascade', 'supports')`);
+    await expect(db.run(sql`INSERT INTO knowledge_evidence (knowledge_item_id, evidence_id, relationship) VALUES (${first.id}, 'evidence-cascade', 'invalid')`)).rejects.toThrow();
+    await repo.deleteKnowledgeItem(first.id);
+    expect(await db.all(sql`SELECT * FROM knowledge_evidence WHERE evidence_id = 'evidence-cascade'`)).toHaveLength(0);
+
+    const second = await repo.createKnowledgeItem(project!.id, {
+      category: 'fact', title: 'Evidence cascade second', content: 'Second evidence target.',
+    });
+    await db.run(sql`INSERT INTO knowledge_evidence (knowledge_item_id, evidence_id, relationship) VALUES (${second.id}, 'evidence-cascade', 'derived_from')`);
+    await db.run(sql`DELETE FROM evidence WHERE id = 'evidence-cascade'`);
+    expect(await db.all(sql`SELECT * FROM knowledge_evidence WHERE knowledge_item_id = ${second.id}`)).toHaveLength(0);
+  });
+
   it('should support updating knowledge items', async () => {
     const project = await repo.getProjectByRootPath(TEST_ROOT);
     const projectId = project!.id;

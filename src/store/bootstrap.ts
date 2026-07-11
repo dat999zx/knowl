@@ -45,6 +45,23 @@ const SCHEMA_STATEMENTS = [
     created_at TEXT NOT NULL
   );`,
 
+  `CREATE TABLE IF NOT EXISTS evidence (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL,
+    locator TEXT NOT NULL,
+    content_hash TEXT,
+    excerpt TEXT,
+    observed_at TEXT NOT NULL,
+    metadata TEXT
+  );`,
+
+  `CREATE TABLE IF NOT EXISTS knowledge_evidence (
+    knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
+    evidence_id TEXT NOT NULL REFERENCES evidence(id) ON DELETE CASCADE,
+    relationship TEXT NOT NULL CHECK (relationship IN ('supports', 'contradicts', 'derived_from')),
+    PRIMARY KEY (knowledge_item_id, evidence_id)
+  );`,
+
   `CREATE TABLE IF NOT EXISTS skill_steps (
     id TEXT PRIMARY KEY,
     knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
@@ -73,6 +90,10 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_ki_status ON knowledge_items(status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_updated ON knowledge_items(updated_at);`,
   `CREATE INDEX IF NOT EXISTS idx_ke_model ON knowledge_embeddings(provider, model);`,
+  `CREATE INDEX IF NOT EXISTS idx_evidence_locator ON evidence(locator);`,
+  `CREATE INDEX IF NOT EXISTS idx_evidence_type ON evidence(type);`,
+  `CREATE INDEX IF NOT EXISTS idx_evidence_observed ON evidence(observed_at);`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_relationship ON knowledge_evidence(relationship);`,
 
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
