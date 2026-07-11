@@ -372,7 +372,7 @@ rtk git commit -m "feat: diagnose automatic host memory capture"
 - Modify: `docs/superpowers/plans/2026-07-11-host-neutral-agent-hooks.md`
 - Modify: `tests/cli/agent-lifecycle.test.ts`
 
-- [ ] **Step 1: Add end-to-end CLI coverage**
+- [x] **Step 1: Add end-to-end CLI coverage**
 
 In a temporary old Knowl project:
 
@@ -383,7 +383,7 @@ In a temporary old Knowl project:
 5. Pipe a secret and assert no DB mutation plus no secret echo.
 6. Simulate stale active state and verify session-start recovery.
 
-- [ ] **Step 2: Document human setup**
+- [x] **Step 2: Document human setup**
 
 Document only user-facing setup:
 
@@ -400,7 +400,7 @@ knowl init codex claude cursor
 
 Explain that a trusted project and new host session may be required. Document the generic contract as an integration API for unsupported hosts, not a normal user command.
 
-- [ ] **Step 3: Run focused and full verification**
+- [x] **Step 3: Run focused and full verification**
 
 Run:
 
@@ -414,7 +414,7 @@ rtk node dist/index.js doctor
 
 Expected: all tests pass, build exits 0, diff check is clean, doctor reports verified lifecycle support for configured local fixtures/current host.
 
-- [ ] **Step 4: Commit and store durable outcome**
+- [x] **Step 4: Commit and store durable outcome**
 
 ```powershell
 rtk git add README.md tests/cli/agent-lifecycle.test.ts docs/superpowers/plans/2026-07-11-host-neutral-agent-hooks.md

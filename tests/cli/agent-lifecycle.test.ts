@@ -97,5 +97,43 @@ describe('agent lifecycle CLI', () => {
       status: 'finished',
     })));
     expect(stopped).toMatchObject({ accepted: true, sessionId: started.sessionId, promotion: expect.any(Object) });
+
+    const duplicate = JSON.parse(run(['agent-hook', 'generic', 'turn-stop', '--json'], JSON.stringify({
+      sessionId: 'generic-session',
+      turnId: 'generic-turn',
+      cwd: TEST_DIR,
+      status: 'finished',
+    })));
+    expect(duplicate).toEqual({ accepted: false, reason: 'event-loss' });
+  }, 15_000);
+
+  it('returns host-native context and rejects secret-bearing host payloads safely', () => {
+    const context = JSON.parse(run(['agent-hook', 'codex', 'SessionStart', '--json'], JSON.stringify({
+      session_id: 'codex-session',
+      cwd: TEST_DIR,
+      hook_event_name: 'SessionStart',
+    })));
+    expect(context).toMatchObject({
+      hookSpecificOutput: {
+        hookEventName: 'SessionStart',
+        additionalContext: expect.stringContaining('KNOWL'),
+      },
+    });
+
+    const secret = 'sk-abcdefghijklmnopqrstuvwxyz123456';
+    let rejected: any;
+    try {
+      run(['agent-hook', 'generic', 'turn-start', '--json'], JSON.stringify({
+        sessionId: 'secret-session',
+        turnId: 'secret-turn',
+        cwd: TEST_DIR,
+        title: secret,
+      }));
+    } catch (error: any) {
+      rejected = error;
+    }
+    expect(rejected.status).toBe(1);
+    expect(rejected.stderr.toString()).toContain('secret material was detected');
+    expect(rejected.stderr.toString()).not.toContain(secret);
   }, 15_000);
 });

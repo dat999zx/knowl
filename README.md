@@ -52,7 +52,7 @@ Initialize a project from the project root:
 knowl init
 ```
 
-This creates `.knowl/config.json`, bootstraps `.knowl/knowl.db`, installs Knowl guidance into `AGENTS.md`, and ensures `.knowl/` is ignored by git.
+This creates `.knowl/config.json`, bootstraps `.knowl/knowl.db`, installs Knowl guidance into `AGENTS.md`, ensures `.knowl/` is ignored by git, and offers project-local MCP plus lifecycle-hook setup for detected agents.
 
 Record a decision:
 
@@ -75,10 +75,11 @@ Choose detected agents interactively, or configure them explicitly:
 
 ```bash
 knowl init
-knowl init codex claude
+knowl init codex claude cursor
+knowl doctor
 ```
 
-Project-local MCP config is preferred. Global-only clients require confirmation unless `--yes` is supplied.
+Project-local MCP and hook config is preferred. Start a new agent session after setup, and trust the repository when the host asks before running project hooks. Claude Desktop receives MCP configuration but remains lifecycle-unsupported because it does not expose a verified project hook surface.
 
 Wrap work with an automatic Knowl work loop:
 
@@ -107,9 +108,11 @@ When a terminal session is finished normally, Knowl deterministically promotes a
 
 ### Agent lifecycle automation
 
-Hosts with a verified lifecycle-hook format can invoke one bounded command: `knowl agent-event session-start|session-event|session-stop|session-recover`. A start event creates or reuses a session and returns compact context; events never retain raw transcripts. Malformed or secret-bearing payloads are rejected, while a late event from a crashed hook is safely dropped and stale sessions recover on the next recovery event.
+`knowl init` installs verified project-local hooks for Codex CLI, Claude Code, and Cursor. Those hooks call the internal `knowl agent-hook <host> <event>` translator, which normalizes vendor payloads into bounded session events. Session and prompt starts receive compact current context; successful commands, file changes, tests, failures, compaction checkpoints, and turn completion feed the existing validation/evidence/promotion pipeline.
 
-Hook support is host-specific. Knowl never guesses or writes an unverified host-hook configuration. When lifecycle status is `unsupported` or `degraded`, MCP remains available and `knowl task run` is the universal fallback.
+Raw prompts, transcripts, stdout/stderr, environment variables, and unknown fields are not retained. Malformed or secret-bearing payloads are rejected, duplicate stop events are idempotently dropped, and stale sessions recover at the next session start. A generic stdin-JSON contract is available for other hosts, but normal users only run `knowl init` and `knowl doctor`.
+
+Hook support remains host-specific. Knowl never guesses or writes an unverified host configuration. Unsupported hosts retain MCP access; `knowl task run` remains the manual fallback.
 
 Create and run a learned skill package:
 
@@ -203,6 +206,7 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl import <path> [--dry-run]` | Validate and import JSONL memory without auto-resolving conflicts. |
 | `knowl view` | Start the read-only local viewer on `127.0.0.1`. |
 | `knowl agent-event <event>` | Receive bounded host lifecycle events; accepts structured flags or JSON on stdin. |
+| `knowl agent-hook <host> <event>` | Internal host-hook translator used by project-local automatic capture. |
 | `knowl session start|event|finish|recover` | Manage bounded, expiring scratch session events and recover stale sessions. |
 | `knowl skill list` | List learned file-backed skill packages under `.knowl/skills`. |
 | `knowl skill read <name>` | Print `skill.json` and `SKILL.md` for a learned skill package. |
