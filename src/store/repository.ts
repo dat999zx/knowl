@@ -12,10 +12,12 @@ import {
   CommitChange,
   KnowledgeCategory,
   KnowledgeFreshness,
-  KnowledgeStatus
+  KnowledgeStatus,
+  KnowledgeWriteValidationOptions,
 } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
+import { KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 
 export const LOCAL_PROJECT_ID = 'local';
 
@@ -111,8 +113,10 @@ export async function createKnowledgeItem(
     confidence?: number;
   },
   steps?: string[],
-  dbConnection?: DbConnection
+  dbConnection?: DbConnection,
+  validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<KnowledgeItem> {
+  validateKnowledgeWrite(item, validationOptions);
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
   const id = generateId();
@@ -206,7 +210,8 @@ export async function updateKnowledgeItem(
   id: string,
   updates: Partial<Omit<KnowledgeItem, 'id' | 'createdAt' | 'updatedAt'>>,
   steps?: string[],
-  dbConnection?: DbConnection
+  dbConnection?: DbConnection,
+  validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<KnowledgeItem> {
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
@@ -233,6 +238,7 @@ export async function updateKnowledgeItem(
       source: updates.source ?? current[0].source,
       affectedPaths,
     };
+    validateKnowledgeWrite(merged, validationOptions);
     const shouldRefreshHash = updates.contentHash === undefined && (
       updates.title !== undefined ||
       updates.content !== undefined ||
@@ -288,6 +294,7 @@ export async function updateKnowledgeItem(
       });
     }
   } catch (error: any) {
+    if (error instanceof KnowledgeValidationError) throw error;
     throw new DatabaseError(`Failed to update knowledge item: ${error.message}`);
   }
 }

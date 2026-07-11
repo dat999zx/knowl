@@ -8,6 +8,9 @@ const PEM_BLOCK = /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/i;
 const NAMED_SECRET = /\b(?:bearer|api[_-]?key|access[_-]?token|secret|password)\s*(?:=|:)?\s*[A-Za-z0-9._~+\/-]{16,}/i;
 const KNOWN_TOKEN = /\b(?:sk-[A-Za-z0-9_-]{16,}|AKIA[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/;
 const HIGH_ENTROPY_TOKEN = /\b(?=[A-Za-z0-9_-]{32,}\b)(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]+\b/;
+const GENERIC_SECRET_INDICATORS = new Set([
+  'password', 'api_key', 'token', 'secret', 'private_key', 'credential', 'db_password',
+]);
 
 export class KnowledgeValidationError extends Error {
   constructor(public readonly code: string, message: string) {
@@ -30,7 +33,12 @@ function stringFields(input: KnowledgeWriteInput): Array<[string, string]> {
 }
 
 function hasConfiguredPattern(value: string, patterns: string[]): boolean {
-  return patterns.some((pattern) => pattern.length > 0 && value.toLocaleLowerCase().includes(pattern.toLocaleLowerCase()));
+  return patterns.some((pattern) => {
+    const normalized = pattern.toLocaleLowerCase();
+    return normalized.length > 0 &&
+      !GENERIC_SECRET_INDICATORS.has(normalized) &&
+      value.toLocaleLowerCase().includes(normalized);
+  });
 }
 
 export function validateKnowledgeWrite(

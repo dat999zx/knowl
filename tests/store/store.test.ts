@@ -13,7 +13,7 @@ import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
 import { getRecentContext } from '../../src/store/recent-context.js';
 import { searchKnowledgeEmbeddings, upsertKnowledgeEmbedding } from '../../src/store/vector.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
-import { updateKnowledgeItemWithCommit } from '../../src/store/knowledge-actions.js';
+import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../../src/store/knowledge-actions.js';
 import { checkKnowledgeDrift } from '../../src/store/drift.js';
 
 const TEST_ROOT = path.resolve('./.knowl-test');
@@ -304,6 +304,35 @@ describe('Storage Layer', () => {
 
     expect(updated.version).toBe(2);
     expect(updated.content).toBe('Auth flow completed with JWT.');
+  });
+
+  it('rejects secret-like direct repository and decision writes without commits', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const beforeItems = await repo.listKnowledgeItems(project!.id);
+    const beforeCommits = await repo.getKnowledgeCommits(project!.id);
+    const secret = 'sk-test-123456789012345678901234567890';
+
+    await expect(repo.createKnowledgeItem(project!.id, {
+      category: 'fact', title: 'Secret', content: secret,
+    })).rejects.toMatchObject({ code: 'KNOWLEDGE_SECRET_TOKEN' });
+    await expect(recordDecisionDirect(project!.id, {
+      title: 'Secret decision', content: secret,
+    })).rejects.toMatchObject({ code: 'KNOWLEDGE_SECRET_TOKEN' });
+
+    expect(await repo.listKnowledgeItems(project!.id)).toHaveLength(beforeItems.length);
+    expect(await repo.getKnowledgeCommits(project!.id)).toHaveLength(beforeCommits.length);
+  });
+
+  it('rejects secret-like direct updates with the validator rule code', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const item = await repo.createKnowledgeItem(project!.id, {
+      category: 'fact', title: 'Safe fact', content: 'Safe content.',
+    });
+
+    await expect(repo.updateKnowledgeItem(item.id, {
+      content: 'sk-test-123456789012345678901234567890',
+    })).rejects.toMatchObject({ code: 'KNOWLEDGE_SECRET_TOKEN' });
+    expect((await repo.getKnowledgeItem(item.id))!.content).toBe('Safe content.');
   });
 
   it('should store provenance and freshness metadata on knowledge items', async () => {

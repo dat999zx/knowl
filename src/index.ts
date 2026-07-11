@@ -420,7 +420,7 @@ program
         }, config);
 
         if (mergeResult.unresolvedContradictions.length > 0) {
-          const item = await recordDecisionDirect(project.id, atom, `Record decision (fallback): ${title}`);
+          const item = await recordDecisionDirect(project.id, atom, `Record decision (fallback): ${title}`, config);
           console.log(`✅ Recorded decision successfully! ID: ${item.id}`);
         } else if (mergeResult.supersededIds.length > 0) {
           const newId = mergeResult.insertedIds[0];
@@ -435,7 +435,7 @@ program
         }
       } else {
         console.log(`⚠️ No AI provider configured or API keys found. Falling back to direct insertion without conflict detection.`);
-        const item = await recordDecisionDirect(project.id, atom, `Record decision: ${title}`);
+        const item = await recordDecisionDirect(project.id, atom, `Record decision: ${title}`, config);
         console.log(`✅ Recorded decision successfully! ID: ${item.id}`);
       }
 

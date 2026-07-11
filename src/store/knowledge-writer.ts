@@ -1,4 +1,4 @@
-import { CommitChange, KnowledgeCategory, KnowledgeItem } from '../core/types.js';
+import { CommitChange, KnowledgeCategory, KnowledgeItem, KnowledgeWriteValidationOptions } from '../core/types.js';
 import { searchKnowledgeItems } from './search.js';
 import * as repo from './repository.js';
 
@@ -97,7 +97,8 @@ export async function findLikelyDuplicateKnowledgeItem(
 export async function storeKnowledgeItemDeduped(
   projectId: string,
   input: StoreKnowledgeInput,
-  commitMessage?: string
+  commitMessage?: string,
+  validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<StoreKnowledgeResult> {
   const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, input);
   if (duplicate) {
@@ -118,7 +119,9 @@ export async function storeKnowledgeItemDeduped(
       affectedPaths: input.affectedPaths,
       confidence: input.confidence,
     },
-    input.steps
+    input.steps,
+    undefined,
+    validationOptions,
   );
 
   await repo.createKnowledgeCommit(projectId, commitMessage || `Store ${input.category}: ${input.title}`, [
@@ -131,7 +134,8 @@ export async function storeKnowledgeItemDeduped(
 export async function storeKnowledgeAtomsDeduped(
   projectId: string,
   atoms: StoreKnowledgeInput[],
-  commitMessage?: string
+  commitMessage?: string,
+  validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<StoreKnowledgeBatchResult> {
   const changes: CommitChange[] = [];
   const itemIds: string[] = [];
@@ -166,7 +170,9 @@ export async function storeKnowledgeAtomsDeduped(
         affectedPaths: atom.affectedPaths,
         confidence: atom.confidence,
       },
-      atom.steps
+      atom.steps,
+      undefined,
+      validationOptions,
     );
 
     itemIds.push(item.id);

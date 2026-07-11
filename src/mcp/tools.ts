@@ -15,6 +15,7 @@ import { previewKnowledgeGc, applyKnowledgeGc } from '../store/gc.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop } from '../store/work-loop.js';
 import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage } from '../skills/registry.js';
+import { KnowledgeValidationError } from '../core/knowledge-validation.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
@@ -534,7 +535,8 @@ export function registerTools(
             confidence,
             steps,
           },
-          `Store ${category}: ${title}`
+          `Store ${category}: ${title}`,
+          config?.security,
         );
 
         if (result.action === 'duplicate') {
@@ -564,7 +566,8 @@ export function registerTools(
         const result = await storeKnowledgeAtomsDeduped(
           projectId!,
           atoms,
-          commitMessage || `Store ${atoms.length} structured knowledge atom(s)`
+          commitMessage || `Store ${atoms.length} structured knowledge atom(s)`,
+          config?.security,
         );
 
         return {
@@ -629,6 +632,7 @@ export function registerTools(
         }, {
           projectRoot,
           freshness,
+          validationOptions: config?.security,
         });
 
         return {
@@ -716,9 +720,12 @@ export function registerTools(
 
       throw new Error(`Unknown tool: ${name}`);
     } catch (error: any) {
+      const message = error instanceof KnowledgeValidationError
+        ? `${error.code}: ${error.message}`
+        : error.message;
       return {
         isError: true,
-        content: [{ type: 'text', text: `Error executing tool "${name}": ${error.message}` }],
+        content: [{ type: 'text', text: `Error executing tool "${name}": ${message}` }],
       };
     }
   });

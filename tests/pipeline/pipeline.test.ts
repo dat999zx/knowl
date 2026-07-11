@@ -4,6 +4,7 @@ import path from 'node:path';
 import { initDb, closeDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { runPipeline } from '../../src/pipeline/pipeline.js';
+import { runFilter } from '../../src/pipeline/filter.js';
 import { getHierarchicalKnowledge } from '../../src/store/queries.js';
 import { ProjectConfig } from '../../src/core/types.js';
 
@@ -79,6 +80,14 @@ describe('Pipeline Integration', () => {
     expect(result.passedFilter).toBe(false);
     expect(result.filterReason).toBe('Rejected conversational noise');
     expect(result.extractedCount).toBe(0);
+  });
+
+  it('blocks raw secret input before asking the AI filter', async () => {
+    const result = await runFilter('sk-test-123456789012345678901234567890', MOCK_CONFIG);
+
+    expect(result).toEqual(expect.objectContaining({ pass: false }));
+    expect(result.reason).toMatch(/secret/i);
+    expect(filterInput).not.toHaveBeenCalled();
   });
 
   it('should extract and insert new knowledge items', async () => {

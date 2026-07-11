@@ -406,6 +406,25 @@ describe('MCP Server Layer', () => {
     expect(items).toHaveLength(2);
   });
 
+  it('rejects secret-like MCP atom writes without persisting a commit', async () => {
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_ingest_atoms',
+      arguments: {
+        atoms: [{
+          category: 'fact',
+          title: 'Secret',
+          content: 'sk-test-123456789012345678901234567890',
+        }],
+      },
+    });
+
+    expect(res.result.isError).toBe(true);
+    expect(res.result.content[0].text).toMatch(/KNOWLEDGE_SECRET_TOKEN/);
+    const db = (await import('../../src/store/database.js')).getDb();
+    expect(await db.select().from((await import('../../src/store/schema.js')).knowledgeItems)).toHaveLength(0);
+    expect(await db.select().from((await import('../../src/store/schema.js')).knowledgeCommits)).toHaveLength(0);
+  });
+
   it('should support a work loop through MCP tools', async () => {
     await repo.createKnowledgeItem(projectId, {
       category: 'decision',

@@ -4,6 +4,7 @@ import { findLikelyDuplicateKnowledgeItem } from './knowledge-writer.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
 import { getCurrentGitCommit } from './drift.js';
+import { KnowledgeWriteValidationOptions } from '../core/types.js';
 
 export type DirectDecisionInput = {
   title: string;
@@ -34,7 +35,7 @@ export async function recordDecisionDirect(
     reasoning: input.reasoning,
     alternatives: input.alternatives,
     tags: input.tags,
-  });
+  }, undefined, undefined, config?.security);
 
   if (existing) {
     await repo.updateKnowledgeItem(existing.id, {
@@ -80,6 +81,7 @@ export async function updateKnowledgeItemWithCommit(
     projectRoot?: string | null;
     sourceCommit?: string | null;
     freshness?: 'fresh' | 'stale' | 'needs_review';
+    validationOptions?: KnowledgeWriteValidationOptions;
   }
 ): Promise<KnowledgeItem> {
   const beforeItem = await repo.getKnowledgeItem(id);
@@ -105,7 +107,7 @@ export async function updateKnowledgeItemWithCommit(
     ...updates,
     ...(resolvedSourceCommit !== undefined ? { sourceCommit: resolvedSourceCommit } : {}),
     ...(shouldRefreshFreshness || options?.freshness ? { freshness: options?.freshness || 'fresh' } : {}),
-  });
+  }, undefined, undefined, options?.validationOptions);
   let action: CommitChange['action'] = 'update';
   if (updates.status && updates.status !== beforeItem.status) {
     if (updates.status === 'active') {
