@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { mergeJsonMcpConfig, McpEntry } from './files.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentIntegrationResult } from './types.js';
+import { unsupportedLifecycleResult } from './lifecycle-config.js';
 
 function desktopConfigPath(environment: AgentEnvironment) {
   if (environment.platform === 'win32') return path.join(environment.appDataDir, 'Claude', 'claude_desktop_config.json');
@@ -39,5 +40,8 @@ export function createClaudeDesktopAdapter(environment: AgentEnvironment): Agent
     async verify(_root) {
       return configured(configPath, entry(environment));
     },
+    async lifecycleCapability() { return 'unsupported'; },
+    async configureLifecycle(_root) { return unsupportedLifecycleResult('claude-desktop', 'global', configPath); },
+    async verifyLifecycle() { return false; },
   };
 }

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { parse } from 'smol-toml';
 import { mergeCodexTomlConfig, mergeJsonMcpConfig, McpEntry } from './files.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentIntegrationResult } from './types.js';
+import { unsupportedLifecycleResult } from './lifecycle-config.js';
 
 function commandEntry(environment: AgentEnvironment): McpEntry {
   return { command: environment.platform === 'win32' ? 'knowl.cmd' : 'knowl', args: ['serve'] };
@@ -47,6 +48,9 @@ export function createCodexAdapter(environment: AgentEnvironment): AgentAdapter 
     async verify(root) {
       return (await this.detect(root)).configured;
     },
+    async lifecycleCapability() { return 'unsupported'; },
+    async configureLifecycle(root) { return unsupportedLifecycleResult('codex', 'project', configPath(root)); },
+    async verifyLifecycle() { return false; },
   };
 }
 
@@ -74,6 +78,9 @@ function createJsonProjectAdapter(
     async verify(root) {
       return (await this.detect(root)).configured;
     },
+    async lifecycleCapability() { return 'unsupported'; },
+    async configureLifecycle(root) { return unsupportedLifecycleResult(name, 'project', configPath(root)); },
+    async verifyLifecycle() { return false; },
   };
 }
 

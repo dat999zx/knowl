@@ -92,4 +92,18 @@ describe('agent adapters', () => {
     expect(parseAgentNames(['codex', 'claude', 'codex'])).toEqual(['codex', 'claude']);
     expect(() => parseAgentNames(['unknown'])).toThrow('Unsupported agent "unknown"');
   });
+
+  it('reports unverified lifecycle hook formats as unsupported without mutating configs', async () => {
+    const adapters = [createCodexAdapter(environment), createClaudeCodeAdapter(environment), createCursorAdapter(environment), createClaudeDesktopAdapter(environment)];
+    for (const adapter of adapters) {
+      expect(await adapter.lifecycleCapability(PROJECT)).toBe('unsupported');
+      expect(await adapter.configureLifecycle(PROJECT)).toMatchObject({ agent: adapter.name, status: 'skipped' });
+      expect(await adapter.verifyLifecycle(PROJECT)).toBe(false);
+    }
+
+    await expect(fs.access(path.join(PROJECT, '.codex', 'config.toml'))).rejects.toThrow();
+    await expect(fs.access(path.join(PROJECT, '.mcp.json'))).rejects.toThrow();
+    await expect(fs.access(path.join(PROJECT, '.cursor', 'mcp.json'))).rejects.toThrow();
+    await expect(fs.access(path.join(HOME, 'AppData', 'Roaming', 'Claude', 'claude_desktop_config.json'))).rejects.toThrow();
+  });
 });
