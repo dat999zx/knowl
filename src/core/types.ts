@@ -102,6 +102,31 @@ export interface KnowledgeEvidence {
   relationship: EvidenceRelationship;
 }
 
+export type CodeSymbolKind = 'class' | 'function' | 'method' | 'import' | 'export' | 'variable';
+
+export interface CodeFile {
+  path: string;
+  contentHash: string;
+  updatedAt: string;
+}
+
+export interface CodeSymbol {
+  locator: string;
+  filePath: string;
+  qualifiedName: string;
+  kind: CodeSymbolKind;
+  startLine: number;
+  endLine: number;
+  signature: string | null;
+  signatureHash: string | null;
+}
+
+export interface CodeSymbolEdge {
+  fromLocator: string;
+  toLocator: string;
+  kind: 'imports' | 'exports';
+}
+
 export type KnowledgeSearchExplanation = {
   finalScore: number;
   bm25Rank?: number;

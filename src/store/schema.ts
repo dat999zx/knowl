@@ -113,3 +113,29 @@ export const knowledgeEmbeddings = sqliteTable('knowledge_embeddings', {
   vector: text('vector', { mode: 'json' }).notNull(),
   updatedAt: text('updated_at').notNull(),
 });
+
+export const codeFiles = sqliteTable('code_files', {
+  path: text('path').primaryKey(),
+  contentHash: text('content_hash').notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const codeSymbols = sqliteTable('code_symbols', {
+  locator: text('locator').primaryKey(),
+  filePath: text('file_path').notNull().references(() => codeFiles.path, { onDelete: 'cascade' }),
+  qualifiedName: text('qualified_name').notNull(),
+  kind: text('kind').notNull(),
+  startLine: integer('start_line').notNull(),
+  endLine: integer('end_line').notNull(),
+  signature: text('signature'),
+  signatureHash: text('signature_hash'),
+}, (table) => [index('idx_code_symbols_file').on(table.filePath)]);
+
+export const codeSymbolEdges = sqliteTable('code_symbol_edges', {
+  fromLocator: text('from_locator').notNull(),
+  toLocator: text('to_locator').notNull(),
+  kind: text('kind').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.fromLocator, table.toLocator, table.kind] }),
+  index('idx_code_symbol_edges_target').on(table.toLocator),
+]);

@@ -124,13 +124,14 @@ const SCHEMA_STATEMENTS = [
   );`,
 
   `CREATE TABLE IF NOT EXISTS code_files (path TEXT PRIMARY KEY, content_hash TEXT NOT NULL, updated_at TEXT NOT NULL);`,
-  `CREATE TABLE IF NOT EXISTS code_symbols (locator TEXT PRIMARY KEY, file_path TEXT NOT NULL REFERENCES code_files(path) ON DELETE CASCADE, qualified_name TEXT NOT NULL, kind TEXT NOT NULL, start_line INTEGER NOT NULL, end_line INTEGER NOT NULL, signature TEXT);`,
+  `CREATE TABLE IF NOT EXISTS code_symbols (locator TEXT PRIMARY KEY, file_path TEXT NOT NULL REFERENCES code_files(path) ON DELETE CASCADE, qualified_name TEXT NOT NULL, kind TEXT NOT NULL, start_line INTEGER NOT NULL, end_line INTEGER NOT NULL, signature TEXT, signature_hash TEXT);`,
   `CREATE TABLE IF NOT EXISTS code_symbol_edges (from_locator TEXT NOT NULL, to_locator TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (from_locator, to_locator, kind));`,
 
   `CREATE INDEX IF NOT EXISTS idx_ki_cat_status ON knowledge_items(category, status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_status ON knowledge_items(status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_updated ON knowledge_items(updated_at);`,
   `CREATE INDEX IF NOT EXISTS idx_code_symbols_file ON code_symbols(file_path);`,
+  `CREATE INDEX IF NOT EXISTS idx_code_symbol_edges_target ON code_symbol_edges(to_locator);`,
   `CREATE INDEX IF NOT EXISTS idx_knowledge_assertions_item_validity ON knowledge_assertions(knowledge_item_id, valid_from, valid_to);`,
   `CREATE INDEX IF NOT EXISTS idx_knowledge_assertions_recorded ON knowledge_assertions(recorded_at);`,
   `CREATE INDEX IF NOT EXISTS idx_ke_model ON knowledge_embeddings(provider, model);`,
@@ -360,6 +361,13 @@ async function ensureMemorySessionColumns(client: Client): Promise<void> {
   if (!columns.includes('promotion_error_code')) await client.execute('ALTER TABLE memory_sessions ADD COLUMN promotion_error_code TEXT;');
 }
 
+async function ensureCodeIndexColumns(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'code_symbols'))) return;
+  const columns = await tableColumns(client, 'code_symbols');
+  if (!columns.includes('signature_hash')) await client.execute('ALTER TABLE code_symbols ADD COLUMN signature_hash TEXT;');
+  await client.execute('CREATE INDEX IF NOT EXISTS idx_code_symbol_edges_target ON code_symbol_edges(to_locator);');
+}
+
 async function backfillKnowledgeAssertions(client: Client): Promise<void> {
   await client.execute(`INSERT INTO knowledge_assertions (id, knowledge_item_id, content, valid_from, valid_to, recorded_at, replaced_at, confidence, source_evidence_id)
     SELECT lower(hex(randomblob(8))), id, content, created_at, NULL, updated_at, NULL, confidence, NULL
@@ -488,6 +496,7 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await ensureFreshnessColumns(client);
   await ensureConflictColumns(client);
   await ensureMemorySessionColumns(client);
+  await ensureCodeIndexColumns(client);
   await backfillKnowledgeAssertions(client);
   await repairSkillForeignKeys(client);
 }
