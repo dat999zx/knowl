@@ -17,6 +17,7 @@ import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js'
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage } from '../skills/registry.js';
 import { KnowledgeValidationError } from '../core/knowledge-validation.js';
 import { isEvidenceStale, listEvidenceForItem } from '../store/evidence-repository.js';
+import { recordKnowledgeFeedback } from '../store/access-feedback.js';
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
@@ -250,6 +251,20 @@ export function registerTools(
           inputSchema: {
             type: 'object',
             properties: { itemId: { type: 'string', description: 'Knowledge item ID.' } },
+            required: ['itemId'],
+          },
+        },
+        {
+          name: 'knowl_feedback',
+          description: 'Record append-only usefulness feedback for a retrieved knowledge item.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              itemId: { type: 'string', description: 'Knowledge item ID.' },
+              used: { type: 'boolean', description: 'Whether the result was used.' },
+              useful: { type: 'boolean', description: 'Whether the result was useful.' },
+              causedCorrection: { type: 'boolean', description: 'Whether the result caused a correction.' },
+            },
             required: ['itemId'],
           },
         },
@@ -629,6 +644,7 @@ export function registerTools(
           status: status as KnowledgeStatus,
           tags,
           limit,
+          surface: 'mcp',
           vector,
         };
         const items = explain
@@ -652,6 +668,12 @@ export function registerTools(
           stale: projectRoot ? await isEvidenceStale(item, projectRoot) : false,
         })));
         return { content: [{ type: 'text', text: JSON.stringify(evidence, null, 2) }] };
+      }
+
+      else if (name === 'knowl_feedback') {
+        const { itemId, used, useful, causedCorrection } = args as any;
+        const feedback = await recordKnowledgeFeedback({ itemId, used, useful, causedCorrection });
+        return { content: [{ type: 'text', text: `Recorded feedback for ${itemId}:\n\n${JSON.stringify(feedback, null, 2)}` }] };
       }
       
       else if (name === 'knowl_update') {

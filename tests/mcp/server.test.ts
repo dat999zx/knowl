@@ -143,6 +143,7 @@ describe('MCP Server Layer', () => {
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_store')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_ingest_atoms')).toBe(true);
+    expect(res.result.tools.some((t: any) => t.name === 'knowl_feedback')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_task_start')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_task_checkpoint')).toBe(true);
     expect(res.result.tools.some((t: any) => t.name === 'knowl_task_finish')).toBe(true);
@@ -314,6 +315,28 @@ describe('MCP Server Layer', () => {
     expect(res.result.isError).toBeUndefined();
     const items = JSON.parse(res.result.content[0].text);
     expect(items).toHaveLength(3);
+    const db = (await import('../../src/store/database.js')).getDb();
+    const access = await db.select().from((await import('../../src/store/schema.js')).knowledgeAccess);
+    expect(access).toHaveLength(3);
+    expect(access.every(item => item.surface === 'mcp')).toBe(true);
+  });
+
+  it('should record retrieval feedback through knowl_feedback', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Feedback target', content: 'Feedback is append-only.',
+    });
+
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_feedback',
+      arguments: { itemId: item.id, used: true, useful: true },
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+    expect(res.result.content[0].text).toContain('Recorded feedback');
+    const db = (await import('../../src/store/database.js')).getDb();
+    const access = await db.select().from((await import('../../src/store/schema.js')).knowledgeAccess);
+    expect(access).toEqual([expect.objectContaining({ knowledgeItemId: item.id, useful: true, used: true })]);
   });
 
   it('should skip duplicate structured knowledge when BM25 finds an existing match', async () => {

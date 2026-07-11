@@ -69,6 +69,19 @@ describe('CLI Integration', () => {
     expect(result.failedCaseIds).toEqual(expect.any(Array));
   });
 
+  it('should report retrieval access as JSON', () => {
+    const output = execSync(`node "${CLI_PATH}" access report --json`, {
+      cwd: TEST_DIR,
+      encoding: 'utf-8',
+    });
+
+    expect(JSON.parse(output)).toEqual(expect.objectContaining({
+      highValue: expect.any(Array),
+      staleFrequentlyRetrieved: expect.any(Array),
+      repeatedlyCorrected: expect.any(Array),
+    }));
+  });
+
   it('should create project .gitignore with .knowl during init', async () => {
     const ignoreDir = path.resolve('./.knowl-cli-new-gitignore-test');
     await fs.rm(ignoreDir, { recursive: true, force: true }).catch(() => {});

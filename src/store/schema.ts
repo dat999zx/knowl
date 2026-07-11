@@ -59,6 +59,21 @@ export const skillSteps = sqliteTable('skill_steps', {
   createdAt: text('created_at').notNull(),
 });
 
+export const knowledgeAccess = sqliteTable('knowledge_access', {
+  id: text('id').primaryKey(),
+  knowledgeItemId: text('knowledge_item_id').notNull().references(() => knowledgeItems.id, { onDelete: 'cascade' }),
+  queryFingerprint: text('query_fingerprint'),
+  retrievedAt: text('retrieved_at').notNull(),
+  surface: text('surface').notNull(),
+  rank: integer('rank').notNull(),
+  used: integer('used', { mode: 'boolean' }),
+  useful: integer('useful', { mode: 'boolean' }),
+  causedCorrection: integer('caused_correction', { mode: 'boolean' }),
+}, (table) => [
+  index('idx_knowledge_access_item_time').on(table.knowledgeItemId, table.retrievedAt),
+  index('idx_knowledge_access_fingerprint').on(table.queryFingerprint),
+]);
+
 export const skillMetadata = sqliteTable('skill_metadata', {
   knowledgeItemId: text('knowledge_item_id').primaryKey().references(() => knowledgeItems.id, { onDelete: 'cascade' }),
   usageCount: integer('usage_count').notNull().default(0),

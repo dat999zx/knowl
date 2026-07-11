@@ -1,6 +1,7 @@
 import { ExplainedKnowledgeItem, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { queryKnowledgeBase } from './queries.js';
 import { searchKnowledgeEmbeddings } from './vector.js';
+import { recordKnowledgeAccessBestEffort } from './access-feedback.js';
 
 const DEFAULT_AGENT_QUERY_LIMIT = 3;
 const CATEGORY_HINT_BOOST = 10;
@@ -52,6 +53,7 @@ export async function queryKnowledgeForAgent(
     status?: KnowledgeStatus;
     tags?: string[];
     query?: string;
+    surface?: string;
     limit?: number;
     vector?: {
       enabled?: boolean;
@@ -71,6 +73,7 @@ export async function queryKnowledgeForAgentExplained(
     status?: KnowledgeStatus;
     tags?: string[];
     query?: string;
+    surface?: string;
     limit?: number;
     vector?: { enabled?: boolean; provider?: string; model?: string; embedding?: number[] };
   },
@@ -118,7 +121,7 @@ export async function queryKnowledgeForAgentExplained(
   const tokens = queryTokens(options.query);
   const timestamps = [...ranked.values()].map(result => new Date(result.item.updatedAt).getTime());
 
-  return [...ranked.values()]
+  const items = [...ranked.values()]
     .sort((left, right) => {
       const leftCategoryBoost = options.category && left.item.category === options.category ? CATEGORY_HINT_BOOST : 0;
       const rightCategoryBoost = options.category && right.item.category === options.category ? CATEGORY_HINT_BOOST : 0;
@@ -155,4 +158,12 @@ export async function queryKnowledgeForAgentExplained(
         },
       };
     });
+
+  await Promise.all(items.map((item, index) => recordKnowledgeAccessBestEffort({
+    itemId: item.id,
+    query: options.query,
+    surface: options.surface ?? 'agent_query',
+    rank: index + 1,
+  })));
+  return items;
 }

@@ -33,6 +33,7 @@ import { createSnapshot, restoreSnapshot } from './store/snapshots.js';
 import { isEvidenceStale, listEvidenceForItem } from './store/evidence-repository.js';
 import { queryKnowledgeForAgent } from './store/agent-query.js';
 import { evaluateRetrieval, RetrievalEvaluationCase } from './store/retrieval-evaluation.js';
+import { getKnowledgeAccessReport } from './store/access-feedback.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -683,6 +684,7 @@ program
         const items = await queryKnowledgeForAgent(project.id, {
           query: testCase.query,
           status: 'active',
+          surface: 'cli_eval',
           limit: testCase.limit,
         });
         return {
@@ -716,7 +718,39 @@ program
     }
   });
 
-// --- 10. UPGRADE COMMAND ---
+// --- 10. ACCESS REPORT COMMAND ---
+program
+  .command('access')
+  .description('Inspect retrieval access feedback')
+  .command('report')
+  .description('Show high-value, stale, and corrected knowledge')
+  .option('--json', 'Print machine-readable JSON')
+  .action(async (options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+      const report = await getKnowledgeAccessReport();
+      if (options.json) {
+        console.log(JSON.stringify(report, null, 2));
+      } else {
+        console.log('KNOWL ACCESS REPORT');
+        for (const [label, items] of Object.entries(report)) {
+          console.log(`${label}:`);
+          for (const item of items) {
+            console.log(`- ${item.title} (${item.retrievalCount} retrievals, ${item.usefulCount} useful, ${item.causedCorrectionCount} corrections)`);
+          }
+        }
+      }
+      await closeDb();
+    } catch (error: any) {
+      console.error(`Error reporting access: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// --- 11. UPGRADE COMMAND ---
 program
   .command('upgrade')
   .description('Upgrade an existing KNOWL repository with the latest config, schema, and agent files')

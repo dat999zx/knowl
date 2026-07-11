@@ -62,6 +62,18 @@ const SCHEMA_STATEMENTS = [
     PRIMARY KEY (knowledge_item_id, evidence_id)
   );`,
 
+  `CREATE TABLE IF NOT EXISTS knowledge_access (
+    id TEXT PRIMARY KEY,
+    knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
+    query_fingerprint TEXT,
+    retrieved_at TEXT NOT NULL,
+    surface TEXT NOT NULL,
+    rank INTEGER NOT NULL,
+    used INTEGER,
+    useful INTEGER,
+    caused_correction INTEGER
+  );`,
+
   `CREATE TABLE IF NOT EXISTS skill_steps (
     id TEXT PRIMARY KEY,
     knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
@@ -94,6 +106,8 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_evidence_type ON evidence(type);`,
   `CREATE INDEX IF NOT EXISTS idx_evidence_observed ON evidence(observed_at);`,
   `CREATE INDEX IF NOT EXISTS idx_knowledge_evidence_relationship ON knowledge_evidence(relationship);`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_access_item_time ON knowledge_access(knowledge_item_id, retrieved_at);`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_access_fingerprint ON knowledge_access(query_fingerprint);`,
 
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
