@@ -45,6 +45,7 @@ import { composeContext } from './store/context-composer.js';
 import { indexCode, listCodeSymbols } from './code/symbol-index.js';
 import { exportKnowledge, importKnowledge } from './store/portability.js';
 import { synthesizeKnowledge } from './store/synthesis.js';
+import { startViewer } from './viewer/server.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -383,6 +384,8 @@ program.command('export').argument('<path>').action(async outputPath => { try { 
 program.command('import').argument('<path>').option('--dry-run').action(async (inputPath, options) => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await importKnowledge(path.resolve(inputPath), { dryRun: options.dryRun, projectRoot: root }), null, 2)); await closeDb(); } catch (error: any) { await closeDb().catch(() => {}); console.error(`Error importing knowledge: ${error.message}`); process.exit(1); } });
 
 program.command('synthesize').requiredOption('--scope <path-or-tag>').action(async options => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await synthesizeKnowledge(project.id, options.scope), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error synthesizing knowledge: ${error.message}`); process.exit(1); } });
+
+program.command('view').option('--port <port>').action(async options => { try { const root = await findProjectRoot(process.cwd()); const viewer = await startViewer(root, { port: options.port === undefined ? 0 : Number(options.port) }); console.log(`Knowl viewer: ${viewer.url}`); const stop = async () => { await viewer.close(); process.exit(0); }; process.once('SIGINT', stop); process.once('SIGTERM', stop); } catch (error: any) { console.error(`Error starting viewer: ${error.message}`); process.exit(1); } });
 
 
 // --- 4. DECIDE COMMAND ---
