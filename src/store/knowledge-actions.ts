@@ -1,10 +1,11 @@
-import { ProjectConfig, CommitChange, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
+import { ProjectConfig, CommitChange, EvidenceInput, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import * as repo from './repository.js';
 import { findLikelyDuplicateKnowledgeItem } from './knowledge-writer.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
 import { getCurrentGitCommit } from './drift.js';
 import { KnowledgeWriteValidationOptions } from '../core/types.js';
+import { attachEvidenceToKnowledge } from './evidence-repository.js';
 
 export type DirectDecisionInput = {
   title: string;
@@ -12,6 +13,7 @@ export type DirectDecisionInput = {
   reasoning?: string | null;
   alternatives?: string[] | null;
   tags?: string[] | null;
+  evidence?: EvidenceInput[];
 };
 
 export async function recordDecisionDirect(
@@ -36,6 +38,7 @@ export async function recordDecisionDirect(
     alternatives: input.alternatives,
     tags: input.tags,
   }, undefined, undefined, config?.security);
+  await attachEvidenceToKnowledge(item.id, input.evidence);
 
   if (existing) {
     await repo.updateKnowledgeItem(existing.id, {

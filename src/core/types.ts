@@ -66,6 +66,8 @@ export interface KnowledgeEvidence {
   relationship: EvidenceRelationship;
 }
 
+export type EvidenceInput = Omit<Evidence, 'id'> & { relationship?: EvidenceRelationship };
+
 export interface CommitChange {
   itemId: string;
   action: 'insert' | 'update' | 'delete' | 'supersede' | 'deprecate' | 'archive' | 'reject' | 'restore';
@@ -158,4 +160,5 @@ export interface KnowledgeAtom {
   affectedPaths?: string[] | null;
   confidence?: number;
   steps?: string[]; // If category is 'skill'
+  evidence?: EvidenceInput[];
 }

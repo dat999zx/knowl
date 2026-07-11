@@ -5,6 +5,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { closeDb, getDb, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
+import { recordDecisionDirect } from '../../src/store/knowledge-actions.js';
+import { storeKnowledgeAtomsDeduped } from '../../src/store/knowledge-writer.js';
 import {
   createEvidence,
   isEvidenceStale,
@@ -78,5 +80,32 @@ describe('evidence repository', () => {
     });
 
     expect(await isEvidenceStale(evidence, TEST_ROOT)).toBe(true);
+  });
+
+  it('attaches explicit and compatibility evidence during direct and batch writes', async () => {
+    const decision = await recordDecisionDirect(projectId, {
+      title: 'Evidence-backed decision', content: 'Use evidence for trust.',
+      evidence: [{
+        type: 'test', locator: 'tests/evidence.test.ts', observedAt: '2026-07-11T00:00:00.000Z', relationship: 'supports',
+      }],
+    } as any);
+    expect(await listEvidenceForItem(decision.id)).toEqual([
+      expect.objectContaining({ type: 'test', relationship: 'supports' }),
+    ]);
+    await repo.updateKnowledgeItem(decision.id, { content: 'Use evidence for durable trust.' });
+    expect(await listEvidenceForItem(decision.id)).toHaveLength(1);
+
+    const result = await storeKnowledgeAtomsDeduped(projectId, [{
+      category: 'fact', title: 'Batch evidence', content: 'Batch atom has provenance.',
+      sourceCommit: 'abc123', affectedPaths: ['src/evidence.ts'],
+      evidence: [{
+        type: 'commit', locator: 'abc123', observedAt: '2026-07-11T00:00:00.000Z', relationship: 'derived_from',
+      }],
+    }] as any);
+    const evidence = await listEvidenceForItem(result.itemIds[0]);
+    expect(evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'commit', locator: 'abc123', relationship: 'derived_from' }),
+    ]));
+    expect(evidence.filter(item => item.type === 'commit')).toHaveLength(1);
   });
 });

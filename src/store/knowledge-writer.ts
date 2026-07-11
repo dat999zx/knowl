@@ -1,6 +1,7 @@
-import { CommitChange, KnowledgeCategory, KnowledgeItem, KnowledgeWriteValidationOptions } from '../core/types.js';
+import { CommitChange, EvidenceInput, KnowledgeCategory, KnowledgeItem, KnowledgeWriteValidationOptions } from '../core/types.js';
 import { searchKnowledgeItems } from './search.js';
 import * as repo from './repository.js';
+import { attachEvidenceToKnowledge } from './evidence-repository.js';
 
 const DUPLICATE_STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'do', 'does', 'for', 'from', 'in', 'is',
@@ -19,6 +20,7 @@ export interface StoreKnowledgeInput {
   affectedPaths?: string[] | null;
   confidence?: number;
   steps?: string[];
+  evidence?: EvidenceInput[];
 }
 
 export interface StoreKnowledgeResult {
@@ -123,6 +125,7 @@ export async function storeKnowledgeItemDeduped(
     undefined,
     validationOptions,
   );
+  await attachEvidenceToKnowledge(item.id, input.evidence, input);
 
   await repo.createKnowledgeCommit(projectId, commitMessage || `Store ${input.category}: ${input.title}`, [
     { itemId: item.id, action: 'insert', after: item },
@@ -174,6 +177,7 @@ export async function storeKnowledgeAtomsDeduped(
       undefined,
       validationOptions,
     );
+    await attachEvidenceToKnowledge(item.id, atom.evidence, atom);
 
     itemIds.push(item.id);
     changes.push({ itemId: item.id, action: 'insert', after: item });

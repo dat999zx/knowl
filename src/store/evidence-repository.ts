@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { Evidence, EvidenceRelationship, EvidenceType, KnowledgeEvidence, KnowledgeItem } from '../core/types.js';
+import { Evidence, EvidenceInput, EvidenceRelationship, EvidenceType, KnowledgeEvidence, KnowledgeItem } from '../core/types.js';
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { getClient } from './database.js';
 import { getKnowledgeItem } from './repository.js';
@@ -94,6 +94,22 @@ export async function unlinkKnowledgeEvidence(itemId: string, evidenceId: string
   await getClient().execute({
     sql: 'DELETE FROM knowledge_evidence WHERE knowledge_item_id = ? AND evidence_id = ?', args: [itemId, evidenceId],
   });
+}
+
+export async function attachEvidenceToKnowledge(
+  itemId: string,
+  explicit: EvidenceInput[] | undefined,
+  compatibility?: { sourceCommit?: string | null; affectedPaths?: string[] | null },
+): Promise<void> {
+  const inputs = explicit?.length ? explicit : [
+    ...(compatibility?.sourceCommit ? [{ type: 'commit' as const, locator: compatibility.sourceCommit, observedAt: new Date().toISOString(), relationship: 'derived_from' as const }] : []),
+    ...((compatibility?.affectedPaths || []).map(locator => ({ type: 'file' as const, locator, observedAt: new Date().toISOString(), relationship: 'supports' as const }))),
+  ];
+  for (const input of inputs) {
+    const { relationship = 'supports', ...evidenceInput } = input;
+    const evidence = await createEvidence(evidenceInput);
+    await linkKnowledgeEvidence({ knowledgeItemId: itemId, evidenceId: evidence.id, relationship });
+  }
 }
 
 export async function isEvidenceStale(evidence: Evidence, projectRoot: string): Promise<boolean> {
