@@ -66,6 +66,16 @@ export interface KnowledgeEvidence {
   relationship: EvidenceRelationship;
 }
 
+export type KnowledgeSearchExplanation = {
+  finalScore: number;
+  bm25Rank?: number;
+  vectorRank?: number;
+  contributions: Record<string, number>;
+  reason: string;
+};
+
+export type ExplainedKnowledgeItem = KnowledgeItem & { explanation: KnowledgeSearchExplanation };
+
 export type EvidenceInput = Omit<Evidence, 'id'> & { relationship?: EvidenceRelationship };
 
 export interface CommitChange {

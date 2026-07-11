@@ -9,7 +9,7 @@ import * as repo from '../../src/store/repository.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from '../../src/store/gc.js';
 import * as queries from '../../src/store/queries.js';
 import { formatRecentContextToMarkdown } from '../../src/core/format.js';
-import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
+import { queryKnowledgeForAgent, queryKnowledgeForAgentExplained } from '../../src/store/agent-query.js';
 import { getRecentContext } from '../../src/store/recent-context.js';
 import { searchKnowledgeEmbeddings, upsertKnowledgeEmbedding } from '../../src/store/vector.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
@@ -526,6 +526,23 @@ describe('Storage Layer', () => {
     expect(constraintHintResults.length).toBeGreaterThanOrEqual(2);
     expect(constraintHintResults.some(item => item.category === 'fact')).toBe(true);
     expect(constraintHintResults.some(item => item.category === 'architecture')).toBe(true);
+  });
+
+  it('returns ranking explanations only through the opt-in agent query API', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    await repo.createKnowledgeItem(project!.id, {
+      category: 'architecture', title: 'Explanation target', content: 'Authentication token architecture detail.', confidence: 0.9,
+    });
+
+    const ordinary = await queryKnowledgeForAgent(project!.id, { query: 'authentication token', limit: 1 });
+    expect(ordinary[0]).not.toHaveProperty('explanation');
+    const explained = await queryKnowledgeForAgentExplained(project!.id, { query: 'authentication token', category: 'architecture', limit: 1 });
+    expect(explained[0].explanation).toMatchObject({
+      finalScore: expect.any(Number),
+      bm25Rank: expect.any(Number),
+      contributions: expect.objectContaining({ text: expect.any(Number), category: expect.any(Number), recency: expect.any(Number) }),
+      reason: expect.any(String),
+    });
   });
 
   it('should prefer newer active knowledge when agent query relevance is similar', async () => {

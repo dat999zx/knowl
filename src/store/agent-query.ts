@@ -1,4 +1,4 @@
-import { KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
+import { ExplainedKnowledgeItem, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { queryKnowledgeBase } from './queries.js';
 import { searchKnowledgeEmbeddings } from './vector.js';
 
@@ -61,6 +61,20 @@ export async function queryKnowledgeForAgent(
     };
   }
 ): Promise<KnowledgeItem[]> {
+  return (await queryKnowledgeForAgentExplained(projectId, options)).map(({ explanation, ...item }) => item);
+}
+
+export async function queryKnowledgeForAgentExplained(
+  projectId: string,
+  options: {
+    category?: KnowledgeCategory;
+    status?: KnowledgeStatus;
+    tags?: string[];
+    query?: string;
+    limit?: number;
+    vector?: { enabled?: boolean; provider?: string; model?: string; embedding?: number[] };
+  },
+): Promise<ExplainedKnowledgeItem[]> {
   const limit = options.limit ?? DEFAULT_AGENT_QUERY_LIMIT;
   const { vector, ...textOptions } = options;
   const bm25Results = await queryKnowledgeBase(projectId, {
@@ -69,11 +83,12 @@ export async function queryKnowledgeForAgent(
     limit: vector?.enabled ? Math.max(limit * 3, 10) : limit,
   });
 
-  const ranked = new Map<string, { item: KnowledgeItem; score: number }>();
+  const ranked = new Map<string, { item: KnowledgeItem; score: number; bm25Rank?: number; vectorRank?: number }>();
   bm25Results.forEach((item, index) => {
     ranked.set(item.id, {
       item,
       score: 1 / (index + 1),
+      bm25Rank: index + 1,
     });
   });
 
@@ -94,6 +109,8 @@ export async function queryKnowledgeForAgent(
       ranked.set(result.item.id, {
         item: result.item,
         score: (existing?.score ?? 0) + score,
+        bm25Rank: existing?.bm25Rank,
+        vectorRank: index + 1,
       });
     });
   }
@@ -120,5 +137,22 @@ export async function queryKnowledgeForAgent(
       return rightScore - leftScore;
     })
     .slice(0, limit)
-    .map(result => result.item);
+    .map(result => {
+      const category = options.category && result.item.category === options.category ? CATEGORY_HINT_BOOST : 0;
+      const text = textMatchScore(result.item, tokens);
+      const recency = normalizedRecencyScore(result.item, timestamps) * SIMILAR_RELEVANCE_RECENCY_BOOST;
+      const confidence = result.item.confidence * 0.01;
+      const freshness = result.item.freshness === 'fresh' ? 0.05 : result.item.freshness === 'needs_review' ? -0.05 : -0.1;
+      const contributions = { rank: result.score, text, category, recency, confidence, freshness };
+      return {
+        ...result.item,
+        explanation: {
+          finalScore: Object.values(contributions).reduce((sum, value) => sum + value, 0),
+          bm25Rank: result.bm25Rank,
+          vectorRank: result.vectorRank,
+          contributions,
+          reason: `rank=${result.score.toFixed(3)}, text=${text}, category=${category}, recency=${recency.toFixed(3)}`,
+        },
+      };
+    });
 }
