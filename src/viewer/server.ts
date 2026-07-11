@@ -5,6 +5,8 @@ import { listAssertions } from '../store/assertions.js';
 import { listActiveConflictKeys } from '../store/conflicts.js';
 import { getKnowledgeAccessReport } from '../store/access-feedback.js';
 import { listSkillPackages } from '../skills/registry.js';
+import { queryKnowledgeForAgentExplained } from '../store/agent-query.js';
+import { listEvidenceForItem } from '../store/evidence-repository.js';
 
 export type ViewerServer = { url: string; close: () => Promise<void> };
 
@@ -17,15 +19,18 @@ export async function startViewer(projectRoot: string, options: { port?: number 
   await initDb(projectRoot);
   const server = http.createServer(async (request, response) => {
     if (request.method !== 'GET') { response.writeHead(405, { allow: 'GET' }); response.end(); return; }
-    const pathname = new URL(request.url ?? '/', 'http://127.0.0.1').pathname;
+    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+    const pathname = url.pathname;
     if (pathname === '/api/brain') return json(response, await listKnowledgeItems('local'));
     if (pathname === '/api/decisions') return json(response, (await listKnowledgeItems('local')).filter(item => item.category === 'decision'));
     if (pathname === '/api/stale') return json(response, (await listKnowledgeItems('local')).filter(item => item.freshness !== 'fresh'));
     if (pathname === '/api/conflicts') return json(response, await listActiveConflictKeys());
     if (pathname === '/api/access') return json(response, await getKnowledgeAccessReport());
     if (pathname === '/api/skills') return json(response, await listSkillPackages(projectRoot));
+    if (pathname === '/api/retrieval') return json(response, await queryKnowledgeForAgentExplained('local', { query: url.searchParams.get('q') ?? '', limit: 10, surface: 'viewer' }));
+    if (pathname.startsWith('/api/evidence/')) return json(response, await listEvidenceForItem(pathname.slice('/api/evidence/'.length)));
     if (pathname.startsWith('/api/timeline/')) return json(response, await listAssertions(pathname.slice('/api/timeline/'.length)));
-    if (pathname === '/') { response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); response.end('<!doctype html><title>Knowl Viewer</title><main><h1>Knowl Viewer</h1><p>Read-only local memory viewer.</p></main>'); return; }
+    if (pathname === '/') { response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); response.end(`<!doctype html><title>Knowl Viewer</title><style>body{font:14px system-ui;margin:2rem;max-width:960px}nav button{margin:.2rem}pre{white-space:pre-wrap;background:#f5f5f5;padding:1rem}</style><main><h1>Knowl Viewer</h1><p>Read-only, localhost-only.</p><nav>${['brain','decisions','stale','conflicts','access','skills'].map(name => `<button data-api="${name}">${name}</button>`).join('')}</nav><pre id="out">Select a view.</pre></main><script>for(const b of document.querySelectorAll('button'))b.onclick=async()=>out.textContent=JSON.stringify(await (await fetch('/api/'+b.dataset.api)).json(),null,2)</script>`); return; }
     response.writeHead(404); response.end();
   });
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.port ?? 0, '127.0.0.1', resolve); });

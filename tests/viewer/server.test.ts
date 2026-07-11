@@ -26,6 +26,8 @@ describe('viewer server', () => {
     expect((await fetch(`${running.url}/api/stale`)).status).toBe(200);
     expect((await fetch(`${running.url}/api/access`)).status).toBe(200);
     expect((await fetch(`${running.url}/api/skills`)).status).toBe(200);
+    expect((await fetch(`${running.url}/api/retrieval?q=viewer`)).status).toBe(200);
+    expect((await fetch(`${running.url}/api/evidence/${body[0].id}`)).status).toBe(200);
     expect((await fetch(`${running.url}/api/brain`, { method: 'POST' })).status).toBe(405);
   });
 });
