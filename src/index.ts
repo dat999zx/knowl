@@ -362,6 +362,10 @@ program.command('conflicts').action(async () => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify((await listActiveConflictKeys()).map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness })), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error listing conflicts: ${error.message}`); process.exit(1); }
 });
 
+program.command('supersede').argument('<itemId>').argument('<replacementId>').action(async (itemId, replacementId) => {
+  try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await repo.supersedeKnowledgeItem(itemId, replacementId), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error superseding knowledge: ${error.message}`); process.exit(1); }
+});
+
 // --- 4. DECIDE COMMAND ---
 program
   .command('decide')

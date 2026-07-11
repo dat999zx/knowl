@@ -338,6 +338,7 @@ export function registerTools(
                 enum: ['fresh', 'stale', 'needs_review'],
                 description: 'Optional freshness override. Defaults to fresh when updating reviewed knowledge content or provenance.',
               },
+              supersedeId: { type: 'string', description: 'Explicitly supersede this active item after the update.' },
             },
             required: ['id'],
           },
@@ -728,7 +729,7 @@ export function registerTools(
       }
       
       else if (name === 'knowl_update') {
-        const { id, title, content, status, reasoning, source, sourceCommit, affectedPaths, freshness } = args as any;
+        const { id, title, content, status, reasoning, source, sourceCommit, affectedPaths, freshness, supersedeId } = args as any;
         const updated = await updateKnowledgeItemWithCommit(projectId!, id, {
           title,
           content,
@@ -743,6 +744,10 @@ export function registerTools(
           validationOptions: config?.security,
         });
 
+        if (supersedeId) {
+          const { supersedeKnowledgeItem } = await import('../store/repository.js');
+          await supersedeKnowledgeItem(supersedeId, updated.id);
+        }
         return {
           content: [{ type: 'text', text: `Successfully updated item ${id}:\n\n${JSON.stringify(updated, null, 2)}` }],
         };
