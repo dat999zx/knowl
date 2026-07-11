@@ -1,5 +1,7 @@
 # Evidence and Provenance Implementation Plan
 
+> **Status:** Completed 2026-07-11. Verification: `rtk npm.cmd test` (127 tests), `rtk npm.cmd run build`, `rtk git diff --check`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Let every durable knowledge item cite multiple inspectable sources, including files, symbols, commits, tests, commands, URLs, users, and agents.
