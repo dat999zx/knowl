@@ -10,7 +10,7 @@ import { getRecentContext } from '../store/recent-context.js';
 import { storeKnowledgeItemDeduped, storeKnowledgeAtomsDeduped } from '../store/knowledge-writer.js';
 import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
 import { isVectorSearchEnabled, createLocalEmbeddingProvider, getVectorSearchConfig } from '../ai/embeddings.js';
-import { queryKnowledgeForAgent } from '../store/agent-query.js';
+import { queryKnowledgeForAgent, queryKnowledgeForAgentExplained } from '../store/agent-query.js';
 import { previewKnowledgeGc, applyKnowledgeGc } from '../store/gc.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop } from '../store/work-loop.js';
 import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
@@ -236,6 +236,10 @@ export function registerTools(
               includeEvidence: {
                 type: 'boolean',
                 description: 'Include linked evidence. Omit for compact results.',
+              },
+              explain: {
+                type: 'boolean',
+                description: 'Include ranking explanations. Omit for compact results.',
               },
             },
           },
@@ -605,7 +609,7 @@ export function registerTools(
       } 
       
       else if (name === 'knowl_query') {
-        const { query, category, status, tags, limit, includeEvidence } = args as any;
+        const { query, category, status, tags, limit, includeEvidence, explain } = args as any;
         let vector;
         if (config && projectRoot && query && isVectorSearchEnabled(config)) {
           const embedder = await createLocalEmbeddingProvider(config, projectRoot);
@@ -619,14 +623,17 @@ export function registerTools(
           };
         }
 
-        const items = await queryKnowledgeForAgent(projectId!, {
+        const queryOptions = {
           query,
           category: category as KnowledgeCategory,
           status: status as KnowledgeStatus,
           tags,
           limit,
           vector,
-        });
+        };
+        const items = explain
+          ? await queryKnowledgeForAgentExplained(projectId!, queryOptions)
+          : await queryKnowledgeForAgent(projectId!, queryOptions);
 
         const withStaleStatus = async (itemId: string) => Promise.all((await listEvidenceForItem(itemId)).map(async evidence => ({
           ...evidence,
