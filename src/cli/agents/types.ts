@@ -24,3 +24,10 @@ export interface AgentAdapter {
   configure(projectRoot: string): Promise<AgentIntegrationResult>;
   verify(projectRoot: string): Promise<boolean>;
 }
+
+export interface AgentEnvironment {
+  platform: NodeJS.Platform;
+  homeDir: string;
+  appDataDir: string;
+  commandExists(command: string): Promise<boolean>;
+}
