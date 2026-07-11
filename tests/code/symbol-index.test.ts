@@ -16,6 +16,7 @@ describe('symbol index', () => {
       expect.objectContaining({ kind: 'class', locator: 'symbol://src/auth.ts#Auth' }),
       expect.objectContaining({ kind: 'method', locator: 'symbol://src/auth.ts#Auth.createToken' }),
       expect.objectContaining({ kind: 'function', locator: 'symbol://src/auth.ts#login' }),
+      expect.objectContaining({ kind: 'import', locator: 'symbol://src/auth.ts#import:node:crypto' }),
     ]));
   });
 });

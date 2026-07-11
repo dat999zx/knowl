@@ -13,6 +13,12 @@ export async function indexCode(root: string): Promise<void> {
   const files: string[] = [];
   async function walk(dir: string) { for (const entry of await fs.readdir(dir, { withFileTypes: true })) { if (['node_modules', '.git', '.knowl', 'dist'].includes(entry.name)) continue; const full = path.join(dir, entry.name); if (entry.isDirectory()) await walk(full); else if (CODE_EXTENSIONS.has(path.extname(entry.name))) files.push(full); } }
   await walk(root);
+  const known = await client.execute('SELECT path FROM code_files');
+  for (const row of known.rows) {
+    if (!files.some(file => path.relative(root, file).replace(/\\/g, '/') === String(row.path))) {
+      await client.execute({ sql: 'DELETE FROM code_files WHERE path = ?', args: [String(row.path)] });
+    }
+  }
   for (const full of files) {
     const filePath = path.relative(root, full).replace(/\\/g, '/'); const text = await fs.readFile(full, 'utf8'); const contentHash = hash(text); const existing = await client.execute({ sql: 'SELECT content_hash FROM code_files WHERE path = ?', args: [filePath] });
     if (String(existing.rows[0]?.content_hash ?? '') === contentHash) continue;
@@ -22,6 +28,7 @@ export async function indexCode(root: string): Promise<void> {
     const symbols: CodeSymbol[] = [];
     for (const match of classes) symbols.push({ locator: `symbol://${filePath}#${match[1]}`, filePath, qualifiedName: match[1], kind: 'class', startLine: line(text, match.index!), endLine: line(text, match.index!) + 1, signature: match[0] });
     for (const match of text.matchAll(/(?:export\s+)?function\s+(\w+)\s*\(/g)) symbols.push({ locator: `symbol://${filePath}#${match[1]}`, filePath, qualifiedName: match[1], kind: 'function', startLine: line(text, match.index!), endLine: line(text, match.index!) + 1, signature: match[0] });
+    for (const match of text.matchAll(/import\s+.*?from\s+['"]([^'"]+)['"]/g)) symbols.push({ locator: `symbol://${filePath}#import:${match[1]}`, filePath, qualifiedName: `import:${match[1]}`, kind: 'import', startLine: line(text, match.index!), endLine: line(text, match.index!), signature: match[0] });
     for (const cls of classes) { const tail = text.slice(cls.index! + cls[0].length); for (const method of tail.matchAll(/^\s*(\w+)\s*\([^)]*\)\s*\{/gm)) { const pos = (cls.index! + cls[0].length) + method.index!; symbols.push({ locator: `symbol://${filePath}#${cls[1]}.${method[1]}`, filePath, qualifiedName: `${cls[1]}.${method[1]}`, kind: 'method', startLine: line(text, pos), endLine: line(text, pos) + 1, signature: method[0] }); } }
     for (const symbol of symbols) await client.execute({ sql: 'INSERT INTO code_symbols (locator, file_path, qualified_name, kind, start_line, end_line, signature) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [symbol.locator, symbol.filePath, symbol.qualifiedName, symbol.kind, symbol.startLine, symbol.endLine, symbol.signature] });
   }
