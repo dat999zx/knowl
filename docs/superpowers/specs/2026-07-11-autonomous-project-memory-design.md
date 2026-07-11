@@ -145,38 +145,24 @@ A local read-first viewer exposes current brain, timeline, decisions, stale know
 
 ## Plan Decomposition and Order
 
-Each item below becomes a separate implementation plan. Execute one plan at a time; finish verification and record the outcome in Knowl before opening the next plan.
+The roadmap is intentionally grouped into eight executable plans. Execute one plan at a time; finish verification and record the outcome in Knowl before opening the next plan.
 
-1. **Universal write guard and integrity tooling**
-   - Central validation, audit command, safe snapshots, restore verification.
+1. **Trust foundation**
+   - Universal write guard, audit command, safe snapshots, restore verification.
 2. **Evidence and provenance**
    - Evidence schema/repository, links, stale-hash checks, CLI/MCP reads.
-3. **Retrieval evaluation and explanations**
-   - Dataset format, metrics runner, baseline report, score explanations.
-4. **Session event buffer and scratch memory**
-   - Sessions/events schema, TTL, bounded capture API, recovery state machine.
-5. **Session finalizer and candidate promotion**
-   - Outcome collection, deterministic candidates, optional bounded synthesis, dedupe/evidence/promotion.
-6. **Agent lifecycle adapters and automatic context bootstrap**
-   - Hook capability model, supported adapters, degraded fallback, doctor/init reporting.
-7. **Temporal assertions and timelines**
-   - Immutable assertion history, as-of queries, timeline surfaces.
-8. **Conflict keys and deterministic contradiction handling**
-   - Exclusive keys/scopes, collision responses, explicit supersession.
-9. **Context composer and retrieval diversification**
-   - Token budgets, pinned sections, RRF/MMR, excluded-item report.
-10. **Knowledge access feedback**
-    - Retrieval telemetry, feedback APIs, usefulness/staleness reports.
-11. **Code symbol index**
-    - Tree-sitter extraction, symbol evidence locators, incremental refresh.
-12. **Synthesized project understanding**
-    - Module summaries and mental models derived from durable sources.
-13. **Layered memory namespaces**
-    - Separate stores, precedence, namespace-aware retrieval and writes.
-14. **Local viewer**
-    - Read-first UI and retrieval/evidence/timeline debugging.
-15. **Synchronization and portability**
-    - Import/export first; optional team synchronization only after namespace and evidence semantics stabilize.
+3. **Retrieval quality**
+   - Evaluation dataset, metrics, score explanations, measured ranking changes, access feedback.
+4. **Automatic memory core**
+   - Sessions/events schema, scratch TTL, bounded capture API, crash recovery.
+5. **Candidate promotion**
+   - Finalizer, deterministic candidates, dedupe, evidence attachment, durable promotion.
+6. **Agent automation**
+   - Hook capability model, supported adapters, degraded fallback, automatic session/context bootstrap.
+7. **Knowledge intelligence**
+   - Temporal assertions, timelines, conflict keys, context composer, RRF/MMR diversification.
+8. **Product layer**
+   - Code symbols, synthesized understanding, layered namespaces, viewer, import/export.
 
 ## Cross-Plan Rules
 
@@ -185,7 +171,7 @@ Each item below becomes a separate implementation plan. Execute one plan at a ti
 - Every durable write uses the universal guard after Plan 1.
 - Every new stored fact supports evidence after Plan 2.
 - Retrieval changes must compare against the evaluation baseline after Plan 3.
-- Plans 5-6 depend on Plan 4; Plans 7-8 depend on Plan 2; Plan 9 depends on Plan 3; Plan 11 depends on Plan 2; Plan 14 depends on Plans 2, 7-10.
+- Plans 2-3 depend on Plan 1; Plan 5 depends on Plans 2 and 4; Plan 6 depends on Plan 4; Plan 7 depends on Plans 2 and 3; Plan 8 depends on Plans 2, 5, and 7.
 - Schema upgrades must be idempotent and tested against an existing project database.
 - No plan permanently stores secrets, raw transcripts, or unbounded command output.
 - Each completed plan updates README/doctor/status only when user-facing behavior changes.
