@@ -45,6 +45,18 @@ const SCHEMA_STATEMENTS = [
     created_at TEXT NOT NULL
   );`,
 
+  `CREATE TABLE IF NOT EXISTS knowledge_assertions (
+    id TEXT PRIMARY KEY,
+    knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    valid_from TEXT NOT NULL,
+    valid_to TEXT,
+    recorded_at TEXT NOT NULL,
+    replaced_at TEXT,
+    confidence REAL NOT NULL,
+    source_evidence_id TEXT REFERENCES evidence(id)
+  );`,
+
   `CREATE TABLE IF NOT EXISTS evidence (
     id TEXT PRIMARY KEY,
     type TEXT NOT NULL,
@@ -112,6 +124,8 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_ki_cat_status ON knowledge_items(category, status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_status ON knowledge_items(status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_updated ON knowledge_items(updated_at);`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_assertions_item_validity ON knowledge_assertions(knowledge_item_id, valid_from, valid_to);`,
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_assertions_recorded ON knowledge_assertions(recorded_at);`,
   `CREATE INDEX IF NOT EXISTS idx_ke_model ON knowledge_embeddings(provider, model);`,
   `CREATE INDEX IF NOT EXISTS idx_evidence_locator ON evidence(locator);`,
   `CREATE INDEX IF NOT EXISTS idx_evidence_type ON evidence(type);`,
@@ -329,6 +343,13 @@ async function ensureMemorySessionColumns(client: Client): Promise<void> {
   if (!columns.includes('promotion_error_code')) await client.execute('ALTER TABLE memory_sessions ADD COLUMN promotion_error_code TEXT;');
 }
 
+async function backfillKnowledgeAssertions(client: Client): Promise<void> {
+  await client.execute(`INSERT INTO knowledge_assertions (id, knowledge_item_id, content, valid_from, valid_to, recorded_at, replaced_at, confidence, source_evidence_id)
+    SELECT lower(hex(randomblob(8))), id, content, created_at, NULL, updated_at, NULL, confidence, NULL
+    FROM knowledge_items
+    WHERE NOT EXISTS (SELECT 1 FROM knowledge_assertions WHERE knowledge_item_id = knowledge_items.id);`);
+}
+
 async function migrateLegacyProjectSchema(client: Client): Promise<void> {
   if (!(await tableExists(client, 'knowledge_items'))) {
     return;
@@ -449,5 +470,6 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await executeAll(client, SCHEMA_STATEMENTS);
   await ensureFreshnessColumns(client);
   await ensureMemorySessionColumns(client);
+  await backfillKnowledgeAssertions(client);
   await repairSkillForeignKeys(client);
 }

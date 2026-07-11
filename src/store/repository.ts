@@ -151,6 +151,11 @@ export async function createKnowledgeItem(
 
   const operation = async (exec: any) => {
     await exec.insert(schema.knowledgeItems).values(newItem);
+    await exec.insert(schema.knowledgeAssertions).values({
+      id: generateId(), knowledgeItemId: id, content: item.content,
+      validFrom: now, validTo: null, recordedAt: now, replacedAt: null,
+      confidence: item.confidence ?? 1.0, sourceEvidenceId: null,
+    });
 
     if (item.category === 'skill') {
       // Create skill metadata

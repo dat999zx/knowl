@@ -28,6 +28,18 @@ export const knowledgeCommits = sqliteTable('knowledge_commits', {
   createdAt: text('created_at').notNull(),
 });
 
+export const knowledgeAssertions = sqliteTable('knowledge_assertions', {
+  id: text('id').primaryKey(),
+  knowledgeItemId: text('knowledge_item_id').notNull().references(() => knowledgeItems.id, { onDelete: 'cascade' }),
+  content: text('content').notNull(),
+  validFrom: text('valid_from').notNull(),
+  validTo: text('valid_to'),
+  recordedAt: text('recorded_at').notNull(),
+  replacedAt: text('replaced_at'),
+  confidence: real('confidence').notNull(),
+  sourceEvidenceId: text('source_evidence_id'),
+}, (table) => [index('idx_knowledge_assertions_item_validity').on(table.knowledgeItemId, table.validFrom, table.validTo), index('idx_knowledge_assertions_recorded').on(table.recordedAt)]);
+
 export const evidence = sqliteTable('evidence', {
   id: text('id').primaryKey(),
   type: text('type').notNull(),

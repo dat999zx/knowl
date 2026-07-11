@@ -58,6 +58,18 @@ export interface KnowledgeItem {
   updatedAt: string;
 }
 
+export interface KnowledgeAssertion {
+  id: string;
+  knowledgeItemId: string;
+  content: string;
+  validFrom: string;
+  validTo?: string | null;
+  recordedAt: string;
+  replacedAt?: string | null;
+  confidence: number;
+  sourceEvidenceId?: string | null;
+}
+
 export interface KnowledgeCommit {
   id: string;
   message: string;
