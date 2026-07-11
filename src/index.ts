@@ -31,6 +31,8 @@ import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackag
 import { auditKnowledgeStore } from './store/integrity.js';
 import { createSnapshot, restoreSnapshot } from './store/snapshots.js';
 import { isEvidenceStale, listEvidenceForItem } from './store/evidence-repository.js';
+import { queryKnowledgeForAgent } from './store/agent-query.js';
+import { evaluateRetrieval, RetrievalEvaluationCase } from './store/retrieval-evaluation.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -655,7 +657,66 @@ program
     }
   });
 
-// --- 9. UPGRADE COMMAND ---
+// --- 9. RETRIEVAL EVALUATION COMMAND ---
+program
+  .command('eval')
+  .description('Run checked-in retrieval evaluation datasets')
+  .command('retrieval')
+  .description('Evaluate agent retrieval against a dataset')
+  .requiredOption('--dataset <path>', 'Path to a retrieval evaluation JSON dataset')
+  .option('--json', 'Print machine-readable JSON')
+  .action(async (options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const datasetPath = path.resolve(options.dataset);
+      const dataset = JSON.parse(await fs.readFile(datasetPath, 'utf-8')) as { cases?: RetrievalEvaluationCase[] };
+      if (!Array.isArray(dataset.cases)) {
+        throw new Error('Retrieval dataset must contain a cases array.');
+      }
+
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const evaluation = await evaluateRetrieval(dataset.cases, async (testCase) => {
+        const startedAt = Date.now();
+        const items = await queryKnowledgeForAgent(project.id, {
+          query: testCase.query,
+          status: 'active',
+          limit: testCase.limit,
+        });
+        return {
+          itemIds: items.map(item => item.id),
+          staleItemIds: items.filter(item => item.freshness !== 'fresh').map(item => item.id),
+          latencyMs: Date.now() - startedAt,
+          contextChars: JSON.stringify(items).length,
+        };
+      });
+
+      const result = { dataset: datasetPath, timestamp: new Date().toISOString(), ...evaluation };
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`KNOWL RETRIEVAL EVALUATION`);
+        console.log(`Dataset: ${result.dataset}`);
+        console.log(`Recall@3: ${result.metrics.recallAt3.toFixed(3)}`);
+        console.log(`Recall@10: ${result.metrics.recallAt10.toFixed(3)}`);
+        console.log(`MRR: ${result.metrics.mrr.toFixed(3)}`);
+        console.log(`nDCG: ${result.metrics.ndcg.toFixed(3)}`);
+        console.log(`Stale hits: ${result.metrics.staleHitCount}`);
+        console.log(`Forbidden hits: ${result.metrics.forbiddenHitCount}`);
+        console.log(`Latency p50/p95: ${result.metrics.p50LatencyMs}/${result.metrics.p95LatencyMs}ms`);
+        console.log(`Context chars avg: ${result.metrics.averageContextChars.toFixed(0)}`);
+        console.log(`Failed cases: ${result.failedCaseIds.join(', ') || 'none'}`);
+      }
+      await closeDb();
+    } catch (error: any) {
+      console.error(`Error evaluating retrieval: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// --- 10. UPGRADE COMMAND ---
 program
   .command('upgrade')
   .description('Upgrade an existing KNOWL repository with the latest config, schema, and agent files')

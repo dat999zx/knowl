@@ -51,6 +51,24 @@ describe('CLI Integration', () => {
     expect(config.search.vector.provider).toBe('local');
   });
 
+  it('should evaluate retrieval from a dataset as JSON', () => {
+    const dataset = path.resolve('./docs/evals/retrieval-baseline.json');
+    const output = execSync(`node "${CLI_PATH}" eval retrieval --dataset "${dataset}" --json`, {
+      cwd: TEST_DIR,
+      encoding: 'utf-8',
+    });
+
+    const result = JSON.parse(output);
+    expect(result.dataset).toBe(dataset);
+    expect(result.timestamp).toBeTruthy();
+    expect(result.metrics).toEqual(expect.objectContaining({
+      recallAt3: expect.any(Number),
+      p95LatencyMs: expect.any(Number),
+      averageContextChars: expect.any(Number),
+    }));
+    expect(result.failedCaseIds).toEqual(expect.any(Array));
+  });
+
   it('should create project .gitignore with .knowl during init', async () => {
     const ignoreDir = path.resolve('./.knowl-cli-new-gitignore-test');
     await fs.rm(ignoreDir, { recursive: true, force: true }).catch(() => {});
