@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "cases": [
+    { "id": "database-choice", "query": "why are we using sqlite", "expectedItemIds": ["fixture-current-sqlite"], "mustNotReturn": ["fixture-rejected-postgres"], "limit": 10 },
+    { "id": "auth-architecture", "query": "authentication token design", "expectedItemIds": ["fixture-auth-architecture"], "mustNotReturn": [], "limit": 10 },
+    { "id": "failed-approach", "query": "failed migration approach", "expectedItemIds": ["fixture-migration-gotcha"], "mustNotReturn": [], "limit": 10 },
+    { "id": "command", "query": "run database tests", "expectedItemIds": ["fixture-test-command"], "mustNotReturn": [], "limit": 10 },
+    { "id": "filename", "query": "src auth token ts", "expectedItemIds": ["fixture-auth-file"], "mustNotReturn": [], "limit": 10 },
+    { "id": "stale", "query": "old persistence choice", "expectedItemIds": ["fixture-current-sqlite"], "mustNotReturn": ["fixture-stale-sqlite"], "limit": 10 },
+    { "id": "category-miss", "query": "deployment runtime", "expectedItemIds": ["fixture-runtime-decision"], "mustNotReturn": [], "limit": 10 },
+    { "id": "constraint", "query": "offline requirement", "expectedItemIds": ["fixture-local-constraint"], "mustNotReturn": [], "limit": 10 },
+    { "id": "skill", "query": "release package", "expectedItemIds": ["fixture-release-skill"], "mustNotReturn": [], "limit": 10 },
+    { "id": "provenance", "query": "why was jwt selected", "expectedItemIds": ["fixture-jwt-decision"], "mustNotReturn": [], "limit": 10 }
+  ]
+}
