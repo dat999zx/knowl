@@ -15,6 +15,7 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
   contentHash: text('content_hash'),
   freshness: text('freshness').notNull().default('fresh'), // 'fresh', 'stale', 'needs_review'
   confidence: real('confidence').notNull().default(1.0),
+  conflictKey: text('conflict_key'), conflictScope: text('conflict_scope', { mode: 'json' }), conflictExclusive: integer('conflict_exclusive', { mode: 'boolean' }).notNull().default(false),
   supersededById: text('superseded_by_id'),
   version: integer('version').notNull().default(1),
   createdAt: text('created_at').notNull(),
@@ -38,6 +39,7 @@ export const knowledgeAssertions = sqliteTable('knowledge_assertions', {
   replacedAt: text('replaced_at'),
   confidence: real('confidence').notNull(),
   sourceEvidenceId: text('source_evidence_id'),
+  conflictKey: text('conflict_key'), conflictScope: text('conflict_scope', { mode: 'json' }), conflictExclusive: integer('conflict_exclusive', { mode: 'boolean' }).notNull().default(false),
 }, (table) => [index('idx_knowledge_assertions_item_validity').on(table.knowledgeItemId, table.validFrom, table.validTo), index('idx_knowledge_assertions_recorded').on(table.recordedAt)]);
 
 export const evidence = sqliteTable('evidence', {

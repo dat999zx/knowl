@@ -3,6 +3,7 @@ import { and, desc, eq, isNull } from 'drizzle-orm';
 import { getDb } from './database.js';
 import type { DbConnection } from './database.js';
 import * as schema from './schema.js';
+import { normalizeConflictKey, normalizeConflictScope } from './conflicts.js';
 import {
   Project,
   KnowledgeItem,
@@ -15,7 +16,7 @@ import {
   KnowledgeStatus,
   KnowledgeWriteValidationOptions,
 } from '../core/types.js';
-import { DatabaseError } from '../core/errors.js';
+import { DatabaseError, KnowledgeConflictError } from '../core/errors.js';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
 import { KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 
@@ -111,6 +112,9 @@ export async function createKnowledgeItem(
     contentHash?: string | null;
     freshness?: KnowledgeFreshness;
     confidence?: number;
+    conflictKey?: string | null;
+    conflictScope?: Record<string, unknown> | null;
+    conflictExclusive?: boolean;
   },
   steps?: string[],
   dbConnection?: DbConnection,
@@ -143,6 +147,7 @@ export async function createKnowledgeItem(
     }),
     freshness: item.freshness || DEFAULT_FRESHNESS,
     confidence: item.confidence ?? 1.0,
+    conflictKey: item.conflictKey ? normalizeConflictKey(item.conflictKey) : null, conflictScope: normalizeConflictScope(item.conflictScope), conflictExclusive: item.conflictExclusive ?? false,
     supersededById: null,
     version: 1,
     createdAt: now,
@@ -150,11 +155,18 @@ export async function createKnowledgeItem(
   };
 
   const operation = async (exec: any) => {
+    if (newItem.conflictExclusive && newItem.conflictKey) {
+      const conflicts = await exec.select().from(schema.knowledgeItems).where(and(
+        eq(schema.knowledgeItems.status, 'active'), eq(schema.knowledgeItems.conflictExclusive, true),
+        eq(schema.knowledgeItems.conflictKey, newItem.conflictKey), eq(schema.knowledgeItems.conflictScope, newItem.conflictScope),
+      ));
+      if (conflicts.length) throw new KnowledgeConflictError(conflicts.map((item: any) => ({ id: item.id, title: item.title })));
+    }
     await exec.insert(schema.knowledgeItems).values(newItem);
     await exec.insert(schema.knowledgeAssertions).values({
       id: generateId(), knowledgeItemId: id, content: item.content,
       validFrom: now, validTo: null, recordedAt: now, replacedAt: null,
-      confidence: item.confidence ?? 1.0, sourceEvidenceId: null,
+      confidence: item.confidence ?? 1.0, sourceEvidenceId: null, conflictKey: newItem.conflictKey, conflictScope: newItem.conflictScope, conflictExclusive: newItem.conflictExclusive,
     });
 
     if (item.category === 'skill') {
@@ -190,6 +202,7 @@ export async function createKnowledgeItem(
     }
     return newItem as KnowledgeItem;
   } catch (error: any) {
+    if (error instanceof KnowledgeConflictError) throw error;
     throw new DatabaseError(`Failed to create knowledge item: ${error.message}`);
   }
 }
@@ -272,7 +285,7 @@ export async function updateKnowledgeItem(
       await exec.update(schema.knowledgeAssertions).set({ validTo: now, replacedAt: now }).where(eq(schema.knowledgeAssertions.id, openAssertions[0].id));
       await exec.insert(schema.knowledgeAssertions).values({
         id: generateId(), knowledgeItemId: id, content: merged.content, validFrom: now, validTo: null,
-        recordedAt: now, replacedAt: null, confidence: updates.confidence ?? current[0].confidence, sourceEvidenceId: null,
+        recordedAt: now, replacedAt: null, confidence: updates.confidence ?? current[0].confidence, sourceEvidenceId: null, conflictKey: updates.conflictKey ?? current[0].conflictKey, conflictScope: updates.conflictScope ?? current[0].conflictScope, conflictExclusive: updates.conflictExclusive ?? current[0].conflictExclusive,
       });
     }
 

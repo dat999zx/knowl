@@ -39,3 +39,9 @@ export class ProjectNotFoundError extends KnowlError {
     this.name = 'ProjectNotFoundError';
   }
 }
+
+export class KnowledgeConflictError extends KnowlError {
+  constructor(public readonly conflicts: Array<{ id: string; title: string }>) {
+    super(`Exclusive knowledge conflict: ${conflicts.map(item => item.title).join(', ')}`, 'KNOWLEDGE_CONFLICT');
+  }
+}

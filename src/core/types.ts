@@ -52,6 +52,9 @@ export interface KnowledgeItem {
   contentHash?: string | null;
   freshness: KnowledgeFreshness;
   confidence: number;
+  conflictKey?: string | null;
+  conflictScope?: Record<string, unknown> | null;
+  conflictExclusive?: boolean;
   supersededById?: string | null;
   version: number;
   createdAt: string;
@@ -68,6 +71,9 @@ export interface KnowledgeAssertion {
   replacedAt?: string | null;
   confidence: number;
   sourceEvidenceId?: string | null;
+  conflictKey?: string | null;
+  conflictScope?: Record<string, unknown> | null;
+  conflictExclusive?: boolean;
 }
 
 export interface KnowledgeCommit {
@@ -199,6 +205,9 @@ export interface KnowledgeAtom {
   sourceCommit?: string | null;
   affectedPaths?: string[] | null;
   confidence?: number;
+  conflictKey?: string | null;
+  conflictScope?: Record<string, unknown> | null;
+  conflictExclusive?: boolean;
   steps?: string[]; // If category is 'skill'
   evidence?: EvidenceInput[];
 }

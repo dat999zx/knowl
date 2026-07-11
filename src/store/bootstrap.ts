@@ -22,6 +22,7 @@ const SCHEMA_STATEMENTS = [
     content_hash TEXT,
     freshness TEXT NOT NULL DEFAULT 'fresh',
     confidence REAL NOT NULL DEFAULT 1.0,
+    conflict_key TEXT, conflict_scope TEXT, conflict_exclusive INTEGER NOT NULL DEFAULT 0,
     superseded_by_id TEXT,
     version INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL,
@@ -55,6 +56,7 @@ const SCHEMA_STATEMENTS = [
     replaced_at TEXT,
     confidence REAL NOT NULL,
     source_evidence_id TEXT REFERENCES evidence(id)
+    ,conflict_key TEXT, conflict_scope TEXT, conflict_exclusive INTEGER NOT NULL DEFAULT 0
   );`,
 
   `CREATE TABLE IF NOT EXISTS evidence (
@@ -334,6 +336,16 @@ async function ensureFreshnessColumns(client: Client): Promise<void> {
   }
 }
 
+async function ensureConflictColumns(client: Client): Promise<void> {
+  for (const table of ['knowledge_items', 'knowledge_assertions']) {
+    const columns = await tableColumns(client, table);
+    if (!columns.includes('conflict_key')) await client.execute(`ALTER TABLE ${table} ADD COLUMN conflict_key TEXT;`);
+    if (!columns.includes('conflict_scope')) await client.execute(`ALTER TABLE ${table} ADD COLUMN conflict_scope TEXT;`);
+    if (!columns.includes('conflict_exclusive')) await client.execute(`ALTER TABLE ${table} ADD COLUMN conflict_exclusive INTEGER NOT NULL DEFAULT 0;`);
+  }
+  await client.execute('CREATE INDEX IF NOT EXISTS idx_knowledge_conflict_active ON knowledge_items(conflict_key, conflict_scope, status, conflict_exclusive);');
+}
+
 async function ensureMemorySessionColumns(client: Client): Promise<void> {
   if (!(await tableExists(client, 'memory_sessions'))) return;
   const columns = await tableColumns(client, 'memory_sessions');
@@ -469,6 +481,7 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await migrateLegacyProjectSchema(client);
   await executeAll(client, SCHEMA_STATEMENTS);
   await ensureFreshnessColumns(client);
+  await ensureConflictColumns(client);
   await ensureMemorySessionColumns(client);
   await backfillKnowledgeAssertions(client);
   await repairSkillForeignKeys(client);
