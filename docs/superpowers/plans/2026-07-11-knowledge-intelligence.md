@@ -74,25 +74,25 @@ rtk git commit -m "feat: preserve immutable knowledge assertions"
 - Test: `tests/cli/cli.test.ts`
 - Test: `tests/mcp/server.test.ts`
 
-- [ ] **Step 1: Write failing integration tests**
+- [x] **Step 1: Write failing integration tests**
 
 Update an item twice and assert current retrieval returns version three, `knowl timeline <id>` returns all assertions, and `knowl query ... --as-of <timestamp>` returns the historically valid content. Assert status-only archival does not rewrite historical content.
 
-- [ ] **Step 2: Run focused tests and verify failure**
+- [x] **Step 2: Run focused tests and verify failure**
 
 Run: `rtk npm.cmd test -- tests/store/assertions.test.ts tests/cli/cli.test.ts tests/mcp/server.test.ts`
 
 Expected: FAIL because current writes and query surfaces ignore assertions.
 
-- [ ] **Step 3: Integrate assertions transactionally**
+- [x] **Step 3: Integrate assertions transactionally**
 
 When title/content/reasoning/confidence changes, replace the open assertion in the same transaction as `knowledge_items`. Preserve knowledge commits as the user-facing audit summary; assertions are the authoritative temporal record.
 
-- [ ] **Step 4: Add read surfaces**
+- [x] **Step 4: Add read surfaces**
 
 Add CLI `knowl timeline <item-id>` and `--as-of` on text query. MCP adds optional `asOf` to `knowl_query` plus `knowl_timeline`. Default queries remain current-only.
 
-- [ ] **Step 5: Verify and commit**
+- [x] **Step 5: Verify and commit**
 
 Run: `rtk npm.cmd test -- tests/store/assertions.test.ts tests/cli/cli.test.ts tests/mcp/server.test.ts`; `rtk npm.cmd run build`
 
