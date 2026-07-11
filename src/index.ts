@@ -37,6 +37,7 @@ import { getKnowledgeAccessReport } from './store/access-feedback.js';
 import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions, startMemorySession } from './store/session-repository.js';
 import { captureMemorySessionEvent } from './store/session-capture.js';
 import { finalizeMemorySession } from './store/session-finalizer.js';
+import { isLifecycleEvent, isSessionEventType, readLifecyclePayload, stringPayloadValue } from './cli/agents/lifecycle.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -849,7 +850,71 @@ sessionCommand.command('recover').option('--json').action(async (options) => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); const recovered = await recoverAbandonedSessions(); const purgedEventCount = await purgeExpiredSessionEvents(); const result = { recoveredCount: recovered.length, purgedEventCount }; console.log(options.json ? JSON.stringify(result) : `Recovered: ${result.recoveredCount}; purged events: ${result.purgedEventCount}`); await closeDb(); } catch (error: any) { console.error(`Error recovering sessions: ${error.message}`); process.exit(1); }
 });
 
-// --- 13. TASK COMMAND ---
+// --- 13. AGENT LIFECYCLE COMMAND ---
+program
+  .command('agent-event')
+  .description('Receive a bounded lifecycle event from an agent host hook')
+  .argument('<event>', 'session-start, session-event, session-stop, or session-recover')
+  .option('--session <id>')
+  .option('--title <title>')
+  .option('--query <query>')
+  .option('--agent <agent>')
+  .option('--type <type>')
+  .option('--status <status>')
+  .option('--summary <summary>')
+  .option('--command <command>')
+  .option('--exit-code <code>')
+  .option('--json')
+  .action(async (event, options) => {
+    try {
+      if (!isLifecycleEvent(event)) throw new Error('Unsupported agent lifecycle event.');
+      const payload = await readLifecyclePayload();
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const sessionId = options.session ?? stringPayloadValue(payload, 'session');
+      let result: unknown;
+
+      if (event === 'session-start') {
+        const title = options.title ?? stringPayloadValue(payload, 'title');
+        if (!title) throw new Error('Agent lifecycle session-start requires a title.');
+        result = await startMemorySession({ title, query: options.query ?? stringPayloadValue(payload, 'query'), agent: options.agent ?? stringPayloadValue(payload, 'agent') });
+      } else if (event === 'session-event') {
+        if (!sessionId) throw new Error('Agent lifecycle session-event requires --session.');
+        const type = options.type ?? stringPayloadValue(payload, 'type');
+        if (!isSessionEventType(type)) throw new Error('Agent lifecycle session-event requires a valid type.');
+        result = await captureMemorySessionEvent(sessionId, type, {
+          ...payload,
+          command: options.command ?? stringPayloadValue(payload, 'command'),
+          summary: options.summary ?? stringPayloadValue(payload, 'summary'),
+          exitCode: options.exitCode === undefined ? payload.exitCode : Number(options.exitCode),
+        });
+      } else if (event === 'session-stop') {
+        if (!sessionId) throw new Error('Agent lifecycle session-stop requires --session.');
+        const status = options.status ?? stringPayloadValue(payload, 'status');
+        if (status !== 'finished' && status !== 'failed') throw new Error('Agent lifecycle session-stop requires status finished or failed.');
+        const session = await finishMemorySession(sessionId, status, options.summary ?? stringPayloadValue(payload, 'summary'));
+        const project = await repo.getProjectByRootPath(root);
+        result = { ...session, promotion: project ? await finalizeMemorySession(project.id, sessionId) : null };
+      } else {
+        const recovered = await recoverAbandonedSessions();
+        result = { recoveredCount: recovered.length, purgedEventCount: await purgeExpiredSessionEvents() };
+      }
+
+      console.log(options.json ? JSON.stringify(result) : 'Agent lifecycle event handled.');
+      await closeDb();
+    } catch (error: any) {
+      if (event === 'session-event' && /Memory session not found|terminal memory session/.test(String(error?.message))) {
+        console.log(options.json ? JSON.stringify({ accepted: false, reason: 'event-loss' }) : 'Agent lifecycle event dropped.');
+        await closeDb().catch(() => {});
+        return;
+      }
+      console.error(`Error handling agent lifecycle event: ${error.message}`);
+      await closeDb().catch(() => {});
+      process.exit(1);
+    }
+  });
+
+// --- 14. TASK COMMAND ---
 const taskCommand = program
   .command('task')
   .description('Run a manual Knowl work loop around multi-step execution');

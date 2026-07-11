@@ -1,6 +1,8 @@
 export type AgentName = 'codex' | 'claude' | 'cursor' | 'claude-desktop';
 export type IntegrationScope = 'project' | 'global';
 export type IntegrationStatus = 'configured' | 'updated' | 'unchanged' | 'skipped' | 'failed';
+export type LifecycleCapability = 'supported' | 'unsupported' | 'degraded';
+export type LifecycleEvent = 'session-start' | 'session-event' | 'session-stop' | 'session-recover';
 
 export interface AgentDetection {
   installed: boolean;
@@ -17,7 +19,13 @@ export interface AgentIntegrationResult {
   message?: string;
 }
 
-export interface AgentAdapter {
+export interface AgentLifecycleAdapter {
+  lifecycleCapability(projectRoot: string): Promise<LifecycleCapability>;
+  configureLifecycle(projectRoot: string): Promise<AgentIntegrationResult>;
+  verifyLifecycle(projectRoot: string): Promise<boolean>;
+}
+
+export interface AgentAdapter extends Partial<AgentLifecycleAdapter> {
   name: AgentName;
   label: string;
   detect(projectRoot: string): Promise<AgentDetection>;
