@@ -738,6 +738,22 @@ describe('CLI Integration', () => {
     }
   }, 15_000);
 
+  it('should synthesize a tagged project understanding on demand', async () => {
+    const synthesisDir = path.resolve('./.knowl-cli-synthesis-test');
+    await fs.rm(synthesisDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(synthesisDir, { recursive: true });
+    try {
+      execSync(`node "${CLI_PATH}" init --yes`, { cwd: synthesisDir, encoding: 'utf-8' });
+      execSync(`node "${CLI_PATH}" decide "Auth module" "Auth lives under src/auth." -t auth`, { cwd: synthesisDir, encoding: 'utf-8' });
+      execSync(`node "${CLI_PATH}" decide "Auth token" "Auth uses JWT tokens." -t auth`, { cwd: synthesisDir, encoding: 'utf-8' });
+      const output = execSync(`node "${CLI_PATH}" synthesize --scope auth`, { cwd: synthesisDir, encoding: 'utf-8' });
+      expect(output).toContain('Synthesized understanding: auth');
+      expect(output).toContain('synthesized');
+    } finally {
+      await fs.rm(synthesisDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 15_000);
+
   it('should show repository status', () => {
     const output = execSync(`node "${CLI_PATH}" status`, {
       cwd: TEST_DIR,

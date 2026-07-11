@@ -267,6 +267,11 @@ export function registerTools(
           inputSchema: { type: 'object', properties: { query: { type: 'string' }, task: { type: 'string' }, tokenBudget: { type: 'number' } }, required: ['tokenBudget'] },
         },
         {
+          name: 'knowl_synthesize',
+          description: 'Create or refresh one deterministic evidence-backed project understanding. This never runs automatically on normal writes.',
+          inputSchema: { type: 'object', properties: { scope: { type: 'string' } }, required: ['scope'] },
+        },
+        {
           name: 'knowl_evidence_list',
           description: 'List inspectable evidence linked to one knowledge item.',
           inputSchema: {
@@ -715,6 +720,12 @@ export function registerTools(
         const { composeContext } = await import('../store/context-composer.js');
         const { query, task, tokenBudget } = args as any;
         return { content: [{ type: 'text', text: JSON.stringify(await composeContext(projectId!, { query, task, tokenBudget }), null, 2) }] };
+      }
+
+      else if (name === 'knowl_synthesize') {
+        const { scope } = args as any;
+        const { synthesizeKnowledge } = await import('../store/synthesis.js');
+        return { content: [{ type: 'text', text: JSON.stringify(await synthesizeKnowledge(projectId!, scope), null, 2) }] };
       }
 
       else if (name === 'knowl_evidence_list') {
