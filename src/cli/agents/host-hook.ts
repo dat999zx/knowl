@@ -125,6 +125,27 @@ function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: 
   return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) } };
 }
 
+function failurePayload(raw: Record<string, unknown>, failed: boolean): Record<string, unknown> {
+  if (!failed) return { status: 'finished' };
+  const nestedError = recordValue(raw.error);
+  const errorCode = stringValue(raw.error)
+    ?? stringValue(raw.code)
+    ?? stringValue(raw.error_code)
+    ?? stringValue(nestedError?.code)
+    ?? stringValue(nestedError?.type)
+    ?? stringValue(nestedError?.error);
+  const message = stringValue(raw.message)
+    ?? stringValue(raw.summary)
+    ?? stringValue(raw.error_message)
+    ?? stringValue(nestedError?.message)
+    ?? (errorCode ? undefined : stringValue(raw.error));
+  return {
+    status: 'failed',
+    ...(errorCode ? { error: errorCode, code: errorCode } : {}),
+    ...(message ? { message } : {}),
+  };
+}
+
 function normalizeGeneric(eventName: string, raw: Record<string, unknown>, projectRoot: string, ids: ReturnType<typeof externalIds>): NormalizedHostHook {
   const event = eventName as NormalizedHookEventName;
   const allowed: NormalizedHookEventName[] = ['session-start', 'turn-start', 'session-event', 'checkpoint', 'turn-stop', 'session-stop'];
@@ -133,7 +154,7 @@ function normalizeGeneric(eventName: string, raw: Record<string, unknown>, proje
   if (event === 'session-event' && type === undefined) throw new IncompleteHostHookPayloadError('Generic session event requires a type.');
   if (type !== undefined && !isSessionEventType(type)) throw new Error(`Unsupported session event type: ${String(type)}`);
   const payload: Record<string, unknown> = {};
-  for (const key of ['command', 'exitCode', 'passed', 'summary', 'message', 'code', 'text', 'changedPaths', 'commit', 'status']) {
+  for (const key of ['command', 'exitCode', 'passed', 'summary', 'message', 'code', 'text', 'changedPaths', 'commit', 'status', 'error', 'error_code', 'error_message']) {
     if (raw[key] !== undefined) payload[key] = Array.isArray(raw[key]) ? raw[key] : typeof raw[key] === 'string' ? String(raw[key]).slice(0, MAX_STRING) : raw[key];
   }
   return {
@@ -188,8 +209,15 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
     return { host: normalizedHost, event, ...ids, projectRoot, type: 'checkpoint', payload: { changedPaths: changedPaths(projectRoot, raw) } };
   }
   if (event === 'turn-stop' || event === 'session-stop') {
-    const failed = eventName === 'StopFailure';
-    return { host: normalizedHost, event, ...ids, projectRoot, status: failed ? 'failed' : 'finished', payload: { status: failed ? 'failed' : 'finished' } };
+    const failed = eventName === 'StopFailure' || stringValue(raw.status) === 'failed' || Boolean(stringValue(raw.error) || recordValue(raw.error));
+    return {
+      host: normalizedHost,
+      event,
+      ...ids,
+      projectRoot,
+      status: failed ? 'failed' : 'finished',
+      payload: failurePayload(raw, failed),
+    };
   }
   if (eventName === 'PostToolUseFailure' || eventName === 'postToolUseFailure') {
     return { host: normalizedHost, event, ...ids, projectRoot, type: 'error', status: 'failed', payload: { message: stringValue(raw.error) ?? 'Tool failed' } };

@@ -258,4 +258,138 @@ describe('host lifecycle orchestration', () => {
     expect(event).toEqual({ accepted: true, sessionId: expect.any(String) });
     expect(stop.accepted).toBe(true);
   });
+
+  it('stores a host-scoped hard-stop handoff and injects it first on the next matching SessionStart', async () => {
+    const sessionStart = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-rate-limit',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+    const checkpoint = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'checkpoint',
+      externalSessionId: 'claude-rate-limit',
+      externalTurnId: 'turn-rate',
+      type: 'checkpoint',
+      payload: { summary: 'Human review gate active', changedPaths: ['src/forge.ts'] },
+    }));
+    const failedStop = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-rate-limit',
+      externalTurnId: 'turn-rate',
+      status: 'failed',
+      payload: { status: 'failed', error: 'rate_limit', message: 'Claude session limit hit' },
+    }));
+
+    expect(sessionStart.accepted).toBe(true);
+    expect(checkpoint.accepted).toBe(true);
+    expect(failedStop.accepted).toBe(true);
+    expect(failedStop.handoff?.handoff.kind).toBe('rate_limit');
+    expect(failedStop.handoff?.handoff.lastCheckpoint).toBe('Human review gate active');
+    expect(failedStop.promotion).toBeDefined();
+
+    const sessionRows = await getClient().execute({
+      sql: 'SELECT status FROM memory_sessions WHERE id = ?',
+      args: [failedStop.sessionId!],
+    });
+    expect(String(sessionRows.rows[0].status)).toBe('failed');
+
+    const codexStart = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'session-start',
+      externalSessionId: 'codex-other',
+      externalTurnId: undefined,
+    }));
+    expect(String(codexStart.context)).not.toContain('PENDING SESSION HANDOFF');
+
+    const nextStart = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-resume',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+    const secondStart = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-resume-2',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+
+    expect(String(nextStart.context)).toContain('PENDING SESSION HANDOFF');
+    expect(String(nextStart.context)).toContain('rate_limit');
+    expect(String(nextStart.context)).toContain('Human review gate active');
+    expect(String(nextStart.context)).toContain('Use local memory');
+    expect(String(secondStart.context)).not.toContain('PENDING SESSION HANDOFF');
+  });
+
+  it('records host-neutral hard-stop handoffs for Codex and Cursor failures', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'session-start',
+      externalSessionId: 'codex-fail',
+      externalTurnId: undefined,
+    }));
+    const codexFail = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'turn-stop',
+      externalSessionId: 'codex-fail',
+      externalTurnId: 'turn-fail',
+      status: 'failed',
+      payload: { status: 'failed', error: 'model_error', message: 'provider blew up' },
+    }));
+    expect(codexFail.handoff?.handoff.kind).toBe('failed');
+    expect(codexFail.handoff?.handoff.urgency).toBe('high');
+    expect(codexFail.promotion).toBeDefined();
+
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'cursor',
+      event: 'session-start',
+      externalSessionId: 'cursor-auth',
+      externalTurnId: undefined,
+    }));
+    const cursorFail = await handleHostLifecycleEvent(projectId, hook({
+      host: 'cursor',
+      event: 'turn-stop',
+      externalSessionId: 'cursor-auth',
+      externalTurnId: 'turn-auth',
+      status: 'failed',
+      payload: { status: 'failed', code: '401', message: 'unauthorized' },
+    }));
+    expect(cursorFail.handoff?.handoff.kind).toBe('auth');
+
+    const cursorResume = await handleHostLifecycleEvent(projectId, hook({
+      host: 'cursor',
+      event: 'session-start',
+      externalSessionId: 'cursor-resume',
+      externalTurnId: undefined,
+    }));
+    expect(cursorResume.hostOutput).toMatchObject({
+      additional_context: expect.stringContaining('PENDING SESSION HANDOFF'),
+      sessionStart: true,
+    });
+    expect(String(cursorResume.context)).toContain('auth');
+  });
+
+  it('does not create handoffs for successful stops', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'generic',
+      event: 'session-start',
+      externalSessionId: 'generic-ok',
+      externalTurnId: undefined,
+    }));
+    const stop = await handleHostLifecycleEvent(projectId, hook({
+      host: 'generic',
+      event: 'turn-stop',
+      externalSessionId: 'generic-ok',
+      externalTurnId: 'turn-ok',
+      status: 'finished',
+      payload: { status: 'finished' },
+    }));
+    expect(stop.handoff).toBeFalsy();
+  });
 });
