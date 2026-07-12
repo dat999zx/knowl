@@ -92,6 +92,20 @@ function changedPaths(projectRoot: string, raw: Record<string, unknown>): string
     .slice(0, 50);
 }
 
+function checkpointState(raw: Record<string, unknown>): Record<string, unknown> {
+  const state: Record<string, unknown> = {};
+  for (const key of ['goal', 'completed', 'nextAction', 'blocker', 'artifactRefs']) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    state[key] = Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === 'string').slice(0, 20).map(entry => entry.slice(0, MAX_STRING))
+      : typeof value === 'string'
+        ? value.slice(0, MAX_STRING)
+        : value;
+  }
+  return state;
+}
+
 function toolInput(raw: Record<string, unknown>): Record<string, unknown> {
   return recordValue(raw.tool_input) ?? recordValue(raw.toolInput) ?? {};
 }
@@ -154,7 +168,7 @@ function normalizeGeneric(eventName: string, raw: Record<string, unknown>, proje
   if (event === 'session-event' && type === undefined) throw new IncompleteHostHookPayloadError('Generic session event requires a type.');
   if (type !== undefined && !isSessionEventType(type)) throw new Error(`Unsupported session event type: ${String(type)}`);
   const payload: Record<string, unknown> = {};
-  for (const key of ['command', 'exitCode', 'passed', 'summary', 'message', 'code', 'text', 'changedPaths', 'commit', 'status', 'error', 'error_code', 'error_message']) {
+  for (const key of ['command', 'exitCode', 'passed', 'summary', 'message', 'code', 'text', 'changedPaths', 'commit', 'status', 'error', 'error_code', 'error_message', 'goal', 'completed', 'nextAction', 'blocker', 'artifactRefs']) {
     if (raw[key] !== undefined) payload[key] = Array.isArray(raw[key]) ? raw[key] : typeof raw[key] === 'string' ? String(raw[key]).slice(0, MAX_STRING) : raw[key];
   }
   return {
@@ -206,7 +220,19 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
     return { host: normalizedHost, event, ...ids, projectRoot, title: event === 'turn-start' ? 'Agent turn' : 'Agent session', payload: {} };
   }
   if (event === 'checkpoint') {
-    return { host: normalizedHost, event, ...ids, projectRoot, type: 'checkpoint', payload: { changedPaths: changedPaths(projectRoot, raw) } };
+    const summary = stringValue(raw.summary);
+    return {
+      host: normalizedHost,
+      event,
+      ...ids,
+      projectRoot,
+      type: 'checkpoint',
+      payload: {
+        ...(summary ? { summary } : {}),
+        changedPaths: changedPaths(projectRoot, raw),
+        ...checkpointState(raw),
+      },
+    };
   }
   if (event === 'turn-stop' || event === 'session-stop') {
     const failed = eventName === 'StopFailure' || stringValue(raw.status) === 'failed' || Boolean(stringValue(raw.error) || recordValue(raw.error));

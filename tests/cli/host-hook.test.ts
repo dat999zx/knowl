@@ -113,6 +113,30 @@ describe('host hook normalization', () => {
     expect(result.payload).not.toHaveProperty('stdout');
   });
 
+  it('keeps structured checkpoint state without retaining arbitrary tool output', () => {
+    const result = normalizeHostHook('generic', 'checkpoint', {
+      sessionId: 'session-structured',
+      turnId: 'turn-structured',
+      cwd: ROOT,
+      summary: 'Checkpoint complete',
+      goal: 'Ship resumable handoffs',
+      completed: ['Added a test'],
+      nextAction: 'Implement the contract',
+      blocker: 'Waiting for a rate-limit reset',
+      artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+      stdout: 'discard me',
+    });
+
+    expect(result.payload).toEqual({
+      summary: 'Checkpoint complete',
+      goal: 'Ship resumable handoffs',
+      completed: ['Added a test'],
+      nextAction: 'Implement the contract',
+      blocker: 'Waiting for a rate-limit reset',
+      artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+    });
+  });
+
 
   it('preserves Claude StopFailure rate-limit error codes', () => {
     const result = normalizeHostHook('claude', 'StopFailure', {

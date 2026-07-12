@@ -101,12 +101,28 @@ describe('host lifecycle orchestration', () => {
       externalTurnId: 'turn-2',
       event: 'checkpoint',
       type: 'checkpoint',
-      payload: { summary: 'Current task state', changedPaths: ['src/auth.ts'] },
+      payload: {
+        summary: 'Current task state',
+        changedPaths: ['src/auth.ts'],
+        goal: 'Ship resumable handoffs',
+        completed: ['Added the regression case'],
+        nextAction: 'Implement the checkpoint contract',
+        blocker: 'None',
+        artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+      },
     }));
 
     expect(checkpoint.sessionId).toBe(start.sessionId);
     const rows = await getClient().execute({ sql: 'SELECT payload FROM memory_session_events WHERE session_id = ? AND type = ?', args: [start.sessionId!, 'checkpoint'] });
-    expect(JSON.parse(String(rows.rows[0].payload))).toEqual({ summary: 'Current task state', changedPaths: ['src/auth.ts'] });
+    expect(JSON.parse(String(rows.rows[0].payload))).toEqual({
+      summary: 'Current task state',
+      changedPaths: ['src/auth.ts'],
+      goal: 'Ship resumable handoffs',
+      completed: ['Added the regression case'],
+      nextAction: 'Implement the checkpoint contract',
+      blocker: 'None',
+      artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+    });
   });
 
   it('delivers fallback context once across completed turns without SessionStart', async () => {
@@ -181,7 +197,15 @@ describe('host lifecycle orchestration', () => {
       externalSessionId: 'claude-rate-limit',
       externalTurnId: 'turn-rate',
       type: 'checkpoint',
-      payload: { summary: 'Human review gate active', changedPaths: ['src/forge.ts'] },
+      payload: {
+        summary: 'Human review gate active',
+        changedPaths: ['src/forge.ts'],
+        goal: 'Ship resumable handoffs',
+        completed: ['Captured a structured checkpoint', 'Ran focused tests'],
+        nextAction: 'Persist the pending handoff',
+        blocker: 'Rate limit',
+        artifactRefs: ['src/store/session-handoff.ts', 'tests/store/host-lifecycle.test.ts'],
+      },
     }));
     const failedStop = await handleHostLifecycleEvent(projectId, hook({
       host: 'claude',
@@ -197,6 +221,26 @@ describe('host lifecycle orchestration', () => {
     expect(failedStop.accepted).toBe(true);
     expect(failedStop.handoff?.handoff.kind).toBe('rate_limit');
     expect(failedStop.handoff?.handoff.lastCheckpoint).toBe('Human review gate active');
+    expect(failedStop.handoff?.handoff.taskState).toEqual({
+      goal: 'Ship resumable handoffs',
+      completed: ['Captured a structured checkpoint', 'Ran focused tests'],
+      nextAction: 'Persist the pending handoff',
+      blocker: 'Rate limit',
+      artifactRefs: ['src/store/session-handoff.ts', 'tests/store/host-lifecycle.test.ts'],
+    });
+
+    const repeatedFailure = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-rate-limit',
+      externalTurnId: 'turn-rate',
+      status: 'failed',
+      payload: { status: 'failed', error: 'rate_limit', message: 'Claude session limit hit' },
+    }));
+    expect(repeatedFailure.accepted).toBe(true);
+    const activeHandoffs = await getClient().execute({ sql: "SELECT id, content, conflict_key, conflict_scope FROM knowledge_items WHERE title = 'Pending session handoff' AND status = 'active'" });
+    expect(activeHandoffs.rows).toHaveLength(1);
+    expect(String(activeHandoffs.rows[0].conflict_key)).toBe('pending.session.handoff');
 
     const nextStart = await handleHostLifecycleEvent(projectId, hook({
       host: 'claude',
@@ -216,6 +260,10 @@ describe('host lifecycle orchestration', () => {
     expect(String(nextStart.context)).toContain('PENDING SESSION HANDOFF');
     expect(String(nextStart.context)).toContain('rate_limit');
     expect(String(nextStart.context)).toContain('Human review gate active');
+    expect(String(nextStart.context)).toContain('Ship resumable handoffs');
+    expect(String(nextStart.context)).toContain('Persist the pending handoff');
+    expect(String(nextStart.context)).toContain('Rate limit');
+    expect(String(nextStart.context)).toContain('src/store/session-handoff.ts');
     expect(String(nextStart.context)).toContain('Use local memory');
     expect(String(secondStart.context)).not.toContain('PENDING SESSION HANDOFF');
   });

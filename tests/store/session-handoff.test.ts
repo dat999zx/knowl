@@ -25,12 +25,22 @@ describe('session handoff helpers', () => {
       errorCode: 'rate_limit',
       lastCheckpoint: 'Review loop gated',
       changedPaths: ['src/forge.ts'],
+      taskState: {
+        goal: 'Ship resumable handoffs',
+        completed: ['Added a regression test'],
+        nextAction: 'Persist task state',
+        blocker: 'Rate limit',
+        artifactRefs: ['tests/store/session-handoff.test.ts'],
+      },
       failedAt: '2026-07-12T00:00:00.000Z',
     });
 
     expect(text).toContain('PENDING SESSION HANDOFF');
     expect(text).toContain('rate_limit');
     expect(text).toContain('Review loop gated');
+    expect(text).toContain('Ship resumable handoffs');
+    expect(text).toContain('Persist task state');
+    expect(text).toContain('tests/store/session-handoff.test.ts');
     expect(text).toContain('Do not restart from scratch');
   });
 });
