@@ -15,13 +15,14 @@ const ROOT_FIELDS = new Set([
   'session_id', 'sessionId', 'thread_id', 'turn_id', 'turnId', 'conversation_id', 'generation_id', 'cwd', 'workspace_roots',
   'title', 'query', 'agent', 'type', 'status', 'summary', 'command', 'exit_code', 'exitCode', 'passed',
   'message', 'code', 'text', 'changedPaths', 'changed_paths', 'commit', 'file_path', 'filePath', 'path',
-  'tool_name', 'toolName', 'error', 'tool_input', 'toolInput', 'tool_response', 'toolResponse',
+  'tool_name', 'toolName', 'error', 'error_code', 'error_message', 'tool_input', 'toolInput', 'tool_response', 'toolResponse',
 ]);
 const NESTED_FIELDS: Record<string, Set<string>> = {
   tool_input: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path']),
   toolInput: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path']),
   tool_response: new Set(['exit_code', 'exitCode']),
   toolResponse: new Set(['exit_code', 'exitCode']),
+  error: new Set(['code', 'type', 'message', 'error']),
 };
 const ARRAY_FIELDS = new Set(['workspace_roots', 'changedPaths', 'changed_paths', 'file_paths', 'filePaths']);
 
@@ -121,3 +122,5 @@ export function stringPayloadValue(payload: Record<string, unknown>, key: string
   const value = payload[key];
   return typeof value === 'string' ? value : undefined;
 }
+
+

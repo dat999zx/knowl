@@ -113,8 +113,31 @@ describe('host hook normalization', () => {
     expect(result.payload).not.toHaveProperty('stdout');
   });
 
+
+  it('preserves Claude StopFailure rate-limit error codes', () => {
+    const result = normalizeHostHook('claude', 'StopFailure', {
+      session_id: 'session-rate',
+      turn_id: 'turn-rate',
+      cwd: ROOT,
+      error: 'rate_limit',
+      message: 'Claude session limit hit',
+    });
+
+    expect(result).toMatchObject({
+      host: 'claude',
+      event: 'turn-stop',
+      status: 'failed',
+      payload: {
+        status: 'failed',
+        error: 'rate_limit',
+        code: 'rate_limit',
+        message: 'Claude session limit hit',
+      },
+    });
+  });
   it('rejects unsupported hosts and events', () => {
     expect(() => normalizeHostHook('unknown', 'SessionStart', {})).toThrow('Unsupported hook host');
     expect(() => normalizeHostHook('codex', 'UnknownEvent', { session_id: 's', cwd: ROOT })).toThrow('Unsupported codex hook event');
   });
 });
+

@@ -166,4 +166,77 @@ describe('host lifecycle orchestration', () => {
     expect(event).toEqual({ accepted: true, sessionId: expect.any(String) });
     expect(stop.accepted).toBe(true);
   });
+
+  it('stores a Claude rate-limit handoff and injects it first on the next SessionStart', async () => {
+    const sessionStart = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-rate-limit',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+    const checkpoint = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'checkpoint',
+      externalSessionId: 'claude-rate-limit',
+      externalTurnId: 'turn-rate',
+      type: 'checkpoint',
+      payload: { summary: 'Human review gate active', changedPaths: ['src/forge.ts'] },
+    }));
+    const failedStop = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-rate-limit',
+      externalTurnId: 'turn-rate',
+      status: 'failed',
+      payload: { status: 'failed', error: 'rate_limit', message: 'Claude session limit hit' },
+    }));
+
+    expect(sessionStart.accepted).toBe(true);
+    expect(checkpoint.accepted).toBe(true);
+    expect(failedStop.accepted).toBe(true);
+    expect(failedStop.handoff?.handoff.kind).toBe('rate_limit');
+    expect(failedStop.handoff?.handoff.lastCheckpoint).toBe('Human review gate active');
+
+    const nextStart = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-resume',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+    const secondStart = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-resume-2',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+
+    expect(String(nextStart.context)).toContain('PENDING SESSION HANDOFF');
+    expect(String(nextStart.context)).toContain('rate_limit');
+    expect(String(nextStart.context)).toContain('Human review gate active');
+    expect(String(nextStart.context)).toContain('Use local memory');
+    expect(String(secondStart.context)).not.toContain('PENDING SESSION HANDOFF');
+  });
+
+  it('records lower-urgency handoffs for non-limit StopFailure events', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-generic-fail',
+      externalTurnId: undefined,
+    }));
+    const failedStop = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-generic-fail',
+      externalTurnId: 'turn-fail',
+      status: 'failed',
+      payload: { status: 'failed', error: 'model_error', message: 'provider blew up' },
+    }));
+
+    expect(failedStop.handoff?.handoff.kind).toBe('failed');
+    expect(failedStop.handoff?.handoff.urgency).toBe('high');
+  });
 });

@@ -110,6 +110,8 @@ When a terminal session is finished normally, Knowl deterministically promotes a
 
 `knowl init` installs verified project-local hooks for Codex CLI, Claude Code, and Cursor. Those hooks call the internal `knowl agent-hook <host> <event>` translator, which normalizes vendor payloads into bounded session events. Session and prompt starts receive compact current context; successful commands, file changes, tests, failures, compaction checkpoints, and turn completion feed the existing validation/evidence/promotion pipeline.
 
+When Claude emits `StopFailure` with a rate-limit or other hard stop error, Knowl stores a deterministic `pending_handoff` state item (no AI required). The next `SessionStart` injects that handoff first, then normal recent context, and archives the handoff so it is delivered once.
+
 Raw prompts, transcripts, stdout/stderr, environment variables, and unknown fields are not retained. Malformed or secret-bearing payloads are rejected, duplicate stop events are idempotently dropped, and stale sessions recover at the next session start. A generic stdin-JSON contract is available for other hosts, but normal users only run `knowl init` and `knowl doctor`.
 
 Hook support remains host-specific. Knowl never guesses or writes an unverified host configuration. Unsupported hosts retain MCP access; `knowl task run` remains the manual fallback.
@@ -355,3 +357,4 @@ The package payload is limited to:
 ## License
 
 Knowl is licensed under the Apache License 2.0. See [LICENSE](LICENSE) for the full terms.
+

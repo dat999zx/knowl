@@ -11,6 +11,8 @@ import {
   getOrCreateHostSession,
   HostSessionKey,
 } from './host-session-bindings.js';
+import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
+import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
 
 export type HostLifecycleResult = {
   accepted: boolean;
@@ -21,6 +23,7 @@ export type HostLifecycleResult = {
   recoveredCount?: number;
   purgedEventCount?: number;
   promotion?: Awaited<ReturnType<typeof finalizeMemorySession>>;
+  handoff?: Awaited<ReturnType<typeof recordPendingSessionHandoff>>;
   hostOutput?: Record<string, unknown>;
 };
 
@@ -44,6 +47,28 @@ function hostContextOutput(input: NormalizedHostHook, context: string | undefine
   };
 }
 
+function mergeBootstrapContext(handoffContext: string | undefined, recentContext: string | undefined): { context?: string; truncated: boolean } {
+  if (!handoffContext && !recentContext) return { context: undefined, truncated: false };
+  if (!handoffContext) {
+    return {
+      context: recentContext,
+      truncated: Boolean(recentContext && recentContext.length > DEFAULT_CONTEXT_MAX_CHARS),
+    };
+  }
+  if (!recentContext) {
+    return {
+      context: handoffContext,
+      truncated: handoffContext.length > DEFAULT_CONTEXT_MAX_CHARS,
+    };
+  }
+  const combined = `${handoffContext}\n\n${recentContext}`;
+  const truncated = combined.length > DEFAULT_CONTEXT_MAX_CHARS;
+  return {
+    context: truncated ? truncateText(combined, DEFAULT_CONTEXT_MAX_CHARS, '\n\n[Context truncated]') : combined,
+    truncated,
+  };
+}
+
 async function startBoundSession(projectId: string, input: NormalizedHostHook, scope: 'session' | 'turn', includeContext = false) {
   return getOrCreateHostSession({
     projectId,
@@ -53,12 +78,26 @@ async function startBoundSession(projectId: string, input: NormalizedHostHook, s
   });
 }
 
+async function bootstrapWithHandoff(projectId: string, input: NormalizedHostHook, scope: 'session' | 'turn', includeContext: boolean) {
+  const started = await startBoundSession(projectId, input, scope, includeContext);
+  if (!includeContext) return { ...started, handoff: null as Awaited<ReturnType<typeof consumePendingSessionHandoff>> };
+
+  const handoff = await consumePendingSessionHandoff(projectId);
+  const merged = mergeBootstrapContext(handoff?.context, started.context);
+  return {
+    ...started,
+    context: merged.context,
+    truncated: merged.truncated,
+    handoff,
+  };
+}
+
 export async function handleHostLifecycleEvent(projectId: string, input: NormalizedHostHook): Promise<HostLifecycleResult> {
   if (input.event === 'session-start') {
     const recovered = await recoverAbandonedSessions();
     const purgedEventCount = await purgeExpiredSessionEvents();
     await closeInactiveHostSessionBindings();
-    const started = await startBoundSession(projectId, input, 'session', true);
+    const started = await bootstrapWithHandoff(projectId, input, 'session', true);
     return {
       accepted: true,
       sessionId: started.session.id,
@@ -73,7 +112,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
   if (input.event === 'turn-start') {
     const sessionBinding = await findHostSession(bindingKey(input, 'session'));
     if (!sessionBinding && (input.host === 'codex' || input.host === 'claude')) {
-      const started = await startBoundSession(projectId, input, 'session', true);
+      const started = await bootstrapWithHandoff(projectId, input, 'session', true);
       await bindHostSession(bindingKey(input, 'turn'), started.session.id);
       return {
         accepted: true,
@@ -83,7 +122,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
         hostOutput: hostContextOutput(input, started.context),
       };
     }
-    const started = await startBoundSession(projectId, input, 'turn', !sessionBinding);
+    const started = await bootstrapWithHandoff(projectId, input, 'turn', !sessionBinding);
     if (!sessionBinding) await bindHostSession(bindingKey(input, 'session'), started.session.id);
     return {
       accepted: true,
@@ -104,17 +143,24 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
 
   if (input.event === 'turn-stop') {
     const key = bindingKey(input, 'turn');
-    const session = await findHostSession(key);
-    if (!session) return { accepted: false, reason: 'event-loss' };
+    let session = await findHostSession(key);
     const sessionBinding = await findHostSession(bindingKey(input, 'session'));
+    // gpt-5.5 StopFailure may arrive without a turn binding. Fall back to the session binding
+    // so rate-limit handoffs still persist when only SessionStart existed.
+    if (!session && input.status === 'failed' && sessionBinding) {
+      session = sessionBinding;
+    }
+    if (!session) return { accepted: false, reason: 'event-loss' };
     if ((input.host === 'codex' || input.host === 'claude') && sessionBinding?.id === session.id) {
+      const handoff = await recordPendingSessionHandoff(projectId, input, { memorySessionId: session.id });
       await closeHostSessionBinding(key);
-      return { accepted: true, sessionId: session.id };
+      return { accepted: true, sessionId: session.id, handoff };
     }
     await finishMemorySession(session.id, input.status ?? 'finished', typeof input.payload.summary === 'string' ? input.payload.summary : undefined);
     const promotion = await finalizeMemorySession(projectId, session.id);
+    const handoff = await recordPendingSessionHandoff(projectId, input, { memorySessionId: session.id });
     await closeHostSessionBinding(key);
-    return { accepted: true, sessionId: session.id, promotion };
+    return { accepted: true, sessionId: session.id, promotion, handoff };
   }
 
   const key = bindingKey(input, 'session');
@@ -125,7 +171,8 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
   }
   await finishMemorySession(session.id, input.status ?? 'finished', typeof input.payload.summary === 'string' ? input.payload.summary : undefined);
   const promotion = await finalizeMemorySession(projectId, session.id);
+  const handoff = await recordPendingSessionHandoff(projectId, input, { memorySessionId: session.id });
   await closeHostSessionBinding(key);
   await closeHostSessionBindings(bindingKey(input, 'turn'));
-  return { accepted: true, sessionId: session.id, promotion };
+  return { accepted: true, sessionId: session.id, promotion, handoff };
 }
