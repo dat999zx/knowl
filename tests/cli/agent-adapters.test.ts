@@ -6,12 +6,29 @@ import { mergeCodexTomlConfig, mergeJsonMcpConfig } from '../../src/cli/agents/f
 import { createClaudeCodeAdapter, createCodexAdapter } from '../../src/cli/agents/project-adapters.js';
 import { createCursorAdapter } from '../../src/cli/agents/cursor.js';
 import { createClaudeDesktopAdapter } from '../../src/cli/agents/desktop-adapter.js';
+import { knowlHookCommand } from '../../src/cli/agents/hook-config.js';
 import { parseAgentNames } from '../../src/cli/agents/registry.js';
 
 const ROOT = path.resolve('.knowl-agent-adapters-test');
 const configPath = path.join(ROOT, 'mcp.json');
 const writeJson = (filePath: string, value: unknown) => fs.writeFile(filePath, JSON.stringify(value, null, 2), 'utf8');
 const readJson = async (filePath: string) => JSON.parse(await fs.readFile(filePath, 'utf8'));
+
+const collectHookCommands = (...configs: Array<Record<string, any>>) => {
+  const commands: string[] = [];
+  const walk = (value: unknown) => {
+    if (!value || typeof value !== 'object') return;
+    if (Array.isArray(value)) {
+      for (const entry of value) walk(entry);
+      return;
+    }
+    const record = value as Record<string, unknown>;
+    if (typeof record.command === 'string') commands.push(record.command);
+    for (const entry of Object.values(record)) walk(entry);
+  };
+  for (const config of configs) walk(config);
+  return commands;
+};
 
 afterEach(async () => fs.rm(ROOT, { recursive: true, force: true }));
 
@@ -68,6 +85,7 @@ describe('agent adapters', () => {
     await adapter.configure(PROJECT);
     const config = parse(await fs.readFile(path.join(PROJECT, '.codex', 'config.toml'), 'utf8')) as Record<string, any>;
     expect(config.mcp_servers.knowl.command).toBe('knowl.cmd');
+    expect(config.mcp_servers.knowl.args).toEqual(['serve']);
     expect(await adapter.verify(PROJECT)).toBe(true);
   });
 
@@ -77,6 +95,7 @@ describe('agent adapters', () => {
     await claude.configure(PROJECT);
     await cursor.configure(PROJECT);
     expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.command).toBe('knowl.cmd');
+    expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.args).toEqual(['serve']);
     expect((await readJson(path.join(PROJECT, '.cursor', 'mcp.json'))).mcpServers.knowl.command).toBe('knowl.cmd');
   });
 
@@ -125,6 +144,25 @@ describe('agent adapters', () => {
     expect(claudeSettings.hooks.SessionStart[0].matcher).toBe('.*');
     expect(cursorHooks.hooks.afterFileEdit[0].command).toBe('existing');
     expect(JSON.stringify(cursorHooks)).toContain('knowl.cmd agent-hook cursor sessionStart --json');
+
+    expect(JSON.stringify(codexHooks.hooks.PostToolUse)).not.toContain('Updating Knowl memory');
+    expect(JSON.stringify(claudeSettings.hooks.PostToolUse)).not.toContain('Updating Knowl memory');
+    expect(JSON.stringify(codexHooks.hooks.Stop)).not.toContain('Updating Knowl memory');
+    expect(JSON.stringify(codexHooks.hooks.SessionStart)).not.toContain('Updating Knowl memory');
+    expect(JSON.stringify(codexHooks.hooks.SessionStart)).toContain('Loading Knowl memory');
+    expect(codexHooks.hooks.PostToolUse.at(-1).hooks[0].statusMessage).toBe('');
+    expect(codexHooks.hooks.Stop.at(-1).hooks[0].statusMessage).toBe('');
+    expect(codexHooks.hooks.SessionStart.at(-1).hooks[0].statusMessage).toBe('Loading Knowl memory');
+    expect(claudeSettings.hooks.PostToolUse.at(-1).hooks[0].statusMessage).toBe('');
+    expect(knowlHookCommand('win32', 'claude', 'PostToolUse')).toBe('knowl.cmd agent-hook claude PostToolUse --json');
+    expect(knowlHookCommand('win32', 'claude', 'PostToolUse')).not.toContain('serve');
+    const knowlHookCommands = collectHookCommands(codexHooks, claudeSettings, cursorHooks)
+      .filter(command => command.includes('agent-hook') || command.includes('knowl'));
+    expect(knowlHookCommands.length).toBeGreaterThan(0);
+    for (const command of knowlHookCommands) {
+      expect(command).toContain('agent-hook');
+      expect(command).not.toContain('serve');
+    }
 
     expect(await codex.verifyLifecycle(PROJECT)).toBe(true);
     expect(await claude.verifyLifecycle(PROJECT)).toBe(true);

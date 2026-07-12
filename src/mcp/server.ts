@@ -96,6 +96,15 @@ export async function startMcpServer(): Promise<void> {
     initError = error.message;
   }
 
+  process.stderr.write(
+    [
+      '[knowl serve]',
+      `pid=${process.pid}`,
+      projectRoot ? `projectRoot=${projectRoot}` : 'projectRoot=unresolved',
+      'note=host-owned stdio process; one serve process per connected host session; hooks use agent-hook and do not spawn serve',
+    ].join(' ') + '\n'
+  );
+
   const server = createMcpServer(
     project ? project.id : null,
     projectRoot,

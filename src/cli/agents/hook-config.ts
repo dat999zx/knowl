@@ -22,6 +22,12 @@ const ownsCommand = (value: unknown, host: HookHost) =>
 const ownsNestedEntry = (entry: Record<string, unknown>, host: 'codex' | 'claude') =>
   Array.isArray(entry.hooks) && (entry.hooks as Record<string, unknown>[]).some(hook => ownsCommand(hook.command, host));
 
+function nestedStatusMessage(event: string): string {
+  if (event === 'SessionStart') return 'Loading Knowl memory';
+  // Keep the field present for host schema compatibility, but empty to avoid status spam.
+  return '';
+}
+
 function nestedEntry(platform: NodeJS.Platform, host: 'codex' | 'claude', event: string): NestedEntry {
   return {
     matcher: '.*',
@@ -29,7 +35,7 @@ function nestedEntry(platform: NodeJS.Platform, host: 'codex' | 'claude', event:
       type: 'command',
       command: knowlHookCommand(platform, host, event),
       timeout: 30,
-      statusMessage: 'Updating Knowl memory',
+      statusMessage: nestedStatusMessage(event),
     }],
   };
 }

@@ -108,7 +108,11 @@ When a terminal session is finished normally, Knowl deterministically promotes a
 
 ### Agent lifecycle automation
 
-`knowl init` installs verified project-local hooks for Codex CLI, Claude Code, and Cursor. Those hooks call the internal `knowl agent-hook <host> <event>` translator, which normalizes vendor payloads into bounded session events. Session and prompt starts receive compact current context; successful commands, file changes, tests, failures, compaction checkpoints, and turn completion feed the existing validation/evidence/promotion pipeline.
+`knowl init` installs verified project-local hooks for Codex CLI, Claude Code, and Cursor. Lifecycle hooks call short-lived `knowl agent-hook <host> <event>` processes that normalize vendor payloads into bounded session events. MCP tools use a separate host-spawned `knowl serve` process; hooks never launch or manage serve.
+
+SessionStart is the sole automatic model-facing context injection. Capture hooks for tools, failures, compaction, and stop stay quiet/capture-only. Successful commands, file changes, tests, failures, compaction checkpoints, and turn completion feed the existing validation/evidence/promotion pipeline.
+
+Multiple leftover `knowl serve` processes usually mean multiple host sessions or reconnects, not hook respawn. Multiple agents can use one repo with shared SQLite and brief lock waits; agents in different repos remain isolated under each project `.knowl/`.
 
 Raw prompts, transcripts, stdout/stderr, environment variables, and unknown fields are not retained. Malformed or secret-bearing payloads are rejected, duplicate stop events are idempotently dropped, and stale sessions recover at the next session start. A generic stdin-JSON contract is available for other hosts, but normal users only run `knowl init` and `knowl doctor`.
 

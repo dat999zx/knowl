@@ -3,7 +3,7 @@ import { createClient } from '@libsql/client';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
-import { initDb, closeDb, getDb } from '../../src/store/database.js';
+import { initDb, closeDb, getDb, getClient } from '../../src/store/database.js';
 import { bootstrapSchema } from '../../src/store/bootstrap.js';
 import * as repo from '../../src/store/repository.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from '../../src/store/gc.js';
@@ -42,6 +42,14 @@ describe('Storage Layer', () => {
     } catch {
       // Ignore cleanup errors
     }
+  });
+
+  
+  it('sets sqlite busy_timeout on every connection', async () => {
+    const client = getClient();
+    const result = await client.execute('PRAGMA busy_timeout;');
+    const value = Number((result.rows[0] as any).busy_timeout ?? (result.rows[0] as any)[0] ?? Object.values(result.rows[0] as any)[0]);
+    expect(value).toBe(5000);
   });
 
   it('should use local project identity without persisted project metadata', async () => {

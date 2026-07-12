@@ -153,6 +153,98 @@ describe('host lifecycle orchestration', () => {
     expect(stop.accepted).toBe(true);
   });
 
+  it('debounces exact duplicate capture events within the window', async () => {
+    const first = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'session-event',
+      externalSessionId: 'debounce-session',
+      externalTurnId: 'debounce-turn',
+      type: 'command',
+      payload: { command: 'npm test', exitCode: 0 },
+    }));
+    const second = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'session-event',
+      externalSessionId: 'debounce-session',
+      externalTurnId: 'debounce-turn',
+      type: 'command',
+      payload: { command: 'npm test', exitCode: 0 },
+    }));
+    const distinct = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'session-event',
+      externalSessionId: 'debounce-session',
+      externalTurnId: 'debounce-turn',
+      type: 'command',
+      payload: { command: 'npm run build', exitCode: 0 },
+    }));
+    const failure = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'session-event',
+      externalSessionId: 'debounce-session',
+      externalTurnId: 'debounce-turn',
+      type: 'error',
+      status: 'failed',
+      payload: { message: 'tool failed' },
+    }));
+    const stop = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'turn-stop',
+      externalSessionId: 'debounce-session',
+      externalTurnId: 'debounce-turn',
+      status: 'finished',
+      payload: { status: 'finished' },
+    }));
+
+    expect(first).toMatchObject({ accepted: true, sessionId: expect.any(String) });
+    expect(second).toEqual({ accepted: true, reason: 'debounced', sessionId: first.sessionId });
+    expect(distinct.accepted).toBe(true);
+    expect(failure.accepted).toBe(true);
+    expect(stop.accepted).toBe(true);
+
+    const commandRows = await getClient().execute({
+      sql: 'SELECT payload FROM memory_session_events WHERE session_id = ? AND type = ? ORDER BY observed_at ASC',
+      args: [first.sessionId!, 'command'],
+    });
+    expect(commandRows.rows).toHaveLength(2);
+    expect(String(commandRows.rows[0].payload)).toContain('npm test');
+    expect(String(commandRows.rows[1].payload)).toContain('npm run build');
+
+    const errorRows = await getClient().execute({
+      sql: 'SELECT payload FROM memory_session_events WHERE session_id = ? AND type = ?',
+      args: [first.sessionId!, 'error'],
+    });
+    expect(errorRows.rows).toHaveLength(1);
+  });
+
+  it('debounces exact duplicate checkpoint captures within the window', async () => {
+    const first = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'checkpoint',
+      externalSessionId: 'debounce-checkpoint-session',
+      externalTurnId: 'debounce-checkpoint-turn',
+      type: 'checkpoint',
+      payload: { summary: 'state', changedPaths: ['src/a.ts', 'src/b.ts'] },
+    }));
+    const second = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'checkpoint',
+      externalSessionId: 'debounce-checkpoint-session',
+      externalTurnId: 'debounce-checkpoint-turn',
+      type: 'checkpoint',
+      payload: { summary: 'state', changedPaths: ['src/b.ts', 'src/a.ts'] },
+    }));
+
+    expect(first.accepted).toBe(true);
+    expect(second).toEqual({ accepted: true, reason: 'debounced', sessionId: first.sessionId });
+
+    const rows = await getClient().execute({
+      sql: 'SELECT payload FROM memory_session_events WHERE session_id = ? AND type = ?',
+      args: [first.sessionId!, 'checkpoint'],
+    });
+    expect(rows.rows).toHaveLength(1);
+  });
+
   it('does not inject fallback context from a tool event when SessionStart is missing', async () => {
     const event = await handleHostLifecycleEvent(projectId, hook({
       host: 'codex', event: 'session-event', externalSessionId: 'missing-bootstrap', externalTurnId: 'tool-turn',

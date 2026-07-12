@@ -2,6 +2,7 @@ import { NormalizedHostHook } from '../cli/agents/host-hook.js';
 import { captureMemorySessionEvent } from './session-capture.js';
 import { finalizeMemorySession } from './session-finalizer.js';
 import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions } from './session-repository.js';
+import { claimCapture, releaseCapture } from './hook-debounce.js';
 import {
   closeHostSessionBinding,
   closeHostSessionBindings,
@@ -14,7 +15,7 @@ import {
 
 export type HostLifecycleResult = {
   accepted: boolean;
-  reason?: 'event-loss';
+  reason?: 'event-loss' | 'debounced';
   sessionId?: string;
   context?: string;
   contextTruncated?: boolean;
@@ -95,11 +96,24 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
   }
 
   if (input.event === 'session-event' || input.event === 'checkpoint') {
-    const started = await startBoundSession(projectId, input, 'turn');
-    const type = input.event === 'checkpoint' ? 'checkpoint' : input.type;
-    if (!type) throw new Error('Normalized host session event requires a type.');
-    await captureMemorySessionEvent(started.session.id, type, input.payload);
-    return { accepted: true, sessionId: started.session.id };
+    // Claim before DB write so concurrent hook processes cannot double-capture.
+    // Debounce reduces duplicate storage work; hosts may still spawn one-shot agent-hook processes.
+    if (!claimCapture(input)) {
+      const existing = await findHostSession(bindingKey(input, 'turn'))
+        ?? await findHostSession(bindingKey(input, 'session'));
+      return { accepted: true, reason: 'debounced', sessionId: existing?.id };
+    }
+
+    try {
+      const started = await startBoundSession(projectId, input, 'turn');
+      const type = input.event === 'checkpoint' ? 'checkpoint' : input.type;
+      if (!type) throw new Error('Normalized host session event requires a type.');
+      await captureMemorySessionEvent(started.session.id, type, input.payload);
+      return { accepted: true, sessionId: started.session.id };
+    } catch (error) {
+      releaseCapture(input);
+      throw error;
+    }
   }
 
   if (input.event === 'turn-stop') {

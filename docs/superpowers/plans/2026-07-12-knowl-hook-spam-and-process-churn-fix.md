@@ -70,7 +70,7 @@
 - Modify: `src/cli/agents/hook-config.ts`
 - Test: `tests/cli/agent-adapters.test.ts`
 
-- [ ] **Step 1: Write failing assertions**
+- [x] **Step 1: Write failing assertions**
 
 In `tests/cli/agent-adapters.test.ts`, after configureLifecycle for Codex and Claude:
 
@@ -83,7 +83,7 @@ expect(JSON.stringify(codexHooks.hooks.SessionStart)).not.toContain('Updating Kn
 
 SessionStart may keep quieter status `Loading Knowl memory` if desired.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```text
 rtk npm.cmd test -- --maxWorkers=1 tests/cli/agent-adapters.test.ts
@@ -91,7 +91,7 @@ rtk npm.cmd test -- --maxWorkers=1 tests/cli/agent-adapters.test.ts
 
 Expected: FAIL because nested hooks still emit Updating Knowl memory.
 
-- [ ] **Step 3: Implement quiet status policy in hook-config.ts**
+- [x] **Step 3: Implement quiet status policy in hook-config.ts**
 
 Change nestedEntry() so status is event-specific:
 
@@ -111,7 +111,7 @@ Implementation rules:
 6. Update NestedHook typing if status becomes optional.
 7. Keep verifyNestedHookConfig equality working with the new shape.
 
-- [ ] **Step 4: Run GREEN**
+- [x] **Step 4: Run GREEN**
 
 ```text
 rtk npm.cmd test -- --maxWorkers=1 tests/cli/agent-adapters.test.ts
@@ -134,7 +134,7 @@ Do this immediately after T1 so the no-serve contract is locked before debounce 
 - Optional add: `tests/cli/agent-hook-isolation.test.ts`
 - Source contracts only if needed: `src/cli/agents/hook-config.ts`, `src/cli/agents/project-adapters.ts`, `src/index.ts`
 
-- [ ] **Step 1: Add config-shape assertions**
+- [x] **Step 1: Add config-shape assertions**
 
 ```ts
 import { knowlHookCommand } from '../../src/cli/agents/hook-config.js';
@@ -159,7 +159,7 @@ expect(config.mcp_servers.knowl.args).toEqual(['serve']);
 expect(mcpJson.mcpServers.knowl.args).toEqual(['serve']);
 ```
 
-- [ ] **Step 2: Add source/runtime isolation assertion**
+- [x] **Step 2: Add source/runtime isolation assertion**
 
 Preferred lightweight checks:
 1. Existing agent-lifecycle tests already prove PostToolUse returns empty stdout.
@@ -167,7 +167,7 @@ Preferred lightweight checks:
 
 Do not build a process-spying framework unless existing test style already supports it.
 
-- [ ] **Step 3: Run GREEN**
+- [x] **Step 3: Run GREEN**
 
 ```text
 rtk npm.cmd test -- --maxWorkers=1 tests/cli/agent-adapters.test.ts tests/cli/agent-lifecycle.test.ts
@@ -187,14 +187,14 @@ rtk npm.cmd test -- --maxWorkers=1 tests/cli/agent-adapters.test.ts tests/cli/ag
 - Test: `tests/store/host-lifecycle.test.ts`
 - Optional: `tests/cli/agent-lifecycle.test.ts`
 
-- [ ] **Step 1: Write failing unit tests in tests/store/host-lifecycle.test.ts**
+- [x] **Step 1: Write failing unit tests in tests/store/host-lifecycle.test.ts**
 
 Cover:
 1. Two identical Codex session-event captures within window -> first accepted, second `{ accepted: true, reason: debounced }`, only one DB command row.
 2. Distinct commands both store; stop still finalizes.
 3. Failures / type error are never debounced.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```text
 rtk npm.cmd test -- --maxWorkers=1 tests/store/host-lifecycle.test.ts
@@ -202,7 +202,7 @@ rtk npm.cmd test -- --maxWorkers=1 tests/store/host-lifecycle.test.ts
 
 Expected: FAIL because no debounce exists.
 
-- [ ] **Step 3: Implement src/store/hook-debounce.ts**
+- [x] **Step 3: Implement src/store/hook-debounce.ts**
 
 Suggested API:
 - `HOOK_CAPTURE_DEBOUNCE_MS = 1500`
@@ -220,7 +220,7 @@ Design rules:
 7. Prune expired entries opportunistically on write.
 8. No schema migration.
 
-- [ ] **Step 4: Wire debounce into handleHostLifecycleEvent**
+- [x] **Step 4: Wire debounce into handleHostLifecycleEvent**
 
 Only on session-event / checkpoint path.
 
@@ -241,7 +241,7 @@ Extend HostLifecycleResult.reason union if needed: `'event-loss' | 'debounced'`.
 
 Keep SessionStart hostOutput / context injection unchanged.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```text
 rtk npm.cmd test -- --maxWorkers=1 tests/store/host-lifecycle.test.ts tests/cli/agent-lifecycle.test.ts
@@ -261,11 +261,11 @@ rtk npm.cmd test -- --maxWorkers=1 tests/store/host-lifecycle.test.ts tests/cli/
 - Modify: `src/store/database.ts` and/or `src/store/bootstrap.ts`
 - Test: `tests/store/store.test.ts` or new `tests/store/database-pragmas.test.ts`
 
-- [ ] **Step 1: Write failing pragma test**
+- [x] **Step 1: Write failing pragma test**
 
 After initDb, assert PRAGMA busy_timeout is 5000. Adapt to actual `@libsql/client` result shape.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```text
 rtk npm.cmd test -- --maxWorkers=1 tests/store/store.test.ts
@@ -273,7 +273,7 @@ rtk npm.cmd test -- --maxWorkers=1 tests/store/store.test.ts
 
 Expected: FAIL if busy_timeout is 0/unset.
 
-- [ ] **Step 3: Implement busy_timeout on every open path**
+- [x] **Step 3: Implement busy_timeout on every open path**
 
 In initDbPath after client create / during bootstrap:
 
@@ -288,11 +288,11 @@ Rules:
 4. Do not change multi-repo isolation.
 5. Avoid durability experiments; busy_timeout alone is enough.
 
-- [ ] **Step 4: Optional sequential-writer smoke**
+- [x] **Step 4: Optional sequential-writer smoke**
 
 Two sequential writers on one db path succeed without uncaught SQLITE_BUSY. No flaky parallel stress suite.
 
-- [ ] **Step 5: Run GREEN**
+- [x] **Step 5: Run GREEN**
 
 ```text
 rtk npm.cmd test -- --maxWorkers=1 tests/store/store.test.ts tests/store/host-lifecycle.test.ts
@@ -310,7 +310,7 @@ rtk npm.cmd test -- --maxWorkers=1 tests/store/store.test.ts tests/store/host-li
 - Modify: `src/index.ts` and/or `src/mcp/server.ts`
 - Modify: `README.md` section Agent lifecycle automation
 
-- [ ] **Step 1: Add stderr diagnostics on serve start**
+- [x] **Step 1: Add stderr diagnostics on serve start**
 
 Log once to stderr:
 - pid
@@ -319,7 +319,7 @@ Log once to stderr:
 
 No new CLI flags.
 
-- [ ] **Step 2: Update README**
+- [x] **Step 2: Update README**
 
 In Agent lifecycle automation, state explicitly:
 1. Lifecycle hooks call short-lived `knowl agent-hook ...` processes.
@@ -331,7 +331,7 @@ In Agent lifecycle automation, state explicitly:
 
 Correct any stale wording that currently says prompt starts receive context if that is no longer true.
 
-- [ ] **Step 3: Run focused checks**
+- [x] **Step 3: Run focused checks**
 
 ```text
 rtk npm.cmd test -- --maxWorkers=1 tests/mcp/server.test.ts tests/cli/agent-adapters.test.ts
@@ -370,8 +370,10 @@ knowl doctor
 Then exercise host sessions and inspect process list.
 
 **DoD**
-- Matrix filled in PR notes.
-- No blocker regressions found, or residual risks explicitly listed.
+- [x] Matrix filled in PR notes.
+- [x] No blocker regressions found, or residual risks explicitly listed.
+
+Matrix results recorded in `docs/superpowers/plans/2026-07-12-knowl-hook-spam-and-process-churn-fix-notes.md`.
 
 ---
 

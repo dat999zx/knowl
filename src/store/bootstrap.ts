@@ -4,6 +4,7 @@ import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from 
 const BASE_STATEMENTS = [
   'PRAGMA foreign_keys = ON;',
   'PRAGMA journal_mode = WAL;',
+  'PRAGMA busy_timeout = 5000;',
 ];
 
 const SCHEMA_STATEMENTS = [
