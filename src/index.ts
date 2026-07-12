@@ -213,7 +213,7 @@ function printUpgradeStatus(result: Awaited<ReturnType<typeof upgradeExistingRep
 program
   .name('knowl')
   .description('KNOWL — A Knowledge Operating System for AI Agents')
-  .version('0.1.0');
+  .version('1.2.0');
 
 // --- 1. INIT COMMAND ---
 program
