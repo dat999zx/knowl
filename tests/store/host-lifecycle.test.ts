@@ -109,6 +109,7 @@ describe('host lifecycle orchestration', () => {
         nextAction: 'Implement the checkpoint contract',
         blocker: 'None',
         artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+        verificationStatus: 'unverified',
       },
     }));
 
@@ -122,6 +123,7 @@ describe('host lifecycle orchestration', () => {
       nextAction: 'Implement the checkpoint contract',
       blocker: 'None',
       artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+      verificationStatus: 'unverified',
     });
   });
 
@@ -297,6 +299,7 @@ describe('host lifecycle orchestration', () => {
         nextAction: 'Persist the pending handoff',
         blocker: 'Rate limit',
         artifactRefs: ['src/store/session-handoff.ts', 'tests/store/host-lifecycle.test.ts'],
+        verificationStatus: 'needs-review',
       },
     }));
     const failedStop = await handleHostLifecycleEvent(projectId, hook({
@@ -319,6 +322,7 @@ describe('host lifecycle orchestration', () => {
       nextAction: 'Persist the pending handoff',
       blocker: 'Rate limit',
       artifactRefs: ['src/store/session-handoff.ts', 'tests/store/host-lifecycle.test.ts'],
+      verificationStatus: 'needs-review',
     });
     expect(failedStop.promotion).toBeDefined();
 
@@ -358,8 +362,66 @@ describe('host lifecycle orchestration', () => {
     expect(String(nextStart.context)).toContain('Persist the pending handoff');
     expect(String(nextStart.context)).toContain('Rate limit');
     expect(String(nextStart.context)).toContain('src/store/session-handoff.ts');
+    expect(String(nextStart.context)).toContain('needs-review');
     expect(String(nextStart.context)).toContain('Use local memory');
     expect(String(secondStart.context)).not.toContain('PENDING SESSION HANDOFF');
+  });
+
+  it('updates one host-scoped handoff record for repeated failures instead of creating duplicates', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-dedupe-session',
+      externalTurnId: undefined,
+    }));
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'checkpoint',
+      externalSessionId: 'claude-dedupe-session',
+      externalTurnId: 'turn-1',
+      type: 'checkpoint',
+      payload: {
+        summary: 'First checkpoint',
+        goal: 'Keep one handoff',
+        completed: ['Recorded first failure path'],
+        nextAction: 'Retry after rate limit',
+        blocker: 'Rate limit',
+        artifactRefs: ['src/store/session-handoff.ts'],
+        verificationStatus: 'unverified',
+      },
+    }));
+    const firstFail = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-dedupe-session',
+      externalTurnId: 'turn-1',
+      status: 'failed',
+      payload: { status: 'failed', error: 'rate_limit', message: 'limit hit' },
+    }));
+    const secondFail = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-dedupe-session',
+      externalTurnId: 'turn-1',
+      status: 'failed',
+      payload: { status: 'failed', error: 'rate_limit', message: 'limit hit again' },
+    }));
+
+    expect(firstFail.handoff?.itemId).toBeTruthy();
+    expect(secondFail.handoff?.itemId).toBe(firstFail.handoff?.itemId);
+
+    const active = await getClient().execute({
+      sql: "SELECT id, content, conflict_scope, tags FROM knowledge_items WHERE title = 'Pending session handoff' AND status = 'active'",
+    });
+    expect(active.rows).toHaveLength(1);
+    const handoff = JSON.parse(String(active.rows[0].content));
+    expect(handoff.externalSessionId).toBe('claude-dedupe-session');
+    expect(handoff.taskState.verificationStatus).toBe('unverified');
+    expect(String(active.rows[0].tags)).toContain('session:claude-dedupe-session');
+    expect(JSON.parse(String(active.rows[0].conflict_scope))).toEqual({
+      host: 'claude',
+      externalSessionId: 'claude-dedupe-session',
+    });
   });
 
   it('records host-neutral hard-stop handoffs for Codex and Cursor failures', async () => {

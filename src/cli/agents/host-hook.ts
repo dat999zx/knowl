@@ -94,7 +94,7 @@ function changedPaths(projectRoot: string, raw: Record<string, unknown>): string
 
 function checkpointState(raw: Record<string, unknown>): Record<string, unknown> {
   const state: Record<string, unknown> = {};
-  for (const key of ['goal', 'completed', 'nextAction', 'blocker', 'artifactRefs']) {
+  for (const key of ['goal', 'completed', 'nextAction', 'blocker', 'artifactRefs', 'verificationStatus']) {
     const value = raw[key];
     if (value === undefined) continue;
     state[key] = Array.isArray(value)
@@ -168,7 +168,7 @@ function normalizeGeneric(eventName: string, raw: Record<string, unknown>, proje
   if (event === 'session-event' && type === undefined) throw new IncompleteHostHookPayloadError('Generic session event requires a type.');
   if (type !== undefined && !isSessionEventType(type)) throw new Error(`Unsupported session event type: ${String(type)}`);
   const payload: Record<string, unknown> = {};
-  for (const key of ['command', 'exitCode', 'passed', 'summary', 'message', 'code', 'text', 'changedPaths', 'commit', 'status', 'error', 'error_code', 'error_message', 'goal', 'completed', 'nextAction', 'blocker', 'artifactRefs']) {
+  for (const key of ['command', 'exitCode', 'passed', 'summary', 'message', 'code', 'text', 'changedPaths', 'commit', 'status', 'error', 'error_code', 'error_message', 'goal', 'completed', 'nextAction', 'blocker', 'artifactRefs', 'verificationStatus']) {
     if (raw[key] !== undefined) payload[key] = Array.isArray(raw[key]) ? raw[key] : typeof raw[key] === 'string' ? String(raw[key]).slice(0, MAX_STRING) : raw[key];
   }
   return {

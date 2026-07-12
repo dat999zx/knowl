@@ -34,6 +34,7 @@ describe('session handoff helpers', () => {
         nextAction: 'Persist task state',
         blocker: 'Rate limit',
         artifactRefs: ['tests/store/session-handoff.test.ts'],
+        verificationStatus: 'unverified',
       },
       failedAt: '2026-07-12T00:00:00.000Z',
     });
@@ -44,6 +45,7 @@ describe('session handoff helpers', () => {
     expect(text).toContain('Ship resumable handoffs');
     expect(text).toContain('Persist task state');
     expect(text).toContain('tests/store/session-handoff.test.ts');
+    expect(text).toContain('unverified');
     expect(text).toContain('Do not restart from scratch');
   });
 });

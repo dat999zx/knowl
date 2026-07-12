@@ -95,7 +95,8 @@ knowl task checkpoint <task-id> "Added search UI tests" \
   --goal "Ship search UI" \
   --completed "Added search UI tests" \
   --next-action "Finish implementation" \
-  --artifact "src/search-ui.ts"
+  --artifact "src/search-ui.ts" \
+  --verification-status "tests-passing"
 knowl task finish <task-id> "Verified search UI implementation"
 ```
 
@@ -118,7 +119,7 @@ SessionStart is the sole automatic model-facing context injection. Capture hooks
 
 When a supported host ends with a hard-stop failure (Claude `StopFailure`, failed Codex/Cursor stop/session end, or generic failed stop), Knowl stores a host-scoped deterministic `pending_handoff` state item (no AI required). The next matching-host `SessionStart` injects that handoff first, then normal recent context, and archives it so delivery is one-shot. Ordinary successful stops and tool failures do not create handoffs.
 
-Checkpoints may also carry structured task state (`goal`, `completed`, `nextAction`, `blocker`, `artifactRefs`). When present, those fields ride through the pending handoff so the next session can resume without reconstructing progress from prose alone. Manual `knowl_task_checkpoint` accepts the same fields for MCP work loops.
+Checkpoints may also carry structured task state (`goal`, `completed`, `nextAction`, `blocker`, `artifactRefs`, `verificationStatus`). When present, those fields ride through the pending handoff so the next session can resume without reconstructing progress from prose alone. Manual `knowl_task_checkpoint` accepts the same fields for MCP work loops.
 
 Multiple leftover `knowl serve` processes usually mean multiple host sessions or reconnects, not hook respawn. Multiple agents can use one repo with shared SQLite and brief lock waits; agents in different repos remain isolated under each project `.knowl/`.
 
@@ -205,7 +206,7 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl evidence list <item-id>` | List linked file, commit, test, command, URL, user, agent, or symbol evidence. |
 | `knowl state` | Print the full active hierarchical project memory. |
 | `knowl task start <title>` | Start a work loop, query relevant memory, and store active task state. |
-| `knowl task checkpoint <task-id> <summary> [--goal ...] [--completed ...] [--next-action ...] [--blocker ...] [--artifact ...]` | Store durable progress and optional structured task state for an active work loop. |
+| `knowl task checkpoint <task-id> <summary> [--goal ...] [--completed ...] [--next-action ...] [--blocker ...] [--artifact ...] [--verification-status ...]` | Store durable progress and optional structured task state for an active work loop. |
 | `knowl task finish <task-id> <summary>` | Store durable completion state for a work loop. |
 | `knowl task run <title> -- <command...>` | Start a work loop, run a command, then finish on success or checkpoint on failure with the child exit code. |
 | `knowl timeline <item-id>` | Print immutable content assertions for one knowledge item. |

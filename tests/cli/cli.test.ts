@@ -369,7 +369,7 @@ describe('CLI Integration', () => {
     expect(taskId).toBeTruthy();
 
     const checkpointOutput = execSync(
-      `node "${CLI_PATH}" task checkpoint ${taskId} "Added search UI tests" --goal "Ship resumable handoffs" --completed "Added search UI tests" --next-action "Finish the implementation" --blocker "None" --artifact "src/index.ts"`,
+      `node "${CLI_PATH}" task checkpoint ${taskId} "Added search UI tests" --goal "Ship resumable handoffs" --completed "Added search UI tests" --next-action "Finish the implementation" --blocker "None" --artifact "src/index.ts" --verification-status "tests-passing"`,
       {
         cwd: workLoopDir,
         encoding: 'utf-8',
@@ -381,6 +381,7 @@ describe('CLI Integration', () => {
     expect(checkpointOutput).toContain('Completed: Added search UI tests');
     expect(checkpointOutput).toContain('Next action: Finish the implementation');
     expect(checkpointOutput).toContain('Artifacts: src/index.ts');
+    expect(checkpointOutput).toContain('Verification: tests-passing');
 
     const finishOutput = execSync(`node "${CLI_PATH}" task finish ${taskId} "Verified search UI implementation"`, {
       cwd: workLoopDir,

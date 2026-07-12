@@ -124,6 +124,7 @@ describe('host hook normalization', () => {
       nextAction: 'Implement the contract',
       blocker: 'Waiting for a rate-limit reset',
       artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+      verificationStatus: 'needs-review',
       stdout: 'discard me',
     });
 
@@ -134,6 +135,7 @@ describe('host hook normalization', () => {
       nextAction: 'Implement the contract',
       blocker: 'Waiting for a rate-limit reset',
       artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+      verificationStatus: 'needs-review',
     });
   });
 

@@ -25,6 +25,7 @@ export type HandoffTaskState = {
   nextAction?: string;
   blocker?: string;
   artifactRefs?: string[];
+  verificationStatus?: string;
 };
 
 export type PendingHandoff = {
@@ -187,6 +188,7 @@ function checkpointTaskState(payload: Record<string, unknown>): HandoffTaskState
     nextAction: asString(payload.nextAction, 1_000),
     blocker: asString(payload.blocker, 1_000),
     artifactRefs: stringList(payload.artifactRefs, 20, 500),
+    verificationStatus: asString(payload.verificationStatus, 100),
   };
   return Object.values(taskState).some(value => value !== undefined) ? taskState : undefined;
 }
@@ -200,6 +202,7 @@ function mergeTaskState(existing: HandoffTaskState | undefined, incoming: Handof
     nextAction: incoming.nextAction ?? existing.nextAction,
     blocker: incoming.blocker ?? existing.blocker,
     artifactRefs: incoming.artifactRefs?.length ? incoming.artifactRefs : existing.artifactRefs,
+    verificationStatus: incoming.verificationStatus ?? existing.verificationStatus,
   };
   return Object.values(taskState).some(value => value !== undefined) ? taskState : undefined;
 }
@@ -281,6 +284,7 @@ export function formatPendingHandoffContext(handoff: PendingHandoff): string {
     if (handoff.taskState.nextAction) lines.push(`- Next action: ${handoff.taskState.nextAction}`);
     if (handoff.taskState.blocker) lines.push(`- Blocker: ${handoff.taskState.blocker}`);
     if (handoff.taskState.artifactRefs?.length) lines.push(`- Artifacts: ${handoff.taskState.artifactRefs.join(', ')}`);
+    if (handoff.taskState.verificationStatus) lines.push(`- Verification: ${handoff.taskState.verificationStatus}`);
   }
   lines.push('', 'Do not restart from scratch. Resume the interrupted work using this handoff plus recent project memory.');
   return truncateText(lines.join('\n'), DEFAULT_CONTEXT_MAX_CHARS);
@@ -330,17 +334,23 @@ export async function recordPendingSessionHandoff(
   };
 
   const conflictKey = pendingHandoffConflictKey(host);
+  const identity = {
+    host,
+    externalSessionId: handoff.externalSessionId,
+  };
   const existing = await findActivePendingHandoff(host);
   if (existing) {
+    // One active handoff per host. Same host+session merges; a newer host session replaces/updates the same record.
     const mergedHandoff = mergeHandoff(existing.handoff, handoff);
     const updated = await repo.updateKnowledgeItem(existing.id, {
       title: PENDING_HANDOFF_TITLE,
       content: JSON.stringify(mergedHandoff),
-      tags: ['pending_handoff', kind, mergedHandoff.urgency, host],
+      tags: ['pending_handoff', kind, mergedHandoff.urgency, host, `session:${mergedHandoff.externalSessionId}`],
       source: `host://${host}/session-failure`,
       freshness: 'fresh',
       confidence: kind === 'rate_limit' || kind === 'auth' ? 1 : 0.9,
       conflictKey,
+      conflictScope: identity,
       conflictExclusive: true,
     });
     await repo.createKnowledgeCommit(projectId, `Update pending session handoff (${host}/${kind})`, [
@@ -353,11 +363,12 @@ export async function recordPendingSessionHandoff(
     category: 'state',
     title: PENDING_HANDOFF_TITLE,
     content: JSON.stringify(handoff),
-    tags: ['pending_handoff', kind, handoff.urgency, host],
+    tags: ['pending_handoff', kind, handoff.urgency, host, `session:${handoff.externalSessionId}`],
     source: `host://${host}/session-failure`,
     freshness: 'fresh',
     confidence: kind === 'rate_limit' || kind === 'auth' ? 1 : 0.9,
     conflictKey,
+    conflictScope: identity,
     conflictExclusive: true,
   });
   await repo.createKnowledgeCommit(projectId, `Record pending session handoff (${host}/${kind})`, [

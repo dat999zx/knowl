@@ -540,6 +540,7 @@ describe('MCP Server Layer', () => {
         nextAction: 'Finish the implementation',
         blocker: 'None',
         artifactRefs: ['src/mcp/tools.ts'],
+        verificationStatus: 'tests-passing',
       },
     });
 
@@ -554,6 +555,7 @@ describe('MCP Server Layer', () => {
       nextAction: 'Finish the implementation',
       blocker: 'None',
       artifactRefs: ['src/mcp/tools.ts'],
+      verificationStatus: 'tests-passing',
     });
 
     const finishRes = await runRpcRequest('tools/call', {

@@ -34,6 +34,7 @@ describe('work loop session capture', () => {
       nextAction: 'Verify MCP tool payload',
       blocker: 'None',
       artifactRefs: ['src/store/work-loop.ts', 'tests/store/work-loop.test.ts'],
+      verificationStatus: 'tests-passing',
     });
 
     expect(checkpoint.taskState).toEqual({
@@ -42,6 +43,7 @@ describe('work loop session capture', () => {
       nextAction: 'Verify MCP tool payload',
       blocker: 'None',
       artifactRefs: ['src/store/work-loop.ts', 'tests/store/work-loop.test.ts'],
+      verificationStatus: 'tests-passing',
     });
 
     const rows = await getClient().execute({
@@ -55,6 +57,7 @@ describe('work loop session capture', () => {
       nextAction: 'Verify MCP tool payload',
       blocker: 'None',
       artifactRefs: ['src/store/work-loop.ts', 'tests/store/work-loop.test.ts'],
+      verificationStatus: 'tests-passing',
     });
   });
 });

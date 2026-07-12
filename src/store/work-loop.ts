@@ -27,6 +27,7 @@ export type WorkLoopTaskState = {
   nextAction?: string;
   blocker?: string;
   artifactRefs?: string[];
+  verificationStatus?: string;
 };
 
 export type WorkLoopCheckpointInput = {
@@ -73,6 +74,9 @@ function normalizeTaskState(input: WorkLoopTaskState): WorkLoopTaskState | undef
     nextAction: typeof input.nextAction === 'string' && input.nextAction.trim() ? input.nextAction.trim().slice(0, 1_000) : undefined,
     blocker: typeof input.blocker === 'string' && input.blocker.trim() ? input.blocker.trim().slice(0, 1_000) : undefined,
     artifactRefs: stringList(input.artifactRefs, 20, 500),
+    verificationStatus: typeof input.verificationStatus === 'string' && input.verificationStatus.trim()
+      ? input.verificationStatus.trim().slice(0, 100)
+      : undefined,
   };
   return Object.values(taskState).some(value => value !== undefined) ? taskState : undefined;
 }
@@ -85,6 +89,7 @@ function taskStateLines(taskState: WorkLoopTaskState | undefined): string[] {
   if (taskState.nextAction) lines.push(`Next action: ${taskState.nextAction}`);
   if (taskState.blocker) lines.push(`Blocker: ${taskState.blocker}`);
   if (taskState.artifactRefs?.length) lines.push(`Artifacts: ${taskState.artifactRefs.join(', ')}`);
+  if (taskState.verificationStatus) lines.push(`Verification: ${taskState.verificationStatus}`);
   return lines;
 }
 

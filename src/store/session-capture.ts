@@ -4,7 +4,7 @@ import { appendMemorySessionEvent } from './session-repository.js';
 const ALLOWED_FIELDS: Record<SessionEventType, string[]> = {
   start: ['title', 'agent'], command: ['command', 'exitCode', 'summary'], test: ['command', 'passed', 'summary'],
   error: ['code', 'message', 'summary'], git: ['commit', 'changedPaths', 'diffStat'], decision: ['text', 'summary'],
-  checkpoint: ['summary', 'changedPaths', 'goal', 'completed', 'nextAction', 'blocker', 'artifactRefs'], stop: ['status', 'summary'],
+  checkpoint: ['summary', 'changedPaths', 'goal', 'completed', 'nextAction', 'blocker', 'artifactRefs', 'verificationStatus'], stop: ['status', 'summary'],
 };
 
 export async function captureMemorySessionEvent(sessionId: string, type: SessionEventType, payload: Record<string, unknown>) {

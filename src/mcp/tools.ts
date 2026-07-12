@@ -420,6 +420,10 @@ export function registerTools(
                 description: 'Optional file or artifact references relevant to the task.',
                 items: { type: 'string' },
               },
+              verificationStatus: {
+                type: 'string',
+                description: 'Optional verification status such as unverified, tests-passing, or needs-review.',
+              },
             },
             required: ['taskId', 'summary'],
           },
@@ -826,7 +830,7 @@ export function registerTools(
       }
 
       else if (name === 'knowl_task_checkpoint') {
-        const { taskId, summary, goal, completed, nextAction, blocker, artifactRefs } = args as any;
+        const { taskId, summary, goal, completed, nextAction, blocker, artifactRefs, verificationStatus } = args as any;
         const result = await checkpointWorkLoop(projectId!, taskId, {
           summary,
           goal,
@@ -834,6 +838,7 @@ export function registerTools(
           nextAction,
           blocker,
           artifactRefs,
+          verificationStatus,
         });
         return {
           content: [{ type: 'text', text: compactMcpJson(result) }],
