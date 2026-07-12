@@ -21,10 +21,23 @@ export type WorkLoopStartResult = {
   memorySessionId?: string;
 };
 
+export type WorkLoopTaskState = {
+  goal?: string;
+  completed?: string[];
+  nextAction?: string;
+  blocker?: string;
+  artifactRefs?: string[];
+};
+
+export type WorkLoopCheckpointInput = {
+  summary: string;
+} & WorkLoopTaskState;
+
 export type WorkLoopStepResult = {
   taskId: string;
   itemId: string;
   summary: string;
+  taskState?: WorkLoopTaskState;
 };
 
 function compactMemoryHit(item: KnowledgeItem): WorkLoopMemoryHit {
@@ -42,6 +55,37 @@ async function requireWorkLoopTask(taskId: string): Promise<KnowledgeItem> {
     throw new Error(`Work loop task not found: ${taskId}`);
   }
   return task;
+}
+
+function stringList(value: unknown, maxItems = 20, maxLength = 500): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const values = value
+    .filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0)
+    .slice(0, maxItems)
+    .map(entry => entry.trim().slice(0, maxLength));
+  return values.length ? values : undefined;
+}
+
+function normalizeTaskState(input: WorkLoopTaskState): WorkLoopTaskState | undefined {
+  const taskState: WorkLoopTaskState = {
+    goal: typeof input.goal === 'string' && input.goal.trim() ? input.goal.trim().slice(0, 1_000) : undefined,
+    completed: stringList(input.completed, 20, 500),
+    nextAction: typeof input.nextAction === 'string' && input.nextAction.trim() ? input.nextAction.trim().slice(0, 1_000) : undefined,
+    blocker: typeof input.blocker === 'string' && input.blocker.trim() ? input.blocker.trim().slice(0, 1_000) : undefined,
+    artifactRefs: stringList(input.artifactRefs, 20, 500),
+  };
+  return Object.values(taskState).some(value => value !== undefined) ? taskState : undefined;
+}
+
+function taskStateLines(taskState: WorkLoopTaskState | undefined): string[] {
+  if (!taskState) return [];
+  const lines: string[] = [];
+  if (taskState.goal) lines.push(`Goal: ${taskState.goal}`);
+  if (taskState.completed?.length) lines.push(`Completed: ${taskState.completed.join('; ')}`);
+  if (taskState.nextAction) lines.push(`Next action: ${taskState.nextAction}`);
+  if (taskState.blocker) lines.push(`Blocker: ${taskState.blocker}`);
+  if (taskState.artifactRefs?.length) lines.push(`Artifacts: ${taskState.artifactRefs.join(', ')}`);
+  return lines;
 }
 
 function memorySessionId(task: KnowledgeItem): string | undefined {
@@ -102,10 +146,12 @@ async function recordWorkLoopStep(
   title: 'Work Loop checkpoint' | 'Work Loop finish',
   summary: string,
   commitMessage: string,
-  stepTag: 'checkpoint' | 'finish'
+  stepTag: 'checkpoint' | 'finish',
+  taskStateInput: WorkLoopTaskState = {},
 ): Promise<WorkLoopStepResult> {
   const task = await requireWorkLoopTask(taskId);
   const now = new Date().toISOString();
+  const taskState = normalizeTaskState(taskStateInput);
   const item = await repo.createKnowledgeItem(projectId, {
     category: 'state',
     title,
@@ -114,6 +160,7 @@ async function recordWorkLoopStep(
       `Task: ${task.title.replace(/^Work Loop: /, '')}`,
       `Recorded at: ${now}`,
       `Summary: ${summary}`,
+      ...taskStateLines(taskState),
     ].join('\n'),
     tags: ['work-loop', `task:${taskId}`, stepTag],
     source: 'knowl work loop',
@@ -128,7 +175,7 @@ async function recordWorkLoopStep(
   if (sessionId) {
     try {
       if (stepTag === 'finish') { await finishMemorySession(sessionId, 'finished', summary); await finalizeMemorySession(projectId, sessionId); }
-      else await captureMemorySessionEvent(sessionId, 'checkpoint', { summary });
+      else await captureMemorySessionEvent(sessionId, 'checkpoint', { summary, ...taskState });
     } catch (error: any) {
       console.error(`Warning: session capture unavailable: ${error.message}`);
     }
@@ -138,21 +185,24 @@ async function recordWorkLoopStep(
     taskId,
     itemId: item.id,
     summary,
+    ...(taskState ? { taskState } : {}),
   };
 }
 
 export async function checkpointWorkLoop(
   projectId: string,
   taskId: string,
-  summary: string
+  input: string | WorkLoopCheckpointInput,
 ): Promise<WorkLoopStepResult> {
+  const checkpoint = typeof input === 'string' ? { summary: input } : input;
   return recordWorkLoopStep(
     projectId,
     taskId,
     'Work Loop checkpoint',
-    summary,
+    checkpoint.summary,
     `Work loop checkpoint: ${taskId}`,
-    'checkpoint'
+    'checkpoint',
+    checkpoint,
   );
 }
 

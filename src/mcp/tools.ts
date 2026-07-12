@@ -386,7 +386,7 @@ export function registerTools(
         },
         {
           name: 'knowl_task_checkpoint',
-          description: 'Record a work-loop checkpoint during execution so the task writes durable progress before the final summary.',
+          description: 'Record a work-loop checkpoint during execution so the task writes durable progress and optional structured task state before the final summary.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -397,6 +397,28 @@ export function registerTools(
               summary: {
                 type: 'string',
                 description: 'Durable checkpoint summary.',
+              },
+              goal: {
+                type: 'string',
+                description: 'Optional current goal for resumable handoffs.',
+              },
+              completed: {
+                type: 'array',
+                description: 'Optional list of completed steps.',
+                items: { type: 'string' },
+              },
+              nextAction: {
+                type: 'string',
+                description: 'Optional next action to resume with.',
+              },
+              blocker: {
+                type: 'string',
+                description: 'Optional current blocker.',
+              },
+              artifactRefs: {
+                type: 'array',
+                description: 'Optional file or artifact references relevant to the task.',
+                items: { type: 'string' },
               },
             },
             required: ['taskId', 'summary'],
@@ -804,8 +826,15 @@ export function registerTools(
       }
 
       else if (name === 'knowl_task_checkpoint') {
-        const { taskId, summary } = args as any;
-        const result = await checkpointWorkLoop(projectId!, taskId, summary);
+        const { taskId, summary, goal, completed, nextAction, blocker, artifactRefs } = args as any;
+        const result = await checkpointWorkLoop(projectId!, taskId, {
+          summary,
+          goal,
+          completed,
+          nextAction,
+          blocker,
+          artifactRefs,
+        });
         return {
           content: [{ type: 'text', text: compactMcpJson(result) }],
         };

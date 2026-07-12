@@ -114,6 +114,8 @@ SessionStart is the sole automatic model-facing context injection. Capture hooks
 
 When a supported host ends with a hard-stop failure (Claude `StopFailure`, failed Codex/Cursor stop/session end, or generic failed stop), Knowl stores a host-scoped deterministic `pending_handoff` state item (no AI required). The next matching-host `SessionStart` injects that handoff first, then normal recent context, and archives it so delivery is one-shot. Ordinary successful stops and tool failures do not create handoffs.
 
+Checkpoints may also carry structured task state (`goal`, `completed`, `nextAction`, `blocker`, `artifactRefs`). When present, those fields ride through the pending handoff so the next session can resume without reconstructing progress from prose alone. Manual `knowl_task_checkpoint` accepts the same fields for MCP work loops.
+
 Multiple leftover `knowl serve` processes usually mean multiple host sessions or reconnects, not hook respawn. Multiple agents can use one repo with shared SQLite and brief lock waits; agents in different repos remain isolated under each project `.knowl/`.
 
 Raw prompts, transcripts, stdout/stderr, environment variables, and unknown fields are not retained. Malformed or secret-bearing payloads are rejected, duplicate stop events are idempotently dropped, and stale sessions recover at the next session start. A generic stdin-JSON contract is available for other hosts, but normal users only run `knowl init` and `knowl doctor`.
