@@ -1,0 +1,337 @@
+import { NormalizedHostHook } from '../cli/agents/host-hook.js';
+import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
+import { normalizeConflictKey } from './conflicts.js';
+import * as repo from './repository.js';
+import { getClient } from './database.js';
+import { getMemorySession } from './session-repository.js';
+
+export const PENDING_HANDOFF_TITLE = 'Pending session handoff';
+export const RATE_LIMIT_URGENCY = 'critical';
+export const AUTH_URGENCY = 'critical';
+export const PROVIDER_OUTAGE_URGENCY = 'high';
+export const INTERRUPTED_URGENCY = 'high';
+export const GENERIC_FAILURE_URGENCY = 'high';
+
+export type SessionFailureKind =
+  | 'rate_limit'
+  | 'auth'
+  | 'provider_outage'
+  | 'interrupted'
+  | 'failed';
+
+export type PendingHandoff = {
+  kind: SessionFailureKind;
+  urgency: typeof RATE_LIMIT_URGENCY | typeof AUTH_URGENCY | typeof PROVIDER_OUTAGE_URGENCY | typeof INTERRUPTED_URGENCY | typeof GENERIC_FAILURE_URGENCY;
+  host: string;
+  projectRoot: string;
+  externalSessionId: string;
+  memorySessionId?: string;
+  sessionTitle?: string;
+  errorCode?: string;
+  errorMessage?: string;
+  lastCheckpoint?: string;
+  changedPaths?: string[];
+  failedAt: string;
+  consumed?: boolean;
+  consumedAt?: string;
+};
+
+const RATE_LIMIT_CODES = [
+  'rate_limit', 'rate-limit', 'ratelimit', 'usage_limit', 'usage-limit',
+  'quota_exceeded', 'quota-exceeded', 'resource_exhausted', 'too_many_requests', '429',
+];
+const AUTH_CODES = [
+  'auth', 'unauthorized', 'unauthenticated', 'authentication',
+  'permission_denied', 'forbidden', '401', '403',
+];
+const PROVIDER_OUTAGE_CODES = [
+  'provider_outage', 'service_unavailable', 'unavailable', 'overloaded',
+  'internal_error', 'server_error', '502', '503', '504',
+];
+const INTERRUPTED_CODES = [
+  'interrupted', 'cancelled', 'canceled', 'aborted', 'timeout', 'timed_out', 'deadline_exceeded',
+];
+const RATE_LIMIT_MESSAGES = [
+  'rate limit', 'usage limit', 'quota exceeded', 'session limit', 'hit your limit', 'limit reached', 'too many requests',
+];
+const AUTH_MESSAGES = [
+  'unauthorized', 'unauthenticated', 'invalid api key', 'authentication failed', 'permission denied',
+];
+const PROVIDER_OUTAGE_MESSAGES = [
+  'service unavailable', 'provider unavailable', 'temporarily overloaded', 'internal server error',
+];
+const INTERRUPTED_MESSAGES = [
+  'interrupted', 'cancelled', 'canceled', 'aborted', 'timed out', 'deadline exceeded',
+];
+
+function asString(value: unknown, max = 2_000): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim().slice(0, max) : undefined;
+}
+
+function pendingHandoffConflictKey(host: string): string {
+  return `pending-session-handoff:${host}`;
+}
+
+function normalizeToken(value: string): string {
+  return value.trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function collectStructuredCodes(payload: Record<string, unknown>): string[] {
+  const codes: string[] = [];
+  const push = (value: unknown) => {
+    const text = asString(value, 200);
+    if (text) codes.push(normalizeToken(text));
+  };
+  push(payload.error);
+  push(payload.code);
+  push(payload.error_code);
+  push(payload.type);
+  const nested = payload.error && typeof payload.error === 'object' && !Array.isArray(payload.error)
+    ? payload.error as Record<string, unknown>
+    : undefined;
+  if (nested) {
+    push(nested.code);
+    push(nested.type);
+    push(nested.error);
+    push(nested.name);
+  }
+  return codes;
+}
+
+function collectMessages(payload: Record<string, unknown>): string[] {
+  const messages: string[] = [];
+  const push = (value: unknown) => {
+    const text = asString(value, 500);
+    if (text) messages.push(text.toLowerCase());
+  };
+  push(payload.message);
+  push(payload.summary);
+  push(payload.error_message);
+  const nested = payload.error && typeof payload.error === 'object' && !Array.isArray(payload.error)
+    ? payload.error as Record<string, unknown>
+    : undefined;
+  if (nested) push(nested.message);
+  const errorText = asString(payload.error, 500);
+  if (errorText && errorText.includes(' ')) push(errorText);
+  return messages;
+}
+
+function matchesAny(values: string[], needles: string[]): boolean {
+  return values.some(value => needles.some(needle => value === needle || value.includes(needle)));
+}
+
+function matchesMessage(values: string[], needles: string[]): boolean {
+  return values.some(value => needles.some(needle => value.includes(needle)));
+}
+
+function urgencyFor(kind: SessionFailureKind) {
+  if (kind === 'rate_limit') return RATE_LIMIT_URGENCY;
+  if (kind === 'auth') return AUTH_URGENCY;
+  if (kind === 'provider_outage') return PROVIDER_OUTAGE_URGENCY;
+  if (kind === 'interrupted') return INTERRUPTED_URGENCY;
+  return GENERIC_FAILURE_URGENCY;
+}
+
+export function detectSessionFailureKind(
+  payload: Record<string, unknown>,
+  status?: 'finished' | 'failed',
+): SessionFailureKind | null {
+  if (status !== 'failed') return null;
+  const codes = collectStructuredCodes(payload);
+  if (matchesAny(codes, RATE_LIMIT_CODES)) return 'rate_limit';
+  if (matchesAny(codes, AUTH_CODES)) return 'auth';
+  if (matchesAny(codes, PROVIDER_OUTAGE_CODES)) return 'provider_outage';
+  if (matchesAny(codes, INTERRUPTED_CODES)) return 'interrupted';
+  const messages = collectMessages(payload);
+  if (matchesMessage(messages, RATE_LIMIT_MESSAGES)) return 'rate_limit';
+  if (matchesMessage(messages, AUTH_MESSAGES)) return 'auth';
+  if (matchesMessage(messages, PROVIDER_OUTAGE_MESSAGES)) return 'provider_outage';
+  if (matchesMessage(messages, INTERRUPTED_MESSAGES)) return 'interrupted';
+  return 'failed';
+}
+
+function parseHandoffContent(content: string): PendingHandoff | null {
+  try {
+    const parsed = JSON.parse(content) as PendingHandoff;
+    if (!parsed || typeof parsed !== 'object') return null;
+    if (!['rate_limit', 'auth', 'provider_outage', 'interrupted', 'failed'].includes(parsed.kind)) return null;
+    if (!parsed.failedAt || !parsed.host || !parsed.projectRoot || !parsed.externalSessionId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function loadLatestSessionCheckpoint(sessionId: string): Promise<{ summary?: string; changedPaths?: string[] }> {
+  const rows = (await getClient().execute({
+    sql: `SELECT payload FROM memory_session_events
+      WHERE session_id = ? AND type = 'checkpoint'
+      ORDER BY observed_at DESC
+      LIMIT 1`,
+    args: [sessionId],
+  })).rows;
+  if (!rows[0]) return {};
+  try {
+    const payload = JSON.parse(String(rows[0].payload)) as Record<string, unknown>;
+    const summary = asString(payload.summary);
+    const changedPaths = Array.isArray(payload.changedPaths)
+      ? payload.changedPaths.filter((value): value is string => typeof value === 'string').slice(0, 20)
+      : undefined;
+    return { summary, changedPaths };
+  } catch {
+    return {};
+  }
+}
+
+async function findActivePendingHandoff(host: string) {
+  const conflictKey = normalizeConflictKey(pendingHandoffConflictKey(host));
+  const rows = await getClient().execute({
+    sql: `SELECT id, content FROM knowledge_items
+      WHERE status = 'active' AND category = 'state' AND conflict_key = ?
+      ORDER BY updated_at DESC
+      LIMIT 5`,
+    args: [conflictKey],
+  });
+  for (const row of rows.rows) {
+    const handoff = parseHandoffContent(String(row.content));
+    if (!handoff || handoff.consumed) continue;
+    if (handoff.host !== host) continue;
+    return { id: String(row.id), handoff };
+  }
+  return null;
+}
+
+export function formatPendingHandoffContext(handoff: PendingHandoff): string {
+  const lines = [
+    '# KNOWL - PENDING SESSION HANDOFF',
+    '',
+    'Previous host session ended before a clean finish. Continue from this handoff first.',
+    '',
+    `- Kind: ${handoff.kind}`,
+    `- Urgency: ${handoff.urgency}`,
+    `- Host: ${handoff.host}`,
+    `- Failed at: ${handoff.failedAt}`,
+    `- External session: ${handoff.externalSessionId}`,
+  ];
+  if (handoff.memorySessionId) lines.push(`- Memory session: ${handoff.memorySessionId}`);
+  if (handoff.sessionTitle) lines.push(`- Session title: ${handoff.sessionTitle}`);
+  if (handoff.errorCode) lines.push(`- Error code: ${handoff.errorCode}`);
+  if (handoff.errorMessage) lines.push(`- Error: ${handoff.errorMessage}`);
+  if (handoff.lastCheckpoint) lines.push(`- Last checkpoint: ${handoff.lastCheckpoint}`);
+  if (handoff.changedPaths?.length) lines.push(`- Changed paths: ${handoff.changedPaths.join(', ')}`);
+  lines.push('', 'Do not restart from scratch. Resume the interrupted work using this handoff plus recent project memory.');
+  return truncateText(lines.join('\n'), DEFAULT_CONTEXT_MAX_CHARS);
+}
+
+export async function recordPendingSessionHandoff(
+  projectId: string,
+  input: NormalizedHostHook,
+  options: { memorySessionId?: string } = {},
+): Promise<{ itemId: string; handoff: PendingHandoff } | null> {
+  const kind = detectSessionFailureKind(input.payload, input.status);
+  if (!kind) return null;
+
+  let sessionTitle: string | undefined;
+  let lastCheckpoint: string | undefined;
+  let changedPaths: string[] | undefined;
+  if (options.memorySessionId) {
+    try {
+      const session = await getMemorySession(options.memorySessionId);
+      sessionTitle = session.title;
+    } catch {
+      // Session may already be terminal or missing; handoff still records host failure.
+    }
+    const checkpoint = await loadLatestSessionCheckpoint(options.memorySessionId);
+    lastCheckpoint = checkpoint.summary;
+    changedPaths = checkpoint.changedPaths;
+  }
+
+  const host = String(input.host);
+  const handoff: PendingHandoff = {
+    kind,
+    urgency: urgencyFor(kind),
+    host,
+    projectRoot: input.projectRoot,
+    externalSessionId: input.externalSessionId,
+    memorySessionId: options.memorySessionId,
+    sessionTitle,
+    errorCode: asString(input.payload.error ?? input.payload.code ?? input.payload.error_code, 200),
+    errorMessage: asString(input.payload.message ?? input.payload.summary ?? input.payload.error_message, 500),
+    lastCheckpoint,
+    changedPaths,
+    failedAt: new Date().toISOString(),
+    consumed: false,
+  };
+
+  const conflictKey = pendingHandoffConflictKey(host);
+  const existing = await findActivePendingHandoff(host);
+  if (existing) {
+    const updated = await repo.updateKnowledgeItem(existing.id, {
+      title: PENDING_HANDOFF_TITLE,
+      content: JSON.stringify(handoff),
+      tags: ['pending_handoff', kind, handoff.urgency, host],
+      source: `host://${host}/session-failure`,
+      freshness: 'fresh',
+      confidence: kind === 'rate_limit' || kind === 'auth' ? 1 : 0.9,
+      conflictKey,
+      conflictExclusive: true,
+    });
+    await repo.createKnowledgeCommit(projectId, `Update pending session handoff (${host}/${kind})`, [
+      { itemId: updated.id, action: 'update', before: existing.handoff as any, after: updated },
+    ]);
+    return { itemId: updated.id, handoff };
+  }
+
+  const created = await repo.createKnowledgeItem(projectId, {
+    category: 'state',
+    title: PENDING_HANDOFF_TITLE,
+    content: JSON.stringify(handoff),
+    tags: ['pending_handoff', kind, handoff.urgency, host],
+    source: `host://${host}/session-failure`,
+    freshness: 'fresh',
+    confidence: kind === 'rate_limit' || kind === 'auth' ? 1 : 0.9,
+    conflictKey,
+    conflictExclusive: true,
+  });
+  await repo.createKnowledgeCommit(projectId, `Record pending session handoff (${host}/${kind})`, [
+    { itemId: created.id, action: 'insert', after: created },
+  ]);
+  return { itemId: created.id, handoff };
+}
+
+export async function consumePendingSessionHandoff(
+  projectId: string,
+  host: string,
+): Promise<{ itemId: string; handoff: PendingHandoff; context: string } | null> {
+  const existing = await findActivePendingHandoff(host);
+  if (!existing) return null;
+
+  const claim = await getClient().execute({
+    sql: `UPDATE knowledge_items
+      SET status = 'archived', freshness = 'stale', updated_at = ?
+      WHERE id = ? AND status = 'active'`,
+    args: [new Date().toISOString(), existing.id],
+  });
+  if (Number(claim.rowsAffected ?? 0) === 0) return null;
+
+  const consumed: PendingHandoff = {
+    ...existing.handoff,
+    consumed: true,
+    consumedAt: new Date().toISOString(),
+  };
+  const updated = await repo.updateKnowledgeItem(existing.id, {
+    content: JSON.stringify(consumed),
+    status: 'archived',
+    freshness: 'stale',
+    tags: ['pending_handoff', existing.handoff.kind, existing.handoff.urgency, existing.handoff.host, 'consumed'],
+  });
+  await repo.createKnowledgeCommit(projectId, `Consume pending session handoff (${host}/${existing.handoff.kind})`, [
+    { itemId: updated.id, action: 'archive', after: updated },
+  ]);
+
+  return {
+    itemId: updated.id,
+    handoff: existing.handoff,
+    context: formatPendingHandoffContext(existing.handoff),
+  };
+}

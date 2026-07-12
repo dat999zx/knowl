@@ -113,6 +113,66 @@ describe('host hook normalization', () => {
     expect(result.payload).not.toHaveProperty('stdout');
   });
 
+  it('preserves hard-stop failure payloads across hosts', () => {
+    const claude = normalizeHostHook('claude', 'StopFailure', {
+      session_id: 'session-rate',
+      turn_id: 'turn-rate',
+      cwd: ROOT,
+      error: 'rate_limit',
+      message: 'Claude session limit hit',
+    });
+    const codex = normalizeHostHook('codex', 'Stop', {
+      session_id: 'session-codex',
+      turn_id: 'turn-codex',
+      cwd: ROOT,
+      status: 'failed',
+      error: 'model_error',
+      message: 'provider blew up',
+    });
+    const cursor = normalizeHostHook('cursor', 'stop', {
+      conversation_id: 'session-cursor',
+      generation_id: 'turn-cursor',
+      workspace_roots: [ROOT],
+      status: 'failed',
+      code: '401',
+      message: 'unauthorized',
+    });
+
+    expect(claude).toMatchObject({
+      host: 'claude',
+      event: 'turn-stop',
+      status: 'failed',
+      payload: {
+        status: 'failed',
+        error: 'rate_limit',
+        code: 'rate_limit',
+        message: 'Claude session limit hit',
+      },
+    });
+    expect(codex).toMatchObject({
+      host: 'codex',
+      event: 'turn-stop',
+      status: 'failed',
+      payload: {
+        status: 'failed',
+        error: 'model_error',
+        code: 'model_error',
+        message: 'provider blew up',
+      },
+    });
+    expect(cursor).toMatchObject({
+      host: 'cursor',
+      event: 'turn-stop',
+      status: 'failed',
+      payload: {
+        status: 'failed',
+        error: '401',
+        code: '401',
+        message: 'unauthorized',
+      },
+    });
+  });
+
   it('rejects unsupported hosts and events', () => {
     expect(() => normalizeHostHook('unknown', 'SessionStart', {})).toThrow('Unsupported hook host');
     expect(() => normalizeHostHook('codex', 'UnknownEvent', { session_id: 's', cwd: ROOT })).toThrow('Unsupported codex hook event');
