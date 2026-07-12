@@ -182,6 +182,25 @@ describe('agent lifecycle CLI', () => {
     expect(output).toBe('');
   }, 15_000);
 
+  it('drops incomplete envelopes for every host adapter without failing the host', () => {
+    const hooks = [
+      ['codex', 'PostToolUse'],
+      ['claude', 'PostToolUse'],
+      ['cursor', 'postToolUse'],
+      ['generic', 'session-event'],
+    ];
+
+    for (const [host, event] of hooks) {
+      expect(run(['agent-hook', host, event, '--json'], '{}')).toBe('');
+    }
+
+    expect(run(['agent-hook', 'generic', 'session-event', '--json'], JSON.stringify({
+      sessionId: 'incomplete-generic',
+      turnId: 'incomplete-turn',
+      cwd: TEST_DIR,
+    }))).toBe('');
+  }, 15_000);
+
   it('accepts host payloads larger than the legacy transport cap', () => {
     const output = run(['agent-hook', 'codex', 'PostToolUse', '--json'], JSON.stringify({
       session_id: 'codex-unbounded-session',

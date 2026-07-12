@@ -29,6 +29,13 @@ const MAX_STRING = 2_000;
 const MAX_RETAINED_INPUT = 4_000;
 const AGENT_HOSTS = new Set<HookHost>(['codex', 'claude', 'cursor', 'claude-desktop', 'generic']);
 
+export class IncompleteHostHookPayloadError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'IncompleteHostHookPayloadError';
+  }
+}
+
 const stringValue = (value: unknown, max = MAX_STRING): string | undefined =>
   typeof value === 'string' && value.length > 0 ? value.slice(0, max) : undefined;
 
@@ -37,7 +44,7 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
 
 function requireString(raw: Record<string, unknown>, key: string): string {
   const value = stringValue(raw[key]);
-  if (!value) throw new Error(`Host hook payload requires ${key}.`);
+  if (!value) throw new IncompleteHostHookPayloadError(`Host hook payload requires ${key}.`);
   return value;
 }
 
@@ -47,7 +54,7 @@ function requireProjectRoot(raw: Record<string, unknown>): string {
   const roots = Array.isArray(raw.workspace_roots) ? raw.workspace_roots : [];
   const root = stringValue(roots[0]);
   if (root) return path.resolve(root);
-  throw new Error('Host hook payload requires cwd or workspace_roots.');
+  throw new IncompleteHostHookPayloadError('Host hook payload requires cwd or workspace_roots.');
 }
 
 function externalIds(host: HookHost, raw: Record<string, unknown>) {
@@ -56,7 +63,7 @@ function externalIds(host: HookHost, raw: Record<string, unknown>) {
     : host === 'generic'
       ? stringValue(raw.sessionId)
       : stringValue(raw.session_id) ?? stringValue(raw.conversation_id) ?? stringValue(raw.thread_id);
-  if (!externalSessionId) throw new Error('Host hook payload requires a session id.');
+  if (!externalSessionId) throw new IncompleteHostHookPayloadError('Host hook payload requires a session id.');
   const externalTurnId = host === 'cursor'
     ? stringValue(raw.generation_id)
     : host === 'generic'
@@ -123,6 +130,7 @@ function normalizeGeneric(eventName: string, raw: Record<string, unknown>, proje
   const allowed: NormalizedHookEventName[] = ['session-start', 'turn-start', 'session-event', 'checkpoint', 'turn-stop', 'session-stop'];
   if (!allowed.includes(event)) throw new Error(`Unsupported generic hook event: ${eventName}`);
   const type = event === 'session-event' ? raw.type : event === 'checkpoint' ? 'checkpoint' : undefined;
+  if (event === 'session-event' && type === undefined) throw new IncompleteHostHookPayloadError('Generic session event requires a type.');
   if (type !== undefined && !isSessionEventType(type)) throw new Error(`Unsupported session event type: ${String(type)}`);
   const payload: Record<string, unknown> = {};
   for (const key of ['command', 'exitCode', 'passed', 'summary', 'message', 'code', 'text', 'changedPaths', 'commit', 'status']) {

@@ -38,7 +38,7 @@ import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSession
 import { captureMemorySessionEvent } from './store/session-capture.js';
 import { finalizeMemorySession } from './store/session-finalizer.js';
 import { isLifecycleEvent, isSessionEventType, readLifecyclePayload, stringPayloadValue } from './cli/agents/lifecycle.js';
-import { normalizeHostHook } from './cli/agents/host-hook.js';
+import { IncompleteHostHookPayloadError, normalizeHostHook } from './cli/agents/host-hook.js';
 import { bootstrapAgentSession } from './store/context-bootstrap.js';
 import { handleHostLifecycleEvent } from './store/host-lifecycle.js';
 import { listAssertions } from './store/assertions.js';
@@ -980,6 +980,10 @@ program
       else if (host !== 'codex' && host !== 'claude') console.log(JSON.stringify(result));
       await closeDb();
     } catch (error: any) {
+      if (error instanceof IncompleteHostHookPayloadError) {
+        await closeDb().catch(() => {});
+        return;
+      }
       console.error(`Error handling agent hook: ${error.message}`);
       await closeDb().catch(() => {});
       process.exit(1);
