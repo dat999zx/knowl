@@ -9,8 +9,8 @@ const KNOWL_AGENTS_SECTION = `${KNOWL_AGENTS_SECTION_MARKER}
 ## Knowl Project Memory
 
 - \`knowl init\` installs automatic lifecycle capture when a host supports a verified hook format. Unsupported hosts use \`knowl task run\` as the manual fallback; neither path stores raw transcripts.
-- At the start of a new project-specific session, call \`knowl_recent\` first to load recent active knowledge and knowledge commits before inspecting files or editing code.
-- After \`knowl_recent\`, use \`knowl_query\` for specific questions. Use 2-6 concise search keywords from the user's question, not the whole question text.
+- Lifecycle bootstrap supplies compact initial context when hooks are available. Call \`knowl_recent\` only when hooks are unavailable or an explicit refresh is needed.
+- Use \`knowl_query\` for focused follow-up with 2-6 concise keywords.
 - Do not use \`knowl_ask\` for MCP first-pass lookup. MCP agents already have a model; use \`knowl_recent\` and \`knowl_query\` for retrieval.
 - Omit category filters unless you are certain; an over-specific category can hide the correct memory item.
 - If the Knowl MCP tools are unavailable, stop and tell the user that Knowl MCP is not configured instead of silently inspecting the repository.
@@ -25,7 +25,7 @@ const KNOWL_AGENTS_SECTION = `${KNOWL_AGENTS_SECTION_MARKER}
 - Prefer learned skill scripts stored inside \`.knowl/skills/<name>/\`; shell fallback entrypoints are allowed when the skill defines them.
 - During work, keep Knowl current. If new findings contradict or replace existing memory, use \`knowl_update\` to correct stale or superseded items instead of adding duplicates.
 - For multi-step tasks, do not wait until the end to use Knowl. Before each new subtask or when switching areas, run a focused \`knowl_query\` for relevant prior decisions, constraints, facts, or current state.
-- After each completed subtask or newly verified durable finding, update Knowl immediately with \`knowl_store\`, \`knowl_decide\`, \`knowl_ingest_atoms\`, or \`knowl_update\` before continuing. If later subtasks depend on new memory you just stored, query Knowl again before continuing.
+- Store durable findings with \`knowl_store\`, \`knowl_decide\`, \`knowl_ingest_atoms\`, or \`knowl_update\`; do not store routine checkpoints or successful commands.
 - When the user confirms a durable fact, decision, constraint, architecture detail, current state, or reusable skill, save it to Knowl using \`knowl_store\`, \`knowl_decide\`, or \`knowl_ingest_atoms\`.
 - After discovering and verifying durable project knowledge from repository files, store it in Knowl using \`knowl_store\` or \`knowl_ingest_atoms\` before giving the final answer, but only when the initial \`knowl_query\` did not already return the same knowledge.
 - Before the final answer, check whether the work produced durable knowledge: implemented feature summaries, setup steps, architecture changes, important commands, decisions, constraints, recurring bugs, gotchas, and verified project facts. Store useful outcomes in Knowl before responding.

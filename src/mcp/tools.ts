@@ -6,6 +6,8 @@ import { initAI } from '../ai/provider.js';
 import { runPipeline } from '../pipeline/pipeline.js';
 import { getHierarchicalKnowledge } from '../store/queries.js';
 import { formatHierarchyToMarkdown, formatRecentContextToMarkdown } from '../core/format.js';
+import { compactMcpJson, compactItemResponse, compactAssertionResponse, boundedEvidence } from './response-format.js';
+import { MAX_ITEM_CONTENT_CHARS, truncateText } from '../core/token-budget.js';
 import { getRecentContext } from '../store/recent-context.js';
 import { storeKnowledgeItemDeduped, storeKnowledgeAtomsDeduped } from '../store/knowledge-writer.js';
 import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
@@ -62,7 +64,7 @@ export function registerTools(
           description: 'Get the full current active state of the project. Use for broad project-memory summaries, status checks, or full-state requests; prefer knowl_query for specific factual questions.',
           inputSchema: {
             type: 'object',
-            properties: {},
+            properties: { maxChars: { type: 'number', description: 'Maximum markdown characters; defaults to 3000.' } },
           },
         },
         {
@@ -73,12 +75,13 @@ export function registerTools(
             properties: {
               itemLimit: {
                 type: 'number',
-                description: 'Maximum recent active knowledge items to return; defaults to 12.',
+                description: 'Maximum recent active knowledge items to return; defaults to 3.',
               },
               commitLimit: {
                 type: 'number',
                 description: 'Maximum recent knowledge commits to return; defaults to 8.',
               },
+              maxChars: { type: 'number', description: 'Maximum markdown characters; defaults to 3000.' },
             },
           },
         },
@@ -266,7 +269,7 @@ export function registerTools(
         {
           name: 'knowl_context',
           description: 'Compose a diversified token-budgeted context pack.',
-          inputSchema: { type: 'object', properties: { query: { type: 'string' }, task: { type: 'string' }, tokenBudget: { type: 'number' } }, required: ['tokenBudget'] },
+          inputSchema: { type: 'object', properties: { query: { type: 'string' }, task: { type: 'string' }, tokenBudget: { type: 'number' }, explain: { type: 'boolean', description: 'Include excluded-item diagnostics.' } }, required: ['tokenBudget'] },
         },
         {
           name: 'knowl_synthesize',
@@ -561,26 +564,27 @@ export function registerTools(
         });
 
         return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+          content: [{ type: 'text', text: compactMcpJson({ inserted: result.insertedIds?.length ?? 0, updated: result.updatedIds?.length ?? 0, superseded: result.supersededIds?.length ?? 0 }) }],
         };
       }
       
       else if (name === 'knowl_state') {
         const hierarchy = await getHierarchicalKnowledge(projectId!);
-        const md = formatHierarchyToMarkdown(hierarchy);
+        const { maxChars } = args as any;
+        const md = formatHierarchyToMarkdown(hierarchy, { maxChars });
         return {
           content: [{ type: 'text', text: md }],
         };
       }
 
       else if (name === 'knowl_recent') {
-        const { itemLimit, commitLimit } = args as any;
+        const { itemLimit, commitLimit, maxChars } = args as any;
         const context = await getRecentContext(projectId!, {
           itemLimit,
           commitLimit,
         });
         return {
-          content: [{ type: 'text', text: formatRecentContextToMarkdown(context) }],
+          content: [{ type: 'text', text: formatRecentContextToMarkdown(context, { maxChars }) }],
         };
       }
 
@@ -671,7 +675,7 @@ export function registerTools(
         const { query, category, status, tags, limit, includeEvidence, explain, asOf } = args as any;
         if (asOf) {
           const items = await queryKnowledgeBase(projectId!, { query, category, status, tags, limit, asOf });
-          return { content: [{ type: 'text', text: JSON.stringify(items, null, 2) }] };
+          return { content: [{ type: 'text', text: compactMcpJson(items.map(compactItemResponse)) }] };
         }
         let vector;
         if (config && projectRoot && query && isVectorSearchEnabled(config)) {
@@ -705,34 +709,36 @@ export function registerTools(
           ...evidence,
           stale: projectRoot ? await isEvidenceStale(evidence, projectRoot) : false,
         })));
+        const compact = (item: any) => ({ ...compactItemResponse(item), ...(explain && item.explanation ? { explanation: item.explanation } : {}) });
         const payload = includeEvidence
-          ? await Promise.all(items.map(async item => ({ ...item, evidence: await withStaleStatus(item.id) })))
-          : items;
-        return { content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] };
+          ? await Promise.all(items.map(async item => ({ ...compact(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
+          : items.map(compact);
+        return { content: [{ type: 'text', text: compactMcpJson(payload) }] };
       } 
 
       else if (name === 'knowl_timeline') {
         const { itemId } = args as any;
         const { listAssertions } = await import('../store/assertions.js');
-        return { content: [{ type: 'text', text: JSON.stringify(await listAssertions(itemId), null, 2) }] };
+        return { content: [{ type: 'text', text: compactMcpJson((await listAssertions(itemId)).slice(0, 5).map(compactAssertionResponse)) }] };
       }
 
       else if (name === 'knowl_conflicts') {
         const { listActiveConflictKeys } = await import('../store/conflicts.js');
         const items = await listActiveConflictKeys();
-        return { content: [{ type: 'text', text: JSON.stringify(items.map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness })), null, 2) }] };
+        return { content: [{ type: 'text', text: compactMcpJson(items.slice(0, 3).map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness }))) }] };
       }
 
       else if (name === 'knowl_context') {
         const { composeContext } = await import('../store/context-composer.js');
-        const { query, task, tokenBudget } = args as any;
-        return { content: [{ type: 'text', text: JSON.stringify(await composeContext(projectId!, { query, task, tokenBudget, namespaceRoot: projectRoot ?? undefined }), null, 2) }] };
+        const { query, task, tokenBudget, explain } = args as any;
+        const pack = await composeContext(projectId!, { query, task, tokenBudget, namespaceRoot: projectRoot ?? undefined });
+        return { content: [{ type: 'text', text: compactMcpJson(explain ? pack : { sections: pack.sections, estimatedTokens: pack.estimatedTokens }) }] };
       }
 
       else if (name === 'knowl_synthesize') {
         const { scope } = args as any;
         const { synthesizeKnowledge } = await import('../store/synthesis.js');
-        return { content: [{ type: 'text', text: JSON.stringify(await synthesizeKnowledge(projectId!, scope), null, 2) }] };
+        return { content: [{ type: 'text', text: compactMcpJson(compactItemResponse(await synthesizeKnowledge(projectId!, scope))) }] };
       }
 
       else if (name === 'knowl_evidence_list') {
@@ -741,7 +747,7 @@ export function registerTools(
           ...item,
           stale: projectRoot ? await isEvidenceStale(item, projectRoot) : false,
         })));
-        return { content: [{ type: 'text', text: JSON.stringify(evidence, null, 2) }] };
+        return { content: [{ type: 'text', text: compactMcpJson(boundedEvidence(evidence)) }] };
       }
 
       else if (name === 'knowl_feedback') {
@@ -754,7 +760,7 @@ export function registerTools(
         const { sessionId, status, summary, promote = true } = args as any;
         const session = await finishMemorySession(sessionId, status, summary);
         const promotion = promote ? await finalizeMemorySession(projectId!, sessionId) : { status: 'skipped', itemIds: [], candidateCount: 0, usedAi: false };
-        return { content: [{ type: 'text', text: JSON.stringify({ session, promotion }, null, 2) }] };
+        return { content: [{ type: 'text', text: compactMcpJson({ session: { id: session.id, status: session.status }, promotion: { status: promotion.status, candidateCount: promotion.candidateCount, itemIds: promotion.itemIds.slice(0, 3) } }) }] };
       }
       
       else if (name === 'knowl_update') {
@@ -778,14 +784,14 @@ export function registerTools(
           await supersedeKnowledgeItem(supersedeId, updated.id);
         }
         return {
-          content: [{ type: 'text', text: `Successfully updated item ${id}:\n\n${JSON.stringify(updated, null, 2)}` }],
+          content: [{ type: 'text', text: `Successfully updated item ${id} (${updated.freshness})` }],
         };
       }
 
       else if (name === 'knowl_gc_preview') {
         const result = await previewKnowledgeGc(projectId!);
         return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+          content: [{ type: 'text', text: compactMcpJson({ summary: result.summary, candidateCount: result.candidates.length, candidates: result.candidates.slice(0, 3) }) }],
         };
       }
 
@@ -793,7 +799,7 @@ export function registerTools(
         const { title, query } = args as any;
         const result = await startWorkLoop(projectId!, title, query);
         return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+          content: [{ type: 'text', text: compactMcpJson({ ...result, relevantMemory: result.relevantMemory.map(item => ({ ...item, content: truncateText(item.content, MAX_ITEM_CONTENT_CHARS) })) }) }],
         };
       }
 
@@ -801,7 +807,7 @@ export function registerTools(
         const { taskId, summary } = args as any;
         const result = await checkpointWorkLoop(projectId!, taskId, summary);
         return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+          content: [{ type: 'text', text: compactMcpJson(result) }],
         };
       }
 
@@ -809,14 +815,14 @@ export function registerTools(
         const { taskId, summary } = args as any;
         const result = await finishWorkLoop(projectId!, taskId, summary);
         return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+          content: [{ type: 'text', text: compactMcpJson(result) }],
         };
       }
 
       else if (name === 'knowl_gc_apply') {
         const result = await applyKnowledgeGc(projectId!);
         return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+          content: [{ type: 'text', text: compactMcpJson({ summary: result.summary, candidateCount: result.candidates.length, candidates: result.candidates.slice(0, 3) }) }],
         };
       }
 
@@ -831,7 +837,7 @@ export function registerTools(
         const { name: skillName } = args as any;
         const skill = await readSkillPackage(projectRoot!, skillName);
         return {
-          content: [{ type: 'text', text: JSON.stringify(skill, null, 2) }],
+          content: [{ type: 'text', text: compactMcpJson({ manifest: skill.manifest, markdown: truncateText(skill.markdown, MAX_ITEM_CONTENT_CHARS), truncated: skill.markdown.length > MAX_ITEM_CONTENT_CHARS }) }],
         };
       }
 
@@ -855,9 +861,7 @@ export function registerTools(
         const { name: skillName, entrypoint, args: runtimeArgs } = args as any;
         const result = await runSkillPackage(projectRoot!, skillName, entrypoint || 'default', runtimeArgs || []);
         await recordSkillRun(projectId!, skillName, result.exitCode === 0);
-        return {
-          content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
-        };
+        return { content: [{ type: 'text', text: compactMcpJson({ ...result, stdout: truncateText(result.stdout, MAX_ITEM_CONTENT_CHARS), stderr: truncateText(result.stderr, MAX_ITEM_CONTENT_CHARS), attempts: result.attempts.map(attempt => ({ entrypoint: attempt.entrypoint, exitCode: attempt.exitCode })) }) }] };
       }
 
       throw new Error(`Unknown tool: ${name}`);

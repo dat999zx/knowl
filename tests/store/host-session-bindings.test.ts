@@ -5,6 +5,7 @@ import { closeDb, initDb } from '../../src/store/database.js';
 import {
   closeHostSessionBinding,
   closeHostSessionBindings,
+  closeInactiveHostSessionBindings,
   findHostSession,
   getOrCreateHostSession,
 } from '../../src/store/host-session-bindings.js';
@@ -73,5 +74,14 @@ describe('host session bindings', () => {
     expect(await closeHostSessionBindings(base)).toBe(2);
     await expect(findHostSession({ ...base, externalTurnId: 'turn-a' })).resolves.toBeNull();
     await expect(findHostSession({ ...base, externalTurnId: 'turn-b' })).resolves.toBeNull();
+  });
+
+  it('closes bindings whose memory sessions are terminal', async () => {
+    const input = { projectId, projectRoot: ROOT, host: 'codex', externalSessionId: 'session-4', externalTurnId: '__session__', title: 'Codex session' };
+    const started = await getOrCreateHostSession(input);
+    await finishMemorySession(started.session.id, 'finished');
+
+    expect(await closeInactiveHostSessionBindings()).toBeGreaterThanOrEqual(1);
+    await expect(findHostSession(input)).resolves.toBeNull();
   });
 });

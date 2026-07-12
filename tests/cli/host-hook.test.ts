@@ -25,6 +25,17 @@ describe('host hook normalization', () => {
     expect(JSON.stringify(result)).not.toContain('Private prompt');
   });
 
+  it('uses stable Codex fallback identity fields', () => {
+    const result = normalizeHostHook('codex', 'UserPromptSubmit', {
+      conversation_id: 'conversation-1',
+      generation_id: 'generation-1',
+      cwd: ROOT,
+    });
+
+    expect(result.externalSessionId).toBe('conversation-1');
+    expect(result.externalTurnId).toBe('generation-1');
+  });
+
   it('normalizes Claude tool success and failure into allowlisted events', () => {
     const success = normalizeHostHook('claude', 'PostToolUse', {
       session_id: 'session-2',

@@ -126,10 +126,12 @@ describe('CLI Integration', () => {
 
     expect(content).toContain('## Knowl Project Memory');
     expect(content).toContain('`knowl init` installs automatic lifecycle capture when a host supports a verified hook format');
-    expect(content).toContain('At the start of a new project-specific session, call `knowl_recent` first');
-    expect(content).toContain('After `knowl_recent`, use `knowl_query` for specific questions');
+    expect(content).toContain('Lifecycle bootstrap supplies compact initial context');
+    expect(content).toContain('Call `knowl_recent` only when hooks are unavailable or an explicit refresh is needed');
+    expect(content).not.toContain('At the start of a new project-specific session, call `knowl_recent` first');
+    expect(content).toContain('Use `knowl_query` for focused follow-up');
     expect(content).toContain('Do not use `knowl_ask` for MCP first-pass lookup');
-    expect(content).toContain('Use 2-6 concise search keywords');
+    expect(content).toContain('2-6 concise keywords');
     expect(content).toContain('Omit category filters unless you are certain');
     expect(content).toContain('Only use `knowl_state` for broad project-memory summaries');
     expect(content).toContain('Do not inspect repository files before this Knowl lookup');
@@ -146,8 +148,7 @@ describe('CLI Integration', () => {
     expect(content).toContain('During work, keep Knowl current');
     expect(content).toContain('For multi-step tasks, do not wait until the end to use Knowl');
     expect(content).toContain('Before each new subtask or when switching areas, run a focused `knowl_query`');
-    expect(content).toContain('After each completed subtask or newly verified durable finding, update Knowl immediately');
-    expect(content).toContain('If later subtasks depend on new memory you just stored, query Knowl again before continuing');
+    expect(content).toContain('Store durable findings with `knowl_store`');
     expect(content).toContain('If new findings contradict or replace existing memory, use `knowl_update`');
     expect(content).toContain('Before the final answer, check whether the work produced durable knowledge');
     expect(content).toContain('implemented feature summaries, setup steps, architecture changes, important commands, decisions, constraints, recurring bugs, gotchas, and verified project facts');
@@ -285,13 +286,13 @@ describe('CLI Integration', () => {
     });
 
     const content = await fs.readFile(agentsPath, 'utf-8');
-    expect(content).toContain('At the start of a new project-specific session, call `knowl_recent` first');
-    expect(content).toContain('After `knowl_recent`, use `knowl_query` for specific questions');
+    expect(content).toContain('Lifecycle bootstrap supplies compact initial context');
+    expect(content).toContain('Use `knowl_query` for focused follow-up');
     expect(content).toContain('Do not use `knowl_ask` for MCP first-pass lookup');
     expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');
     expect(content).toContain('For multi-step tasks, do not wait until the end to use Knowl');
     expect(content).toContain('Before each new subtask or when switching areas, run a focused `knowl_query`');
-    expect(content).toContain('After each completed subtask or newly verified durable finding, update Knowl immediately');
+    expect(content).toContain('Store durable findings with `knowl_store`');
     expect(content).toContain('Before the final answer, check whether the work produced durable knowledge');
     expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
     expect((content.match(/## Knowl Project Memory/g) || []).length).toBe(1);

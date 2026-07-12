@@ -1,8 +1,7 @@
 import { formatRecentContextToMarkdown } from '../core/format.js';
+import { DEFAULT_CONTEXT_MAX_CHARS } from '../core/token-budget.js';
 import { heartbeatMemorySession, startMemorySession } from './session-repository.js';
 import { getRecentContext } from './recent-context.js';
-
-const MAX_CONTEXT_LENGTH = 6_000;
 
 export type AgentBootstrapInput = {
   projectId: string;
@@ -12,7 +11,7 @@ export type AgentBootstrapInput = {
   sessionId?: string;
 };
 
-export async function bootstrapAgentSession(input: AgentBootstrapInput) {
+export async function bootstrapAgentSession(input: AgentBootstrapInput, options: { includeContext?: boolean } = {}) {
   let session;
   if (input.sessionId) {
     try {
@@ -24,12 +23,13 @@ export async function bootstrapAgentSession(input: AgentBootstrapInput) {
     session = await startMemorySession(input);
   }
 
+  if (options.includeContext === false) return { session, context: undefined, truncated: false };
   const recent = await getRecentContext(input.projectId);
-  const fallback = formatRecentContextToMarkdown(recent);
-  const truncated = fallback.length > MAX_CONTEXT_LENGTH;
+  const fallback = formatRecentContextToMarkdown(recent, { maxChars: Number.MAX_SAFE_INTEGER });
+  const truncated = fallback.length > DEFAULT_CONTEXT_MAX_CHARS;
   return {
     session,
-    context: truncated ? `${fallback.slice(0, MAX_CONTEXT_LENGTH - 24)}\n\n[Context truncated]` : fallback,
+    context: truncated ? `${fallback.slice(0, DEFAULT_CONTEXT_MAX_CHARS - 24)}\n\n[Context truncated]` : fallback,
     truncated,
   };
 }

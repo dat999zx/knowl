@@ -49,13 +49,25 @@ describe('host lifecycle orchestration', () => {
 
     expect(result).toMatchObject({ accepted: true, sessionId: expect.any(String) });
     expect(result.context).toContain('Use local memory');
-    expect(result.context!.length).toBeLessThanOrEqual(6_000);
+    expect(result.context!.length).toBeLessThanOrEqual(3_000);
     expect(result.hostOutput).toEqual({
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
         additionalContext: result.context,
       },
     });
+  });
+
+  it('delivers context once after SessionStart and not on later prompts or events', async () => {
+    const sessionStart = await handleHostLifecycleEvent(projectId, hook({ host: 'codex', event: 'session-start', externalSessionId: 'one-shot', externalTurnId: undefined }));
+    const firstPrompt = await handleHostLifecycleEvent(projectId, hook({ host: 'codex', event: 'turn-start', externalSessionId: 'one-shot', externalTurnId: 'prompt-1' }));
+    const secondPrompt = await handleHostLifecycleEvent(projectId, hook({ host: 'codex', event: 'turn-start', externalSessionId: 'one-shot', externalTurnId: 'prompt-2' }));
+    const checkpoint = await handleHostLifecycleEvent(projectId, hook({ host: 'codex', event: 'checkpoint', externalSessionId: 'one-shot', externalTurnId: 'prompt-2', type: 'checkpoint', payload: { summary: 'state' } }));
+
+    expect(sessionStart.hostOutput?.hookSpecificOutput).toHaveProperty('additionalContext');
+    expect(firstPrompt.hostOutput).toBeUndefined();
+    expect(secondPrompt.hostOutput).toBeUndefined();
+    expect(checkpoint).not.toHaveProperty('context');
   });
 
   it('captures a turn, finalizes candidates, and drops duplicate stops', async () => {
@@ -77,7 +89,7 @@ describe('host lifecycle orchestration', () => {
     }));
 
     expect(event.sessionId).toBe(start.sessionId);
-    expect(stop).toMatchObject({ accepted: true, sessionId: start.sessionId, promotion: { candidateCount: 1 } });
+    expect(stop).toMatchObject({ accepted: true, sessionId: start.sessionId, promotion: { candidateCount: 0 } });
     expect(duplicate).toEqual({ accepted: false, reason: 'event-loss' });
     const rows = await getClient().execute({ sql: 'SELECT payload FROM memory_session_events WHERE session_id = ? AND type = ?', args: [start.sessionId!, 'command'] });
     expect(String(rows.rows[0].payload)).not.toContain('discard me');
@@ -95,5 +107,63 @@ describe('host lifecycle orchestration', () => {
     expect(checkpoint.sessionId).toBe(start.sessionId);
     const rows = await getClient().execute({ sql: 'SELECT payload FROM memory_session_events WHERE session_id = ? AND type = ?', args: [start.sessionId!, 'checkpoint'] });
     expect(JSON.parse(String(rows.rows[0].payload))).toEqual({ summary: 'Current task state', changedPaths: ['src/auth.ts'] });
+  });
+
+  it('delivers fallback context once across completed turns without SessionStart', async () => {
+    const firstStart = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      externalSessionId: 'missing-session-start',
+      externalTurnId: 'prompt-1',
+    }));
+    const firstStop = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      event: 'turn-stop',
+      externalSessionId: 'missing-session-start',
+      externalTurnId: 'prompt-1',
+      status: 'finished',
+      payload: { status: 'finished' },
+    }));
+    const secondStart = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex',
+      externalSessionId: 'missing-session-start',
+      externalTurnId: 'prompt-2',
+    }));
+
+    expect(firstStart.hostOutput?.hookSpecificOutput).toHaveProperty('additionalContext');
+    expect(firstStop.accepted).toBe(true);
+    expect(secondStart.hostOutput).toBeUndefined();
+    expect(secondStart.sessionId).not.toBe(firstStart.sessionId);
+  });
+
+  it('captures a Codex tool turn without UserPromptSubmit', async () => {
+    const sessionStart = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex', event: 'session-start', externalSessionId: 'tool-only-session', externalTurnId: undefined,
+    }));
+    const event = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex', event: 'session-event', externalSessionId: 'tool-only-session', externalTurnId: 'tool-turn',
+      type: 'command', payload: { command: 'npm test', exitCode: 0 },
+    }));
+    const stop = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex', event: 'turn-stop', externalSessionId: 'tool-only-session', externalTurnId: 'tool-turn',
+      status: 'finished', payload: { status: 'finished' },
+    }));
+
+    expect(sessionStart.hostOutput?.hookSpecificOutput).toHaveProperty('additionalContext');
+    expect(event.accepted).toBe(true);
+    expect(stop.accepted).toBe(true);
+  });
+
+  it('does not inject fallback context from a tool event when SessionStart is missing', async () => {
+    const event = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex', event: 'session-event', externalSessionId: 'missing-bootstrap', externalTurnId: 'tool-turn',
+      type: 'command', payload: { command: 'npm test', exitCode: 0 },
+    }));
+    const stop = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex', event: 'turn-stop', externalSessionId: 'missing-bootstrap', externalTurnId: 'tool-turn',
+      status: 'finished', payload: { status: 'finished' },
+    }));
+
+    expect(event).toEqual({ accepted: true, sessionId: expect.any(String) });
+    expect(stop.accepted).toBe(true);
   });
 });

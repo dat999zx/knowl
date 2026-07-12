@@ -134,12 +134,14 @@ MCP is the preferred way for agents to use Knowl. The MCP tools do not require K
 
 Recommended agent flow:
 
-1. Call `knowl_recent` at the start of a project-specific session.
+1. Lifecycle hooks deliver compact context once at session start. Call `knowl_recent` only when hooks are unavailable or a refresh is needed.
 2. Use `knowl_query` for specific questions, with 2-6 concise keywords.
 3. Use `knowl_state` only for broad full-state summaries.
 4. For multi-step tasks, query Knowl again before each new subtask or when switching areas.
 5. Store durable new facts, decisions, constraints, architecture notes, state, and skills immediately after each completed subtask or verified finding with `knowl_store`, `knowl_decide`, or `knowl_ingest_atoms`.
 6. Use `knowl_update` as soon as you find stale or contradicted memory.
+
+Routine lifecycle events remain ephemeral. MCP responses are compact and bounded by default; explicit detail options request larger inspection payloads.
 
 Available MCP tools:
 

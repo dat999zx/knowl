@@ -118,8 +118,11 @@ describe('agent adapters', () => {
     const cursorHooks = await readJson(path.join(PROJECT, '.cursor', 'hooks.json'));
     expect(codexHooks.hooks.Stop[0].hooks[0].command).toBe('existing');
     expect(JSON.stringify(codexHooks)).toContain('knowl.cmd agent-hook codex SessionStart --json');
+    expect(codexHooks.hooks.SessionStart[0].matcher).toBe('.*');
+    expect(codexHooks.hooks.UserPromptSubmit).toBeUndefined();
     expect(claudeSettings.permissions.allow).toEqual(['Bash(npm test)']);
     expect(JSON.stringify(claudeSettings)).toContain('knowl.cmd agent-hook claude SessionStart --json');
+    expect(claudeSettings.hooks.SessionStart[0].matcher).toBe('.*');
     expect(cursorHooks.hooks.afterFileEdit[0].command).toBe('existing');
     expect(JSON.stringify(cursorHooks)).toContain('knowl.cmd agent-hook cursor sessionStart --json');
 
@@ -133,6 +136,38 @@ describe('agent adapters', () => {
     await expect(fs.access(path.join(PROJECT, '.codex', 'hooks.json.backup'))).resolves.toBeUndefined();
     await expect(fs.access(path.join(PROJECT, '.claude', 'settings.local.json.backup'))).resolves.toBeUndefined();
     await expect(fs.access(path.join(PROJECT, '.cursor', 'hooks.json.backup'))).resolves.toBeUndefined();
+  });
+
+  it('removes retired Knowl prompt hooks while preserving user hooks', async () => {
+    const codex = createCodexAdapter(environment);
+    const claude = createClaudeCodeAdapter(environment);
+    const cursor = createCursorAdapter(environment);
+    await fs.mkdir(path.join(PROJECT, '.codex'), { recursive: true });
+    await fs.mkdir(path.join(PROJECT, '.claude'), { recursive: true });
+    await fs.mkdir(path.join(PROJECT, '.cursor'), { recursive: true });
+    await writeJson(path.join(PROJECT, '.codex', 'hooks.json'), { hooks: { UserPromptSubmit: [
+      { matcher: '.*', hooks: [{ type: 'command', command: 'knowl.cmd agent-hook codex UserPromptSubmit --json' }] },
+      { matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] },
+    ] } });
+    await writeJson(path.join(PROJECT, '.claude', 'settings.local.json'), { hooks: { UserPromptSubmit: [
+      { matcher: '.*', hooks: [{ type: 'command', command: 'knowl.cmd agent-hook claude UserPromptSubmit --json' }] },
+      { matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] },
+    ] } });
+    await writeJson(path.join(PROJECT, '.cursor', 'hooks.json'), { version: 1, hooks: { beforeSubmitPrompt: [
+      { command: 'knowl.cmd agent-hook cursor beforeSubmitPrompt --json' },
+      { command: 'user-hook' },
+    ] } });
+
+    await codex.configureLifecycle(PROJECT);
+    await claude.configureLifecycle(PROJECT);
+    await cursor.configureLifecycle(PROJECT);
+
+    const codexHooks = await readJson(path.join(PROJECT, '.codex', 'hooks.json'));
+    const claudeHooks = await readJson(path.join(PROJECT, '.claude', 'settings.local.json'));
+    const cursorHooks = await readJson(path.join(PROJECT, '.cursor', 'hooks.json'));
+    expect(codexHooks.hooks.UserPromptSubmit).toEqual([{ matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] }]);
+    expect(claudeHooks.hooks.UserPromptSubmit).toEqual([{ matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] }]);
+    expect(cursorHooks.hooks.beforeSubmitPrompt).toEqual([{ command: 'user-hook' }]);
   });
 
   it('keeps Claude Desktop lifecycle unsupported and rejects partial hook configuration', async () => {

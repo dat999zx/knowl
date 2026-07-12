@@ -19,10 +19,6 @@ export async function extractSessionMemoryCandidates(sessionId: string): Promise
     const text = typeof event.payload.text === 'string' ? event.payload.text.slice(0, 2_000) : '';
     if (text) candidates.push({ candidateType: 'decision', sessionId, category: 'decision', title: `Session decision: ${text.slice(0, 80)}`, content: text, confidence: 0.9, evidence: eventEvidence(sessionId, event) });
   }
-  for (const event of events.filter(event => event.type === 'command' && event.payload.exitCode === 0)) {
-    const command = typeof event.payload.command === 'string' ? event.payload.command.slice(0, 500) : '';
-    if (command) candidates.push({ candidateType: 'verified-command', sessionId, category: 'skill', title: `Verified command: ${command}`, content: `${command}\nVerified during session: ${String(sessionRow.title)}`, confidence: 0.8, evidence: eventEvidence(sessionId, event) });
-  }
   const stop = events.find(event => event.type === 'stop');
   const summary = typeof stop?.payload.summary === 'string' ? stop.payload.summary.slice(0, 2_000) : '';
   if (summary) candidates.push({ candidateType: 'outcome', sessionId, category: 'state', title: `Session outcome: ${String(sessionRow.title)}`, content: summary, confidence: 0.75, evidence: eventEvidence(sessionId, stop!) });

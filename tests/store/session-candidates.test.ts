@@ -13,15 +13,15 @@ describe('session candidates', () => {
   beforeEach(async () => { const db = getDb() as any; await db.run(sql`DELETE FROM memory_session_events`); await db.run(sql`DELETE FROM memory_sessions`); });
   afterAll(async () => { await closeDb(); await fs.rm(TEST_ROOT, { recursive: true, force: true }).catch(() => {}); });
 
-  it('derives bounded decision, verified-command, and task-state candidates', async () => {
+  it('derives durable decisions and outcomes, not successful command noise', async () => {
     const session = await startMemorySession({ title: 'Improve retrieval', query: 'search' });
     await appendMemorySessionEvent(session.id, 'decision', { text: 'Use RRF ranking for hybrid retrieval.' });
     await appendMemorySessionEvent(session.id, 'command', { command: 'npm test', exitCode: 0, summary: 'All tests passed.' });
     await finishMemorySession(session.id, 'finished', 'Improved retrieval ranking.');
 
     const candidates = await extractSessionMemoryCandidates(session.id);
-    expect(candidates).toHaveLength(3);
-    expect(candidates.map(candidate => candidate.candidateType)).toEqual(['decision', 'verified-command', 'outcome']);
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map(candidate => candidate.candidateType)).toEqual(['decision', 'outcome']);
     expect(candidates.every(candidate => candidate.content.length <= 2_000)).toBe(true);
     expect(candidates.every(candidate => candidate.evidence.length > 0)).toBe(true);
   });

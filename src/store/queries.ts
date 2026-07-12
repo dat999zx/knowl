@@ -81,6 +81,7 @@ export async function queryKnowledgeBase(
     asOf?: string;
   }
 ): Promise<KnowledgeItem[]> {
+  const resultLimit = options.limit;
   const db = getDb();
   try {
     if (options.query) {
@@ -93,7 +94,7 @@ export async function queryKnowledgeBase(
       });
 
       if (ftsResults.length > 0) {
-        if (!options.asOf) return ftsResults;
+        if (!options.asOf) return resultLimit === undefined ? ftsResults : ftsResults.slice(0, resultLimit);
       }
     }
 
@@ -143,12 +144,13 @@ export async function queryKnowledgeBase(
       });
     }
 
-    if (!options.asOf) return mapped;
+    if (!options.asOf) return resultLimit === undefined ? mapped : mapped.slice(0, resultLimit);
     const historical = await Promise.all(mapped.map(async item => {
       const assertion = await findAssertionAsOf(item.id, options.asOf!);
       return assertion ? { ...item, content: assertion.content, confidence: assertion.confidence } : null;
     }));
-    return historical.filter((item): item is KnowledgeItem => item !== null);
+    const resolved = historical.filter((item): item is KnowledgeItem => item !== null);
+    return resultLimit === undefined ? resolved : resolved.slice(0, resultLimit);
   } catch (error: any) {
     throw new DatabaseError(`Failed to query knowledge base: ${error.message}`);
   }

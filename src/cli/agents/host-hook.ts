@@ -26,7 +26,7 @@ export interface NormalizedHostHook {
 }
 
 const MAX_STRING = 2_000;
-const MAX_INPUT = 4_000;
+const MAX_RETAINED_INPUT = 4_000;
 const AGENT_HOSTS = new Set<HookHost>(['codex', 'claude', 'cursor', 'claude-desktop', 'generic']);
 
 const stringValue = (value: unknown, max = MAX_STRING): string | undefined =>
@@ -55,13 +55,13 @@ function externalIds(host: HookHost, raw: Record<string, unknown>) {
     ? stringValue(raw.conversation_id)
     : host === 'generic'
       ? stringValue(raw.sessionId)
-      : stringValue(raw.session_id);
+      : stringValue(raw.session_id) ?? stringValue(raw.conversation_id) ?? stringValue(raw.thread_id);
   if (!externalSessionId) throw new Error('Host hook payload requires a session id.');
   const externalTurnId = host === 'cursor'
     ? stringValue(raw.generation_id)
     : host === 'generic'
       ? stringValue(raw.turnId)
-      : stringValue(raw.turn_id);
+      : stringValue(raw.turn_id) ?? stringValue(raw.generation_id);
   return { externalSessionId, externalTurnId };
 }
 
@@ -130,19 +130,32 @@ function normalizeGeneric(eventName: string, raw: Record<string, unknown>, proje
   }
   return {
     host: 'generic', event, ...ids, projectRoot,
-    title: event === 'turn-start' ? 'Agent turn' : stringValue(raw.title),
+    title: event === 'turn-start' ? stringValue(raw.title) ?? 'Agent turn' : stringValue(raw.title),
     status: event === 'turn-stop' || event === 'session-stop' ? (raw.status === 'failed' ? 'failed' : 'finished') : undefined,
     type: type as SessionEventType | undefined,
     payload,
   };
 }
 
-export function normalizeHostHook(host: string, eventName: string, raw: Record<string, unknown>): NormalizedHostHook {
+function validateNormalizedHostHook(input: NormalizedHostHook): NormalizedHostHook {
+  const changedPaths = Array.isArray(input.payload.changedPaths)
+    ? input.payload.changedPaths.filter((value): value is string => typeof value === 'string')
+    : undefined;
+  validateKnowledgeWrite({
+    title: input.title,
+    rawOutput: JSON.stringify({
+      externalSessionId: input.externalSessionId,
+      externalTurnId: input.externalTurnId,
+      payload: input.payload,
+    }),
+    affectedPaths: changedPaths,
+  }, { maxRawOutputLength: MAX_RETAINED_INPUT });
+  return input;
+}
+
+function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record<string, unknown>): NormalizedHostHook {
   if (!AGENT_HOSTS.has(host as HookHost)) throw new Error(`Unsupported hook host: ${host}`);
   const normalizedHost = host as HookHost;
-  const serialized = JSON.stringify(raw);
-  if (serialized.length > MAX_INPUT) throw new Error('Host hook payload exceeds the allowed length.');
-  validateKnowledgeWrite({ rawOutput: serialized }, { maxRawOutputLength: MAX_INPUT });
   const projectRoot = requireProjectRoot(raw);
   const ids = externalIds(normalizedHost, raw);
   if (normalizedHost === 'generic') return normalizeGeneric(eventName, raw, projectRoot, ids);
@@ -174,4 +187,8 @@ export function normalizeHostHook(host: string, eventName: string, raw: Record<s
     return { host: normalizedHost, event, ...ids, projectRoot, type: 'error', status: 'failed', payload: { message: stringValue(raw.error) ?? 'Tool failed' } };
   }
   return { host: normalizedHost, event, ...ids, projectRoot, ...toolEvent(normalizedHost, eventName, projectRoot, raw) };
+}
+
+export function normalizeHostHook(host: string, eventName: string, raw: Record<string, unknown>): NormalizedHostHook {
+  return validateNormalizedHostHook(normalizeHostHookUnchecked(host, eventName, raw));
 }

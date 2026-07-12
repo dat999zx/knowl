@@ -24,6 +24,7 @@ export async function reindexKnowledgeEmbeddings(
 ): Promise<VectorReindexResult> {
   const items = await queryKnowledgeBase(projectId, {
     status: 'active',
+    limit: 10_000,
   });
 
   if (items.length === 0) {

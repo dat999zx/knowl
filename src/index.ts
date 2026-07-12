@@ -347,7 +347,7 @@ program
       if (!project) throw new Error('Project not found in database.');
 
       const hierarchy = await getHierarchicalKnowledge(project.id);
-      const md = formatHierarchyToMarkdown(hierarchy);
+      const md = formatHierarchyToMarkdown(hierarchy, { maxChars: Number.MAX_SAFE_INTEGER, maxItemChars: Number.MAX_SAFE_INTEGER });
       console.log(md);
 
       await closeDb();
@@ -976,7 +976,8 @@ program
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not found in database.');
       const result = await handleHostLifecycleEvent(project.id, normalized);
-      console.log(JSON.stringify(result.hostOutput ?? result));
+      if (result.hostOutput) console.log(JSON.stringify(result.hostOutput));
+      else if (host !== 'codex' && host !== 'claude') console.log(JSON.stringify(result));
       await closeDb();
     } catch (error: any) {
       console.error(`Error handling agent hook: ${error.message}`);

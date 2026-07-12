@@ -4,8 +4,10 @@ import path from 'node:path';
 import { initDb, closeDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { startMemorySession } from '../../src/store/session-repository.js';
+import { createEvidence, linkKnowledgeEvidence } from '../../src/store/evidence-repository.js';
 import { createMcpServer } from '../../src/mcp/server.js';
 import { ProjectConfig } from '../../src/core/types.js';
+import { DEFAULT_CONTEXT_MAX_CHARS } from '../../src/core/token-budget.js';
 
 // Mock AI functions
 vi.mock('../../src/ai/provider.js', () => {
@@ -358,6 +360,35 @@ describe('MCP Server Layer', () => {
     expect(JSON.parse(res.result.content[0].text)).toEqual([expect.objectContaining({ content: 'Updated content.' }), expect.objectContaining({ content: 'Initial content.' })]);
   });
 
+  it('compacts default timeline content', async () => {
+    const item = await repo.createKnowledgeItem(projectId, { category: 'fact', title: 'Long timeline target', content: 'x'.repeat(2_000) });
+
+    const res = await runRpcRequest('tools/call', { name: 'knowl_timeline', arguments: { itemId: item.id } });
+    const payload = JSON.parse(res.result.content[0].text);
+
+    expect(payload[0].content.length).toBeLessThanOrEqual(600);
+    expect(res.result.content[0].text.length).toBeLessThan(1_000);
+  });
+
+  it('compacts default evidence payloads', async () => {
+    const item = await repo.createKnowledgeItem(projectId, { category: 'fact', title: 'Evidence target', content: 'Evidence stays inspectable.' });
+    const evidence = await createEvidence({
+      type: 'file',
+      locator: 'src/evidence.ts',
+      excerpt: 'x'.repeat(2_000),
+      metadata: { verbose: 'y'.repeat(10_000) },
+      observedAt: new Date().toISOString(),
+    });
+    await linkKnowledgeEvidence({ knowledgeItemId: item.id, evidenceId: evidence.id, relationship: 'supports' });
+
+    const res = await runRpcRequest('tools/call', { name: 'knowl_evidence_list', arguments: { itemId: item.id } });
+    const payload = JSON.parse(res.result.content[0].text);
+
+    expect(res.result.content[0].text.length).toBeLessThan(2_000);
+    expect(payload[0].excerpt.length).toBeLessThanOrEqual(600);
+    expect(payload[0]).not.toHaveProperty('metadata');
+  });
+
   it('accepts conflict identity on structured MCP writes', async () => {
     const args = { category: 'decision', title: 'MCP production engine', content: 'PostgreSQL.', conflictKey: 'database.production.engine', conflictScope: { environment: 'production' }, conflictExclusive: true };
     const first = await runRpcRequest('tools/call', { name: 'knowl_store', arguments: args });
@@ -612,6 +643,20 @@ describe('MCP Server Layer', () => {
     expect(res.error).toBeUndefined();
     expect(res.result.contents[0].text).toContain('Offline Support');
     expect(res.result.contents[0].text).toContain('GOALS');
+  });
+
+  it('bounds default state and brain resource output', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'goal',
+      title: 'Large goal',
+      content: 'x'.repeat(DEFAULT_CONTEXT_MAX_CHARS * 2),
+    });
+
+    const state = await runRpcRequest('tools/call', { name: 'knowl_state', arguments: {} });
+    const brain = await runRpcRequest('resources/read', { uri: 'knowl://brain' });
+
+    expect(state.result.content[0].text.length).toBeLessThanOrEqual(DEFAULT_CONTEXT_MAX_CHARS);
+    expect(brain.result.contents[0].text.length).toBeLessThanOrEqual(DEFAULT_CONTEXT_MAX_CHARS);
   });
 
   it('should preview and apply knowledge garbage collection via MCP tools', async () => {

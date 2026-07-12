@@ -66,5 +66,5 @@ export async function queryLayeredKnowledge(
       if (!descriptor.optional) throw error;
     }
   }
-  return results;
+  return results.slice(0, limit);
 }

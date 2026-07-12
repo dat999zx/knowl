@@ -17,6 +17,7 @@ export type HostSessionInput = HostSessionKey & {
   projectId: string;
   title: string;
   query?: string;
+  includeContext?: boolean;
 };
 
 const normalizedKey = (input: HostSessionKey) => ({
@@ -54,7 +55,7 @@ export async function getOrCreateHostSession(input: HostSessionInput) {
       query: input.query,
       agent: String(input.host),
       sessionId: existing.id,
-    });
+    }, { includeContext: input.includeContext });
     return { ...bootstrap, created: false };
   }
 
@@ -64,7 +65,13 @@ export async function getOrCreateHostSession(input: HostSessionInput) {
     title: input.title,
     query: input.query,
     agent: String(input.host),
-  });
+  }, { includeContext: input.includeContext });
+  await bindHostSession(input, bootstrap.session.id);
+  return { ...bootstrap, created: true };
+}
+
+export async function bindHostSession(input: HostSessionKey, memorySessionId: string): Promise<void> {
+  const key = normalizedKey(input);
   const now = new Date().toISOString();
   await getClient().execute({
     sql: `INSERT INTO host_session_bindings
@@ -72,9 +79,8 @@ export async function getOrCreateHostSession(input: HostSessionInput) {
       VALUES (?, ?, ?, ?, ?, 1, ?)
       ON CONFLICT (host, project_root, external_session_id, external_turn_id)
       DO UPDATE SET memory_session_id = excluded.memory_session_id, active = 1, updated_at = excluded.updated_at`,
-    args: [key.host, key.projectRoot, key.externalSessionId, key.externalTurnId, bootstrap.session.id, now],
+    args: [key.host, key.projectRoot, key.externalSessionId, key.externalTurnId, memorySessionId, now],
   });
-  return { ...bootstrap, created: true };
 }
 
 export async function closeHostSessionBinding(input: HostSessionKey): Promise<boolean> {
@@ -93,6 +99,19 @@ export async function closeHostSessionBindings(input: Omit<HostSessionKey, 'exte
     sql: `UPDATE host_session_bindings SET active = 0, updated_at = ?
       WHERE host = ? AND project_root = ? AND external_session_id = ? AND active = 1`,
     args: [new Date().toISOString(), key.host, key.projectRoot, key.externalSessionId],
+  });
+  return Number(result.rowsAffected ?? 0);
+}
+
+export async function closeInactiveHostSessionBindings(): Promise<number> {
+  const result = await getClient().execute({
+    sql: `UPDATE host_session_bindings SET active = 0, updated_at = ?
+      WHERE active = 1 AND NOT EXISTS (
+        SELECT 1 FROM memory_sessions
+        WHERE memory_sessions.id = host_session_bindings.memory_session_id
+          AND memory_sessions.status = 'active'
+      )`,
+    args: [new Date().toISOString()],
   });
   return Number(result.rowsAffected ?? 0);
 }

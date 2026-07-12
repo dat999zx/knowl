@@ -5,6 +5,8 @@ import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSession
 import {
   closeHostSessionBinding,
   closeHostSessionBindings,
+  closeInactiveHostSessionBindings,
+  bindHostSession,
   findHostSession,
   getOrCreateHostSession,
   HostSessionKey,
@@ -31,7 +33,8 @@ function bindingKey(input: NormalizedHostHook, scope: 'session' | 'turn'): HostS
   };
 }
 
-function hostContextOutput(input: NormalizedHostHook, context: string): Record<string, unknown> | undefined {
+function hostContextOutput(input: NormalizedHostHook, context: string | undefined): Record<string, unknown> | undefined {
+  if (!context) return undefined;
   if (input.host !== 'codex' && input.host !== 'claude') return undefined;
   return {
     hookSpecificOutput: {
@@ -41,11 +44,12 @@ function hostContextOutput(input: NormalizedHostHook, context: string): Record<s
   };
 }
 
-async function startBoundSession(projectId: string, input: NormalizedHostHook, scope: 'session' | 'turn') {
+async function startBoundSession(projectId: string, input: NormalizedHostHook, scope: 'session' | 'turn', includeContext = false) {
   return getOrCreateHostSession({
     projectId,
     ...bindingKey(input, scope),
     title: input.title ?? (scope === 'session' ? 'Agent session' : 'Agent turn'),
+    includeContext,
   });
 }
 
@@ -53,7 +57,8 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
   if (input.event === 'session-start') {
     const recovered = await recoverAbandonedSessions();
     const purgedEventCount = await purgeExpiredSessionEvents();
-    const started = await startBoundSession(projectId, input, 'session');
+    await closeInactiveHostSessionBindings();
+    const started = await startBoundSession(projectId, input, 'session', true);
     return {
       accepted: true,
       sessionId: started.session.id,
@@ -66,7 +71,20 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
   }
 
   if (input.event === 'turn-start') {
-    const started = await startBoundSession(projectId, input, 'turn');
+    const sessionBinding = await findHostSession(bindingKey(input, 'session'));
+    if (!sessionBinding && (input.host === 'codex' || input.host === 'claude')) {
+      const started = await startBoundSession(projectId, input, 'session', true);
+      await bindHostSession(bindingKey(input, 'turn'), started.session.id);
+      return {
+        accepted: true,
+        sessionId: started.session.id,
+        context: started.context,
+        contextTruncated: started.truncated,
+        hostOutput: hostContextOutput(input, started.context),
+      };
+    }
+    const started = await startBoundSession(projectId, input, 'turn', !sessionBinding);
+    if (!sessionBinding) await bindHostSession(bindingKey(input, 'session'), started.session.id);
     return {
       accepted: true,
       sessionId: started.session.id,
@@ -88,6 +106,11 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     const key = bindingKey(input, 'turn');
     const session = await findHostSession(key);
     if (!session) return { accepted: false, reason: 'event-loss' };
+    const sessionBinding = await findHostSession(bindingKey(input, 'session'));
+    if ((input.host === 'codex' || input.host === 'claude') && sessionBinding?.id === session.id) {
+      await closeHostSessionBinding(key);
+      return { accepted: true, sessionId: session.id };
+    }
     await finishMemorySession(session.id, input.status ?? 'finished', typeof input.payload.summary === 'string' ? input.payload.summary : undefined);
     const promotion = await finalizeMemorySession(projectId, session.id);
     await closeHostSessionBinding(key);

@@ -9,6 +9,7 @@ import * as repo from '../../src/store/repository.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from '../../src/store/gc.js';
 import * as queries from '../../src/store/queries.js';
 import { formatRecentContextToMarkdown } from '../../src/core/format.js';
+import { DEFAULT_CONTEXT_MAX_CHARS } from '../../src/core/token-budget.js';
 import { queryKnowledgeForAgent, queryKnowledgeForAgentExplained } from '../../src/store/agent-query.js';
 import { getRecentContext } from '../../src/store/recent-context.js';
 import { searchKnowledgeEmbeddings, upsertKnowledgeEmbedding } from '../../src/store/vector.js';
@@ -746,6 +747,12 @@ describe('Storage Layer', () => {
     expect(markdown).toContain('Current plan');
     expect(markdown).toContain('Implement recent context before query ranking.');
     expect(markdown).toContain('Store recent context plan');
+  });
+
+  it('bounds automatic recent context with a deterministic marker', () => {
+    const markdown = formatRecentContextToMarkdown({ items: [{ id: 'x', category: 'fact', status: 'active', title: 'Long', content: 'x'.repeat(DEFAULT_CONTEXT_MAX_CHARS), freshness: 'fresh', confidence: 1, version: 1, createdAt: '', updatedAt: '' }], commits: [] }, { maxChars: 80 });
+    expect(markdown.length).toBeLessThanOrEqual(80);
+    expect(markdown).toContain('[Context truncated]');
   });
 
   it('should store and search knowledge embeddings in SQLite', async () => {

@@ -1,4 +1,4 @@
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, notLike } from 'drizzle-orm';
 import { KnowledgeCommit, KnowledgeItem, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 import { getDb } from './database.js';
@@ -15,17 +15,23 @@ export async function getRecentContext(
   options: {
     itemLimit?: number;
     commitLimit?: number;
+    includeEphemeral?: boolean;
   } = {}
 ): Promise<RecentContext> {
   const db = getDb();
-  const itemLimit = options.itemLimit ?? 12;
+  const itemLimit = options.itemLimit ?? 3;
   const commitLimit = options.commitLimit ?? 8;
 
   try {
+    const conditions = [eq(schema.knowledgeItems.status, 'active')];
+    if (!options.includeEphemeral) {
+      conditions.push(notLike(schema.knowledgeItems.title, 'Verified command:%'));
+      conditions.push(notLike(schema.knowledgeItems.title, 'Work Loop checkpoint%'));
+    }
     const rows = await db
       .select()
       .from(schema.knowledgeItems)
-      .where(eq(schema.knowledgeItems.status, 'active'))
+      .where(and(...conditions))
       .orderBy(desc(schema.knowledgeItems.updatedAt))
       .limit(itemLimit);
 

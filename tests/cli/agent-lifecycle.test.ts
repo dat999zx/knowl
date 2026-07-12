@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { createClient } from '@libsql/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { isLifecycleCapability, isLifecycleEvent } from '../../src/cli/agents/lifecycle.js';
+import { isLifecycleCapability, isLifecycleEvent, readLifecyclePayload } from '../../src/cli/agents/lifecycle.js';
 
 const TEST_DIR = path.resolve('./.knowl-agent-lifecycle-test');
 const CLI_PATH = path.resolve('./dist/index.js');
@@ -29,6 +30,24 @@ describe('agent lifecycle CLI', () => {
     expect(['supported', 'unsupported', 'degraded'].every(isLifecycleCapability)).toBe(true);
     expect(['session-start', 'session-event', 'session-stop', 'session-recover'].every(isLifecycleEvent)).toBe(true);
     expect(isLifecycleEvent('start')).toBe(false);
+  });
+
+  it('streams allowlisted nested fields without retaining ignored output', async () => {
+    const payload = await readLifecyclePayload(Readable.from([JSON.stringify({
+      session_id: 'stream-session',
+      cwd: TEST_DIR,
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test', unsafe: 'discard me' },
+      tool_response: { stdout: `sk-test-123456789012345678901234567890${'x'.repeat(1_100_000)}`, exit_code: 0 },
+    })]) as NodeJS.ReadStream);
+
+    expect(payload).toEqual({
+      session_id: 'stream-session',
+      cwd: TEST_DIR,
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+      tool_response: { exit_code: 0 },
+    });
   });
 
   it('captures bounded lifecycle events from stdin', () => {
@@ -135,5 +154,55 @@ describe('agent lifecycle CLI', () => {
     expect(rejected.status).toBe(1);
     expect(rejected.stderr.toString()).toContain('secret material was detected');
     expect(rejected.stderr.toString()).not.toContain(secret);
+  }, 15_000);
+
+  it('accepts large host payloads when retained hook data stays bounded', () => {
+    const output = run(['agent-hook', 'codex', 'PostToolUse', '--json'], JSON.stringify({
+      session_id: 'codex-large-session',
+      turn_id: 'codex-large-turn',
+      cwd: TEST_DIR,
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+      tool_response: { stdout: `sk-test-123456789012345678901234567890${'x'.repeat(5_000)}`, exit_code: 0 },
+    }));
+
+    expect(output).toBe('');
+  }, 15_000);
+
+  it('accepts Codex thread_id payloads streamed from PostToolUse', () => {
+    const output = run(['agent-hook', 'codex', 'PostToolUse', '--json'], JSON.stringify({
+      thread_id: 'codex-thread-session',
+      generation_id: 'codex-thread-turn',
+      cwd: TEST_DIR,
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+      tool_response: { exit_code: 0 },
+    }));
+
+    expect(output).toBe('');
+  }, 15_000);
+
+  it('accepts host payloads larger than the legacy transport cap', () => {
+    const output = run(['agent-hook', 'codex', 'PostToolUse', '--json'], JSON.stringify({
+      session_id: 'codex-unbounded-session',
+      turn_id: 'codex-unbounded-turn',
+      cwd: TEST_DIR,
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+      tool_response: { stdout: 'x'.repeat(1_100_000), exit_code: 0 },
+    }));
+
+    expect(output).toBe('');
+  }, 15_000);
+
+  it('emits no JSON for Codex Stop hooks', () => {
+    const payload = {
+      session_id: 'codex-stop-session',
+      turn_id: 'codex-stop-turn',
+      cwd: TEST_DIR,
+    };
+    run(['agent-hook', 'codex', 'UserPromptSubmit', '--json'], JSON.stringify(payload));
+
+    expect(run(['agent-hook', 'codex', 'Stop', '--json'], JSON.stringify(payload))).toBe('');
   }, 15_000);
 });

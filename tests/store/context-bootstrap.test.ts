@@ -28,6 +28,12 @@ describe('agent context bootstrap', () => {
     expect(reused.session.id).toBe(started.session.id);
     expect(started.context).toContain('# KNOWL - RECENT SESSION CONTEXT');
     expect(started.context).toContain('Use SQLite');
-    expect(started.context.length).toBeLessThanOrEqual(6_000);
+    expect(started.context.length).toBeLessThanOrEqual(3_000);
+  });
+
+  it('heartbeats without recomposing context when delivery is disabled', async () => {
+    const started = await bootstrapAgentSession({ projectId, title: 'One shot' });
+    const heartbeat = await bootstrapAgentSession({ projectId, title: 'Ignored', sessionId: started.session.id }, { includeContext: false });
+    expect(heartbeat).toMatchObject({ session: { id: started.session.id }, context: undefined, truncated: false });
   });
 });
