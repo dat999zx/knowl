@@ -1025,17 +1025,36 @@ taskCommand
   .description('Store durable progress for an active work loop')
   .argument('<taskId>', 'Task ID returned by knowl task start')
   .argument('<summary>', 'Checkpoint summary')
-  .action(async (taskId, summary) => {
+  .option('--goal <goal>', 'Optional current goal for resumable handoffs')
+  .option('--completed <item>', 'Optional completed step; repeatable', (value: string, previous: string[] = []) => previous.concat(value), [])
+  .option('--next-action <nextAction>', 'Optional next action to resume with')
+  .option('--blocker <blocker>', 'Optional current blocker')
+  .option('--artifact <ref>', 'Optional artifact or file reference; repeatable', (value: string, previous: string[] = []) => previous.concat(value), [])
+  .action(async (taskId, summary, options) => {
     try {
       const root = await findProjectRoot(process.cwd());
       await initDb(root);
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not found in database.');
 
-      const result = await checkpointWorkLoop(project.id, taskId, summary);
+      const result = await checkpointWorkLoop(project.id, taskId, {
+        summary,
+        goal: options.goal,
+        completed: options.completed,
+        nextAction: options.nextAction,
+        blocker: options.blocker,
+        artifactRefs: options.artifact,
+      });
       console.log('KNOWL WORK LOOP CHECKPOINT');
       console.log(`Task ID: ${result.taskId}`);
       console.log(`Checkpoint ID: ${result.itemId}`);
+      if (result.taskState) {
+        if (result.taskState.goal) console.log(`Goal: ${result.taskState.goal}`);
+        if (result.taskState.completed?.length) console.log(`Completed: ${result.taskState.completed.join('; ')}`);
+        if (result.taskState.nextAction) console.log(`Next action: ${result.taskState.nextAction}`);
+        if (result.taskState.blocker) console.log(`Blocker: ${result.taskState.blocker}`);
+        if (result.taskState.artifactRefs?.length) console.log(`Artifacts: ${result.taskState.artifactRefs.join(', ')}`);
+      }
 
       await closeDb();
     } catch (error: any) {

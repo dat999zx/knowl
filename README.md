@@ -91,7 +91,11 @@ Or record manual checkpoints:
 
 ```bash
 knowl task start "Implement search UI" --query "search retrieval"
-knowl task checkpoint <task-id> "Added search UI tests"
+knowl task checkpoint <task-id> "Added search UI tests" \
+  --goal "Ship search UI" \
+  --completed "Added search UI tests" \
+  --next-action "Finish implementation" \
+  --artifact "src/search-ui.ts"
 knowl task finish <task-id> "Verified search UI implementation"
 ```
 
@@ -201,7 +205,7 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl evidence list <item-id>` | List linked file, commit, test, command, URL, user, agent, or symbol evidence. |
 | `knowl state` | Print the full active hierarchical project memory. |
 | `knowl task start <title>` | Start a work loop, query relevant memory, and store active task state. |
-| `knowl task checkpoint <task-id> <summary>` | Store durable progress for an active work loop. |
+| `knowl task checkpoint <task-id> <summary> [--goal ...] [--completed ...] [--next-action ...] [--blocker ...] [--artifact ...]` | Store durable progress and optional structured task state for an active work loop. |
 | `knowl task finish <task-id> <summary>` | Store durable completion state for a work loop. |
 | `knowl task run <title> -- <command...>` | Start a work loop, run a command, then finish on success or checkpoint on failure with the child exit code. |
 | `knowl timeline <item-id>` | Print immutable content assertions for one knowledge item. |
