@@ -33,6 +33,17 @@ describe('CLI Integration', () => {
     }
   });
 
+  it('should report the package version', async () => {
+    const packageVersion = (JSON.parse(
+      await fs.readFile(path.resolve('./package.json'), 'utf-8')
+    ) as { version: string }).version;
+    const output = execFileSync(process.execPath, [CLI_PATH, '--version'], {
+      encoding: 'utf-8',
+    }).trim();
+
+    expect(output).toBe(packageVersion);
+  });
+
   it('should initialize a repository', async () => {
     const output = execSync(`node "${CLI_PATH}" init --yes`, {
       cwd: TEST_DIR,

@@ -6,6 +6,7 @@ import { initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { registerTools } from './tools.js';
 import { registerResources } from './resources.js';
+import { PACKAGE_VERSION } from '../version.js';
 
 export const KNOWL_MCP_TOOL_NAMES = [
   'knowl_ingest',
@@ -43,7 +44,7 @@ export function createMcpServer(
   const server = new Server(
     {
       name: 'knowl-knowledge-server',
-      version: '0.1.0',
+      version: PACKAGE_VERSION,
     },
     {
       capabilities: {

@@ -5,6 +5,7 @@ import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
+import { PACKAGE_VERSION } from './version.js';
 import { DEFAULT_CONFIG, findProjectRoot, loadConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
 import { installKnowlAgentsGuidance } from './core/agents-guidance.js';
 import { installKnowlGitignoreEntry } from './core/gitignore.js';
@@ -213,7 +214,7 @@ function printUpgradeStatus(result: Awaited<ReturnType<typeof upgradeExistingRep
 program
   .name('knowl')
   .description('KNOWL — A Knowledge Operating System for AI Agents')
-  .version('1.2.0');
+  .version(PACKAGE_VERSION);
 
 // --- 1. INIT COMMAND ---
 program
