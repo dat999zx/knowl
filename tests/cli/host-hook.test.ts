@@ -113,6 +113,62 @@ describe('host hook normalization', () => {
     expect(result.payload).not.toHaveProperty('stdout');
   });
 
+  it('keeps structured checkpoint state without retaining arbitrary tool output', () => {
+    const result = normalizeHostHook('generic', 'checkpoint', {
+      sessionId: 'session-structured',
+      turnId: 'turn-structured',
+      cwd: ROOT,
+      summary: 'Checkpoint complete',
+      goal: 'Ship resumable handoffs',
+      completed: ['Added a test'],
+      nextAction: 'Implement the contract',
+      blocker: 'Waiting for a rate-limit reset',
+      artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+      verificationStatus: 'needs-review',
+      stdout: 'discard me',
+    });
+
+    expect(result.payload).toEqual({
+      summary: 'Checkpoint complete',
+      goal: 'Ship resumable handoffs',
+      completed: ['Added a test'],
+      nextAction: 'Implement the contract',
+      blocker: 'Waiting for a rate-limit reset',
+      artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+      verificationStatus: 'needs-review',
+    });
+  });
+
+  it('keeps structured task state on hard-stop failures', () => {
+    const result = normalizeHostHook('claude', 'StopFailure', {
+      session_id: 'session-failure-state',
+      turn_id: 'turn-failure-state',
+      cwd: ROOT,
+      error: 'rate_limit',
+      message: 'Claude session limit hit',
+      goal: 'Ship resumable handoffs',
+      completed: ['Captured the failure state'],
+      nextAction: 'Resume after the limit resets',
+      blocker: 'Rate limit',
+      artifactRefs: ['src/store/session-handoff.ts'],
+      verificationStatus: 'blocked',
+      stdout: 'discard me',
+    });
+
+    expect(result.payload).toEqual({
+      status: 'failed',
+      error: 'rate_limit',
+      code: 'rate_limit',
+      message: 'Claude session limit hit',
+      goal: 'Ship resumable handoffs',
+      completed: ['Captured the failure state'],
+      nextAction: 'Resume after the limit resets',
+      blocker: 'Rate limit',
+      artifactRefs: ['src/store/session-handoff.ts'],
+      verificationStatus: 'blocked',
+    });
+  });
+
   it('preserves hard-stop failure payloads across hosts', () => {
     const claude = normalizeHostHook('claude', 'StopFailure', {
       session_id: 'session-rate',

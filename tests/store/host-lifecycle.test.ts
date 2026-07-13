@@ -5,6 +5,7 @@ import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { handleHostLifecycleEvent } from '../../src/store/host-lifecycle.js';
 import * as repo from '../../src/store/repository.js';
+import { recordPendingSessionHandoff } from '../../src/store/session-handoff.js';
 
 const ROOT = path.resolve('.knowl-host-lifecycle-test');
 
@@ -101,12 +102,30 @@ describe('host lifecycle orchestration', () => {
       externalTurnId: 'turn-2',
       event: 'checkpoint',
       type: 'checkpoint',
-      payload: { summary: 'Current task state', changedPaths: ['src/auth.ts'] },
+      payload: {
+        summary: 'Current task state',
+        changedPaths: ['src/auth.ts'],
+        goal: 'Ship resumable handoffs',
+        completed: ['Added the regression case'],
+        nextAction: 'Implement the checkpoint contract',
+        blocker: 'None',
+        artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+        verificationStatus: 'unverified',
+      },
     }));
 
     expect(checkpoint.sessionId).toBe(start.sessionId);
     const rows = await getClient().execute({ sql: 'SELECT payload FROM memory_session_events WHERE session_id = ? AND type = ?', args: [start.sessionId!, 'checkpoint'] });
-    expect(JSON.parse(String(rows.rows[0].payload))).toEqual({ summary: 'Current task state', changedPaths: ['src/auth.ts'] });
+    expect(JSON.parse(String(rows.rows[0].payload))).toEqual({
+      summary: 'Current task state',
+      changedPaths: ['src/auth.ts'],
+      goal: 'Ship resumable handoffs',
+      completed: ['Added the regression case'],
+      nextAction: 'Implement the checkpoint contract',
+      blocker: 'None',
+      artifactRefs: ['tests/store/host-lifecycle.test.ts'],
+      verificationStatus: 'unverified',
+    });
   });
 
   it('delivers fallback context once across completed turns without SessionStart', async () => {
@@ -273,7 +292,16 @@ describe('host lifecycle orchestration', () => {
       externalSessionId: 'claude-rate-limit',
       externalTurnId: 'turn-rate',
       type: 'checkpoint',
-      payload: { summary: 'Human review gate active', changedPaths: ['src/forge.ts'] },
+      payload: {
+        summary: 'Human review gate active',
+        changedPaths: ['src/forge.ts'],
+        goal: 'Ship resumable handoffs',
+        completed: ['Captured a structured checkpoint', 'Ran focused tests'],
+        nextAction: 'Persist the pending handoff',
+        blocker: 'Rate limit',
+        artifactRefs: ['src/store/session-handoff.ts', 'tests/store/host-lifecycle.test.ts'],
+        verificationStatus: 'needs-review',
+      },
     }));
     const failedStop = await handleHostLifecycleEvent(projectId, hook({
       host: 'claude',
@@ -281,7 +309,13 @@ describe('host lifecycle orchestration', () => {
       externalSessionId: 'claude-rate-limit',
       externalTurnId: 'turn-rate',
       status: 'failed',
-      payload: { status: 'failed', error: 'rate_limit', message: 'Claude session limit hit' },
+      payload: {
+        status: 'failed',
+        error: 'rate_limit',
+        message: 'Claude session limit hit',
+        nextAction: 'Resume after the rate limit resets',
+        verificationStatus: 'blocked',
+      },
     }));
 
     expect(sessionStart.accepted).toBe(true);
@@ -289,6 +323,14 @@ describe('host lifecycle orchestration', () => {
     expect(failedStop.accepted).toBe(true);
     expect(failedStop.handoff?.handoff.kind).toBe('rate_limit');
     expect(failedStop.handoff?.handoff.lastCheckpoint).toBe('Human review gate active');
+    expect(failedStop.handoff?.handoff.taskState).toEqual({
+      goal: 'Ship resumable handoffs',
+      completed: ['Captured a structured checkpoint', 'Ran focused tests'],
+      nextAction: 'Resume after the rate limit resets',
+      blocker: 'Rate limit',
+      artifactRefs: ['src/store/session-handoff.ts', 'tests/store/host-lifecycle.test.ts'],
+      verificationStatus: 'blocked',
+    });
     expect(failedStop.promotion).toBeDefined();
 
     const sessionRows = await getClient().execute({
@@ -323,8 +365,174 @@ describe('host lifecycle orchestration', () => {
     expect(String(nextStart.context)).toContain('PENDING SESSION HANDOFF');
     expect(String(nextStart.context)).toContain('rate_limit');
     expect(String(nextStart.context)).toContain('Human review gate active');
+    expect(String(nextStart.context)).toContain('Ship resumable handoffs');
+    expect(String(nextStart.context)).toContain('Resume after the rate limit resets');
+    expect(String(nextStart.context)).toContain('Rate limit');
+    expect(String(nextStart.context)).toContain('src/store/session-handoff.ts');
+    expect(String(nextStart.context)).toContain('blocked');
     expect(String(nextStart.context)).toContain('Use local memory');
     expect(String(secondStart.context)).not.toContain('PENDING SESSION HANDOFF');
+  });
+
+  it('updates one host-scoped handoff record for repeated failures instead of creating duplicates', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-dedupe-session',
+      externalTurnId: undefined,
+    }));
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'checkpoint',
+      externalSessionId: 'claude-dedupe-session',
+      externalTurnId: 'turn-1',
+      type: 'checkpoint',
+      payload: {
+        summary: 'First checkpoint',
+        goal: 'Keep one handoff',
+        completed: ['Recorded first failure path'],
+        nextAction: 'Retry after rate limit',
+        blocker: 'Rate limit',
+        artifactRefs: ['src/store/session-handoff.ts'],
+        verificationStatus: 'unverified',
+      },
+    }));
+    const firstFail = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-dedupe-session',
+      externalTurnId: 'turn-1',
+      status: 'failed',
+      payload: { status: 'failed', error: 'rate_limit', message: 'limit hit' },
+    }));
+    const secondFail = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-dedupe-session',
+      externalTurnId: 'turn-1',
+      status: 'failed',
+      payload: { status: 'failed', error: 'rate_limit', message: 'limit hit again' },
+    }));
+
+    expect(firstFail.handoff?.itemId).toBeTruthy();
+    expect(secondFail.handoff?.itemId).toBe(firstFail.handoff?.itemId);
+
+    const active = await getClient().execute({
+      sql: "SELECT id, content, conflict_scope, tags FROM knowledge_items WHERE title = 'Pending session handoff' AND status = 'active'",
+    });
+    expect(active.rows).toHaveLength(1);
+    const handoff = JSON.parse(String(active.rows[0].content));
+    expect(handoff.externalSessionId).toBe('claude-dedupe-session');
+    expect(handoff.taskState.verificationStatus).toBe('unverified');
+    expect(String(active.rows[0].tags)).toContain('session:claude-dedupe-session');
+    expect(JSON.parse(String(active.rows[0].conflict_scope))).toEqual({
+      host: 'claude',
+      externalSessionId: 'claude-dedupe-session',
+    });
+  });
+
+  it('uses task state attached to a hard-stop failure without a checkpoint', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-failure-state',
+      externalTurnId: undefined,
+    }));
+    const failedStop = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-failure-state',
+      externalTurnId: 'turn-failure-state',
+      status: 'failed',
+      payload: {
+        status: 'failed',
+        error: 'rate_limit',
+        message: 'Claude session limit hit',
+        goal: 'Ship resumable handoffs',
+        completed: ['Captured the failure state'],
+        nextAction: 'Resume after the limit resets',
+        blocker: 'Rate limit',
+        artifactRefs: ['src/store/session-handoff.ts'],
+        verificationStatus: 'blocked',
+      },
+    }));
+
+    expect(failedStop.handoff?.handoff.taskState).toEqual({
+      goal: 'Ship resumable handoffs',
+      completed: ['Captured the failure state'],
+      nextAction: 'Resume after the limit resets',
+      blocker: 'Rate limit',
+      artifactRefs: ['src/store/session-handoff.ts'],
+      verificationStatus: 'blocked',
+    });
+
+    const resume = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-failure-resume',
+      externalTurnId: undefined,
+    }));
+    expect(String(resume.context)).toContain('Captured the failure state');
+    expect(String(resume.context)).toContain('Resume after the limit resets');
+  });
+
+  it('replaces stale handoff state when a newer external session fails', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'claude-old-session',
+      externalTurnId: undefined,
+    }));
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'checkpoint',
+      externalSessionId: 'claude-old-session',
+      externalTurnId: 'turn-old',
+      type: 'checkpoint',
+      payload: {
+        summary: 'Old checkpoint',
+        changedPaths: ['src/old.ts'],
+        goal: 'Old goal',
+        nextAction: 'Old action',
+      },
+    }));
+    const firstFail = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-old-session',
+      externalTurnId: 'turn-old',
+      status: 'failed',
+      payload: { status: 'failed', error: 'rate_limit', message: 'Old session limit hit' },
+    }));
+    const secondFail = await recordPendingSessionHandoff(projectId, hook({
+      host: 'claude',
+      event: 'turn-stop',
+      externalSessionId: 'claude-new-session',
+      externalTurnId: 'turn-new',
+      status: 'failed',
+      payload: { status: 'failed', error: 'model_error', message: 'New session failed' },
+    }));
+
+    expect(secondFail?.itemId).toBe(firstFail.handoff?.itemId);
+    expect(secondFail?.handoff.externalSessionId).toBe('claude-new-session');
+    expect(secondFail?.handoff.memorySessionId).toBeUndefined();
+    expect(secondFail?.handoff.lastCheckpoint).toBeUndefined();
+    expect(secondFail?.handoff.changedPaths).toBeUndefined();
+    expect(secondFail?.handoff.taskState).toBeUndefined();
+
+    const active = await getClient().execute({
+      sql: 'SELECT content, conflict_scope FROM knowledge_items WHERE id = ?',
+      args: [secondFail!.itemId],
+    });
+    expect(active.rows).toHaveLength(1);
+    const handoff = JSON.parse(String(active.rows[0].content));
+    expect(handoff.externalSessionId).toBe('claude-new-session');
+    expect(handoff.lastCheckpoint).toBeUndefined();
+    expect(handoff.taskState).toBeUndefined();
+    expect(JSON.parse(String(active.rows[0].conflict_scope))).toEqual({
+      host: 'claude',
+      externalSessionId: 'claude-new-session',
+    });
   });
 
   it('records host-neutral hard-stop handoffs for Codex and Cursor failures', async () => {

@@ -535,6 +535,12 @@ describe('MCP Server Layer', () => {
       arguments: {
         taskId: startPayload.taskId,
         summary: 'Added search UI tests',
+        goal: 'Ship resumable handoffs',
+        completed: ['Added search UI tests'],
+        nextAction: 'Finish the implementation',
+        blocker: 'None',
+        artifactRefs: ['src/mcp/tools.ts'],
+        verificationStatus: 'tests-passing',
       },
     });
 
@@ -543,6 +549,14 @@ describe('MCP Server Layer', () => {
     const checkpointPayload = JSON.parse(checkpointRes.result.content[0].text);
     expect(checkpointPayload.taskId).toBe(startPayload.taskId);
     expect(checkpointPayload.itemId).toBeTruthy();
+    expect(checkpointPayload.taskState).toEqual({
+      goal: 'Ship resumable handoffs',
+      completed: ['Added search UI tests'],
+      nextAction: 'Finish the implementation',
+      blocker: 'None',
+      artifactRefs: ['src/mcp/tools.ts'],
+      verificationStatus: 'tests-passing',
+    });
 
     const finishRes = await runRpcRequest('tools/call', {
       name: 'knowl_task_finish',
