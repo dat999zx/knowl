@@ -157,6 +157,7 @@ function failurePayload(raw: Record<string, unknown>, failed: boolean): Record<s
     status: 'failed',
     ...(errorCode ? { error: errorCode, code: errorCode } : {}),
     ...(message ? { message } : {}),
+    ...checkpointState(raw),
   };
 }
 

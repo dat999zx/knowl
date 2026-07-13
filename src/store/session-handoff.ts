@@ -181,7 +181,7 @@ function stringList(value: unknown, maxItems = 20, maxLength = 2_000): string[] 
   return values.length ? values : undefined;
 }
 
-function checkpointTaskState(payload: Record<string, unknown>): HandoffTaskState | undefined {
+function taskStateFromPayload(payload: Record<string, unknown>): HandoffTaskState | undefined {
   const taskState: HandoffTaskState = {
     goal: asString(payload.goal, 1_000),
     completed: stringList(payload.completed, 20, 500),
@@ -235,7 +235,7 @@ async function loadLatestSessionCheckpoint(sessionId: string): Promise<{ summary
     const changedPaths = Array.isArray(payload.changedPaths)
       ? payload.changedPaths.filter((value): value is string => typeof value === 'string').slice(0, 20)
       : undefined;
-    return { summary, changedPaths, taskState: checkpointTaskState(payload) };
+    return { summary, changedPaths, taskState: taskStateFromPayload(payload) };
   } catch {
     return {};
   }
@@ -301,7 +301,7 @@ export async function recordPendingSessionHandoff(
   let sessionTitle: string | undefined;
   let lastCheckpoint: string | undefined;
   let changedPaths: string[] | undefined;
-  let taskState: HandoffTaskState | undefined;
+  let taskState = taskStateFromPayload(input.payload);
   if (options.memorySessionId) {
     try {
       const session = await getMemorySession(options.memorySessionId);
@@ -312,7 +312,7 @@ export async function recordPendingSessionHandoff(
     const checkpoint = await loadLatestSessionCheckpoint(options.memorySessionId);
     lastCheckpoint = checkpoint.summary;
     changedPaths = checkpoint.changedPaths;
-    taskState = checkpoint.taskState;
+    taskState = mergeTaskState(checkpoint.taskState, taskState);
   }
 
   const host = String(input.host);
@@ -340,8 +340,10 @@ export async function recordPendingSessionHandoff(
   };
   const existing = await findActivePendingHandoff(host);
   if (existing) {
-    // One active handoff per host. Same host+session merges; a newer host session replaces/updates the same record.
-    const mergedHandoff = mergeHandoff(existing.handoff, handoff);
+    // One active handoff per host. Only repeated failures from the same host session merge.
+    const mergedHandoff = existing.handoff.externalSessionId === handoff.externalSessionId
+      ? mergeHandoff(existing.handoff, handoff)
+      : handoff;
     const updated = await repo.updateKnowledgeItem(existing.id, {
       title: PENDING_HANDOFF_TITLE,
       content: JSON.stringify(mergedHandoff),
