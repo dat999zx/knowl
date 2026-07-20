@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "datasetId": "coding-memory-v1",
+  "generatorVersion": "coding-memory-v1",
+  "seed": "20260713",
+  "defaultRelevanceGrade": 0,
+  "generatedAt": "2026-07-13T00:00:00.000Z",
+  "counts": {
+    "projects": 5,
+    "histories": 100,
+    "sessions": 400,
+    "questions": 200
+  },
+  "digests": {
+    "public/normalized-records.ndjson": "75890283be1cab2e637affe2edf0afeba7efd843d2237771744cca43cddfcc01",
+    "public/native-histories.ndjson": "163b0759c3ef0198976298cd85f3629ed8e7765ab9ce12342ae5c513aa49dbfa",
+    "public/queries.ndjson": "15f00e805e3aaaf57e6d36cdba0af1cb825df94280e3d628a74a5546b145103d",
+    "gold/question-labels.ndjson": "d0f6b39045c49b816f79f4e090af7e5baff11e3366ce26a2421ca281f2d049ea",
+    "gold/capture-labels.ndjson": "2e5fb0bbcfff99d8c29069841c7aadf961a89f29e333303c342f8a216c820009"
+  }
+}
