@@ -1,0 +1,95 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "knowl.cmd agent-hook claude SessionStart --json",
+            "timeout": 30,
+            "statusMessage": "Loading Knowl memory"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "knowl.cmd agent-hook claude PostToolUse --json",
+            "timeout": 30,
+            "statusMessage": ""
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "knowl.cmd agent-hook claude PostToolUseFailure --json",
+            "timeout": 30,
+            "statusMessage": ""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "knowl.cmd agent-hook claude PreCompact --json",
+            "timeout": 30,
+            "statusMessage": ""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "knowl.cmd agent-hook claude Stop --json",
+            "timeout": 30,
+            "statusMessage": ""
+          }
+        ]
+      }
+    ],
+    "StopFailure": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "knowl.cmd agent-hook claude StopFailure --json",
+            "timeout": 30,
+            "statusMessage": ""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "knowl.cmd agent-hook claude SessionEnd --json",
+            "timeout": 30,
+            "statusMessage": ""
+          }
+        ]
+      }
+    ]
+  }
+}
