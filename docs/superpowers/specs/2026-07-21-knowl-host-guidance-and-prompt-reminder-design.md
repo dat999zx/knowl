@@ -302,7 +302,7 @@ Explicit agent names are validated before base init writes any files so an unsup
 3. Benchmark standalone cold and warm prompt-time command launches and report their overhead; do not add a timing-sensitive CI assertion.
 4. Measure the injected payload and host-observed transcript/context growth across 20 user prompts. Accept at most 500 estimated tokens per card and 10,000 cumulative estimated card tokens over 20 prompts; report any extra host wrapper or replay overhead separately.
 5. Rerun `knowl init claude` in `D:/coding/DuckPrep-server` after implementation.
-6. Start a fresh trusted Claude session and verify `/context` includes `KNOWL.md` through `CLAUDE.md`.
+6. Start a fresh trusted Claude session and verify `/context` includes the canonical Knowl workflow through `CLAUDE.md`, either from a direct `KNOWL.md` import or an existing synchronized `AGENTS.md` import. In DuckPrep, preserve and verify its existing `@AGENTS.md` path rather than adding a duplicate import.
 7. In three fresh Claude sessions, submit one project-specific prompt and confirm the first project action uses directly relevant active bootstrap context or a focused `knowl_query` before repository tools. Confirm Claude does not start a parallel manual work loop while automatic hooks are active.
 8. Ask Claude which Knowl tool it would use for one scenario from each routing group and confirm the answer follows the operational card without needing an explicit "read `KNOWL.md`" instruction.
 9. Verify a casual non-project prompt does not cause unnecessary retrieval.
