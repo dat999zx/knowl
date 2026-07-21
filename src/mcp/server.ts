@@ -7,30 +7,12 @@ import { getProjectByRootPath } from '../store/repository.js';
 import { registerTools } from './tools.js';
 import { registerResources } from './resources.js';
 import { PACKAGE_VERSION } from '../version.js';
+import {
+  KNOWL_MCP_SERVER_INSTRUCTIONS,
+  KNOWL_MCP_TOOL_NAMES,
+} from '../core/knowl-guidance.js';
 
-export const KNOWL_MCP_TOOL_NAMES = [
-  'knowl_ingest',
-  'knowl_state',
-  'knowl_recent',
-  'knowl_store',
-  'knowl_ingest_atoms',
-  'knowl_decide',
-  'knowl_query',
-  'knowl_timeline',
-  'knowl_conflicts',
-  'knowl_context',
-  'knowl_evidence_list',
-  'knowl_update',
-  'knowl_task_start',
-  'knowl_task_checkpoint',
-  'knowl_task_finish',
-  'knowl_gc_preview',
-  'knowl_gc_apply',
-  'knowl_skill_list',
-  'knowl_skill_read',
-  'knowl_skill_create',
-  'knowl_skill_run',
-] as const;
+export { KNOWL_MCP_TOOL_NAMES };
 
 /**
  * Creates and configures the MCP Server.
@@ -51,6 +33,7 @@ export function createMcpServer(
         tools: {},
         resources: {},
       },
+      instructions: KNOWL_MCP_SERVER_INSTRUCTIONS,
     }
   );
 

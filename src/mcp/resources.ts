@@ -24,7 +24,7 @@ export function registerResources(
         {
           uri: 'knowl://recent',
           name: 'Recent Session Context',
-          description: 'Compact fallback context for resuming a project session; lifecycle bootstrap returns the same bounded source automatically when supported.',
+          description: 'Compact recent context only when lifecycle bootstrap is unavailable (including manual mode) or an explicit refresh is needed.',
           mimeType: 'text/markdown',
         },
       ],

@@ -2,11 +2,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
 import { findProjectRoot, loadConfig } from '../core/config.js';
-import { isKnowlAgentsGuidanceCurrent } from '../core/agents-guidance.js';
+import { isKnowlProjectGuidanceCurrent } from '../core/agents-guidance.js';
 import { closeDb, getDb, initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { queryKnowledgeForAgent } from '../store/agent-query.js';
-import { KNOWL_MCP_TOOL_NAMES } from '../mcp/server.js';
+import { KNOWL_MCP_TOOL_NAMES } from '../core/knowl-guidance.js';
 import { getVectorSearchConfig, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
 import { createAgentRegistry } from './agents/registry.js';
@@ -43,12 +43,12 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         : 'Config missing vector search defaults; run knowl upgrade',
     });
 
-    const guidanceCurrent = await isKnowlAgentsGuidanceCurrent(root);
+    const guidanceCurrent = await isKnowlProjectGuidanceCurrent(root);
     checks.push({
       status: guidanceCurrent ? 'OK' : 'WARN',
       message: guidanceCurrent
-        ? 'AGENTS.md Knowl guidance current'
-        : 'AGENTS.md Knowl guidance missing or stale; run knowl init',
+        ? 'KNOWL.md and AGENTS.md guidance current'
+        : 'KNOWL.md or AGENTS.md Knowl guidance missing or stale; run knowl init',
       fix: guidanceCurrent ? undefined : 'run `knowl init`',
     });
 

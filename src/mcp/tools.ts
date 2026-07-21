@@ -39,7 +39,7 @@ export function registerTools(
       tools: [
         {
           name: 'knowl_ingest',
-          description: 'Process raw text or conversational inputs (like decision discussions, developer notes, or bug reports) through the Knowl pipeline to filter, extract, and store verified knowledge.',
+          description: 'Process explicitly supplied raw source text through the configured Knowl AI pipeline. Use only for an explicit ingestion request; never silently ingest the current conversation or prompt.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -69,7 +69,7 @@ export function registerTools(
         },
         {
           name: 'knowl_recent',
-          description: 'Get compact recent session context for starting or resuming work: recent active knowledge plus recent knowledge commits. Use this at the start of a new project-specific session before targeted knowl_query calls.',
+          description: 'Get compact recent session context only when lifecycle bootstrap is unavailable (including manual mode) or an explicit refresh is needed.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -217,7 +217,7 @@ export function registerTools(
         },
         {
           name: 'knowl_query',
-          description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests.',
+          description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. Query with 2-6 keywords. Skip only for directly relevant active lifecycle context, a same-request query, or relevant memory returned by knowl_task_start. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -258,12 +258,12 @@ export function registerTools(
         },
         {
           name: 'knowl_timeline',
-          description: 'List immutable content assertions for one knowledge item.',
+          description: 'Inspect immutable assertions for one knowledge item when its history is needed.',
           inputSchema: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
         },
         {
           name: 'knowl_conflicts',
-          description: 'List active exclusive conflict identities without dumping full item content.',
+          description: 'Inspect active exclusive conflict identities when a conflict must be resolved.',
           inputSchema: { type: 'object', properties: {} },
         },
         {
@@ -278,7 +278,7 @@ export function registerTools(
         },
         {
           name: 'knowl_evidence_list',
-          description: 'List inspectable evidence linked to one knowledge item.',
+          description: 'Inspect evidence linked to one knowledge item when source support must be checked.',
           inputSchema: {
             type: 'object',
             properties: { itemId: { type: 'string', description: 'Knowledge item ID.' } },
@@ -287,7 +287,7 @@ export function registerTools(
         },
         {
           name: 'knowl_feedback',
-          description: 'Record append-only usefulness feedback for a retrieved knowledge item.',
+          description: 'Record append-only usefulness feedback only after a retrieved item was actually used, rejected, or caused a correction.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -301,7 +301,7 @@ export function registerTools(
         },
         {
           name: 'knowl_session_finish',
-          description: 'Finish a memory session and promote its bounded durable candidates.',
+          description: 'Finish and optionally promote an explicitly owned manual memory session; never a hook-owned session.',
           inputSchema: {
             type: 'object', properties: {
               sessionId: { type: 'string', description: 'Memory session ID.' }, status: { type: 'string', enum: ['finished', 'failed'] }, summary: { type: 'string' }, promote: { type: 'boolean' },
@@ -368,7 +368,7 @@ export function registerTools(
         },
         {
           name: 'knowl_task_start',
-          description: 'Start a manual Knowl work loop for a multi-step task. Stores active task state and returns relevant memory before execution begins.',
+          description: 'Start one manual work loop for multi-command or resumable work when verified lifecycle hooks are unavailable. Returns relevant memory and a taskId. Never use for a hook-owned session.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -386,7 +386,7 @@ export function registerTools(
         },
         {
           name: 'knowl_task_checkpoint',
-          description: 'Record a work-loop checkpoint during execution so the task writes durable progress and optional structured task state before the final summary.',
+          description: 'Checkpoint meaningful progress or a blocker in a manual work loop using the taskId from knowl_task_start. Never use for a hook-owned session or routine command noise.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -430,7 +430,7 @@ export function registerTools(
         },
         {
           name: 'knowl_task_finish',
-          description: 'Finish a work loop by storing a durable completion summary for the task.',
+          description: 'Finish one manual work loop exactly once after verification using the taskId from knowl_task_start. Never use for a hook-owned session.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -448,7 +448,7 @@ export function registerTools(
         },
         {
           name: 'knowl_gc_apply',
-          description: 'Apply knowledge garbage collection transactionally: purge duplicates, archive stale state, compress cold archives, and record a knowledge commit.',
+          description: 'Apply knowledge garbage collection only after knowl_gc_preview and explicit user approval; this may purge, archive, or compress records.',
           inputSchema: {
             type: 'object',
             properties: {},
@@ -478,7 +478,7 @@ export function registerTools(
         },
         {
           name: 'knowl_skill_create',
-          description: 'Create a learned file-backed skill package under `.knowl/skills/<name>/` and index it as a `skill` knowledge item.',
+          description: 'Create and index a learned file-backed skill only when the user explicitly requested a reusable workflow to be codified.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -524,7 +524,7 @@ export function registerTools(
         },
         {
           name: 'knowl_skill_run',
-          description: 'Auto-run a learned skill package entrypoint from `.knowl/skills`. Prefer repo-local scripts; shell fallbacks are allowed when the skill defines them.',
+          description: 'Run a trusted matching learned-skill entrypoint after inspecting the package with knowl_skill_read.',
           inputSchema: {
             type: 'object',
             properties: {

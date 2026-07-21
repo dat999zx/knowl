@@ -8,6 +8,10 @@ import { createEvidence, linkKnowledgeEvidence } from '../../src/store/evidence-
 import { createMcpServer } from '../../src/mcp/server.js';
 import { ProjectConfig } from '../../src/core/types.js';
 import { DEFAULT_CONTEXT_MAX_CHARS } from '../../src/core/token-budget.js';
+import {
+  KNOWL_MCP_SERVER_INSTRUCTIONS,
+  KNOWL_MCP_TOOL_NAMES,
+} from '../../src/core/knowl-guidance.js';
 
 // Mock AI functions
 vi.mock('../../src/ai/provider.js', () => {
@@ -82,21 +86,14 @@ describe('MCP Server Layer', () => {
     projectId = project.id;
   });
 
-  // Helper to run a JSON-RPC request against the server through InMemoryTransport
-  async function runRpcRequest(method: string, params: any = {}) {
-    mcpServer = createMcpServer(projectId, TEST_ROOT, MOCK_CONFIG);
+  async function initializeServer(server = createMcpServer(projectId, TEST_ROOT, MOCK_CONFIG)) {
     const transport = new InMemoryTransport();
-    await mcpServer.connect(transport);
-
-    // 1. Perform Handshake
-    const handshakePromise = new Promise<any>((resolve) => {
-      transport.onSend = (msg) => {
-        if (msg.id === 'init-id') {
-          resolve(msg);
-        }
+    await server.connect(transport as any);
+    const responsePromise = new Promise<any>(resolve => {
+      transport.onSend = message => {
+        if (message.id === 'init-id') resolve(message);
       };
     });
-
     transport.onmessage!({
       jsonrpc: '2.0',
       id: 'init-id',
@@ -107,14 +104,16 @@ describe('MCP Server Layer', () => {
         clientInfo: { name: 'test-client', version: '1.0' },
       },
     });
+    const response = await responsePromise;
+    transport.onmessage!({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    return { server, transport, response };
+  }
 
-    await handshakePromise;
-
-    // Send initialized notification
-    transport.onmessage!({
-      jsonrpc: '2.0',
-      method: 'notifications/initialized',
-    });
+  // Helper to run a JSON-RPC request against the server through InMemoryTransport
+  async function runRpcRequest(method: string, params: any = {}) {
+    mcpServer = createMcpServer(projectId, TEST_ROOT, MOCK_CONFIG);
+    const initialized = await initializeServer(mcpServer);
+    const transport = initialized.transport;
 
     // 2. Send target request
     const responsePromise = new Promise<any>((resolve) => {
@@ -133,9 +132,34 @@ describe('MCP Server Layer', () => {
     });
 
     const res = await responsePromise;
-    await mcpServer.close();
+    await initialized.server.close();
     return res;
   }
+
+  it('publishes host-neutral instructions even when project initialization failed', async () => {
+    const initialized = await initializeServer(createMcpServer(null, null, null, 'not initialized'));
+    expect(initialized.response.result.instructions).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
+    await initialized.server.close();
+  });
+
+  it('keeps tools/list exactly aligned with the canonical inventory', async () => {
+    const res = await runRpcRequest('tools/list');
+    const names = res.result.tools.map((tool: any) => tool.name);
+    expect([...names].sort()).toEqual([...KNOWL_MCP_TOOL_NAMES].sort());
+    expect(new Set(names).size).toBe(24);
+  });
+
+  it('advertises lifecycle and mutation gates in tool descriptions', async () => {
+    const res = await runRpcRequest('tools/list');
+    const byName = new Map(res.result.tools.map((tool: any) => [tool.name, tool.description]));
+    expect(byName.get('knowl_recent')).toContain('only when lifecycle bootstrap is unavailable');
+    expect(byName.get('knowl_task_start')).toContain('manual work loop');
+    expect(byName.get('knowl_task_start')).toContain('Never use for a hook-owned session');
+    expect(byName.get('knowl_session_finish')).toContain('never a hook-owned session');
+    expect(byName.get('knowl_ingest')).toContain('never silently ingest the current conversation');
+    expect(byName.get('knowl_skill_create')).toContain('explicitly requested');
+    expect(byName.get('knowl_gc_apply')).toContain('explicit user approval');
+  });
 
   it('should list tools', async () => {
     const res = await runRpcRequest('tools/list');
