@@ -8,6 +8,9 @@ const TEST_DIR = path.resolve('./.knowl-cli-test');
 const AGENTS_TEST_DIR = path.resolve('./.knowl-cli-agents-test');
 const AGENTS_REFRESH_TEST_DIR = path.resolve('./.knowl-cli-agents-refresh-test');
 const CLI_PATH = path.resolve('./dist/index.js');
+const managedSection = (source: string) => source.match(
+  /<!-- KNOWL_PROJECT_MEMORY -->[\s\S]*?<!-- \/KNOWL_PROJECT_MEMORY -->/,
+  )?.[0];
 
 describe('CLI Integration', () => {
   beforeAll(async () => {
@@ -131,41 +134,13 @@ describe('CLI Integration', () => {
     await fs.rm(gitignoreDir, { recursive: true, force: true });
   });
 
-  it('should create AGENTS.md with Knowl MCP guidance during init', async () => {
-    const agentsPath = path.join(TEST_DIR, 'AGENTS.md');
-    const content = await fs.readFile(agentsPath, 'utf-8');
-
-    expect(content).toContain('## Knowl Project Memory');
-    expect(content).toContain('`knowl init` installs automatic lifecycle capture when a host supports a verified hook format');
-    expect(content).toContain('Lifecycle bootstrap supplies compact initial context');
-    expect(content).toContain('Call `knowl_recent` only when hooks are unavailable or an explicit refresh is needed');
-    expect(content).not.toContain('At the start of a new project-specific session, call `knowl_recent` first');
-    expect(content).toContain('Use `knowl_query` for focused follow-up');
-    expect(content).toContain('Do not use `knowl_ask` for MCP first-pass lookup');
-    expect(content).toContain('2-6 concise keywords');
-    expect(content).toContain('Omit category filters unless you are certain');
-    expect(content).toContain('Only use `knowl_state` for broad project-memory summaries');
-    expect(content).toContain('Do not inspect repository files before this Knowl lookup');
-    expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');
-    expect(content).toContain('Do not inspect repository files just to re-verify known facts');
-    expect(content).toContain('Only inspect repository files when Knowl misses, conflicts, looks stale or low-confidence, or the user asks for source verification');
-    expect(content).toContain('If the Knowl MCP tools are unavailable');
-    expect(content).toContain('`Auth: Unsupported` on a local stdio MCP server is normal');
-    expect(content).toContain('knowl_state');
-    expect(content).toContain('knowl_recent');
-    expect(content).toContain('knowl_query');
-    expect(content).toContain('knowl_store');
-    expect(content).toContain('knowl_decide');
-    expect(content).toContain('During work, keep Knowl current');
-    expect(content).toContain('For multi-step tasks, do not wait until the end to use Knowl');
-    expect(content).toContain('Before each new subtask or when switching areas, run a focused `knowl_query`');
-    expect(content).toContain('Store durable findings with `knowl_store`');
-    expect(content).toContain('If new findings contradict or replace existing memory, use `knowl_update`');
-    expect(content).toContain('Before the final answer, check whether the work produced durable knowledge');
-    expect(content).toContain('implemented feature summaries, setup steps, architecture changes, important commands, decisions, constraints, recurring bugs, gotchas, and verified project facts');
-    expect(content).toContain('Store durable knowledge as concise structured atoms, not raw chat transcripts');
-    expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
-    expect(content).toContain('Do not store temporary debugging noise');
+  it('should create canonical KNOWL.md and synchronized AGENTS.md during init', async () => {
+    const knowl = await fs.readFile(path.join(TEST_DIR, 'KNOWL.md'), 'utf-8');
+    const agents = await fs.readFile(path.join(TEST_DIR, 'AGENTS.md'), 'utf-8');
+    expect(managedSection(knowl)).toBe(managedSection(agents));
+    expect(knowl).toContain('For every project-specific request');
+    expect(knowl).toContain('### Complete MCP tool routing');
+    expect(knowl).toContain('knowl_task_checkpoint');
   });
 
   it('should report AGENTS.md guidance status when init is rerun in an existing repository', () => {
@@ -176,6 +151,7 @@ describe('CLI Integration', () => {
 
     expect(output).toContain('KNOWL repository already initialized');
     expect(output).toContain('KNOWL repository upgrade complete.');
+    expect(output).toContain('KNOWL.md: unchanged');
     expect(output).toContain('AGENTS.md: unchanged');
   });
 
@@ -255,6 +231,7 @@ describe('CLI Integration', () => {
     });
 
     expect(output).toContain('KNOWL repository upgrade complete');
+    expect(output).toContain('KNOWL.md');
     expect(output).toContain('AGENTS.md');
     expect(output).toContain('.gitignore');
 
@@ -274,6 +251,7 @@ describe('CLI Integration', () => {
     expect(content).toContain('# Existing Agent Rules');
     expect(content).toContain('Keep responses concise.');
     expect(content).toContain('## Knowl Project Memory');
+    expect(await fs.readFile(path.join(AGENTS_TEST_DIR, 'KNOWL.md'), 'utf-8')).toContain('### Complete MCP tool routing');
     expect((content.match(/## Knowl Project Memory/g) || []).length).toBe(1);
   });
 
@@ -297,15 +275,14 @@ describe('CLI Integration', () => {
     });
 
     const content = await fs.readFile(agentsPath, 'utf-8');
-    expect(content).toContain('Lifecycle bootstrap supplies compact initial context');
-    expect(content).toContain('Use `knowl_query` for focused follow-up');
-    expect(content).toContain('Do not use `knowl_ask` for MCP first-pass lookup');
-    expect(content).toContain('If `knowl_query` returns a relevant active item, answer from Knowl immediately');
-    expect(content).toContain('For multi-step tasks, do not wait until the end to use Knowl');
-    expect(content).toContain('Before each new subtask or when switching areas, run a focused `knowl_query`');
-    expect(content).toContain('Store durable findings with `knowl_store`');
-    expect(content).toContain('Before the final answer, check whether the work produced durable knowledge');
-    expect(content).toContain('After discovering and verifying durable project knowledge from repository files, store it in Knowl');
+    const knowlContent = await fs.readFile(path.join(AGENTS_REFRESH_TEST_DIR, 'KNOWL.md'), 'utf-8');
+    expect(managedSection(content)).toBe(managedSection(knowlContent));
+    expect(content).toContain('For every project-specific request');
+    expect(content).toContain('call `knowl_query` with 2-6 concise keywords');
+    expect(content).toContain('### Lifecycle modes');
+    expect(content).toContain('### Complete MCP tool routing');
+    expect(content).toContain('knowl_feedback');
+    expect(content).not.toContain('knowl_ask');
     expect((content.match(/## Knowl Project Memory/g) || []).length).toBe(1);
   });
 
@@ -631,7 +608,7 @@ describe('CLI Integration', () => {
 
     expect(output).toContain('KNOWL AGENT READINESS');
     expect(output).toContain('[OK] Repository initialized');
-    expect(output).toContain('[OK] AGENTS.md Knowl guidance current');
+    expect(output).toContain('[OK] KNOWL.md and AGENTS.md guidance current');
     expect(output).toContain('[OK] Config includes vector search defaults');
     expect(output).toContain('[OK] Database schema includes knowledge_embeddings');
     expect(output).toContain('[OK] .gitignore ignores .knowl/');

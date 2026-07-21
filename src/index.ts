@@ -7,7 +7,10 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { PACKAGE_VERSION } from './version.js';
 import { DEFAULT_CONFIG, findProjectRoot, loadConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
-import { installKnowlAgentsGuidance } from './core/agents-guidance.js';
+import {
+  installKnowlProjectGuidance,
+  KnowlProjectGuidanceInstallResult,
+} from './core/agents-guidance.js';
 import { installKnowlGitignoreEntry } from './core/gitignore.js';
 import { initDb, closeDb } from './store/database.js';
 import * as repo from './store/repository.js';
@@ -55,14 +58,9 @@ dotenv.config();
 
 const program = new Command();
 
-function printAgentsGuidanceStatus(status: Awaited<ReturnType<typeof installKnowlAgentsGuidance>>) {
-  if (status === 'created') {
-    console.log(`Created AGENTS.md with Knowl MCP guidance.`);
-  } else if (status === 'updated') {
-    console.log(`Updated AGENTS.md with Knowl MCP guidance.`);
-  } else {
-    console.log(`AGENTS.md Knowl MCP guidance is up to date.`);
-  }
+function printProjectGuidanceStatus(status: KnowlProjectGuidanceInstallResult) {
+  console.log(`KNOWL.md: ${status.knowl}`);
+  console.log(`AGENTS.md: ${status.agents}`);
 }
 
 function printRelevantMemory(items: WorkLoopMemoryHit[]) {
@@ -184,7 +182,7 @@ function createSkillEntrypoints(options: {
 async function upgradeExistingRepository(projectRoot: string, fallbackName: string) {
   const configStatus = await upgradeConfigDefaults(projectRoot);
   const config = await loadConfig(projectRoot);
-  const agentsStatus = await installKnowlAgentsGuidance(projectRoot);
+  const guidanceStatus = await installKnowlProjectGuidance(projectRoot);
   const gitignoreStatus = await installKnowlGitignoreEntry(projectRoot);
   await fs.mkdir(path.join(projectRoot, '.knowl', 'skills'), { recursive: true });
 
@@ -198,7 +196,7 @@ async function upgradeExistingRepository(projectRoot: string, fallbackName: stri
   return {
     project,
     configStatus,
-    agentsStatus,
+    guidanceStatus,
     gitignoreStatus,
   };
 }
@@ -207,7 +205,7 @@ function printUpgradeStatus(result: Awaited<ReturnType<typeof upgradeExistingRep
   console.log(`KNOWL repository upgrade complete.`);
   console.log(`Repository: ${result.project.rootPath}`);
   console.log(`Config: ${result.configStatus}`);
-  console.log(`AGENTS.md: ${result.agentsStatus}`);
+  printProjectGuidanceStatus(result.guidanceStatus);
   console.log(`.gitignore: ${result.gitignoreStatus}`);
 }
 
@@ -266,16 +264,12 @@ program
       await initDb(cwd);
       const project = await repo.createProject(cwd, name);
       await closeDb();
-      const agentsStatus = await installKnowlAgentsGuidance(cwd);
+      const guidanceStatus = await installKnowlProjectGuidance(cwd);
       const gitignoreStatus = await installKnowlGitignoreEntry(cwd);
 
       console.log(`🎉 Successfully initialized KNOWL repository!`);
       console.log(`📂 Created: ${knowlDir}`);
-      if (agentsStatus === 'created') {
-        console.log(`🧭 Created AGENTS.md with Knowl MCP guidance.`);
-      } else if (agentsStatus === 'updated') {
-        console.log(`🧭 Updated AGENTS.md with Knowl MCP guidance.`);
-      }
+      printProjectGuidanceStatus(guidanceStatus);
       if (gitignoreStatus === 'created') {
         console.log(`Created .gitignore with .knowl/ entry.`);
       } else if (gitignoreStatus === 'updated') {
@@ -283,9 +277,6 @@ program
       }
       console.log(`⚙️  Local project store ready.`);
       console.log(`👉 Run "knowl status" to see repository status.`);
-      if (agentsStatus === 'unchanged') {
-        printAgentsGuidanceStatus(agentsStatus);
-      }
       const flow = await runAgentInitFlow(cwd, {
         agentNames: agents,
         yes: options.yes,

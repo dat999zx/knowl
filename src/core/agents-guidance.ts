@@ -7,7 +7,6 @@ import {
 } from './knowl-guidance.js';
 
 export type GuidanceInstallStatus = 'created' | 'updated' | 'unchanged';
-export type AgentsGuidanceInstallStatus = GuidanceInstallStatus;
 
 export interface KnowlProjectGuidanceInstallResult {
   knowl: GuidanceInstallStatus;
@@ -71,20 +70,6 @@ export async function isKnowlProjectGuidanceCurrent(projectRoot: string): Promis
       fs.readFile(path.join(projectRoot, 'AGENTS.md'), 'utf8'),
     ]);
     return knowl.includes(managed) && agents.includes(managed);
-  } catch (error: any) {
-    if (error?.code === 'ENOENT') return false;
-    throw error;
-  }
-}
-
-export async function installKnowlAgentsGuidance(projectRoot: string): Promise<GuidanceInstallStatus> {
-  return (await installKnowlProjectGuidance(projectRoot)).agents;
-}
-
-export async function isKnowlAgentsGuidanceCurrent(projectRoot: string): Promise<boolean> {
-  try {
-    return (await fs.readFile(path.join(projectRoot, 'AGENTS.md'), 'utf8'))
-      .includes(renderManagedKnowlGuidanceSection());
   } catch (error: any) {
     if (error?.code === 'ENOENT') return false;
     throw error;
