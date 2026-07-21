@@ -66,4 +66,3 @@ The increment uses one SQL `UPDATE ... RETURNING` operation so concurrent tool c
 - CLI tests prove the eighth real `agent-hook claude PostToolUse --json` invocation emits the Claude `PostToolUse` envelope.
 - Schema migration tests prove an older `host_session_bindings` table receives the new column.
 - README documents the prompt-time full card and throttled mid-turn reminder separately.
-
