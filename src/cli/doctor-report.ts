@@ -149,6 +149,16 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         const detection = await adapter.detect(root);
         if (!detection.configured) continue;
         configuredAgentCount += 1;
+        if (adapter.verifyInstructions) {
+          const verified = await adapter.verifyInstructions(root);
+          checks.push({
+            status: verified ? 'OK' : 'WARN',
+            message: verified
+              ? `${adapter.name} native instructions configured`
+              : `${adapter.name} native instructions missing or stale`,
+            fix: verified ? undefined : `run \`knowl init ${adapter.name}\``,
+          });
+        }
         const capability = await adapter.lifecycleCapability?.(root) ?? 'unsupported';
         if (capability === 'supported') {
           const verified = await adapter.verifyLifecycle?.(root) ?? false;

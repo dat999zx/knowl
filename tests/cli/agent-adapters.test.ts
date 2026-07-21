@@ -99,6 +99,16 @@ describe('agent adapters', () => {
     expect((await readJson(path.join(PROJECT, '.cursor', 'mcp.json'))).mcpServers.knowl.command).toBe('knowl.cmd');
   });
 
+  it('configures and verifies Claude native instructions separately from MCP', async () => {
+    const claude = createClaudeCodeAdapter(environment);
+    await fs.mkdir(PROJECT, { recursive: true });
+    await fs.writeFile(path.join(PROJECT, 'CLAUDE.md'), 'Claude rules stay.\n');
+    expect(await claude.configureInstructions!(PROJECT)).toMatchObject({ status: 'updated' });
+    expect(await fs.readFile(path.join(PROJECT, 'CLAUDE.md'), 'utf8')).toContain('@KNOWL.md');
+    expect(await fs.readFile(path.join(PROJECT, 'CLAUDE.md'), 'utf8')).toContain('Claude rules stay.');
+    expect(await claude.verifyInstructions!(PROJECT)).toBe(true);
+  });
+
   it('marks Claude Desktop as global and writes its platform config', async () => {
     const adapter = createClaudeDesktopAdapter(environment);
     expect((await adapter.detect(PROJECT)).scope).toBe('global');

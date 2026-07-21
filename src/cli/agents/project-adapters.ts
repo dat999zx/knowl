@@ -5,6 +5,11 @@ import { mergeCodexTomlConfig, mergeJsonMcpConfig, McpEntry } from './files.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentIntegrationResult } from './types.js';
 import { unsupportedLifecycleResult } from './lifecycle-config.js';
 import { mergeNestedHookConfig, verifyNestedHookConfig } from './hook-config.js';
+import {
+  installKnowlHostInstructions,
+  NativeInstructionHost,
+  verifyKnowlHostInstructions,
+} from './instruction-files.js';
 
 function commandEntry(environment: AgentEnvironment): McpEntry {
   return { command: environment.platform === 'win32' ? 'knowl.cmd' : 'knowl', args: ['serve'] };
@@ -66,6 +71,7 @@ function createJsonProjectAdapter(
   command: string,
   configPath: (root: string) => string,
   environment: AgentEnvironment,
+  instructionHost?: NativeInstructionHost,
 ): AgentAdapter {
   const lifecyclePath = (root: string) => path.join(root, '.claude', 'settings.local.json');
   return {
@@ -95,11 +101,20 @@ function createJsonProjectAdapter(
     async verifyLifecycle(root) {
       return name === 'claude' && verifyNestedHookConfig(lifecyclePath(root), environment.platform, 'claude');
     },
+    ...(instructionHost ? {
+      async configureInstructions(root: string) {
+        const status = await installKnowlHostInstructions(root, instructionHost);
+        return { status, configPath: path.join(root, instructionHost === 'claude' ? 'CLAUDE.md' : 'GEMINI.md') };
+      },
+      async verifyInstructions(root: string) {
+        return verifyKnowlHostInstructions(root, instructionHost);
+      },
+    } : {}),
   };
 }
 
 export function createClaudeCodeAdapter(environment: AgentEnvironment) {
-  return createJsonProjectAdapter('claude', 'Claude Code', 'claude', root => path.join(root, '.mcp.json'), environment);
+  return createJsonProjectAdapter('claude', 'Claude Code', 'claude', root => path.join(root, '.mcp.json'), environment, 'claude');
 }
 
 export function createCursorProjectAdapter(environment: AgentEnvironment) {

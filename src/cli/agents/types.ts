@@ -17,11 +17,23 @@ export interface AgentIntegrationResult {
   scope: IntegrationScope;
   configPath: string;
   message?: string;
+  instructions?: IntegrationDetail;
   lifecycle?: {
     capability: LifecycleCapability;
     status: IntegrationStatus;
     message?: string;
   };
+}
+
+export interface IntegrationDetail {
+  status: IntegrationStatus;
+  configPath: string;
+  message?: string;
+}
+
+export interface AgentInstructionAdapter {
+  configureInstructions(projectRoot: string): Promise<IntegrationDetail>;
+  verifyInstructions(projectRoot: string): Promise<boolean>;
 }
 
 export interface AgentLifecycleAdapter {
@@ -30,7 +42,7 @@ export interface AgentLifecycleAdapter {
   verifyLifecycle(projectRoot: string): Promise<boolean>;
 }
 
-export interface AgentAdapter extends Partial<AgentLifecycleAdapter> {
+export interface AgentAdapter extends Partial<AgentLifecycleAdapter>, Partial<AgentInstructionAdapter> {
   name: AgentName;
   label: string;
   detect(projectRoot: string): Promise<AgentDetection>;

@@ -1,5 +1,5 @@
 import { createAgentRegistry, detectAgents, parseAgentNames } from './agents/registry.js';
-import { AgentAdapter, AgentIntegrationResult, AgentName } from './agents/types.js';
+import { AgentAdapter, AgentIntegrationResult, AgentName, IntegrationDetail } from './agents/types.js';
 
 export interface InitAgentChoice {
   value: AgentName;
@@ -67,14 +67,27 @@ export async function runAgentInitFlow(
       if (!(await adapter.verify(projectRoot))) {
         results.push({ ...result, status: 'failed', message: 'Configuration verification failed' });
       } else {
+        const instructions = await configureInstructions(adapter, projectRoot);
         const lifecycle = await configureLifecycle(adapter, projectRoot);
-        results.push({ ...result, lifecycle });
+        results.push({ ...result, instructions, lifecycle });
       }
     } catch (error: any) {
       results.push({ agent: name, status: 'failed', scope: detection.scope, configPath: detection.configPath, message: error.message });
     }
   }
-  return { results, exitCode: results.some(result => result.status === 'failed' || result.lifecycle?.status === 'failed') ? 1 : 0 };
+  return { results, exitCode: results.some(result => result.status === 'failed' || result.instructions?.status === 'failed' || result.lifecycle?.status === 'failed') ? 1 : 0 };
+}
+
+async function configureInstructions(adapter: AgentAdapter, projectRoot: string): Promise<IntegrationDetail | undefined> {
+  if (!adapter.configureInstructions || !adapter.verifyInstructions) return undefined;
+  try {
+    const result = await adapter.configureInstructions(projectRoot);
+    return await adapter.verifyInstructions(projectRoot)
+      ? result
+      : { ...result, status: 'failed', message: 'Instruction configuration verification failed' };
+  } catch (error: any) {
+    return { status: 'failed', configPath: projectRoot, message: error.message };
+  }
 }
 
 async function configureLifecycle(adapter: AgentAdapter, projectRoot: string): Promise<NonNullable<AgentIntegrationResult['lifecycle']>> {
@@ -97,10 +110,16 @@ async function configureLifecycle(adapter: AgentAdapter, projectRoot: string): P
 export function formatAgentInitSummary(results: AgentIntegrationResult[]) {
   if (results.length === 0) return 'MCP: no agent integrations selected.\nLifecycle: no hooks configured; `knowl task run` remains available.\nResult: ready';
   const width = Math.max(...results.map(result => result.agent.length));
-  const lines = results.flatMap(result => [
-    `${result.agent.padEnd(width)} MCP: ${result.status} (${result.scope})${result.message ? ` - ${result.message}` : ''}`,
-    `${result.agent.padEnd(width)} lifecycle: ${result.lifecycle?.capability ?? 'unsupported'} (${result.lifecycle?.status ?? 'skipped'})${result.lifecycle?.message ? ` - ${result.lifecycle.message}` : ''}`,
-  ]);
-  lines.push(`Result: ${results.some(result => result.status === 'failed' || result.lifecycle?.status === 'failed') ? 'needs attention' : 'ready'}`);
+  const lines = results.flatMap(result => {
+    const rows = [
+      `${result.agent.padEnd(width)} MCP: ${result.status} (${result.scope})${result.message ? ` - ${result.message}` : ''}`,
+    ];
+    if (result.instructions) {
+      rows.push(`${result.agent.padEnd(width)} instructions: ${result.instructions.status} (${result.instructions.configPath})${result.instructions.message ? ` - ${result.instructions.message}` : ''}`);
+    }
+    rows.push(`${result.agent.padEnd(width)} lifecycle: ${result.lifecycle?.capability ?? 'unsupported'} (${result.lifecycle?.status ?? 'skipped'})${result.lifecycle?.message ? ` - ${result.lifecycle.message}` : ''}`);
+    return rows;
+  });
+  lines.push(`Result: ${results.some(result => result.status === 'failed' || result.instructions?.status === 'failed' || result.lifecycle?.status === 'failed') ? 'needs attention' : 'ready'}`);
   return lines.join('\n');
 }

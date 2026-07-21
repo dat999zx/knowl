@@ -108,6 +108,44 @@ describe('agent init flow', () => {
     expect(result.results[0]).toMatchObject({ status: 'configured', lifecycle: { capability: 'unsupported', status: 'skipped' } });
   });
 
+  it('configures MCP, native instructions, then lifecycle for a selected host', async () => {
+    const calls: string[] = [];
+    const adapter: AgentAdapter = {
+      ...fakeAdapter('claude', { installed: true, configured: false, scope: 'project', configPath: 'mcp' }),
+      configure: async () => { calls.push('mcp'); return { agent: 'claude', status: 'configured', scope: 'project', configPath: 'mcp' }; },
+      verify: async () => true,
+      configureInstructions: async () => { calls.push('instructions'); return { status: 'configured', configPath: 'CLAUDE.md' }; },
+      verifyInstructions: async () => true,
+      lifecycleCapability: async () => 'supported',
+      configureLifecycle: async () => { calls.push('lifecycle'); return { agent: 'claude', status: 'configured', scope: 'project', configPath: 'hooks' }; },
+      verifyLifecycle: async () => true,
+    };
+    const result = await runAgentInitFlow(ROOT, {
+      agentNames: ['claude'], yes: true, interactive: false,
+      registry: new Map([['claude', adapter]]), prompts: prompts(),
+    });
+    expect(calls).toEqual(['mcp', 'instructions', 'lifecycle']);
+    expect(result.results[0].instructions).toMatchObject({ status: 'configured', configPath: 'CLAUDE.md' });
+  });
+
+  it('keeps MCP configured but fails readiness when native instructions do not verify', async () => {
+    const adapter: AgentAdapter = {
+      ...fakeAdapter('claude', { installed: true, configured: false, scope: 'project', configPath: 'mcp' }),
+      verify: async () => true,
+      configureInstructions: async () => ({ status: 'configured', configPath: 'CLAUDE.md' }),
+      verifyInstructions: async () => false,
+    };
+    const result = await runAgentInitFlow(ROOT, {
+      agentNames: ['claude'], yes: true, interactive: false,
+      registry: new Map([['claude', adapter]]), prompts: prompts(),
+    });
+    expect(result.results[0]).toMatchObject({
+      status: 'configured',
+      instructions: { status: 'failed', configPath: 'CLAUDE.md' },
+    });
+    expect(result.exitCode).toBe(1);
+  });
+
   it('reports verified supported lifecycle configuration separately from MCP', async () => {
     const adapter: AgentAdapter = {
       ...fakeAdapter('codex', { installed: true, configured: false, scope: 'project', configPath: 'codex' }),
