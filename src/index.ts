@@ -53,6 +53,7 @@ import { indexCode, listCodeSymbols } from './code/symbol-index.js';
 import { exportKnowledge, importKnowledge } from './store/portability.js';
 import { synthesizeKnowledge } from './store/synthesis.js';
 import { startViewer } from './viewer/server.js';
+import { createAgentReminderOutput } from './cli/agents/reminder.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -950,6 +951,20 @@ program
       }
       console.error(`Error handling agent lifecycle event: ${error.message}`);
       await closeDb().catch(() => {});
+      process.exit(1);
+    }
+  });
+
+program
+  .command('agent-reminder')
+  .description('Emit fixed workflow guidance for an agent host prompt hook')
+  .argument('<host>', 'claude')
+  .option('--json')
+  .action(host => {
+    try {
+      console.log(JSON.stringify(createAgentReminderOutput(host)));
+    } catch (error: any) {
+      console.error(`Error emitting agent reminder: ${error.message}`);
       process.exit(1);
     }
   });
