@@ -15,7 +15,8 @@ function hasActiveGuidanceImport(source: string): boolean {
   let fenced = false;
   const visible: string[] = [];
   for (const line of withoutComments.split(/\r?\n/)) {
-    if (/^\s*(?:```|~~~)/.test(line)) {
+    if (/^(?: {4}|\t)/.test(line)) continue;
+    if (/^\s{0,3}(?:```|~~~)/.test(line)) {
       fenced = !fenced;
       continue;
     }

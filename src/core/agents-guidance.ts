@@ -14,13 +14,27 @@ export interface KnowlProjectGuidanceInstallResult {
 }
 
 export function stripManagedKnowlGuidance(source: string): string {
-  const start = source.indexOf(KNOWL_GUIDANCE_START_MARKER);
-  if (start < 0) return source;
-  const end = source.indexOf(KNOWL_GUIDANCE_END_MARKER, start);
-  const replacementEnd = end < 0 ? source.length : end + KNOWL_GUIDANCE_END_MARKER.length;
-  const before = source.slice(0, start).trimEnd();
-  const after = source.slice(replacementEnd).trimStart();
-  return [before, after].filter(Boolean).join('\n\n') + (before || after ? '\n' : '');
+  let current = source;
+  while (true) {
+    const start = current.indexOf(KNOWL_GUIDANCE_START_MARKER);
+    if (start < 0) return current.replaceAll(KNOWL_GUIDANCE_END_MARKER, '');
+    const end = current.indexOf(KNOWL_GUIDANCE_END_MARKER, start);
+    const replacementEnd = end < 0 ? current.length : end + KNOWL_GUIDANCE_END_MARKER.length;
+    const before = current.slice(0, start).trimEnd();
+    const after = current.slice(replacementEnd).trimStart();
+    current = [before, after].filter(Boolean).join('\n\n') + (before || after ? '\n' : '');
+  }
+}
+
+function normalizeManagedFile(source: string, managed: string): string {
+  const unmanaged = stripManagedKnowlGuidance(source).trimEnd();
+  return unmanaged.length > 0 ? `${unmanaged}\n\n${managed}` : managed;
+}
+
+function isManagedFileCurrent(source: string, managed: string): boolean {
+  const startCount = source.split(KNOWL_GUIDANCE_START_MARKER).length - 1;
+  const endCount = source.split(KNOWL_GUIDANCE_END_MARKER).length - 1;
+  return startCount === 1 && endCount === 1 && normalizeManagedFile(source, managed) === source;
 }
 
 async function installManagedFile(
@@ -38,19 +52,8 @@ async function installManagedFile(
     await fs.writeFile(filePath, `${createPrefix}${managed}`, 'utf8');
     return 'created';
   }
-  if (existing.includes(managed)) return 'unchanged';
-  const start = existing.indexOf(KNOWL_GUIDANCE_START_MARKER);
-  let next: string;
-  if (start >= 0) {
-    const end = existing.indexOf(KNOWL_GUIDANCE_END_MARKER, start);
-    const replacementEnd = end < 0 ? existing.length : end + KNOWL_GUIDANCE_END_MARKER.length;
-    const before = existing.slice(0, start).trimEnd();
-    const after = existing.slice(replacementEnd).trimStart();
-    next = [before, managed.trimEnd(), after].filter(Boolean).join('\n\n') + '\n';
-  } else {
-    const separator = existing.length === 0 ? '' : existing.endsWith('\n') ? '\n' : '\n\n';
-    next = `${existing}${separator}${managed}`;
-  }
+  const next = normalizeManagedFile(existing, managed);
+  if (next === existing) return 'unchanged';
   await fs.writeFile(filePath, next, 'utf8');
   return 'updated';
 }
@@ -69,7 +72,7 @@ export async function isKnowlProjectGuidanceCurrent(projectRoot: string): Promis
       fs.readFile(path.join(projectRoot, 'KNOWL.md'), 'utf8'),
       fs.readFile(path.join(projectRoot, 'AGENTS.md'), 'utf8'),
     ]);
-    return knowl.includes(managed) && agents.includes(managed);
+    return isManagedFileCurrent(knowl, managed) && isManagedFileCurrent(agents, managed);
   } catch (error: any) {
     if (error?.code === 'ENOENT') return false;
     throw error;

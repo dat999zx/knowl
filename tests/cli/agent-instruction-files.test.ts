@@ -47,6 +47,19 @@ describe.each([
     expect((await fs.readFile(pathname, 'utf8')).startsWith(`${preferredImport}\n`)).toBe(true);
   });
 
+  it.each([
+    '    @./KNOWL.md',
+    '\t@AGENTS.md',
+  ])('does not mistake an indented-code %s example for an active import', async example => {
+    await fs.mkdir(ROOT, { recursive: true });
+    await fs.writeFile(pathname, `Example only:\n\n${example}\n`);
+
+    expect(await installKnowlHostInstructions(ROOT, host)).toBe('updated');
+    const saved = await fs.readFile(pathname, 'utf8');
+    expect(saved.startsWith(`${preferredImport}\n`)).toBe(true);
+    expect(await verifyKnowlHostInstructions(ROOT, host)).toBe(true);
+  });
+
   it('removes only legacy managed guidance and preserves custom content', async () => {
     await fs.mkdir(ROOT, { recursive: true });
     await fs.writeFile(pathname, `Before\n\n${renderManagedKnowlGuidanceSection()}\nAfter\n`);
@@ -66,6 +79,19 @@ describe.each([
     expect(saved).not.toContain('KNOWL_PROJECT_MEMORY');
     expect(saved).toContain('Host rules stay.');
     expect(saved.match(/@(?:\.\/)?KNOWL\.md/g)).toHaveLength(1);
+  });
+
+  it('removes every duplicate legacy managed section in one run', async () => {
+    await fs.mkdir(ROOT, { recursive: true });
+    const managed = renderManagedKnowlGuidanceSection();
+    await fs.writeFile(pathname, `${preferredImport}\n\n${managed}\nHost rules stay.\n\n${managed}`);
+
+    expect(await installKnowlHostInstructions(ROOT, host)).toBe('updated');
+    const saved = await fs.readFile(pathname, 'utf8');
+    expect(saved).not.toContain('KNOWL_PROJECT_MEMORY');
+    expect(saved).toContain('Host rules stay.');
+    expect(await verifyKnowlHostInstructions(ROOT, host)).toBe(true);
+    expect(await installKnowlHostInstructions(ROOT, host)).toBe('unchanged');
   });
 
   it('repairs an unterminated legacy section from its opening marker through EOF', async () => {
