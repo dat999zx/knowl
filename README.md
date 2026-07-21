@@ -79,7 +79,7 @@ knowl init codex claude cursor gemini
 knowl doctor
 ```
 
-Project-local MCP and host config is preferred. Claude uses `CLAUDE.md` importing `@KNOWL.md` and a default-on matcher-free `UserPromptSubmit` hook that runs `knowl.cmd agent-reminder claude --json`; the reminder emits a fixed card, never reads the prompt, opens the database, or captures a session. Gemini uses `.gemini/settings.json` and `GEMINI.md` importing `@./KNOWL.md`; it remains on the manual `knowl task run` fallback because no verified lifecycle hook format is assumed. Existing host rules and active `@AGENTS.md`/`@KNOWL.md` imports are preserved. Start a new agent session after setup and trust the repository when the host asks before running project hooks. Claude Desktop receives MCP configuration but remains lifecycle-unsupported.
+Project-local MCP and host config is preferred. Claude uses `CLAUDE.md` importing `@KNOWL.md` and a default-on matcher-free `UserPromptSubmit` hook that runs `knowl.cmd agent-reminder claude --json`; the prompt reminder emits a fixed card without reading the prompt, opening the database, or capturing a session. During one long Claude response, the existing `PostToolUse` lifecycle hook also emits a shorter continuation reminder after every eight accepted successful tool events. Gemini uses `.gemini/settings.json` and `GEMINI.md` importing `@./KNOWL.md`; it remains on the manual `knowl task run` fallback because no verified lifecycle hook format is assumed. Existing host rules and active `@AGENTS.md`/`@KNOWL.md` imports are preserved. Start a new agent session after setup and trust the repository when the host asks before running project hooks. Claude Desktop receives MCP configuration but remains lifecycle-unsupported.
 
 Wrap work with an automatic Knowl work loop:
 
@@ -115,7 +115,7 @@ When a terminal session is finished normally, Knowl deterministically promotes a
 
 `knowl init` installs verified project-local hooks for Codex CLI, Claude Code, and Cursor. Lifecycle hooks call short-lived `knowl agent-hook <host> <event>` processes that normalize vendor payloads into bounded session events. Claude additionally receives the prompt-time `knowl agent-reminder claude --json` card. MCP tools use a separate host-spawned `knowl serve` process; hooks never launch or manage serve.
 
-SessionStart is the sole automatic retrieved-memory injection; Claude's prompt reminder is fixed workflow guidance, not retrieved memory. Capture hooks for tools, failures, compaction, and stop stay quiet/capture-only. Successful commands, file changes, tests, failures, compaction checkpoints, and turn completion feed the existing validation/evidence/promotion pipeline.
+SessionStart is the sole automatic retrieved-memory injection; Claude's prompt reminder and throttled continuation reminder are fixed workflow guidance, not retrieved memory. Claude's successful `PostToolUse` hook injects the compact continuation reminder after every eight accepted tool events in one turn; all other tool events and capture hooks remain quiet. The counter resets when the turn binding closes at `Stop`. An interrupted turn may retain its count and remind sooner on the next response, but never later. The continuation reminder does not query Knowl or inspect prompt content. Successful commands, file changes, tests, failures, compaction checkpoints, and turn completion still feed the existing validation/evidence/promotion pipeline.
 
 When a supported host ends with a hard-stop failure (Claude `StopFailure`, failed Codex/Cursor stop/session end, or generic failed stop), Knowl stores a host-scoped deterministic `pending_handoff` state item (no AI required). The next matching-host `SessionStart` injects that handoff first, then normal recent context, and archives it so delivery is one-shot. Ordinary successful stops and tool failures do not create handoffs.
 
@@ -228,7 +228,7 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl import <path> [--dry-run]` | Validate and import JSONL memory without auto-resolving conflicts. |
 | `knowl view` | Start the read-only local viewer on `127.0.0.1`. |
 | `knowl agent-event <event>` | Receive bounded host lifecycle events; accepts structured flags or JSON on stdin. |
-| `knowl agent-hook <host> <event>` | Internal host-hook translator used by project-local automatic capture. |
+| `knowl agent-hook <host> <event>` | Internal host-hook translator used by project-local automatic capture; Claude `PostToolUse` also emits the throttled continuation reminder. |
 | `knowl agent-reminder claude --json` | Emit the fixed non-blocking Claude `UserPromptSubmit` workflow card. |
 | `knowl session start|event|finish|recover` | Manage bounded, expiring scratch session events and recover stale sessions. |
 | `knowl skill list` | List learned file-backed skill packages under `.knowl/skills`. |
