@@ -1,4 +1,4 @@
-export type AgentName = 'codex' | 'claude' | 'cursor' | 'claude-desktop';
+export type AgentName = 'codex' | 'claude' | 'cursor' | 'gemini' | 'claude-desktop';
 export type IntegrationScope = 'project' | 'global';
 export type IntegrationStatus = 'configured' | 'updated' | 'unchanged' | 'skipped' | 'failed';
 export type LifecycleCapability = 'supported' | 'unsupported' | 'degraded';

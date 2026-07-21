@@ -66,7 +66,7 @@ export function createCodexAdapter(environment: AgentEnvironment): AgentAdapter 
 }
 
 function createJsonProjectAdapter(
-  name: 'claude' | 'cursor',
+  name: 'claude' | 'cursor' | 'gemini',
   label: string,
   command: string,
   configPath: (root: string) => string,
@@ -115,6 +115,17 @@ function createJsonProjectAdapter(
 
 export function createClaudeCodeAdapter(environment: AgentEnvironment) {
   return createJsonProjectAdapter('claude', 'Claude Code', 'claude', root => path.join(root, '.mcp.json'), environment, 'claude');
+}
+
+export function createGeminiAdapter(environment: AgentEnvironment) {
+  return createJsonProjectAdapter(
+    'gemini',
+    'Gemini CLI',
+    'gemini',
+    root => path.join(root, '.gemini', 'settings.json'),
+    environment,
+    'gemini',
+  );
 }
 
 export function createCursorProjectAdapter(environment: AgentEnvironment) {

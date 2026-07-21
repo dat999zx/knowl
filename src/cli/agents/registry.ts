@@ -3,10 +3,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createClaudeDesktopAdapter } from './desktop-adapter.js';
 import { createCursorAdapter } from './cursor.js';
-import { createClaudeCodeAdapter, createCodexAdapter } from './project-adapters.js';
+import { createClaudeCodeAdapter, createCodexAdapter, createGeminiAdapter } from './project-adapters.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentName } from './types.js';
 
-export const SUPPORTED_AGENT_NAMES: AgentName[] = ['codex', 'claude', 'cursor', 'claude-desktop'];
+export const SUPPORTED_AGENT_NAMES: AgentName[] = ['codex', 'claude', 'cursor', 'gemini', 'claude-desktop'];
 
 function defaultEnvironment(): AgentEnvironment {
   return {
@@ -22,6 +22,7 @@ export function createAgentRegistry(overrides: Partial<AgentEnvironment> = {}): 
   return new Map([
     ['codex', createCodexAdapter(environment)],
     ['claude', createClaudeCodeAdapter(environment)],
+    ['gemini', createGeminiAdapter(environment)],
     ['cursor', createCursorAdapter(environment)],
     ['claude-desktop', createClaudeDesktopAdapter(environment)],
   ]);

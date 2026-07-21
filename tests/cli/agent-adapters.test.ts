@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'smol-toml';
 import { mergeCodexTomlConfig, mergeJsonMcpConfig } from '../../src/cli/agents/files.js';
-import { createClaudeCodeAdapter, createCodexAdapter } from '../../src/cli/agents/project-adapters.js';
+import { createClaudeCodeAdapter, createCodexAdapter, createGeminiAdapter } from '../../src/cli/agents/project-adapters.js';
 import { createCursorAdapter } from '../../src/cli/agents/cursor.js';
 import { createClaudeDesktopAdapter } from '../../src/cli/agents/desktop-adapter.js';
 import { knowlHookCommand } from '../../src/cli/agents/hook-config.js';
@@ -76,7 +76,7 @@ describe('agent adapters', () => {
     platform: 'win32' as NodeJS.Platform,
     homeDir: HOME,
     appDataDir: path.join(HOME, 'AppData', 'Roaming'),
-    commandExists: async (command: string) => ['codex', 'claude', 'cursor'].includes(command),
+    commandExists: async (command: string) => ['codex', 'claude', 'cursor', 'gemini'].includes(command),
   };
 
   it('configures Codex in the project TOML config', async () => {
@@ -109,6 +109,22 @@ describe('agent adapters', () => {
     expect(await claude.verifyInstructions!(PROJECT)).toBe(true);
   });
 
+  it('configures Gemini MCP and native instructions with manual lifecycle fallback', async () => {
+    const gemini = createGeminiAdapter(environment);
+    expect((await gemini.detect(PROJECT)).installed).toBe(true);
+    await fs.mkdir(path.join(PROJECT, '.gemini'), { recursive: true });
+    await writeJson(path.join(PROJECT, '.gemini', 'settings.json'), { theme: 'dark' });
+    expect(await gemini.configure(PROJECT)).toMatchObject({ agent: 'gemini', status: 'configured' });
+    expect(await gemini.configureInstructions!(PROJECT)).toMatchObject({ status: 'configured' });
+    const settings = await readJson(path.join(PROJECT, '.gemini', 'settings.json'));
+    expect(settings.theme).toBe('dark');
+    expect(settings.mcpServers.knowl).toEqual({ command: 'knowl.cmd', args: ['serve'] });
+    expect(await fs.readFile(path.join(PROJECT, 'GEMINI.md'), 'utf8')).toBe('@./KNOWL.md\n');
+    expect(await gemini.verify(PROJECT)).toBe(true);
+    expect(await gemini.verifyInstructions!(PROJECT)).toBe(true);
+    expect(await gemini.lifecycleCapability!(PROJECT)).toBe('unsupported');
+  });
+
   it('marks Claude Desktop as global and writes its platform config', async () => {
     const adapter = createClaudeDesktopAdapter(environment);
     expect((await adapter.detect(PROJECT)).scope).toBe('global');
@@ -120,6 +136,10 @@ describe('agent adapters', () => {
   it('deduplicates agent names and rejects unsupported names', () => {
     expect(parseAgentNames(['codex', 'claude', 'codex'])).toEqual(['codex', 'claude']);
     expect(() => parseAgentNames(['unknown'])).toThrow('Unsupported agent "unknown"');
+  });
+
+  it('accepts Gemini as an explicit agent name', () => {
+    expect(parseAgentNames(['gemini'])).toEqual(['gemini']);
   });
 
   it('configures verified project-local lifecycle hooks for Codex, Claude Code, and Cursor', async () => {

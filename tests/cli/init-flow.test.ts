@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { InitAgentChoice, InitPrompts, runAgentInitFlow } from '../../src/cli/init-flow.js';
+import { formatAgentInitSummary, InitAgentChoice, InitPrompts, runAgentInitFlow } from '../../src/cli/init-flow.js';
 import { AgentAdapter, AgentDetection, AgentIntegrationResult, AgentName } from '../../src/cli/agents/types.js';
 
 const ROOT = 'project';
@@ -159,6 +159,17 @@ describe('agent init flow', () => {
 
     expect(result.exitCode).toBe(0);
     expect(result.results[0]).toMatchObject({ status: 'configured', lifecycle: { capability: 'supported', status: 'configured' } });
+  });
+
+  it('makes the Gemini manual lifecycle fallback explicit', () => {
+    expect(formatAgentInitSummary([{
+      agent: 'gemini',
+      status: 'configured',
+      scope: 'project',
+      configPath: '.gemini/settings.json',
+      instructions: { status: 'configured', configPath: 'GEMINI.md' },
+      lifecycle: { capability: 'unsupported', status: 'skipped', message: 'Lifecycle hooks are unavailable; use `knowl task run`.' },
+    }])).toContain('use `knowl task run`');
   });
 
   it('keeps MCP configured but fails readiness when supported hooks do not verify', async () => {

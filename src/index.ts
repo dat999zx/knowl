@@ -26,6 +26,7 @@ import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embedd
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue } from './cli/config/service.js';
 import { runConfigUi } from './cli/config/ui.js';
 import { formatAgentInitSummary, runAgentInitFlow } from './cli/init-flow.js';
+import { parseAgentNames } from './cli/agents/registry.js';
 import { reindexKnowledgeEmbeddings } from './store/vector-index.js';
 import { applyKnowledgeGc, previewKnowledgeGc } from './store/gc.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } from './store/work-loop.js';
@@ -226,6 +227,7 @@ program
     const name = path.basename(cwd) || 'My Project';
 
     try {
+      parseAgentNames(agents);
       let isExisting = false;
       try {
         await fs.access(knowlDir);

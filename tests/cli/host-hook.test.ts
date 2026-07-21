@@ -233,4 +233,8 @@ describe('host hook normalization', () => {
     expect(() => normalizeHostHook('unknown', 'SessionStart', {})).toThrow('Unsupported hook host');
     expect(() => normalizeHostHook('codex', 'UnknownEvent', { session_id: 's', cwd: ROOT })).toThrow('Unsupported codex hook event');
   });
+
+  it('does not treat Gemini MCP support as a verified lifecycle hook host', () => {
+    expect(() => normalizeHostHook('gemini', 'SessionStart', {})).toThrow('Unsupported hook host: gemini');
+  });
 });

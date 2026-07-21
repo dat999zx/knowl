@@ -4,7 +4,7 @@ import { SessionEventType } from '../../core/types.js';
 import { isSessionEventType } from './lifecycle.js';
 import { AgentName } from './types.js';
 
-export type HookHost = AgentName | 'generic';
+export type HookHost = 'codex' | 'claude' | 'cursor' | 'claude-desktop' | 'generic';
 export type NormalizedHookEventName =
   | 'session-start'
   | 'turn-start'

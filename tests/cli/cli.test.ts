@@ -1,5 +1,5 @@
 ﻿import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { createClient } from '@libsql/client';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -293,6 +293,46 @@ describe('CLI Integration', () => {
     }).trim();
 
     expect(aiConfig).toBe('undefined');
+  });
+
+  it('rejects an unsupported explicit agent before base init writes', async () => {
+    const root = path.resolve('.knowl-cli-invalid-agent-test');
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(root, { recursive: true });
+    expect(() => execFileSync(process.execPath, [CLI_PATH, 'init', 'unknown', '--yes'], {
+      cwd: root, encoding: 'utf8', stdio: 'pipe',
+    })).toThrow();
+    for (const entry of ['.knowl', '.gitignore', 'KNOWL.md', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md']) {
+      await expect(fs.access(path.join(root, entry))).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it.each([
+    { name: 'base', agents: [], present: ['KNOWL.md', 'AGENTS.md'], absent: ['CLAUDE.md', 'GEMINI.md'] },
+    { name: 'claude', agents: ['claude'], present: ['KNOWL.md', 'AGENTS.md', 'CLAUDE.md'], absent: ['GEMINI.md'] },
+    { name: 'gemini', agents: ['gemini'], present: ['KNOWL.md', 'AGENTS.md', 'GEMINI.md', '.gemini/settings.json'], absent: ['CLAUDE.md'] },
+  ])('applies the $name host-file creation policy', async ({ name, agents, present, absent }) => {
+    const root = path.resolve(`.knowl-cli-creation-${name}-test`);
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(root, { recursive: true });
+    execFileSync(process.execPath, [CLI_PATH, 'init', ...agents, '--yes'], { cwd: root, encoding: 'utf8' });
+    for (const entry of present) await expect(fs.access(path.join(root, entry))).resolves.toBeUndefined();
+    for (const entry of absent) await expect(fs.access(path.join(root, entry))).rejects.toMatchObject({ code: 'ENOENT' });
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it('doctor reports selected native instructions that are missing or stale', async () => {
+    const root = path.resolve('.knowl-cli-stale-claude-instructions-test');
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(root, { recursive: true });
+    execFileSync(process.execPath, [CLI_PATH, 'init', 'claude', '--yes'], { cwd: root, encoding: 'utf8' });
+    await fs.writeFile(path.join(root, 'CLAUDE.md'), 'No active Knowl import.\n');
+    const result = spawnSync(process.execPath, [CLI_PATH, 'doctor'], { cwd: root, encoding: 'utf8' });
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('[WARN] claude native instructions missing or stale');
+    expect(result.stdout).toContain('run `knowl init claude`');
+    await fs.rm(root, { recursive: true, force: true });
   });
 
   it('should allow explicit AI provider configuration', () => {
