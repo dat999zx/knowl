@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
+import { KNOWL_CLAUDE_CONTINUATION_REMINDER } from '../../src/core/knowl-guidance.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { handleHostLifecycleEvent } from '../../src/store/host-lifecycle.js';
 import {
@@ -288,6 +289,73 @@ describe('host lifecycle orchestration', () => {
       args: [first.sessionId!, 'checkpoint'],
     });
     expect(rows.rows).toHaveLength(1);
+  });
+
+  it('reminds Claude after every eight accepted successful tool events', async () => {
+    const results = [];
+    for (let index = 1; index <= 9; index++) {
+      results.push(await handleHostLifecycleEvent(projectId, hook({
+        host: 'claude',
+        event: 'session-event',
+        externalSessionId: 'claude-long-turn',
+        externalTurnId: undefined,
+        type: 'command',
+        payload: { command: `tool-${index}`, exitCode: 0 },
+      })));
+    }
+
+    expect(results.slice(0, 7).every(result => result.hostOutput === undefined)).toBe(true);
+    expect(results[7].hostOutput).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        additionalContext: KNOWL_CLAUDE_CONTINUATION_REMINDER,
+      },
+    });
+    expect(results[8].hostOutput).toBeUndefined();
+  });
+
+  it('does not count duplicate or failed Claude tool events toward the reminder', async () => {
+    const base = {
+      host: 'claude' as const,
+      event: 'session-event' as const,
+      externalSessionId: 'claude-filtered-turn',
+      externalTurnId: undefined,
+    };
+    const first = await handleHostLifecycleEvent(projectId, hook({
+      ...base,
+      type: 'command',
+      payload: { command: 'same-tool', exitCode: 0 },
+    }));
+    const duplicate = await handleHostLifecycleEvent(projectId, hook({
+      ...base,
+      type: 'command',
+      payload: { command: 'same-tool', exitCode: 0 },
+    }));
+    const failure = await handleHostLifecycleEvent(projectId, hook({
+      ...base,
+      type: 'error',
+      status: 'failed',
+      payload: { message: 'tool failed' },
+    }));
+    const following = [];
+    for (let index = 2; index <= 8; index++) {
+      following.push(await handleHostLifecycleEvent(projectId, hook({
+        ...base,
+        type: 'command',
+        payload: { command: `filtered-tool-${index}`, exitCode: 0 },
+      })));
+    }
+
+    expect(first.hostOutput).toBeUndefined();
+    expect(duplicate.reason).toBe('debounced');
+    expect(failure.hostOutput).toBeUndefined();
+    expect(following.slice(0, 6).every(result => result.hostOutput === undefined)).toBe(true);
+    expect(following[6].hostOutput).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        additionalContext: KNOWL_CLAUDE_CONTINUATION_REMINDER,
+      },
+    });
   });
 
   it('does not inject fallback context from a tool event when SessionStart is missing', async () => {

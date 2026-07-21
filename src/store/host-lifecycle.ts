@@ -1,4 +1,5 @@
 import { NormalizedHostHook } from '../cli/agents/host-hook.js';
+import { createClaudePostToolReminderOutput } from '../cli/agents/reminder.js';
 import { captureMemorySessionEvent } from './session-capture.js';
 import { finalizeMemorySession } from './session-finalizer.js';
 import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions } from './session-repository.js';
@@ -11,6 +12,7 @@ import {
   findHostSession,
   getOrCreateHostSession,
   HostSessionKey,
+  incrementHostSuccessfulToolCount,
 } from './host-session-bindings.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
@@ -175,7 +177,18 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       const type = input.event === 'checkpoint' ? 'checkpoint' : input.type;
       if (!type) throw new Error('Normalized host session event requires a type.');
       await captureMemorySessionEvent(started.session.id, type, input.payload);
-      return { accepted: true, sessionId: started.session.id };
+      const successfulToolCount = input.host === 'claude'
+        && input.event === 'session-event'
+        && input.status !== 'failed'
+        ? await incrementHostSuccessfulToolCount(bindingKey(input, 'turn'))
+        : 0;
+      return {
+        accepted: true,
+        sessionId: started.session.id,
+        hostOutput: successfulToolCount > 0 && successfulToolCount % 8 === 0
+          ? createClaudePostToolReminderOutput()
+          : undefined,
+      };
     } catch (error) {
       releaseCapture(input);
       throw error;

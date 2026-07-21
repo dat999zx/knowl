@@ -101,3 +101,4 @@ function renderCompactKnowlGuidance(modeLine: string): string {
 
 export const KNOWL_CLAUDE_OPERATIONAL_CARD = renderCompactKnowlGuidance(KNOWL_CLAUDE_MODE_LINE);
 export const KNOWL_MCP_SERVER_INSTRUCTIONS = renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE);
+export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with 2-6 keywords before repository files or commands. Store or update verified durable findings. Claude hooks own lifecycle; do not start the manual task loop.';
