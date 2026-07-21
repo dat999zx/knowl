@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import {
   KNOWL_CLAUDE_MODE_LINE,
   KNOWL_CLAUDE_OPERATIONAL_CARD,
@@ -72,5 +74,17 @@ describe('canonical Knowl agent guidance', () => {
     expect(
       KNOWL_CLAUDE_OPERATIONAL_CARD.replace(KNOWL_CLAUDE_MODE_LINE, KNOWL_HOST_NEUTRAL_MODE_LINE),
     ).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
+  });
+
+  it('documents every canonical MCP tool in the README table', async () => {
+    const readme = await fs.readFile(path.resolve('README.md'), 'utf8');
+    const documentedTools = [...readme.matchAll(/^\| \`(knowl_[a-z_]+)\` \|/gm)]
+      .map(match => match[1]);
+    expect(documentedTools).toEqual([...KNOWL_MCP_TOOL_NAMES]);
+    expect(new Set(documentedTools).size).toBe(24);
+    expect(readme).toContain('KNOWL.md');
+    expect(readme).toContain('GEMINI.md');
+    expect(readme).toContain('agent-reminder claude --json');
+    expect(readme).toContain('previewed maintenance after explicit approval');
   });
 });

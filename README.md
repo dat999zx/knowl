@@ -11,7 +11,7 @@ Knowl is designed for durable engineering context: decisions, architecture, goal
 - Stores project memory locally in `.knowl/knowl.db`.
 - Organizes memory into `fact`, `decision`, `goal`, `constraint`, `architecture`, `state`, and `skill` categories.
 - Provides deterministic MCP tools for storing and querying structured knowledge without a Knowl-side AI provider.
-- Generates or refreshes `AGENTS.md` guidance so agents know to query Knowl before inspecting files.
+- Generates canonical `KNOWL.md` plus a synchronized managed section in `AGENTS.md` so agents know to query Knowl before inspecting files.
 - Records work-loop starts, checkpoints, and finishes as structured state atoms with knowledge commits.
 - Wraps shell commands with an automatic work loop so agents query memory before execution and write back success or failure state.
 - Stores learned executable skill packages under `.knowl/skills/<name>/` with `SKILL.md`, `skill.json`, and optional scripts.
@@ -52,7 +52,7 @@ Initialize a project from the project root:
 knowl init
 ```
 
-This creates `.knowl/config.json`, bootstraps `.knowl/knowl.db`, installs Knowl guidance into `AGENTS.md`, ensures `.knowl/` is ignored by git, and offers project-local MCP plus lifecycle-hook setup for detected agents.
+This creates `.knowl/config.json`, bootstraps `.knowl/knowl.db`, installs canonical `KNOWL.md` plus synchronized `AGENTS.md` guidance, ensures `.knowl/` is ignored by git, and offers project-local MCP plus host setup for detected agents.
 
 Record a decision:
 
@@ -75,11 +75,11 @@ Choose detected agents interactively, or configure them explicitly:
 
 ```bash
 knowl init
-knowl init codex claude cursor
+knowl init codex claude cursor gemini
 knowl doctor
 ```
 
-Project-local MCP and hook config is preferred. Start a new agent session after setup, and trust the repository when the host asks before running project hooks. Claude Desktop receives MCP configuration but remains lifecycle-unsupported because it does not expose a verified project hook surface.
+Project-local MCP and host config is preferred. Claude uses `CLAUDE.md` importing `@KNOWL.md` and a default-on matcher-free `UserPromptSubmit` hook that runs `knowl.cmd agent-reminder claude --json`; the reminder emits a fixed card, never reads the prompt, opens the database, or captures a session. Gemini uses `.gemini/settings.json` and `GEMINI.md` importing `@./KNOWL.md`; it remains on the manual `knowl task run` fallback because no verified lifecycle hook format is assumed. Existing host rules and active `@AGENTS.md`/`@KNOWL.md` imports are preserved. Start a new agent session after setup and trust the repository when the host asks before running project hooks. Claude Desktop receives MCP configuration but remains lifecycle-unsupported.
 
 Wrap work with an automatic Knowl work loop:
 
@@ -113,9 +113,9 @@ When a terminal session is finished normally, Knowl deterministically promotes a
 
 ### Agent lifecycle automation
 
-`knowl init` installs verified project-local hooks for Codex CLI, Claude Code, and Cursor. Lifecycle hooks call short-lived `knowl agent-hook <host> <event>` processes that normalize vendor payloads into bounded session events. MCP tools use a separate host-spawned `knowl serve` process; hooks never launch or manage serve.
+`knowl init` installs verified project-local hooks for Codex CLI, Claude Code, and Cursor. Lifecycle hooks call short-lived `knowl agent-hook <host> <event>` processes that normalize vendor payloads into bounded session events. Claude additionally receives the prompt-time `knowl agent-reminder claude --json` card. MCP tools use a separate host-spawned `knowl serve` process; hooks never launch or manage serve.
 
-SessionStart is the sole automatic model-facing context injection. Capture hooks for tools, failures, compaction, and stop stay quiet/capture-only. Successful commands, file changes, tests, failures, compaction checkpoints, and turn completion feed the existing validation/evidence/promotion pipeline.
+SessionStart is the sole automatic retrieved-memory injection; Claude's prompt reminder is fixed workflow guidance, not retrieved memory. Capture hooks for tools, failures, compaction, and stop stay quiet/capture-only. Successful commands, file changes, tests, failures, compaction checkpoints, and turn completion feed the existing validation/evidence/promotion pipeline.
 
 When a supported host ends with a hard-stop failure (Claude `StopFailure`, failed Codex/Cursor stop/session end, or generic failed stop), Knowl stores a host-scoped deterministic `pending_handoff` state item (no AI required). The next matching-host `SessionStart` injects that handoff first, then normal recent context, and archives it so delivery is one-shot. Ordinary successful stops and tool failures do not create handoffs.
 
@@ -125,7 +125,7 @@ Multiple leftover `knowl serve` processes usually mean multiple host sessions or
 
 Raw prompts, transcripts, stdout/stderr, environment variables, and unknown fields are not retained. Malformed or secret-bearing payloads are rejected, duplicate stop events are idempotently dropped, and stale sessions recover at the next session start. A generic stdin-JSON contract is available for other hosts, but normal users only run `knowl init` and `knowl doctor`.
 
-Hook support remains host-specific. Knowl never guesses or writes an unverified host configuration. Unsupported hosts retain MCP access; `knowl task run` remains the manual fallback.
+Hook support remains host-specific. Knowl never guesses or writes an unverified host configuration. Verified lifecycle hooks and a manual task loop are mutually exclusive for one task. Unsupported hosts retain MCP access; `knowl task run` remains the manual fallback. Rerun init after upgrades, then start a new host session so imported instructions and hook registrations are reloaded.
 
 Create and run a learned skill package:
 
@@ -156,27 +156,34 @@ Recommended agent flow:
 
 Routine lifecycle events remain ephemeral. MCP responses are compact and bounded by default; explicit detail options request larger inspection payloads.
 
-Available MCP tools:
+Available MCP tools (the MCP server publishes this same host-neutral workflow card in its initialize instructions):
 
 | Tool | Purpose |
 | --- | --- |
-| `knowl_recent` | Return recent active knowledge and recent knowledge commits for session startup. |
-| `knowl_query` | Search active or historical project memory. Defaults to active items and returns up to three hits. |
-| `knowl_state` | Return the full active project memory as markdown. |
-| `knowl_store` | Store one structured knowledge atom without AI configuration. |
-| `knowl_ingest_atoms` | Store a batch of structured knowledge atoms without AI configuration. |
-| `knowl_decide` | Record a decision with required reasoning. |
-| `knowl_update` | Update item content, title, reasoning, or status. |
-| `knowl_task_start` | Start a manual work loop, query relevant memory, and store active task state. |
-| `knowl_task_checkpoint` | Store durable progress during a work loop. |
-| `knowl_task_finish` | Store durable completion state for a work loop. |
-| `knowl_skill_list` | List learned file-backed skill packages from `.knowl/skills`. |
-| `knowl_skill_read` | Read one learned skill package (`skill.json` and `SKILL.md`). |
-| `knowl_skill_create` | Create a learned skill package and index it as a `skill` knowledge item. |
-| `knowl_skill_run` | Auto-run a learned skill entrypoint, preferring repo-local scripts with optional shell fallback. |
-| `knowl_ingest` | Run raw text through Knowl's AI-backed extraction pipeline. Requires explicit AI config. |
-| `knowl_gc_preview` | Preview duplicate, stale, or cold memory cleanup recommendations. |
-| `knowl_gc_apply` | Apply garbage collection transactionally and record a knowledge commit. |
+| `knowl_query` | Focused 2-6 keyword retrieval before project files and before each new subtask or area switch. |
+| `knowl_recent` | Compact recent context only when lifecycle bootstrap is unavailable or an explicit refresh is needed. |
+| `knowl_state` | Broad active project-memory status or full-state summary. |
+| `knowl_context` | Compose an explicitly token-budgeted context pack. |
+| `knowl_task_start` | Start one manual work loop when verified lifecycle hooks are unavailable. |
+| `knowl_task_checkpoint` | Checkpoint meaningful manual-loop progress or blockers with its task ID. |
+| `knowl_task_finish` | Finish one manual work loop once after verification. |
+| `knowl_store` | Store one concise structured durable atom. |
+| `knowl_ingest_atoms` | Batch store client-extracted durable atoms, never raw transcripts. |
+| `knowl_decide` | Record a confirmed project decision and reasoning. |
+| `knowl_update` | Correct or supersede stale or contradicted memory. |
+| `knowl_timeline` | Inspect immutable assertions for one item's history. |
+| `knowl_evidence_list` | Inspect evidence linked to one item. |
+| `knowl_conflicts` | Inspect active exclusive conflict identities. |
+| `knowl_feedback` | Record feedback after an item was actually used, rejected, or corrected. |
+| `knowl_skill_list` | List learned file-backed skills. |
+| `knowl_skill_read` | Inspect one learned skill package before running it. |
+| `knowl_skill_run` | Run a trusted matching learned-skill entrypoint. |
+| `knowl_skill_create` | Create a reusable learned skill only when explicitly requested. |
+| `knowl_ingest` | Process explicitly supplied raw source through configured AI; never silently ingest the current conversation. |
+| `knowl_synthesize` | Create or refresh one explicitly scoped evidence-backed understanding; never automatic. |
+| `knowl_session_finish` | Finish an explicitly owned manual memory session, never a hook-owned session. |
+| `knowl_gc_preview` | Preview duplicate, stale, or cold memory cleanup. |
+| `knowl_gc_apply` | Apply previewed maintenance after explicit approval. |
 
 Readable MCP resources:
 
@@ -188,7 +195,7 @@ Readable MCP resources:
 
 ## Agent Setup
 
-`knowl init` detects Codex, Claude Code, Cursor, and Claude Desktop, then presents a multi-select UI. Re-run it at any time to add another agent or repair a stale Knowl registration. It preserves unrelated MCP servers, writes a backup before changing an existing agent config, and does not duplicate correct entries.
+`knowl init` detects Codex, Claude Code, Cursor, Gemini CLI, and Claude Desktop, then presents a multi-select UI. Re-run it at any time to add another agent or repair a stale Knowl registration. It preserves unrelated MCP servers and host rules, writes a backup before changing an existing agent config, and does not duplicate correct entries. `KNOWL.md` is the canonical full workflow; `AGENTS.md` contains the synchronized managed reference, while selected Claude/Gemini files use native imports.
 
 If an MCP client shows `Auth: Unsupported` for this local stdio server, that is expected and does not mean Knowl is unavailable.
 
@@ -196,7 +203,7 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 
 | Command | Description |
 | --- | --- |
-| `knowl init [agents...]` | Initialize or upgrade this project, then interactively select detected agents. Pass `codex`, `claude`, `cursor`, or `claude-desktop` to configure explicitly. |
+| `knowl init [agents...]` | Initialize or upgrade this project, then interactively select detected agents. Pass `codex`, `claude`, `cursor`, `gemini`, or `claude-desktop` to configure explicitly. |
 | `knowl upgrade` | Upgrade an existing Knowl repository with current defaults and agent files. |
 | `knowl status` | Show repository path, item counts, category counts, AI config status, and recent knowledge commits. |
 | `knowl doctor` | Check whether the project is ready for agent memory usage. |
@@ -222,6 +229,7 @@ If an MCP client shows `Auth: Unsupported` for this local stdio server, that is 
 | `knowl view` | Start the read-only local viewer on `127.0.0.1`. |
 | `knowl agent-event <event>` | Receive bounded host lifecycle events; accepts structured flags or JSON on stdin. |
 | `knowl agent-hook <host> <event>` | Internal host-hook translator used by project-local automatic capture. |
+| `knowl agent-reminder claude --json` | Emit the fixed non-blocking Claude `UserPromptSubmit` workflow card. |
 | `knowl session start|event|finish|recover` | Manage bounded, expiring scratch session events and recover stale sessions. |
 | `knowl skill list` | List learned file-backed skill packages under `.knowl/skills`. |
 | `knowl skill read <name>` | Print `skill.json` and `SKILL.md` for a learned skill package. |
