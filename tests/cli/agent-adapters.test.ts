@@ -172,6 +172,14 @@ describe('agent adapters', () => {
     expect(claudeSettings.permissions.allow).toEqual(['Bash(npm test)']);
     expect(JSON.stringify(claudeSettings)).toContain('knowl.cmd agent-hook claude SessionStart --json');
     expect(claudeSettings.hooks.SessionStart[0].matcher).toBe('.*');
+    expect(claudeSettings.hooks.UserPromptSubmit).toContainEqual({
+      hooks: [{
+        type: 'command',
+        command: 'knowl.cmd agent-reminder claude --json',
+        timeout: 30,
+        statusMessage: '',
+      }],
+    });
     expect(cursorHooks.hooks.afterFileEdit[0].command).toBe('existing');
     expect(JSON.stringify(cursorHooks)).toContain('knowl.cmd agent-hook cursor sessionStart --json');
 
@@ -187,16 +195,30 @@ describe('agent adapters', () => {
     expect(knowlHookCommand('win32', 'claude', 'PostToolUse')).toBe('knowl.cmd agent-hook claude PostToolUse --json');
     expect(knowlHookCommand('win32', 'claude', 'PostToolUse')).not.toContain('serve');
     const knowlHookCommands = collectHookCommands(codexHooks, claudeSettings, cursorHooks)
-      .filter(command => command.includes('agent-hook') || command.includes('knowl'));
+      .filter(command => command.includes('knowl'));
     expect(knowlHookCommands.length).toBeGreaterThan(0);
     for (const command of knowlHookCommands) {
-      expect(command).toContain('agent-hook');
+      expect(command.includes('agent-hook') || command.includes('agent-reminder')).toBe(true);
       expect(command).not.toContain('serve');
     }
 
     expect(await codex.verifyLifecycle(PROJECT)).toBe(true);
     expect(await claude.verifyLifecycle(PROJECT)).toBe(true);
     expect(await cursor.verifyLifecycle(PROJECT)).toBe(true);
+    const canonical = await readJson(path.join(PROJECT, '.claude', 'settings.local.json'));
+    for (const [field, value] of [
+      ['command', 'knowl.cmd agent-reminder claude --wrong'],
+      ['timeout', 3],
+      ['statusMessage', 'noisy'],
+    ] as const) {
+      const altered = structuredClone(canonical);
+      const entry = altered.hooks.UserPromptSubmit.find((candidate: any) =>
+        candidate.hooks?.some((hook: any) => hook.command?.includes(' agent-reminder claude ')));
+      entry.hooks[0][field] = value;
+      await writeJson(path.join(PROJECT, '.claude', 'settings.local.json'), altered);
+      expect(await claude.verifyLifecycle(PROJECT)).toBe(false);
+    }
+    await writeJson(path.join(PROJECT, '.claude', 'settings.local.json'), canonical);
     expect((await codex.configureLifecycle(PROJECT)).status).toBe('unchanged');
     expect((await claude.configureLifecycle(PROJECT)).status).toBe('unchanged');
     expect((await cursor.configureLifecycle(PROJECT)).status).toBe('unchanged');
@@ -217,10 +239,22 @@ describe('agent adapters', () => {
       { matcher: '.*', hooks: [{ type: 'command', command: 'knowl.cmd agent-hook codex UserPromptSubmit --json' }] },
       { matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] },
     ] } });
-    await writeJson(path.join(PROJECT, '.claude', 'settings.local.json'), { hooks: { UserPromptSubmit: [
-      { matcher: '.*', hooks: [{ type: 'command', command: 'knowl.cmd agent-hook claude UserPromptSubmit --json' }] },
-      { matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] },
-    ] } });
+    const userHandler = {
+      type: 'command',
+      command: 'user-hook',
+      timeout: 7,
+      statusMessage: 'User hook',
+      custom: 'preserve',
+    };
+    await writeJson(path.join(PROJECT, '.claude', 'settings.local.json'), { hooks: { UserPromptSubmit: [{
+      matcher: 'custom',
+      description: 'preserve matcher metadata',
+      hooks: [
+        userHandler,
+        { type: 'command', command: 'knowl.cmd agent-hook claude UserPromptSubmit --json', timeout: 30, statusMessage: '' },
+        { type: 'command', command: 'knowl.cmd agent-reminder claude --json', timeout: 3, statusMessage: 'stale' },
+      ],
+    }] } });
     await writeJson(path.join(PROJECT, '.cursor', 'hooks.json'), { version: 1, hooks: { beforeSubmitPrompt: [
       { command: 'knowl.cmd agent-hook cursor beforeSubmitPrompt --json' },
       { command: 'user-hook' },
@@ -234,8 +268,27 @@ describe('agent adapters', () => {
     const claudeHooks = await readJson(path.join(PROJECT, '.claude', 'settings.local.json'));
     const cursorHooks = await readJson(path.join(PROJECT, '.cursor', 'hooks.json'));
     expect(codexHooks.hooks.UserPromptSubmit).toEqual([{ matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] }]);
-    expect(claudeHooks.hooks.UserPromptSubmit).toEqual([{ matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] }]);
+    expect(claudeHooks.hooks.UserPromptSubmit[0]).toEqual({
+      matcher: 'custom',
+      description: 'preserve matcher metadata',
+      hooks: [userHandler],
+    });
+    const reminderHandlers = claudeHooks.hooks.UserPromptSubmit
+      .flatMap((entry: any) => entry.hooks)
+      .filter((hook: any) => hook.command?.includes(' agent-reminder claude '));
+    expect(reminderHandlers).toEqual([{
+      type: 'command',
+      command: 'knowl.cmd agent-reminder claude --json',
+      timeout: 30,
+      statusMessage: '',
+    }]);
+    expect(await claude.configureLifecycle(PROJECT)).toMatchObject({ status: 'unchanged' });
     expect(cursorHooks.hooks.beforeSubmitPrompt).toEqual([{ command: 'user-hook' }]);
+    for (const command of collectHookCommands(codexHooks, claudeHooks, cursorHooks)
+      .filter(command => command.includes('knowl'))) {
+      expect(command.includes('agent-hook') || command.includes('agent-reminder')).toBe(true);
+      expect(command).not.toContain('serve');
+    }
   });
 
   it('keeps Claude Desktop lifecycle unsupported and rejects partial hook configuration', async () => {
