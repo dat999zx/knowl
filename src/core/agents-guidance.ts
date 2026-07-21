@@ -1,85 +1,92 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {
+  KNOWL_GUIDANCE_END_MARKER,
+  KNOWL_GUIDANCE_START_MARKER,
+  renderManagedKnowlGuidanceSection,
+} from './knowl-guidance.js';
 
-export type AgentsGuidanceInstallStatus = 'created' | 'updated' | 'unchanged';
+export type GuidanceInstallStatus = 'created' | 'updated' | 'unchanged';
+export type AgentsGuidanceInstallStatus = GuidanceInstallStatus;
 
-const KNOWL_AGENTS_SECTION_MARKER = '<!-- KNOWL_PROJECT_MEMORY -->';
-const KNOWL_AGENTS_SECTION_END_MARKER = '<!-- /KNOWL_PROJECT_MEMORY -->';
-const KNOWL_AGENTS_SECTION = `${KNOWL_AGENTS_SECTION_MARKER}
-## Knowl Project Memory
+export interface KnowlProjectGuidanceInstallResult {
+  knowl: GuidanceInstallStatus;
+  agents: GuidanceInstallStatus;
+}
 
-- \`knowl init\` installs automatic lifecycle capture when a host supports a verified hook format. Unsupported hosts use \`knowl task run\` as the manual fallback; neither path stores raw transcripts.
-- Lifecycle bootstrap supplies compact initial context when hooks are available. Call \`knowl_recent\` only when hooks are unavailable or an explicit refresh is needed.
-- Use \`knowl_query\` for focused follow-up with 2-6 concise keywords.
-- Do not use \`knowl_ask\` for MCP first-pass lookup. MCP agents already have a model; use \`knowl_recent\` and \`knowl_query\` for retrieval.
-- Omit category filters unless you are certain; an over-specific category can hide the correct memory item.
-- If the Knowl MCP tools are unavailable, stop and tell the user that Knowl MCP is not configured instead of silently inspecting the repository.
-- \`Auth: Unsupported\` on a local stdio MCP server is normal and does not mean Knowl is unavailable when \`knowl_query\` is listed.
-- Do not inspect repository files before this Knowl lookup. If Knowl has a relevant active answer, use it and cite that it came from Knowl.
-- If \`knowl_query\` returns a relevant active item, answer from Knowl immediately.
-- Do not inspect repository files just to re-verify known facts already found in Knowl.
-- Only inspect repository files when Knowl misses, conflicts, looks stale or low-confidence, or the user asks for source verification.
-- Only use \`knowl_state\` for broad project-memory summaries, status checks, or when the user asks for the full current state.
-- Learned executable skills live under \`.knowl/skills/<name>/\` with \`SKILL.md\`, \`skill.json\`, and optional scripts. Use \`knowl_skill_list\`, \`knowl_skill_read\`, and \`knowl_skill_run\` to discover, inspect, and auto-run them.
-- Do not expect one MCP tool per learned skill. The fixed \`knowl_skill_*\` tools scan \`.knowl/skills\` dynamically, so newly created skills are usable in old sessions without an MCP tool reload.
-- Prefer learned skill scripts stored inside \`.knowl/skills/<name>/\`; shell fallback entrypoints are allowed when the skill defines them.
-- During work, keep Knowl current. If new findings contradict or replace existing memory, use \`knowl_update\` to correct stale or superseded items instead of adding duplicates.
-- For multi-step tasks, do not wait until the end to use Knowl. Before each new subtask or when switching areas, run a focused \`knowl_query\` for relevant prior decisions, constraints, facts, or current state.
-- Store durable findings with \`knowl_store\`, \`knowl_decide\`, \`knowl_ingest_atoms\`, or \`knowl_update\`; do not store routine checkpoints or successful commands.
-- When the user confirms a durable fact, decision, constraint, architecture detail, current state, or reusable skill, save it to Knowl using \`knowl_store\`, \`knowl_decide\`, or \`knowl_ingest_atoms\`.
-- After discovering and verifying durable project knowledge from repository files, store it in Knowl using \`knowl_store\` or \`knowl_ingest_atoms\` before giving the final answer, but only when the initial \`knowl_query\` did not already return the same knowledge.
-- Before the final answer, check whether the work produced durable knowledge: implemented feature summaries, setup steps, architecture changes, important commands, decisions, constraints, recurring bugs, gotchas, and verified project facts. Store useful outcomes in Knowl before responding.
-- Store durable knowledge as concise structured atoms, not raw chat transcripts. Use raw conversation only as optional source/evidence when it is useful.
-- Do not store temporary debugging noise, failed attempts, secrets, credentials, or speculative ideas unless the user explicitly says they are durable project knowledge.
-- All Knowl writes are secret-validated. If a write is rejected, do not retry with redacted secret material; store only the durable non-sensitive fact.
-- Use \`knowl audit\` to inspect memory integrity. Snapshot restore requires \`--confirm\` and creates a pre-restore snapshot.
-- Prefer current active Knowl state over stale conversation memory when answering questions about this project.
-${KNOWL_AGENTS_SECTION_END_MARKER}
-`;
+export function stripManagedKnowlGuidance(source: string): string {
+  const start = source.indexOf(KNOWL_GUIDANCE_START_MARKER);
+  if (start < 0) return source;
+  const end = source.indexOf(KNOWL_GUIDANCE_END_MARKER, start);
+  const replacementEnd = end < 0 ? source.length : end + KNOWL_GUIDANCE_END_MARKER.length;
+  const before = source.slice(0, start).trimEnd();
+  const after = source.slice(replacementEnd).trimStart();
+  return [before, after].filter(Boolean).join('\n\n') + (before || after ? '\n' : '');
+}
 
-export async function installKnowlAgentsGuidance(projectRoot: string): Promise<AgentsGuidanceInstallStatus> {
-  const agentsPath = path.join(projectRoot, 'AGENTS.md');
-
+async function installManagedFile(
+  filePath: string,
+  createPrefix: string,
+): Promise<GuidanceInstallStatus> {
+  const managed = renderManagedKnowlGuidanceSection();
+  let existing: string | undefined;
   try {
-    const existing = await fs.readFile(agentsPath, 'utf-8');
-    if (existing.includes(KNOWL_AGENTS_SECTION_MARKER)) {
-      if (existing.includes(KNOWL_AGENTS_SECTION) && existing.includes(KNOWL_AGENTS_SECTION_END_MARKER)) {
-        return 'unchanged';
-      }
-
-      const start = existing.indexOf(KNOWL_AGENTS_SECTION_MARKER);
-      const end = existing.indexOf(KNOWL_AGENTS_SECTION_END_MARKER, start);
-      const replacementEnd = end >= 0 ? end + KNOWL_AGENTS_SECTION_END_MARKER.length : existing.length;
-      const before = existing.slice(0, start).trimEnd();
-      const after = existing.slice(replacementEnd).trimStart();
-      const updated = [before, KNOWL_AGENTS_SECTION.trimEnd(), after].filter(Boolean).join('\n\n') + '\n';
-      await fs.writeFile(agentsPath, updated, 'utf-8');
-      return 'updated';
-    }
-
-    const separator = existing.endsWith('\n') ? '\n' : '\n\n';
-    await fs.writeFile(agentsPath, `${existing}${separator}${KNOWL_AGENTS_SECTION}`, 'utf-8');
-    return 'updated';
+    existing = await fs.readFile(filePath, 'utf8');
   } catch (error: any) {
-    if (error?.code !== 'ENOENT') {
-      throw error;
-    }
-
-    await fs.writeFile(agentsPath, `# Agent Instructions\n\n${KNOWL_AGENTS_SECTION}`, 'utf-8');
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  if (existing === undefined) {
+    await fs.writeFile(filePath, `${createPrefix}${managed}`, 'utf8');
     return 'created';
+  }
+  if (existing.includes(managed)) return 'unchanged';
+  const start = existing.indexOf(KNOWL_GUIDANCE_START_MARKER);
+  let next: string;
+  if (start >= 0) {
+    const end = existing.indexOf(KNOWL_GUIDANCE_END_MARKER, start);
+    const replacementEnd = end < 0 ? existing.length : end + KNOWL_GUIDANCE_END_MARKER.length;
+    const before = existing.slice(0, start).trimEnd();
+    const after = existing.slice(replacementEnd).trimStart();
+    next = [before, managed.trimEnd(), after].filter(Boolean).join('\n\n') + '\n';
+  } else {
+    const separator = existing.length === 0 ? '' : existing.endsWith('\n') ? '\n' : '\n\n';
+    next = `${existing}${separator}${managed}`;
+  }
+  await fs.writeFile(filePath, next, 'utf8');
+  return 'updated';
+}
+
+export async function installKnowlProjectGuidance(projectRoot: string): Promise<KnowlProjectGuidanceInstallResult> {
+  return {
+    knowl: await installManagedFile(path.join(projectRoot, 'KNOWL.md'), ''),
+    agents: await installManagedFile(path.join(projectRoot, 'AGENTS.md'), '# Agent Instructions\n\n'),
+  };
+}
+
+export async function isKnowlProjectGuidanceCurrent(projectRoot: string): Promise<boolean> {
+  const managed = renderManagedKnowlGuidanceSection();
+  try {
+    const [knowl, agents] = await Promise.all([
+      fs.readFile(path.join(projectRoot, 'KNOWL.md'), 'utf8'),
+      fs.readFile(path.join(projectRoot, 'AGENTS.md'), 'utf8'),
+    ]);
+    return knowl.includes(managed) && agents.includes(managed);
+  } catch (error: any) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
   }
 }
 
-export async function isKnowlAgentsGuidanceCurrent(projectRoot: string): Promise<boolean> {
-  const agentsPath = path.join(projectRoot, 'AGENTS.md');
+export async function installKnowlAgentsGuidance(projectRoot: string): Promise<GuidanceInstallStatus> {
+  return (await installKnowlProjectGuidance(projectRoot)).agents;
+}
 
+export async function isKnowlAgentsGuidanceCurrent(projectRoot: string): Promise<boolean> {
   try {
-    const existing = await fs.readFile(agentsPath, 'utf-8');
-    return existing.includes(KNOWL_AGENTS_SECTION) && existing.includes(KNOWL_AGENTS_SECTION_END_MARKER);
+    return (await fs.readFile(path.join(projectRoot, 'AGENTS.md'), 'utf8'))
+      .includes(renderManagedKnowlGuidanceSection());
   } catch (error: any) {
-    if (error?.code === 'ENOENT') {
-      return false;
-    }
+    if (error?.code === 'ENOENT') return false;
     throw error;
   }
 }
