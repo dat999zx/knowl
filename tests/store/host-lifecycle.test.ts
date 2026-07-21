@@ -4,8 +4,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { handleHostLifecycleEvent } from '../../src/store/host-lifecycle.js';
+import {
+  bindHostSession,
+  closeHostSessionBinding,
+  HostSessionKey,
+  incrementHostSuccessfulToolCount,
+} from '../../src/store/host-session-bindings.js';
 import * as repo from '../../src/store/repository.js';
 import { recordPendingSessionHandoff } from '../../src/store/session-handoff.js';
+import { startMemorySession } from '../../src/store/session-repository.js';
 
 const ROOT = path.resolve('.knowl-host-lifecycle-test');
 
@@ -57,6 +64,25 @@ describe('host lifecycle orchestration', () => {
         additionalContext: result.context,
       },
     });
+  });
+
+  it('counts successful tools per active turn binding and resets on rebind', async () => {
+    const key: HostSessionKey = {
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'counter-session',
+      externalTurnId: '__turn__',
+    };
+    const first = await startMemorySession({ title: 'First counter turn', agent: 'claude' });
+    await bindHostSession(key, first.id);
+
+    expect(await incrementHostSuccessfulToolCount(key)).toBe(1);
+    expect(await incrementHostSuccessfulToolCount(key)).toBe(2);
+
+    await closeHostSessionBinding(key);
+    const second = await startMemorySession({ title: 'Second counter turn', agent: 'claude' });
+    await bindHostSession(key, second.id);
+    expect(await incrementHostSuccessfulToolCount(key)).toBe(1);
   });
 
   it('delivers context once after SessionStart and not on later prompts or events', async () => {

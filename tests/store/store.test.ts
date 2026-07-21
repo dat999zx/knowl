@@ -163,6 +163,34 @@ describe('Storage Layer', () => {
     }
   });
 
+  it('should add the successful tool counter to older host binding tables', async () => {
+    const legacyRoot = path.resolve('./.knowl-host-binding-counter-migration-test');
+    await fs.rm(legacyRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(legacyRoot, '.knowl'), { recursive: true });
+
+    const client = createClient({ url: `file:${path.join(legacyRoot, '.knowl', 'knowl.db')}` });
+    try {
+      await client.execute(`CREATE TABLE host_session_bindings (
+        host TEXT NOT NULL,
+        project_root TEXT NOT NULL,
+        external_session_id TEXT NOT NULL,
+        external_turn_id TEXT NOT NULL DEFAULT '',
+        memory_session_id TEXT NOT NULL,
+        active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (host, project_root, external_session_id, external_turn_id)
+      );`);
+
+      await bootstrapSchema(client);
+
+      const columns = await client.execute('PRAGMA table_info(host_session_bindings)');
+      expect(columns.rows.map(row => String(row.name))).toContain('successful_tool_count');
+    } finally {
+      client.close();
+      await fs.rm(legacyRoot, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it('should repair stale skill foreign keys from an older compact-schema migration', async () => {
     const repairRoot = path.resolve('./.knowl-stale-fk-test');
     await fs.rm(repairRoot, { recursive: true, force: true }).catch(() => {});

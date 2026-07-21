@@ -112,6 +112,7 @@ export const hostSessionBindings = sqliteTable('host_session_bindings', {
   externalTurnId: text('external_turn_id').notNull().default(''),
   memorySessionId: text('memory_session_id').notNull().references(() => memorySessions.id, { onDelete: 'cascade' }),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  successfulToolCount: integer('successful_tool_count').notNull().default(0),
   updatedAt: text('updated_at').notNull(),
 }, (table) => [
   primaryKey({ columns: [table.host, table.projectRoot, table.externalSessionId, table.externalTurnId] }),

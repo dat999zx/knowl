@@ -102,7 +102,7 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS host_session_bindings (
     host TEXT NOT NULL, project_root TEXT NOT NULL, external_session_id TEXT NOT NULL, external_turn_id TEXT NOT NULL DEFAULT '',
     memory_session_id TEXT NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
-    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)), updated_at TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)), successful_tool_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
     PRIMARY KEY (host, project_root, external_session_id, external_turn_id)
   );`,
 
@@ -370,6 +370,14 @@ async function ensureMemorySessionColumns(client: Client): Promise<void> {
   if (!columns.includes('promotion_error_code')) await client.execute('ALTER TABLE memory_sessions ADD COLUMN promotion_error_code TEXT;');
 }
 
+async function ensureHostSessionBindingColumns(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'host_session_bindings'))) return;
+  const columns = await tableColumns(client, 'host_session_bindings');
+  if (!columns.includes('successful_tool_count')) {
+    await client.execute('ALTER TABLE host_session_bindings ADD COLUMN successful_tool_count INTEGER NOT NULL DEFAULT 0;');
+  }
+}
+
 async function ensureCodeIndexColumns(client: Client): Promise<void> {
   if (!(await tableExists(client, 'code_symbols'))) return;
   const columns = await tableColumns(client, 'code_symbols');
@@ -505,6 +513,7 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await ensureFreshnessColumns(client);
   await ensureConflictColumns(client);
   await ensureMemorySessionColumns(client);
+  await ensureHostSessionBindingColumns(client);
   await ensureCodeIndexColumns(client);
   await backfillKnowledgeAssertions(client);
   await repairSkillForeignKeys(client);

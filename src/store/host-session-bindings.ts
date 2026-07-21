@@ -75,12 +75,24 @@ export async function bindHostSession(input: HostSessionKey, memorySessionId: st
   const now = new Date().toISOString();
   await getClient().execute({
     sql: `INSERT INTO host_session_bindings
-      (host, project_root, external_session_id, external_turn_id, memory_session_id, active, updated_at)
-      VALUES (?, ?, ?, ?, ?, 1, ?)
+      (host, project_root, external_session_id, external_turn_id, memory_session_id, active, successful_tool_count, updated_at)
+      VALUES (?, ?, ?, ?, ?, 1, 0, ?)
       ON CONFLICT (host, project_root, external_session_id, external_turn_id)
-      DO UPDATE SET memory_session_id = excluded.memory_session_id, active = 1, updated_at = excluded.updated_at`,
+      DO UPDATE SET memory_session_id = excluded.memory_session_id, active = 1, successful_tool_count = 0, updated_at = excluded.updated_at`,
     args: [key.host, key.projectRoot, key.externalSessionId, key.externalTurnId, memorySessionId, now],
   });
+}
+
+export async function incrementHostSuccessfulToolCount(input: HostSessionKey): Promise<number> {
+  const key = normalizedKey(input);
+  const row = (await getClient().execute({
+    sql: `UPDATE host_session_bindings
+      SET successful_tool_count = successful_tool_count + 1, updated_at = ?
+      WHERE host = ? AND project_root = ? AND external_session_id = ? AND external_turn_id = ? AND active = 1
+      RETURNING successful_tool_count`,
+    args: [new Date().toISOString(), key.host, key.projectRoot, key.externalSessionId, key.externalTurnId],
+  })).rows[0];
+  return row ? Number(row.successful_tool_count) : 0;
 }
 
 export async function closeHostSessionBinding(input: HostSessionKey): Promise<boolean> {
