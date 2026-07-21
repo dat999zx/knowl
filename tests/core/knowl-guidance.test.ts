@@ -1,0 +1,76 @@
+import { describe, expect, it } from 'vitest';
+import {
+  KNOWL_CLAUDE_MODE_LINE,
+  KNOWL_CLAUDE_OPERATIONAL_CARD,
+  KNOWL_HOST_NEUTRAL_MODE_LINE,
+  KNOWL_MCP_SERVER_INSTRUCTIONS,
+  KNOWL_MCP_TOOL_GROUPS,
+  KNOWL_MCP_TOOL_NAMES,
+  renderFullKnowlGuidance,
+  renderManagedKnowlGuidanceSection,
+} from '../../src/core/knowl-guidance.js';
+
+const EXPECTED_TOOLS = [
+  'knowl_query',
+  'knowl_recent', 'knowl_state', 'knowl_context',
+  'knowl_task_start', 'knowl_task_checkpoint', 'knowl_task_finish',
+  'knowl_store', 'knowl_ingest_atoms', 'knowl_decide', 'knowl_update',
+  'knowl_timeline', 'knowl_evidence_list', 'knowl_conflicts', 'knowl_feedback',
+  'knowl_skill_list', 'knowl_skill_read', 'knowl_skill_run', 'knowl_skill_create',
+  'knowl_ingest', 'knowl_synthesize', 'knowl_session_finish', 'knowl_gc_preview', 'knowl_gc_apply',
+] as const;
+
+const EXPECTED_CLAUDE_CARD = [
+  'KNOWL WORKFLOW - for project work.',
+  'Start: use a relevant active lifecycle hit; else call knowl_query with 2-6 keywords before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
+  'Mode: Claude hooks own lifecycle. Never call knowl_task_start, knowl_task_checkpoint, knowl_task_finish, or knowl_session_finish while active.',
+  'Manual fallback: one bounded command uses knowl task run; resumable work uses knowl_task_start once, knowl_task_checkpoint at meaningful milestones/blockers with its taskId, and knowl_task_finish once after verification.',
+  'Route:',
+  '- retrieval: knowl_query; knowl_recent only without bootstrap or for refresh; knowl_state for broad state; knowl_context for a token-budgeted pack.',
+  '- durable memory: knowl_store one atom; knowl_ingest_atoms a batch; knowl_decide a confirmed choice; knowl_update a stale or contradicted item.',
+  '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
+  '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',
+  '- special: knowl_ingest only for explicit raw-source ingestion, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an explicitly owned manual session; knowl_gc_preview before maintenance; knowl_gc_apply only after preview and explicit approval.',
+  'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
+].join('\n');
+
+const namesIn = (text: string) => [...new Set(text.match(/\bknowl_[a-z_]+\b/g) ?? [])].sort();
+
+describe('canonical Knowl agent guidance', () => {
+  it('defines seven groups and the exact 24-tool inventory', () => {
+    expect(KNOWL_MCP_TOOL_GROUPS).toHaveLength(7);
+    expect(KNOWL_MCP_TOOL_NAMES).toEqual(EXPECTED_TOOLS);
+    expect(new Set(KNOWL_MCP_TOOL_NAMES).size).toBe(24);
+    expect(KNOWL_MCP_TOOL_NAMES).not.toContain('knowl_ask');
+  });
+
+  it('renders every tool into the full and compact guidance', () => {
+    expect(namesIn(renderFullKnowlGuidance())).toEqual([...EXPECTED_TOOLS].sort());
+    expect(namesIn(KNOWL_CLAUDE_OPERATIONAL_CARD)).toEqual([...EXPECTED_TOOLS].sort());
+    expect(namesIn(KNOWL_MCP_SERVER_INSTRUCTIONS)).toEqual([...EXPECTED_TOOLS].sort());
+    expect(renderManagedKnowlGuidanceSection()).toContain('<!-- KNOWL_PROJECT_MEMORY -->');
+    expect(renderFullKnowlGuidance()).not.toContain('KNOWL_PROJECT_MEMORY');
+    expect(renderFullKnowlGuidance()).toContain('Casual conversation, a single memory lookup, and trivial non-resumable work do not create a manual task loop.');
+    expect(renderFullKnowlGuidance()).toContain('never send the current conversation silently');
+    expect(renderFullKnowlGuidance()).toContain('never a hook session');
+  });
+
+  it('keeps both compact renderings bounded and front-loads the required action', () => {
+    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toBe(EXPECTED_CLAUDE_CARD);
+    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_695);
+    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_746);
+    for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS]) {
+      expect(card.length).toBeLessThan(2_000);
+      expect(card.slice(0, 512)).toContain('knowl_query');
+      expect(card.slice(0, 512)).toContain('own lifecycle');
+      expect(Math.ceil(card.length / 4)).toBeLessThanOrEqual(500);
+      expect(20 * Math.ceil(card.length / 4)).toBeLessThanOrEqual(10_000);
+    }
+  });
+
+  it('changes only the lifecycle mode line between compact renderings', () => {
+    expect(
+      KNOWL_CLAUDE_OPERATIONAL_CARD.replace(KNOWL_CLAUDE_MODE_LINE, KNOWL_HOST_NEUTRAL_MODE_LINE),
+    ).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
+  });
+});
