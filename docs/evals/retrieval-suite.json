@@ -1,0 +1,6437 @@
+{
+  "version": 1,
+  "description": "Knowl retrieval evaluation suite — diverse, adversarial engineering knowledge base with distractors, stale/rejected traps, paraphrase, provenance, and filename queries.",
+  "fixtures": [
+    {
+      "id": "db-postgres",
+      "category": "decision",
+      "title": "PostgreSQL as primary datastore",
+      "content": "PostgreSQL 16 is the primary transactional datastore for Northwind. Chosen for strong relational guarantees, JSONB, and mature replication.",
+      "tags": [
+        "database",
+        "postgres",
+        "persistence"
+      ]
+    },
+    {
+      "id": "db-mongo-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "MongoDB as primary datastore",
+      "content": "MongoDB was evaluated and rejected as the primary store; the domain is highly relational and needs multi-row transactions.",
+      "tags": [
+        "database",
+        "mongodb",
+        "persistence"
+      ]
+    },
+    {
+      "id": "db-mysql-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "MySQL legacy datastore",
+      "content": "Early prototype used MySQL 5.7. Superseded by the PostgreSQL migration.",
+      "tags": [
+        "database",
+        "mysql",
+        "legacy"
+      ]
+    },
+    {
+      "id": "db-migrations",
+      "category": "fact",
+      "title": "Never run concurrent schema migrations",
+      "content": "Running two schema migrations concurrently against Postgres causes advisory-lock deadlocks. Migrations must run serially in CI.",
+      "tags": [
+        "database",
+        "migration",
+        "ci",
+        "gotcha"
+      ]
+    },
+    {
+      "id": "auth-jwt",
+      "category": "architecture",
+      "title": "JWT access tokens with refresh rotation",
+      "content": "Authentication uses short-lived JWT access tokens (15m) plus rotating refresh tokens stored server-side. Access tokens are stateless; refresh tokens are revocable.",
+      "tags": [
+        "auth",
+        "jwt",
+        "token",
+        "security"
+      ]
+    },
+    {
+      "id": "auth-session-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "Server-side session cookies",
+      "content": "Classic server-side session cookies were rejected for the API tier; the mobile clients need stateless bearer tokens.",
+      "tags": [
+        "auth",
+        "session",
+        "cookie"
+      ]
+    },
+    {
+      "id": "auth-oauth",
+      "category": "architecture",
+      "title": "OAuth2 social login via Google and GitHub",
+      "content": "Third-party login is implemented with OAuth2 authorization code flow for Google and GitHub identity providers.",
+      "tags": [
+        "auth",
+        "oauth",
+        "sso"
+      ]
+    },
+    {
+      "id": "auth-token-file",
+      "category": "architecture",
+      "title": "src/auth/token.ts issues access tokens",
+      "content": "src/auth/token.ts exports createAccessToken and verifyAccessToken used by the API gateway.",
+      "tags": [
+        "src/auth/token.ts",
+        "createAccessToken",
+        "auth"
+      ]
+    },
+    {
+      "id": "billing-stripe",
+      "category": "decision",
+      "title": "Stripe for billing and subscriptions",
+      "content": "Stripe handles subscriptions, invoicing, and payment methods. We do not store raw card data; only Stripe customer and payment-method IDs.",
+      "tags": [
+        "billing",
+        "stripe",
+        "payments"
+      ]
+    },
+    {
+      "id": "billing-webhook-idempotency",
+      "category": "fact",
+      "title": "Stripe webhooks must be idempotent",
+      "content": "Stripe can deliver the same webhook event more than once. Handlers key on event.id and ignore already-processed events to stay idempotent.",
+      "tags": [
+        "billing",
+        "stripe",
+        "webhook",
+        "idempotency",
+        "gotcha"
+      ]
+    },
+    {
+      "id": "billing-paypal-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "PayPal as billing provider",
+      "content": "PayPal was rejected as the billing provider; Stripe covers our subscription and tax needs with one integration.",
+      "tags": [
+        "billing",
+        "paypal",
+        "payments"
+      ]
+    },
+    {
+      "id": "search-opensearch",
+      "category": "decision",
+      "title": "OpenSearch for full-text product search",
+      "content": "Product catalog search runs on OpenSearch. Documents are indexed from Postgres via a change-data-capture stream.",
+      "tags": [
+        "search",
+        "opensearch",
+        "fulltext"
+      ]
+    },
+    {
+      "id": "search-reindex",
+      "category": "skill",
+      "title": "Rebuild the OpenSearch product index",
+      "content": "Run scripts/reindex-products.ts to rebuild the OpenSearch product index from the Postgres source of truth.",
+      "tags": [
+        "search",
+        "opensearch",
+        "reindex",
+        "command"
+      ]
+    },
+    {
+      "id": "cache-redis",
+      "category": "architecture",
+      "title": "Redis for caching and rate-limit counters",
+      "content": "Redis stores hot read caches and token-bucket rate-limit counters. It is treated as ephemeral; nothing authoritative lives only in Redis.",
+      "tags": [
+        "cache",
+        "redis",
+        "performance"
+      ]
+    },
+    {
+      "id": "queue-sqs",
+      "category": "decision",
+      "title": "SQS for asynchronous job processing",
+      "content": "Background jobs use Amazon SQS with a dead-letter queue after 5 failed attempts. Workers are idempotent.",
+      "tags": [
+        "queue",
+        "sqs",
+        "async",
+        "jobs"
+      ]
+    },
+    {
+      "id": "queue-kafka-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "Kafka for job processing",
+      "content": "Kafka was rejected for simple background jobs; SQS is operationally cheaper and enough for our throughput.",
+      "tags": [
+        "queue",
+        "kafka",
+        "async"
+      ]
+    },
+    {
+      "id": "api-rest",
+      "category": "decision",
+      "title": "REST API with explicit versioning",
+      "content": "The public API is REST over HTTPS with URL versioning (/v1, /v2). Breaking changes require a new version; additive changes do not.",
+      "tags": [
+        "api",
+        "rest",
+        "versioning"
+      ]
+    },
+    {
+      "id": "api-graphql-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "GraphQL public API",
+      "content": "A GraphQL public API was rejected; REST with versioning is simpler for our partners to consume and cache.",
+      "tags": [
+        "api",
+        "graphql"
+      ]
+    },
+    {
+      "id": "api-ratelimit",
+      "category": "constraint",
+      "title": "Public API rate limit is 600 requests per minute",
+      "content": "Each API key is limited to 600 requests per minute using a Redis token bucket; bursts up to 100 are allowed.",
+      "tags": [
+        "api",
+        "rate-limit",
+        "constraint"
+      ]
+    },
+    {
+      "id": "fe-react",
+      "category": "decision",
+      "title": "React with server components for the web app",
+      "content": "The web client is React with server components and streaming SSR for first-paint performance.",
+      "tags": [
+        "frontend",
+        "react",
+        "ssr"
+      ]
+    },
+    {
+      "id": "fe-state",
+      "category": "architecture",
+      "title": "Client state via React Query, no global store",
+      "content": "Server state is managed with React Query; there is intentionally no Redux-style global store. Local UI state stays in components.",
+      "tags": [
+        "frontend",
+        "react-query",
+        "state"
+      ]
+    },
+    {
+      "id": "fe-redux-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Redux global store",
+      "content": "Early web app used a Redux global store. Replaced by React Query for server state.",
+      "tags": [
+        "frontend",
+        "redux",
+        "state",
+        "legacy"
+      ]
+    },
+    {
+      "id": "infra-k8s",
+      "category": "architecture",
+      "title": "Kubernetes on EKS for service hosting",
+      "content": "Services run on Kubernetes (EKS). Each service is a Deployment behind a ClusterIP with an ingress for public routes.",
+      "tags": [
+        "infra",
+        "kubernetes",
+        "eks",
+        "deploy"
+      ]
+    },
+    {
+      "id": "infra-terraform",
+      "category": "decision",
+      "title": "Terraform for infrastructure as code",
+      "content": "All cloud infrastructure is defined in Terraform. Manual console changes are prohibited and drift is detected nightly.",
+      "tags": [
+        "infra",
+        "terraform",
+        "iac"
+      ]
+    },
+    {
+      "id": "infra-ci",
+      "category": "skill",
+      "title": "Deploy a service to staging",
+      "content": "Run scripts/deploy.sh <service> staging to build, push, and roll out a service to the staging cluster.",
+      "tags": [
+        "infra",
+        "deploy",
+        "staging",
+        "command"
+      ]
+    },
+    {
+      "id": "obs-otel",
+      "category": "architecture",
+      "title": "OpenTelemetry tracing to Grafana Tempo",
+      "content": "Distributed tracing uses OpenTelemetry SDKs exporting spans to Grafana Tempo. Trace IDs propagate through all internal calls.",
+      "tags": [
+        "observability",
+        "tracing",
+        "opentelemetry"
+      ]
+    },
+    {
+      "id": "obs-logs",
+      "category": "constraint",
+      "title": "Structured JSON logs, no PII",
+      "content": "All logs are structured JSON and must never contain PII or secrets. A redaction middleware strips known sensitive keys.",
+      "tags": [
+        "observability",
+        "logging",
+        "pii",
+        "security"
+      ]
+    },
+    {
+      "id": "test-vitest",
+      "category": "decision",
+      "title": "Vitest for unit and integration tests",
+      "content": "Unit and integration tests use Vitest. Every pull request must keep the suite green before merge.",
+      "tags": [
+        "testing",
+        "vitest",
+        "ci"
+      ]
+    },
+    {
+      "id": "test-playwright",
+      "category": "architecture",
+      "title": "Playwright for end-to-end tests",
+      "content": "End-to-end browser tests use Playwright against a seeded staging environment nightly.",
+      "tags": [
+        "testing",
+        "playwright",
+        "e2e"
+      ]
+    },
+    {
+      "id": "test-cmd",
+      "category": "skill",
+      "title": "Run the database test suite",
+      "content": "Run npm test -- tests/store/store.test.ts to execute the database repository tests.",
+      "tags": [
+        "testing",
+        "command",
+        "database"
+      ]
+    },
+    {
+      "id": "sec-secrets",
+      "category": "constraint",
+      "title": "Secrets live in AWS Secrets Manager only",
+      "content": "Application secrets are stored exclusively in AWS Secrets Manager and injected at runtime. Secrets must never be committed to git or baked into images.",
+      "tags": [
+        "security",
+        "secrets",
+        "aws"
+      ]
+    },
+    {
+      "id": "sec-rbac",
+      "category": "architecture",
+      "title": "Role-based access control with three roles",
+      "content": "Authorization uses RBAC with owner, admin, and member roles. Permission checks happen in a central policy module.",
+      "tags": [
+        "security",
+        "rbac",
+        "authorization"
+      ]
+    },
+    {
+      "id": "sec-encrypt",
+      "category": "constraint",
+      "title": "Encrypt PII at rest with KMS",
+      "content": "Personally identifiable columns are encrypted at rest using envelope encryption with AWS KMS keys rotated yearly.",
+      "tags": [
+        "security",
+        "encryption",
+        "kms",
+        "pii"
+      ]
+    },
+    {
+      "id": "data-warehouse",
+      "category": "decision",
+      "title": "Snowflake as the analytics warehouse",
+      "content": "Analytics data lands in Snowflake via a nightly ELT from Postgres and event streams. BI tools read only from Snowflake.",
+      "tags": [
+        "data",
+        "snowflake",
+        "warehouse",
+        "analytics"
+      ]
+    },
+    {
+      "id": "data-cdc",
+      "category": "architecture",
+      "title": "Change data capture with Debezium",
+      "content": "Debezium captures row-level changes from Postgres WAL and publishes them to the event bus for search indexing and analytics.",
+      "tags": [
+        "data",
+        "cdc",
+        "debezium",
+        "postgres"
+      ]
+    },
+    {
+      "id": "perf-nplusone",
+      "category": "fact",
+      "title": "N+1 queries in the orders endpoint were fixed with a join",
+      "content": "The GET /orders endpoint had an N+1 query loading line items per order. Fixed by a single joined query with a dataloader fallback.",
+      "tags": [
+        "performance",
+        "n+1",
+        "database",
+        "gotcha"
+      ]
+    },
+    {
+      "id": "perf-index",
+      "category": "fact",
+      "title": "Composite index on (tenant_id, created_at)",
+      "content": "List queries scan by tenant then time; a composite index on (tenant_id, created_at) removed a slow sequential scan.",
+      "tags": [
+        "performance",
+        "index",
+        "database"
+      ]
+    },
+    {
+      "id": "goal-uptime",
+      "category": "goal",
+      "title": "Maintain 99.9% API uptime",
+      "content": "The reliability goal is 99.9% monthly uptime for the public API, measured by external synthetic checks.",
+      "tags": [
+        "goal",
+        "reliability",
+        "sla"
+      ]
+    },
+    {
+      "id": "constraint-region",
+      "category": "constraint",
+      "title": "EU customer data stays in eu-west-1",
+      "content": "For GDPR, EU customer data must be stored and processed only in the eu-west-1 region.",
+      "tags": [
+        "constraint",
+        "gdpr",
+        "data-residency"
+      ]
+    },
+    {
+      "id": "goal-onboarding",
+      "category": "goal",
+      "title": "New engineer productive within one week",
+      "content": "A new engineer should ship a small change to production within their first week using the documented setup path.",
+      "tags": [
+        "goal",
+        "onboarding",
+        "dx"
+      ]
+    },
+    {
+      "id": "rate-limit-worker",
+      "category": "architecture",
+      "title": "Worker concurrency limit is 20 per node",
+      "content": "Background worker concurrency is capped at 20 jobs per node to protect the database connection pool.",
+      "tags": [
+        "queue",
+        "concurrency",
+        "limit",
+        "worker"
+      ]
+    },
+    {
+      "id": "why-monorepo",
+      "category": "decision",
+      "title": "Single monorepo for all services",
+      "content": "All services live in one monorepo to share types and CI. Chosen over polyrepo for atomic cross-service changes.",
+      "tags": [
+        "repo",
+        "monorepo",
+        "ci"
+      ],
+      "reasoning": "Atomic cross-service refactors and shared types outweigh polyrepo isolation."
+    },
+    {
+      "id": "why-polyrepo-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "Polyrepo per service",
+      "content": "A polyrepo-per-service layout was rejected; cross-cutting changes became too painful to coordinate.",
+      "tags": [
+        "repo",
+        "polyrepo"
+      ]
+    },
+    {
+      "id": "fact-tz",
+      "category": "fact",
+      "title": "Store all timestamps in UTC",
+      "content": "Every timestamp is stored in UTC; timezone conversion happens only at the presentation layer.",
+      "tags": [
+        "fact",
+        "time",
+        "utc"
+      ]
+    },
+    {
+      "id": "fact-uuid",
+      "category": "decision",
+      "title": "UUIDv7 primary keys",
+      "content": "New tables use UUIDv7 primary keys for time-sortable, non-guessable identifiers instead of auto-increment integers.",
+      "tags": [
+        "database",
+        "uuid",
+        "primary-key"
+      ]
+    },
+    {
+      "id": "fact-softdelete",
+      "category": "architecture",
+      "title": "Soft deletes via deleted_at",
+      "content": "Rows are soft-deleted with a deleted_at timestamp; a nightly job hard-deletes rows older than 30 days.",
+      "tags": [
+        "database",
+        "soft-delete"
+      ]
+    },
+    {
+      "id": "fact-featureflags",
+      "category": "architecture",
+      "title": "Feature flags via LaunchDarkly",
+      "content": "Feature rollout is controlled by LaunchDarkly flags evaluated at request time with a local fallback cache.",
+      "tags": [
+        "feature-flags",
+        "launchdarkly",
+        "rollout"
+      ]
+    },
+    {
+      "id": "fact-email",
+      "category": "decision",
+      "title": "Transactional email via Postmark",
+      "content": "Transactional email (receipts, password resets) is sent through Postmark; marketing email is out of scope for the app.",
+      "tags": [
+        "email",
+        "postmark",
+        "notifications"
+      ]
+    },
+    {
+      "id": "fact-cdn",
+      "category": "architecture",
+      "title": "Static assets served from CloudFront",
+      "content": "Static assets and the web bundle are served from CloudFront with long cache TTLs and content-hashed filenames.",
+      "tags": [
+        "cdn",
+        "cloudfront",
+        "assets",
+        "performance"
+      ]
+    },
+    {
+      "id": "deploy-current",
+      "category": "decision",
+      "title": "Deploys use blue-green rollout",
+      "content": "Production deploys use blue-green rollout with automated health checks before shifting traffic.",
+      "tags": [
+        "deploy",
+        "blue-green",
+        "release"
+      ]
+    },
+    {
+      "id": "deploy-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Deploys use in-place rolling restart",
+      "content": "Older deploy method was an in-place rolling restart. Replaced by blue-green.",
+      "tags": [
+        "deploy",
+        "rolling",
+        "legacy"
+      ]
+    },
+    {
+      "id": "skill-release",
+      "category": "skill",
+      "title": "Cut a production release",
+      "content": "Tag main with vX.Y.Z, let CI build and publish artifacts, then approve the production rollout in the deploy dashboard.",
+      "tags": [
+        "release",
+        "skill",
+        "command"
+      ]
+    },
+    {
+      "id": "skill-seed",
+      "category": "skill",
+      "title": "Seed a local development database",
+      "content": "Run npm run db:seed to load fixture data into a local Postgres for development.",
+      "tags": [
+        "skill",
+        "database",
+        "seed",
+        "command"
+      ]
+    },
+    {
+      "id": "api-pagination",
+      "category": "architecture",
+      "title": "Cursor-based pagination for list endpoints",
+      "content": "List endpoints use opaque cursor pagination, not offset/limit, to stay stable under concurrent inserts.",
+      "tags": [
+        "api",
+        "pagination",
+        "cursor"
+      ]
+    },
+    {
+      "id": "infra-secrets-inject",
+      "category": "architecture",
+      "title": "Secrets injected as env vars at pod start",
+      "content": "A CSI driver mounts Secrets Manager values and exposes them as environment variables when a pod starts.",
+      "tags": [
+        "infra",
+        "secrets",
+        "kubernetes"
+      ]
+    },
+    {
+      "id": "data-retention",
+      "category": "constraint",
+      "title": "Raw event logs retained for 90 days",
+      "content": "Raw event and access logs are retained for 90 days, then aggregated and purged to control storage cost and privacy exposure.",
+      "tags": [
+        "data",
+        "retention",
+        "logs",
+        "privacy"
+      ]
+    },
+    {
+      "id": "fe-a11y",
+      "category": "constraint",
+      "title": "WCAG 2.1 AA accessibility is required",
+      "content": "The web app must meet WCAG 2.1 AA; automated axe checks run in CI and block merges on regressions.",
+      "tags": [
+        "frontend",
+        "accessibility",
+        "wcag"
+      ]
+    },
+    {
+      "id": "api-error-format",
+      "category": "architecture",
+      "title": "RFC 7807 problem+json error bodies",
+      "content": "API errors use RFC 7807 application/problem+json bodies with a stable type URI, title, status, and detail.",
+      "tags": [
+        "api",
+        "errors",
+        "rfc7807"
+      ]
+    },
+    {
+      "id": "db-pool",
+      "category": "constraint",
+      "title": "Max 100 Postgres connections per service",
+      "content": "Each service caps its PgBouncer pool at 100 connections; workers and web share the budget to avoid exhausting Postgres.",
+      "tags": [
+        "database",
+        "connection-pool",
+        "pgbouncer",
+        "postgres"
+      ]
+    },
+    {
+      "id": "svc-ledger",
+      "category": "architecture",
+      "title": "The ledger service",
+      "tags": [
+        "service",
+        "ledger",
+        "microservice"
+      ],
+      "content": "The ledger service records immutable double-entry financial transactions. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-invoicing",
+      "category": "architecture",
+      "title": "The invoicing service",
+      "tags": [
+        "service",
+        "invoicing",
+        "microservice"
+      ],
+      "content": "The invoicing service generates and sends customer invoices. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-dunning",
+      "category": "architecture",
+      "title": "The dunning service",
+      "tags": [
+        "service",
+        "dunning",
+        "microservice"
+      ],
+      "content": "The dunning service retries failed payments and manages collections. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-catalog",
+      "category": "architecture",
+      "title": "The catalog service",
+      "tags": [
+        "service",
+        "catalog",
+        "microservice"
+      ],
+      "content": "The catalog service stores the product catalog and pricing. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-inventory",
+      "category": "architecture",
+      "title": "The inventory service",
+      "tags": [
+        "service",
+        "inventory",
+        "microservice"
+      ],
+      "content": "The inventory service tracks stock levels per warehouse. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-fulfilment",
+      "category": "architecture",
+      "title": "The fulfilment service",
+      "tags": [
+        "service",
+        "fulfilment",
+        "microservice"
+      ],
+      "content": "The fulfilment service coordinates picking, packing, and shipping. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-shipping-rates",
+      "category": "architecture",
+      "title": "The shipping-rates service",
+      "tags": [
+        "service",
+        "shipping-rates",
+        "microservice"
+      ],
+      "content": "The shipping-rates service quotes carrier shipping rates. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-tax",
+      "category": "architecture",
+      "title": "The tax service",
+      "tags": [
+        "service",
+        "tax",
+        "microservice"
+      ],
+      "content": "The tax service computes sales tax and VAT per jurisdiction. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-identity",
+      "category": "architecture",
+      "title": "The identity service",
+      "tags": [
+        "service",
+        "identity",
+        "microservice"
+      ],
+      "content": "The identity service owns user accounts and credentials. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-sessions",
+      "category": "architecture",
+      "title": "The sessions service",
+      "tags": [
+        "service",
+        "sessions",
+        "microservice"
+      ],
+      "content": "The sessions service issues and validates login sessions. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-permissions",
+      "category": "architecture",
+      "title": "The permissions service",
+      "tags": [
+        "service",
+        "permissions",
+        "microservice"
+      ],
+      "content": "The permissions service evaluates authorization policy decisions. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-notifications",
+      "category": "architecture",
+      "title": "The notifications service",
+      "tags": [
+        "service",
+        "notifications",
+        "microservice"
+      ],
+      "content": "The notifications service delivers email, SMS, and push notifications. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-preferences",
+      "category": "architecture",
+      "title": "The preferences service",
+      "tags": [
+        "service",
+        "preferences",
+        "microservice"
+      ],
+      "content": "The preferences service stores per-user notification and UI preferences. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-search-indexer",
+      "category": "architecture",
+      "title": "The search-indexer service",
+      "tags": [
+        "service",
+        "search-indexer",
+        "microservice"
+      ],
+      "content": "The search-indexer service keeps the product search index in sync. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-recommendations",
+      "category": "architecture",
+      "title": "The recommendations service",
+      "tags": [
+        "service",
+        "recommendations",
+        "microservice"
+      ],
+      "content": "The recommendations service computes personalized product recommendations. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-reviews",
+      "category": "architecture",
+      "title": "The reviews service",
+      "tags": [
+        "service",
+        "reviews",
+        "microservice"
+      ],
+      "content": "The reviews service stores and moderates product reviews. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-cart",
+      "category": "architecture",
+      "title": "The cart service",
+      "tags": [
+        "service",
+        "cart",
+        "microservice"
+      ],
+      "content": "The cart service holds in-progress shopping carts. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-checkout",
+      "category": "architecture",
+      "title": "The checkout service",
+      "tags": [
+        "service",
+        "checkout",
+        "microservice"
+      ],
+      "content": "The checkout service orchestrates the checkout and order-creation flow. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-orders",
+      "category": "architecture",
+      "title": "The orders service",
+      "tags": [
+        "service",
+        "orders",
+        "microservice"
+      ],
+      "content": "The orders service is the system of record for placed orders. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-returns",
+      "category": "architecture",
+      "title": "The returns service",
+      "tags": [
+        "service",
+        "returns",
+        "microservice"
+      ],
+      "content": "The returns service handles return-merchandise authorizations. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-loyalty",
+      "category": "architecture",
+      "title": "The loyalty service",
+      "tags": [
+        "service",
+        "loyalty",
+        "microservice"
+      ],
+      "content": "The loyalty service tracks loyalty points and tiers. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-gift-cards",
+      "category": "architecture",
+      "title": "The gift-cards service",
+      "tags": [
+        "service",
+        "gift-cards",
+        "microservice"
+      ],
+      "content": "The gift-cards service issues and redeems gift cards. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-pricing-engine",
+      "category": "architecture",
+      "title": "The pricing-engine service",
+      "tags": [
+        "service",
+        "pricing-engine",
+        "microservice"
+      ],
+      "content": "The pricing-engine service applies promotions and dynamic pricing. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-media",
+      "category": "architecture",
+      "title": "The media service",
+      "tags": [
+        "service",
+        "media",
+        "microservice"
+      ],
+      "content": "The media service stores and transforms product images. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-content",
+      "category": "architecture",
+      "title": "The content service",
+      "tags": [
+        "service",
+        "content",
+        "microservice"
+      ],
+      "content": "The content service serves marketing pages and blog content. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-audit-log",
+      "category": "architecture",
+      "title": "The audit-log service",
+      "tags": [
+        "service",
+        "audit-log",
+        "microservice"
+      ],
+      "content": "The audit-log service records an append-only audit trail of admin actions. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-webhooks",
+      "category": "architecture",
+      "title": "The webhooks service",
+      "tags": [
+        "service",
+        "webhooks",
+        "microservice"
+      ],
+      "content": "The webhooks service delivers outbound webhooks to partners. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-import",
+      "category": "architecture",
+      "title": "The import service",
+      "tags": [
+        "service",
+        "import",
+        "microservice"
+      ],
+      "content": "The import service ingests bulk catalog and inventory feeds. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-export",
+      "category": "architecture",
+      "title": "The export service",
+      "tags": [
+        "service",
+        "export",
+        "microservice"
+      ],
+      "content": "The export service produces scheduled data exports for partners. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-geocoding",
+      "category": "architecture",
+      "title": "The geocoding service",
+      "tags": [
+        "service",
+        "geocoding",
+        "microservice"
+      ],
+      "content": "The geocoding service resolves addresses to coordinates. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-fraud",
+      "category": "architecture",
+      "title": "The fraud service",
+      "tags": [
+        "service",
+        "fraud",
+        "microservice"
+      ],
+      "content": "The fraud service scores orders for fraud risk. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-support",
+      "category": "architecture",
+      "title": "The support service",
+      "tags": [
+        "service",
+        "support",
+        "microservice"
+      ],
+      "content": "The support service stores customer support tickets. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-analytics-collector",
+      "category": "architecture",
+      "title": "The analytics-collector service",
+      "tags": [
+        "service",
+        "analytics-collector",
+        "microservice"
+      ],
+      "content": "The analytics-collector service ingests raw product analytics events. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-reporting",
+      "category": "architecture",
+      "title": "The reporting service",
+      "tags": [
+        "service",
+        "reporting",
+        "microservice"
+      ],
+      "content": "The reporting service builds scheduled business reports. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-scheduler",
+      "category": "architecture",
+      "title": "The scheduler service",
+      "tags": [
+        "service",
+        "scheduler",
+        "microservice"
+      ],
+      "content": "The scheduler service runs cron-style scheduled jobs. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-feature-service",
+      "category": "architecture",
+      "title": "The feature-service service",
+      "tags": [
+        "service",
+        "feature-service",
+        "microservice"
+      ],
+      "content": "The feature-service service evaluates feature flags at request time. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-config-service",
+      "category": "architecture",
+      "title": "The config-service service",
+      "tags": [
+        "service",
+        "config-service",
+        "microservice"
+      ],
+      "content": "The config-service service serves runtime configuration to services. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-rate-gateway",
+      "category": "architecture",
+      "title": "The rate-gateway service",
+      "tags": [
+        "service",
+        "rate-gateway",
+        "microservice"
+      ],
+      "content": "The rate-gateway service enforces per-tenant API rate limits at the edge. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-image-cdn",
+      "category": "architecture",
+      "title": "The image-cdn service",
+      "tags": [
+        "service",
+        "image-cdn",
+        "microservice"
+      ],
+      "content": "The image-cdn service caches and resizes images at the edge. It is deployed independently and owns its data."
+    },
+    {
+      "id": "svc-email-templates",
+      "category": "architecture",
+      "title": "The email-templates service",
+      "tags": [
+        "service",
+        "email-templates",
+        "microservice"
+      ],
+      "content": "The email-templates service renders transactional email templates. It is deployed independently and owns its data."
+    },
+    {
+      "id": "cfg-request-timeout",
+      "category": "constraint",
+      "title": "HTTP request timeout is 30 seconds",
+      "tags": [
+        "config",
+        "timeout",
+        "limit"
+      ],
+      "content": "HTTP request timeout is 30 seconds. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-upload-limit",
+      "category": "constraint",
+      "title": "Max upload size is 25 MB",
+      "tags": [
+        "config",
+        "upload",
+        "limit"
+      ],
+      "content": "Max upload size is 25 MB. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-password-min",
+      "category": "constraint",
+      "title": "Passwords must be at least 12 characters",
+      "tags": [
+        "config",
+        "password",
+        "limit"
+      ],
+      "content": "Passwords must be at least 12 characters. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-session-ttl",
+      "category": "constraint",
+      "title": "Login sessions expire after 14 days of inactivity",
+      "tags": [
+        "config",
+        "session",
+        "limit"
+      ],
+      "content": "Login sessions expire after 14 days of inactivity. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-jwt-ttl",
+      "category": "constraint",
+      "title": "Access tokens live for 15 minutes",
+      "tags": [
+        "config",
+        "token",
+        "limit"
+      ],
+      "content": "Access tokens live for 15 minutes. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-cors-origins",
+      "category": "constraint",
+      "title": "CORS allows only the app and partner origins",
+      "tags": [
+        "config",
+        "cors",
+        "limit"
+      ],
+      "content": "CORS allows only the app and partner origins. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-max-page-size",
+      "category": "constraint",
+      "title": "List endpoints return at most 100 items per page",
+      "tags": [
+        "config",
+        "pagination",
+        "limit"
+      ],
+      "content": "List endpoints return at most 100 items per page. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-retry-budget",
+      "category": "constraint",
+      "title": "Outbound calls retry at most 3 times with backoff",
+      "tags": [
+        "config",
+        "retry",
+        "limit"
+      ],
+      "content": "Outbound calls retry at most 3 times with backoff. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-cache-ttl",
+      "category": "constraint",
+      "title": "Product cache entries expire after 5 minutes",
+      "tags": [
+        "config",
+        "cache",
+        "limit"
+      ],
+      "content": "Product cache entries expire after 5 minutes. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-worker-timeout",
+      "category": "constraint",
+      "title": "Background jobs are killed after 10 minutes",
+      "tags": [
+        "config",
+        "worker",
+        "limit"
+      ],
+      "content": "Background jobs are killed after 10 minutes. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-db-statement-timeout",
+      "category": "constraint",
+      "title": "Postgres statement timeout is 8 seconds",
+      "tags": [
+        "config",
+        "database",
+        "limit"
+      ],
+      "content": "Postgres statement timeout is 8 seconds. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-lock-timeout",
+      "category": "constraint",
+      "title": "Advisory lock wait is capped at 2 seconds",
+      "tags": [
+        "config",
+        "lock",
+        "limit"
+      ],
+      "content": "Advisory lock wait is capped at 2 seconds. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-image-max-dim",
+      "category": "constraint",
+      "title": "Uploaded images are downscaled to 4096 px max",
+      "tags": [
+        "config",
+        "media",
+        "limit"
+      ],
+      "content": "Uploaded images are downscaled to 4096 px max. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-bulk-batch",
+      "category": "constraint",
+      "title": "Bulk imports commit in batches of 500 rows",
+      "tags": [
+        "config",
+        "import",
+        "limit"
+      ],
+      "content": "Bulk imports commit in batches of 500 rows. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-webhook-timeout",
+      "category": "constraint",
+      "title": "Webhook deliveries time out after 5 seconds",
+      "tags": [
+        "config",
+        "webhook",
+        "limit"
+      ],
+      "content": "Webhook deliveries time out after 5 seconds. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-login-throttle",
+      "category": "constraint",
+      "title": "Failed logins are throttled after 5 attempts",
+      "tags": [
+        "config",
+        "security",
+        "limit"
+      ],
+      "content": "Failed logins are throttled after 5 attempts. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-export-retention",
+      "category": "constraint",
+      "title": "Generated exports are deleted after 7 days",
+      "tags": [
+        "config",
+        "retention",
+        "limit"
+      ],
+      "content": "Generated exports are deleted after 7 days. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-trace-sample",
+      "category": "constraint",
+      "title": "Tracing samples 10 percent of requests",
+      "tags": [
+        "config",
+        "tracing",
+        "limit"
+      ],
+      "content": "Tracing samples 10 percent of requests. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-log-level",
+      "category": "constraint",
+      "title": "Production log level is info",
+      "tags": [
+        "config",
+        "logging",
+        "limit"
+      ],
+      "content": "Production log level is info. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-idle-conn",
+      "category": "constraint",
+      "title": "Idle database connections close after 30 seconds",
+      "tags": [
+        "config",
+        "database",
+        "limit"
+      ],
+      "content": "Idle database connections close after 30 seconds. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-max-cart-items",
+      "category": "constraint",
+      "title": "A cart holds at most 200 line items",
+      "tags": [
+        "config",
+        "cart",
+        "limit"
+      ],
+      "content": "A cart holds at most 200 line items. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-coupon-stack",
+      "category": "constraint",
+      "title": "At most one coupon may apply per order",
+      "tags": [
+        "config",
+        "promotion",
+        "limit"
+      ],
+      "content": "At most one coupon may apply per order. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-refund-window",
+      "category": "constraint",
+      "title": "Refunds are allowed within 30 days of purchase",
+      "tags": [
+        "config",
+        "refund",
+        "limit"
+      ],
+      "content": "Refunds are allowed within 30 days of purchase. This is enforced in the shared config module."
+    },
+    {
+      "id": "cfg-api-key-scopes",
+      "category": "constraint",
+      "title": "API keys carry explicit read or write scopes",
+      "tags": [
+        "config",
+        "api",
+        "limit"
+      ],
+      "content": "API keys carry explicit read or write scopes. This is enforced in the shared config module."
+    },
+    {
+      "id": "evt-order_placed",
+      "category": "architecture",
+      "title": "Event order_placed",
+      "tags": [
+        "event",
+        "order",
+        "analytics"
+      ],
+      "content": "The order_placed event is emitted when a customer completes checkout. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-order_shipped",
+      "category": "architecture",
+      "title": "Event order_shipped",
+      "tags": [
+        "event",
+        "order",
+        "analytics"
+      ],
+      "content": "The order_shipped event is emitted when an order leaves the warehouse. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-order_refunded",
+      "category": "architecture",
+      "title": "Event order_refunded",
+      "tags": [
+        "event",
+        "order",
+        "analytics"
+      ],
+      "content": "The order_refunded event is emitted when a refund is issued. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-cart_abandoned",
+      "category": "architecture",
+      "title": "Event cart_abandoned",
+      "tags": [
+        "event",
+        "cart",
+        "analytics"
+      ],
+      "content": "The cart_abandoned event is emitted when a cart is idle for an hour. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-user_signed_up",
+      "category": "architecture",
+      "title": "Event user_signed_up",
+      "tags": [
+        "event",
+        "user",
+        "analytics"
+      ],
+      "content": "The user_signed_up event is emitted on account creation. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-user_logged_in",
+      "category": "architecture",
+      "title": "Event user_logged_in",
+      "tags": [
+        "event",
+        "user",
+        "analytics"
+      ],
+      "content": "The user_logged_in event is emitted on a successful login. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-subscription_started",
+      "category": "architecture",
+      "title": "Event subscription_started",
+      "tags": [
+        "event",
+        "subscription",
+        "analytics"
+      ],
+      "content": "The subscription_started event is emitted when a subscription begins. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-subscription_cancelled",
+      "category": "architecture",
+      "title": "Event subscription_cancelled",
+      "tags": [
+        "event",
+        "subscription",
+        "analytics"
+      ],
+      "content": "The subscription_cancelled event is emitted when a subscription is cancelled. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-payment_failed",
+      "category": "architecture",
+      "title": "Event payment_failed",
+      "tags": [
+        "event",
+        "payment",
+        "analytics"
+      ],
+      "content": "The payment_failed event is emitted when a charge is declined. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-review_posted",
+      "category": "architecture",
+      "title": "Event review_posted",
+      "tags": [
+        "event",
+        "review",
+        "analytics"
+      ],
+      "content": "The review_posted event is emitted when a review passes moderation. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-product_viewed",
+      "category": "architecture",
+      "title": "Event product_viewed",
+      "tags": [
+        "event",
+        "product",
+        "analytics"
+      ],
+      "content": "The product_viewed event is emitted when a product page is viewed. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-search_performed",
+      "category": "architecture",
+      "title": "Event search_performed",
+      "tags": [
+        "event",
+        "search",
+        "analytics"
+      ],
+      "content": "The search_performed event is emitted when a search query runs. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-inventory_low",
+      "category": "architecture",
+      "title": "Event inventory_low",
+      "tags": [
+        "event",
+        "inventory",
+        "analytics"
+      ],
+      "content": "The inventory_low event is emitted when stock crosses the reorder point. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-price_changed",
+      "category": "architecture",
+      "title": "Event price_changed",
+      "tags": [
+        "event",
+        "price",
+        "analytics"
+      ],
+      "content": "The price_changed event is emitted when a product price updates. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-ticket_opened",
+      "category": "architecture",
+      "title": "Event ticket_opened",
+      "tags": [
+        "event",
+        "ticket",
+        "analytics"
+      ],
+      "content": "The ticket_opened event is emitted when a support ticket is created. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-export_ready",
+      "category": "architecture",
+      "title": "Event export_ready",
+      "tags": [
+        "event",
+        "export",
+        "analytics"
+      ],
+      "content": "The export_ready event is emitted when a data export finishes. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-flag_toggled",
+      "category": "architecture",
+      "title": "Event flag_toggled",
+      "tags": [
+        "event",
+        "flag",
+        "analytics"
+      ],
+      "content": "The flag_toggled event is emitted when a feature flag changes. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-webhook_delivered",
+      "category": "architecture",
+      "title": "Event webhook_delivered",
+      "tags": [
+        "event",
+        "webhook",
+        "analytics"
+      ],
+      "content": "The webhook_delivered event is emitted when an outbound webhook succeeds. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-fraud_flagged",
+      "category": "architecture",
+      "title": "Event fraud_flagged",
+      "tags": [
+        "event",
+        "fraud",
+        "analytics"
+      ],
+      "content": "The fraud_flagged event is emitted when an order is flagged for fraud review. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "evt-loyalty_earned",
+      "category": "architecture",
+      "title": "Event loyalty_earned",
+      "tags": [
+        "event",
+        "loyalty",
+        "analytics"
+      ],
+      "content": "The loyalty_earned event is emitted when loyalty points are awarded. It carries a stable schema versioned in the event registry."
+    },
+    {
+      "id": "inc-checkout-timeout",
+      "category": "fact",
+      "title": "Postmortem: checkout timeout",
+      "tags": [
+        "incident",
+        "postmortem",
+        "checkout"
+      ],
+      "content": "Incident: a slow tax lookup caused checkout timeouts under load; the tax call is now cached."
+    },
+    {
+      "id": "inc-duplicate-charge",
+      "category": "fact",
+      "title": "Postmortem: duplicate charge",
+      "tags": [
+        "incident",
+        "postmortem",
+        "duplicate"
+      ],
+      "content": "Incident: a webhook replay double-charged customers; handlers are now idempotent by event id."
+    },
+    {
+      "id": "inc-index-missing",
+      "category": "fact",
+      "title": "Postmortem: index missing",
+      "tags": [
+        "incident",
+        "postmortem",
+        "index"
+      ],
+      "content": "Incident: a missing index made the orders report time out; a composite index fixed it."
+    },
+    {
+      "id": "inc-cache-stampede",
+      "category": "fact",
+      "title": "Postmortem: cache stampede",
+      "tags": [
+        "incident",
+        "postmortem",
+        "cache"
+      ],
+      "content": "Incident: a cache expiry stampede overloaded Postgres; a request coalescing lock was added."
+    },
+    {
+      "id": "inc-clock-skew",
+      "category": "fact",
+      "title": "Postmortem: clock skew",
+      "tags": [
+        "incident",
+        "postmortem",
+        "clock"
+      ],
+      "content": "Incident: JWT validation failed intermittently due to node clock skew; NTP is now enforced."
+    },
+    {
+      "id": "inc-leaked-key",
+      "category": "fact",
+      "title": "Postmortem: leaked key",
+      "tags": [
+        "incident",
+        "postmortem",
+        "leaked"
+      ],
+      "content": "Incident: an API key was committed to git and rotated; secret scanning now blocks pushes."
+    },
+    {
+      "id": "inc-queue-poison",
+      "category": "fact",
+      "title": "Postmortem: queue poison",
+      "tags": [
+        "incident",
+        "postmortem",
+        "queue"
+      ],
+      "content": "Incident: a poison message stalled the worker queue; a dead-letter queue was added."
+    },
+    {
+      "id": "inc-n-plus-one-cart",
+      "category": "fact",
+      "title": "Postmortem: n plus one cart",
+      "tags": [
+        "incident",
+        "postmortem",
+        "n"
+      ],
+      "content": "Incident: the cart page issued a query per item; it now batches with a dataloader."
+    },
+    {
+      "id": "inc-oom-import",
+      "category": "fact",
+      "title": "Postmortem: oom import",
+      "tags": [
+        "incident",
+        "postmortem",
+        "oom"
+      ],
+      "content": "Incident: a bulk import ran out of memory; imports now stream in batches."
+    },
+    {
+      "id": "inc-deadlock-migration",
+      "category": "fact",
+      "title": "Postmortem: deadlock migration",
+      "tags": [
+        "incident",
+        "postmortem",
+        "deadlock"
+      ],
+      "content": "Incident: two migrations deadlocked in CI; migrations now run serially."
+    },
+    {
+      "id": "inc-cors-block",
+      "category": "fact",
+      "title": "Postmortem: cors block",
+      "tags": [
+        "incident",
+        "postmortem",
+        "cors"
+      ],
+      "content": "Incident: a CORS misconfiguration blocked the partner portal; origins are now explicit."
+    },
+    {
+      "id": "inc-timezone-bug",
+      "category": "fact",
+      "title": "Postmortem: timezone bug",
+      "tags": [
+        "incident",
+        "postmortem",
+        "timezone"
+      ],
+      "content": "Incident: reports were off by a day due to local-time math; all math is now UTC."
+    },
+    {
+      "id": "inc-retry-storm",
+      "category": "fact",
+      "title": "Postmortem: retry storm",
+      "tags": [
+        "incident",
+        "postmortem",
+        "retry"
+      ],
+      "content": "Incident: aggressive retries caused a retry storm; a retry budget with backoff was added."
+    },
+    {
+      "id": "inc-stale-cache-price",
+      "category": "fact",
+      "title": "Postmortem: stale cache price",
+      "tags": [
+        "incident",
+        "postmortem",
+        "stale"
+      ],
+      "content": "Incident: a stale price cache showed wrong prices; cache is now invalidated on price change."
+    },
+    {
+      "id": "inc-unbounded-export",
+      "category": "fact",
+      "title": "Postmortem: unbounded export",
+      "tags": [
+        "incident",
+        "postmortem",
+        "unbounded"
+      ],
+      "content": "Incident: an unbounded export filled the disk; exports now paginate and expire."
+    },
+    {
+      "id": "inc-session-fixation",
+      "category": "fact",
+      "title": "Postmortem: session fixation",
+      "tags": [
+        "incident",
+        "postmortem",
+        "session"
+      ],
+      "content": "Incident: a session fixation risk was found; session ids rotate on login."
+    },
+    {
+      "id": "inc-thundering-deploy",
+      "category": "fact",
+      "title": "Postmortem: thundering deploy",
+      "tags": [
+        "incident",
+        "postmortem",
+        "thundering"
+      ],
+      "content": "Incident: an in-place restart dropped requests; deploys moved to blue-green."
+    },
+    {
+      "id": "inc-pii-in-logs",
+      "category": "fact",
+      "title": "Postmortem: pii in logs",
+      "tags": [
+        "incident",
+        "postmortem",
+        "pii"
+      ],
+      "content": "Incident: PII leaked into logs; a redaction middleware now strips sensitive keys."
+    },
+    {
+      "id": "inc-hot-partition",
+      "category": "fact",
+      "title": "Postmortem: hot partition",
+      "tags": [
+        "incident",
+        "postmortem",
+        "hot"
+      ],
+      "content": "Incident: a hot Kafka-style partition lagged; keys were rebalanced."
+    },
+    {
+      "id": "inc-flag-default-on",
+      "category": "fact",
+      "title": "Postmortem: flag default on",
+      "tags": [
+        "incident",
+        "postmortem",
+        "flag"
+      ],
+      "content": "Incident: a feature flag defaulted on in prod; flags now fail closed to off."
+    },
+    {
+      "id": "inc-double-refund",
+      "category": "fact",
+      "title": "Postmortem: double refund",
+      "tags": [
+        "incident",
+        "postmortem",
+        "double"
+      ],
+      "content": "Incident: a race allowed double refunds; refunds are now guarded by a unique key."
+    },
+    {
+      "id": "inc-slow-regex",
+      "category": "fact",
+      "title": "Postmortem: slow regex",
+      "tags": [
+        "incident",
+        "postmortem",
+        "slow"
+      ],
+      "content": "Incident: a catastrophic regex hung a request thread; the pattern was bounded."
+    },
+    {
+      "id": "inc-missing-backpressure",
+      "category": "fact",
+      "title": "Postmortem: missing backpressure",
+      "tags": [
+        "incident",
+        "postmortem",
+        "missing"
+      ],
+      "content": "Incident: the collector dropped events under spikes; backpressure was added."
+    },
+    {
+      "id": "inc-orphaned-media",
+      "category": "fact",
+      "title": "Postmortem: orphaned media",
+      "tags": [
+        "incident",
+        "postmortem",
+        "orphaned"
+      ],
+      "content": "Incident: deleted products left orphaned images; a cleanup job now reclaims them."
+    },
+    {
+      "id": "inc-token-in-url",
+      "category": "fact",
+      "title": "Postmortem: token in url",
+      "tags": [
+        "incident",
+        "postmortem",
+        "token"
+      ],
+      "content": "Incident: a reset token appeared in a URL and got logged; tokens moved to the body."
+    }
+  ],
+  "cases": [
+    {
+      "id": "db-direct",
+      "query": "primary database engine",
+      "expectedItemIds": [
+        "db-postgres"
+      ],
+      "mustNotReturn": [
+        "db-mongo-rejected",
+        "db-mysql-stale"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "db-why",
+      "query": "why did we choose postgres over mongodb",
+      "expectedItemIds": [
+        "db-postgres"
+      ],
+      "mustNotReturn": [
+        "db-mongo-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "db-paraphrase",
+      "query": "what stores our transactional data",
+      "expectedItemIds": [
+        "db-postgres"
+      ],
+      "mustNotReturn": [
+        "db-mysql-stale"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "mig-gotcha",
+      "query": "concurrent migration deadlock problem",
+      "expectedItemIds": [
+        "db-migrations"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "mig-para",
+      "query": "why do migrations have to run one at a time",
+      "expectedItemIds": [
+        "db-migrations"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "auth-direct",
+      "query": "authentication token design",
+      "expectedItemIds": [
+        "auth-jwt"
+      ],
+      "mustNotReturn": [
+        "auth-session-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "auth-why",
+      "query": "why rotate refresh tokens",
+      "expectedItemIds": [
+        "auth-jwt"
+      ],
+      "mustNotReturn": [
+        "auth-session-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "auth-oauth-q",
+      "query": "social login providers",
+      "expectedItemIds": [
+        "auth-oauth"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "auth-file-q",
+      "query": "src auth token ts access token creator",
+      "expectedItemIds": [
+        "auth-token-file"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "auth-refresh",
+      "query": "how are refresh tokens handled",
+      "expectedItemIds": [
+        "auth-jwt"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "billing-direct",
+      "query": "payment and subscription provider",
+      "expectedItemIds": [
+        "billing-stripe"
+      ],
+      "mustNotReturn": [
+        "billing-paypal-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "billing-webhook",
+      "query": "duplicate stripe webhook delivery",
+      "expectedItemIds": [
+        "billing-webhook-idempotency"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "billing-pci",
+      "query": "do we store credit card numbers",
+      "expectedItemIds": [
+        "billing-stripe"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "search-direct",
+      "query": "full text search backend",
+      "expectedItemIds": [
+        "search-opensearch"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "search-reindex-q",
+      "query": "how to rebuild the product search index",
+      "expectedItemIds": [
+        "search-reindex"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cache-direct",
+      "query": "caching layer",
+      "expectedItemIds": [
+        "cache-redis"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cache-para",
+      "query": "where do rate limit counters live",
+      "expectedItemIds": [
+        "cache-redis"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "queue-direct",
+      "query": "background job queue",
+      "expectedItemIds": [
+        "queue-sqs"
+      ],
+      "mustNotReturn": [
+        "queue-kafka-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "queue-dlq",
+      "query": "what happens to jobs that keep failing",
+      "expectedItemIds": [
+        "queue-sqs"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "api-direct",
+      "query": "public api style",
+      "expectedItemIds": [
+        "api-rest"
+      ],
+      "mustNotReturn": [
+        "api-graphql-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "api-version",
+      "query": "how do we handle breaking api changes",
+      "expectedItemIds": [
+        "api-rest"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "api-rate",
+      "query": "requests per minute limit per key",
+      "expectedItemIds": [
+        "api-ratelimit"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "fe-direct",
+      "query": "web frontend framework",
+      "expectedItemIds": [
+        "fe-react"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "fe-state-q",
+      "query": "how is server state managed on the client",
+      "expectedItemIds": [
+        "fe-state"
+      ],
+      "mustNotReturn": [
+        "fe-redux-stale"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "fe-noredux",
+      "query": "do we use a global store",
+      "expectedItemIds": [
+        "fe-state"
+      ],
+      "mustNotReturn": [
+        "fe-redux-stale"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "infra-direct",
+      "query": "container orchestration platform",
+      "expectedItemIds": [
+        "infra-k8s"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "infra-iac",
+      "query": "how is cloud infrastructure managed",
+      "expectedItemIds": [
+        "infra-terraform"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "infra-deploy",
+      "query": "deploy a service to staging",
+      "expectedItemIds": [
+        "infra-ci"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "infra-nomanual",
+      "query": "can i change infra in the aws console",
+      "expectedItemIds": [
+        "infra-terraform"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "obs-trace",
+      "query": "distributed tracing stack",
+      "expectedItemIds": [
+        "obs-otel"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "obs-log",
+      "query": "logging format and pii rules",
+      "expectedItemIds": [
+        "obs-logs"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "test-unit",
+      "query": "unit test framework",
+      "expectedItemIds": [
+        "test-vitest"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "test-e2e",
+      "query": "browser end to end tests",
+      "expectedItemIds": [
+        "test-playwright"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "test-cmd-q",
+      "query": "command to run database tests",
+      "expectedItemIds": [
+        "test-cmd"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "sec-secrets-q",
+      "query": "where are application secrets stored",
+      "expectedItemIds": [
+        "sec-secrets"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "sec-rbac-q",
+      "query": "authorization roles model",
+      "expectedItemIds": [
+        "sec-rbac"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "sec-encrypt-q",
+      "query": "how is pii protected at rest",
+      "expectedItemIds": [
+        "sec-encrypt"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "data-wh",
+      "query": "analytics data warehouse",
+      "expectedItemIds": [
+        "data-warehouse"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "data-cdc-q",
+      "query": "how are database changes streamed",
+      "expectedItemIds": [
+        "data-cdc"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "perf-nplus",
+      "query": "orders endpoint slow n plus one",
+      "expectedItemIds": [
+        "perf-nplusone"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "perf-index-q",
+      "query": "index to speed up tenant list queries",
+      "expectedItemIds": [
+        "perf-index"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "goal-uptime-q",
+      "query": "uptime reliability target",
+      "expectedItemIds": [
+        "goal-uptime"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "constraint-eu",
+      "query": "where must eu customer data be stored",
+      "expectedItemIds": [
+        "constraint-region"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "goal-onboard-q",
+      "query": "onboarding time goal for new engineers",
+      "expectedItemIds": [
+        "goal-onboarding"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "rate-api-vs-worker",
+      "query": "api key requests per minute rate limit",
+      "expectedItemIds": [
+        "api-ratelimit"
+      ],
+      "mustNotReturn": [
+        "rate-limit-worker"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "rate-worker-vs-api",
+      "query": "worker job concurrency cap per node",
+      "expectedItemIds": [
+        "rate-limit-worker"
+      ],
+      "mustNotReturn": [
+        "api-ratelimit"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "token-auth-vs-bucket",
+      "query": "access token creation and verification",
+      "expectedItemIds": [
+        "auth-token-file",
+        "auth-jwt"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "why-mono",
+      "query": "why one monorepo instead of many repos",
+      "expectedItemIds": [
+        "why-monorepo"
+      ],
+      "mustNotReturn": [
+        "why-polyrepo-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "fact-tz-q",
+      "query": "timezone storage convention",
+      "expectedItemIds": [
+        "fact-tz"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "fact-uuid-q",
+      "query": "why uuid primary keys instead of integers",
+      "expectedItemIds": [
+        "fact-uuid"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "fact-soft-q",
+      "query": "how are deletes handled in the database",
+      "expectedItemIds": [
+        "fact-softdelete"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "fact-flags-q",
+      "query": "feature flag system",
+      "expectedItemIds": [
+        "fact-featureflags"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "fact-email-q",
+      "query": "how are password reset emails sent",
+      "expectedItemIds": [
+        "fact-email"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "fact-cdn-q",
+      "query": "where are static assets served from",
+      "expectedItemIds": [
+        "fact-cdn"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "deploy-current-q",
+      "query": "current production deploy strategy",
+      "expectedItemIds": [
+        "deploy-current"
+      ],
+      "mustNotReturn": [
+        "deploy-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "skill-release-q",
+      "query": "how to cut a production release",
+      "expectedItemIds": [
+        "skill-release"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "skill-seed-q",
+      "query": "seed local dev database with sample data",
+      "expectedItemIds": [
+        "skill-seed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "security-broad",
+      "query": "how do we protect sensitive data",
+      "expectedItemIds": [
+        "sec-secrets",
+        "sec-encrypt",
+        "obs-logs"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "postgres-broad",
+      "query": "postgres related decisions and facts",
+      "expectedItemIds": [
+        "db-postgres",
+        "db-migrations",
+        "data-cdc"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "api-pag-q",
+      "query": "pagination strategy for lists",
+      "expectedItemIds": [
+        "api-pagination"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "api-pag-why",
+      "query": "why not offset pagination",
+      "expectedItemIds": [
+        "api-pagination"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "infra-secret-inject-q",
+      "query": "how do secrets reach a running pod",
+      "expectedItemIds": [
+        "infra-secrets-inject"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "data-retention-q",
+      "query": "how long are raw logs kept",
+      "expectedItemIds": [
+        "data-retention"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "fe-a11y-q",
+      "query": "accessibility requirements for the web app",
+      "expectedItemIds": [
+        "fe-a11y"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "api-error-q",
+      "query": "api error response format",
+      "expectedItemIds": [
+        "api-error-format"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "db-pool-q",
+      "query": "postgres connection pool limit",
+      "expectedItemIds": [
+        "db-pool"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-db-1",
+      "query": "relational store for the product",
+      "expectedItemIds": [
+        "db-postgres"
+      ],
+      "mustNotReturn": [
+        "db-mongo-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "v-db-2",
+      "query": "which sql database do we run",
+      "expectedItemIds": [
+        "db-postgres"
+      ],
+      "mustNotReturn": [
+        "db-mysql-stale"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "v-auth-1",
+      "query": "bearer token verification",
+      "expectedItemIds": [
+        "auth-token-file",
+        "auth-jwt"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-auth-2",
+      "query": "stateless api credentials",
+      "expectedItemIds": [
+        "auth-jwt"
+      ],
+      "mustNotReturn": [
+        "auth-session-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "v-auth-3",
+      "query": "google github sign in",
+      "expectedItemIds": [
+        "auth-oauth"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-billing-1",
+      "query": "subscription payments integration",
+      "expectedItemIds": [
+        "billing-stripe"
+      ],
+      "mustNotReturn": [
+        "billing-paypal-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "v-billing-2",
+      "query": "avoid double processing payment events",
+      "expectedItemIds": [
+        "billing-webhook-idempotency"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-search-1",
+      "query": "catalog text search engine",
+      "expectedItemIds": [
+        "search-opensearch"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-search-2",
+      "query": "refresh product index from postgres",
+      "expectedItemIds": [
+        "search-reindex"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-cache-1",
+      "query": "in memory hot cache",
+      "expectedItemIds": [
+        "cache-redis"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-queue-1",
+      "query": "async worker message broker",
+      "expectedItemIds": [
+        "queue-sqs"
+      ],
+      "mustNotReturn": [
+        "queue-kafka-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "v-queue-2",
+      "query": "dead letter after repeated failure",
+      "expectedItemIds": [
+        "queue-sqs"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-api-1",
+      "query": "endpoint versioning approach",
+      "expectedItemIds": [
+        "api-rest"
+      ],
+      "mustNotReturn": [
+        "api-graphql-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "v-api-2",
+      "query": "throttling per api key",
+      "expectedItemIds": [
+        "api-ratelimit"
+      ],
+      "mustNotReturn": [
+        "rate-limit-worker"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "v-fe-1",
+      "query": "server side rendering choice",
+      "expectedItemIds": [
+        "fe-react"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-fe-2",
+      "query": "data fetching and caching on client",
+      "expectedItemIds": [
+        "fe-state"
+      ],
+      "mustNotReturn": [
+        "fe-redux-stale"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "v-infra-1",
+      "query": "where do services run",
+      "expectedItemIds": [
+        "infra-k8s"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-infra-2",
+      "query": "provisioning cloud resources",
+      "expectedItemIds": [
+        "infra-terraform"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-infra-3",
+      "query": "ship code to the staging cluster",
+      "expectedItemIds": [
+        "infra-ci"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-obs-1",
+      "query": "span export backend",
+      "expectedItemIds": [
+        "obs-otel"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-obs-2",
+      "query": "can logs contain personal data",
+      "expectedItemIds": [
+        "obs-logs"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-test-1",
+      "query": "which test runner",
+      "expectedItemIds": [
+        "test-vitest"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-test-2",
+      "query": "automated browser testing tool",
+      "expectedItemIds": [
+        "test-playwright"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-sec-1",
+      "query": "secret management system",
+      "expectedItemIds": [
+        "sec-secrets"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-sec-2",
+      "query": "permission roles",
+      "expectedItemIds": [
+        "sec-rbac"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-sec-3",
+      "query": "encryption of personal columns",
+      "expectedItemIds": [
+        "sec-encrypt"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-data-1",
+      "query": "bi and reporting store",
+      "expectedItemIds": [
+        "data-warehouse"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-data-2",
+      "query": "stream row changes from the database",
+      "expectedItemIds": [
+        "data-cdc"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-perf-1",
+      "query": "repeated per-row queries slowdown",
+      "expectedItemIds": [
+        "perf-nplusone"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-perf-2",
+      "query": "speed up listing by tenant and date",
+      "expectedItemIds": [
+        "perf-index"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-goal-1",
+      "query": "reliability service level target",
+      "expectedItemIds": [
+        "goal-uptime"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-constraint-1",
+      "query": "gdpr data location rule",
+      "expectedItemIds": [
+        "constraint-region"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-fact-1",
+      "query": "do we keep local time or utc",
+      "expectedItemIds": [
+        "fact-tz"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-fact-2",
+      "query": "time sortable identifiers",
+      "expectedItemIds": [
+        "fact-uuid"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-fact-3",
+      "query": "recover a deleted row",
+      "expectedItemIds": [
+        "fact-softdelete"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-fact-4",
+      "query": "gradual rollout toggles",
+      "expectedItemIds": [
+        "fact-featureflags"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-fact-5",
+      "query": "receipt and reset email delivery",
+      "expectedItemIds": [
+        "fact-email"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-fact-6",
+      "query": "asset delivery network",
+      "expectedItemIds": [
+        "fact-cdn"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-mono-1",
+      "query": "single repository for services",
+      "expectedItemIds": [
+        "why-monorepo"
+      ],
+      "mustNotReturn": [
+        "why-polyrepo-rejected"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "v-deploy-1",
+      "query": "zero downtime release method",
+      "expectedItemIds": [
+        "deploy-current"
+      ],
+      "mustNotReturn": [
+        "deploy-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "v-skill-1",
+      "query": "publish a new version to production",
+      "expectedItemIds": [
+        "skill-release"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-skill-2",
+      "query": "load sample data locally",
+      "expectedItemIds": [
+        "skill-seed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-pag-1",
+      "query": "stable paging under inserts",
+      "expectedItemIds": [
+        "api-pagination"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-pool-1",
+      "query": "limit database connections per service",
+      "expectedItemIds": [
+        "db-pool"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-a11y-1",
+      "query": "wcag compliance level",
+      "expectedItemIds": [
+        "fe-a11y"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-err-1",
+      "query": "problem json error type uri",
+      "expectedItemIds": [
+        "api-error-format"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-rbac-2",
+      "query": "owner admin member roles",
+      "expectedItemIds": [
+        "sec-rbac"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "v-otel-2",
+      "query": "trace id propagation",
+      "expectedItemIds": [
+        "obs-otel"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-ledger-a",
+      "query": "which service records immutable double-entry financial transactions",
+      "expectedItemIds": [
+        "svc-ledger"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-ledger-b",
+      "query": "what does the ledger service do",
+      "expectedItemIds": [
+        "svc-ledger"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-ledger-c",
+      "query": "ledger service responsibility",
+      "expectedItemIds": [
+        "svc-ledger"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-ledger-d",
+      "query": "the microservice that records immutable double-entry financial transactions",
+      "expectedItemIds": [
+        "svc-ledger"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-invoicing-a",
+      "query": "which service generates and sends customer invoices",
+      "expectedItemIds": [
+        "svc-invoicing"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-invoicing-b",
+      "query": "what does the invoicing service do",
+      "expectedItemIds": [
+        "svc-invoicing"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-invoicing-c",
+      "query": "invoicing service responsibility",
+      "expectedItemIds": [
+        "svc-invoicing"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-invoicing-d",
+      "query": "the microservice that generates and sends customer invoices",
+      "expectedItemIds": [
+        "svc-invoicing"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-dunning-a",
+      "query": "which service retries failed payments and manages collections",
+      "expectedItemIds": [
+        "svc-dunning"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-dunning-b",
+      "query": "what does the dunning service do",
+      "expectedItemIds": [
+        "svc-dunning"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-dunning-c",
+      "query": "dunning service responsibility",
+      "expectedItemIds": [
+        "svc-dunning"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-dunning-d",
+      "query": "the microservice that retries failed payments and manages collections",
+      "expectedItemIds": [
+        "svc-dunning"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-catalog-a",
+      "query": "which service stores the product catalog and pricing",
+      "expectedItemIds": [
+        "svc-catalog"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-catalog-b",
+      "query": "what does the catalog service do",
+      "expectedItemIds": [
+        "svc-catalog"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-catalog-c",
+      "query": "catalog service responsibility",
+      "expectedItemIds": [
+        "svc-catalog"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-catalog-d",
+      "query": "the microservice that stores the product catalog and pricing",
+      "expectedItemIds": [
+        "svc-catalog"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-inventory-a",
+      "query": "which service tracks stock levels per warehouse",
+      "expectedItemIds": [
+        "svc-inventory"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-inventory-b",
+      "query": "what does the inventory service do",
+      "expectedItemIds": [
+        "svc-inventory"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-inventory-c",
+      "query": "inventory service responsibility",
+      "expectedItemIds": [
+        "svc-inventory"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-inventory-d",
+      "query": "the microservice that tracks stock levels per warehouse",
+      "expectedItemIds": [
+        "svc-inventory"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-fulfilment-a",
+      "query": "which service coordinates picking, packing, and shipping",
+      "expectedItemIds": [
+        "svc-fulfilment"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-fulfilment-b",
+      "query": "what does the fulfilment service do",
+      "expectedItemIds": [
+        "svc-fulfilment"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-fulfilment-c",
+      "query": "fulfilment service responsibility",
+      "expectedItemIds": [
+        "svc-fulfilment"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-fulfilment-d",
+      "query": "the microservice that coordinates picking, packing, and shipping",
+      "expectedItemIds": [
+        "svc-fulfilment"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-shipping-rates-a",
+      "query": "which service quotes carrier shipping rates",
+      "expectedItemIds": [
+        "svc-shipping-rates"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-shipping-rates-b",
+      "query": "what does the shipping-rates service do",
+      "expectedItemIds": [
+        "svc-shipping-rates"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-shipping-rates-c",
+      "query": "shipping-rates service responsibility",
+      "expectedItemIds": [
+        "svc-shipping-rates"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-shipping-rates-d",
+      "query": "the microservice that quotes carrier shipping rates",
+      "expectedItemIds": [
+        "svc-shipping-rates"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-tax-a",
+      "query": "which service computes sales tax and VAT per jurisdiction",
+      "expectedItemIds": [
+        "svc-tax"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-tax-b",
+      "query": "what does the tax service do",
+      "expectedItemIds": [
+        "svc-tax"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-tax-c",
+      "query": "tax service responsibility",
+      "expectedItemIds": [
+        "svc-tax"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-tax-d",
+      "query": "the microservice that computes sales tax and VAT per jurisdiction",
+      "expectedItemIds": [
+        "svc-tax"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-identity-a",
+      "query": "which service owns user accounts and credentials",
+      "expectedItemIds": [
+        "svc-identity"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-identity-b",
+      "query": "what does the identity service do",
+      "expectedItemIds": [
+        "svc-identity"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-identity-c",
+      "query": "identity service responsibility",
+      "expectedItemIds": [
+        "svc-identity"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-identity-d",
+      "query": "the microservice that owns user accounts and credentials",
+      "expectedItemIds": [
+        "svc-identity"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-sessions-a",
+      "query": "which service issues and validates login sessions",
+      "expectedItemIds": [
+        "svc-sessions"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-sessions-b",
+      "query": "what does the sessions service do",
+      "expectedItemIds": [
+        "svc-sessions"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-sessions-c",
+      "query": "sessions service responsibility",
+      "expectedItemIds": [
+        "svc-sessions"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-sessions-d",
+      "query": "the microservice that issues and validates login sessions",
+      "expectedItemIds": [
+        "svc-sessions"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-permissions-a",
+      "query": "which service evaluates authorization policy decisions",
+      "expectedItemIds": [
+        "svc-permissions"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-permissions-b",
+      "query": "what does the permissions service do",
+      "expectedItemIds": [
+        "svc-permissions"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-permissions-c",
+      "query": "permissions service responsibility",
+      "expectedItemIds": [
+        "svc-permissions"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-permissions-d",
+      "query": "the microservice that evaluates authorization policy decisions",
+      "expectedItemIds": [
+        "svc-permissions"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-notifications-a",
+      "query": "which service delivers email, SMS, and push notifications",
+      "expectedItemIds": [
+        "svc-notifications"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-notifications-b",
+      "query": "what does the notifications service do",
+      "expectedItemIds": [
+        "svc-notifications"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-notifications-c",
+      "query": "notifications service responsibility",
+      "expectedItemIds": [
+        "svc-notifications"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-notifications-d",
+      "query": "the microservice that delivers email, SMS, and push notifications",
+      "expectedItemIds": [
+        "svc-notifications"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-preferences-a",
+      "query": "which service stores per-user notification and UI preferences",
+      "expectedItemIds": [
+        "svc-preferences"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-preferences-b",
+      "query": "what does the preferences service do",
+      "expectedItemIds": [
+        "svc-preferences"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-preferences-c",
+      "query": "preferences service responsibility",
+      "expectedItemIds": [
+        "svc-preferences"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-preferences-d",
+      "query": "the microservice that stores per-user notification and UI preferences",
+      "expectedItemIds": [
+        "svc-preferences"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-search-indexer-a",
+      "query": "which service keeps the product search index in sync",
+      "expectedItemIds": [
+        "svc-search-indexer"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-search-indexer-b",
+      "query": "what does the search-indexer service do",
+      "expectedItemIds": [
+        "svc-search-indexer"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-search-indexer-c",
+      "query": "search-indexer service responsibility",
+      "expectedItemIds": [
+        "svc-search-indexer"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-search-indexer-d",
+      "query": "the microservice that keeps the product search index in sync",
+      "expectedItemIds": [
+        "svc-search-indexer"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-recommendations-a",
+      "query": "which service computes personalized product recommendations",
+      "expectedItemIds": [
+        "svc-recommendations"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-recommendations-b",
+      "query": "what does the recommendations service do",
+      "expectedItemIds": [
+        "svc-recommendations"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-recommendations-c",
+      "query": "recommendations service responsibility",
+      "expectedItemIds": [
+        "svc-recommendations"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-recommendations-d",
+      "query": "the microservice that computes personalized product recommendations",
+      "expectedItemIds": [
+        "svc-recommendations"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-reviews-a",
+      "query": "which service stores and moderates product reviews",
+      "expectedItemIds": [
+        "svc-reviews"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-reviews-b",
+      "query": "what does the reviews service do",
+      "expectedItemIds": [
+        "svc-reviews"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-reviews-c",
+      "query": "reviews service responsibility",
+      "expectedItemIds": [
+        "svc-reviews"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-reviews-d",
+      "query": "the microservice that stores and moderates product reviews",
+      "expectedItemIds": [
+        "svc-reviews"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-cart-a",
+      "query": "which service holds in-progress shopping carts",
+      "expectedItemIds": [
+        "svc-cart"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-cart-b",
+      "query": "what does the cart service do",
+      "expectedItemIds": [
+        "svc-cart"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-cart-c",
+      "query": "cart service responsibility",
+      "expectedItemIds": [
+        "svc-cart"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-cart-d",
+      "query": "the microservice that holds in-progress shopping carts",
+      "expectedItemIds": [
+        "svc-cart"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-checkout-a",
+      "query": "which service orchestrates the checkout and order-creation flow",
+      "expectedItemIds": [
+        "svc-checkout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-checkout-b",
+      "query": "what does the checkout service do",
+      "expectedItemIds": [
+        "svc-checkout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-checkout-c",
+      "query": "checkout service responsibility",
+      "expectedItemIds": [
+        "svc-checkout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-checkout-d",
+      "query": "the microservice that orchestrates the checkout and order-creation flow",
+      "expectedItemIds": [
+        "svc-checkout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-orders-a",
+      "query": "which service is the system of record for placed orders",
+      "expectedItemIds": [
+        "svc-orders"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-orders-b",
+      "query": "what does the orders service do",
+      "expectedItemIds": [
+        "svc-orders"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-orders-c",
+      "query": "orders service responsibility",
+      "expectedItemIds": [
+        "svc-orders"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-orders-d",
+      "query": "the microservice that is the system of record for placed orders",
+      "expectedItemIds": [
+        "svc-orders"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-returns-a",
+      "query": "which service handles return-merchandise authorizations",
+      "expectedItemIds": [
+        "svc-returns"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-returns-b",
+      "query": "what does the returns service do",
+      "expectedItemIds": [
+        "svc-returns"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-returns-c",
+      "query": "returns service responsibility",
+      "expectedItemIds": [
+        "svc-returns"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-returns-d",
+      "query": "the microservice that handles return-merchandise authorizations",
+      "expectedItemIds": [
+        "svc-returns"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-loyalty-a",
+      "query": "which service tracks loyalty points and tiers",
+      "expectedItemIds": [
+        "svc-loyalty"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-loyalty-b",
+      "query": "what does the loyalty service do",
+      "expectedItemIds": [
+        "svc-loyalty"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-loyalty-c",
+      "query": "loyalty service responsibility",
+      "expectedItemIds": [
+        "svc-loyalty"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-loyalty-d",
+      "query": "the microservice that tracks loyalty points and tiers",
+      "expectedItemIds": [
+        "svc-loyalty"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-gift-cards-a",
+      "query": "which service issues and redeems gift cards",
+      "expectedItemIds": [
+        "svc-gift-cards"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-gift-cards-b",
+      "query": "what does the gift-cards service do",
+      "expectedItemIds": [
+        "svc-gift-cards"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-gift-cards-c",
+      "query": "gift-cards service responsibility",
+      "expectedItemIds": [
+        "svc-gift-cards"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-gift-cards-d",
+      "query": "the microservice that issues and redeems gift cards",
+      "expectedItemIds": [
+        "svc-gift-cards"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-pricing-engine-a",
+      "query": "which service applies promotions and dynamic pricing",
+      "expectedItemIds": [
+        "svc-pricing-engine"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-pricing-engine-b",
+      "query": "what does the pricing-engine service do",
+      "expectedItemIds": [
+        "svc-pricing-engine"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-pricing-engine-c",
+      "query": "pricing-engine service responsibility",
+      "expectedItemIds": [
+        "svc-pricing-engine"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-pricing-engine-d",
+      "query": "the microservice that applies promotions and dynamic pricing",
+      "expectedItemIds": [
+        "svc-pricing-engine"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-media-a",
+      "query": "which service stores and transforms product images",
+      "expectedItemIds": [
+        "svc-media"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-media-b",
+      "query": "what does the media service do",
+      "expectedItemIds": [
+        "svc-media"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-media-c",
+      "query": "media service responsibility",
+      "expectedItemIds": [
+        "svc-media"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-media-d",
+      "query": "the microservice that stores and transforms product images",
+      "expectedItemIds": [
+        "svc-media"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-content-a",
+      "query": "which service serves marketing pages and blog content",
+      "expectedItemIds": [
+        "svc-content"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-content-b",
+      "query": "what does the content service do",
+      "expectedItemIds": [
+        "svc-content"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-content-c",
+      "query": "content service responsibility",
+      "expectedItemIds": [
+        "svc-content"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-content-d",
+      "query": "the microservice that serves marketing pages and blog content",
+      "expectedItemIds": [
+        "svc-content"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-audit-log-a",
+      "query": "which service records an append-only audit trail of admin actions",
+      "expectedItemIds": [
+        "svc-audit-log"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-audit-log-b",
+      "query": "what does the audit-log service do",
+      "expectedItemIds": [
+        "svc-audit-log"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-audit-log-c",
+      "query": "audit-log service responsibility",
+      "expectedItemIds": [
+        "svc-audit-log"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-audit-log-d",
+      "query": "the microservice that records an append-only audit trail of admin actions",
+      "expectedItemIds": [
+        "svc-audit-log"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-webhooks-a",
+      "query": "which service delivers outbound webhooks to partners",
+      "expectedItemIds": [
+        "svc-webhooks"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-webhooks-b",
+      "query": "what does the webhooks service do",
+      "expectedItemIds": [
+        "svc-webhooks"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-webhooks-c",
+      "query": "webhooks service responsibility",
+      "expectedItemIds": [
+        "svc-webhooks"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-webhooks-d",
+      "query": "the microservice that delivers outbound webhooks to partners",
+      "expectedItemIds": [
+        "svc-webhooks"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-import-a",
+      "query": "which service ingests bulk catalog and inventory feeds",
+      "expectedItemIds": [
+        "svc-import"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-import-b",
+      "query": "what does the import service do",
+      "expectedItemIds": [
+        "svc-import"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-import-c",
+      "query": "import service responsibility",
+      "expectedItemIds": [
+        "svc-import"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-import-d",
+      "query": "the microservice that ingests bulk catalog and inventory feeds",
+      "expectedItemIds": [
+        "svc-import"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-export-a",
+      "query": "which service produces scheduled data exports for partners",
+      "expectedItemIds": [
+        "svc-export"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-export-b",
+      "query": "what does the export service do",
+      "expectedItemIds": [
+        "svc-export"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-export-c",
+      "query": "export service responsibility",
+      "expectedItemIds": [
+        "svc-export"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-export-d",
+      "query": "the microservice that produces scheduled data exports for partners",
+      "expectedItemIds": [
+        "svc-export"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-geocoding-a",
+      "query": "which service resolves addresses to coordinates",
+      "expectedItemIds": [
+        "svc-geocoding"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-geocoding-b",
+      "query": "what does the geocoding service do",
+      "expectedItemIds": [
+        "svc-geocoding"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-geocoding-c",
+      "query": "geocoding service responsibility",
+      "expectedItemIds": [
+        "svc-geocoding"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-geocoding-d",
+      "query": "the microservice that resolves addresses to coordinates",
+      "expectedItemIds": [
+        "svc-geocoding"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-fraud-a",
+      "query": "which service scores orders for fraud risk",
+      "expectedItemIds": [
+        "svc-fraud"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-fraud-b",
+      "query": "what does the fraud service do",
+      "expectedItemIds": [
+        "svc-fraud"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-fraud-c",
+      "query": "fraud service responsibility",
+      "expectedItemIds": [
+        "svc-fraud"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-fraud-d",
+      "query": "the microservice that scores orders for fraud risk",
+      "expectedItemIds": [
+        "svc-fraud"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-support-a",
+      "query": "which service stores customer support tickets",
+      "expectedItemIds": [
+        "svc-support"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-support-b",
+      "query": "what does the support service do",
+      "expectedItemIds": [
+        "svc-support"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-support-c",
+      "query": "support service responsibility",
+      "expectedItemIds": [
+        "svc-support"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-support-d",
+      "query": "the microservice that stores customer support tickets",
+      "expectedItemIds": [
+        "svc-support"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-analytics-collector-a",
+      "query": "which service ingests raw product analytics events",
+      "expectedItemIds": [
+        "svc-analytics-collector"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-analytics-collector-b",
+      "query": "what does the analytics-collector service do",
+      "expectedItemIds": [
+        "svc-analytics-collector"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-analytics-collector-c",
+      "query": "analytics-collector service responsibility",
+      "expectedItemIds": [
+        "svc-analytics-collector"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-analytics-collector-d",
+      "query": "the microservice that ingests raw product analytics events",
+      "expectedItemIds": [
+        "svc-analytics-collector"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-reporting-a",
+      "query": "which service builds scheduled business reports",
+      "expectedItemIds": [
+        "svc-reporting"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-reporting-b",
+      "query": "what does the reporting service do",
+      "expectedItemIds": [
+        "svc-reporting"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-reporting-c",
+      "query": "reporting service responsibility",
+      "expectedItemIds": [
+        "svc-reporting"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-reporting-d",
+      "query": "the microservice that builds scheduled business reports",
+      "expectedItemIds": [
+        "svc-reporting"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-scheduler-a",
+      "query": "which service runs cron-style scheduled jobs",
+      "expectedItemIds": [
+        "svc-scheduler"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-scheduler-b",
+      "query": "what does the scheduler service do",
+      "expectedItemIds": [
+        "svc-scheduler"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-scheduler-c",
+      "query": "scheduler service responsibility",
+      "expectedItemIds": [
+        "svc-scheduler"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-scheduler-d",
+      "query": "the microservice that runs cron-style scheduled jobs",
+      "expectedItemIds": [
+        "svc-scheduler"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-feature-service-a",
+      "query": "which service evaluates feature flags at request time",
+      "expectedItemIds": [
+        "svc-feature-service"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-feature-service-b",
+      "query": "what does the feature-service service do",
+      "expectedItemIds": [
+        "svc-feature-service"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-feature-service-c",
+      "query": "feature-service service responsibility",
+      "expectedItemIds": [
+        "svc-feature-service"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-feature-service-d",
+      "query": "the microservice that evaluates feature flags at request time",
+      "expectedItemIds": [
+        "svc-feature-service"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-config-service-a",
+      "query": "which service serves runtime configuration to services",
+      "expectedItemIds": [
+        "svc-config-service"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-config-service-b",
+      "query": "what does the config-service service do",
+      "expectedItemIds": [
+        "svc-config-service"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-config-service-c",
+      "query": "config-service service responsibility",
+      "expectedItemIds": [
+        "svc-config-service"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-config-service-d",
+      "query": "the microservice that serves runtime configuration to services",
+      "expectedItemIds": [
+        "svc-config-service"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-rate-gateway-a",
+      "query": "which service enforces per-tenant API rate limits at the edge",
+      "expectedItemIds": [
+        "svc-rate-gateway"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-rate-gateway-b",
+      "query": "what does the rate-gateway service do",
+      "expectedItemIds": [
+        "svc-rate-gateway"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-rate-gateway-c",
+      "query": "rate-gateway service responsibility",
+      "expectedItemIds": [
+        "svc-rate-gateway"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-rate-gateway-d",
+      "query": "the microservice that enforces per-tenant API rate limits at the edge",
+      "expectedItemIds": [
+        "svc-rate-gateway"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-image-cdn-a",
+      "query": "which service caches and resizes images at the edge",
+      "expectedItemIds": [
+        "svc-image-cdn"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-image-cdn-b",
+      "query": "what does the image-cdn service do",
+      "expectedItemIds": [
+        "svc-image-cdn"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-image-cdn-c",
+      "query": "image-cdn service responsibility",
+      "expectedItemIds": [
+        "svc-image-cdn"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-image-cdn-d",
+      "query": "the microservice that caches and resizes images at the edge",
+      "expectedItemIds": [
+        "svc-image-cdn"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-email-templates-a",
+      "query": "which service renders transactional email templates",
+      "expectedItemIds": [
+        "svc-email-templates"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-email-templates-b",
+      "query": "what does the email-templates service do",
+      "expectedItemIds": [
+        "svc-email-templates"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-email-templates-c",
+      "query": "email-templates service responsibility",
+      "expectedItemIds": [
+        "svc-email-templates"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "svc-email-templates-d",
+      "query": "the microservice that renders transactional email templates",
+      "expectedItemIds": [
+        "svc-email-templates"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-request-timeout-a",
+      "query": "http request timeout is 30 seconds",
+      "expectedItemIds": [
+        "cfg-request-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-request-timeout-b",
+      "query": "what is the timeout limit for request timeout",
+      "expectedItemIds": [
+        "cfg-request-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-request-timeout-c",
+      "query": "request timeout configured value",
+      "expectedItemIds": [
+        "cfg-request-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-upload-limit-a",
+      "query": "max upload size is 25 mb",
+      "expectedItemIds": [
+        "cfg-upload-limit"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-upload-limit-b",
+      "query": "what is the upload limit for upload limit",
+      "expectedItemIds": [
+        "cfg-upload-limit"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-upload-limit-c",
+      "query": "upload limit configured value",
+      "expectedItemIds": [
+        "cfg-upload-limit"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-password-min-a",
+      "query": "passwords must be at least 12 characters",
+      "expectedItemIds": [
+        "cfg-password-min"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-password-min-b",
+      "query": "what is the password limit for password min",
+      "expectedItemIds": [
+        "cfg-password-min"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-password-min-c",
+      "query": "password min configured value",
+      "expectedItemIds": [
+        "cfg-password-min"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-session-ttl-a",
+      "query": "login sessions expire after 14 days of inactivity",
+      "expectedItemIds": [
+        "cfg-session-ttl"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-session-ttl-b",
+      "query": "what is the session limit for session ttl",
+      "expectedItemIds": [
+        "cfg-session-ttl"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-session-ttl-c",
+      "query": "session ttl configured value",
+      "expectedItemIds": [
+        "cfg-session-ttl"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-jwt-ttl-a",
+      "query": "access tokens live for 15 minutes",
+      "expectedItemIds": [
+        "cfg-jwt-ttl"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-jwt-ttl-b",
+      "query": "what is the token limit for jwt ttl",
+      "expectedItemIds": [
+        "cfg-jwt-ttl"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-jwt-ttl-c",
+      "query": "jwt ttl configured value",
+      "expectedItemIds": [
+        "cfg-jwt-ttl"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-cors-origins-a",
+      "query": "cors allows only the app and partner origins",
+      "expectedItemIds": [
+        "cfg-cors-origins"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-cors-origins-b",
+      "query": "what is the cors limit for cors origins",
+      "expectedItemIds": [
+        "cfg-cors-origins"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-cors-origins-c",
+      "query": "cors origins configured value",
+      "expectedItemIds": [
+        "cfg-cors-origins"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-max-page-size-a",
+      "query": "list endpoints return at most 100 items per page",
+      "expectedItemIds": [
+        "cfg-max-page-size"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-max-page-size-b",
+      "query": "what is the pagination limit for max page size",
+      "expectedItemIds": [
+        "cfg-max-page-size"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-max-page-size-c",
+      "query": "max page size configured value",
+      "expectedItemIds": [
+        "cfg-max-page-size"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-retry-budget-a",
+      "query": "outbound calls retry at most 3 times with backoff",
+      "expectedItemIds": [
+        "cfg-retry-budget"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-retry-budget-b",
+      "query": "what is the retry limit for retry budget",
+      "expectedItemIds": [
+        "cfg-retry-budget"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-retry-budget-c",
+      "query": "retry budget configured value",
+      "expectedItemIds": [
+        "cfg-retry-budget"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-cache-ttl-a",
+      "query": "product cache entries expire after 5 minutes",
+      "expectedItemIds": [
+        "cfg-cache-ttl"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-cache-ttl-b",
+      "query": "what is the cache limit for cache ttl",
+      "expectedItemIds": [
+        "cfg-cache-ttl"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-cache-ttl-c",
+      "query": "cache ttl configured value",
+      "expectedItemIds": [
+        "cfg-cache-ttl"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-worker-timeout-a",
+      "query": "background jobs are killed after 10 minutes",
+      "expectedItemIds": [
+        "cfg-worker-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-worker-timeout-b",
+      "query": "what is the worker limit for worker timeout",
+      "expectedItemIds": [
+        "cfg-worker-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-worker-timeout-c",
+      "query": "worker timeout configured value",
+      "expectedItemIds": [
+        "cfg-worker-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-db-statement-timeout-a",
+      "query": "postgres statement timeout is 8 seconds",
+      "expectedItemIds": [
+        "cfg-db-statement-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-db-statement-timeout-b",
+      "query": "what is the database limit for db statement timeout",
+      "expectedItemIds": [
+        "cfg-db-statement-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-db-statement-timeout-c",
+      "query": "db statement timeout configured value",
+      "expectedItemIds": [
+        "cfg-db-statement-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-lock-timeout-a",
+      "query": "advisory lock wait is capped at 2 seconds",
+      "expectedItemIds": [
+        "cfg-lock-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-lock-timeout-b",
+      "query": "what is the lock limit for lock timeout",
+      "expectedItemIds": [
+        "cfg-lock-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-lock-timeout-c",
+      "query": "lock timeout configured value",
+      "expectedItemIds": [
+        "cfg-lock-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-image-max-dim-a",
+      "query": "uploaded images are downscaled to 4096 px max",
+      "expectedItemIds": [
+        "cfg-image-max-dim"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-image-max-dim-b",
+      "query": "what is the media limit for image max dim",
+      "expectedItemIds": [
+        "cfg-image-max-dim"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-image-max-dim-c",
+      "query": "image max dim configured value",
+      "expectedItemIds": [
+        "cfg-image-max-dim"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-bulk-batch-a",
+      "query": "bulk imports commit in batches of 500 rows",
+      "expectedItemIds": [
+        "cfg-bulk-batch"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-bulk-batch-b",
+      "query": "what is the import limit for bulk batch",
+      "expectedItemIds": [
+        "cfg-bulk-batch"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-bulk-batch-c",
+      "query": "bulk batch configured value",
+      "expectedItemIds": [
+        "cfg-bulk-batch"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-webhook-timeout-a",
+      "query": "webhook deliveries time out after 5 seconds",
+      "expectedItemIds": [
+        "cfg-webhook-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-webhook-timeout-b",
+      "query": "what is the webhook limit for webhook timeout",
+      "expectedItemIds": [
+        "cfg-webhook-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-webhook-timeout-c",
+      "query": "webhook timeout configured value",
+      "expectedItemIds": [
+        "cfg-webhook-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-login-throttle-a",
+      "query": "failed logins are throttled after 5 attempts",
+      "expectedItemIds": [
+        "cfg-login-throttle"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-login-throttle-b",
+      "query": "what is the security limit for login throttle",
+      "expectedItemIds": [
+        "cfg-login-throttle"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-login-throttle-c",
+      "query": "login throttle configured value",
+      "expectedItemIds": [
+        "cfg-login-throttle"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-export-retention-a",
+      "query": "generated exports are deleted after 7 days",
+      "expectedItemIds": [
+        "cfg-export-retention"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-export-retention-b",
+      "query": "what is the retention limit for export retention",
+      "expectedItemIds": [
+        "cfg-export-retention"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-export-retention-c",
+      "query": "export retention configured value",
+      "expectedItemIds": [
+        "cfg-export-retention"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-trace-sample-a",
+      "query": "tracing samples 10 percent of requests",
+      "expectedItemIds": [
+        "cfg-trace-sample"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-trace-sample-b",
+      "query": "what is the tracing limit for trace sample",
+      "expectedItemIds": [
+        "cfg-trace-sample"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-trace-sample-c",
+      "query": "trace sample configured value",
+      "expectedItemIds": [
+        "cfg-trace-sample"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-log-level-a",
+      "query": "production log level is info",
+      "expectedItemIds": [
+        "cfg-log-level"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-log-level-b",
+      "query": "what is the logging limit for log level",
+      "expectedItemIds": [
+        "cfg-log-level"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-log-level-c",
+      "query": "log level configured value",
+      "expectedItemIds": [
+        "cfg-log-level"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-idle-conn-a",
+      "query": "idle database connections close after 30 seconds",
+      "expectedItemIds": [
+        "cfg-idle-conn"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-idle-conn-b",
+      "query": "what is the database limit for idle conn",
+      "expectedItemIds": [
+        "cfg-idle-conn"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-idle-conn-c",
+      "query": "idle conn configured value",
+      "expectedItemIds": [
+        "cfg-idle-conn"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-max-cart-items-a",
+      "query": "a cart holds at most 200 line items",
+      "expectedItemIds": [
+        "cfg-max-cart-items"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-max-cart-items-b",
+      "query": "what is the cart limit for max cart items",
+      "expectedItemIds": [
+        "cfg-max-cart-items"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-max-cart-items-c",
+      "query": "max cart items configured value",
+      "expectedItemIds": [
+        "cfg-max-cart-items"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-coupon-stack-a",
+      "query": "at most one coupon may apply per order",
+      "expectedItemIds": [
+        "cfg-coupon-stack"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-coupon-stack-b",
+      "query": "what is the promotion limit for coupon stack",
+      "expectedItemIds": [
+        "cfg-coupon-stack"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-coupon-stack-c",
+      "query": "coupon stack configured value",
+      "expectedItemIds": [
+        "cfg-coupon-stack"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-refund-window-a",
+      "query": "refunds are allowed within 30 days of purchase",
+      "expectedItemIds": [
+        "cfg-refund-window"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-refund-window-b",
+      "query": "what is the refund limit for refund window",
+      "expectedItemIds": [
+        "cfg-refund-window"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-refund-window-c",
+      "query": "refund window configured value",
+      "expectedItemIds": [
+        "cfg-refund-window"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-api-key-scopes-a",
+      "query": "api keys carry explicit read or write scopes",
+      "expectedItemIds": [
+        "cfg-api-key-scopes"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-api-key-scopes-b",
+      "query": "what is the api limit for api key scopes",
+      "expectedItemIds": [
+        "cfg-api-key-scopes"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cfg-api-key-scopes-c",
+      "query": "api key scopes configured value",
+      "expectedItemIds": [
+        "cfg-api-key-scopes"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-order_placed-a",
+      "query": "which event is emitted when a customer completes checkout",
+      "expectedItemIds": [
+        "evt-order_placed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-order_placed-b",
+      "query": "event emitted for order placed",
+      "expectedItemIds": [
+        "evt-order_placed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-order_placed-c",
+      "query": "order placed event schema",
+      "expectedItemIds": [
+        "evt-order_placed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-order_shipped-a",
+      "query": "which event is emitted when an order leaves the warehouse",
+      "expectedItemIds": [
+        "evt-order_shipped"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-order_shipped-b",
+      "query": "event emitted for order shipped",
+      "expectedItemIds": [
+        "evt-order_shipped"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-order_shipped-c",
+      "query": "order shipped event schema",
+      "expectedItemIds": [
+        "evt-order_shipped"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-order_refunded-a",
+      "query": "which event is emitted when a refund is issued",
+      "expectedItemIds": [
+        "evt-order_refunded"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-order_refunded-b",
+      "query": "event emitted for order refunded",
+      "expectedItemIds": [
+        "evt-order_refunded"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-order_refunded-c",
+      "query": "order refunded event schema",
+      "expectedItemIds": [
+        "evt-order_refunded"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-cart_abandoned-a",
+      "query": "which event is emitted when a cart is idle for an hour",
+      "expectedItemIds": [
+        "evt-cart_abandoned"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-cart_abandoned-b",
+      "query": "event emitted for cart abandoned",
+      "expectedItemIds": [
+        "evt-cart_abandoned"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-cart_abandoned-c",
+      "query": "cart abandoned event schema",
+      "expectedItemIds": [
+        "evt-cart_abandoned"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-user_signed_up-a",
+      "query": "which event is emitted on account creation",
+      "expectedItemIds": [
+        "evt-user_signed_up"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-user_signed_up-b",
+      "query": "event emitted for user signed up",
+      "expectedItemIds": [
+        "evt-user_signed_up"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-user_signed_up-c",
+      "query": "user signed up event schema",
+      "expectedItemIds": [
+        "evt-user_signed_up"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-user_logged_in-a",
+      "query": "which event is emitted on a successful login",
+      "expectedItemIds": [
+        "evt-user_logged_in"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-user_logged_in-b",
+      "query": "event emitted for user logged in",
+      "expectedItemIds": [
+        "evt-user_logged_in"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-user_logged_in-c",
+      "query": "user logged in event schema",
+      "expectedItemIds": [
+        "evt-user_logged_in"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-subscription_started-a",
+      "query": "which event is emitted when a subscription begins",
+      "expectedItemIds": [
+        "evt-subscription_started"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-subscription_started-b",
+      "query": "event emitted for subscription started",
+      "expectedItemIds": [
+        "evt-subscription_started"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-subscription_started-c",
+      "query": "subscription started event schema",
+      "expectedItemIds": [
+        "evt-subscription_started"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-subscription_cancelled-a",
+      "query": "which event is emitted when a subscription is cancelled",
+      "expectedItemIds": [
+        "evt-subscription_cancelled"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-subscription_cancelled-b",
+      "query": "event emitted for subscription cancelled",
+      "expectedItemIds": [
+        "evt-subscription_cancelled"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-subscription_cancelled-c",
+      "query": "subscription cancelled event schema",
+      "expectedItemIds": [
+        "evt-subscription_cancelled"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-payment_failed-a",
+      "query": "which event is emitted when a charge is declined",
+      "expectedItemIds": [
+        "evt-payment_failed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-payment_failed-b",
+      "query": "event emitted for payment failed",
+      "expectedItemIds": [
+        "evt-payment_failed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-payment_failed-c",
+      "query": "payment failed event schema",
+      "expectedItemIds": [
+        "evt-payment_failed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-review_posted-a",
+      "query": "which event is emitted when a review passes moderation",
+      "expectedItemIds": [
+        "evt-review_posted"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-review_posted-b",
+      "query": "event emitted for review posted",
+      "expectedItemIds": [
+        "evt-review_posted"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-review_posted-c",
+      "query": "review posted event schema",
+      "expectedItemIds": [
+        "evt-review_posted"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-product_viewed-a",
+      "query": "which event is emitted when a product page is viewed",
+      "expectedItemIds": [
+        "evt-product_viewed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-product_viewed-b",
+      "query": "event emitted for product viewed",
+      "expectedItemIds": [
+        "evt-product_viewed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-product_viewed-c",
+      "query": "product viewed event schema",
+      "expectedItemIds": [
+        "evt-product_viewed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-search_performed-a",
+      "query": "which event is emitted when a search query runs",
+      "expectedItemIds": [
+        "evt-search_performed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-search_performed-b",
+      "query": "event emitted for search performed",
+      "expectedItemIds": [
+        "evt-search_performed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-search_performed-c",
+      "query": "search performed event schema",
+      "expectedItemIds": [
+        "evt-search_performed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-inventory_low-a",
+      "query": "which event is emitted when stock crosses the reorder point",
+      "expectedItemIds": [
+        "evt-inventory_low"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-inventory_low-b",
+      "query": "event emitted for inventory low",
+      "expectedItemIds": [
+        "evt-inventory_low"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-inventory_low-c",
+      "query": "inventory low event schema",
+      "expectedItemIds": [
+        "evt-inventory_low"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-price_changed-a",
+      "query": "which event is emitted when a product price updates",
+      "expectedItemIds": [
+        "evt-price_changed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-price_changed-b",
+      "query": "event emitted for price changed",
+      "expectedItemIds": [
+        "evt-price_changed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-price_changed-c",
+      "query": "price changed event schema",
+      "expectedItemIds": [
+        "evt-price_changed"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-ticket_opened-a",
+      "query": "which event is emitted when a support ticket is created",
+      "expectedItemIds": [
+        "evt-ticket_opened"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-ticket_opened-b",
+      "query": "event emitted for ticket opened",
+      "expectedItemIds": [
+        "evt-ticket_opened"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-ticket_opened-c",
+      "query": "ticket opened event schema",
+      "expectedItemIds": [
+        "evt-ticket_opened"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-export_ready-a",
+      "query": "which event is emitted when a data export finishes",
+      "expectedItemIds": [
+        "evt-export_ready"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-export_ready-b",
+      "query": "event emitted for export ready",
+      "expectedItemIds": [
+        "evt-export_ready"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-export_ready-c",
+      "query": "export ready event schema",
+      "expectedItemIds": [
+        "evt-export_ready"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-flag_toggled-a",
+      "query": "which event is emitted when a feature flag changes",
+      "expectedItemIds": [
+        "evt-flag_toggled"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-flag_toggled-b",
+      "query": "event emitted for flag toggled",
+      "expectedItemIds": [
+        "evt-flag_toggled"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-flag_toggled-c",
+      "query": "flag toggled event schema",
+      "expectedItemIds": [
+        "evt-flag_toggled"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-webhook_delivered-a",
+      "query": "which event is emitted when an outbound webhook succeeds",
+      "expectedItemIds": [
+        "evt-webhook_delivered"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-webhook_delivered-b",
+      "query": "event emitted for webhook delivered",
+      "expectedItemIds": [
+        "evt-webhook_delivered"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-webhook_delivered-c",
+      "query": "webhook delivered event schema",
+      "expectedItemIds": [
+        "evt-webhook_delivered"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-fraud_flagged-a",
+      "query": "which event is emitted when an order is flagged for fraud review",
+      "expectedItemIds": [
+        "evt-fraud_flagged"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-fraud_flagged-b",
+      "query": "event emitted for fraud flagged",
+      "expectedItemIds": [
+        "evt-fraud_flagged"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-fraud_flagged-c",
+      "query": "fraud flagged event schema",
+      "expectedItemIds": [
+        "evt-fraud_flagged"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-loyalty_earned-a",
+      "query": "which event is emitted when loyalty points are awarded",
+      "expectedItemIds": [
+        "evt-loyalty_earned"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-loyalty_earned-b",
+      "query": "event emitted for loyalty earned",
+      "expectedItemIds": [
+        "evt-loyalty_earned"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "evt-loyalty_earned-c",
+      "query": "loyalty earned event schema",
+      "expectedItemIds": [
+        "evt-loyalty_earned"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-checkout-timeout-a",
+      "query": "a slow tax lookup caused checkout timeouts under load; the tax call is now cached",
+      "expectedItemIds": [
+        "inc-checkout-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-checkout-timeout-b",
+      "query": "what happened with the checkout timeout incident",
+      "expectedItemIds": [
+        "inc-checkout-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-duplicate-charge-a",
+      "query": "a webhook replay double-charged customers; handlers are now idempotent by event id",
+      "expectedItemIds": [
+        "inc-duplicate-charge"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-duplicate-charge-b",
+      "query": "what happened with the duplicate charge incident",
+      "expectedItemIds": [
+        "inc-duplicate-charge"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-index-missing-a",
+      "query": "a missing index made the orders report time out; a composite index fixed it",
+      "expectedItemIds": [
+        "inc-index-missing"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-index-missing-b",
+      "query": "what happened with the index missing incident",
+      "expectedItemIds": [
+        "inc-index-missing"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-cache-stampede-a",
+      "query": "a cache expiry stampede overloaded Postgres; a request coalescing lock was added",
+      "expectedItemIds": [
+        "inc-cache-stampede"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-cache-stampede-b",
+      "query": "what happened with the cache stampede incident",
+      "expectedItemIds": [
+        "inc-cache-stampede"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-clock-skew-a",
+      "query": "JWT validation failed intermittently due to node clock skew; NTP is now enforced",
+      "expectedItemIds": [
+        "inc-clock-skew"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-clock-skew-b",
+      "query": "what happened with the clock skew incident",
+      "expectedItemIds": [
+        "inc-clock-skew"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-leaked-key-a",
+      "query": "an API key was committed to git and rotated; secret scanning now blocks pushes",
+      "expectedItemIds": [
+        "inc-leaked-key"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-leaked-key-b",
+      "query": "what happened with the leaked key incident",
+      "expectedItemIds": [
+        "inc-leaked-key"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-queue-poison-a",
+      "query": "a poison message stalled the worker queue; a dead-letter queue was added",
+      "expectedItemIds": [
+        "inc-queue-poison"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-queue-poison-b",
+      "query": "what happened with the queue poison incident",
+      "expectedItemIds": [
+        "inc-queue-poison"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-n-plus-one-cart-a",
+      "query": "the cart page issued a query per item; it now batches with a dataloader",
+      "expectedItemIds": [
+        "inc-n-plus-one-cart"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-n-plus-one-cart-b",
+      "query": "what happened with the n plus one cart incident",
+      "expectedItemIds": [
+        "inc-n-plus-one-cart"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-oom-import-a",
+      "query": "a bulk import ran out of memory; imports now stream in batches",
+      "expectedItemIds": [
+        "inc-oom-import"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-oom-import-b",
+      "query": "what happened with the oom import incident",
+      "expectedItemIds": [
+        "inc-oom-import"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-deadlock-migration-a",
+      "query": "two migrations deadlocked in CI; migrations now run serially",
+      "expectedItemIds": [
+        "inc-deadlock-migration"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-deadlock-migration-b",
+      "query": "what happened with the deadlock migration incident",
+      "expectedItemIds": [
+        "inc-deadlock-migration"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-cors-block-a",
+      "query": "a CORS misconfiguration blocked the partner portal; origins are now explicit",
+      "expectedItemIds": [
+        "inc-cors-block"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-cors-block-b",
+      "query": "what happened with the cors block incident",
+      "expectedItemIds": [
+        "inc-cors-block"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-timezone-bug-a",
+      "query": "reports were off by a day due to local-time math; all math is now UTC",
+      "expectedItemIds": [
+        "inc-timezone-bug"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-timezone-bug-b",
+      "query": "what happened with the timezone bug incident",
+      "expectedItemIds": [
+        "inc-timezone-bug"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-retry-storm-a",
+      "query": "aggressive retries caused a retry storm; a retry budget with backoff was added",
+      "expectedItemIds": [
+        "inc-retry-storm"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-retry-storm-b",
+      "query": "what happened with the retry storm incident",
+      "expectedItemIds": [
+        "inc-retry-storm"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-stale-cache-price-a",
+      "query": "a stale price cache showed wrong prices; cache is now invalidated on price change",
+      "expectedItemIds": [
+        "inc-stale-cache-price"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-stale-cache-price-b",
+      "query": "what happened with the stale cache price incident",
+      "expectedItemIds": [
+        "inc-stale-cache-price"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-unbounded-export-a",
+      "query": "an unbounded export filled the disk; exports now paginate and expire",
+      "expectedItemIds": [
+        "inc-unbounded-export"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-unbounded-export-b",
+      "query": "what happened with the unbounded export incident",
+      "expectedItemIds": [
+        "inc-unbounded-export"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-session-fixation-a",
+      "query": "a session fixation risk was found; session ids rotate on login",
+      "expectedItemIds": [
+        "inc-session-fixation"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-session-fixation-b",
+      "query": "what happened with the session fixation incident",
+      "expectedItemIds": [
+        "inc-session-fixation"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-thundering-deploy-a",
+      "query": "an in-place restart dropped requests; deploys moved to blue-green",
+      "expectedItemIds": [
+        "inc-thundering-deploy"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-thundering-deploy-b",
+      "query": "what happened with the thundering deploy incident",
+      "expectedItemIds": [
+        "inc-thundering-deploy"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-pii-in-logs-a",
+      "query": "PII leaked into logs; a redaction middleware now strips sensitive keys",
+      "expectedItemIds": [
+        "inc-pii-in-logs"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-pii-in-logs-b",
+      "query": "what happened with the pii in logs incident",
+      "expectedItemIds": [
+        "inc-pii-in-logs"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-hot-partition-a",
+      "query": "a hot Kafka-style partition lagged; keys were rebalanced",
+      "expectedItemIds": [
+        "inc-hot-partition"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-hot-partition-b",
+      "query": "what happened with the hot partition incident",
+      "expectedItemIds": [
+        "inc-hot-partition"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-flag-default-on-a",
+      "query": "a feature flag defaulted on in prod; flags now fail closed to off",
+      "expectedItemIds": [
+        "inc-flag-default-on"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-flag-default-on-b",
+      "query": "what happened with the flag default on incident",
+      "expectedItemIds": [
+        "inc-flag-default-on"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-double-refund-a",
+      "query": "a race allowed double refunds; refunds are now guarded by a unique key",
+      "expectedItemIds": [
+        "inc-double-refund"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-double-refund-b",
+      "query": "what happened with the double refund incident",
+      "expectedItemIds": [
+        "inc-double-refund"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-slow-regex-a",
+      "query": "a catastrophic regex hung a request thread; the pattern was bounded",
+      "expectedItemIds": [
+        "inc-slow-regex"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-slow-regex-b",
+      "query": "what happened with the slow regex incident",
+      "expectedItemIds": [
+        "inc-slow-regex"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-missing-backpressure-a",
+      "query": "the collector dropped events under spikes; backpressure was added",
+      "expectedItemIds": [
+        "inc-missing-backpressure"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-missing-backpressure-b",
+      "query": "what happened with the missing backpressure incident",
+      "expectedItemIds": [
+        "inc-missing-backpressure"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-orphaned-media-a",
+      "query": "deleted products left orphaned images; a cleanup job now reclaims them",
+      "expectedItemIds": [
+        "inc-orphaned-media"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-orphaned-media-b",
+      "query": "what happened with the orphaned media incident",
+      "expectedItemIds": [
+        "inc-orphaned-media"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-token-in-url-a",
+      "query": "a reset token appeared in a URL and got logged; tokens moved to the body",
+      "expectedItemIds": [
+        "inc-token-in-url"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "inc-token-in-url-b",
+      "query": "what happened with the token in url incident",
+      "expectedItemIds": [
+        "inc-token-in-url"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-0",
+      "query": "the relational database of record",
+      "expectedItemIds": [
+        "db-postgres"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-1",
+      "query": "schema change concurrency rule",
+      "expectedItemIds": [
+        "db-migrations"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-2",
+      "query": "access token lifetime and rotation",
+      "expectedItemIds": [
+        "auth-jwt"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-3",
+      "query": "third party identity providers",
+      "expectedItemIds": [
+        "auth-oauth"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-4",
+      "query": "file that creates and verifies tokens",
+      "expectedItemIds": [
+        "auth-token-file"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-5",
+      "query": "who processes our card payments",
+      "expectedItemIds": [
+        "billing-stripe"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-6",
+      "query": "handle repeated billing events safely",
+      "expectedItemIds": [
+        "billing-webhook-idempotency"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-7",
+      "query": "engine behind catalog search",
+      "expectedItemIds": [
+        "search-opensearch"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-8",
+      "query": "ephemeral hot data store",
+      "expectedItemIds": [
+        "cache-redis"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-9",
+      "query": "how are background tasks queued",
+      "expectedItemIds": [
+        "queue-sqs"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-10",
+      "query": "shape of the public http api",
+      "expectedItemIds": [
+        "api-rest"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-11",
+      "query": "per key throughput cap",
+      "expectedItemIds": [
+        "api-ratelimit"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-12",
+      "query": "client rendering technology",
+      "expectedItemIds": [
+        "fe-react"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-13",
+      "query": "where server data is cached on the client",
+      "expectedItemIds": [
+        "fe-state"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-14",
+      "query": "where do containers run",
+      "expectedItemIds": [
+        "infra-k8s"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-15",
+      "query": "declarative infrastructure definitions",
+      "expectedItemIds": [
+        "infra-terraform"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-16",
+      "query": "how traces are collected",
+      "expectedItemIds": [
+        "obs-otel"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-17",
+      "query": "log format and privacy policy",
+      "expectedItemIds": [
+        "obs-logs"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-18",
+      "query": "the test runner we use",
+      "expectedItemIds": [
+        "test-vitest"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-19",
+      "query": "browser automation for tests",
+      "expectedItemIds": [
+        "test-playwright"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-20",
+      "query": "vault for credentials",
+      "expectedItemIds": [
+        "sec-secrets"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-21",
+      "query": "how permissions are modeled",
+      "expectedItemIds": [
+        "sec-rbac"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-22",
+      "query": "protecting personal data on disk",
+      "expectedItemIds": [
+        "sec-encrypt"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-23",
+      "query": "analytics query store",
+      "expectedItemIds": [
+        "data-warehouse"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-24",
+      "query": "streaming row changes downstream",
+      "expectedItemIds": [
+        "data-cdc"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-25",
+      "query": "query fan out on the orders route",
+      "expectedItemIds": [
+        "perf-nplusone"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-26",
+      "query": "index for tenant scoped listings",
+      "expectedItemIds": [
+        "perf-index"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-27",
+      "query": "availability objective",
+      "expectedItemIds": [
+        "goal-uptime"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-28",
+      "query": "residency rule for european data",
+      "expectedItemIds": [
+        "constraint-region"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-29",
+      "query": "canonical timezone for storage",
+      "expectedItemIds": [
+        "fact-tz"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-30",
+      "query": "identifier scheme for new rows",
+      "expectedItemIds": [
+        "fact-uuid"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-31",
+      "query": "reversible deletion mechanism",
+      "expectedItemIds": [
+        "fact-softdelete"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-32",
+      "query": "controlled feature rollout tool",
+      "expectedItemIds": [
+        "fact-featureflags"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-33",
+      "query": "transactional mail sender",
+      "expectedItemIds": [
+        "fact-email"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-34",
+      "query": "edge delivery for static files",
+      "expectedItemIds": [
+        "fact-cdn"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-35",
+      "query": "single versus many repositories",
+      "expectedItemIds": [
+        "why-monorepo"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-36",
+      "query": "safe production rollout technique",
+      "expectedItemIds": [
+        "deploy-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-37",
+      "query": "steps to ship a release",
+      "expectedItemIds": [
+        "skill-release"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-38",
+      "query": "how large lists are paged",
+      "expectedItemIds": [
+        "api-pagination"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-39",
+      "query": "ceiling on database connections",
+      "expectedItemIds": [
+        "db-pool"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-40",
+      "query": "standard error payload shape",
+      "expectedItemIds": [
+        "api-error-format"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-41",
+      "query": "how long raw logs persist",
+      "expectedItemIds": [
+        "data-retention"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-42",
+      "query": "accessibility conformance target",
+      "expectedItemIds": [
+        "fe-a11y"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "x-43",
+      "query": "access control role hierarchy",
+      "expectedItemIds": [
+        "sec-rbac"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    }
+  ]
+}

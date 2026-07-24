@@ -1,0 +1,27 @@
+<svg width="760" height="212" viewBox="0 0 760 212" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Always-on guidance footprint: 424 tokens, 1695 characters, 11 lines per prompt, zero database reads">
+  <rect x="1" y="1" width="758" height="210" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
+
+  <text x="28" y="42" font-size="21" font-weight="700" fill="#ffffff">Always-on guidance footprint</text>
+  <text x="28" y="66" font-size="14" fill="#898781">fixed UserPromptSubmit card — no prompt read, no database open, no capture</text>
+
+  <g>
+    <rect x="28" y="88" width="164" height="96" rx="12" fill="#0f141c" stroke="#242b36"/>
+    <rect x="208" y="88" width="164" height="96" rx="12" fill="#0f141c" stroke="#242b36"/>
+    <rect x="388" y="88" width="164" height="96" rx="12" fill="#0f141c" stroke="#242b36"/>
+    <rect x="568" y="88" width="164" height="96" rx="12" fill="#0f141c" stroke="#242b36"/>
+  </g>
+
+  <g text-anchor="middle">
+    <text x="110" y="142" font-size="38" font-weight="800" fill="#3987e5">424</text>
+    <text x="110" y="167" font-size="13" font-weight="600" fill="#c3c2b7">tokens / prompt</text>
+
+    <text x="290" y="142" font-size="38" font-weight="800" fill="#3987e5">1695</text>
+    <text x="290" y="167" font-size="13" font-weight="600" fill="#c3c2b7">characters</text>
+
+    <text x="470" y="142" font-size="38" font-weight="800" fill="#3987e5">11</text>
+    <text x="470" y="167" font-size="13" font-weight="600" fill="#c3c2b7">lines</text>
+
+    <text x="650" y="142" font-size="38" font-weight="800" fill="#0ca30c">0</text>
+    <text x="650" y="167" font-size="13" font-weight="600" fill="#c3c2b7">DB reads / capture</text>
+  </g>
+</svg>

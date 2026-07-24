@@ -1,0 +1,1178 @@
+{
+  "version": 1,
+  "description": "Knowl governance eval: current-truth resolution, stale suppression, and rejected-decision exclusion after project evolution.",
+  "fixtures": [
+    {
+      "id": "db-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "PostgreSQL is the primary database",
+      "content": "PostgreSQL 16 is the current transactional datastore.",
+      "reasoning": "Strong relational guarantees and multi-row transactions.",
+      "tags": [
+        "db",
+        "database",
+        "current"
+      ]
+    },
+    {
+      "id": "db-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "MySQL legacy database",
+      "content": "MySQL 5.7 was the original datastore, since migrated to Postgres.",
+      "tags": [
+        "db",
+        "database",
+        "legacy"
+      ]
+    },
+    {
+      "id": "db-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "MongoDB primary database",
+      "content": "MongoDB was rejected as the primary datastore.",
+      "tags": [
+        "db",
+        "database",
+        "rejected"
+      ]
+    },
+    {
+      "id": "deploy-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "Blue-green deploys",
+      "content": "Production uses blue-green deploys with health checks.",
+      "reasoning": "Zero-downtime cutover with instant rollback.",
+      "tags": [
+        "deploy",
+        "deploy strategy",
+        "current"
+      ]
+    },
+    {
+      "id": "deploy-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Rolling restart deploys",
+      "content": "Deploys used in-place rolling restarts, now replaced.",
+      "tags": [
+        "deploy",
+        "deploy strategy",
+        "legacy"
+      ]
+    },
+    {
+      "id": "state-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "React Query for server state",
+      "content": "Server state is managed with React Query.",
+      "reasoning": "Server cache semantics fit better than a global store.",
+      "tags": [
+        "state",
+        "client state management",
+        "current"
+      ]
+    },
+    {
+      "id": "state-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Redux global store",
+      "content": "The app used a Redux global store, now removed.",
+      "tags": [
+        "state",
+        "client state management",
+        "legacy"
+      ]
+    },
+    {
+      "id": "queue-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "SQS for background jobs",
+      "content": "Background jobs run on Amazon SQS with a DLQ.",
+      "reasoning": "Operationally cheap and enough for our throughput.",
+      "tags": [
+        "queue",
+        "job queue",
+        "current"
+      ]
+    },
+    {
+      "id": "queue-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "RabbitMQ for jobs",
+      "content": "RabbitMQ was the earlier broker, since retired.",
+      "tags": [
+        "queue",
+        "job queue",
+        "legacy"
+      ]
+    },
+    {
+      "id": "queue-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "Kafka for jobs",
+      "content": "Kafka was rejected for simple background jobs.",
+      "tags": [
+        "queue",
+        "job queue",
+        "rejected"
+      ]
+    },
+    {
+      "id": "auth-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "JWT access tokens",
+      "content": "Auth uses short-lived JWT access tokens with refresh rotation.",
+      "reasoning": "Stateless bearer tokens suit mobile clients.",
+      "tags": [
+        "auth",
+        "authentication",
+        "current"
+      ]
+    },
+    {
+      "id": "auth-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "API key auth",
+      "content": "Static API keys were the original scheme, since replaced.",
+      "tags": [
+        "auth",
+        "authentication",
+        "legacy"
+      ]
+    },
+    {
+      "id": "auth-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "Server session cookies",
+      "content": "Server-side session cookies were rejected for the API.",
+      "tags": [
+        "auth",
+        "authentication",
+        "rejected"
+      ]
+    },
+    {
+      "id": "search-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "OpenSearch for search",
+      "content": "Full-text search runs on OpenSearch.",
+      "reasoning": "Open license and managed offering.",
+      "tags": [
+        "search",
+        "search engine",
+        "current"
+      ]
+    },
+    {
+      "id": "search-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Elasticsearch for search",
+      "content": "Elasticsearch was used before the OpenSearch fork migration.",
+      "tags": [
+        "search",
+        "search engine",
+        "legacy"
+      ]
+    },
+    {
+      "id": "pay-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "Stripe for payments",
+      "content": "Stripe handles subscriptions and payments.",
+      "reasoning": "One integration covers subscriptions and tax.",
+      "tags": [
+        "pay",
+        "payment provider",
+        "current"
+      ]
+    },
+    {
+      "id": "pay-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Braintree for payments",
+      "content": "Braintree was the earlier processor, since replaced.",
+      "tags": [
+        "pay",
+        "payment provider",
+        "legacy"
+      ]
+    },
+    {
+      "id": "pay-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "PayPal for payments",
+      "content": "PayPal was rejected as the billing provider.",
+      "tags": [
+        "pay",
+        "payment provider",
+        "rejected"
+      ]
+    },
+    {
+      "id": "ci-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "GitHub Actions for CI",
+      "content": "CI runs on GitHub Actions.",
+      "reasoning": "Native to the repo host, less to operate.",
+      "tags": [
+        "ci",
+        "ci system",
+        "current"
+      ]
+    },
+    {
+      "id": "ci-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Jenkins for CI",
+      "content": "Jenkins was the previous CI server, decommissioned.",
+      "tags": [
+        "ci",
+        "ci system",
+        "legacy"
+      ]
+    },
+    {
+      "id": "container-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "Kubernetes on EKS",
+      "content": "Services run on Kubernetes (EKS).",
+      "reasoning": "Ecosystem and managed control plane.",
+      "tags": [
+        "container",
+        "orchestrator",
+        "current"
+      ]
+    },
+    {
+      "id": "container-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Docker Swarm",
+      "content": "Docker Swarm was the early orchestrator, since migrated.",
+      "tags": [
+        "container",
+        "orchestrator",
+        "legacy"
+      ]
+    },
+    {
+      "id": "container-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "Nomad",
+      "content": "HashiCorp Nomad was rejected as the orchestrator.",
+      "tags": [
+        "container",
+        "orchestrator",
+        "rejected"
+      ]
+    },
+    {
+      "id": "cache-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "Redis cache",
+      "content": "Redis is the caching and rate-limit store.",
+      "reasoning": "Richer data types and persistence options.",
+      "tags": [
+        "cache",
+        "cache",
+        "current"
+      ]
+    },
+    {
+      "id": "cache-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Memcached cache",
+      "content": "Memcached was the earlier cache, since replaced.",
+      "tags": [
+        "cache",
+        "cache",
+        "legacy"
+      ]
+    },
+    {
+      "id": "api-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "REST with versioning",
+      "content": "The public API is REST with URL versioning.",
+      "reasoning": "Simpler for partners to consume and cache.",
+      "tags": [
+        "api",
+        "api style",
+        "current"
+      ]
+    },
+    {
+      "id": "api-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "SOAP API",
+      "content": "A SOAP API served the first partners, long retired.",
+      "tags": [
+        "api",
+        "api style",
+        "legacy"
+      ]
+    },
+    {
+      "id": "api-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "GraphQL public API",
+      "content": "A GraphQL public API was rejected.",
+      "tags": [
+        "api",
+        "api style",
+        "rejected"
+      ]
+    },
+    {
+      "id": "iac-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "Terraform for IaC",
+      "content": "Infrastructure is defined in Terraform.",
+      "reasoning": "Multi-cloud and a large module ecosystem.",
+      "tags": [
+        "iac",
+        "infrastructure as code",
+        "current"
+      ]
+    },
+    {
+      "id": "iac-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "CloudFormation for IaC",
+      "content": "CloudFormation was used first, since migrated.",
+      "tags": [
+        "iac",
+        "infrastructure as code",
+        "legacy"
+      ]
+    },
+    {
+      "id": "pm-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "pnpm package manager",
+      "content": "The repo uses pnpm workspaces.",
+      "reasoning": "Fast installs and strict, disk-efficient linking.",
+      "tags": [
+        "pm",
+        "package manager",
+        "current"
+      ]
+    },
+    {
+      "id": "pm-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "npm package manager",
+      "content": "npm was the original tool, since replaced.",
+      "tags": [
+        "pm",
+        "package manager",
+        "legacy"
+      ]
+    },
+    {
+      "id": "pm-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "yarn package manager",
+      "content": "yarn classic was rejected.",
+      "tags": [
+        "pm",
+        "package manager",
+        "rejected"
+      ]
+    },
+    {
+      "id": "orm-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "Drizzle ORM",
+      "content": "Data access uses Drizzle ORM.",
+      "reasoning": "Type-safe SQL with light runtime.",
+      "tags": [
+        "orm",
+        "orm",
+        "current"
+      ]
+    },
+    {
+      "id": "orm-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "TypeORM",
+      "content": "TypeORM was used early, since migrated.",
+      "tags": [
+        "orm",
+        "orm",
+        "legacy"
+      ]
+    },
+    {
+      "id": "orm-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "Sequelize",
+      "content": "Sequelize was rejected.",
+      "tags": [
+        "orm",
+        "orm",
+        "rejected"
+      ]
+    },
+    {
+      "id": "email-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "Postmark for email",
+      "content": "Transactional email is sent via Postmark.",
+      "reasoning": "Best transactional deliverability.",
+      "tags": [
+        "email",
+        "transactional email",
+        "current"
+      ]
+    },
+    {
+      "id": "email-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Mailgun for email",
+      "content": "Mailgun was the earlier sender, since replaced.",
+      "tags": [
+        "email",
+        "transactional email",
+        "legacy"
+      ]
+    },
+    {
+      "id": "email-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "SES for email",
+      "content": "Amazon SES was rejected for transactional mail.",
+      "tags": [
+        "email",
+        "transactional email",
+        "rejected"
+      ]
+    },
+    {
+      "id": "wh-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "Snowflake warehouse",
+      "content": "Analytics lands in Snowflake.",
+      "reasoning": "Separation of storage and compute.",
+      "tags": [
+        "wh",
+        "analytics warehouse",
+        "current"
+      ]
+    },
+    {
+      "id": "wh-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Redshift warehouse",
+      "content": "Redshift was used before, since migrated.",
+      "tags": [
+        "wh",
+        "analytics warehouse",
+        "legacy"
+      ]
+    },
+    {
+      "id": "wh-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "BigQuery warehouse",
+      "content": "BigQuery was rejected as the warehouse.",
+      "tags": [
+        "wh",
+        "analytics warehouse",
+        "rejected"
+      ]
+    },
+    {
+      "id": "flags-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "LaunchDarkly flags",
+      "content": "Feature flags use LaunchDarkly.",
+      "reasoning": "Targeting and audit out of the box.",
+      "tags": [
+        "flags",
+        "feature flags",
+        "current"
+      ]
+    },
+    {
+      "id": "flags-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Homegrown flags",
+      "content": "A homegrown flag table was the first approach, since replaced.",
+      "tags": [
+        "flags",
+        "feature flags",
+        "legacy"
+      ]
+    },
+    {
+      "id": "cdn-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "CloudFront CDN",
+      "content": "Static assets are served from CloudFront.",
+      "reasoning": "Bundled with our cloud and cheap egress.",
+      "tags": [
+        "cdn",
+        "cdn",
+        "current"
+      ]
+    },
+    {
+      "id": "cdn-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Fastly CDN",
+      "content": "Fastly served assets earlier, since migrated.",
+      "tags": [
+        "cdn",
+        "cdn",
+        "legacy"
+      ]
+    },
+    {
+      "id": "secrets-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "AWS Secrets Manager",
+      "content": "Secrets live in AWS Secrets Manager.",
+      "reasoning": "Managed rotation without running a cluster.",
+      "tags": [
+        "secrets",
+        "secret storage",
+        "current"
+      ]
+    },
+    {
+      "id": "secrets-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Dotenv files",
+      "content": "Secrets were kept in .env files early on, since removed.",
+      "tags": [
+        "secrets",
+        "secret storage",
+        "legacy"
+      ]
+    },
+    {
+      "id": "secrets-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "HashiCorp Vault",
+      "content": "Self-hosted Vault was rejected.",
+      "tags": [
+        "secrets",
+        "secret storage",
+        "rejected"
+      ]
+    },
+    {
+      "id": "pg-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "Cursor pagination",
+      "content": "List endpoints use cursor pagination.",
+      "reasoning": "Stable under concurrent inserts.",
+      "tags": [
+        "pg",
+        "pagination",
+        "current"
+      ]
+    },
+    {
+      "id": "pg-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Offset pagination",
+      "content": "Offset/limit paging was used first, since replaced.",
+      "tags": [
+        "pg",
+        "pagination",
+        "legacy"
+      ]
+    },
+    {
+      "id": "lang-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "TypeScript everywhere",
+      "content": "Services are written in TypeScript.",
+      "reasoning": "One typed language across the stack.",
+      "tags": [
+        "lang",
+        "language",
+        "current"
+      ]
+    },
+    {
+      "id": "lang-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "CoffeeScript",
+      "content": "Some early code was CoffeeScript, since rewritten.",
+      "tags": [
+        "lang",
+        "language",
+        "legacy"
+      ]
+    },
+    {
+      "id": "lang-rejected",
+      "category": "decision",
+      "status": "rejected",
+      "title": "Flow typing",
+      "content": "Flow was rejected in favor of TypeScript.",
+      "tags": [
+        "lang",
+        "language",
+        "rejected"
+      ]
+    },
+    {
+      "id": "node-current",
+      "category": "decision",
+      "freshness": "fresh",
+      "title": "Node.js 22 runtime",
+      "content": "Services run on Node.js 22.",
+      "reasoning": "Current LTS with native fetch and test runner.",
+      "tags": [
+        "node",
+        "node runtime",
+        "current"
+      ]
+    },
+    {
+      "id": "node-stale",
+      "category": "decision",
+      "freshness": "stale",
+      "title": "Node.js 18 runtime",
+      "content": "Node 18 was the prior runtime, since upgraded.",
+      "tags": [
+        "node",
+        "node runtime",
+        "legacy"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "db-truth",
+      "query": "what database do we use now",
+      "expectedItemIds": [
+        "db-current"
+      ],
+      "mustNotReturn": [
+        "db-stale",
+        "db-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "db-why",
+      "query": "why did we choose postgresql",
+      "expectedItemIds": [
+        "db-current"
+      ],
+      "mustNotReturn": [
+        "db-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "deploy-truth",
+      "query": "what deploy strategy do we use now",
+      "expectedItemIds": [
+        "deploy-current"
+      ],
+      "mustNotReturn": [
+        "deploy-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "deploy-why",
+      "query": "why did we choose blue green deploys",
+      "expectedItemIds": [
+        "deploy-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 3
+    },
+    {
+      "id": "state-truth",
+      "query": "what client state management do we use now",
+      "expectedItemIds": [
+        "state-current"
+      ],
+      "mustNotReturn": [
+        "state-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "state-why",
+      "query": "why did we choose react query",
+      "expectedItemIds": [
+        "state-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 3
+    },
+    {
+      "id": "queue-truth",
+      "query": "what job queue do we use now",
+      "expectedItemIds": [
+        "queue-current"
+      ],
+      "mustNotReturn": [
+        "queue-stale",
+        "queue-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "queue-why",
+      "query": "why did we choose sqs",
+      "expectedItemIds": [
+        "queue-current"
+      ],
+      "mustNotReturn": [
+        "queue-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "auth-truth",
+      "query": "what authentication do we use now",
+      "expectedItemIds": [
+        "auth-current"
+      ],
+      "mustNotReturn": [
+        "auth-stale",
+        "auth-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "auth-why",
+      "query": "why did we choose jwt tokens",
+      "expectedItemIds": [
+        "auth-current"
+      ],
+      "mustNotReturn": [
+        "auth-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "search-truth",
+      "query": "what search engine do we use now",
+      "expectedItemIds": [
+        "search-current"
+      ],
+      "mustNotReturn": [
+        "search-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "search-why",
+      "query": "why did we choose opensearch",
+      "expectedItemIds": [
+        "search-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 3
+    },
+    {
+      "id": "pay-truth",
+      "query": "what payment provider do we use now",
+      "expectedItemIds": [
+        "pay-current"
+      ],
+      "mustNotReturn": [
+        "pay-stale",
+        "pay-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "pay-why",
+      "query": "why did we choose stripe",
+      "expectedItemIds": [
+        "pay-current"
+      ],
+      "mustNotReturn": [
+        "pay-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "ci-truth",
+      "query": "what ci system do we use now",
+      "expectedItemIds": [
+        "ci-current"
+      ],
+      "mustNotReturn": [
+        "ci-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "ci-why",
+      "query": "why did we choose github actions",
+      "expectedItemIds": [
+        "ci-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 3
+    },
+    {
+      "id": "container-truth",
+      "query": "what orchestrator do we use now",
+      "expectedItemIds": [
+        "container-current"
+      ],
+      "mustNotReturn": [
+        "container-stale",
+        "container-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "container-why",
+      "query": "why did we choose kubernetes",
+      "expectedItemIds": [
+        "container-current"
+      ],
+      "mustNotReturn": [
+        "container-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "cache-truth",
+      "query": "what cache do we use now",
+      "expectedItemIds": [
+        "cache-current"
+      ],
+      "mustNotReturn": [
+        "cache-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "cache-why",
+      "query": "why did we choose redis",
+      "expectedItemIds": [
+        "cache-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 3
+    },
+    {
+      "id": "api-truth",
+      "query": "what api style do we use now",
+      "expectedItemIds": [
+        "api-current"
+      ],
+      "mustNotReturn": [
+        "api-stale",
+        "api-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "api-why",
+      "query": "why did we choose rest",
+      "expectedItemIds": [
+        "api-current"
+      ],
+      "mustNotReturn": [
+        "api-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "iac-truth",
+      "query": "what infrastructure as code do we use now",
+      "expectedItemIds": [
+        "iac-current"
+      ],
+      "mustNotReturn": [
+        "iac-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "iac-why",
+      "query": "why did we choose terraform",
+      "expectedItemIds": [
+        "iac-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 3
+    },
+    {
+      "id": "pm-truth",
+      "query": "what package manager do we use now",
+      "expectedItemIds": [
+        "pm-current"
+      ],
+      "mustNotReturn": [
+        "pm-stale",
+        "pm-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "pm-why",
+      "query": "why did we choose pnpm",
+      "expectedItemIds": [
+        "pm-current"
+      ],
+      "mustNotReturn": [
+        "pm-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "orm-truth",
+      "query": "what orm do we use now",
+      "expectedItemIds": [
+        "orm-current"
+      ],
+      "mustNotReturn": [
+        "orm-stale",
+        "orm-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "orm-why",
+      "query": "why did we choose drizzle",
+      "expectedItemIds": [
+        "orm-current"
+      ],
+      "mustNotReturn": [
+        "orm-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "email-truth",
+      "query": "what transactional email do we use now",
+      "expectedItemIds": [
+        "email-current"
+      ],
+      "mustNotReturn": [
+        "email-stale",
+        "email-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "email-why",
+      "query": "why did we choose postmark",
+      "expectedItemIds": [
+        "email-current"
+      ],
+      "mustNotReturn": [
+        "email-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "wh-truth",
+      "query": "what analytics warehouse do we use now",
+      "expectedItemIds": [
+        "wh-current"
+      ],
+      "mustNotReturn": [
+        "wh-stale",
+        "wh-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "wh-why",
+      "query": "why did we choose snowflake",
+      "expectedItemIds": [
+        "wh-current"
+      ],
+      "mustNotReturn": [
+        "wh-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "flags-truth",
+      "query": "what feature flags do we use now",
+      "expectedItemIds": [
+        "flags-current"
+      ],
+      "mustNotReturn": [
+        "flags-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "flags-why",
+      "query": "why did we choose launchdarkly",
+      "expectedItemIds": [
+        "flags-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 3
+    },
+    {
+      "id": "cdn-truth",
+      "query": "what cdn do we use now",
+      "expectedItemIds": [
+        "cdn-current"
+      ],
+      "mustNotReturn": [
+        "cdn-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "cdn-why",
+      "query": "why did we choose cloudfront",
+      "expectedItemIds": [
+        "cdn-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 3
+    },
+    {
+      "id": "secrets-truth",
+      "query": "what secret storage do we use now",
+      "expectedItemIds": [
+        "secrets-current"
+      ],
+      "mustNotReturn": [
+        "secrets-stale",
+        "secrets-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "secrets-why",
+      "query": "why did we choose secrets manager",
+      "expectedItemIds": [
+        "secrets-current"
+      ],
+      "mustNotReturn": [
+        "secrets-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "pg-truth",
+      "query": "what pagination do we use now",
+      "expectedItemIds": [
+        "pg-current"
+      ],
+      "mustNotReturn": [
+        "pg-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "pg-why",
+      "query": "why did we choose cursor pagination",
+      "expectedItemIds": [
+        "pg-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 3
+    },
+    {
+      "id": "lang-truth",
+      "query": "what language do we use now",
+      "expectedItemIds": [
+        "lang-current"
+      ],
+      "mustNotReturn": [
+        "lang-stale",
+        "lang-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "lang-why",
+      "query": "why did we choose typescript",
+      "expectedItemIds": [
+        "lang-current"
+      ],
+      "mustNotReturn": [
+        "lang-rejected"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "node-truth",
+      "query": "what node runtime do we use now",
+      "expectedItemIds": [
+        "node-current"
+      ],
+      "mustNotReturn": [
+        "node-stale"
+      ],
+      "limit": 3
+    },
+    {
+      "id": "node-why",
+      "query": "why did we choose node 22",
+      "expectedItemIds": [
+        "node-current"
+      ],
+      "mustNotReturn": [],
+      "limit": 3
+    }
+  ]
+}

@@ -1,0 +1,76 @@
+<svg width="1200" height="340" viewBox="0 0 1200 340" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Knowl — the Knowledge Operating System for AI Agents">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="340" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0d1117"/>
+      <stop offset="0.55" stop-color="#111722"/>
+      <stop offset="1" stop-color="#161b22"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.8" cy="0.2" r="0.9">
+      <stop offset="0" stop-color="#3987e5" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#3987e5" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3987e5"/>
+      <stop offset="1" stop-color="#199e70"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="1" y="1" width="1198" height="338" rx="20" fill="url(#bg)" stroke="#2c313a" stroke-width="1.5"/>
+  <rect x="1" y="1" width="1198" height="338" rx="20" fill="url(#glow)"/>
+
+  <!-- Left: wordmark -->
+  <g transform="translate(72,116)">
+    <!-- diamond atom glyph -->
+    <g transform="translate(0,-14)">
+      <rect x="6" y="6" width="40" height="40" rx="9" transform="rotate(45 26 26)" fill="none" stroke="url(#edge)" stroke-width="3"/>
+      <circle cx="26" cy="26" r="7" fill="#3987e5"/>
+    </g>
+    <text x="70" y="20" font-size="58" font-weight="800" fill="#ffffff" letter-spacing="-1.5">Knowl</text>
+    <text x="72" y="66" font-size="23" font-weight="500" fill="#c3c2b7">The Knowledge Operating System for AI Agents</text>
+
+    <!-- chips -->
+    <g transform="translate(72,96)" font-size="14" font-weight="600">
+      <g>
+        <rect x="0" y="0" width="132" height="30" rx="15" fill="#1b2330" stroke="#2c313a"/>
+        <circle cx="18" cy="15" r="4" fill="#199e70"/>
+        <text x="30" y="20" fill="#e6edf3">Local-first</text>
+      </g>
+      <g transform="translate(146,0)">
+        <rect x="0" y="0" width="176" height="30" rx="15" fill="#1b2330" stroke="#2c313a"/>
+        <circle cx="18" cy="15" r="4" fill="#3987e5"/>
+        <text x="30" y="20" fill="#e6edf3">Structured memory</text>
+      </g>
+      <g transform="translate(336,0)">
+        <rect x="0" y="0" width="128" height="30" rx="15" fill="#1b2330" stroke="#2c313a"/>
+        <circle cx="18" cy="15" r="4" fill="#eda100"/>
+        <text x="30" y="20" fill="#e6edf3">MCP-native</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Right: knowledge graph motif -->
+  <g transform="translate(830,60)" opacity="0.96">
+    <!-- edges -->
+    <g stroke="#3987e5" stroke-width="1.6" opacity="0.5">
+      <line x1="150" y1="110" x2="60" y2="40"/>
+      <line x1="150" y1="110" x2="250" y2="46"/>
+      <line x1="150" y1="110" x2="40" y2="170"/>
+      <line x1="150" y1="110" x2="255" y2="168"/>
+      <line x1="150" y1="110" x2="150" y2="210"/>
+      <line x1="60" y1="40" x2="250" y2="46"/>
+      <line x1="40" y1="170" x2="150" y2="210"/>
+      <line x1="255" y1="168" x2="150" y2="210"/>
+    </g>
+    <!-- central node -->
+    <circle cx="150" cy="110" r="26" fill="#12233d" stroke="#3987e5" stroke-width="2"/>
+    <text x="150" y="116" font-size="16" font-weight="700" fill="#7cb0f5" text-anchor="middle">knowl</text>
+    <!-- category atoms -->
+    <g font-size="13" font-weight="700" text-anchor="middle">
+      <g><circle cx="60" cy="40" r="18" fill="#161f2e" stroke="#199e70" stroke-width="2"/><text x="60" y="45" fill="#5fcf9f">dec</text></g>
+      <g><circle cx="250" cy="46" r="18" fill="#161f2e" stroke="#eda100" stroke-width="2"/><text x="250" y="51" fill="#f0c45a">arch</text></g>
+      <g><circle cx="40" cy="170" r="18" fill="#161f2e" stroke="#3987e5" stroke-width="2"/><text x="40" y="175" fill="#7cb0f5">fact</text></g>
+      <g><circle cx="255" cy="168" r="18" fill="#161f2e" stroke="#d55181" stroke-width="2"/><text x="255" y="173" fill="#e58bab">goal</text></g>
+      <g><circle cx="150" cy="210" r="18" fill="#161f2e" stroke="#9085e9" stroke-width="2"/><text x="150" y="215" fill="#b3abf1">skill</text></g>
+    </g>
+  </g>
+</svg>
