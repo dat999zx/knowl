@@ -11,7 +11,7 @@
   </g>
 
   <g text-anchor="middle">
-    <text x="138" y="140" font-size="40" font-weight="800" fill="#3987e5">0.97</text>
+    <text x="138" y="140" font-size="40" font-weight="800" fill="#3987e5">0.94</text>
     <text x="138" y="166" font-size="13" font-weight="600" fill="#c3c2b7">MRR — current decision ranked #1</text>
 
     <text x="380" y="140" font-size="40" font-weight="800" fill="#3987e5">100<tspan font-size="20" font-weight="700" fill="#7cb0f5">%</tspan></text>

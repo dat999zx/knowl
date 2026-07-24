@@ -57,7 +57,7 @@ Knowl deliberately **does not** clone the "silently record every transcript" app
 
 - 🧠 **Structured knowledge atoms** — seven first-class categories with status, freshness, tags, and history.
 - 🔌 **MCP-native** — a deterministic MCP server (`knowl serve`) that needs no AI provider for core memory.
-- 🔍 **Hybrid retrieval** — BM25 full-text **plus** default-on local vector search, fused and freshness-aware.
+- 🔍 **Vector-first retrieval** — default-on local vector search, BM25 as fallback + exact-identifier booster, freshness-aware re-rank.
 - 🔁 **Automatic work loop** — agents query memory before work and write back verified state after.
 - 🪝 **Agent lifecycle hooks** — verified project-local capture for Claude Code, Codex, and Cursor.
 - 🧾 **Evidence & provenance** — link items to files, commits, tests, commands, symbols, and URLs.
@@ -72,23 +72,26 @@ Knowl deliberately **does not** clone the "silently record every transcript" app
 
 ## 🧭 How Knowl compares
 
-Most agent-memory tools optimize **retrieval** — get the right text back. Knowl optimizes **knowledge management** — keep a typed, current, auditable model of the project. The capability grid below is where that difference shows (features, not benchmark scores — those live in [Benchmarks](#-benchmarks)):
+Mem0, Zep, and Letta mostly optimize **retrieval** — get the right text back. [**AgentMemory**](https://github.com/rohitg00/agentmemory) is the closest peer: it also does local-first, key-free knowledge management. The grid below is honest about that overlap (features, not benchmark scores — those live in [Benchmarks](#-benchmarks)):
 
-| Capability | **Knowl** | Mem0 | Zep / Graphiti | Letta (MemGPT) |
-| --- | :---: | :---: | :---: | :---: |
-| Primary model | Typed knowledge **atoms** (7 categories) | Vector memories (+ opt. graph) | Temporal knowledge graph | OS-style memory tiers / blocks |
-| Core writes/reads with **zero API keys** | ✅ | ✖ (LLM extraction) | ✖ (LLM + graph DB) | ✖ (LLM) |
-| Local-first, stored **in your repo** | ✅ `.knowl/` SQLite | cloud or self-host | self-host + graph DB | self-host or cloud |
-| Decision + **reasoning + alternatives** | ✅ | ✖ | ➖ graph facts | ✖ |
-| **Rejected/superseded** excluded from answers | ✅ | ✖ | ➖ temporal invalidation | ✖ |
-| Current-truth over history (temporal) | ✅ freshness + `--as-of` | ➖ | ✅ bi-temporal | ✖ |
-| **Knowledge commits** / reviewable history | ✅ | ✖ | ➖ edge history | ✖ |
-| Evidence/provenance to **code** (file·commit·symbol) | ✅ | ✖ | ✖ | ✖ |
-| Learned **runnable skills** | ✅ | ✖ | ✖ | ➖ tools |
-| MCP server | ✅ | ✅ | ➖ | ✅ |
-| License | Apache-2.0 | Apache-2.0 | Graphiti Apache-2.0 (Zep cloud) | Apache-2.0 |
+| Capability | **Knowl** | AgentMemory | Mem0 | Zep / Graphiti | Letta |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| Primary model | Typed **decision** atoms (7 categories) | Observations → 4-tier semantic/procedural | Vector memories (+ graph) | Temporal knowledge graph | Memory tiers / blocks |
+| Core reads/writes with **zero API keys** | ✅ | ✅ | ✖ | ✖ | ✖ |
+| Local-first (SQLite, no server) | ✅ per-repo `.knowl/` | ✅ local store | ✖ cloud/self-host | ✖ self-host + graph DB | ✖ self-host/cloud |
+| Decision + **reasoning + alternatives** | ✅ first-class `decide` | ➖ decision patterns | ✖ | ➖ graph facts | ✖ |
+| **Rejected** decisions excluded from active answers | ✅ hard filter | ➖ supersession/eviction | ✖ | ➖ temporal invalidation | ✖ |
+| Current-truth over history (temporal) | ✅ freshness + `--as-of` | ➖ versioning/evolution | ➖ | ✅ bi-temporal | ✖ |
+| Reviewable history / commits | ✅ knowledge commits | ✅ versioning + git snapshots | ✖ | ➖ edge history | ✖ |
+| Provenance to **code** (file·commit·symbol) | ✅ | ➖ to source observations | ✖ | ✖ | ✖ |
+| Auto-capture + tiered consolidation | ➖ minimal work-loop | ✅ 12 hooks, 4-tier decay | ✅ consolidation | ✅ | ✅ |
+| Learned runnable skills | ✅ | ➖ skills | ✖ | ✖ | ➖ tools |
+| MCP server | ✅ | ✅ (53 tools) | ✅ | ➖ | ✅ |
+| License | Apache-2.0 | Apache-2.0 | Apache-2.0 | Graphiti Apache-2.0 (Zep cloud) | Apache-2.0 |
 
-✅ first-class · ➖ partial/adjacent · ✖ not a feature. Zep's temporal graph genuinely tracks fact validity over time — a real strength — but it needs an LLM and a graph database to run; Knowl's angle is **typed, in-repo, key-free** project governance. Competitor facts from their own docs/papers (see [Benchmarks](#-benchmarks) for sources).
+✅ first-class · ➖ partial/adjacent · ✖ not a feature.
+
+**Honest read:** AgentMemory overlaps heavily and is *broader* — auto-capture, 4-tier consolidation, entity/knowledge-graph, session replay. Knowl deliberately goes **narrower and stricter**: project **decisions** as the unit (reasoning + alternatives, with `rejected` hard-excluded from retrieval), **code-linked** evidence (file/commit/`symbol://` with staleness), scoped **per-repo in `.knowl/`** rather than a global capture store. Rule of thumb — reach for **AgentMemory** if you want broad autonomous session memory that records and consolidates everything; reach for **Knowl** if you want a small, governed, in-repo record of what the project *decided, rejected, and why*, wired to your code. Competitor facts from their own docs/repos (sources under [Benchmarks](#-benchmarks)).
 
 ---
 
@@ -257,9 +260,9 @@ knowl timeline <item-id>     # immutable content assertions over time
 
 The MCP server is the preferred surface for agents. Core tools — `knowl_store`, `knowl_ingest_atoms`, `knowl_decide`, `knowl_query`, `knowl_recent`, `knowl_state`, `knowl_update` — are **fully deterministic and require no Knowl-side AI provider**. The client model does the extraction; Knowl does the governed storage and retrieval. See [MCP tools & resources](#-mcp-tools--resources).
 
-### Hybrid retrieval — BM25 + vectors, freshness-aware
+### Vector-first retrieval, freshness-aware
 
-Retrieval fuses BM25 full-text ranking with default-on local vector search (a model is lazily downloaded on first use), then layers category hints, freshness, confidence, and exact-identifier signals — bounded below the dominant relevance signal so ranking stays stable. Rejected and superseded items never surface as current answers.
+Retrieval leads with default-on local vector search (a MiniLM model is lazily downloaded on first use) and layers a bounded freshness/status/confidence/exact-identifier re-rank on top, so the current decision beats its stale sibling. **BM25 is the fallback** — it powers retrieval when vectors are disabled/unavailable and boosts exact filename/`symbol://` lookups where embeddings are weak. (This ordering came from a checked-in [ablation](#-benchmarks); the earlier equal-weight fusion diluted vector's ranking.) Rejected and superseded items never surface as current answers.
 
 ```bash
 knowl query "auth token design"
@@ -396,52 +399,52 @@ Every number below is produced by checked-in tooling and reproducible on your ma
 
 ### Retrieval quality
 
-Run against the checked-in **retrieval suite** ([`docs/evals/retrieval-suite.json`](docs/evals/retrieval-suite.json)) — **500 cases** over **168 knowledge atoms** across ~20 engineering domains, built to be *adversarial*: paraphrased and vague queries, **40 near-identical microservices** as mutual distractors, filename/provenance lookups, and `stale`/`rejected` traps the retriever must avoid.
+Run against the checked-in **retrieval suite** ([`docs/evals/retrieval-suite.json`](docs/evals/retrieval-suite.json)) — **500 cases** over **168 knowledge atoms** across ~20 engineering domains, adversarial by design: paraphrased and vague queries, **40 near-identical microservices** as mutual distractors, filename/provenance lookups, and `stale`/`rejected` traps the retriever must avoid. The numbers below are the **default path real agents use**: local **vector search fused with BM25**.
 
 <div align="center">
-<img src="docs/assets/benchmark-retrieval-quality.svg" alt="Retrieval quality on the 500-case suite: Recall@3 0.819, Recall@10 0.963, MRR 0.784, nDCG 0.827" width="82%" />
+<img src="docs/assets/benchmark-retrieval-quality.svg" alt="Retrieval quality on the 500-case suite with vector+BM25 fusion: Recall@3 0.989, Recall@10 0.994, MRR 0.961, nDCG 0.969" width="82%" />
 </div>
 
 ```bash
-knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
+knowl eval retrieval --dataset docs/evals/retrieval-suite.json --vector --json
 ```
 
 ```json
 {
   "metrics": {
-    "recallAt3": 0.819, "recallAt10": 0.963,
-    "mrr": 0.784, "ndcg": 0.827,
-    "staleHitCount": 23, "forbiddenHitCount": 4,
-    "p50LatencyMs": 30, "p95LatencyMs": 45,
-    "averageContextChars": 5815
+    "recallAt3": 0.989, "recallAt10": 0.994,
+    "mrr": 0.961, "ndcg": 0.969,
+    "staleHitCount": 15, "forbiddenHitCount": 5,
+    "p50LatencyMs": 320, "p95LatencyMs": 1124,
+    "averageContextChars": 6524
   },
-  "failedCaseIds": [ "fe-state-q", "infra-direct", "rate-api-vs-worker", "…20 total" ]
+  "failedCaseIds": [ "db-direct", "fe-state-q", "fe-noredux", "rate-worker-vs-api", "…8 total" ]
 }
 ```
 
-**480 of 500 cases hit** their expected atom in the top results. We keep the **20 honest misses** in the dataset rather than deleting them — they cluster around genuinely hard cases (a strongly-worded `stale` item out-ranking its fresh replacement, a pure vocabulary gap like *"container orchestration"* → a Kubernetes note, and disambiguations among the 40 look-alike services). `rejected`/superseded items are **never** returned — they're filtered from active retrieval — so the residual `forbiddenHitCount` is only stale-but-active distractors, never a rejected decision. The MRR of 0.78 is deliberately depressed by those 40 mutually-confusable services; on the hand-written domains it is far higher.
+**492 of 500 cases hit** their expected atom in the top results. We keep the **8 honest misses** in the dataset rather than deleting them — they cluster on `stale`-beats-fresh siblings and a couple of the 40 look-alike services. `rejected`/superseded items are **never** returned (filtered from active retrieval), so the residual `forbiddenHitCount` is only stale-but-active distractors, never a rejected decision.
 
-> A 10-case smoke dataset ([`docs/evals/retrieval-baseline.json`](docs/evals/retrieval-baseline.json)) is also kept as a fast CI regression check.
+> **Retrieval-engine note.** An ablation (BM25-only vs vector-only vs fused) found the old equal-weight fusion was *diluting* vector's ranking. Knowl now ranks **vector-first**, keeps a bounded freshness/status re-rank for governance, and treats **BM25 as a fallback + exact-identifier booster** — lifting suite MRR from **0.784 → 0.961**. Vector search embeds the query locally (~0.3s p50 on CPU); run **without** `--vector` for the deterministic BM25-only lower bound (Recall@10 0.963, MRR 0.784, ~30ms) that needs no model and backs the CI smoke test. A 10-case smoke dataset ([`docs/evals/retrieval-baseline.json`](docs/evals/retrieval-baseline.json)) is also kept as a fast regression check.
 
 ### Governance — the part that actually differentiates
 
 Retrieval asks *"can you find the text?"* Governance asks *"after the project changed its mind, do you return the **current** truth — and never a decision we **rejected**?"* This is Knowl's reason to exist, and it's measurable. The governance suite ([`docs/evals/retrieval-governance.json`](docs/evals/retrieval-governance.json)) seeds **22 migration scenarios** — each with a *current* decision, a *superseded/stale* one, and often a *rejected* alternative on the same topic — then asks "what do we use now?" and "why did we choose it?".
 
 <div align="center">
-<img src="docs/assets/benchmark-governance.svg" alt="Governance: current-truth MRR 0.97, current truth in top-3 100%, 0 of 24 rejected decisions surfaced" width="82%" />
+<img src="docs/assets/benchmark-governance.svg" alt="Governance: current-truth MRR 0.94, current truth in top-3 100%, 0 of 24 rejected decisions surfaced" width="82%" />
 </div>
 
-- **Current truth wins.** The fresh decision is ranked **#1** with MRR **0.97** (Recall@3 **1.00**) — ask "which database do we use now?" and PostgreSQL comes back on top, not the MySQL you migrated off.
+- **Current truth wins.** The fresh decision is ranked **#1** with MRR **0.94** (Recall@3 **1.00**) — ask "which database do we use now?" and PostgreSQL comes back on top, not the MySQL you migrated off.
 - **Rejected decisions are never surfaced.** Across **24 rejected-decision traps, 0 leaked** — `rejected`/`superseded` status is filtered out of active retrieval entirely. A memory built on raw transcripts *cannot* make that guarantee; the rejected idea is still sitting in the chat log.
 - **Honest limit:** the stale sibling is *downranked below* the current decision but still appears lower in the list (it isn't hidden unless you filter freshness or query `--as-of`). That's a deliberate history-preserving choice, not a bug.
 
 ### Speed & footprint
 
 <div align="center">
-<img src="docs/assets/benchmark-speed.svg" alt="Speed and footprint: p50 ~30ms, p95 ~45ms, avg context ~5.8KB per query" width="82%" />
+<img src="docs/assets/benchmark-speed.svg" alt="Speed and footprint: vector fusion ~0.3s p50, BM25-only ~30ms p50, avg context ~6KB per query" width="82%" />
 </div>
 
-Retrieval runs in-process against local SQLite — no network round trip — returning ~10 ranked atoms from the 168-atom corpus in ~30ms p50 / ~45ms p95, most of which is embedding the query for vector search (latency varies with hardware).
+Retrieval runs in-process against local SQLite — no network round trip. With local vector search on, p50 is **~0.3s** (dominated by embedding the query on CPU); disable vectors for a **~30ms** BM25-only path. Either way it returns ~10 compact ranked atoms (latency varies with hardware).
 
 ### Always-on guidance overhead
 
@@ -459,7 +462,7 @@ knowl agent-reminder claude --json
 
 Launch latency is a short-lived Node process spawned per prompt and runs off the user's critical path: on a warm run this environment measured a **~1.36 s** mean (p50 1.34 s, p95 1.51 s) over 25 launches; a dedicated linked-checkout reference environment previously measured **~0.95 s** mean (p50 0.91 s, p95 1.18 s) over 100 launches, with **zero** lingering reminder processes.
 
-> **How we measure.** Retrieval metrics come from `src/store/retrieval-evaluation.ts` (recall@k, MRR, nDCG, stale/forbidden counts, p50/p95 latency, average context size — all computed without database access inside the metric functions). The eval spins up a throwaway store from the dataset's `fixtures`, runs each case through the same `queryKnowledgeForAgent` path agents use, and tears it down. Numbers vary with hardware; rerun the commands above to get yours.
+> **How we measure.** Retrieval metrics come from `src/store/retrieval-evaluation.ts` (recall@k, MRR, nDCG, stale/forbidden counts, p50/p95 latency, average context size — all computed without database access inside the metric functions). The eval spins up a throwaway store from the dataset's `fixtures`, runs each case through the same `queryKnowledgeForAgent` path agents use, and tears it down. With `--vector` it reindexes fixture embeddings and embeds each query so the run mirrors the real vector+BM25 fusion path; without it, retrieval is BM25-only and fully deterministic (no model download — the CI path). Numbers vary with hardware; rerun the commands above to get yours.
 
 ### On comparing to other systems
 
@@ -467,14 +470,28 @@ It's tempting to line Knowl's Recall@10 up against other memory projects — but
 
 | System | Dataset | Reported result |
 | --- | --- | --- |
-| **Knowl** | self-built suite (500 adversarial cases) | Recall@10 **0.963** · MRR **0.784** |
+| **Knowl** | self-built suite (500 adversarial cases) | Recall@10 **0.994** · MRR **0.961** |
 | AgentMemory | LongMemEval-S (500 Q) | Recall@10 **0.986** · MRR **0.882** |
 | Zep / Graphiti | LongMemEval | **63.8%** LLM-judge score |
 | Mem0 | LoCoMo | **66.9%** LLM-judge score |
 
-**Do not read across rows** — LongMemEval, LoCoMo, and our suite are different tasks, and an LLM-judge score is not a Recall@k. AgentMemory's ~2-point Recall@10 edge on *its* benchmark is real but not something we can claim to have beaten or lost on *ours*. The honest takeaway matches the [capability grid](#-how-knowl-compares): Knowl's retrieval is competitive, but its **differentiation is governance** — current-truth resolution and rejected-decision exclusion — not a race for the last few points of recall. If you want a better raw retriever, one will always come along; if you want memory that knows what your project *decided* and what it *rejected*, that's the part we build.
+**Do not read across rows** — LongMemEval, LoCoMo, and our suite are different tasks, and an LLM-judge score is not a Recall@k. Knowl's 0.994 sitting *above* AgentMemory's 0.986 is **not** evidence Knowl retrieves better — only that our self-built suite differs in difficulty from LongMemEval-S. We'd need to run every system on one shared dataset to make a real claim, and we haven't. The honest takeaway matches the [capability grid](#-how-knowl-compares): Knowl's retrieval is competitive, but its **differentiation is governance** — current-truth resolution and rejected-decision exclusion — not a race for the last points of recall. If you want a better raw retriever, one will always come along; if you want memory that knows what your project *decided* and what it *rejected*, that's the part we build.
 
-<sub>Competitor figures from published sources: [Mem0 LoCoMo research](https://mem0.ai/research), [Zep temporal KG paper (arXiv 2501.13956)](https://arxiv.org/abs/2501.13956) and [Zep vs Mem0 LongMemEval](https://blog.getzep.com/state-of-the-art-agent-memory/), [Letta / MemGPT docs](https://www.letta.com), and AgentMemory's own LongMemEval-S scorecard. Retrieved 2026-07.</sub>
+<sub>Competitor figures from published sources: [Mem0 LoCoMo research](https://mem0.ai/research), [Zep temporal KG paper (arXiv 2501.13956)](https://arxiv.org/abs/2501.13956) and [Zep vs Mem0 LongMemEval](https://blog.getzep.com/state-of-the-art-agent-memory/), [Letta / MemGPT docs](https://www.letta.com), and [AgentMemory](https://github.com/rohitg00/agentmemory)'s own LongMemEval-S scorecard. Retrieved 2026-07.</sub>
+
+### Token efficiency
+
+Memory is only useful if it's cheap enough to keep on. Knowl is bounded at every surface:
+
+| Surface | Token cost | How it's bounded |
+| --- | --- | --- |
+| Per-prompt reminder | **~131** | Short routing nudge; full 24-tool card lives in `KNOWL.md` + MCP `initialize` (loaded once, not re-injected) |
+| Mid-turn continuation nudge | **~55** | One compact line, only after every 8th accepted tool call — never per event |
+| `knowl_query` (default 3 atoms) | **~550** | Each atom's content truncated to 600 chars; evidence opt-in |
+| `knowl_context --token-budget N` | **≤ N** | Composer adds atoms only while `used + cost ≤ N`; pinned constraints first, `estimatedTokens` returned |
+| `knowl_state` (full brain) | ~24K on a 221-atom project | **Never** injected automatically — SessionStart uses compact recent context instead |
+
+The always-on Claude guidance dropped from **424 → 131 tokens/prompt** — over a 50-prompt session that's ~15K tokens saved. Retrieval returns compact, budgeted context by default; ask for `includeEvidence` or a larger `limit` only when you need the detail.
 
 ---
 
@@ -546,7 +563,7 @@ knowl init codex claude cursor gemini   # configure explicitly
 knowl doctor                        # verify readiness
 ```
 
-`KNOWL.md` is the canonical full workflow; `AGENTS.md` carries the synchronized managed reference; selected Claude/Gemini files use native imports (`@KNOWL.md` / `@./KNOWL.md`). Start a new agent session after setup and trust the repository when the host asks before running project hooks. Rerun `knowl init` after upgrades so imports and hook registrations reload.
+`KNOWL.md` is the canonical full workflow; `AGENTS.md` carries the synchronized managed reference; `CLAUDE.md` imports `@KNOWL.md` and `GEMINI.md` imports `@./KNOWL.md` via native imports. Start a new agent session after setup and trust the repository when the host asks before running project hooks. Rerun `knowl init` after upgrades so imports and hook registrations reload.
 
 ---
 

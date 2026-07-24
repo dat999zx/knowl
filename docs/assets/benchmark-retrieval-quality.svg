@@ -1,11 +1,9 @@
-<svg width="760" height="392" viewBox="0 0 760 392" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Retrieval quality on the 114-case suite: Recall@3 0.87, Recall@10 0.96, MRR 0.81, nDCG 0.85">
+<svg width="760" height="392" viewBox="0 0 760 392" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Retrieval quality on the 500-case suite with vector+BM25 fusion: Recall@3 0.989, Recall@10 0.994, MRR 0.961, nDCG 0.969">
   <rect x="1" y="1" width="758" height="390" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
 
-  <!-- header -->
   <text x="28" y="42" font-size="21" font-weight="700" fill="#ffffff">Retrieval quality</text>
-  <text x="28" y="66" font-size="14" fill="#898781">knowl eval retrieval · retrieval-suite.json · 500 adversarial cases · higher is better</text>
+  <text x="28" y="66" font-size="14" fill="#898781">knowl eval retrieval --vector · 500 adversarial cases · vector + BM25 fusion · higher is better</text>
 
-  <!-- gridlines + axis ticks -->
   <g stroke="#2c2c2a" stroke-width="1">
     <line x1="160" y1="96" x2="160" y2="316"/>
     <line x1="285" y1="96" x2="285" y2="316"/>
@@ -21,7 +19,6 @@
     <text x="660" y="334">1.0</text>
   </g>
 
-  <!-- bars: 0..1 scale, x0=160 x1=660 (width 500) -->
   <g font-size="14" fill="#c3c2b7" text-anchor="end" font-weight="600">
     <text x="146" y="122">Recall@3</text>
     <text x="146" y="176">Recall@10</text>
@@ -29,24 +26,23 @@
     <text x="146" y="284">nDCG</text>
   </g>
   <g>
-    <rect x="160" y="104" width="409.5" height="24" rx="6" fill="#3987e5"/>
-    <rect x="160" y="158" width="481.5" height="24" rx="6" fill="#3987e5"/>
-    <rect x="160" y="212" width="392" height="24" rx="6" fill="#3987e5"/>
-    <rect x="160" y="266" width="413.5" height="24" rx="6" fill="#3987e5"/>
+    <rect x="160" y="104" width="494.5" height="24" rx="6" fill="#3987e5"/>
+    <rect x="160" y="158" width="497" height="24" rx="6" fill="#3987e5"/>
+    <rect x="160" y="212" width="480.5" height="24" rx="6" fill="#3987e5"/>
+    <rect x="160" y="266" width="484.5" height="24" rx="6" fill="#3987e5"/>
   </g>
   <g font-size="14" font-weight="700" fill="#ffffff" text-anchor="start">
-    <text x="581.5" y="122">0.819</text>
-    <text x="653.5" y="176">0.963</text>
-    <text x="564" y="230">0.784</text>
-    <text x="585.5" y="284">0.827</text>
+    <text x="666.5" y="122">0.989</text>
+    <text x="669" y="176">0.994</text>
+    <text x="652.5" y="230">0.961</text>
+    <text x="656.5" y="284">0.969</text>
   </g>
 
-  <!-- footer badges (honest) -->
   <g transform="translate(28,352)" font-size="13" font-weight="600">
     <g>
       <rect x="0" y="0" width="176" height="26" rx="13" fill="#12251a" stroke="#1e5c38"/>
       <circle cx="16" cy="13" r="4" fill="#0ca30c"/>
-      <text x="26" y="18" fill="#7fdca0">480 / 500 cases hit</text>
+      <text x="26" y="18" fill="#7fdca0">492 / 500 cases hit</text>
     </g>
     <g transform="translate(190,0)">
       <rect x="0" y="0" width="168" height="26" rx="13" fill="#1b2330" stroke="#2c313a"/>
