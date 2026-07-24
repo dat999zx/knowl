@@ -123,3 +123,22 @@ export async function getKnowledgeAccessReport(): Promise<{
     repeatedlyCorrected: items.filter(item => item.causedCorrectionCount > 1).sort((a, b) => b.causedCorrectionCount - a.causedCorrectionCount),
   };
 }
+
+export type KnowledgeAccessSummary = { retrievalCount: number; lastRetrievedAt: string };
+
+// Per-item retrieval frequency and recency — used by GC to protect hot memory
+// from decay and to collect only genuinely cold items.
+export async function getAccessSummary(): Promise<Map<string, KnowledgeAccessSummary>> {
+  const rows = (await getClient().execute(`
+    SELECT knowledge_item_id, COUNT(*) AS retrieval_count, MAX(retrieved_at) AS last_retrieved_at
+    FROM knowledge_access WHERE surface != 'feedback' GROUP BY knowledge_item_id
+  `)).rows;
+  const summary = new Map<string, KnowledgeAccessSummary>();
+  for (const row of rows) {
+    summary.set(String(row.knowledge_item_id), {
+      retrievalCount: Number(row.retrieval_count),
+      lastRetrievedAt: String(row.last_retrieved_at),
+    });
+  }
+  return summary;
+}

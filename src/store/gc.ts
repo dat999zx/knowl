@@ -1,5 +1,6 @@
 import { getDb } from './database.js';
 import * as repo from './repository.js';
+import { getAccessSummary, KnowledgeAccessSummary } from './access-feedback.js';
 import { CommitChange, KnowledgeCategory, KnowledgeItem } from '../core/types.js';
 
 export type KnowledgeGcAction = 'archive' | 'compress' | 'purge';
@@ -32,6 +33,17 @@ export interface KnowledgeGcResult {
 const DEFAULT_STALE_STATE_DAYS = 60;
 const DEFAULT_COMPRESS_ARCHIVED_DAYS = 30;
 const DEFAULT_MIN_COMPRESS_BYTES = 180;
+// A "hot" item — retrieved this often, or this recently — is protected from decay
+// even once it passes the staleness age, so useful memory is not archived away.
+const HOT_RETRIEVAL_COUNT = 3;
+const HOT_RECENT_DAYS = 21;
+
+function isHot(itemId: string, access: Map<string, KnowledgeAccessSummary>, now: Date): boolean {
+  const a = access.get(itemId);
+  if (!a) return false;
+  if (a.retrievalCount >= HOT_RETRIEVAL_COUNT) return true;
+  return daysSince(a.lastRetrievedAt, now) <= HOT_RECENT_DAYS;
+}
 const PROTECTED_CATEGORIES = new Set<KnowledgeCategory>([
   'decision',
   'constraint',
@@ -85,7 +97,7 @@ function summarizeCandidates(candidates: KnowledgeGcCandidate[]): Record<Knowled
   return summary;
 }
 
-function buildCandidates(items: KnowledgeItem[], options: KnowledgeGcOptions): KnowledgeGcCandidate[] {
+function buildCandidates(items: KnowledgeItem[], options: KnowledgeGcOptions, access: Map<string, KnowledgeAccessSummary>): KnowledgeGcCandidate[] {
   const now = new Date(options.now || new Date().toISOString());
   const staleStateDays = options.staleStateDays ?? DEFAULT_STALE_STATE_DAYS;
   const compressArchivedDays = options.compressArchivedDays ?? DEFAULT_COMPRESS_ARCHIVED_DAYS;
@@ -124,14 +136,19 @@ function buildCandidates(items: KnowledgeItem[], options: KnowledgeGcOptions): K
         continue;
       }
 
-      if (item.category === 'state' && daysSince(item.updatedAt, now) >= staleStateDays) {
+      if (
+        item.category === 'state' &&
+        daysSince(item.updatedAt, now) >= staleStateDays &&
+        !isHot(item.id, access, now)
+      ) {
+        const retrievals = access.get(item.id)?.retrievalCount ?? 0;
         candidates.push({
           itemId: item.id,
           action: 'archive',
           title: item.title,
           category: item.category,
           status: item.status,
-          reason: `State item stale for ${daysSince(item.updatedAt, now)} days`,
+          reason: `State item stale for ${daysSince(item.updatedAt, now)} days${retrievals === 0 ? ' and never retrieved' : ''}`,
           beforeBytes,
           afterBytes: beforeBytes,
         });
@@ -168,7 +185,8 @@ export async function previewKnowledgeGc(
   options: KnowledgeGcOptions = {}
 ): Promise<KnowledgeGcResult> {
   const items = await repo.listKnowledgeItems(projectId);
-  const candidates = buildCandidates(items, options);
+  const access = await getAccessSummary();
+  const candidates = buildCandidates(items, options, access);
   return {
     candidates,
     summary: summarizeCandidates(candidates),
@@ -180,9 +198,10 @@ export async function applyKnowledgeGc(
   options: KnowledgeGcOptions = {}
 ): Promise<KnowledgeGcResult> {
   const db = getDb();
+  const access = await getAccessSummary();
   return db.transaction(async (tx) => {
     const items = await repo.listKnowledgeItems(projectId, tx);
-    const candidates = buildCandidates(items, options);
+    const candidates = buildCandidates(items, options, access);
     const byId = new Map(items.map(item => [item.id, item]));
     const changes: CommitChange[] = [];
 
