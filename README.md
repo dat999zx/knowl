@@ -576,8 +576,8 @@ knowl doctor                        # verify readiness
 
 | Command | Description |
 | --- | --- |
-| `knowl init [agents...]` | Initialize/upgrade this project, then select detected agents (`codex`, `claude`, `cursor`, `gemini`, `claude-desktop`) |
-| `knowl upgrade` | Upgrade an existing Knowl repo with current defaults and agent files |
+| `knowl init [agents...]` | Initialize **or** upgrade this project, then register detected agents (`codex`, `claude`, `cursor`, `gemini`, `claude-desktop`). Safe to re-run. |
+| `knowl upgrade` | The project-files half of `init` — refresh config, schema, guidance, and `.gitignore` with **no** agent setup or prompts (scriptable/CI-safe) |
 | `knowl status` | Repo path, item/category counts, AI config status, recent knowledge commits |
 | `knowl doctor` | Check whether the project is ready for agent memory usage |
 | `knowl state` | Print the full active hierarchical project memory |

@@ -149,7 +149,7 @@ describe('CLI Integration', () => {
       encoding: 'utf-8',
     });
 
-    expect(output).toContain('KNOWL repository already initialized');
+    expect(output).toContain('Existing KNOWL project detected');
     expect(output).toContain('KNOWL repository upgrade complete.');
     expect(output).toContain('KNOWL.md: unchanged');
     expect(output).toContain('AGENTS.md: unchanged');

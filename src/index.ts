@@ -220,7 +220,7 @@ program
 // --- 1. INIT COMMAND ---
 program
   .command('init')
-  .description('Initialize a new KNOWL repository in the current directory')
+  .description('Initialize (or re-run on an existing repo to upgrade) and register agent integrations. On an existing project this performs `knowl upgrade` first, then agent setup.')
   .argument('[agents...]', 'Agent integrations to configure')
   .option('-y, --yes', 'Accept global configuration confirmations')
   .action(async (agents: string[], options) => {
@@ -240,7 +240,7 @@ program
 
       if (isExisting) {
         const result = await upgradeExistingRepository(cwd, name);
-        console.log(`⚠️  KNOWL repository already initialized in this directory: ${knowlDir}`);
+        console.log(`↻ Existing KNOWL project detected — upgrading, then checking agent setup: ${knowlDir}`);
         printUpgradeStatus(result);
         const flow = await runAgentInitFlow(cwd, {
           agentNames: agents,
@@ -834,11 +834,11 @@ program
 // --- 11. UPGRADE COMMAND ---
 program
   .command('upgrade')
-  .description('Upgrade an existing KNOWL repository with the latest config, schema, and agent files')
+  .description('Refresh project files only (config, schema, guidance, .gitignore) — no agent setup. `knowl init` runs this plus agent registration.')
   .action(async () => {
     try {
       const root = await findProjectRoot(process.cwd());
-      const result = await upgradeExistingRepository(root, 'My Project');
+      const result = await upgradeExistingRepository(root, path.basename(root) || 'My Project');
       printUpgradeStatus(result);
     } catch (error: any) {
       console.error(`❌ Error upgrading KNOWL: ${error.message}`);
