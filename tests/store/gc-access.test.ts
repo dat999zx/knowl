@@ -39,5 +39,11 @@ describe('access-weighted GC decay', () => {
     const archived = result.candidates.filter(candidate => candidate.action === 'archive').map(candidate => candidate.itemId);
     expect(archived).toContain(cold.id);
     expect(archived).not.toContain(hot.id);
+
+    // --ignore-access archives the hot item too.
+    const forced = await previewKnowledgeGc(projectId, { now: NOW, ignoreAccess: true });
+    const forcedArchived = forced.candidates.filter(candidate => candidate.action === 'archive').map(candidate => candidate.itemId);
+    expect(forcedArchived).toContain(cold.id);
+    expect(forcedArchived).toContain(hot.id);
   });
 });

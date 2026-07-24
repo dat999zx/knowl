@@ -23,6 +23,8 @@ export interface KnowledgeGcOptions {
   staleStateDays?: number;
   compressArchivedDays?: number;
   minCompressBytes?: number;
+  /** Archive stale state items even if they are hot (recently/frequently retrieved). */
+  ignoreAccess?: boolean;
 }
 
 export interface KnowledgeGcResult {
@@ -38,7 +40,7 @@ const DEFAULT_MIN_COMPRESS_BYTES = 180;
 const HOT_RETRIEVAL_COUNT = 3;
 const HOT_RECENT_DAYS = 21;
 
-function isHot(itemId: string, access: Map<string, KnowledgeAccessSummary>, now: Date): boolean {
+export function isHot(itemId: string, access: Map<string, KnowledgeAccessSummary>, now: Date): boolean {
   const a = access.get(itemId);
   if (!a) return false;
   if (a.retrievalCount >= HOT_RETRIEVAL_COUNT) return true;
@@ -139,7 +141,7 @@ function buildCandidates(items: KnowledgeItem[], options: KnowledgeGcOptions, ac
       if (
         item.category === 'state' &&
         daysSince(item.updatedAt, now) >= staleStateDays &&
-        !isHot(item.id, access, now)
+        (options.ignoreAccess || !isHot(item.id, access, now))
       ) {
         const retrievals = access.get(item.id)?.retrievalCount ?? 0;
         candidates.push({

@@ -28,7 +28,8 @@ import { runConfigUi } from './cli/config/ui.js';
 import { formatAgentInitSummary, runAgentInitFlow } from './cli/init-flow.js';
 import { parseAgentNames } from './cli/agents/registry.js';
 import { reindexKnowledgeEmbeddings } from './store/vector-index.js';
-import { applyKnowledgeGc, previewKnowledgeGc } from './store/gc.js';
+import { applyKnowledgeGc, previewKnowledgeGc, isHot } from './store/gc.js';
+import { getAccessSummary } from './store/access-feedback.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } from './store/work-loop.js';
 import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince } from './store/drift.js';
 import { indexSkillPackage, recordSkillRun } from './skills/knowledge-index.js';
@@ -850,6 +851,10 @@ program
   .command('gc')
   .description('Preview or apply knowledge garbage collection')
   .option('--apply', 'Apply the GC recommendations')
+  .option('--stale-days <days>', 'Archive active state items older than this many days (default 60)')
+  .option('--compress-days <days>', 'Compress archived items cold for this many days (default 30)')
+  .option('--min-bytes <bytes>', 'Minimum content bytes before compressing an archived item (default 180)')
+  .option('--ignore-access', 'Archive stale state even if it was recently or frequently retrieved (hot)')
   .action(async (options) => {
     try {
       const root = await findProjectRoot(process.cwd());
@@ -857,9 +862,15 @@ program
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not found in database.');
 
+      const gcOptions = {
+        staleStateDays: options.staleDays !== undefined ? Number(options.staleDays) : undefined,
+        compressArchivedDays: options.compressDays !== undefined ? Number(options.compressDays) : undefined,
+        minCompressBytes: options.minBytes !== undefined ? Number(options.minBytes) : undefined,
+        ignoreAccess: Boolean(options.ignoreAccess),
+      };
       const result = options.apply
-        ? await applyKnowledgeGc(project.id)
-        : await previewKnowledgeGc(project.id);
+        ? await applyKnowledgeGc(project.id, gcOptions)
+        : await previewKnowledgeGc(project.id, gcOptions);
 
       console.log(options.apply ? 'KNOWL GC APPLY' : 'KNOWL GC PREVIEW');
       console.log(`Archive:  ${result.summary.archive}`);
@@ -867,7 +878,26 @@ program
       console.log(`Purge:    ${result.summary.purge}`);
 
       if (result.candidates.length === 0) {
+        const staleDays = gcOptions.staleStateDays ?? 60;
+        const items = await repo.listKnowledgeItems(project.id);
+        const now = new Date();
+        const ageOf = (item: any) => Math.floor((now.getTime() - new Date(item.updatedAt).getTime()) / 86_400_000);
+        const states = items.filter(item => item.status === 'active' && item.category === 'state');
+        const archived = items.filter(item => item.status === 'archived').length;
+        const ageEligible = states.filter(item => ageOf(item) >= staleDays);
+        const access = await getAccessSummary();
+        const hotProtected = gcOptions.ignoreAccess ? 0 : ageEligible.filter(item => isHot(item.id, access, now)).length;
         console.log('No GC actions recommended.');
+        if (ageEligible.length === 0) {
+          const oldestDays = states.length ? Math.max(...states.map(ageOf)) : 0;
+          console.log(`  No state items past --stale-days ${staleDays} (oldest of ${states.length} is ${oldestDays}d); no exact duplicates; ${archived} archived items to compress.`);
+          console.log('  Tip: lower the age, e.g. `knowl gc --stale-days 14`.');
+        } else if (hotProtected === ageEligible.length) {
+          console.log(`  ${ageEligible.length} state items are old enough but all protected as recently/frequently retrieved (hot).`);
+          console.log('  Tip: archive them anyway with `knowl gc --ignore-access` (add --apply to commit).');
+        } else {
+          console.log(`  ${ageEligible.length} old-enough state items, ${hotProtected} protected as hot; no exact duplicates; ${archived} archived to compress.`);
+        }
       } else {
         for (const candidate of result.candidates) {
           console.log(`- ${candidate.action.toUpperCase()} ${candidate.itemId} ${candidate.title}`);

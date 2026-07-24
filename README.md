@@ -635,7 +635,7 @@ knowl doctor                        # verify readiness
 | `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Transactional SQLite snapshots with SHA-256 manifest |
 | `knowl config [get\|set\|reset] [key] [value]` | Interactive or scriptable configuration |
 | `knowl reindex --vectors` | Rebuild local vector embeddings |
-| `knowl gc` / `knowl gc --apply` | Preview / apply memory garbage collection |
+| `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access]` | Preview / apply memory GC; tune the archive/compress thresholds, and use `--ignore-access` to archive stale state even if it's hot (recently retrieved) |
 | `knowl view` | Start the read-only local viewer on `127.0.0.1` |
 | `knowl serve` | Start the stdio MCP server |
 | `knowl agent-event\|agent-hook\|agent-reminder` | Internal host lifecycle capture and the Claude prompt card |
