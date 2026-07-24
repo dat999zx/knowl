@@ -38,4 +38,20 @@ describe('session candidates', () => {
     expect(candidates.slice(0, 7).every(candidate => candidate.candidateType === 'decision')).toBe(true);
     expect(candidates[7].candidateType).toBe('outcome');
   });
+
+  it('suggests a skill when a command repeats, but ignores one-off commands', async () => {
+    const session = await startMemorySession({ title: 'Repeated workflow', query: 'x' });
+    for (let index = 0; index < 3; index++) {
+      await appendMemorySessionEvent(session.id, 'command', { command: 'npm run build && npm test', exitCode: 0, summary: 'ok' });
+    }
+    await appendMemorySessionEvent(session.id, 'command', { command: 'ls -la', exitCode: 0, summary: 'ok' });
+    await finishMemorySession(session.id, 'finished', 'Done.');
+
+    const candidates = await extractSessionMemoryCandidates(session.id);
+    const skill = candidates.find(candidate => candidate.category === 'skill');
+    expect(skill).toBeDefined();
+    expect(skill!.content).toContain('npm run build && npm test');
+    // the single `ls -la` run is not promoted as a skill
+    expect(candidates.some(candidate => candidate.content.includes('ls -la'))).toBe(false);
+  });
 });

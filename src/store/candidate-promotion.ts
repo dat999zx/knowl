@@ -12,7 +12,8 @@ export const MAX_PROMOTED_CANDIDATES = 8;
 export function candidateImportance(candidate: MemoryCandidate): number {
   const typeWeight = candidate.candidateType === 'decision' ? 1
     : candidate.candidateType === 'outcome' ? 0.6
-    : candidate.candidateType === 'command' ? 0.5
+    : candidate.candidateType === 'verified-command' ? 0.5
+    : candidate.candidateType === 'task-state' ? 0.45
     : 0.4;
   return (candidate.confidence ?? 0.5) * 0.6 + typeWeight * 0.4;
 }
