@@ -88,7 +88,23 @@ Most agent memory is **recall**: embed what the agent said, hand back the neares
 | MCP server | ✅ | ✅ | ✅ | ➖ | ✅ |
 | License | Apache-2.0 | Apache-2.0 | Apache-2.0 | Graphiti Apache-2.0 (Zep cloud) | Apache-2.0 |
 
-✅ first-class · ➖ partial/adjacent · ✖ not a feature. <sub>Competitor capabilities from their own public docs and repositories, retrieved 2026-07.</sub>
+✅ first-class · ➖ partial/adjacent · ✖ not a feature.
+
+### Published performance
+
+Each project measures on its own dataset, so this is **not one leaderboard** — it's what each team reports:
+
+| System | Benchmark (its own) | Reported result |
+| --- | --- | --- |
+| **Knowl** | own 500-case adversarial suite — **ships in this repo** | Recall@10 **0.994** · MRR **0.961** · governance MRR **0.94**, 0/24 rejected leaked |
+| AgentMemory | LongMemEval-S (500 Q) | Recall@10 **98.6%** · Recall@5 95.2% · MRR **88.2%** |
+| Mem0 | LoCoMo / LongMemEval (managed platform) | **92.5** / **94.4** · ~7K tokens · p50 0.88–1.09s |
+| Zep / Graphiti | DMR / LongMemEval | DMR **94.8%** · up to **+18.5%** accuracy, −90% latency |
+| Letta (MemGPT) | DMR | **93.4%** |
+
+A LongMemEval or LoCoMo score is not a Recall@k on our corpus — the tasks and metrics differ, so don't read across rows. The difference that matters: **our datasets ship in [`docs/evals/`](docs/evals/)**, so you can rerun our numbers (or point our harness at your own project) rather than take them on trust. Mem0's figures are from its managed platform, which it notes includes optimizations absent from the open-source SDK; Letta's DMR figure is as reported in the Zep paper.
+
+<sub>Sources: [AgentMemory](https://github.com/rohitg00/agentmemory), [Mem0](https://github.com/mem0ai/mem0), [Graphiti](https://github.com/getzep/graphiti) and [Zep: A Temporal Knowledge Graph Architecture for Agent Memory (arXiv 2501.13956)](https://arxiv.org/abs/2501.13956), [Letta](https://github.com/letta-ai/letta). Retrieved 2026-07.</sub>
 
 Where Knowl is deliberately strict: project **decisions** are the unit (reasoning + alternatives, with `rejected` hard-excluded from retrieval), evidence is **code-linked** (file/commit/`symbol://`, flagged stale when the code moves), and everything lives **per-repo in `.knowl/`** with no service to run. Governance is measured, not asserted — see [Benchmarks](#-benchmarks).
 
@@ -230,6 +246,99 @@ knowl query "why sqlite"
 ```
 
 That's it. Start a fresh agent session, and it will pull relevant context at startup and query Knowl before reaching for files.
+
+---
+
+## 🤝 Agent setup
+
+`knowl init` detects **Codex, Claude Code, Cursor, Gemini CLI, and Claude Desktop**, then presents a multi-select UI. Re-run it any time to add an agent or repair a stale registration — it preserves unrelated MCP servers and host rules, backs up existing configs before changing them, and never duplicates correct entries.
+
+```bash
+knowl init                          # interactive multi-select
+knowl init codex claude cursor gemini   # configure explicitly
+knowl doctor                        # verify readiness
+```
+
+`KNOWL.md` is the canonical full workflow; `AGENTS.md` carries the synchronized managed reference; `CLAUDE.md` imports `@KNOWL.md` and `GEMINI.md` imports `@./KNOWL.md` via native imports. Start a new agent session after setup and trust the repository when the host asks before running project hooks. Rerun `knowl init` after upgrades so imports and hook registrations reload.
+
+---
+
+## ⌨️ CLI reference
+
+<details open>
+<summary><b>Project & status</b></summary>
+
+| Command | Description |
+| --- | --- |
+| `knowl init [agents...]` | Initialize **or** upgrade this project, then register detected agents (`codex`, `claude`, `cursor`, `gemini`, `claude-desktop`). Safe to re-run. |
+| `knowl upgrade` | The project-files half of `init` — refresh config, schema, guidance, and `.gitignore` with **no** agent setup or prompts (scriptable/CI-safe) |
+| `knowl status` | Repo path, item/category counts, AI config status, recent knowledge commits, and a new-version notice |
+| `knowl doctor` | Check whether the project is ready for agent memory usage (also reports a new version) |
+| `knowl state` | Print the full active hierarchical project memory |
+| `knowl audit` | Read-only validation, reference, JSON, status, and FTS integrity audit |
+
+</details>
+
+<details>
+<summary><b>Memory: decisions, queries, history</b></summary>
+
+| Command | Description |
+| --- | --- |
+| `knowl decide [title] [content]` | Record a decision (interactive if title/content omitted) |
+| `knowl query <query> [--as-of <ts>]` | Query current or historically valid content |
+| `knowl timeline <item-id>` | Print immutable content assertions for one item |
+| `knowl conflicts` | List active exclusive conflict identities |
+| `knowl supersede <item-id> <replacement-id>` | Mark one item superseded by an explicit replacement |
+| `knowl evidence list <item-id>` | List linked file/commit/test/command/URL/symbol evidence |
+| `knowl context --token-budget <n>` | Compose a compact task context pack |
+| `knowl eval retrieval --dataset <path> [--json]` | Run a checked-in retrieval evaluation dataset |
+
+</details>
+
+<details>
+<summary><b>Work loops & sessions</b></summary>
+
+| Command | Description |
+| --- | --- |
+| `knowl task start <title>` | Start a work loop, query memory, store active task state |
+| `knowl task checkpoint <task-id> <summary> [--goal ...] [--completed ...] [--next-action ...] [--blocker ...] [--artifact ...] [--verification-status ...]` | Store durable progress + optional structured task state |
+| `knowl task finish <task-id> <summary>` | Store durable completion state |
+| `knowl task run <title> -- <command...>` | Start a loop, run a command, finish on success or checkpoint on failure |
+| `knowl session start\|event\|finish\|recover` | Manage bounded, expiring scratch session events and recover stale sessions |
+
+</details>
+
+<details>
+<summary><b>Skills, code & AI</b></summary>
+
+| Command | Description |
+| --- | --- |
+| `knowl skill list\|read\|create\|run` | Manage and run file-backed learned skill packages |
+| `knowl code index` | Incrementally index TS/JS symbols and import/export edges |
+| `knowl code symbols <path>` | Print indexed symbols for one repo-relative file |
+| `knowl synthesize --scope <tag>` | Create/refresh deterministic evidence-backed understanding |
+| `knowl ask <question>` | Natural-language question over memory (requires AI config) |
+| `knowl ingest <text>` | Extract and merge knowledge from raw text (requires AI config) |
+
+</details>
+
+<details>
+<summary><b>Data, config & serving</b></summary>
+
+| Command | Description |
+| --- | --- |
+| `knowl export <path>` / `knowl import <path> [--dry-run]` | Versioned, manifest-verified JSONL portability |
+| `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Transactional SQLite snapshots with SHA-256 manifest |
+| `knowl config [get\|set\|reset] [key] [value]` | Interactive or scriptable configuration |
+| `knowl reindex --vectors` | Fetch the embedding model and backfill embeddings for existing atoms (new writes index themselves) |
+| `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access]` | Preview / apply memory GC; tune the archive/compress thresholds, and use `--ignore-access` to archive stale state even if it's hot (recently retrieved) |
+| `knowl view` | Start the read-only local viewer on `127.0.0.1` |
+| `knowl serve` | Start the stdio MCP server |
+| `knowl agent-event\|agent-hook\|agent-reminder` | Internal host lifecycle capture and the Claude prompt card |
+
+</details>
+
+Every structured and raw write passes deterministic **secret, sensitive-path, and size validation**. `knowl audit` never mutates data.
 
 ---
 
@@ -543,99 +652,6 @@ MCP is the preferred way for agents to use Knowl. The server publishes this same
 
 ---
 
-## 🤝 Agent setup
-
-`knowl init` detects **Codex, Claude Code, Cursor, Gemini CLI, and Claude Desktop**, then presents a multi-select UI. Re-run it any time to add an agent or repair a stale registration — it preserves unrelated MCP servers and host rules, backs up existing configs before changing them, and never duplicates correct entries.
-
-```bash
-knowl init                          # interactive multi-select
-knowl init codex claude cursor gemini   # configure explicitly
-knowl doctor                        # verify readiness
-```
-
-`KNOWL.md` is the canonical full workflow; `AGENTS.md` carries the synchronized managed reference; `CLAUDE.md` imports `@KNOWL.md` and `GEMINI.md` imports `@./KNOWL.md` via native imports. Start a new agent session after setup and trust the repository when the host asks before running project hooks. Rerun `knowl init` after upgrades so imports and hook registrations reload.
-
----
-
-## ⌨️ CLI reference
-
-<details open>
-<summary><b>Project & status</b></summary>
-
-| Command | Description |
-| --- | --- |
-| `knowl init [agents...]` | Initialize **or** upgrade this project, then register detected agents (`codex`, `claude`, `cursor`, `gemini`, `claude-desktop`). Safe to re-run. |
-| `knowl upgrade` | The project-files half of `init` — refresh config, schema, guidance, and `.gitignore` with **no** agent setup or prompts (scriptable/CI-safe) |
-| `knowl status` | Repo path, item/category counts, AI config status, recent knowledge commits, and a new-version notice |
-| `knowl doctor` | Check whether the project is ready for agent memory usage (also reports a new version) |
-| `knowl state` | Print the full active hierarchical project memory |
-| `knowl audit` | Read-only validation, reference, JSON, status, and FTS integrity audit |
-
-</details>
-
-<details>
-<summary><b>Memory: decisions, queries, history</b></summary>
-
-| Command | Description |
-| --- | --- |
-| `knowl decide [title] [content]` | Record a decision (interactive if title/content omitted) |
-| `knowl query <query> [--as-of <ts>]` | Query current or historically valid content |
-| `knowl timeline <item-id>` | Print immutable content assertions for one item |
-| `knowl conflicts` | List active exclusive conflict identities |
-| `knowl supersede <item-id> <replacement-id>` | Mark one item superseded by an explicit replacement |
-| `knowl evidence list <item-id>` | List linked file/commit/test/command/URL/symbol evidence |
-| `knowl context --token-budget <n>` | Compose a compact task context pack |
-| `knowl eval retrieval --dataset <path> [--json]` | Run a checked-in retrieval evaluation dataset |
-
-</details>
-
-<details>
-<summary><b>Work loops & sessions</b></summary>
-
-| Command | Description |
-| --- | --- |
-| `knowl task start <title>` | Start a work loop, query memory, store active task state |
-| `knowl task checkpoint <task-id> <summary> [--goal ...] [--completed ...] [--next-action ...] [--blocker ...] [--artifact ...] [--verification-status ...]` | Store durable progress + optional structured task state |
-| `knowl task finish <task-id> <summary>` | Store durable completion state |
-| `knowl task run <title> -- <command...>` | Start a loop, run a command, finish on success or checkpoint on failure |
-| `knowl session start\|event\|finish\|recover` | Manage bounded, expiring scratch session events and recover stale sessions |
-
-</details>
-
-<details>
-<summary><b>Skills, code & AI</b></summary>
-
-| Command | Description |
-| --- | --- |
-| `knowl skill list\|read\|create\|run` | Manage and run file-backed learned skill packages |
-| `knowl code index` | Incrementally index TS/JS symbols and import/export edges |
-| `knowl code symbols <path>` | Print indexed symbols for one repo-relative file |
-| `knowl synthesize --scope <tag>` | Create/refresh deterministic evidence-backed understanding |
-| `knowl ask <question>` | Natural-language question over memory (requires AI config) |
-| `knowl ingest <text>` | Extract and merge knowledge from raw text (requires AI config) |
-
-</details>
-
-<details>
-<summary><b>Data, config & serving</b></summary>
-
-| Command | Description |
-| --- | --- |
-| `knowl export <path>` / `knowl import <path> [--dry-run]` | Versioned, manifest-verified JSONL portability |
-| `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Transactional SQLite snapshots with SHA-256 manifest |
-| `knowl config [get\|set\|reset] [key] [value]` | Interactive or scriptable configuration |
-| `knowl reindex --vectors` | Fetch the embedding model and backfill embeddings for existing atoms (new writes index themselves) |
-| `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access]` | Preview / apply memory GC; tune the archive/compress thresholds, and use `--ignore-access` to archive stale state even if it's hot (recently retrieved) |
-| `knowl view` | Start the read-only local viewer on `127.0.0.1` |
-| `knowl serve` | Start the stdio MCP server |
-| `knowl agent-event\|agent-hook\|agent-reminder` | Internal host lifecycle capture and the Claude prompt card |
-
-</details>
-
-Every structured and raw write passes deterministic **secret, sensitive-path, and size validation**. `knowl audit` never mutates data.
-
----
-
 ## 🤖 Optional AI configuration
 
 Knowl needs **no** AI configuration for MCP structured tools. Configure a provider only for `knowl ask`, `knowl ingest`, MCP `knowl_ingest`, and AI-assisted decision-conflict handling. Supported providers: `openai`, `anthropic`, `ollama`, `custom`.
@@ -664,17 +680,6 @@ knowl config set ai.apiKey my-key
 
 Environment-variable placeholders such as `${OPENAI_API_KEY}` are resolved at runtime.
 
-### Update notifications
-
-`knowl status` and `knowl doctor` tell you when a newer version is published:
-
-```
-📦 Update available: 1.3.1 → 1.4.0
-   npm install -g @dat999zx/knowl
-```
-
-True to local-first: the check runs **only** from those two explicit commands — never from hooks, MCP, or `knowl serve` — is cached for 24h in `.knowl/cache/`, times out in 2s, and fails silently offline. Turn it off with `knowl config set updateCheck.enabled false`, or the `KNOWL_NO_UPDATE_CHECK` / `NO_UPDATE_NOTIFIER` environment variables.
-
 ---
 
 ## 💾 Local data
@@ -686,29 +691,6 @@ Knowl stores everything under `.knowl/` (git-ignored by default):
 - `.knowl/skills/` — file-backed learned skill packages (`SKILL.md`, `skill.json`, optional scripts).
 
 `skill.json` defines path-safe metadata plus entrypoints; the `default` entrypoint should point at a repo-local script inside the package (`run.ps1`, `run.sh`, `run.cmd`). A `fallback` shell command is allowed when a direct shell invocation is needed.
-
----
-
-## 🛠️ Development
-
-```bash
-npm install          # dependencies
-npm test             # vitest suite
-npm run build        # build the CLI (tsup)
-npm pack --dry-run   # validate npm package contents
-```
-
-On Windows, if the default npm cache has permission issues, use a workspace-local cache:
-
-```bash
-npm pack --dry-run --cache .tmp\npm-cache
-```
-
----
-
-## 📦 Package
-
-Published as **`@dat999zx/knowl`**; the installed binary is `knowl`. The package payload is limited to `dist`, `README.md`, and `LICENSE`. `prepublishOnly` runs `npm run build` before publish.
 
 ---
 
