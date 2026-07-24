@@ -96,7 +96,7 @@ Each project measures on its own dataset, so this is **not one leaderboard** —
 
 | System | Benchmark (its own) | Reported result |
 | --- | --- | --- |
-| **Knowl** | own 500-case adversarial suite — **ships in this repo** | Recall@10 **0.994** · MRR **0.961** · governance MRR **0.94**, 0/24 rejected leaked |
+| **Knowl** | own 500-case adversarial suite — **ships in this repo** | Recall@10 **99.4%** · MRR **96.1%** · governance MRR **94%**, 0/24 rejected leaked |
 | AgentMemory | LongMemEval-S (500 Q) | Recall@10 **98.6%** · Recall@5 95.2% · MRR **88.2%** |
 | Mem0 | LoCoMo / LongMemEval (managed platform) | **92.5** / **94.4** · ~7K tokens · p50 0.88–1.09s |
 | Zep / Graphiti | DMR / LongMemEval | DMR **94.8%** · up to **+18.5%** accuracy, −90% latency |
@@ -514,7 +514,7 @@ Every number below is produced by checked-in tooling and reproducible on your ma
 Run against the checked-in **retrieval suite** ([`docs/evals/retrieval-suite.json`](docs/evals/retrieval-suite.json)) — **500 cases** over **168 knowledge atoms** across ~20 engineering domains, adversarial by design: paraphrased and vague queries, **40 near-identical microservices** as mutual distractors, filename/provenance lookups, and `stale`/`rejected` traps the retriever must avoid. The numbers below are the **default path real agents use**: local **vector search fused with BM25**.
 
 <div align="center">
-<img src="docs/assets/benchmark-retrieval-quality.svg" alt="Retrieval quality on the 500-case suite with vector+BM25 fusion: Recall@3 0.989, Recall@10 0.994, MRR 0.961, nDCG 0.969" width="82%" />
+<img src="docs/assets/benchmark-retrieval-quality.svg" alt="Retrieval quality on the 500-case suite with vector+BM25 fusion: Recall@3 98.9%, Recall@10 99.4%, MRR 96.1%, nDCG 96.9%" width="82%" />
 </div>
 
 ```bash
@@ -536,17 +536,17 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --vector --json
 
 **492 of 500 cases hit** their expected atom in the top results. We keep the **8 honest misses** in the dataset rather than deleting them — they cluster on `stale`-beats-fresh siblings and a couple of the 40 look-alike services. `rejected`/superseded items are **never** returned (filtered from active retrieval), so the residual `forbiddenHitCount` is only stale-but-active distractors, never a rejected decision.
 
-> **Retrieval-engine note.** An ablation (BM25-only vs vector-only vs fused) found the old equal-weight fusion was *diluting* vector's ranking. Knowl now ranks **vector-first**, keeps a bounded freshness/status re-rank for governance, and treats **BM25 as a fallback + exact-identifier booster** — lifting suite MRR from **0.784 → 0.961**. Vector search embeds the query locally (~0.3s p50 on CPU); run **without** `--vector` for the deterministic BM25-only lower bound (Recall@10 0.963, MRR 0.784, ~30ms) that needs no model and backs the CI smoke test. A 10-case smoke dataset ([`docs/evals/retrieval-baseline.json`](docs/evals/retrieval-baseline.json)) is also kept as a fast regression check.
+> **Retrieval-engine note.** An ablation (BM25-only vs vector-only vs fused) found the old equal-weight fusion was *diluting* vector's ranking. Knowl now ranks **vector-first**, keeps a bounded freshness/status re-rank for governance, and treats **BM25 as a fallback + exact-identifier booster** — lifting suite MRR from **78.4% → 96.1%**. Vector search embeds the query locally (~0.3s p50 on CPU); run **without** `--vector` for the deterministic BM25-only lower bound (Recall@10 96.3%, MRR 78.4%, ~30ms) that needs no model and backs the CI smoke test. A 10-case smoke dataset ([`docs/evals/retrieval-baseline.json`](docs/evals/retrieval-baseline.json)) is also kept as a fast regression check.
 
 ### Governance — the part that actually differentiates
 
 Retrieval asks *"can you find the text?"* Governance asks *"after the project changed its mind, do you return the **current** truth — and never a decision we **rejected**?"* This is Knowl's reason to exist, and it's measurable. The governance suite ([`docs/evals/retrieval-governance.json`](docs/evals/retrieval-governance.json)) seeds **22 migration scenarios** — each with a *current* decision, a *superseded/stale* one, and often a *rejected* alternative on the same topic — then asks "what do we use now?" and "why did we choose it?".
 
 <div align="center">
-<img src="docs/assets/benchmark-governance.svg" alt="Governance: current-truth MRR 0.94, current truth in top-3 100%, 0 of 24 rejected decisions surfaced" width="82%" />
+<img src="docs/assets/benchmark-governance.svg" alt="Governance: current-truth MRR 94%, current truth in top-3 100%, 0 of 24 rejected decisions surfaced" width="82%" />
 </div>
 
-- **Current truth wins.** The fresh decision is ranked **#1** with MRR **0.94** (Recall@3 **1.00**) — ask "which database do we use now?" and PostgreSQL comes back on top, not the MySQL you migrated off.
+- **Current truth wins.** The fresh decision is ranked **#1** with MRR **94%** (Recall@3 **100%**) — ask "which database do we use now?" and PostgreSQL comes back on top, not the MySQL you migrated off.
 - **Rejected decisions are never surfaced.** Across **24 rejected-decision traps, 0 leaked** — `rejected`/`superseded` status is filtered out of active retrieval entirely. A memory built on raw transcripts *cannot* make that guarantee; the rejected idea is still sitting in the chat log.
 - **By design:** the superseded sibling is *downranked below* the current decision but still reachable further down the list — history is preserved, not deleted. Filter by freshness or query `--as-of` when you want only the current answer.
 

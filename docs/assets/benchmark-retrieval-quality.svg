@@ -1,4 +1,4 @@
-<svg width="760" height="392" viewBox="0 0 760 392" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Retrieval quality on the 500-case suite with vector+BM25 fusion: Recall@3 0.989, Recall@10 0.994, MRR 0.961, nDCG 0.969">
+<svg width="760" height="392" viewBox="0 0 760 392" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Retrieval quality on the 500-case suite with vector+BM25 fusion: Recall@3 98.9%, Recall@10 99.4%, MRR 96.1%, nDCG 96.9%">
   <rect x="1" y="1" width="758" height="390" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
 
   <text x="28" y="42" font-size="21" font-weight="700" fill="#ffffff">Retrieval quality</text>
@@ -12,11 +12,11 @@
     <line x1="660" y1="96" x2="660" y2="316"/>
   </g>
   <g font-size="12" fill="#898781" text-anchor="middle">
-    <text x="160" y="334">0</text>
-    <text x="285" y="334">0.25</text>
-    <text x="410" y="334">0.50</text>
-    <text x="535" y="334">0.75</text>
-    <text x="660" y="334">1.0</text>
+    <text x="160" y="334">0%</text>
+    <text x="285" y="334">25%</text>
+    <text x="410" y="334">50%</text>
+    <text x="535" y="334">75%</text>
+    <text x="660" y="334">100%</text>
   </g>
 
   <g font-size="14" fill="#c3c2b7" text-anchor="end" font-weight="600">
@@ -32,10 +32,10 @@
     <rect x="160" y="266" width="484.5" height="24" rx="6" fill="#3987e5"/>
   </g>
   <g font-size="14" font-weight="700" fill="#ffffff" text-anchor="start">
-    <text x="666.5" y="122">0.989</text>
-    <text x="669" y="176">0.994</text>
-    <text x="652.5" y="230">0.961</text>
-    <text x="656.5" y="284">0.969</text>
+    <text x="666.5" y="122">98.9%</text>
+    <text x="669" y="176">99.4%</text>
+    <text x="652.5" y="230">96.1%</text>
+    <text x="656.5" y="284">96.9%</text>
   </g>
 
   <g transform="translate(28,352)" font-size="13" font-weight="600">

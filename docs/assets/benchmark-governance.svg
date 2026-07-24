@@ -1,4 +1,4 @@
-<svg width="760" height="212" viewBox="0 0 760 212" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Governance benchmark: current-truth MRR 0.97, current truth in top-3 100 percent, zero rejected decisions surfaced across 24 traps">
+<svg width="760" height="212" viewBox="0 0 760 212" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Governance benchmark: current-truth MRR 94%, current truth in top-3 100 percent, zero rejected decisions surfaced across 24 traps">
   <rect x="1" y="1" width="758" height="210" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
 
   <text x="28" y="42" font-size="21" font-weight="700" fill="#ffffff">Governance — current truth over history</text>
@@ -11,7 +11,7 @@
   </g>
 
   <g text-anchor="middle">
-    <text x="138" y="140" font-size="40" font-weight="800" fill="#3987e5">0.94</text>
+    <text x="138" y="140" font-size="40" font-weight="800" fill="#3987e5">94%</text>
     <text x="138" y="166" font-size="13" font-weight="600" fill="#c3c2b7">MRR — current decision ranked #1</text>
 
     <text x="380" y="140" font-size="40" font-weight="800" fill="#3987e5">100<tspan font-size="20" font-weight="700" fill="#7cb0f5">%</tspan></text>
