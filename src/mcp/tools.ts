@@ -138,6 +138,7 @@ export function registerTools(
               conflictKey: { type: 'string', description: 'Optional normalized semantic identity key.' },
               conflictScope: { type: 'object', description: 'Optional scope for the conflict key.' },
               conflictExclusive: { type: 'boolean', description: 'Whether only one active value may exist for this key/scope.' },
+              supersedes: { type: 'string', description: 'Optional id of an active item this write replaces; it is marked superseded. A changed `state` atom supersedes its near-duplicate automatically.' },
               steps: {
                 type: 'array',
                 items: { type: 'string' },
@@ -615,7 +616,7 @@ export function registerTools(
       }
 
       else if (name === 'knowl_store') {
-        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, steps, conflictKey, conflictScope, conflictExclusive, namespace = 'project' } = args as any;
+        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, steps, conflictKey, conflictScope, conflictExclusive, supersedes, namespace = 'project' } = args as any;
 
         if (!KNOWLEDGE_CATEGORIES.includes(category)) {
           throw new Error(`Invalid knowledge category: ${category}`);
@@ -637,6 +638,7 @@ export function registerTools(
             conflictKey,
             conflictScope,
             conflictExclusive,
+            supersedes,
             steps,
           },
           `Store ${category}: ${title}`,

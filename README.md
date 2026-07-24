@@ -326,6 +326,8 @@ knowl conflicts
 knowl supersede <old-item-id> <replacement-id>
 ```
 
+**Current truth is maintained on write, not just on read.** Recording a decision that matches an existing one retires the old decision (`status: superseded`), and a **changed `state` atom supersedes its near-duplicate predecessor** — so "what are we doing now?" resolves to the latest status instead of accumulating stale copies. This also applies to the automatic session→durable promotion. `fact`, `constraint`, `architecture`, and `goal` atoms deliberately **coexist** (two facts can both be true; nothing is silently retired on a fuzzy match) — retire those explicitly with `knowl_update`, `knowl supersede`, or `knowl_store { supersedes: <id> }`. Exclusive `conflictKey`s still reject a colliding write outright so contradictions surface instead of piling up.
+
 ### Learned skills
 
 Store reusable, file-backed skill packages under `.knowl/skills/<name>/` (`SKILL.md`, `skill.json`, optional scripts), indexed as `skill` atoms and runnable through stable CLI/MCP bridges — no new tool per skill.
@@ -518,7 +520,7 @@ MCP is the preferred way for agents to use Knowl. The server publishes this same
 | `knowl_task_start` | Start one manual work loop when verified lifecycle hooks are unavailable |
 | `knowl_task_checkpoint` | Checkpoint meaningful manual-loop progress or blockers with its task ID |
 | `knowl_task_finish` | Finish one manual work loop once after verification |
-| `knowl_store` | Store one concise structured durable atom |
+| `knowl_store` | Store one concise structured durable atom; optional `supersedes: <id>` retires the item it replaces |
 | `knowl_ingest_atoms` | Batch store client-extracted durable atoms, never raw transcripts |
 | `knowl_decide` | Record a confirmed project decision and reasoning |
 | `knowl_update` | Correct or supersede stale or contradicted memory |

@@ -23,6 +23,8 @@ export interface StoreKnowledgeInput {
   confidence?: number;
   steps?: string[];
   evidence?: EvidenceInput[];
+  /** Explicitly mark this active item id superseded by the new write. */
+  supersedes?: string;
 }
 
 export interface StoreKnowledgeResult {
@@ -98,6 +100,34 @@ export async function findLikelyDuplicateKnowledgeItem(
   ) || null;
 }
 
+function normalizedIdentity(item: { title: string; content: string }): string {
+  return `${item.title}\n${item.content}`.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// Decide whether a detected duplicate should be superseded by the new write rather
+// than causing the new write to be dropped. `state` is inherently "current status",
+// so a *changed* near-duplicate replaces the old one (like decisions do); an explicit
+// `supersedes` id always wins. Facts/constraints/architecture/goals keep coexisting.
+function supersedesDuplicate(input: { category: KnowledgeCategory; title: string; content: string; supersedes?: string }, duplicate: KnowledgeItem): boolean {
+  if (input.supersedes && input.supersedes === duplicate.id) return true;
+  return input.category === 'state' && normalizedIdentity(input) !== normalizedIdentity(duplicate);
+}
+
+// Resolve the item (if any) that a new write should mark superseded: the detected
+// duplicate when it qualifies, otherwise an explicitly named active item.
+async function resolveSupersedeTarget(
+  input: { supersedes?: string },
+  duplicate: KnowledgeItem | null,
+  qualifies: boolean,
+): Promise<KnowledgeItem | null> {
+  if (duplicate && qualifies) return duplicate;
+  if (input.supersedes) {
+    const explicit = await repo.getKnowledgeItem(input.supersedes);
+    if (explicit && explicit.status === 'active') return explicit;
+  }
+  return null;
+}
+
 export async function storeKnowledgeItemDeduped(
   projectId: string,
   input: StoreKnowledgeInput,
@@ -107,7 +137,8 @@ export async function storeKnowledgeItemDeduped(
   const conflicts = await checkKnowledgeConflict(input);
   if (conflicts.length) throw new KnowledgeConflictError(conflicts.map(item => ({ id: item.id, title: item.title })));
   const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, input);
-  if (duplicate) {
+  const qualifies = duplicate ? supersedesDuplicate(input, duplicate) : false;
+  if (duplicate && !qualifies && !input.supersedes) {
     return { action: 'duplicate', item: duplicate };
   }
 
@@ -134,9 +165,14 @@ export async function storeKnowledgeItemDeduped(
   );
   await attachEvidenceToKnowledge(item.id, input.evidence, input);
 
-  await repo.createKnowledgeCommit(projectId, commitMessage || `Store ${input.category}: ${input.title}`, [
-    { itemId: item.id, action: 'insert', after: item },
-  ]);
+  const changes: CommitChange[] = [];
+  const superseded = await resolveSupersedeTarget(input, duplicate, qualifies);
+  if (superseded && superseded.id !== item.id) {
+    await repo.updateKnowledgeItem(superseded.id, { status: 'superseded', supersededById: item.id });
+    changes.push({ itemId: superseded.id, action: 'supersede', before: superseded });
+  }
+  changes.push({ itemId: item.id, action: 'insert', after: item });
+  await repo.createKnowledgeCommit(projectId, commitMessage || `Store ${input.category}: ${input.title}`, changes);
 
   return { action: 'inserted', item };
 }
@@ -150,6 +186,7 @@ export async function storeKnowledgeAtomsDeduped(
   const changes: CommitChange[] = [];
   const itemIds: string[] = [];
   let duplicateCount = 0;
+  let insertedCount = 0;
 
   for (const atom of atoms) {
     const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, {
@@ -160,7 +197,8 @@ export async function storeKnowledgeAtomsDeduped(
       tags: atom.tags,
     });
 
-    if (duplicate) {
+    const qualifies = duplicate ? supersedesDuplicate(atom, duplicate) : false;
+    if (duplicate && !qualifies && !atom.supersedes) {
       itemIds.push(duplicate.id);
       duplicateCount++;
       continue;
@@ -186,7 +224,14 @@ export async function storeKnowledgeAtomsDeduped(
     );
     await attachEvidenceToKnowledge(item.id, atom.evidence, atom);
 
+    const superseded = await resolveSupersedeTarget(atom, duplicate, qualifies);
+    if (superseded && superseded.id !== item.id) {
+      await repo.updateKnowledgeItem(superseded.id, { status: 'superseded', supersededById: item.id });
+      changes.push({ itemId: superseded.id, action: 'supersede', before: superseded });
+    }
+
     itemIds.push(item.id);
+    insertedCount++;
     changes.push({ itemId: item.id, action: 'insert', after: item });
   }
 
@@ -200,7 +245,7 @@ export async function storeKnowledgeAtomsDeduped(
 
   return {
     itemIds,
-    insertedCount: changes.length,
+    insertedCount,
     duplicateCount,
   };
 }
