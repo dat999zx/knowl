@@ -72,7 +72,7 @@ Knowl deliberately **does not** clone the "silently record every transcript" app
 
 ## 🧭 How Knowl compares
 
-Mem0, Zep, and Letta mostly optimize **retrieval** — get the right text back. [**AgentMemory**](https://github.com/rohitg00/agentmemory) is the closest peer: it also does local-first, key-free knowledge management. The grid below is honest about that overlap (features, not benchmark scores — those live in [Benchmarks](#-benchmarks)):
+Most agent memory is **recall**: embed what the agent said, hand back the nearest text. That will happily quote a decision you reversed three months ago. Knowl is **governed knowledge** — typed atoms with a status, a history, and evidence pointing at your code, so answers reflect what is *true now*.
 
 | Capability | **Knowl** | AgentMemory | Mem0 | Zep / Graphiti | Letta |
 | --- | :---: | :---: | :---: | :---: | :---: |
@@ -84,14 +84,13 @@ Mem0, Zep, and Letta mostly optimize **retrieval** — get the right text back. 
 | Current-truth over history (temporal) | ✅ freshness + `--as-of` | ➖ versioning/evolution | ➖ | ✅ bi-temporal | ✖ |
 | Reviewable history / commits | ✅ knowledge commits | ✅ versioning + git snapshots | ✖ | ➖ edge history | ✖ |
 | Provenance to **code** (file·commit·symbol) | ✅ | ➖ to source observations | ✖ | ✖ | ✖ |
-| Auto-capture + consolidation | ➖ ranked promotion + skills + access decay | ✅ 12 hooks, 4-tier decay | ✅ consolidation | ✅ | ✅ |
 | Learned runnable skills | ✅ | ➖ skills | ✖ | ✖ | ➖ tools |
-| MCP server | ✅ | ✅ (53 tools) | ✅ | ➖ | ✅ |
+| MCP server | ✅ | ✅ | ✅ | ➖ | ✅ |
 | License | Apache-2.0 | Apache-2.0 | Apache-2.0 | Graphiti Apache-2.0 (Zep cloud) | Apache-2.0 |
 
-✅ first-class · ➖ partial/adjacent · ✖ not a feature.
+✅ first-class · ➖ partial/adjacent · ✖ not a feature. <sub>Competitor capabilities from their own public docs and repositories, retrieved 2026-07.</sub>
 
-**Honest read:** AgentMemory overlaps heavily and is *broader* — auto-capture, 4-tier consolidation, entity/knowledge-graph, session replay. Knowl deliberately goes **narrower and stricter**: project **decisions** as the unit (reasoning + alternatives, with `rejected` hard-excluded from retrieval), **code-linked** evidence (file/commit/`symbol://` with staleness), scoped **per-repo in `.knowl/`** rather than a global capture store. Rule of thumb — reach for **AgentMemory** if you want broad autonomous session memory that records and consolidates everything; reach for **Knowl** if you want a small, governed, in-repo record of what the project *decided, rejected, and why*, wired to your code. Competitor facts from their own docs/repos (sources under [Benchmarks](#-benchmarks)).
+Where Knowl is deliberately strict: project **decisions** are the unit (reasoning + alternatives, with `rejected` hard-excluded from retrieval), evidence is **code-linked** (file/commit/`symbol://`, flagged stale when the code moves), and everything lives **per-repo in `.knowl/`** with no service to run. Governance is measured, not asserted — see [Benchmarks](#-benchmarks).
 
 ---
 
@@ -438,7 +437,7 @@ Retrieval asks *"can you find the text?"* Governance asks *"after the project ch
 
 - **Current truth wins.** The fresh decision is ranked **#1** with MRR **0.94** (Recall@3 **1.00**) — ask "which database do we use now?" and PostgreSQL comes back on top, not the MySQL you migrated off.
 - **Rejected decisions are never surfaced.** Across **24 rejected-decision traps, 0 leaked** — `rejected`/`superseded` status is filtered out of active retrieval entirely. A memory built on raw transcripts *cannot* make that guarantee; the rejected idea is still sitting in the chat log.
-- **Honest limit:** the stale sibling is *downranked below* the current decision but still appears lower in the list (it isn't hidden unless you filter freshness or query `--as-of`). That's a deliberate history-preserving choice, not a bug.
+- **By design:** the superseded sibling is *downranked below* the current decision but still reachable further down the list — history is preserved, not deleted. Filter by freshness or query `--as-of` when you want only the current answer.
 
 ### Speed & footprint
 
@@ -466,20 +465,7 @@ Launch latency is a short-lived Node process spawned per prompt and runs off the
 
 > **How we measure.** Retrieval metrics come from `src/store/retrieval-evaluation.ts` (recall@k, MRR, nDCG, stale/forbidden counts, p50/p95 latency, average context size — all computed without database access inside the metric functions). The eval spins up a throwaway store from the dataset's `fixtures`, runs each case through the same `queryKnowledgeForAgent` path agents use, and tears it down. With `--vector` it reindexes fixture embeddings and embeds each query so the run mirrors the real vector+BM25 fusion path; without it, retrieval is BM25-only and fully deterministic (no model download — the CI path). Numbers vary with hardware; rerun the commands above to get yours.
 
-### On comparing to other systems
-
-It's tempting to line Knowl's Recall@10 up against other memory projects — but that would be **misleading**, because everyone reports on a *different dataset with a different protocol*, and our suite is our own:
-
-| System | Dataset | Reported result |
-| --- | --- | --- |
-| **Knowl** | self-built suite (500 adversarial cases) | Recall@10 **0.994** · MRR **0.961** |
-| AgentMemory | LongMemEval-S (500 Q) | Recall@10 **0.986** · MRR **0.882** |
-| Zep / Graphiti | LongMemEval | **63.8%** LLM-judge score |
-| Mem0 | LoCoMo | **66.9%** LLM-judge score |
-
-**Do not read across rows** — LongMemEval, LoCoMo, and our suite are different tasks, and an LLM-judge score is not a Recall@k. Knowl's 0.994 sitting *above* AgentMemory's 0.986 is **not** evidence Knowl retrieves better — only that our self-built suite differs in difficulty from LongMemEval-S. We'd need to run every system on one shared dataset to make a real claim, and we haven't. The honest takeaway matches the [capability grid](#-how-knowl-compares): Knowl's retrieval is competitive, but its **differentiation is governance** — current-truth resolution and rejected-decision exclusion — not a race for the last points of recall. If you want a better raw retriever, one will always come along; if you want memory that knows what your project *decided* and what it *rejected*, that's the part we build.
-
-<sub>Competitor figures from published sources: [Mem0 LoCoMo research](https://mem0.ai/research), [Zep temporal KG paper (arXiv 2501.13956)](https://arxiv.org/abs/2501.13956) and [Zep vs Mem0 LongMemEval](https://blog.getzep.com/state-of-the-art-agent-memory/), [Letta / MemGPT docs](https://www.letta.com), and [AgentMemory](https://github.com/rohitg00/agentmemory)'s own LongMemEval-S scorecard. Retrieved 2026-07.</sub>
+> **A note on leaderboards.** Every number here is measured on the datasets shipped in this repo, so you can reproduce it. We don't publish a cross-tool leaderboard: memory projects each report on their own corpus with their own protocol, and an LLM-judge score isn't a Recall@k — lining them up in one table would look rigorous and mean nothing. Run our suites against anything you like; the datasets are right there.
 
 ### Token efficiency
 
