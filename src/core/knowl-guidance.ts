@@ -102,3 +102,13 @@ function renderCompactKnowlGuidance(modeLine: string): string {
 export const KNOWL_CLAUDE_OPERATIONAL_CARD = renderCompactKnowlGuidance(KNOWL_CLAUDE_MODE_LINE);
 export const KNOWL_MCP_SERVER_INSTRUCTIONS = renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE);
 export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with 2-6 keywords before repository files or commands. Store or update verified durable findings. Claude hooks own lifecycle; do not start the manual task loop.';
+
+// Short per-prompt reminder (UserPromptSubmit). The full tool routing lives in
+// KNOWL.md and the MCP initialize instructions, so the per-prompt card only needs
+// the core loop — keeping it ~1/3 the size of the operational card.
+export const KNOWL_CLAUDE_PROMPT_REMINDER = [
+  'KNOWL — project memory is active.',
+  'For any project question or new subtask, call knowl_query (2-6 keywords) BEFORE reading files; use a relevant active hit directly and inspect files only on a miss, conflict, or stale/low-confidence result.',
+  'Store or update verified durable decisions, facts, state, and constraints as you go with knowl_store / knowl_decide / knowl_update; never store secrets or routine noise.',
+  'Claude hooks own the lifecycle — do not call knowl_task_start/checkpoint/finish. Full tool routing is in KNOWL.md.',
+].join(' ');

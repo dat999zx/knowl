@@ -23,6 +23,8 @@ export interface NormalizedHostHook {
   status?: 'finished' | 'failed';
   type?: SessionEventType;
   payload: Record<string, unknown>;
+  /** True when this tool event is a Knowl MCP/CLI call — used to reset the drift reminder. */
+  knowlTool?: boolean;
 }
 
 const MAX_STRING = 2_000;
@@ -126,17 +128,18 @@ function commandEvent(projectRoot: string, raw: Record<string, unknown>): Pick<N
   return { type: 'command', payload: { command, exitCode } };
 }
 
-function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status'> {
+function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'knowlTool'> {
   const input = toolInput(raw);
   const toolName = stringValue(raw.tool_name) ?? stringValue(raw.toolName) ?? '';
+  const knowlTool = /knowl/i.test(toolName);
   const isShell = host === 'cursor'
     ? eventName === 'afterShellExecution'
     : toolName.toLocaleLowerCase() === 'bash' || toolName.toLocaleLowerCase() === 'shell';
-  if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined };
+  if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, knowlTool };
 
   const paths = changedPaths(projectRoot, { ...raw, ...input });
-  if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths } };
-  return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) } };
+  if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths }, knowlTool };
+  return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) }, knowlTool };
 }
 
 function failurePayload(raw: Record<string, unknown>, failed: boolean): Record<string, unknown> {

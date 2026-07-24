@@ -291,27 +291,35 @@ describe('host lifecycle orchestration', () => {
     expect(rows.rows).toHaveLength(1);
   });
 
-  it('reminds Claude after every eight accepted successful tool events', async () => {
+  it('reminds Claude after 12 consecutive non-Knowl tool events and resets on a Knowl tool', async () => {
+    const drift = (command: string) => hook({
+      host: 'claude', event: 'session-event', externalSessionId: 'claude-long-turn', externalTurnId: undefined,
+      type: 'command', payload: { command, exitCode: 0 },
+    });
     const results = [];
-    for (let index = 1; index <= 9; index++) {
-      results.push(await handleHostLifecycleEvent(projectId, hook({
-        host: 'claude',
-        event: 'session-event',
-        externalSessionId: 'claude-long-turn',
-        externalTurnId: undefined,
-        type: 'command',
-        payload: { command: `tool-${index}`, exitCode: 0 },
-      })));
+    for (let index = 1; index <= 13; index++) {
+      results.push(await handleHostLifecycleEvent(projectId, drift(`tool-${index}`)));
     }
 
-    expect(results.slice(0, 7).every(result => result.hostOutput === undefined)).toBe(true);
-    expect(results[7].hostOutput).toEqual({
+    expect(results.slice(0, 11).every(result => result.hostOutput === undefined)).toBe(true);
+    expect(results[11].hostOutput).toEqual({
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         additionalContext: KNOWL_CLAUDE_CONTINUATION_REMINDER,
       },
     });
-    expect(results[8].hostOutput).toBeUndefined();
+    expect(results[12].hostOutput).toBeUndefined();
+
+    // Using a Knowl tool resets the drift counter, so the next 11 non-Knowl calls stay quiet.
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude', event: 'session-event', externalSessionId: 'claude-long-turn', externalTurnId: undefined,
+      type: 'checkpoint', payload: { summary: 'mcp__knowl__knowl_query completed' }, knowlTool: true,
+    }));
+    const afterReset = [];
+    for (let index = 1; index <= 11; index++) {
+      afterReset.push(await handleHostLifecycleEvent(projectId, drift(`post-reset-${index}`)));
+    }
+    expect(afterReset.every(result => result.hostOutput === undefined)).toBe(true);
   });
 
   it('does not count duplicate or failed Claude tool events toward the reminder', async () => {
@@ -338,7 +346,7 @@ describe('host lifecycle orchestration', () => {
       payload: { message: 'tool failed' },
     }));
     const following = [];
-    for (let index = 2; index <= 8; index++) {
+    for (let index = 2; index <= 12; index++) {
       following.push(await handleHostLifecycleEvent(projectId, hook({
         ...base,
         type: 'command',
@@ -349,8 +357,8 @@ describe('host lifecycle orchestration', () => {
     expect(first.hostOutput).toBeUndefined();
     expect(duplicate.reason).toBe('debounced');
     expect(failure.hostOutput).toBeUndefined();
-    expect(following.slice(0, 6).every(result => result.hostOutput === undefined)).toBe(true);
-    expect(following[6].hostOutput).toEqual({
+    expect(following.slice(0, 10).every(result => result.hostOutput === undefined)).toBe(true);
+    expect(following[10].hostOutput).toEqual({
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         additionalContext: KNOWL_CLAUDE_CONTINUATION_REMINDER,

@@ -95,6 +95,17 @@ export async function incrementHostSuccessfulToolCount(input: HostSessionKey): P
   return row ? Number(row.successful_tool_count) : 0;
 }
 
+// Reset the drift counter — called when the agent actually uses a Knowl tool, so
+// the continuation reminder only fires after a stretch of ignoring memory.
+export async function resetHostSuccessfulToolCount(input: HostSessionKey): Promise<void> {
+  const key = normalizedKey(input);
+  await getClient().execute({
+    sql: `UPDATE host_session_bindings SET successful_tool_count = 0, updated_at = ?
+      WHERE host = ? AND project_root = ? AND external_session_id = ? AND external_turn_id = ? AND active = 1`,
+    args: [new Date().toISOString(), key.host, key.projectRoot, key.externalSessionId, key.externalTurnId],
+  });
+}
+
 export async function closeHostSessionBinding(input: HostSessionKey): Promise<boolean> {
   const key = normalizedKey(input);
   const result = await getClient().execute({

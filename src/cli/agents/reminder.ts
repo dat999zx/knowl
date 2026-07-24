@@ -1,6 +1,6 @@
 import {
   KNOWL_CLAUDE_CONTINUATION_REMINDER,
-  KNOWL_CLAUDE_OPERATIONAL_CARD,
+  KNOWL_CLAUDE_PROMPT_REMINDER,
 } from '../../core/knowl-guidance.js';
 
 export interface ClaudePromptReminderOutput {
@@ -22,7 +22,7 @@ export function createAgentReminderOutput(host: string): ClaudePromptReminderOut
   return {
     hookSpecificOutput: {
       hookEventName: 'UserPromptSubmit',
-      additionalContext: KNOWL_CLAUDE_OPERATIONAL_CARD,
+      additionalContext: KNOWL_CLAUDE_PROMPT_REMINDER,
     },
   };
 }

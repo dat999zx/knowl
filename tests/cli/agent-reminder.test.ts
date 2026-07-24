@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { KNOWL_CLAUDE_OPERATIONAL_CARD } from '../../src/core/knowl-guidance.js';
+import { KNOWL_CLAUDE_PROMPT_REMINDER } from '../../src/core/knowl-guidance.js';
 
 const CLI_PATH = path.resolve('./dist/index.js');
 let outsideRoot: string;
@@ -24,7 +24,7 @@ describe('Claude prompt reminder', () => {
     expect(JSON.parse(run())).toEqual({
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
-        additionalContext: KNOWL_CLAUDE_OPERATIONAL_CARD,
+        additionalContext: KNOWL_CLAUDE_PROMPT_REMINDER,
       },
     });
     expect(await fs.readdir(outsideRoot)).toEqual([]);

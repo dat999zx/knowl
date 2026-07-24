@@ -13,9 +13,14 @@ import {
   getOrCreateHostSession,
   HostSessionKey,
   incrementHostSuccessfulToolCount,
+  resetHostSuccessfulToolCount,
 } from './host-session-bindings.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
+
+// Emit the mid-turn continuation reminder after this many consecutive non-Knowl
+// tool calls; any Knowl tool call resets the counter to zero.
+const KNOWL_REMINDER_DRIFT = 12;
 
 export type HostLifecycleResult = {
   accepted: boolean;
@@ -177,18 +182,19 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       const type = input.event === 'checkpoint' ? 'checkpoint' : input.type;
       if (!type) throw new Error('Normalized host session event requires a type.');
       await captureMemorySessionEvent(started.session.id, type, input.payload);
-      const successfulToolCount = input.host === 'claude'
-        && input.event === 'session-event'
-        && input.status !== 'failed'
-        ? await incrementHostSuccessfulToolCount(bindingKey(input, 'turn'))
-        : 0;
-      return {
-        accepted: true,
-        sessionId: started.session.id,
-        hostOutput: successfulToolCount > 0 && successfulToolCount % 8 === 0
-          ? createClaudePostToolReminderOutput()
-          : undefined,
-      };
+      // Adaptive continuation reminder: only nudge Claude after a run of tool calls
+      // that ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
+      // that is querying/storing memory never sees a reminder.
+      let hostOutput: Record<string, unknown> | undefined;
+      if (input.host === 'claude' && input.event === 'session-event' && input.status !== 'failed') {
+        if (input.knowlTool) {
+          await resetHostSuccessfulToolCount(bindingKey(input, 'turn'));
+        } else {
+          const drift = await incrementHostSuccessfulToolCount(bindingKey(input, 'turn'));
+          if (drift > 0 && drift % KNOWL_REMINDER_DRIFT === 0) hostOutput = createClaudePostToolReminderOutput();
+        }
+      }
+      return { accepted: true, sessionId: started.session.id, hostOutput };
     } catch (error) {
       releaseCapture(input);
       throw error;
