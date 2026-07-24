@@ -104,13 +104,22 @@ function normalizedIdentity(item: { title: string; content: string }): string {
   return `${item.title}\n${item.content}`.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
+function normalizedTitle(item: { title: string }): string {
+  return item.title.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 // Decide whether a detected duplicate should be superseded by the new write rather
 // than causing the new write to be dropped. `state` is inherently "current status",
 // so a *changed* near-duplicate replaces the old one (like decisions do); an explicit
 // `supersedes` id always wins. Facts/constraints/architecture/goals keep coexisting.
 function supersedesDuplicate(input: { category: KnowledgeCategory; title: string; content: string; supersedes?: string }, duplicate: KnowledgeItem): boolean {
   if (input.supersedes && input.supersedes === duplicate.id) return true;
-  return input.category === 'state' && normalizedIdentity(input) !== normalizedIdentity(duplicate);
+  // Only a re-report of the *same* state under the *same* title supersedes: "same
+  // thing, new status". Distinct titles (e.g. a work loop's start / checkpoint /
+  // finish records) stay side by side even though their text overlaps heavily.
+  return input.category === 'state'
+    && normalizedTitle(input) === normalizedTitle(duplicate)
+    && normalizedIdentity(input) !== normalizedIdentity(duplicate);
 }
 
 // Resolve the item (if any) that a new write should mark superseded: the detected

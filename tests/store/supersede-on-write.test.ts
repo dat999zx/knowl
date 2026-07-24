@@ -69,6 +69,19 @@ describe('supersede on write', () => {
     expect(old!.supersededById).toBe(replacement.item.id);
   });
 
+  it('never supersedes a differently-titled state record (work loop trail is safe)', async () => {
+    const start = await storeKnowledgeItemDeduped(projectId, {
+      category: 'state', title: 'Work Loop: Implement search UI', content: 'Started work loop for the search UI task.',
+    });
+    // A different title on the same topic must not retire the earlier record,
+    // even though the text overlaps heavily.
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'state', title: 'Work Loop finish', content: 'Started work loop for the search UI task, verified implementation.',
+    });
+
+    expect((await repo.getKnowledgeItem(start.item.id))!.status).toBe('active');
+  });
+
   it('batch promotion supersedes stale state too', async () => {
     const seed = await storeKnowledgeItemDeduped(projectId, {
       category: 'state', title: 'Session outcome', content: 'Finished the retrieval refactor, tests passing.',

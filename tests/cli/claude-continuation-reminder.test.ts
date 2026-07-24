@@ -26,9 +26,9 @@ describe('Claude continuation reminder CLI', () => {
     await fs.rm(TEST_DIR, { recursive: true, force: true }).catch(() => {});
   });
 
-  it('emits PostToolUse context on the eighth success and resets after Stop', () => {
+  it('emits PostToolUse context after 12 non-Knowl successes and resets after Stop', () => {
     const outputs = [];
-    for (let index = 1; index <= 8; index++) {
+    for (let index = 1; index <= 12; index++) {
       outputs.push(run(['agent-hook', 'claude', 'PostToolUse', '--json'], JSON.stringify({
         session_id: 'cli-long-session',
         cwd: TEST_DIR,
@@ -38,8 +38,8 @@ describe('Claude continuation reminder CLI', () => {
       })));
     }
 
-    expect(outputs.slice(0, 7).every(output => output === '')).toBe(true);
-    expect(JSON.parse(outputs[7])).toEqual({
+    expect(outputs.slice(0, 11).every(output => output === '')).toBe(true);
+    expect(JSON.parse(outputs[11])).toEqual({
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         additionalContext: KNOWL_CLAUDE_CONTINUATION_REMINDER,
@@ -58,4 +58,21 @@ describe('Claude continuation reminder CLI', () => {
       tool_response: { exit_code: 0 },
     }))).toBe('');
   }, 30_000);
+
+  it('a Knowl tool call resets the drift counter so no reminder fires', () => {
+    const post = (toolName: string, command: string) => run(['agent-hook', 'claude', 'PostToolUse', '--json'], JSON.stringify({
+      session_id: 'cli-reset-session',
+      cwd: TEST_DIR,
+      tool_name: toolName,
+      tool_input: { command },
+      tool_response: { exit_code: 0 },
+    }));
+
+    for (let index = 1; index <= 11; index++) post('Bash', `tool-${index}`);
+    // Using Knowl resets the streak, so the next 11 non-Knowl calls stay quiet.
+    expect(post('mcp__knowl__knowl_query', 'query')).toBe('');
+    const after = [];
+    for (let index = 1; index <= 11; index++) after.push(post('Bash', `post-reset-${index}`));
+    expect(after.every(output => output === '')).toBe(true);
+  }, 60_000);
 });
