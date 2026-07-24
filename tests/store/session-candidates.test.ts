@@ -25,4 +25,17 @@ describe('session candidates', () => {
     expect(candidates.every(candidate => candidate.content.length <= 2_000)).toBe(true);
     expect(candidates.every(candidate => candidate.evidence.length > 0)).toBe(true);
   });
+
+  it('promotes up to 8 importance-ranked candidates, decisions before the outcome', async () => {
+    const session = await startMemorySession({ title: 'Many decisions', query: 'x' });
+    for (let index = 1; index <= 7; index++) {
+      await appendMemorySessionEvent(session.id, 'decision', { text: `Decision number ${index} about the system.` });
+    }
+    await finishMemorySession(session.id, 'finished', 'Wrapped up.');
+
+    const candidates = await extractSessionMemoryCandidates(session.id);
+    expect(candidates).toHaveLength(8); // 7 decisions + 1 outcome, above the old cap of 5
+    expect(candidates.slice(0, 7).every(candidate => candidate.candidateType === 'decision')).toBe(true);
+    expect(candidates[7].candidateType).toBe('outcome');
+  });
 });

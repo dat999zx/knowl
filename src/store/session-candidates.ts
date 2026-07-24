@@ -1,5 +1,6 @@
 import { MemoryCandidate, MemorySessionEvent } from '../core/types.js';
 import { getClient } from './database.js';
+import { rankCandidatesByImportance, MAX_PROMOTED_CANDIDATES } from './candidate-promotion.js';
 
 function eventEvidence(sessionId: string, event: MemorySessionEvent) {
   return [{ type: 'agent' as const, locator: `session://${sessionId}/event/${event.id}`, relationship: 'derived_from' as const, observedAt: event.observedAt }];
@@ -23,5 +24,6 @@ export async function extractSessionMemoryCandidates(sessionId: string): Promise
   const summary = typeof stop?.payload.summary === 'string' ? stop.payload.summary.slice(0, 2_000) : '';
   if (summary) candidates.push({ candidateType: 'outcome', sessionId, category: 'state', title: `Session outcome: ${String(sessionRow.title)}`, content: summary, confidence: 0.75, evidence: eventEvidence(sessionId, stop!) });
   const seen = new Set<string>();
-  return candidates.filter(candidate => { const key = `${candidate.title}\n${candidate.content}`.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; }).slice(0, 5);
+  const deduped = candidates.filter(candidate => { const key = `${candidate.title}\n${candidate.content}`.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
+  return rankCandidatesByImportance(deduped).slice(0, MAX_PROMOTED_CANDIDATES);
 }
