@@ -578,8 +578,8 @@ knowl doctor                        # verify readiness
 | --- | --- |
 | `knowl init [agents...]` | Initialize **or** upgrade this project, then register detected agents (`codex`, `claude`, `cursor`, `gemini`, `claude-desktop`). Safe to re-run. |
 | `knowl upgrade` | The project-files half of `init` — refresh config, schema, guidance, and `.gitignore` with **no** agent setup or prompts (scriptable/CI-safe) |
-| `knowl status` | Repo path, item/category counts, AI config status, recent knowledge commits |
-| `knowl doctor` | Check whether the project is ready for agent memory usage |
+| `knowl status` | Repo path, item/category counts, AI config status, recent knowledge commits, and a new-version notice |
+| `knowl doctor` | Check whether the project is ready for agent memory usage (also reports a new version) |
 | `knowl state` | Print the full active hierarchical project memory |
 | `knowl audit` | Read-only validation, reference, JSON, status, and FTS integrity audit |
 
@@ -675,6 +675,17 @@ knowl config set ai.apiKey my-key
 ```
 
 Environment-variable placeholders such as `${OPENAI_API_KEY}` are resolved at runtime.
+
+### Update notifications
+
+`knowl status` and `knowl doctor` tell you when a newer version is published:
+
+```
+📦 Update available: 1.3.1 → 1.4.0
+   npm install -g @dat999zx/knowl
+```
+
+True to local-first: the check runs **only** from those two explicit commands — never from hooks, MCP, or `knowl serve` — is cached for 24h in `.knowl/cache/`, times out in 2s, and fails silently offline. Turn it off with `knowl config set updateCheck.enabled false`, or the `KNOWL_NO_UPDATE_CHECK` / `NO_UPDATE_NOTIFIER` environment variables.
 
 ---
 

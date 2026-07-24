@@ -25,6 +25,9 @@ export const DEFAULT_CONFIG: ProjectConfig = {
       dtype: 'q8',
     },
   },
+  updateCheck: {
+    enabled: true,
+  },
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

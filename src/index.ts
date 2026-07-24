@@ -5,7 +5,8 @@ import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
-import { PACKAGE_VERSION } from './version.js';
+import { PACKAGE_NAME, PACKAGE_VERSION } from './version.js';
+import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from './core/version-check.js';
 import { DEFAULT_CONFIG, findProjectRoot, loadConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
 import {
   installKnowlProjectGuidance,
@@ -322,6 +323,11 @@ program
         deprecatedItems,
         commits,
       }));
+
+      if (isUpdateCheckEnabled(config)) {
+        const update = await checkForUpdate({ packageName: PACKAGE_NAME, currentVersion: PACKAGE_VERSION, projectRoot: root });
+        if (update?.updateAvailable) console.log(formatUpdateNotice(update, PACKAGE_NAME));
+      }
 
       await closeDb();
     } catch (error: any) {
@@ -1483,6 +1489,18 @@ program
   .action(async () => {
     const result = await runDoctor(process.cwd());
     console.log(formatDoctorReport(result));
+
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      if (isUpdateCheckEnabled(config)) {
+        const update = await checkForUpdate({ packageName: PACKAGE_NAME, currentVersion: PACKAGE_VERSION, projectRoot: root });
+        if (update?.updateAvailable) console.log(formatUpdateNotice(update, PACKAGE_NAME));
+      }
+    } catch {
+      // never let the update check affect doctor's verdict
+    }
+
     if (!result.ready) {
       process.exit(1);
     }

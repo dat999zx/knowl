@@ -200,6 +200,10 @@ export interface ProjectConfig {
     rejectSecrets: boolean;
     secretPatterns: string[];
   };
+  /** Opt out of the once-a-day npm update check shown by `status` and `doctor`. */
+  updateCheck?: {
+    enabled?: boolean;
+  };
 }
 
 export interface FilterResult {
