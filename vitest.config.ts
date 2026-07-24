@@ -18,6 +18,9 @@ export default defineConfig({
     env: {
       OPENAI_API_KEY: '',
       ANTHROPIC_API_KEY: '',
+      // Write-time vector indexing would load the embedding model on every write.
+      // Tests that care about it opt back in explicitly.
+      KNOWL_DISABLE_WRITE_EMBEDDING: '1',
     },
   },
 });

@@ -4,6 +4,7 @@ import * as repo from './repository.js';
 import { checkKnowledgeConflict } from './conflicts.js';
 import { KnowledgeConflictError } from '../core/errors.js';
 import { attachEvidenceToKnowledge } from './evidence-repository.js';
+import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 
 const DUPLICATE_STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'do', 'does', 'for', 'from', 'in', 'is',
@@ -182,6 +183,7 @@ export async function storeKnowledgeItemDeduped(
   }
   changes.push({ itemId: item.id, action: 'insert', after: item });
   await repo.createKnowledgeCommit(projectId, commitMessage || `Store ${input.category}: ${input.title}`, changes);
+  await indexKnowledgeItemsBestEffort(projectId, [item]);
 
   return { action: 'inserted', item };
 }
@@ -194,6 +196,7 @@ export async function storeKnowledgeAtomsDeduped(
 ): Promise<StoreKnowledgeBatchResult> {
   const changes: CommitChange[] = [];
   const itemIds: string[] = [];
+  const inserted: KnowledgeItem[] = [];
   let duplicateCount = 0;
   let insertedCount = 0;
 
@@ -241,6 +244,7 @@ export async function storeKnowledgeAtomsDeduped(
 
     itemIds.push(item.id);
     insertedCount++;
+    inserted.push(item);
     changes.push({ itemId: item.id, action: 'insert', after: item });
   }
 
@@ -251,6 +255,7 @@ export async function storeKnowledgeAtomsDeduped(
       changes
     );
   }
+  await indexKnowledgeItemsBestEffort(projectId, inserted);
 
   return {
     itemIds,

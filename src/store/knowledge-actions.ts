@@ -6,6 +6,7 @@ import { initAI } from '../ai/provider.js';
 import { getCurrentGitCommit } from './drift.js';
 import { KnowledgeWriteValidationOptions } from '../core/types.js';
 import { attachEvidenceToKnowledge } from './evidence-repository.js';
+import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 
 export type DirectDecisionInput = {
   title: string;
@@ -54,6 +55,7 @@ export async function recordDecisionDirect(
   changes.push({ itemId: item.id, action: 'insert', after: item });
 
   await repo.createKnowledgeCommit(projectId, commitMessage, changes);
+  await indexKnowledgeItemsBestEffort(projectId, [item]);
 
   if (config && hasAiConfigured(config)) {
     try {

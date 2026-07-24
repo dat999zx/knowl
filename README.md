@@ -266,9 +266,11 @@ Retrieval leads with default-on local vector search (a MiniLM model is lazily do
 ```bash
 knowl query "auth token design"
 knowl query "sqlite persistence" --as-of 2026-01-01T00:00:00Z
-knowl reindex --vectors             # rebuild local embeddings
+knowl reindex --vectors             # one-time: fetch the model + backfill existing atoms
 knowl config set search.vector.enabled false   # BM25-only if you prefer
 ```
+
+**Embeddings stay fresh on their own.** New atoms are indexed as they're written, so vector search doesn't decay between manual reindexes. Two guardrails keep that safe: indexing is best-effort (it can never fail a write), and it **never downloads** — if the model isn't cached yet it silently skips, leaving the fetch to an explicit `knowl reindex --vectors`. So the flow is: run `reindex --vectors` once to pull the model and backfill, and writes keep themselves current from then on. Opt out with `KNOWL_DISABLE_WRITE_EMBEDDING=1`.
 
 Retrieval quality is measured, not asserted — see [Benchmarks](#-benchmarks).
 
@@ -622,7 +624,7 @@ knowl doctor                        # verify readiness
 | `knowl export <path>` / `knowl import <path> [--dry-run]` | Versioned, manifest-verified JSONL portability |
 | `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Transactional SQLite snapshots with SHA-256 manifest |
 | `knowl config [get\|set\|reset] [key] [value]` | Interactive or scriptable configuration |
-| `knowl reindex --vectors` | Rebuild local vector embeddings |
+| `knowl reindex --vectors` | Fetch the embedding model and backfill embeddings for existing atoms (new writes index themselves) |
 | `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access]` | Preview / apply memory GC; tune the archive/compress thresholds, and use `--ignore-access` to archive stale state even if it's hot (recently retrieved) |
 | `knowl view` | Start the read-only local viewer on `127.0.0.1` |
 | `knowl serve` | Start the stdio MCP server |
