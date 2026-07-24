@@ -84,7 +84,7 @@ Mem0, Zep, and Letta mostly optimize **retrieval** — get the right text back. 
 | Current-truth over history (temporal) | ✅ freshness + `--as-of` | ➖ versioning/evolution | ➖ | ✅ bi-temporal | ✖ |
 | Reviewable history / commits | ✅ knowledge commits | ✅ versioning + git snapshots | ✖ | ➖ edge history | ✖ |
 | Provenance to **code** (file·commit·symbol) | ✅ | ➖ to source observations | ✖ | ✖ | ✖ |
-| Auto-capture + tiered consolidation | ➖ minimal work-loop | ✅ 12 hooks, 4-tier decay | ✅ consolidation | ✅ | ✅ |
+| Auto-capture + consolidation | ➖ ranked promotion + skills + access decay | ✅ 12 hooks, 4-tier decay | ✅ consolidation | ✅ | ✅ |
 | Learned runnable skills | ✅ | ➖ skills | ✖ | ✖ | ➖ tools |
 | MCP server | ✅ | ✅ (53 tools) | ✅ | ➖ | ✅ |
 | License | Apache-2.0 | Apache-2.0 | Apache-2.0 | Graphiti Apache-2.0 (Zep cloud) | Apache-2.0 |
