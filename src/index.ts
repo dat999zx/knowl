@@ -708,6 +708,7 @@ program
   .description('Evaluate agent retrieval against a dataset')
   .requiredOption('--dataset <path>', 'Path to a retrieval evaluation JSON dataset')
   .option('--json', 'Print machine-readable JSON')
+  .option('--vector', 'Embed queries and rank with vector + BM25 fusion (the path real agents use; requires the local embedding model)')
   .action(async (options) => {
     try {
       const root = await findProjectRoot(process.cwd());
@@ -745,13 +746,25 @@ program
         if (!project) throw new Error('Project not found in database.');
       }
 
+      let embedder: Awaited<ReturnType<typeof createLocalEmbeddingProvider>> | null = null;
+      if (options.vector) {
+        const config = await loadConfig(root);
+        if (!isVectorSearchEnabled(config)) throw new Error('Vector search is not enabled. Set search.vector.enabled true to run --vector.');
+        embedder = await createLocalEmbeddingProvider(config, root);
+        await reindexKnowledgeEmbeddings(project.id, embedder);
+      }
+
       const evaluation = await evaluateRetrieval(cases, async (testCase) => {
         const startedAt = Date.now();
+        const vectorOption = embedder
+          ? { enabled: true, provider: embedder.provider, model: embedder.model, embedding: (await embedder.embed([testCase.query]))[0] }
+          : undefined;
         const items = await queryKnowledgeForAgent(project.id, {
           query: testCase.query,
           status: 'active',
           surface: 'cli_eval',
           limit: testCase.limit,
+          vector: vectorOption,
         });
         return {
           itemIds: items.map(item => item.id),

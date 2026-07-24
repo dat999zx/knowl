@@ -11,6 +11,11 @@ const CONFIDENCE_BOOST = 0.005;
 const EXACT_IDENTIFIER_BOOST = 0.02;
 const MMR_RELEVANCE_WEIGHT = 0.2;
 const MMR_SIMILARITY_WEIGHT = 0.8;
+// When vector search is available it becomes the primary ranker (cosine similarity,
+// 0..1), BM25 drops to a bounded fallback for lexical-only hits, and a stronger
+// freshness re-rank keeps current-truth above near-identical stale siblings.
+const VECTOR_PRIMARY_WEIGHT = 1;
+const BM25_FALLBACK_WEIGHT = 0.35;
 
 function queryTokens(query?: string): string[] {
   return [...new Set((query ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length > 1))];
@@ -56,6 +61,15 @@ function freshnessScore(item: KnowledgeItem): number {
   if (item.freshness === 'fresh') return 0.006;
   if (item.freshness === 'needs_review') return -0.006;
   return -0.012;
+}
+
+// Stronger freshness adjustment used only on the vector path, where the base is a
+// 0..1 cosine score. Big enough to flip a stale/fresh near-tie (near-identical
+// migration siblings), small enough not to bury a uniquely-relevant stale atom.
+function freshnessRerank(item: KnowledgeItem): number {
+  if (item.freshness === 'fresh') return 0.02;
+  if (item.freshness === 'needs_review') return -0.02;
+  return -0.05;
 }
 
 function normalizedRecencyScore(item: KnowledgeItem, timestamps: number[]): number {
@@ -115,7 +129,7 @@ export async function queryKnowledgeForAgentExplained(
     limit: candidateLimit,
   });
 
-  const ranked = new Map<string, { item: KnowledgeItem; score: number; bm25Rank?: number; vectorRank?: number }>();
+  const ranked = new Map<string, { item: KnowledgeItem; score: number; bm25Rank?: number; vectorRank?: number; vectorScore?: number }>();
   bm25Results.forEach((item, index) => {
     ranked.set(item.id, {
       item,
@@ -124,14 +138,15 @@ export async function queryKnowledgeForAgentExplained(
     });
   });
 
-  if (vector?.enabled && vector.embedding) {
+  const usingVector = Boolean(vector?.enabled && vector.embedding);
+  if (usingVector) {
     const vectorResults = await searchKnowledgeEmbeddings(projectId, {
-      vector: vector.embedding,
+      vector: vector!.embedding!,
       category: undefined,
       status: options.status,
       tags: options.tags,
-      provider: vector.provider,
-      model: vector.model,
+      provider: vector!.provider,
+      model: vector!.model,
       limit: candidateLimit,
     });
 
@@ -143,6 +158,7 @@ export async function queryKnowledgeForAgentExplained(
         score: (existing?.score ?? 0) + score,
         bm25Rank: existing?.bm25Rank,
         vectorRank: index + 1,
+        vectorScore: result.score,
       });
     });
   }
@@ -153,12 +169,27 @@ export async function queryKnowledgeForAgentExplained(
   const scored = [...ranked.values()]
     .map(result => {
       const category = options.category && result.item.category === options.category ? CATEGORY_HINT_BOOST : 0;
-      const text = Math.min(textMatchScore(result.item, tokens), 20) * 0.01;
       const recency = normalizedRecencyScore(result.item, timestamps) * RECENCY_BOOST;
       const confidence = result.item.confidence * CONFIDENCE_BOOST;
-      const freshness = freshnessScore(result.item);
       const exactIdentifier = exactIdentifierScore(result.item, options.query);
-      const contributions = { rank: result.score, text, category, recency, confidence, freshness, exactIdentifier };
+      let rank: number;
+      let text: number;
+      let freshness: number;
+      if (usingVector) {
+        // Vector cosine is the primary signal; BM25-only hits fall back to a bounded
+        // rank score so lexical matches still surface below semantic ones.
+        const fallback = result.vectorScore === undefined && result.bm25Rank
+          ? BM25_FALLBACK_WEIGHT / (RRF_K + result.bm25Rank)
+          : 0;
+        rank = (result.vectorScore ?? 0) * VECTOR_PRIMARY_WEIGHT + fallback;
+        text = Math.min(textMatchScore(result.item, tokens), 20) * 0.001;
+        freshness = freshnessRerank(result.item);
+      } else {
+        rank = result.score;
+        text = Math.min(textMatchScore(result.item, tokens), 20) * 0.01;
+        freshness = freshnessScore(result.item);
+      }
+      const contributions = { rank, text, category, recency, confidence, freshness, exactIdentifier };
       return {
         result,
         score: Object.values(contributions).reduce((sum, value) => sum + value, 0),
@@ -167,25 +198,32 @@ export async function queryKnowledgeForAgentExplained(
     })
     .sort((left, right) => right.score - left.score);
 
-  const selected: Array<typeof scored[number] & { diversity: number }> = [];
-  const candidateTokens = new Map(scored.map(candidate => [candidate.result.item.id, itemTokens(candidate.result.item)]));
-  const highestScore = scored[0]?.score || 1;
-  while (selected.length < limit && selected.length < scored.length) {
-    const next = scored
-      .filter(candidate => !selected.some(chosen => chosen.result.item.id === candidate.result.item.id))
-      .map(candidate => {
-        const overlap = selected.length === 0 ? 0 : Math.max(...selected.map(chosen => tokenOverlap(
-          candidateTokens.get(candidate.result.item.id)!, candidateTokens.get(chosen.result.item.id)!,
-        )));
-        return {
-          ...candidate,
-          diversity: -overlap * MMR_SIMILARITY_WEIGHT,
-          mmr: (candidate.score / highestScore) * MMR_RELEVANCE_WEIGHT - overlap * MMR_SIMILARITY_WEIGHT,
-        };
-      })
-      .sort((left, right) => right.mmr - left.mmr)[0];
-    if (!next) break;
-    selected.push(next);
+  let selected: Array<typeof scored[number] & { diversity: number }>;
+  if (usingVector) {
+    // Trust the semantic ranking directly — MMR de-duplication scrambles rankings
+    // among legitimately distinct-but-similar atoms and hurts recall.
+    selected = scored.slice(0, limit).map(candidate => ({ ...candidate, diversity: 0 }));
+  } else {
+    selected = [];
+    const candidateTokens = new Map(scored.map(candidate => [candidate.result.item.id, itemTokens(candidate.result.item)]));
+    const highestScore = scored[0]?.score || 1;
+    while (selected.length < limit && selected.length < scored.length) {
+      const next = scored
+        .filter(candidate => !selected.some(chosen => chosen.result.item.id === candidate.result.item.id))
+        .map(candidate => {
+          const overlap = selected.length === 0 ? 0 : Math.max(...selected.map(chosen => tokenOverlap(
+            candidateTokens.get(candidate.result.item.id)!, candidateTokens.get(chosen.result.item.id)!,
+          )));
+          return {
+            ...candidate,
+            diversity: -overlap * MMR_SIMILARITY_WEIGHT,
+            mmr: (candidate.score / highestScore) * MMR_RELEVANCE_WEIGHT - overlap * MMR_SIMILARITY_WEIGHT,
+          };
+        })
+        .sort((left, right) => right.mmr - left.mmr)[0];
+      if (!next) break;
+      selected.push(next);
+    }
   }
 
   const items = selected.map(({ result, score, contributions, diversity }) => {
