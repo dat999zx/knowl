@@ -40,16 +40,23 @@ async function readCache(cacheFile: string, ttlMs: number): Promise<string | nul
 }
 
 async function fetchLatest(packageName: string, fetchImpl: typeof fetch): Promise<string | null> {
+  // An unref'd timer plus `connection: close` keeps this check from holding the
+  // event loop open — a CLI command must not linger seconds after its output.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  timer.unref?.();
   try {
     const response = await fetchImpl(`${REGISTRY_BASE}/${packageName.replace('/', '%2F')}/latest`, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      headers: { accept: 'application/vnd.npm.install-v1+json, application/json' },
+      signal: controller.signal,
+      headers: { accept: 'application/vnd.npm.install-v1+json, application/json', connection: 'close' },
     });
     if (!response.ok) return null;
     const body = await response.json() as { version?: string };
     return typeof body.version === 'string' ? body.version : null;
   } catch {
     return null; // offline, blocked, slow, or malformed — never surface an error
+  } finally {
+    clearTimeout(timer);
   }
 }
 

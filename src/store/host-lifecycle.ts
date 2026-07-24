@@ -60,9 +60,9 @@ function hostContextOutput(input: NormalizedHostHook, context: string | undefine
       sessionStart: true,
     };
   }
-  if (input.host === 'generic') {
-    return { additionalContext: context };
-  }
+  // `generic` has no host-native protocol: emitting a host-output object here would
+  // replace the host-neutral lifecycle result ({ accepted, sessionId, context, ... })
+  // that generic integrations consume, so it deliberately returns nothing.
   return undefined;
 }
 

@@ -1502,7 +1502,10 @@ program
     }
 
     if (!result.ready) {
-      process.exit(1);
+      // Set the code instead of process.exit(): a hard exit while the update
+      // check's socket/timer handles are still tearing down crashes the process
+      // on Windows (STATUS_STACK_BUFFER_OVERRUN) instead of reporting status 1.
+      process.exitCode = 1;
     }
   });
 
