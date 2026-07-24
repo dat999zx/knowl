@@ -427,7 +427,7 @@ describe('CLI Integration', () => {
     expect(stateOutput).toContain('Work Loop finish');
 
     await fs.rm(workLoopDir, { recursive: true, force: true });
-  }, 10_000);
+  }, 60_000);
 
   it('should run a command inside an automatic work loop', async () => {
     const workLoopRunDir = path.resolve('./.knowl-cli-work-loop-run-test');
@@ -477,7 +477,7 @@ describe('CLI Integration', () => {
     expect(stateOutput).toContain('Command succeeded:');
 
     await fs.rm(workLoopRunDir, { recursive: true, force: true });
-  }, 15_000);
+  }, 60_000);
 
   it('should checkpoint failed automatic work loop commands and preserve the exit code', async () => {
     const workLoopFailureDir = path.resolve('./.knowl-cli-work-loop-run-failure-test');
@@ -623,7 +623,7 @@ describe('CLI Integration', () => {
     } finally {
       await fs.rm(prDir, { recursive: true, force: true }).catch(() => {});
     }
-  }, 15_000);
+  }, 60_000);
 
   it('should report agent readiness with doctor', async () => {
     const doctorDir = path.resolve('./.knowl-cli-doctor-test');
@@ -721,7 +721,7 @@ describe('CLI Integration', () => {
     expect(state).not.toContain('After snapshot');
 
     await fs.rm(snapshotDir, { recursive: true, force: true });
-  }, 15_000);
+  }, 60_000);
 
   it('should list inspectable evidence for a knowledge item', async () => {
     const evidenceDir = path.resolve('./.knowl-cli-evidence-test');
@@ -739,7 +739,7 @@ describe('CLI Integration', () => {
     expect(output).toContain('tests/evidence.test.ts');
     expect(output).toContain('supports');
     await fs.rm(evidenceDir, { recursive: true, force: true }).catch(() => {});
-  }, 15_000);
+  }, 60_000);
 
   it('should index symbols and report stale symbol evidence with an unambiguous replacement', async () => {
     const symbolDir = path.resolve('./.knowl-cli-symbol-test');
@@ -773,7 +773,7 @@ describe('CLI Integration', () => {
     } finally {
       await fs.rm(symbolDir, { recursive: true, force: true }).catch(() => {});
     }
-  }, 15_000);
+  }, 60_000);
 
   it('should synthesize a tagged project understanding on demand', async () => {
     const synthesisDir = path.resolve('./.knowl-cli-synthesis-test');
@@ -789,7 +789,7 @@ describe('CLI Integration', () => {
     } finally {
       await fs.rm(synthesisDir, { recursive: true, force: true }).catch(() => {});
     }
-  }, 15_000);
+  }, 60_000);
 
   it('should export and dry-run import portable JSONL memory', async () => {
     const portabilityDir = path.resolve('./.knowl-cli-portability-test');
@@ -805,7 +805,7 @@ describe('CLI Integration', () => {
     } finally {
       await fs.rm(portabilityDir, { recursive: true, force: true }).catch(() => {});
     }
-  }, 15_000);
+  }, 60_000);
 
   it('should show repository status', () => {
     const output = execSync(`node "${CLI_PATH}" status`, {

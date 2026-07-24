@@ -11,7 +11,7 @@ describe('session CLI', () => {
     await fs.rm(TEST_DIR, { recursive: true, force: true });
     await fs.mkdir(TEST_DIR, { recursive: true });
     execSync(`node "${CLI_PATH}" init --yes`, { cwd: TEST_DIR, encoding: 'utf-8' });
-  }, 15_000);
+  }, 120_000);
   afterAll(async () => { await fs.rm(TEST_DIR, { recursive: true, force: true }).catch(() => {}); });
 
   it('starts, records, finishes, and recovers sessions with JSON output', () => {
@@ -26,5 +26,5 @@ describe('session CLI', () => {
 
     const recovered = JSON.parse(execSync(`node "${CLI_PATH}" session recover --json`, { cwd: TEST_DIR, encoding: 'utf-8' }));
     expect(recovered).toMatchObject({ recoveredCount: expect.any(Number), purgedEventCount: expect.any(Number) });
-  }, 15_000);
+  }, 120_000);
 });

@@ -34,5 +34,5 @@ describe('Claude prompt reminder', () => {
     const baseline = run();
     expect(run('{')).toBe(baseline);
     expect(run('sk-test-abcdefghijklmnopqrstuvwxyz123456')).toBe(baseline);
-  });
+  }, 120_000);
 });

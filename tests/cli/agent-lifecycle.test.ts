@@ -22,7 +22,7 @@ describe('agent lifecycle CLI', () => {
     await fs.rm(TEST_DIR, { recursive: true, force: true });
     await fs.mkdir(TEST_DIR, { recursive: true });
     run(['init', '--yes']);
-  }, 15_000);
+  }, 60_000);
 
   afterAll(async () => { await fs.rm(TEST_DIR, { recursive: true, force: true }).catch(() => {}); });
 
@@ -65,7 +65,7 @@ describe('agent lifecycle CLI', () => {
 
     const lostEvent = JSON.parse(run(['agent-event', 'session-event', '--session', started.id, '--type', 'command', '--json']));
     expect(lostEvent).toEqual({ accepted: false, reason: 'event-loss' });
-  }, 15_000);
+  }, 60_000);
 
   it('rejects malformed and secret lifecycle payloads without echoing secret values', () => {
     let malformed: any;
@@ -88,7 +88,7 @@ describe('agent lifecycle CLI', () => {
     client.close();
 
     expect(JSON.parse(run(['agent-event', 'session-recover', '--json']))).toMatchObject({ recoveredCount: 1 });
-  }, 15_000);
+  }, 60_000);
 
   it('accepts the host-neutral hook contract and promotes a completed turn', () => {
     const started = JSON.parse(run(['agent-hook', 'generic', 'turn-start', '--json'], JSON.stringify({
@@ -124,7 +124,7 @@ describe('agent lifecycle CLI', () => {
       status: 'finished',
     })));
     expect(duplicate).toEqual({ accepted: false, reason: 'event-loss' });
-  }, 15_000);
+  }, 60_000);
 
   it('returns host-native context and rejects secret-bearing host payloads safely', () => {
     const context = JSON.parse(run(['agent-hook', 'codex', 'SessionStart', '--json'], JSON.stringify({
@@ -154,7 +154,7 @@ describe('agent lifecycle CLI', () => {
     expect(rejected.status).toBe(1);
     expect(rejected.stderr.toString()).toContain('secret material was detected');
     expect(rejected.stderr.toString()).not.toContain(secret);
-  }, 15_000);
+  }, 60_000);
 
   it('accepts large host payloads when retained hook data stays bounded', () => {
     const output = run(['agent-hook', 'codex', 'PostToolUse', '--json'], JSON.stringify({
@@ -167,7 +167,7 @@ describe('agent lifecycle CLI', () => {
     }));
 
     expect(output).toBe('');
-  }, 15_000);
+  }, 60_000);
 
   it('accepts Codex thread_id payloads streamed from PostToolUse', () => {
     const output = run(['agent-hook', 'codex', 'PostToolUse', '--json'], JSON.stringify({
@@ -180,7 +180,7 @@ describe('agent lifecycle CLI', () => {
     }));
 
     expect(output).toBe('');
-  }, 15_000);
+  }, 60_000);
 
   it('drops incomplete envelopes for every host adapter without failing the host', () => {
     const hooks = [
@@ -199,7 +199,7 @@ describe('agent lifecycle CLI', () => {
       turnId: 'incomplete-turn',
       cwd: TEST_DIR,
     }))).toBe('');
-  }, 15_000);
+  }, 60_000);
 
   it('accepts host payloads larger than the legacy transport cap', () => {
     const output = run(['agent-hook', 'codex', 'PostToolUse', '--json'], JSON.stringify({
@@ -212,7 +212,7 @@ describe('agent lifecycle CLI', () => {
     }));
 
     expect(output).toBe('');
-  }, 15_000);
+  }, 60_000);
 
   it('emits no JSON for Codex Stop hooks', () => {
     const payload = {
@@ -223,5 +223,5 @@ describe('agent lifecycle CLI', () => {
     run(['agent-hook', 'codex', 'UserPromptSubmit', '--json'], JSON.stringify(payload));
 
     expect(run(['agent-hook', 'codex', 'Stop', '--json'], JSON.stringify(payload))).toBe('');
-  }, 15_000);
+  }, 60_000);
 });

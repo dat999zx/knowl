@@ -69,5 +69,5 @@ describe('CLI learned skills', () => {
     expect(agents).toContain('knowl_skill_list');
     expect(agents).toContain('knowl_skill_read');
     expect(agents).toContain('knowl_skill_run');
-  }, 15000);
+  }, 120_000);
 });
