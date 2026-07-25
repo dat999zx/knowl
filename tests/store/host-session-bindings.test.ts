@@ -52,6 +52,36 @@ describe('host session bindings', () => {
     await expect(findHostSession(input)).resolves.toMatchObject({ id: first.session.id, status: 'active' });
   });
 
+  // Windows paths are case-insensitive but case-preserving, and the same project reaches
+  // us with different drive-letter case depending on the source: a hook payload's `cwd`
+  // reports `D:\project` while `process.cwd()` reports `d:\project`. Keying on the
+  // unfolded path split one agent across two binding rows, each with its own change
+  // watermark, so a write advanced one row while the next tool event read the other,
+  // found it stale, and reported the agent's own write back to it.
+  it.skipIf(process.platform !== 'win32')('treats drive-letter case as the same project', async () => {
+    const upper = ROOT.replace(/^([a-z]):/i, (_match, drive) => `${String(drive).toUpperCase()}:`);
+    const lower = ROOT.replace(/^([a-z]):/i, (_match, drive) => `${String(drive).toLowerCase()}:`);
+    expect(upper).not.toBe(lower);
+
+    const input = {
+      projectId,
+      projectRoot: upper,
+      host: 'generic',
+      externalSessionId: 'drive-case-session',
+      externalTurnId: 'turn-1',
+      title: 'Agent turn',
+    };
+    const created = await getOrCreateHostSession(input);
+
+    // The same agent, reached through the other casing, must resolve to one row.
+    const viaLower = await findHostSession({ ...input, projectRoot: lower });
+    expect(viaLower?.id).toBe(created.session.id);
+
+    const head = await readCommitHead();
+    await setHostSeenCommit({ ...input, projectRoot: upper }, head);
+    expect(await readHostSeenCommit({ ...input, projectRoot: lower })).toBe(head);
+  });
+
   it('rotates bindings after a turn finishes', async () => {
     const input = {
       projectId,

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { canonicalProjectRoot } from '../core/project-path.js';
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { MemorySession } from '../core/types.js';
 import { HookHost } from '../cli/agents/host-hook.js';
@@ -23,7 +24,7 @@ export type HostSessionInput = HostSessionKey & {
 
 const normalizedKey = (input: HostSessionKey) => ({
   host: input.host,
-  projectRoot: path.resolve(input.projectRoot),
+  projectRoot: canonicalProjectRoot(input.projectRoot),
   externalSessionId: input.externalSessionId.slice(0, 2_000),
   externalTurnId: (input.externalTurnId ?? '').slice(0, 2_000),
 });

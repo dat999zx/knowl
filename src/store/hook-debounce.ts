@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { canonicalProjectRoot } from '../core/project-path.js';
 import { NormalizedHostHook } from '../cli/agents/host-hook.js';
 
 export const HOOK_CAPTURE_DEBOUNCE_MS = 1500;
@@ -40,7 +41,9 @@ export function captureFingerprint(input: Pick<NormalizedHostHook, 'event' | 'ty
 function debounceKey(input: NormalizedHostHook, fingerprint: string): string {
   return [
     input.host,
-    path.resolve(input.projectRoot),
+    // Same canonicalisation as the binding key: an unfolded root gave one agent two
+    // debounce namespaces on Windows, so duplicate captures slipped through.
+    canonicalProjectRoot(input.projectRoot),
     input.externalSessionId,
     input.externalTurnId ?? '',
     fingerprint,
