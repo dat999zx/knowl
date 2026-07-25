@@ -60,7 +60,7 @@ Knowl deliberately **does not** clone the "silently record every transcript" app
 - 🔍 **Vector-first retrieval** — default-on local vector search, BM25 as fallback + exact-identifier booster, freshness-aware re-rank.
 - 🔁 **Automatic work loop** — agents query memory before work and write back verified state after.
 - 🪝 **Agent lifecycle hooks** — verified project-local capture for Claude Code, Codex, and Cursor.
-- 👥 **Subagent memory** — spawned Claude Code subagents get their own memory snapshot, and any agent is told when memory changed underneath it.
+- 👥 **Subagent memory** — spawned subagents get their own memory snapshot, and any agent is told when memory changed underneath it. Verified live on Claude Code and Codex CLI.
 - 🧾 **Evidence & provenance** — link items to files, commits, tests, commands, symbols, and URLs.
 - ⏳ **Temporal memory** — immutable assertions, `--as-of` queries, and exclusive conflict identities.
 - 🧩 **Learned skills** — file-backed, runnable skill packages under `.knowl/skills/`.
@@ -411,8 +411,8 @@ knowl task finish <task-id> "Verified search UI implementation"
 
 `knowl init` installs **verified** project-local hooks for Codex CLI, Claude Code, and Cursor. Lifecycle hooks call short-lived `knowl agent-hook <host> <event>` processes that normalize vendor payloads into bounded session events. MCP tools use a separate host-spawned `knowl serve` process — hooks never launch or manage `serve`.
 
-- **SessionStart** injects retrieved memory for the main session; **SubagentStart** does the same for each spawned Claude Code subagent, at half the context budget.
-- **Claude Code** additionally gets a fixed prompt-time guidance card (`knowl agent-reminder claude --json`) and a drift-adaptive continuation reminder: it fires only after 12 consecutive accepted tool events that ignored Knowl, and any Knowl tool call resets the counter. An agent actively using memory never sees it. Neither reads the prompt.
+- **SessionStart** injects retrieved memory for the main session; **SubagentStart** does the same for each spawned subagent on hosts that have subagents, at half the context budget.
+- **Claude Code** additionally gets a fixed prompt-time guidance card (`knowl agent-reminder claude --json`). Hosts with a mid-turn channel also get a drift-adaptive continuation reminder: it fires only after 12 consecutive accepted tool events that ignored Knowl, and any Knowl tool call resets the counter. An agent actively using memory never sees it. Neither reads the prompt.
 - **Memory that changes mid-session** is reported on the next tool event, per agent. See [Subagent memory & change notification](#subagent-memory--change-notification).
 - On a **hard-stop failure**, Knowl stores a host-scoped `pending_handoff` state item; the next matching-host SessionStart injects it once, then archives it.
 
@@ -445,9 +445,24 @@ Three properties make it cheap enough to run on every tool call:
 - **It replaces the continuation reminder** when both would fire, rather than adding to it, and delivering it resets the drift counter — the agent already has its reason to re-query.
 - **It never reports your own writes back to you.** A new commit is recognised as the caller's own by matching the arguments of the call that produced it, so storing a fact does not notify you about it. No extra bookkeeping, and no attribution column.
 
-**Host coverage.** **Claude Code** gets the full behaviour. **Codex** and **Cursor** maintain the watermark but emit no card, pending verification that they accept mid-turn context on tool events. Host-neutral integrations receive the same information as `changes` in the `knowl agent-hook … --json` result, which needs no host protocol at all.
+**Host coverage.** **Claude Code** and **Codex CLI** both get the full behaviour — subagent
+bootstrap and change cards over `hookSpecificOutput.additionalContext`, each verified with a
+live subagent and a live model run. **Cursor** is sent `additional_context`; its hooks accept
+it, though upstream reports say it is not yet surfaced to the model, so it will start working
+there without any change here. **Claude Desktop** and **Gemini** have no lifecycle hook
+channel and stay MCP-only. Host-neutral integrations read the same information as `changes` in
+the `knowl agent-hook … --json` result, which needs no host protocol at all.
 
-**Known limits.** A sibling commit that lands between your own write and its hook event is absorbed silently. Knowl used through the CLI rather than MCP appears to the hook as a shell command, so your own CLI write is reported back to you as foreign.
+Each host is one file under `src/cli/agents/hosts/`, declaring its identity keys, event map,
+and context envelopes. A host that cannot receive context returns nothing rather than setting
+a flag, so support can never be claimed for a channel that does not deliver. Adding a host is
+adding a file.
+
+> **Codex requires hook trust.** Codex will not execute project hooks until they are trusted
+> once — interactively when prompted, or with `--dangerously-bypass-hook-trust` in automation.
+> Until then the hooks silently do not run.
+
+**Known limits.** A sibling commit that lands between your own write and its hook event is absorbed silently. Knowl used through the CLI rather than MCP appears to the hook as a shell command, so your own CLI write is reported back to you as foreign. Subagent-scoped isolation needs a host that reports a subagent identity on its hook events; hosts without one share a single per-turn watermark.
 
 ### Evidence & provenance
 

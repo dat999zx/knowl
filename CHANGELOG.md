@@ -24,6 +24,14 @@ Subagents get project memory, and any agent is told when memory changed undernea
 - **`changes` in host-neutral hook output.** `knowl agent-hook <host> <event> --json` now
   carries the same change summary as structured JSON, so hosts with no native protocol can
   consume it without one.
+- **Host profiles.** Each supported host is described by one file in `src/cli/agents/hosts/`
+  declaring its identity keys, event map, and context envelopes, replacing host conditionals
+  spread across six modules. Capability is expressed by return value, so support cannot be
+  claimed for a channel that delivers nothing. Adding a host is adding a file.
+- **Change notification beyond Claude Code.** Codex CLI receives subagent bootstrap and change
+  cards through the same `hookSpecificOutput.additionalContext` channel, verified with a live
+  Codex model run. Cursor is sent `additional_context`. Hosts with no hook channel continue to
+  read `changes` from the host-neutral JSON result.
 
 ### Fixed
 
@@ -39,12 +47,17 @@ Subagents get project memory, and any agent is told when memory changed undernea
 - **Subagent identity was stripped from hook payloads.** The lifecycle payload allowlist
   dropped `agent_id` and `agent_type` before normalization, and dropped the tool arguments
   needed to recognise an agent's own writes.
+- **Claude Desktop was routed through Cursor's hook event map.** The event-mapping ternary
+  checked only Codex and Claude by name, so every other host fell through to Cursor's
+  camelCase events. Each host now declares its own map, and a conformance suite asserts it.
 
 ### Upgrading
 
-- **Rerun `knowl init claude` once.** An existing configuration written by an earlier
-  version has no `SubagentStart`/`SubagentStop` handlers, and subagents keep starting with
-  no memory until you rerun it. `knowl doctor` reports the configuration as stale in the
-  meantime.
+- **Rerun `knowl init` for your hosts once.** A configuration written by an earlier version
+  has no `SubagentStart`/`SubagentStop` handlers, and subagents keep starting with no memory
+  until you rerun it. `knowl doctor` reports the configuration as stale in the meantime.
+- **Codex users must trust the hooks.** Codex does not execute project hooks until they are
+  trusted once, interactively when prompted or with `--dangerously-bypass-hook-trust` in
+  automation. Until then the hooks silently do not run.
 - **No database action required.** The new `seen_commit_rowid` column is applied
   automatically the next time any Knowl process opens the database.
