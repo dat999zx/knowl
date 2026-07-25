@@ -190,6 +190,29 @@ describe('portability', () => {
     expect(indexedItems.map(item => item.title)).toContain('Indexable fact');
   });
 
+  it('re-indexes an item adopted from the peer, not just fresh inserts', async () => {
+    // An adopted divergent item has different content, so its stored embedding is now
+    // wrong. Indexing only inserts would leave vector search matching the old text.
+    const item = await createKnowledgeItem('local', {
+      category: 'fact', title: 'Adopted fact', content: 'Local text.',
+    });
+    const target = path.join(INDEXING_TARGET, 'adopt-index.jsonl');
+    await portability.exportKnowledge('local', target, INDEXING_TARGET);
+
+    await updateKnowledgeItem(item.id, { content: 'Diverged locally.' });
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET updated_at = ? WHERE id = ?',
+      args: ['2020-01-01T00:00:00.000Z', item.id],
+    });
+
+    vi.mocked(indexKnowledgeItemsBestEffort).mockClear();
+    const result = await portability.importKnowledge(target, { projectRoot: INDEXING_TARGET, onDivergence: 'newer' });
+
+    expect(result.updated).toBe(1);
+    const [, indexedItems] = vi.mocked(indexKnowledgeItemsBestEffort).mock.calls[0];
+    expect(indexedItems.map(entry => entry.id)).toContain(item.id);
+  });
+
   it('does not call the indexer for a dry run', async () => {
     vi.mocked(indexKnowledgeItemsBestEffort).mockClear();
     const exportPath = path.join(TARGET, 'indexing.jsonl');
