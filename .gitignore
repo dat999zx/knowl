@@ -28,4 +28,5 @@ Thumbs.db
 .npm-cache
 
 .codex/
+.claude/*.backup
 .mcp.json
