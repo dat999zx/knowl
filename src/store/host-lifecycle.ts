@@ -1,7 +1,7 @@
 import { NormalizedHostHook } from '../cli/agents/host-hook.js';
 import { renderChangeCard } from '../cli/agents/change-card.js';
 import { hostProfile } from '../cli/agents/hosts/index.js';
-import { KNOWL_CLAUDE_CONTINUATION_REMINDER } from '../core/knowl-guidance.js';
+import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';
 import { ChangeSummary, loadForeignChanges, readCommitHead } from './change-watermark.js';
 import { captureMemorySessionEvent } from './session-capture.js';
 import { finalizeMemorySession } from './session-finalizer.js';
@@ -116,9 +116,11 @@ async function bootstrapWithHandoff(projectId: string, input: NormalizedHostHook
 }
 
 // Subagent bootstrap deliberately halves the recent-context cap: fan-out multiplies
-// whatever a subagent costs. The operational card is retained, because it is unverified
-// whether MCP instructions reach subagents and a wrong bet there silently disables the
-// workflow, while a wrong bet the other way only costs tokens.
+// whatever a subagent costs. The guidance card is prepended rather than left to the
+// prompt reminder, because a subagent receives no prompt event and a live probe confirmed
+// MCP server instructions do not reach it either — without the card it gets memory data
+// and nothing telling it to use memory. The card is charged against the cap first so a
+// large recent-context block can never truncate the guidance away.
 async function bootstrapAgentContext(projectId: string, input: NormalizedHostHook, sessionId: string) {
   const bootstrap = await bootstrapAgentSession({
     projectId,
@@ -127,8 +129,10 @@ async function bootstrapAgentContext(projectId: string, input: NormalizedHostHoo
     sessionId,
   }, { includeContext: true });
   const cap = Math.floor(DEFAULT_CONTEXT_MAX_CHARS / 2);
-  const context = bootstrap.context ? truncateText(bootstrap.context, cap) : undefined;
-  return { context, truncated: Boolean(bootstrap.context && bootstrap.context.length > cap) };
+  const recentBudget = Math.max(0, cap - KNOWL_SUBAGENT_BOOTSTRAP_CARD.length - 2);
+  const recent = bootstrap.context ? truncateText(bootstrap.context, recentBudget) : undefined;
+  const context = recent ? `${KNOWL_SUBAGENT_BOOTSTRAP_CARD}\n\n${recent}` : KNOWL_SUBAGENT_BOOTSTRAP_CARD;
+  return { context, truncated: Boolean(bootstrap.context && bootstrap.context.length > recentBudget) };
 }
 
 /**

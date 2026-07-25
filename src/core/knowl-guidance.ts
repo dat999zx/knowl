@@ -112,3 +112,21 @@ export const KNOWL_CLAUDE_PROMPT_REMINDER = [
   'Store or update verified durable decisions, facts, state, and constraints as you go with knowl_store / knowl_decide / knowl_update; never store secrets or routine noise.',
   'Claude hooks own the lifecycle — do not call knowl_task_start/checkpoint/finish. Full tool routing is in KNOWL.md.',
 ].join(' ');
+
+/**
+ * Guidance delivered with a subagent's bootstrap context.
+ *
+ * A subagent gets no prompt event, so `KNOWL_CLAUDE_PROMPT_REMINDER` never reaches it,
+ * and a live probe confirmed the MCP server `instructions` block does not either. Memory
+ * data alone leaves a subagent with nothing telling it to use memory, so this card is the
+ * only guidance it ever sees. It avoids referring to KNOWL.md because host instruction
+ * files are not loaded into subagent context, and it mentions loading tool schemas because
+ * hosts may list memory tools without loading them.
+ */
+export const KNOWL_SUBAGENT_BOOTSTRAP_CARD = [
+  'KNOWL — project memory is active for this subagent.',
+  'Before reading repository files, call knowl_query with 2-6 keywords and use a relevant active hit directly; inspect files only on a miss, conflict, or stale result.',
+  'Store verified durable findings with knowl_store or knowl_update before you return; never store secrets or routine noise.',
+  'Do not call knowl_task_start/checkpoint/finish — the host session owns the lifecycle.',
+  'If the knowl tools are listed but not callable, load their schemas before calling them.',
+].join(' ');

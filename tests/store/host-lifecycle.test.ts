@@ -740,6 +740,52 @@ describe('host lifecycle orchestration', () => {
     expect(child.context!.length).toBeLessThanOrEqual(1_500);
   });
 
+  it('carries the operational guidance card in subagent bootstrap', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'subagent-card',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+
+    const child = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'agent-start',
+      externalSessionId: 'subagent-card',
+      externalTurnId: undefined,
+      agentId: 'agent-card',
+      agentType: 'Explore',
+    }));
+
+    // Subagents receive no prompt event, so the prompt-time reminder never reaches
+    // them, and a live probe confirmed MCP server instructions do not either. Without
+    // the card riding along with the bootstrap a subagent gets data and no reason to
+    // use it, which silently disables the workflow for every subagent.
+    expect(child.context).toContain('KNOWL');
+    expect(child.context).toContain('knowl_query');
+    expect(child.context).toContain('knowl_store');
+    // Guidance precedes data, and must survive the halved cap rather than being
+    // truncated away with the tail of the recent-context block.
+    expect(child.context!.indexOf('knowl_query'))
+      .toBeLessThan(child.context!.indexOf('KNOWL - RECENT SESSION CONTEXT'));
+    expect(child.context!.length).toBeLessThanOrEqual(1_500);
+  });
+
+  it('returns the guidance card even when the project has no recent context', async () => {
+    const bare = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'agent-start',
+      externalSessionId: 'subagent-card-bare',
+      externalTurnId: undefined,
+      agentId: 'agent-card-bare',
+      agentType: 'Explore',
+    }));
+
+    expect(bare.accepted).toBe(true);
+    expect(bare.context).toContain('knowl_query');
+  });
+
   it('routes subagent tool events to an agent-scoped binding, isolated from the parent', async () => {
     await handleHostLifecycleEvent(projectId, hook({
       host: 'claude',
