@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER } from '../../src/core/knowl-guidance.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
+import { readCommitHead } from '../../src/store/change-watermark.js';
 import { handleHostLifecycleEvent } from '../../src/store/host-lifecycle.js';
 import {
   bindHostSession,
@@ -11,6 +12,8 @@ import {
   findHostSession,
   HostSessionKey,
   incrementHostSuccessfulToolCount,
+  readHostSeenCommit,
+  setHostSeenCommit,
 } from '../../src/store/host-session-bindings.js';
 import * as repo from '../../src/store/repository.js';
 import { recordPendingSessionHandoff } from '../../src/store/session-handoff.js';
@@ -807,5 +810,167 @@ describe('host lifecycle orchestration', () => {
     expect(stopped.hostOutput).toBeUndefined();
     expect(await findHostSession(agentKey)).toBeNull();
     expect(await findHostSession(sessionKey)).not.toBeNull();
+  });
+
+  // captureFingerprint includes payload.summary, so identical consecutive events are
+  // dropped by the 1500ms capture debounce. Real tool calls differ; these must too.
+  let toolEventSeq = 0;
+  const claudeToolEvent = (externalSessionId: string, extra: Partial<NormalizedHostHook> = {}) => hook({
+    host: 'claude',
+    event: 'session-event',
+    type: 'checkpoint',
+    externalSessionId,
+    externalTurnId: undefined,
+    payload: { summary: `Tool ${++toolEventSeq} completed` },
+    ...extra,
+  });
+
+  it('adopts head without notifying when the watermark is uninitialised', async () => {
+    await repo.createKnowledgeCommit(projectId, 'Pre-existing history', [
+      { itemId: 'history-1', action: 'insert', after: { id: 'history-1', category: 'fact', title: 'Old news' } },
+    ]);
+    const key: HostSessionKey = {
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'watermark-init-session',
+      externalTurnId: '__turn__',
+    };
+    const session = await startMemorySession({ title: 'Watermark init' });
+    await bindHostSession(key, session.id);
+    await setHostSeenCommit(key, 0);
+
+    const result = await handleHostLifecycleEvent(projectId, claudeToolEvent('watermark-init-session'));
+
+    expect(result.changes).toBeUndefined();
+    expect(result.hostOutput).toBeUndefined();
+    expect(await readHostSeenCommit(key)).toBe(await readCommitHead());
+  });
+
+  it('emits a change card for a sibling commit and resets drift', async () => {
+    const key: HostSessionKey = {
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'sibling-write-session',
+      externalTurnId: '__turn__',
+    };
+    await handleHostLifecycleEvent(projectId, claudeToolEvent('sibling-write-session'));
+    await incrementHostSuccessfulToolCount(key);
+
+    await repo.createKnowledgeCommit(projectId, 'Sibling stored a decision', [
+      { itemId: 'sibling-x', action: 'insert', after: { id: 'sibling-x', category: 'decision', title: 'Ship the watermark' } },
+    ]);
+
+    const result = await handleHostLifecycleEvent(projectId, claudeToolEvent('sibling-write-session'));
+
+    expect(result.changes).toEqual({
+      count: 1,
+      items: [{ itemId: 'sibling-x', category: 'decision', title: 'Ship the watermark', action: 'insert' }],
+    });
+    const context = (result.hostOutput as any).hookSpecificOutput.additionalContext as string;
+    expect(context).toContain('KNOWL CHANGED: 1 item since you last looked.');
+    expect(context).toContain('- decision: Ship the watermark');
+    expect(await readHostSeenCommit(key)).toBe(await readCommitHead());
+
+    // The card is delivered once; the next tool event is silent.
+    const next = await handleHostLifecycleEvent(projectId, claudeToolEvent('sibling-write-session'));
+    expect(next.hostOutput).toBeUndefined();
+  });
+
+  it('does not report the agents own write back to it', async () => {
+    await handleHostLifecycleEvent(projectId, claudeToolEvent('own-write-session'));
+
+    await repo.createKnowledgeCommit(projectId, 'My own store', [
+      { itemId: 'own-1', action: 'insert', after: { id: 'own-1', category: 'fact', title: 'A thing I just learned' } },
+    ]);
+
+    const result = await handleHostLifecycleEvent(projectId, claudeToolEvent('own-write-session', {
+      knowlTool: true,
+      knowlChangeKeys: { ids: [], titles: ['A thing I just learned'] },
+    }));
+
+    expect(result.changes).toBeUndefined();
+    expect(result.hostOutput).toBeUndefined();
+  });
+
+  it('reports a sibling commit even when the agent wrote at the same time', async () => {
+    await handleHostLifecycleEvent(projectId, claudeToolEvent('mixed-write-session'));
+
+    await repo.createKnowledgeCommit(projectId, 'Sibling', [
+      { itemId: 'mixed-sibling', action: 'insert', after: { id: 'mixed-sibling', category: 'fact', title: 'Sibling fact' } },
+    ]);
+    await repo.createKnowledgeCommit(projectId, 'Mine', [
+      { itemId: 'mixed-mine', action: 'insert', after: { id: 'mixed-mine', category: 'fact', title: 'My fact' } },
+    ]);
+
+    const result = await handleHostLifecycleEvent(projectId, claudeToolEvent('mixed-write-session', {
+      knowlTool: true,
+      knowlChangeKeys: { ids: [], titles: ['My fact'] },
+    }));
+
+    expect(result.changes!.items.map(item => item.itemId)).toEqual(['mixed-sibling']);
+  });
+
+  it('clamps a watermark ahead of head, as after a snapshot restore', async () => {
+    const key: HostSessionKey = {
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'clamp-session',
+      externalTurnId: '__turn__',
+    };
+    await handleHostLifecycleEvent(projectId, claudeToolEvent('clamp-session'));
+    await setHostSeenCommit(key, 100_000);
+
+    const result = await handleHostLifecycleEvent(projectId, claudeToolEvent('clamp-session'));
+
+    expect(result.changes).toBeUndefined();
+    expect(result.hostOutput).toBeUndefined();
+    expect(await readHostSeenCommit(key)).toBe(await readCommitHead());
+  });
+
+  it('populates changes for generic hosts without emitting host output', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'generic',
+      event: 'session-event',
+      type: 'checkpoint',
+      externalSessionId: 'generic-changes-session',
+      payload: { summary: 'Generic tool one completed' },
+    }));
+
+    await repo.createKnowledgeCommit(projectId, 'Sibling for generic', [
+      { itemId: 'generic-1', action: 'insert', after: { id: 'generic-1', category: 'fact', title: 'Generic visible fact' } },
+    ]);
+
+    const result = await handleHostLifecycleEvent(projectId, hook({
+      host: 'generic',
+      event: 'session-event',
+      type: 'checkpoint',
+      externalSessionId: 'generic-changes-session',
+      payload: { summary: 'Generic tool two completed' },
+    }));
+
+    expect(result.changes!.items.map(item => item.title)).toEqual(['Generic visible fact']);
+    expect(result.hostOutput).toBeUndefined();
+  });
+
+  it('prefers the change card over the drift reminder', async () => {
+    const key: HostSessionKey = {
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'precedence-session',
+      externalTurnId: '__turn__',
+    };
+    await handleHostLifecycleEvent(projectId, claudeToolEvent('precedence-session'));
+    // Park drift one short of the threshold so the next event would emit the static card.
+    for (let index = 0; index < 11; index++) await incrementHostSuccessfulToolCount(key);
+
+    await repo.createKnowledgeCommit(projectId, 'Sibling at drift boundary', [
+      { itemId: 'precedence-1', action: 'insert', after: { id: 'precedence-1', category: 'fact', title: 'Boundary fact' } },
+    ]);
+
+    const result = await handleHostLifecycleEvent(projectId, claudeToolEvent('precedence-session'));
+    const context = (result.hostOutput as any).hookSpecificOutput.additionalContext as string;
+
+    expect(context).toContain('KNOWL CHANGED');
+    expect(context).not.toContain(KNOWL_CLAUDE_CONTINUATION_REMINDER);
   });
 });

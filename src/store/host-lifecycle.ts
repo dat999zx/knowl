@@ -1,5 +1,7 @@
 import { NormalizedHostHook } from '../cli/agents/host-hook.js';
+import { createClaudeChangeCardOutput } from '../cli/agents/change-card.js';
 import { createClaudePostToolReminderOutput } from '../cli/agents/reminder.js';
+import { ChangeSummary, loadForeignChanges, readCommitHead } from './change-watermark.js';
 import { captureMemorySessionEvent } from './session-capture.js';
 import { finalizeMemorySession } from './session-finalizer.js';
 import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions } from './session-repository.js';
@@ -13,7 +15,9 @@ import {
   getOrCreateHostSession,
   HostSessionKey,
   incrementHostSuccessfulToolCount,
+  readHostSeenCommit,
   resetHostSuccessfulToolCount,
+  setHostSeenCommit,
 } from './host-session-bindings.js';
 import { bootstrapAgentSession } from './context-bootstrap.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
@@ -34,6 +38,7 @@ export type HostLifecycleResult = {
   promotion?: Awaited<ReturnType<typeof finalizeMemorySession>>;
   handoff?: Awaited<ReturnType<typeof recordPendingSessionHandoff>>;
   hostOutput?: Record<string, unknown>;
+  changes?: ChangeSummary;
 };
 
 function bindingKey(input: NormalizedHostHook, scope: 'session' | 'turn'): HostSessionKey {
@@ -140,6 +145,37 @@ async function bootstrapAgentContext(projectId: string, input: NormalizedHostHoo
   return { context, truncated: Boolean(bootstrap.context && bootstrap.context.length > cap) };
 }
 
+/**
+ * Ordered watermark rule. Always advances to head; returns only the changes that are
+ * not the caller's own. Returns undefined when there is nothing to report, which
+ * includes the uninitialised and clamp cases.
+ */
+async function evaluateChangeNotification(
+  input: NormalizedHostHook,
+  key: HostSessionKey,
+): Promise<ChangeSummary | undefined> {
+  const head = await readCommitHead();
+  const seen = await readHostSeenCommit(key);
+  if (seen === null) return undefined;
+
+  // 0 means "uninitialised", not "has seen no commits": adopt head silently rather
+  // than reporting the entire history. Covers rows migrated by the ALTER TABLE.
+  if (seen === 0 && head > 0) {
+    await setHostSeenCommit(key, head);
+    return undefined;
+  }
+  // Snapshot restore reassigns rowids, so a stored watermark can exceed head.
+  if (seen > head) {
+    await setHostSeenCommit(key, head);
+    return undefined;
+  }
+  if (seen === head) return undefined;
+
+  const summary = await loadForeignChanges(seen, input.knowlChangeKeys);
+  await setHostSeenCommit(key, head);
+  return summary.count > 0 ? summary : undefined;
+}
+
 async function finalizeFailedStop(projectId: string, input: NormalizedHostHook, sessionId: string) {
   await finishMemorySession(
     sessionId,
@@ -244,15 +280,28 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       // that ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
       // that is querying/storing memory never sees a reminder.
       let hostOutput: Record<string, unknown> | undefined;
-      if (input.host === 'claude' && input.event === 'session-event' && input.status !== 'failed') {
-        if (input.knowlTool) {
-          await resetHostSuccessfulToolCount(bindingKey(input, 'turn'));
-        } else {
-          const drift = await incrementHostSuccessfulToolCount(bindingKey(input, 'turn'));
-          if (drift > 0 && drift % KNOWL_REMINDER_DRIFT === 0) hostOutput = createClaudePostToolReminderOutput();
+      let changes: ChangeSummary | undefined;
+      if (input.event === 'session-event' && input.status !== 'failed') {
+        const key = bindingKey(input, 'turn');
+        changes = await evaluateChangeNotification(input, key);
+        if (changes) {
+          // Change news implies "go query", so it replaces the static drift nudge and
+          // resets the counter. At most one card per tool event, never two.
+          await resetHostSuccessfulToolCount(key);
+          if (input.host === 'claude') hostOutput = createClaudeChangeCardOutput(changes);
+        } else if (input.host === 'claude') {
+          // Adaptive continuation reminder: only nudge Claude after a run of tool calls
+          // that ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
+          // that is querying/storing memory never sees a reminder.
+          if (input.knowlTool) {
+            await resetHostSuccessfulToolCount(key);
+          } else {
+            const drift = await incrementHostSuccessfulToolCount(key);
+            if (drift > 0 && drift % KNOWL_REMINDER_DRIFT === 0) hostOutput = createClaudePostToolReminderOutput();
+          }
         }
       }
-      return { accepted: true, sessionId: started.session.id, hostOutput };
+      return { accepted: true, sessionId: started.session.id, hostOutput, ...(changes ? { changes } : {}) };
     } catch (error) {
       releaseCapture(input);
       throw error;
