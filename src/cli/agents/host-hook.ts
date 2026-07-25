@@ -2,6 +2,7 @@ import path from 'node:path';
 import { validateKnowledgeWrite } from '../../core/knowledge-validation.js';
 import { SessionEventType } from '../../core/types.js';
 import { isSessionEventType } from './lifecycle.js';
+import { hostProfile, isHookHost } from './hosts/index.js';
 import { AgentName } from './types.js';
 
 export type HookHost = 'codex' | 'claude' | 'cursor' | 'claude-desktop' | 'generic';
@@ -41,7 +42,7 @@ export interface NormalizedHostHook {
 
 const MAX_STRING = 2_000;
 const MAX_RETAINED_INPUT = 4_000;
-const AGENT_HOSTS = new Set<HookHost>(['codex', 'claude', 'cursor', 'claude-desktop', 'generic']);
+// The set of valid hosts is the profile registry; see `isHookHost`.
 
 export class IncompleteHostHookPayloadError extends Error {
   constructor(message: string) {
@@ -71,26 +72,9 @@ function requireProjectRoot(raw: Record<string, unknown>): string {
   throw new IncompleteHostHookPayloadError('Host hook payload requires cwd or workspace_roots.');
 }
 
-function externalIds(host: HookHost, raw: Record<string, unknown>) {
-  const externalSessionId = host === 'cursor'
-    ? stringValue(raw.conversation_id)
-    : host === 'generic'
-      ? stringValue(raw.sessionId)
-      : stringValue(raw.session_id) ?? stringValue(raw.conversation_id) ?? stringValue(raw.thread_id);
-  if (!externalSessionId) throw new IncompleteHostHookPayloadError('Host hook payload requires a session id.');
-  const externalTurnId = host === 'cursor'
-    ? stringValue(raw.generation_id)
-    : host === 'generic'
-      ? stringValue(raw.turnId)
-      : stringValue(raw.turn_id) ?? stringValue(raw.generation_id);
-  return { externalSessionId, externalTurnId };
-}
-
-function agentIdentity(raw: Record<string, unknown>) {
-  const agentId = stringValue(raw.agent_id) ?? stringValue(raw.agentId);
-  const agentType = stringValue(raw.agent_type) ?? stringValue(raw.agentType);
-  return { ...(agentId ? { agentId } : {}), ...(agentType ? { agentType } : {}) };
-}
+// Identity extraction and event mapping live in each host's profile
+// (src/cli/agents/hosts/), so adding a host is adding a file rather than editing
+// conditionals here.
 
 function relativePath(projectRoot: string, value: unknown): string | undefined {
   const candidate = stringValue(value);
@@ -173,9 +157,7 @@ function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: 
   const toolName = stringValue(raw.tool_name) ?? stringValue(raw.toolName) ?? '';
   const knowlTool = /knowl/i.test(toolName);
   const changeKeys = knowlTool ? { knowlChangeKeys: knowlChangeKeys(input) } : {};
-  const isShell = host === 'cursor'
-    ? eventName === 'afterShellExecution'
-    : toolName.toLocaleLowerCase() === 'bash' || toolName.toLocaleLowerCase() === 'shell';
+  const isShell = hostProfile(host).isShellEvent(eventName, toolName);
   if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, knowlTool, ...changeKeys };
 
   const paths = changedPaths(projectRoot, { ...raw, ...input });
@@ -205,10 +187,13 @@ function failurePayload(raw: Record<string, unknown>, failed: boolean): Record<s
   };
 }
 
-function normalizeGeneric(eventName: string, raw: Record<string, unknown>, projectRoot: string, ids: ReturnType<typeof externalIds>): NormalizedHostHook {
-  const event = eventName as NormalizedHookEventName;
-  const allowed: NormalizedHookEventName[] = ['session-start', 'turn-start', 'session-event', 'checkpoint', 'turn-stop', 'session-stop'];
-  if (!allowed.includes(event)) throw new Error(`Unsupported generic hook event: ${eventName}`);
+function normalizeGeneric(
+  event: NormalizedHookEventName,
+  raw: Record<string, unknown>,
+  projectRoot: string,
+  ids: { externalSessionId: string; externalTurnId?: string },
+): NormalizedHostHook {
+  // The profile has already validated the event name, so only payload shape is checked here.
   const type = event === 'session-event' ? raw.type : event === 'checkpoint' ? 'checkpoint' : undefined;
   if (event === 'session-event' && type === undefined) throw new IncompleteHostHookPayloadError('Generic session event requires a type.');
   if (type !== undefined && !isSessionEventType(type)) throw new Error(`Unsupported session event type: ${String(type)}`);
@@ -242,27 +227,20 @@ function validateNormalizedHostHook(input: NormalizedHostHook): NormalizedHostHo
 }
 
 function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record<string, unknown>): NormalizedHostHook {
-  if (!AGENT_HOSTS.has(host as HookHost)) throw new Error(`Unsupported hook host: ${host}`);
-  const normalizedHost = host as HookHost;
+  if (!isHookHost(host)) throw new Error(`Unsupported hook host: ${host}`);
+  const normalizedHost = host;
+  const profile = hostProfile(normalizedHost);
   const projectRoot = requireProjectRoot(raw);
-  const ids = externalIds(normalizedHost, raw);
-  const agent = agentIdentity(raw);
-  if (normalizedHost === 'generic') return normalizeGeneric(eventName, raw, projectRoot, ids);
-
-  const eventMap: Record<string, NormalizedHookEventName> = normalizedHost === 'codex' || normalizedHost === 'claude'
-    ? {
-        SessionStart: 'session-start', UserPromptSubmit: 'turn-start', PostToolUse: 'session-event',
-        PostToolUseFailure: 'session-event', PreCompact: 'checkpoint', Stop: 'turn-stop',
-        StopFailure: 'turn-stop', SessionEnd: 'session-stop',
-        SubagentStart: 'agent-start', SubagentStop: 'agent-stop',
-      }
-    : {
-        sessionStart: 'session-start', beforeSubmitPrompt: 'turn-start', afterShellExecution: 'session-event',
-        postToolUse: 'session-event', postToolUseFailure: 'session-event', afterFileEdit: 'session-event',
-        preCompact: 'checkpoint', stop: 'turn-stop', sessionEnd: 'session-stop',
-      };
-  const event = eventMap[eventName];
+  const identity = profile.identity(raw);
+  if (!identity.externalSessionId) throw new IncompleteHostHookPayloadError('Host hook payload requires a session id.');
+  const ids = { externalSessionId: identity.externalSessionId, externalTurnId: identity.externalTurnId };
+  const agent = {
+    ...(identity.agentId ? { agentId: identity.agentId } : {}),
+    ...(identity.agentType ? { agentType: identity.agentType } : {}),
+  };
+  const event = profile.normalizedEvent(eventName);
   if (!event) throw new Error(`Unsupported ${normalizedHost} hook event: ${eventName}`);
+  if (normalizedHost === 'generic') return normalizeGeneric(event, raw, projectRoot, ids);
   if (event === 'session-start' || event === 'turn-start') {
     return { host: normalizedHost, event, ...ids, projectRoot, title: event === 'turn-start' ? 'Agent turn' : 'Agent session', payload: {} };
   }
