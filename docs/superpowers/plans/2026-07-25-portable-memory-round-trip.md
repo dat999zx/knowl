@@ -35,7 +35,7 @@
   - `listTombstones(dbConnection?: DbConnection): Promise<Tombstone[]>` where `Tombstone = { id: string; deletedAt: string; reason: string | null }`
   - `pruneTombstones(olderThanDays: number, now?: Date, dbConnection?: DbConnection): Promise<number>` returning the number removed.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/store/tombstones.test.ts`:
 
@@ -89,12 +89,12 @@ describe('tombstones', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/store/tombstones.test.ts`
 Expected: FAIL — cannot resolve `../../src/store/tombstones.js`.
 
-- [ ] **Step 3: Add the schema statement**
+- [x] **Step 3: Add the schema statement**
 
 In `src/store/bootstrap.ts`, add to the array of `CREATE TABLE` statements, directly after the `host_session_bindings` statement:
 
@@ -108,7 +108,7 @@ In `src/store/bootstrap.ts`, add to the array of `CREATE TABLE` statements, dire
 
 `CREATE TABLE IF NOT EXISTS` runs on every open, so existing databases pick the table up with no separate migration.
 
-- [ ] **Step 4: Create the tombstone module**
+- [x] **Step 4: Create the tombstone module**
 
 Create `src/store/tombstones.ts`:
 
@@ -163,7 +163,7 @@ export async function pruneTombstones(
 }
 ```
 
-- [ ] **Step 5: Record a tombstone on delete**
+- [x] **Step 5: Record a tombstone on delete**
 
 In `src/store/repository.ts`, replace the body of `deleteKnowledgeItem` (currently lines 378-387):
 
@@ -189,17 +189,17 @@ Add the import at the top of `src/store/repository.ts`:
 import { recordTombstone } from './tombstones.js';
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `npx vitest run tests/store/tombstones.test.ts`
 Expected: PASS (2 tests)
 
-- [ ] **Step 7: Verify no regression in GC, which owns the only delete call site**
+- [x] **Step 7: Verify no regression in GC, which owns the only delete call site**
 
 Run: `npx vitest run tests/store/gc-access.test.ts tests/store/store.test.ts`
 Expected: PASS
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/store/tombstones.ts src/store/bootstrap.ts src/store/repository.ts tests/store/tombstones.test.ts
@@ -225,7 +225,7 @@ git commit -m "feat(store): record a tombstone when a knowledge item is purged"
   - `export type ImportCandidate = { id: string; contentHash?: string | null; updatedAt: string; version: number }`
   - `export type LocalItemRow = { id: string; contentHash: string | null; updatedAt: string; version: number }`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/store/import-policy.test.ts`:
 
@@ -283,12 +283,12 @@ describe('divergence resolution', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/store/import-policy.test.ts`
 Expected: FAIL — cannot resolve `../../src/store/import-policy.js`.
 
-- [ ] **Step 3: Implement the policy module**
+- [x] **Step 3: Implement the policy module**
 
 Create `src/store/import-policy.ts`:
 
@@ -331,12 +331,12 @@ export function resolveDivergence(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/store/import-policy.test.ts`
 Expected: PASS (7 tests)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/store/import-policy.ts tests/store/import-policy.test.ts
@@ -380,7 +380,7 @@ rather than adding a second import from the same module.)
 - Consumes: `listTombstones` from Task 1.
 - Produces: JSONL records of shape `{ type: 'tombstone', tombstone: { id, deletedAt, reason } }`, emitted after all item records and before the manifest. `exportKnowledge` return value gains `tombstones: number`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/store/portability.test.ts`, inside the existing top-level `describe`:
 
@@ -404,12 +404,12 @@ Append to `tests/store/portability.test.ts`, inside the existing top-level `desc
 
 The `fs`, `path` and `portability` imports already exist in this file.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/store/portability.test.ts -t "tombstones"`
 Expected: FAIL — `result.tombstones` is `undefined`.
 
-- [ ] **Step 3: Emit tombstone records**
+- [x] **Step 3: Emit tombstone records**
 
 In `src/store/portability.ts`, add the import:
 
@@ -430,12 +430,12 @@ And change the return statement to:
   return { items: items.length, tombstones: tombstones.length, sha256: manifest };
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/store/portability.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/store/portability.ts tests/store/portability.test.ts
@@ -469,7 +469,7 @@ git commit -m "feat(portability): carry tombstones in the exported JSONL stream"
   ```
   `importKnowledge(inputPath, options)` where `options` gains `onDivergence?: DivergencePolicy`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/store/portability.test.ts`:
 
@@ -577,12 +577,12 @@ import { exportKnowledge, importKnowledge } from '../../src/store/portability.js
 
 `getKnowledgeItem` returns `null` for a missing id in this codebase; if it throws instead, assert with `await expect(...).rejects.toThrow()`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `npx vitest run tests/store/portability.test.ts`
 Expected: FAIL — `onDivergence` is not accepted and `result.updated` is `undefined`.
 
-- [ ] **Step 3: Rewrite the import classification and apply loop**
+- [x] **Step 3: Rewrite the import classification and apply loop**
 
 In `src/store/portability.ts`, add imports:
 
@@ -758,12 +758,12 @@ export async function importKnowledge(
 ): Promise<ImportResult> {
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/store/portability.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/store/portability.ts tests/store/portability.test.ts
@@ -782,7 +782,7 @@ git commit -m "feat(portability): resolve divergence per item instead of discard
 - Consumes: the `plan` array from Task 4.
 - Produces: no new exports; `importKnowledge` now leaves `knowledge_embeddings` rows for written items when vectors are enabled.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/store/portability.test.ts`:
 
@@ -818,12 +818,12 @@ import * as writeEmbedding from '../../src/store/write-embedding.js';
 
 Note: `deleteKnowledgeItem` now writes a tombstone (Task 1), and this export was taken before the delete, so the stream contains the item but not its tombstone — the item re-inserts.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/store/portability.test.ts -t "embedding indexer"`
 Expected: FAIL — `indexed` is empty.
 
-- [ ] **Step 3: Call the indexer after commit**
+- [x] **Step 3: Call the indexer after commit**
 
 In `src/store/portability.ts`, add the import:
 
@@ -849,12 +849,12 @@ Then, after `await client.execute('COMMIT;');` succeeds and before the `return`,
 
 Place this after the `try/catch` block so a failed transaction never indexes.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/store/portability.test.ts`
 Expected: PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/store/portability.ts tests/store/portability.test.ts
@@ -874,7 +874,7 @@ git commit -m "fix(portability): index imported items so they reach vector searc
 - Consumes: `DIVERGENCE_POLICIES`, `DEFAULT_DIVERGENCE_POLICY` (Task 2); `pruneTombstones` (Task 1).
 - Produces: `knowl import <path> [--dry-run] [--on-divergence <policy>]`; GC removes tombstones older than `--tombstone-days` (default 90).
 
-- [ ] **Step 1: Write the failing round-trip test**
+- [x] **Step 1: Write the failing round-trip test**
 
 Append to `tests/store/portability.test.ts`:
 
@@ -921,12 +921,12 @@ Append to `tests/store/portability.test.ts`:
   });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/store/portability.test.ts -t "round trip"`
 Expected: FAIL until Tasks 4 and 5 are in place; if they are, this should already pass and the remaining steps are CLI wiring.
 
-- [ ] **Step 3: Add the CLI option**
+- [x] **Step 3: Add the CLI option**
 
 In `src/index.ts`, replace the `import` command definition at line 389:
 
@@ -956,7 +956,7 @@ Add to the imports at the top of `src/index.ts`:
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from './store/import-policy.js';
 ```
 
-- [ ] **Step 4: Prune tombstones during GC**
+- [x] **Step 4: Prune tombstones during GC**
 
 In `src/store/gc.ts`, add the import:
 
@@ -982,7 +982,7 @@ In `src/index.ts`, add to the `gc` command:
 
 and pass `tombstoneDays: options.tombstoneDays === undefined ? undefined : Number(options.tombstoneDays)` through to the GC call.
 
-- [ ] **Step 5: Add a CLI integration assertion**
+- [x] **Step 5: Add a CLI integration assertion**
 
 In `tests/cli/cli.test.ts`, extend the existing `'should export and dry-run import portable JSONL memory'` test, or add alongside it:
 
@@ -996,12 +996,12 @@ In `tests/cli/cli.test.ts`, extend the existing `'should export and dry-run impo
 
 Match the helper name and signature already used in `tests/cli/cli.test.ts` for invoking the CLI; do not introduce a new helper.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `npx vitest run`
 Expected: PASS, with no reduction from the current 409 tests.
 
-- [ ] **Step 7: Verify the real round trip by hand**
+- [x] **Step 7: Verify the real round trip by hand**
 
 The unit tests use synthetic streams. Repeat the experiment that proved the defect, which uses a real multi-hundred-item export:
 
@@ -1017,7 +1017,7 @@ cd /tmp/rt/a && knowl import /tmp/rt/from-b.jsonl
 
 Expected: `applied: true`, `inserted: 1`, and the peer decision present on A. Before this work the same sequence produced `applied: false` with nothing written.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/index.ts src/store/gc.ts tests/store/portability.test.ts tests/cli/cli.test.ts

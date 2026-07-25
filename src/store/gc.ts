@@ -1,5 +1,6 @@
 import { getDb } from './database.js';
 import * as repo from './repository.js';
+import { pruneTombstones } from './tombstones.js';
 import { getAccessSummary, KnowledgeAccessSummary } from './access-feedback.js';
 import { CommitChange, KnowledgeCategory, KnowledgeItem } from '../core/types.js';
 
@@ -25,9 +26,13 @@ export interface KnowledgeGcOptions {
   minCompressBytes?: number;
   /** Archive stale state items even if they are hot (recently/frequently retrieved). */
   ignoreAccess?: boolean;
+  /** Remove delete records older than this many days. Defaults to 90. */
+  tombstoneDays?: number;
 }
 
 export interface KnowledgeGcResult {
+  /** Delete records removed by retention; present only on apply. */
+  prunedTombstones?: number;
   candidates: KnowledgeGcCandidate[];
   summary: Record<KnowledgeGcAction, number>;
 }
@@ -250,9 +255,14 @@ export async function applyKnowledgeGc(
       await repo.createKnowledgeCommit(projectId, 'Apply knowledge GC', changes, tx);
     }
 
+    // Tombstones are the only unbounded table this feature adds. One older than any
+    // plausible export round cannot change the outcome of a future import.
+    const prunedTombstones = await pruneTombstones(options.tombstoneDays ?? 90, undefined, tx);
+
     return {
       candidates,
       summary: summarizeCandidates(candidates),
+      prunedTombstones,
     };
   });
 }

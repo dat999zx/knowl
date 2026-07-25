@@ -190,6 +190,45 @@ describe('portability', () => {
     expect(indexedItems.map(item => item.title)).toContain('Indexable fact');
   });
 
+  it('converges two databases across a full round trip', async () => {
+    // The acceptance criterion from the spec: the peer edits a shared item and adds one
+    // of its own, and after import both sides agree on content_hash with the new item
+    // present. A repeat import must then be a no-op, which is what convergence means.
+    const shared = await createKnowledgeItem('local', {
+      category: 'fact', title: 'Round trip fact', content: 'Initial content.',
+    });
+    const first = path.join(TARGET, 'rt-1.jsonl');
+    await portability.exportKnowledge('local', first, TARGET);
+
+    const stream = (await fs.readFile(first, 'utf8')).split('\n').filter(Boolean);
+    const records = stream.slice(0, -1).map(line => JSON.parse(line));
+    for (const record of records) {
+      if (record.type === 'item' && record.item.id === shared.id) {
+        record.item.content = 'Peer content.';
+        record.item.contentHash = 'peer-hash';
+        record.item.updatedAt = '2030-01-01T00:00:00.000Z';
+        record.item.version = record.item.version + 1;
+      }
+    }
+    records.push({ type: 'item', item: { ...shared, id: 'peer-only-item', title: 'Peer only', content: 'From the peer.', contentHash: 'peer-only-hash', updatedAt: '2030-01-01T00:00:00.000Z' } });
+    const joined = `${records.map(record => JSON.stringify(record)).join('\n')}\n`;
+    const sha = createHash('sha256').update(joined).digest('hex');
+    const second = path.join(TARGET, 'rt-2.jsonl');
+    await fs.writeFile(second, `${joined}${JSON.stringify({ type: 'manifest', sha256: sha })}\n`, 'utf8');
+
+    const result = await portability.importKnowledge(second, { projectRoot: TARGET, onDivergence: 'newer' });
+
+    expect(result.applied).toBe(true);
+    expect(result.inserted).toBe(1);
+    expect(result.updated).toBe(1);
+    expect((await getKnowledgeItem(shared.id))!.contentHash).toBe('peer-hash');
+    expect(await getKnowledgeItem('peer-only-item')).not.toBeNull();
+
+    const repeat = await portability.importKnowledge(second, { projectRoot: TARGET, onDivergence: 'newer' });
+    expect(repeat.updated).toBe(0);
+    expect(repeat.inserted).toBe(0);
+  });
+
   it('re-indexes an item adopted from the peer, not just fresh inserts', async () => {
     // An adopted divergent item has different content, so its stored embedding is now
     // wrong. Indexing only inserts would leave vector search matching the old text.

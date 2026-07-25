@@ -802,6 +802,14 @@ describe('CLI Integration', () => {
       expect(execSync(`node "${CLI_PATH}" export "${exportPath}"`, { cwd: portabilityDir, encoding: 'utf-8' })).toContain('sha256');
       const output = execSync(`node "${CLI_PATH}" import "${exportPath}" --dry-run`, { cwd: portabilityDir, encoding: 'utf-8' });
       expect(output).toContain('"applied": false');
+      // A dry run reports its projection separately from what it actually wrote.
+      expect(output).toContain('"wouldApply"');
+
+      // An unknown policy must fail loudly rather than silently falling back to a
+      // default, since the choice decides whether local edits survive the import.
+      const rejected = spawnSync(process.execPath, [CLI_PATH, 'import', exportPath, '--on-divergence', 'whatever'], { cwd: portabilityDir, encoding: 'utf-8' });
+      expect(rejected.status).toBe(1);
+      expect(rejected.stderr).toMatch(/Unknown --on-divergence policy/);
     } finally {
       await fs.rm(portabilityDir, { recursive: true, force: true }).catch(() => {});
     }

@@ -26,6 +26,7 @@ import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue } from './cli/config/service.js';
 import { runConfigUi } from './cli/config/ui.js';
+import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from './store/import-policy.js';
 import { formatAgentInitSummary, runAgentInitFlow } from './cli/init-flow.js';
 import { parseAgentNames } from './cli/agents/registry.js';
 import { reindexKnowledgeEmbeddings } from './store/vector-index.js';
@@ -386,7 +387,23 @@ codeCommand.command('symbols').argument('<path>').action(async filePath => { try
 
 program.command('export').argument('<path>').description('Write portable JSONL memory to a file').action(async outputPath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await exportKnowledge(project.id, path.resolve(outputPath), root), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error exporting knowledge: ${error.message}`); process.exit(1); } });
 
-program.command('import').argument('<path>').description('Load portable JSONL memory from a file').option('--dry-run').action(async (inputPath, options) => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await importKnowledge(path.resolve(inputPath), { dryRun: options.dryRun, projectRoot: root }), null, 2)); await closeDb(); } catch (error: any) { await closeDb().catch(() => {}); console.error(`Error importing knowledge: ${error.message}`); process.exit(1); } });
+program.command('import').argument('<path>').description('Load portable JSONL memory from a file').option('--dry-run')
+  .option('--on-divergence <policy>', `How to resolve items that differ locally: ${DIVERGENCE_POLICIES.join(', ')}`, DEFAULT_DIVERGENCE_POLICY)
+  .action(async (inputPath, options) => {
+    try {
+      if (!DIVERGENCE_POLICIES.includes(options.onDivergence)) {
+        throw new Error(`Unknown --on-divergence policy: ${options.onDivergence}. Expected one of: ${DIVERGENCE_POLICIES.join(', ')}`);
+      }
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      console.log(JSON.stringify(await importKnowledge(path.resolve(inputPath), { dryRun: options.dryRun, projectRoot: root, onDivergence: options.onDivergence }), null, 2));
+      await closeDb();
+    } catch (error: any) {
+      await closeDb().catch(() => {});
+      console.error(`Error importing knowledge: ${error.message}`);
+      process.exit(1);
+    }
+  });
 
 program.command('synthesize').description('Summarize knowledge for a path or tag into one item').requiredOption('--scope <path-or-tag>').action(async options => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await synthesizeKnowledge(project.id, options.scope), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error synthesizing knowledge: ${error.message}`); process.exit(1); } });
 
@@ -862,6 +879,7 @@ program
   .option('--compress-days <days>', 'Compress archived items cold for this many days (default 30)')
   .option('--min-bytes <bytes>', 'Minimum content bytes before compressing an archived item (default 180)')
   .option('--ignore-access', 'Archive stale state even if it was recently or frequently retrieved (hot)')
+  .option('--tombstone-days <days>', 'Remove delete records older than this many days (default 90)')
   .action(async (options) => {
     try {
       const root = await findProjectRoot(process.cwd());
@@ -874,6 +892,7 @@ program
         compressArchivedDays: options.compressDays !== undefined ? Number(options.compressDays) : undefined,
         minCompressBytes: options.minBytes !== undefined ? Number(options.minBytes) : undefined,
         ignoreAccess: Boolean(options.ignoreAccess),
+        tombstoneDays: options.tombstoneDays !== undefined ? Number(options.tombstoneDays) : undefined,
       };
       const result = options.apply
         ? await applyKnowledgeGc(project.id, gcOptions)
