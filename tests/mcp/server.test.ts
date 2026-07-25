@@ -321,6 +321,27 @@ describe('MCP Server Layer', () => {
     expect(items[0].title).toBe('Project uses SQLite persistence');
   });
 
+  it('should serve a historical asOf query instead of crashing', async () => {
+    // Regression: the asOf branch called queryKnowledgeBase without importing it, so a
+    // documented parameter of the most-used tool threw "queryKnowledgeBase is not
+    // defined" at runtime. No other test reached that branch.
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Historical asOf fact',
+      content: 'Recorded so a point-in-time query has something to resolve.',
+      tags: ['history'],
+    });
+
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_query',
+      arguments: { query: 'historical asOf', asOf: new Date(Date.now() + 60_000).toISOString(), limit: 5 },
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+    expect(() => JSON.parse(res.result.content[0].text)).not.toThrow();
+  });
+
   it('should return at most three knowledge hits by default for MCP queries', async () => {
     for (let i = 1; i <= 4; i++) {
       await repo.createKnowledgeItem(projectId, {

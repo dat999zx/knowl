@@ -4,7 +4,7 @@ import { ProjectConfig, KnowledgeCategory, KnowledgeStatus } from '../core/types
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
 import { runPipeline } from '../pipeline/pipeline.js';
-import { getHierarchicalKnowledge } from '../store/queries.js';
+import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { formatHierarchyToMarkdown, formatRecentContextToMarkdown } from '../core/format.js';
 import { compactMcpJson, compactItemResponse, compactAssertionResponse, boundedEvidence } from './response-format.js';
 import { MAX_ITEM_CONTENT_CHARS, truncateText } from '../core/token-budget.js';
@@ -590,8 +590,10 @@ export function registerTools(
           commitMessage: commitMessage || 'Ingest via MCP tool',
         });
 
+        // Counts live on mergeResult; reading them off the top level always reported zero.
+        const merge = result.mergeResult;
         return {
-          content: [{ type: 'text', text: compactMcpJson({ inserted: result.insertedIds?.length ?? 0, updated: result.updatedIds?.length ?? 0, superseded: result.supersededIds?.length ?? 0 }) }],
+          content: [{ type: 'text', text: compactMcpJson({ inserted: merge?.insertedIds?.length ?? 0, updated: merge?.updatedIds?.length ?? 0, superseded: merge?.supersededIds?.length ?? 0 }) }],
         };
       }
       
