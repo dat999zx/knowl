@@ -10,12 +10,13 @@ export interface ClaudePromptReminderOutput {
   };
 }
 
-export interface ClaudePostToolReminderOutput {
+// Alias rather than interface for the implicit index signature — see change-card.ts.
+export type ClaudePostToolReminderOutput = {
   hookSpecificOutput: {
     hookEventName: 'PostToolUse';
     additionalContext: string;
   };
-}
+};
 
 export function createAgentReminderOutput(host: string): ClaudePromptReminderOutput {
   if (host !== 'claude') throw new Error(`Unsupported reminder host: ${host}`);

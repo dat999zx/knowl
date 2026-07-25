@@ -4,12 +4,15 @@ const MAX_ITEM_LINES = 5;
 const MAX_TITLE_LENGTH = 90;
 const CLOSING_LINE = 'Call knowl_query before relying on earlier memory in these areas.';
 
-export interface ClaudeChangeCardOutput {
+// A type alias rather than an interface: only aliases get an implicit index
+// signature, which is what keeps this assignable to HostLifecycleResult.hostOutput
+// (`Record<string, unknown>`) without a cast.
+export type ClaudeChangeCardOutput = {
   hookSpecificOutput: {
     hookEventName: 'PostToolUse';
     additionalContext: string;
   };
-}
+};
 
 /**
  * Titles only, never content. A title is the routing information the agent needs —
