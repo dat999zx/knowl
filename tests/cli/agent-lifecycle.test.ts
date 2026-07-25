@@ -50,6 +50,31 @@ describe('agent lifecycle CLI', () => {
     });
   });
 
+  it('retains subagent identity and Knowl write arguments while still discarding noise', async () => {
+    const payload = await readLifecyclePayload(Readable.from([JSON.stringify({
+      session_id: 'stream-subagent',
+      agent_id: 'adc54472c7d8cad78',
+      agent_type: 'Explore',
+      cwd: TEST_DIR,
+      prompt_id: 'discard me',
+      tool_name: 'mcp__knowl__knowl_ingest_atoms',
+      tool_input: {
+        atoms: [{ title: 'First atom', content: 'discard me' }],
+        id: 'item-9',
+        supersedeId: 'item-8',
+        title: 'A title',
+        unsafe: 'discard me',
+      },
+    })]) as NodeJS.ReadStream);
+
+    expect(payload.agent_id).toBe('adc54472c7d8cad78');
+    expect(payload.agent_type).toBe('Explore');
+    expect(payload.prompt_id).toBeUndefined();
+    expect(payload.tool_input).toMatchObject({ id: 'item-9', supersedeId: 'item-8', title: 'A title' });
+    expect((payload.tool_input as any).atoms[0].title).toBe('First atom');
+    expect((payload.tool_input as any).unsafe).toBeUndefined();
+  });
+
   it('captures bounded lifecycle events from stdin', () => {
     const started = JSON.parse(run(['agent-event', 'session-start', '--title', 'Implement lifecycle hooks', '--agent', 'codex', '--json']));
     expect(started).toMatchObject({ id: expect.any(String), status: 'active', agent: 'codex' });

@@ -6,7 +6,7 @@ type NestedEntry = { matcher: string; hooks: NestedHook[] };
 type CursorEntry = { command: string; timeout: number };
 
 export const CODEX_HOOK_EVENTS = ['SessionStart', 'PostToolUse', 'PostToolUseFailure', 'PreCompact', 'Stop'] as const;
-export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'PostToolUse', 'PostToolUseFailure', 'PreCompact', 'Stop', 'StopFailure', 'SessionEnd'] as const;
+export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'SubagentStart', 'PostToolUse', 'PostToolUseFailure', 'PreCompact', 'Stop', 'StopFailure', 'SubagentStop', 'SessionEnd'] as const;
 export const CURSOR_HOOK_EVENTS = ['sessionStart', 'afterShellExecution', 'postToolUse', 'postToolUseFailure', 'afterFileEdit', 'preCompact', 'stop', 'sessionEnd'] as const;
 const CLAUDE_PROMPT_EVENT = 'UserPromptSubmit';
 const RETIRED_CURSOR_EVENTS = ['beforeSubmitPrompt'];

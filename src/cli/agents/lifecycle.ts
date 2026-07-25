@@ -16,10 +16,17 @@ const ROOT_FIELDS = new Set([
   'title', 'query', 'agent', 'type', 'status', 'summary', 'command', 'exit_code', 'exitCode', 'passed',
   'message', 'code', 'text', 'changedPaths', 'changed_paths', 'commit', 'file_path', 'filePath', 'path',
   'tool_name', 'toolName', 'error', 'error_code', 'error_message', 'tool_input', 'toolInput', 'tool_response', 'toolResponse',
+  // Claude subagent identity: without these the agent-scoped binding degrades to the
+  // shared main-thread row and SubagentStart/Stop cannot resolve an agent at all.
+  'agent_id', 'agentId', 'agent_type', 'agentType',
 ]);
+// Knowl write-tool arguments are retained so a new commit can be recognised as the
+// caller's own work. They are compared in memory and never persisted: only summary,
+// command, and changedPaths reach the stored event payload.
+const KNOWL_WRITE_ARGS = ['title', 'id', 'supersedeId', 'supersedes', 'atoms'];
 const NESTED_FIELDS: Record<string, Set<string>> = {
-  tool_input: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path']),
-  toolInput: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path']),
+  tool_input: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', ...KNOWL_WRITE_ARGS]),
+  toolInput: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', ...KNOWL_WRITE_ARGS]),
   tool_response: new Set(['exit_code', 'exitCode']),
   toolResponse: new Set(['exit_code', 'exitCode']),
   error: new Set(['code', 'type', 'message', 'error']),
