@@ -3,6 +3,7 @@ import { and, desc, eq, isNull } from 'drizzle-orm';
 import { getDb } from './database.js';
 import type { DbConnection } from './database.js';
 import * as schema from './schema.js';
+import { recordTombstone } from './tombstones.js';
 import { normalizeConflictKey, normalizeConflictScope } from './conflicts.js';
 import {
   Project,
@@ -381,6 +382,9 @@ export async function deleteKnowledgeItem(id: string, dbConnection?: DbConnectio
     await conn
       .delete(schema.knowledgeItems)
       .where(eq(schema.knowledgeItems.id, id));
+    // Written through the same connection — and therefore the same transaction when GC
+    // passes one — so a purge can never lose its tombstone.
+    await recordTombstone(id, new Date().toISOString(), 'purged', conn);
   } catch (error: any) {
     throw new DatabaseError(`Failed to delete knowledge item: ${error.message}`);
   }

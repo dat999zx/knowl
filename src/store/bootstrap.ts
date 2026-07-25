@@ -107,6 +107,12 @@ const SCHEMA_STATEMENTS = [
     PRIMARY KEY (host, project_root, external_session_id, external_turn_id)
   );`,
 
+  `CREATE TABLE IF NOT EXISTS knowledge_tombstones (
+    id TEXT PRIMARY KEY,
+    deleted_at TEXT NOT NULL,
+    reason TEXT
+  );`,
+
   `CREATE TABLE IF NOT EXISTS skill_steps (
     id TEXT PRIMARY KEY,
     knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
