@@ -1,6 +1,7 @@
 import { NormalizedHostHook } from '../cli/agents/host-hook.js';
-import { createClaudeChangeCardOutput } from '../cli/agents/change-card.js';
-import { createClaudePostToolReminderOutput } from '../cli/agents/reminder.js';
+import { renderChangeCard } from '../cli/agents/change-card.js';
+import { hostProfile } from '../cli/agents/hosts/index.js';
+import { KNOWL_CLAUDE_CONTINUATION_REMINDER } from '../core/knowl-guidance.js';
 import { ChangeSummary, loadForeignChanges, readCommitHead } from './change-watermark.js';
 import { captureMemorySessionEvent } from './session-capture.js';
 import { finalizeMemorySession } from './session-finalizer.js';
@@ -59,24 +60,9 @@ function bindingKey(input: NormalizedHostHook, scope: 'session' | 'turn'): HostS
 
 function hostContextOutput(input: NormalizedHostHook, context: string | undefined): Record<string, unknown> | undefined {
   if (!context) return undefined;
-  if (input.host === 'codex' || input.host === 'claude') {
-    const hookEventName = input.event === 'session-start'
-      ? 'SessionStart'
-      : input.event === 'agent-start'
-        ? 'SubagentStart'
-        : 'UserPromptSubmit';
-    return { hookSpecificOutput: { hookEventName, additionalContext: context } };
-  }
-  if (input.host === 'cursor') {
-    return {
-      additional_context: context,
-      sessionStart: true,
-    };
-  }
-  // `generic` has no host-native protocol: emitting a host-output object here would
-  // replace the host-neutral lifecycle result ({ accepted, sessionId, context, ... })
-  // that generic integrations consume, so it deliberately returns nothing.
-  return undefined;
+  // Hosts with no native protocol — `generic` — return undefined, so the host-neutral
+  // lifecycle result ({ accepted, sessionId, context, ... }) reaches the caller intact.
+  return hostProfile(input.host).startContext(input.event, context);
 }
 
 function mergeBootstrapContext(handoffContext: string | undefined, recentContext: string | undefined): { context?: string; truncated: boolean } {
@@ -206,7 +192,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
 
   if (input.event === 'turn-start') {
     const sessionBinding = await findHostSession(bindingKey(input, 'session'));
-    if (!sessionBinding && (input.host === 'codex' || input.host === 'claude')) {
+    if (!sessionBinding && hostProfile(input.host).sharesSessionBinding) {
       const started = await bootstrapWithHandoff(projectId, input, 'session', true);
       await bindHostSession(bindingKey(input, 'turn'), started.session.id);
       return {
@@ -283,21 +269,26 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       let changes: ChangeSummary | undefined;
       if (input.event === 'session-event' && input.status !== 'failed') {
         const key = bindingKey(input, 'turn');
+        const profile = hostProfile(input.host);
+        // The watermark runs for every host; only delivery depends on the host having a
+        // mid-turn channel, which `midTurnContext` answers by returning an envelope.
         changes = await evaluateChangeNotification(input, key);
         if (changes) {
           // Change news implies "go query", so it replaces the static drift nudge and
           // resets the counter. At most one card per tool event, never two.
           await resetHostSuccessfulToolCount(key);
-          if (input.host === 'claude') hostOutput = createClaudeChangeCardOutput(changes);
-        } else if (input.host === 'claude') {
-          // Adaptive continuation reminder: only nudge Claude after a run of tool calls
-          // that ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
+          hostOutput = profile.midTurnContext(renderChangeCard(changes));
+        } else if (profile.midTurnContext('') !== undefined) {
+          // Adaptive continuation reminder: only nudge after a run of tool calls that
+          // ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
           // that is querying/storing memory never sees a reminder.
           if (input.knowlTool) {
             await resetHostSuccessfulToolCount(key);
           } else {
             const drift = await incrementHostSuccessfulToolCount(key);
-            if (drift > 0 && drift % KNOWL_REMINDER_DRIFT === 0) hostOutput = createClaudePostToolReminderOutput();
+            if (drift > 0 && drift % KNOWL_REMINDER_DRIFT === 0) {
+              hostOutput = profile.midTurnContext(KNOWL_CLAUDE_CONTINUATION_REMINDER);
+            }
           }
         }
       }
@@ -320,7 +311,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
 
     // gpt-5.5 often share one session binding across turns. Normal Stop only closes the turn
     // binding. Hard failures finish the session and record a host-scoped handoff.
-    if ((input.host === 'codex' || input.host === 'claude') && sessionBinding?.id === session.id) {
+    if (hostProfile(input.host).sharesSessionBinding && sessionBinding?.id === session.id) {
       if (input.status === 'failed') {
         const result = await finalizeFailedStop(projectId, input, session.id);
         await closeHostSessionBinding(key);

@@ -973,4 +973,55 @@ describe('host lifecycle orchestration', () => {
     expect(context).toContain('KNOWL CHANGED');
     expect(context).not.toContain(KNOWL_CLAUDE_CONTINUATION_REMINDER);
   });
+
+  it('delivers the change card to every host with a mid-turn channel', async () => {
+    const hosts: Array<{ host: 'claude' | 'codex' | 'cursor'; expected: (output: any) => void }> = [
+      { host: 'claude', expected: o => expect(o.hookSpecificOutput.hookEventName).toBe('PostToolUse') },
+      { host: 'codex', expected: o => expect(o.hookSpecificOutput.hookEventName).toBe('PostToolUse') },
+      { host: 'cursor', expected: o => expect(o.additional_context).toContain('KNOWL CHANGED') },
+    ];
+
+    for (const { host, expected } of hosts) {
+      const session = `multi-${host}`;
+      await handleHostLifecycleEvent(projectId, hook({
+        host, event: 'session-event', type: 'checkpoint', externalSessionId: session,
+        externalTurnId: 'turn-1', payload: { summary: `${host} warmup` },
+      }));
+
+      await repo.createKnowledgeCommit(projectId, `Sibling for ${host}`, [
+        { itemId: `multi-${host}-1`, action: 'insert', after: { id: `multi-${host}-1`, category: 'fact', title: `Fact for ${host}` } },
+      ]);
+
+      const result = await handleHostLifecycleEvent(projectId, hook({
+        host, event: 'session-event', type: 'checkpoint', externalSessionId: session,
+        externalTurnId: 'turn-1', payload: { summary: `${host} second tool` },
+      }));
+
+      expect(result.changes?.items.map(item => item.title), host).toEqual([`Fact for ${host}`]);
+      expect(result.hostOutput, host).toBeDefined();
+      expected(result.hostOutput);
+    }
+  });
+
+  it('keeps hosts with no mid-turn channel silent while still reporting changes', async () => {
+    for (const host of ['generic', 'claude-desktop'] as const) {
+      const session = `silent-${host}`;
+      await handleHostLifecycleEvent(projectId, hook({
+        host, event: 'session-event', type: 'checkpoint', externalSessionId: session,
+        externalTurnId: 'turn-1', payload: { summary: `${host} warmup` },
+      }));
+
+      await repo.createKnowledgeCommit(projectId, `Sibling for ${host}`, [
+        { itemId: `silent-${host}-1`, action: 'insert', after: { id: `silent-${host}-1`, category: 'fact', title: `Quiet fact for ${host}` } },
+      ]);
+
+      const result = await handleHostLifecycleEvent(projectId, hook({
+        host, event: 'session-event', type: 'checkpoint', externalSessionId: session,
+        externalTurnId: 'turn-1', payload: { summary: `${host} second tool` },
+      }));
+
+      expect(result.changes?.items.map(item => item.title), host).toEqual([`Quiet fact for ${host}`]);
+      expect(result.hostOutput, host).toBeUndefined();
+    }
+  });
 });
