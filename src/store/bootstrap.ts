@@ -102,7 +102,8 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS host_session_bindings (
     host TEXT NOT NULL, project_root TEXT NOT NULL, external_session_id TEXT NOT NULL, external_turn_id TEXT NOT NULL DEFAULT '',
     memory_session_id TEXT NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
-    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)), successful_tool_count INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)), successful_tool_count INTEGER NOT NULL DEFAULT 0,
+    seen_commit_rowid INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
     PRIMARY KEY (host, project_root, external_session_id, external_turn_id)
   );`,
 
@@ -375,6 +376,11 @@ async function ensureHostSessionBindingColumns(client: Client): Promise<void> {
   const columns = await tableColumns(client, 'host_session_bindings');
   if (!columns.includes('successful_tool_count')) {
     await client.execute('ALTER TABLE host_session_bindings ADD COLUMN successful_tool_count INTEGER NOT NULL DEFAULT 0;');
+  }
+  // 0 is an "uninitialized" sentinel, not "has seen no commits". Rows migrated here
+  // adopt head on their first tool event rather than reporting all history as new.
+  if (!columns.includes('seen_commit_rowid')) {
+    await client.execute('ALTER TABLE host_session_bindings ADD COLUMN seen_commit_rowid INTEGER NOT NULL DEFAULT 0;');
   }
 }
 

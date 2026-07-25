@@ -3,6 +3,7 @@ import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { MemorySession } from '../core/types.js';
 import { HookHost } from '../cli/agents/host-hook.js';
 import { getClient } from './database.js';
+import { readCommitHead } from './change-watermark.js';
 import { bootstrapAgentSession } from './context-bootstrap.js';
 import { getMemorySession } from './session-repository.js';
 
@@ -73,13 +74,17 @@ export async function getOrCreateHostSession(input: HostSessionInput) {
 export async function bindHostSession(input: HostSessionKey, memorySessionId: string): Promise<void> {
   const key = normalizedKey(input);
   const now = new Date().toISOString();
+  // Seed the watermark at head so a brand-new row never reports the entire
+  // commit history as "changed since you last looked".
+  const head = await readCommitHead();
   await getClient().execute({
     sql: `INSERT INTO host_session_bindings
-      (host, project_root, external_session_id, external_turn_id, memory_session_id, active, successful_tool_count, updated_at)
-      VALUES (?, ?, ?, ?, ?, 1, 0, ?)
+      (host, project_root, external_session_id, external_turn_id, memory_session_id, active, successful_tool_count, seen_commit_rowid, updated_at)
+      VALUES (?, ?, ?, ?, ?, 1, 0, ?, ?)
       ON CONFLICT (host, project_root, external_session_id, external_turn_id)
-      DO UPDATE SET memory_session_id = excluded.memory_session_id, active = 1, successful_tool_count = 0, updated_at = excluded.updated_at`,
-    args: [key.host, key.projectRoot, key.externalSessionId, key.externalTurnId, memorySessionId, now],
+      DO UPDATE SET memory_session_id = excluded.memory_session_id, active = 1, successful_tool_count = 0,
+        seen_commit_rowid = excluded.seen_commit_rowid, updated_at = excluded.updated_at`,
+    args: [key.host, key.projectRoot, key.externalSessionId, key.externalTurnId, memorySessionId, head, now],
   });
 }
 
@@ -103,6 +108,25 @@ export async function resetHostSuccessfulToolCount(input: HostSessionKey): Promi
     sql: `UPDATE host_session_bindings SET successful_tool_count = 0, updated_at = ?
       WHERE host = ? AND project_root = ? AND external_session_id = ? AND external_turn_id = ? AND active = 1`,
     args: [new Date().toISOString(), key.host, key.projectRoot, key.externalSessionId, key.externalTurnId],
+  });
+}
+
+export async function readHostSeenCommit(input: HostSessionKey): Promise<number | null> {
+  const key = normalizedKey(input);
+  const row = (await getClient().execute({
+    sql: `SELECT seen_commit_rowid FROM host_session_bindings
+      WHERE host = ? AND project_root = ? AND external_session_id = ? AND external_turn_id = ? AND active = 1`,
+    args: [key.host, key.projectRoot, key.externalSessionId, key.externalTurnId],
+  })).rows[0];
+  return row ? Number(row.seen_commit_rowid) : null;
+}
+
+export async function setHostSeenCommit(input: HostSessionKey, value: number): Promise<void> {
+  const key = normalizedKey(input);
+  await getClient().execute({
+    sql: `UPDATE host_session_bindings SET seen_commit_rowid = ?, updated_at = ?
+      WHERE host = ? AND project_root = ? AND external_session_id = ? AND external_turn_id = ? AND active = 1`,
+    args: [value, new Date().toISOString(), key.host, key.projectRoot, key.externalSessionId, key.externalTurnId],
   });
 }
 

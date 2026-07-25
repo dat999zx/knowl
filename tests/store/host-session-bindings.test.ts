@@ -2,14 +2,19 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, initDb } from '../../src/store/database.js';
+import { readCommitHead } from '../../src/store/change-watermark.js';
 import {
+  bindHostSession,
   closeHostSessionBinding,
   closeHostSessionBindings,
   closeInactiveHostSessionBindings,
   findHostSession,
   getOrCreateHostSession,
+  HostSessionKey,
+  readHostSeenCommit,
+  setHostSeenCommit,
 } from '../../src/store/host-session-bindings.js';
-import { finishMemorySession } from '../../src/store/session-repository.js';
+import { finishMemorySession, startMemorySession } from '../../src/store/session-repository.js';
 import * as repo from '../../src/store/repository.js';
 
 const ROOT = path.resolve('.knowl-host-session-bindings-test');
@@ -83,5 +88,40 @@ describe('host session bindings', () => {
 
     expect(await closeInactiveHostSessionBindings()).toBeGreaterThanOrEqual(1);
     await expect(findHostSession(input)).resolves.toBeNull();
+  });
+
+  it('initialises the watermark to the current commit head when binding', async () => {
+    await repo.createKnowledgeCommit(projectId, 'First commit', [
+      { itemId: 'item-a', action: 'insert', after: { id: 'item-a', title: 'A' } },
+    ]);
+    const head = await readCommitHead();
+    expect(head).toBeGreaterThan(0);
+
+    const session = await startMemorySession({ title: 'Watermark bind' });
+    const key: HostSessionKey = {
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'watermark-session',
+      externalTurnId: '__agent__:agent-1',
+    };
+    await bindHostSession(key, session.id);
+
+    expect(await readHostSeenCommit(key)).toBe(head);
+  });
+
+  it('advances and reads the watermark, and returns null for an unknown row', async () => {
+    const session = await startMemorySession({ title: 'Watermark advance' });
+    const key: HostSessionKey = {
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'watermark-advance-session',
+      externalTurnId: '__agent__:agent-2',
+    };
+    await bindHostSession(key, session.id);
+
+    await setHostSeenCommit(key, 99);
+    expect(await readHostSeenCommit(key)).toBe(99);
+
+    expect(await readHostSeenCommit({ ...key, externalTurnId: '__agent__:missing' })).toBeNull();
   });
 });
