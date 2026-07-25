@@ -66,7 +66,7 @@
   - `readHostSeenCommit(key: HostSessionKey): Promise<number | null>` — `null` when no active row exists. Exported from `src/store/host-session-bindings.ts`.
   - `setHostSeenCommit(key: HostSessionKey, value: number): Promise<void>` — exported from `src/store/host-session-bindings.ts`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/store/host-session-bindings.test.ts` inside the existing top-level `describe`:
 
@@ -116,12 +116,12 @@ import { readHostSeenCommit, setHostSeenCommit } from '../../src/store/host-sess
 
 Open `tests/store/host-session-bindings.test.ts` first and reuse whatever it already names for `projectId`, `ROOT`, `repo`, and `startMemorySession` rather than adding duplicate imports or a second `beforeAll`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/store/host-session-bindings.test.ts`
 Expected: FAIL — cannot resolve `src/store/change-watermark.js`.
 
-- [ ] **Step 3: Create the watermark head reader**
+- [x] **Step 3: Create the watermark head reader**
 
 Create `src/store/change-watermark.ts`:
 
@@ -142,7 +142,7 @@ export async function readCommitHead(): Promise<number> {
 }
 ```
 
-- [ ] **Step 4: Add the schema column**
+- [x] **Step 4: Add the schema column**
 
 In `src/store/schema.ts`, inside the `hostSessionBindings` definition, add after the `successfulToolCount` line:
 
@@ -150,7 +150,7 @@ In `src/store/schema.ts`, inside the `hostSessionBindings` definition, add after
   seenCommitRowid: integer('seen_commit_rowid').notNull().default(0),
 ```
 
-- [ ] **Step 5: Add the migration and the fresh-database column**
+- [x] **Step 5: Add the migration and the fresh-database column**
 
 In `src/store/bootstrap.ts`, extend `ensureHostSessionBindingColumns`:
 
@@ -171,7 +171,7 @@ async function ensureHostSessionBindingColumns(client: Client): Promise<void> {
 
 Then find the `CREATE TABLE IF NOT EXISTS host_session_bindings` statement in the same file and add `seen_commit_rowid INTEGER NOT NULL DEFAULT 0,` alongside `successful_tool_count INTEGER NOT NULL DEFAULT 0,` so fresh databases get the column without relying on the migration.
 
-- [ ] **Step 6: Initialise the watermark on bind and add the accessors**
+- [x] **Step 6: Initialise the watermark on bind and add the accessors**
 
 In `src/store/host-session-bindings.ts`, add the import:
 
@@ -223,17 +223,17 @@ export async function setHostSeenCommit(input: HostSessionKey, value: number): P
 }
 ```
 
-- [ ] **Step 7: Run the tests to verify they pass**
+- [x] **Step 7: Run the tests to verify they pass**
 
 Run: `npx vitest run tests/store/host-session-bindings.test.ts`
 Expected: PASS, including the pre-existing tests in that file.
 
-- [ ] **Step 8: Verify no regression in the existing lifecycle suite**
+- [x] **Step 8: Verify no regression in the existing lifecycle suite**
 
 Run: `npx vitest run tests/store/host-lifecycle.test.ts`
 Expected: PASS. `bindHostSession` changed shape, so this confirms callers still work.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/store/change-watermark.ts src/store/schema.ts src/store/bootstrap.ts src/store/host-session-bindings.ts tests/store/host-session-bindings.test.ts
@@ -255,7 +255,7 @@ git commit -m "feat(store): add seen_commit_rowid watermark to host session bind
   - `knowlChangeKeys?: { ids: string[]; titles: string[] }` — set only when `knowlTool` is true
   - `NormalizedHookEventName` gains `'agent-start' | 'agent-stop'`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/cli/host-hook.test.ts` inside the existing `describe`:
 
@@ -370,12 +370,12 @@ Append to `tests/cli/host-hook.test.ts` inside the existing `describe`:
 
 Add `IncompleteHostHookPayloadError` to the file's import from `../../src/cli/agents/host-hook.js`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `npx vitest run tests/cli/host-hook.test.ts`
 Expected: FAIL — `agentId` undefined on the subagent event, and `Unsupported claude hook event: SubagentStart`.
 
-- [ ] **Step 3: Extend the type and event name union**
+- [x] **Step 3: Extend the type and event name union**
 
 In `src/cli/agents/host-hook.ts`, extend the union and interface:
 
@@ -406,7 +406,7 @@ Add to `NormalizedHostHook`, after `knowlTool`:
   knowlChangeKeys?: { ids: string[]; titles: string[] };
 ```
 
-- [ ] **Step 4: Extract attribution keys**
+- [x] **Step 4: Extract attribution keys**
 
 Add these constants and helper above `toolEvent` in the same file:
 
@@ -453,7 +453,7 @@ function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: 
 }
 ```
 
-- [ ] **Step 5: Read agent identity and route the two new events**
+- [x] **Step 5: Read agent identity and route the two new events**
 
 Still in `src/cli/agents/host-hook.ts`, add a helper next to `externalIds`:
 
@@ -500,12 +500,12 @@ Finally, spread `agent` into the tool-event return at the end of the function so
   return { host: normalizedHost, event, ...ids, ...agent, projectRoot, ...toolEvent(normalizedHost, eventName, projectRoot, raw) };
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `npx vitest run tests/cli/host-hook.test.ts`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/cli/agents/host-hook.ts tests/cli/host-hook.test.ts
@@ -529,7 +529,7 @@ git commit -m "feat(hooks): normalize Claude subagent identity and SubagentStart
 
 `count` is the number of distinct changed items after deduplication, including any whose title could not be resolved. `items` holds only the titled ones. That asymmetry is deliberate: the header stays truthful when a change carries neither `after` nor `before`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/store/change-watermark.test.ts`:
 
@@ -653,12 +653,12 @@ describe('foreign change detection', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/store/change-watermark.test.ts`
 Expected: FAIL — `loadForeignChanges` is not exported.
 
-- [ ] **Step 3: Implement foreign-change loading**
+- [x] **Step 3: Implement foreign-change loading**
 
 First add `CommitChange` to the import block at the top of `src/store/change-watermark.ts`, so the file keeps a single import section:
 
@@ -740,12 +740,12 @@ export async function loadForeignChanges(
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/store/change-watermark.test.ts`
 Expected: PASS, all eight cases.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/store/change-watermark.ts tests/store/change-watermark.test.ts
@@ -766,7 +766,7 @@ git commit -m "feat(store): detect commits since a watermark excluding the calle
   - `renderChangeCard(summary: ChangeSummary): string`
   - `createClaudeChangeCardOutput(summary: ChangeSummary): { hookSpecificOutput: { hookEventName: 'PostToolUse'; additionalContext: string } }`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/cli/change-card.test.ts`:
 
@@ -846,12 +846,12 @@ describe('change card rendering', () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `npx vitest run tests/cli/change-card.test.ts`
 Expected: FAIL — cannot resolve `src/cli/agents/change-card.js`.
 
-- [ ] **Step 3: Implement the renderer**
+- [x] **Step 3: Implement the renderer**
 
 Create `src/cli/agents/change-card.ts`:
 
@@ -899,12 +899,12 @@ export function createClaudeChangeCardOutput(summary: ChangeSummary): ClaudeChan
 }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `npx vitest run tests/cli/change-card.test.ts`
 Expected: PASS, all seven cases.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/agents/change-card.ts tests/cli/change-card.test.ts
@@ -923,7 +923,7 @@ git commit -m "feat(hooks): render the Knowl change card"
 - Consumes: `agentId` / `agentType` from Task 2; `bindHostSession`, `findHostSession`, `closeHostSessionBinding` from `host-session-bindings.js`.
 - Produces: `bindingKey(input, 'turn')` returns `__agent__:<agentId>` when `agentId` is set; `handleHostLifecycleEvent` handles `agent-start` and `agent-stop`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/store/host-lifecycle.test.ts`:
 
@@ -1033,12 +1033,12 @@ Append to `tests/store/host-lifecycle.test.ts`:
 
 Add `findHostSession` to the existing import from `../../src/store/host-session-bindings.js`.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `npx vitest run tests/store/host-lifecycle.test.ts`
 Expected: FAIL — `agent-start` falls through to the session-stop branch at the end of `handleHostLifecycleEvent` and returns `{ accepted: false, reason: 'event-loss' }`.
 
-- [ ] **Step 3: Make the turn-scope key agent-aware**
+- [x] **Step 3: Make the turn-scope key agent-aware**
 
 In `src/store/host-lifecycle.ts`, replace `bindingKey`:
 
@@ -1059,7 +1059,7 @@ function bindingKey(input: NormalizedHostHook, scope: 'session' | 'turn'): HostS
 }
 ```
 
-- [ ] **Step 4: Extend the host output envelope for SubagentStart**
+- [x] **Step 4: Extend the host output envelope for SubagentStart**
 
 In the same file, update `hostContextOutput` so an `agent-start` event names the right hook:
 
@@ -1087,7 +1087,7 @@ function hostContextOutput(input: NormalizedHostHook, context: string | undefine
 }
 ```
 
-- [ ] **Step 5: Handle the two new events**
+- [x] **Step 5: Handle the two new events**
 
 In `handleHostLifecycleEvent`, add this block immediately after the `turn-start` block and before the `session-event` block:
 
@@ -1153,19 +1153,19 @@ Add `bootstrapAgentSession` to the imports:
 import { bootstrapAgentSession } from './context-bootstrap.js';
 ```
 
-- [ ] **Step 6: Run tests to verify they pass**
+- [x] **Step 6: Run tests to verify they pass**
 
 Run: `npx vitest run tests/store/host-lifecycle.test.ts`
 Expected: PASS, including all pre-existing tests in the file.
 
-- [ ] **Step 7: Verify the main-thread path still keys on `__turn__`**
+- [x] **Step 7: Verify the main-thread path still keys on `__turn__`**
 
 Run: `npx vitest run tests/cli/claude-continuation-reminder.test.ts`
 Expected: PASS. This is the regression gate for `bindingKey`: main-session payloads carry no `agent_id`, so the drift reminder must still fire at exactly the 12th tool call. If this fails, the `input.agentId` branch is being taken for main-thread events.
 
 Note: this test runs the built CLI from `dist/index.js`. Run `npm run build` first if it has not been built in this session.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/store/host-lifecycle.ts tests/store/host-lifecycle.test.ts
@@ -1193,7 +1193,7 @@ The ordered rule, which the implementation must follow exactly:
 4. Foreign changes present → emit the card and reset drift to zero.
 5. Otherwise → existing drift behaviour, unchanged.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/store/host-lifecycle.test.ts`:
 
@@ -1367,12 +1367,12 @@ import { readHostSeenCommit, setHostSeenCommit } from '../../src/store/host-sess
 
 Task 1 already added the second import to this file's sibling suite; here it must be added to `tests/store/host-lifecycle.test.ts` specifically.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `npx vitest run tests/store/host-lifecycle.test.ts`
 Expected: FAIL — `result.changes` is undefined on the sibling-commit case, and no change card appears in `hostOutput`.
 
-- [ ] **Step 3: Add `changes` to the result type**
+- [x] **Step 3: Add `changes` to the result type**
 
 In `src/store/host-lifecycle.ts`, add to `HostLifecycleResult`:
 
@@ -1389,7 +1389,7 @@ import { createClaudeChangeCardOutput } from '../cli/agents/change-card.js';
 
 and extend the existing `host-session-bindings.js` import with `readHostSeenCommit` and `setHostSeenCommit`.
 
-- [ ] **Step 4: Implement the trigger**
+- [x] **Step 4: Implement the trigger**
 
 Add above `handleHostLifecycleEvent`:
 
@@ -1454,17 +1454,17 @@ Then replace the reminder block inside the `session-event` / `checkpoint` branch
       return { accepted: true, sessionId: started.session.id, hostOutput, ...(changes ? { changes } : {}) };
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `npx vitest run tests/store/host-lifecycle.test.ts`
 Expected: PASS, all seven new cases plus every pre-existing case.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `npm test`
 Expected: PASS. Watch particularly for `tests/cli/claude-continuation-reminder.test.ts`, `tests/store/host-session-bindings.test.ts`, and `tests/store/session-handoff.test.ts`.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/store/host-lifecycle.ts tests/store/host-lifecycle.test.ts
@@ -1483,7 +1483,7 @@ git commit -m "feat(lifecycle): notify agents of foreign memory changes on tool 
 - Consumes: everything from Tasks 1-6.
 - Produces: `CLAUDE_HOOK_EVENTS` includes `SubagentStart` and `SubagentStop`, so `knowl init` writes handlers for them and `verifyNestedHookConfig` requires them.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/cli/claude-subagent-notification.test.ts`:
 
@@ -1605,12 +1605,12 @@ describe('Claude subagent change notification CLI', () => {
 
 There is no `knowl store` CLI command — `decide` is the direct write path (`src/index.ts:397-403`), and it runs non-interactively only when both the title and content positionals are supplied. It records a `decision`, which is why the expected card line reads `- decision: ...` rather than `- fact: ...`.
 
-- [ ] **Step 2: Build and run the test to verify it fails**
+- [x] **Step 2: Build and run the test to verify it fails**
 
 Run: `npm run build && npx vitest run tests/cli/claude-subagent-notification.test.ts`
 Expected: FAIL on the first case — `settings.hooks.SubagentStart` is undefined.
 
-- [ ] **Step 3: Register the events**
+- [x] **Step 3: Register the events**
 
 In `src/cli/agents/hook-config.ts`, replace line 9:
 
@@ -1620,29 +1620,29 @@ export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'SubagentStart', 'PostToolUse
 
 `nestedStatusMessage` needs no change: only `SessionStart` shows a status message, and everything else returns `''` to avoid status spam.
 
-- [ ] **Step 4: Rebuild and run the test to verify it passes**
+- [x] **Step 4: Rebuild and run the test to verify it passes**
 
 Run: `npm run build && npx vitest run tests/cli/claude-subagent-notification.test.ts`
 Expected: PASS, all four cases.
 
-- [ ] **Step 5: Confirm re-running `init` is idempotent**
+- [x] **Step 5: Confirm re-running `init` is idempotent**
 
 Run: `npx vitest run tests/cli/init-flow.test.ts tests/cli/agent-adapters.test.ts`
 Expected: PASS. `mergeNestedHookConfig` must add exactly one handler per new event and report `unchanged` on a second run. Hook config takes effect live rather than at next session start, so a duplicated handler would fire twice immediately.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `npm test`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/cli/agents/hook-config.ts tests/cli/claude-subagent-notification.test.ts
 git commit -m "feat(hooks): register SubagentStart and SubagentStop for Claude"
 ```
 
-- [ ] **Step 8: Update the spec status**
+- [x] **Step 8: Update the spec status**
 
 In `docs/superpowers/specs/2026-07-25-agent-change-notification-design.md`, change the status line to `**Status:** Implemented.` and commit:
 
@@ -1658,7 +1658,24 @@ git commit -m "docs: mark agent change notification spec as implemented"
 Automated tests cover the state machine, but two behaviours are only observable in a live session. After Task 7, verify by hand:
 
 1. **Subagent bootstrap actually arrives.** Spawn an `Explore` subagent and confirm from its transcript that it received Knowl context at `SubagentStart`. This also settles the open question the spec flags — whether MCP `instructions` reach subagents — because if the operational card is visibly redundant there, the card can be dropped from the subagent bootstrap as a follow-up.
+
+   **Performed 2026-07-25 — found a defect, now fixed.** Memory context arrived correctly. Guidance did not: the subagent received no prompt reminder, no MCP server `instructions` block, and no host instruction file. The spec's open question is therefore answered **no** — MCP instructions do *not* reach subagents — which invalidated the assumption behind omitting the card. The subagent had project memory and nothing telling it to use memory. Fixed by prepending `KNOWL_SUBAGENT_BOOTSTRAP_CARD` in `bootstrapAgentContext`, charged against the halved cap first so recent-context cannot truncate the guidance away. Re-probed after the fix: guidance arrives and precedes the data.
+
+   Two incidental findings worth keeping: memory tools reach a subagent as *deferred* names whose schemas are not loaded, so the card tells the agent to load them; and subagent guidance must never point at `KNOWL.md`, which is not in subagent context.
+
 2. **Sibling notification in a real fan-out.** Spawn two subagents, have one store a fact, and confirm the other receives a `KNOWL CHANGED` card on its next tool call and does not receive one for its own write.
+
+   **Performed 2026-07-25 — passed.** A background subagent ran ten sequential `Read` calls while the parent session landed one `knowl_store` commit mid-run. The subagent received exactly one card, on the first tool event after the commit:
+
+   ```
+   KNOWL CHANGED: 1 item since you last looked.
+   - state: Change-notification plan manual verification status 2026-07-25
+   Call knowl_query before relying on earlier memory in these areas.
+   ```
+
+   It named the committed atom exactly, arrived as `PostToolUse` `additionalContext`, and fired once rather than on every subsequent tool call — so the watermark advances as designed. The nine other Reads produced no card.
+
+   Two notes from the run. The probe speculated the trigger might be tied to the file it read (`KNOWL.md`); it is not — the card fired on that Read because that is when the commit landed, and the rule is `head > seen` with no path involvement, relevance filtering being an explicit non-goal. Separately, an unrelated `knowl_store` in the same window was silently deduped and produced no commit at all, which is what surfaced the write-loss defect fixed alongside this verification.
 
 ## Spec coverage
 

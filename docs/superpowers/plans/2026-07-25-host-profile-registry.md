@@ -51,7 +51,7 @@
 
 Pure addition — nothing imports it yet, so all 358 existing tests must still pass.
 
-- [ ] **Step 1: Write the conformance test**
+- [x] **Step 1: Write the conformance test**
 
 Create `tests/cli/hosts/profile-conformance.test.ts`:
 
@@ -136,12 +136,12 @@ describe('host profile registry', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run tests/cli/hosts/profile-conformance.test.ts`
 Expected: FAIL — cannot resolve `src/cli/agents/hosts/index.js`.
 
-- [ ] **Step 3: Create the profile contract**
+- [x] **Step 3: Create the profile contract**
 
 Create `src/cli/agents/hosts/profile.ts`:
 
@@ -196,7 +196,7 @@ export const agentIdentityFrom = (raw: Record<string, unknown>): Pick<HostIdenti
 });
 ```
 
-- [ ] **Step 4: Create the Claude and Codex profiles**
+- [x] **Step 4: Create the Claude and Codex profiles**
 
 Both hosts use Anthropic-style PascalCase event names and the same
 `hookSpecificOutput` envelope, so the shared parts live in one helper that each file
@@ -312,7 +312,7 @@ export const codexProfile: HostProfile = {
 };
 ```
 
-- [ ] **Step 5: Create the Cursor, Claude Desktop, and generic profiles**
+- [x] **Step 5: Create the Cursor, Claude Desktop, and generic profiles**
 
 Create `src/cli/agents/hosts/cursor.ts`:
 
@@ -451,7 +451,7 @@ export const genericProfile: HostProfile = {
 };
 ```
 
-- [ ] **Step 6: Create the registry**
+- [x] **Step 6: Create the registry**
 
 Create `src/cli/agents/hosts/index.ts`:
 
@@ -485,17 +485,17 @@ export function isHookHost(value: string): value is HookHost {
 }
 ```
 
-- [ ] **Step 7: Run the conformance test**
+- [x] **Step 7: Run the conformance test**
 
 Run: `npx vitest run tests/cli/hosts/profile-conformance.test.ts`
 Expected: PASS.
 
-- [ ] **Step 8: Confirm nothing else broke**
+- [x] **Step 8: Confirm nothing else broke**
 
 Run: `npm test`
 Expected: PASS — this task only adds files.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 ```bash
 git add src/cli/agents/hosts tests/cli/hosts
@@ -514,7 +514,7 @@ git commit -m "feat(hosts): add a host profile per provider with a conformance s
 - Consumes: `hostProfile`, `isHookHost` from `src/cli/agents/hosts/index.js`.
 - Produces: no signature changes. `normalizeHostHook(host, eventName, raw)` keeps its contract.
 
-- [ ] **Step 1: Replace identity extraction**
+- [x] **Step 1: Replace identity extraction**
 
 In `src/cli/agents/host-hook.ts`, delete `externalIds` and `agentIdentity`, and replace the
 `AGENT_HOSTS` set with the registry. Add the import:
@@ -553,7 +553,7 @@ payload contract genuinely differs, and the spec permits this one call. Change
 `NormalizedHookEventName`, deleting its internal `allowed` list since
 `profile.normalizedEvent` has already validated it.
 
-- [ ] **Step 2: Route shell detection through the profile**
+- [x] **Step 2: Route shell detection through the profile**
 
 In `toolEvent`, replace the `isShell` ternary:
 
@@ -561,17 +561,17 @@ In `toolEvent`, replace the `isShell` ternary:
   const isShell = hostProfile(host).isShellEvent(eventName, toolName);
 ```
 
-- [ ] **Step 3: Run the hook suite**
+- [x] **Step 3: Run the hook suite**
 
 Run: `npx vitest run tests/cli/host-hook.test.ts`
 Expected: PASS, all 20 tests. Behaviour is unchanged; only the routing moved.
 
-- [ ] **Step 4: Confirm the generic and lifecycle suites**
+- [x] **Step 4: Confirm the generic and lifecycle suites**
 
 Run: `npx vitest run tests/cli/agent-lifecycle.test.ts tests/store/host-lifecycle.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/agents/host-hook.ts
@@ -592,7 +592,7 @@ git commit -m "refactor(hooks): resolve identity and event mapping from host pro
 
 This is where Codex and Cursor start receiving the change card.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/store/host-lifecycle.test.ts`:
 
@@ -649,12 +649,12 @@ Append to `tests/store/host-lifecycle.test.ts`:
   });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run tests/store/host-lifecycle.test.ts`
 Expected: FAIL — codex and cursor produce no `hostOutput` for the change card.
 
-- [ ] **Step 3: Replace `hostContextOutput` with the profile call**
+- [x] **Step 3: Replace `hostContextOutput` with the profile call**
 
 In `src/store/host-lifecycle.ts`, add the import:
 
@@ -671,7 +671,7 @@ function hostContextOutput(input: NormalizedHostHook, context: string | undefine
 }
 ```
 
-- [ ] **Step 4: Replace the card and reminder branches**
+- [x] **Step 4: Replace the card and reminder branches**
 
 Replace the trigger block's host checks so delivery is decided by the profile:
 
@@ -706,7 +706,7 @@ with `renderChangeCard` from `../cli/agents/change-card.js` and
 `KNOWL_CLAUDE_CONTINUATION_REMINDER` from `../core/knowl-guidance.js`. The envelope now comes
 from the profile, so the two Claude-specific output builders are no longer needed here.
 
-- [ ] **Step 5: Replace the binding-semantics checks**
+- [x] **Step 5: Replace the binding-semantics checks**
 
 Two places test `codex || claude`. Replace both with the profile flag — at the `turn-start`
 branch:
@@ -721,17 +721,17 @@ and at the `turn-stop` branch:
     if (hostProfile(input.host).sharesSessionBinding && sessionBinding?.id === session.id) {
 ```
 
-- [ ] **Step 6: Run the lifecycle suite**
+- [x] **Step 6: Run the lifecycle suite**
 
 Run: `npx vitest run tests/store/host-lifecycle.test.ts`
 Expected: PASS, including both new multi-host tests.
 
-- [ ] **Step 7: Run the full suite**
+- [x] **Step 7: Run the full suite**
 
 Run: `npm test`
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add src/store/host-lifecycle.ts tests/store/host-lifecycle.test.ts
@@ -750,7 +750,7 @@ git commit -m "feat(lifecycle): deliver change cards to every host with a mid-tu
 - Consumes: `hostProfile` from `src/cli/agents/hosts/index.js`.
 - Produces: `CLAUDE_HOOK_EVENTS`, `CODEX_HOOK_EVENTS`, and `CURSOR_HOOK_EVENTS` are re-exported from `hook-config.ts` for existing importers, but now sourced from the profiles.
 
-- [ ] **Step 1: Source the event lists from profiles**
+- [x] **Step 1: Source the event lists from profiles**
 
 In `src/cli/agents/hook-config.ts`, replace the three event-list constants with re-exports so
 there is one definition per host:
@@ -770,7 +770,7 @@ Replace both `host === 'codex' ? CODEX_HOOK_EVENTS : CLAUDE_HOOK_EVENTS` occurre
   const events = hostProfile(host).hookEvents;
 ```
 
-- [ ] **Step 2: Drive the prompt reminder from the profile**
+- [x] **Step 2: Drive the prompt reminder from the profile**
 
 Still in `hook-config.ts`, replace the three `host === 'claude'` prompt-reminder checks with
 the profile's `promptEvent`. Define once near the top of `mergeNestedHookConfig`:
@@ -783,7 +783,7 @@ then use `promptEvent ? ... : ...` in place of `host === 'claude' ? ... : ...`, 
 `promptEvent ?? CLAUDE_PROMPT_EVENT` as the config key so a host without a prompt event never
 writes one. Do the same in `verifyNestedHookConfig`.
 
-- [ ] **Step 3: Generalize the reminder builder**
+- [x] **Step 3: Generalize the reminder builder**
 
 In `src/cli/agents/reminder.ts`, replace the Claude-only guard:
 
@@ -801,7 +801,7 @@ export function createAgentReminderOutput(host: string): HostOutput {
 Add `import { hostProfile, isHookHost, HostOutput } from './hosts/index.js';`. The error
 message stays byte-identical so `tests/cli/agent-reminder.test.ts` still passes.
 
-- [ ] **Step 4: Drive CLI output from the profile**
+- [x] **Step 4: Drive CLI output from the profile**
 
 In `src/index.ts`, replace the `agent-hook` output line:
 
@@ -812,7 +812,7 @@ In `src/index.ts`, replace the `agent-hook` output line:
 
 Add `import { hostProfile } from './cli/agents/hosts/index.js';` to the imports.
 
-- [ ] **Step 5: Verify no host conditionals remain in the core**
+- [x] **Step 5: Verify no host conditionals remain in the core**
 
 Run:
 
@@ -823,12 +823,12 @@ grep -rn "host === '\|host !== '\|normalizedHost === '" src/ | grep -v "src/cli/
 Expected: only the single `normalizedHost === 'generic'` dispatch in `host-hook.ts`, which the
 spec permits. Anything else is a miss — fix it before committing.
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `npm test`
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/cli/agents/hook-config.ts src/cli/agents/reminder.ts src/index.ts
@@ -851,7 +851,7 @@ Codex now registers `SubagentStart`/`SubagentStop` because they are in `codexPro
 so `knowl init codex` writes them. This task proves the whole chain works for Codex the way
 `tests/cli/claude-subagent-notification.test.ts` proves it for Claude.
 
-- [ ] **Step 1: Write the end-to-end test**
+- [x] **Step 1: Write the end-to-end test**
 
 Create `tests/cli/codex-subagent-notification.test.ts`:
 
@@ -929,19 +929,19 @@ describe('Codex subagent change notification CLI', () => {
 });
 ```
 
-- [ ] **Step 2: Build and run it**
+- [x] **Step 2: Build and run it**
 
 Run: `npm run build && npx vitest run tests/cli/codex-subagent-notification.test.ts`
 Expected: PASS. If `SubagentStart` returns empty, the payload allowlist in
 `src/cli/agents/lifecycle.ts` is dropping a Codex identity field — check `ROOT_FIELDS`
 contains `agent_id` and `agent_type`.
 
-- [ ] **Step 3: Run the full suite**
+- [x] **Step 3: Run the full suite**
 
 Run: `npm test`
 Expected: PASS.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add tests/cli/codex-subagent-notification.test.ts
@@ -960,7 +960,7 @@ git commit -m "test(codex): cover subagent bootstrap and change notification end
 - Consumes: everything above.
 - Produces: documentation matching the shipped behaviour.
 
-- [ ] **Step 1: Drive the real Codex CLI**
+- [x] **Step 1: Drive the real Codex CLI**
 
 Create a scratch project, register Knowl for Codex, and run `codex` with a cheap model and a
 prompt that forces a tool call. Use `codex exec` for a non-interactive run:
@@ -988,14 +988,14 @@ Expected: at least one active `codex` binding row with a non-zero `seen_commit_r
 proving the watermark path ran under a real Codex session. If `codex exec` rejects the model
 name, run `codex --help` and pick the smallest available model.
 
-- [ ] **Step 2: Record what the live run proved**
+- [x] **Step 2: Record what the live run proved**
 
 Store the outcome with `knowl_store` as a `fact`, naming which Codex events were observed and
 whether the card was accepted. If the live run contradicts the binary evidence, the profile's
 `midTurnContext` must return `undefined` for Codex and the README must say so — correctness
 outranks the plan.
 
-- [ ] **Step 3: Update the README**
+- [x] **Step 3: Update the README**
 
 In `README.md`, revise the `### Subagent memory & change notification` host-coverage
 paragraph. Replace the Codex/Cursor "watermark only" sentence with the verified position:
@@ -1006,7 +1006,7 @@ and Gemini have no hook channel and stay MCP-only. Keep the paragraph free of ve
 Also update `### Agent lifecycle automation` so `SubagentStart` is not described as
 Claude-only.
 
-- [ ] **Step 4: Update the CHANGELOG**
+- [x] **Step 4: Update the CHANGELOG**
 
 Add to the `## 2.1.0` entry's `### Added` section:
 
@@ -1028,7 +1028,7 @@ Add to `### Fixed`:
   camelCase events. Each host now declares its own map.
 ```
 
-- [ ] **Step 5: Run the full suite and commit**
+- [x] **Step 5: Run the full suite and commit**
 
 ```bash
 npm test
