@@ -3,6 +3,57 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.2.0 — 2026-07-25
+
+Live verification of the 2.1.0 subagent work found it shipped half-working, and fixing it
+turned up two ways memory could be lost or blocked without telling you.
+
+### Fixed
+
+- **Subagents had memory but no reason to use it.** 2.1.0 delivered a subagent's memory
+  snapshot and no guidance at all — a spawned agent received no prompt reminder, no MCP
+  server instructions, and no `KNOWL.md`. Probing a live subagent settled the question the
+  design had left open: MCP instructions do *not* reach a subagent's startup context. A
+  guidance card now ships with the bootstrap, budgeted before the memory snapshot so a
+  large snapshot cannot truncate it away.
+- **Corrections were discarded in favour of the value they corrected.** `knowl_store`
+  superseded a same-titled near-duplicate only for `state`. For every other category the
+  *new* write was dropped: storing "Cache TTL: 5 minutes" and then "Cache TTL: 30 minutes
+  now" left the stale five-minute item active and threw the correction away. The
+  exact-title rule now applies to every category. Nothing is lost either way — a
+  superseded item keeps its status and stays queryable.
+- **`.env.example` counted as a secret.** The sensitive-path check matched `.env` plus any
+  suffix, so `.env.example`, `.env.sample`, `.env.template` and `.env.dist` were all
+  rejected. Those files exist to be committed. Template suffixes are now exempt, matched
+  exactly, so `.env.exampled` is still caught.
+- **`security.rejectSecrets: false` did not fully turn secret rejection off.** The
+  sensitive-path check ran before the flag was consulted, so the only knob available was
+  silently partial and `knowl doctor` could report NOT READY with no setting able to clear
+  it. All secret detection now sits behind that flag.
+- **`knowl doctor` misreported its integrity check.** It described errors as "warning(s)"
+  while failing on them, and pointed at "repair reported records" when `knowl audit` is
+  read-only and no repair command exists. It now counts errors and warnings separately and
+  names commands that exist.
+
+### Changed
+
+- **`knowl config` is navigable.** Choosing a category no longer commits you to editing
+  something in it: the field list offers `Back` and the category list offers `Quit`, and
+  quitting without changes no longer prompts to save an empty diff.
+- **Config values are picked, not typed.** Fields now declare their type, so booleans and
+  enums are presented as choices instead of free-text boxes that required typing `true` or
+  recalling the valid `dtype` values. Text and list fields prefill the current value.
+- **A bad config entry no longer discards your work.** Invalid input is reported and
+  re-prompted rather than throwing away every pending change.
+- **The duplicate reply from `knowl_store` says what happened.** It previously read
+  "skipped duplicate insert", which scans as success; it now leads with `NOT STORED` and
+  names the recovery.
+
+### Documentation
+
+- Spec for the portable memory round trip — repeatable import and traceable deletes —
+  covering the two items deferred from the collaboration scoping work.
+
 ## 2.1.0 — 2026-07-25
 
 Subagents get project memory, and any agent is told when memory changed underneath it.
