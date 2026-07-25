@@ -1,0 +1,62 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Resolve version
+        id: version
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Package version: $version"
+
+      - name: Verify tag matches package.json version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" != "${{ steps.version.outputs.version }}" ]; then
+            echo "Tag v$tag does not match package.json version ${{ steps.version.outputs.version }}" >&2
+            exit 1
+          fi
+
+      - name: Fail if version is already on npm
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          if npm view "$name@${{ steps.version.outputs.version }}" version > /dev/null 2>&1; then
+            echo "$name@${{ steps.version.outputs.version }} is already published. Bump the version first." >&2
+            exit 1
+          fi
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      - name: Publish to npm
+        run: npm publish --access public
