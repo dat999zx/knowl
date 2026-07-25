@@ -2,7 +2,20 @@
 
 **Date:** 2026-07-25
 
-**Status:** Approved. No open blockers.
+**Status:** Implemented (2026-07-25). See [the plan](../plans/2026-07-25-agent-change-notification.md).
+
+One dependency was missed at design time and found during implementation:
+`readLifecyclePayload` (`src/cli/agents/lifecycle.ts`) filters hook stdin through a strict
+`ROOT_FIELDS` allowlist that did not include `agent_id` or `agent_type`, and a
+`NESTED_FIELDS.tool_input` allowlist limited to command and path keys. Through the CLI —
+the only path that runs in production — this made the whole design inert:
+`SubagentStart` threw `IncompleteHostHookPayloadError` and exited silently, subagent
+`PostToolUse` degraded to the shared main-thread row, and attribution had no keys, so an
+agent was told about its own write. In-process tests passed throughout because they build
+`NormalizedHostHook` directly and bypass the filter. The allowlist now retains subagent
+identity plus `title`, `id`, `supersedeId`, `supersedes`, and `atoms` under `tool_input`;
+those are compared in memory and never persisted, since only `summary`, `command`, and
+`changedPaths` reach the stored event payload.
 
 ## Problem
 
