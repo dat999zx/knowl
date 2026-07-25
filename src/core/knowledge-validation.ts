@@ -3,6 +3,15 @@ import type { KnowledgeWriteInput, KnowledgeWriteValidationOptions } from './typ
 const DEFAULT_MAX_FIELD_LENGTH = 20_000;
 const DEFAULT_MAX_RAW_OUTPUT_LENGTH = 50_000;
 const SENSITIVE_PATH = /(^|[\\/])(?:\.env(?:\.[^\\/]+)?|[^\\/]*(?:credential|secret)[^\\/]*|id_rsa(?:\.pub)?|[^\\/]*\.(?:pem|p12|pfx|key))$/i;
+// `.env.example` and friends exist to be committed -- they document the configuration
+// surface and hold placeholders, not secrets. Treating them as sensitive blocks storing
+// legitimate knowledge about a project's own setup. The suffix must be exact, so
+// `.env.exampled` is still rejected.
+const TEMPLATE_PATH_SUFFIX = /\.(?:example|sample|template|dist)$/i;
+
+function isSensitivePath(path: string): boolean {
+  return SENSITIVE_PATH.test(path) && !TEMPLATE_PATH_SUFFIX.test(path);
+}
 const CREDENTIAL_URL = /\b[a-z][a-z\d+.-]*:\/\/[^\s/:@]+:[^\s@/]+@/i;
 const PEM_BLOCK = /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/i;
 const NAMED_SECRET = /\b(?:bearer|api[_-]?key|access[_-]?token|secret|password)\s*(?:=|:)?\s*[A-Za-z0-9._~+\/-]{16,}/i;
@@ -57,11 +66,15 @@ export function validateKnowledgeWrite(
     reject('KNOWLEDGE_RAW_OUTPUT_TOO_LARGE', 'Knowledge write rejected: raw output exceeds the allowed length.');
   }
 
-  if ((input.affectedPaths ?? []).some((path) => SENSITIVE_PATH.test(path))) {
+  // Everything below is secret detection, so it all sits behind the one knob users have.
+  // The sensitive-path check used to run above this line, which made `rejectSecrets: false`
+  // silently partial: `knowl doctor` kept failing its integrity audit with no setting that
+  // could clear it.
+  if (options.rejectSecrets === false) return { pass: true };
+
+  if ((input.affectedPaths ?? []).some(isSensitivePath)) {
     reject('KNOWLEDGE_SENSITIVE_PATH', 'Knowledge write rejected: a sensitive path cannot be stored.');
   }
-
-  if (options.rejectSecrets === false) return { pass: true };
 
   const values = [...fields.map(([, value]) => value), input.rawOutput ?? ''];
   if (values.some((value) => PEM_BLOCK.test(value))) {

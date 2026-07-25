@@ -74,12 +74,20 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     await initDb(root);
     dbOpen = true;
     const integrity = await auditKnowledgeStore(config.security);
+    // Report errors and warnings separately: the old message called everything a
+    // "warning" while failing on errors, and pointed at "repair reported records" when
+    // `knowl audit` is read-only and no repair command exists. A fix hint has to name
+    // something the reader can actually run.
+    const integrityErrors = integrity.findings.filter(finding => finding.severity === 'error').length;
+    const integrityWarnings = integrity.findings.length - integrityErrors;
     checks.push({
-      status: integrity.findings.some(finding => finding.severity === 'error') ? 'FAIL' : 'OK',
+      status: integrityErrors > 0 ? 'FAIL' : 'OK',
       message: integrity.findings.length === 0
         ? 'Knowledge integrity audit passed'
-        : `Knowledge integrity audit found ${integrity.findings.length} warning(s)`,
-      fix: integrity.findings.length === 0 ? undefined : 'run `knowl audit` and repair reported records',
+        : `Knowledge integrity audit found ${integrityErrors} error(s) and ${integrityWarnings} warning(s)`,
+      fix: integrity.findings.length === 0
+        ? undefined
+        : 'run `knowl audit` to list the records, then correct an item with `knowl update` or adjust security settings with `knowl config`',
     });
     try {
       await (getDb() as any).all(sql`SELECT 1 FROM knowledge_embeddings LIMIT 1`);

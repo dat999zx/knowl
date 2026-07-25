@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DEFAULT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
 import { getConfigValue, resetConfigValue, setConfigValue } from '../../src/cli/config/service.js';
-import { ConfigPrompts, runConfigUi } from '../../src/cli/config/ui.js';
+import { CONFIG_UI_BACK, CONFIG_UI_QUIT, ConfigFieldView, ConfigPrompts, runConfigUi } from '../../src/cli/config/ui.js';
 
 const ROOT = path.resolve('.knowl-config-service-test');
 
@@ -121,6 +121,92 @@ describe('config UI', () => {
     };
     expect((await runConfigUi(ROOT, prompts)).saved).toBe(false);
     expect(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8')).toBe(before);
+  });
+
+  it('quits from the category list without asking about an empty diff', async () => {
+    await writeConfig();
+    const before = await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8');
+    let confirmCalled = false;
+    const prompts: ConfigPrompts = {
+      selectCategory: async () => CONFIG_UI_QUIT,
+      selectField: async () => { throw new Error('should not reach field selection'); },
+      inputValue: async () => { throw new Error('should not reach value entry'); },
+      confirmSave: async () => { confirmCalled = true; return true; },
+      continueEditing: async () => false,
+    };
+
+    const result = await runConfigUi(ROOT, prompts);
+
+    expect(result.saved).toBe(false);
+    expect(result.changes).toEqual([]);
+    expect(confirmCalled).toBe(false);
+    expect(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8')).toBe(before);
+  });
+
+  it('goes back to the category list instead of forcing an edit', async () => {
+    await writeConfig();
+    const categoriesSeen: string[] = [];
+    let fieldPrompts = 0;
+    const prompts: ConfigPrompts = {
+      // Enter Search, back out, then quit. Entering a category used to commit you to
+      // changing something in it.
+      selectCategory: async () => {
+        categoriesSeen.push('asked');
+        return categoriesSeen.length === 1 ? 'Search' : CONFIG_UI_QUIT;
+      },
+      selectField: async () => { fieldPrompts += 1; return CONFIG_UI_BACK; },
+      inputValue: async () => { throw new Error('should not reach value entry'); },
+      confirmSave: async () => true,
+      continueEditing: async () => false,
+    };
+
+    const result = await runConfigUi(ROOT, prompts);
+
+    expect(fieldPrompts).toBe(1);
+    expect(categoriesSeen).toHaveLength(2);
+    expect(result.saved).toBe(false);
+  });
+
+  it('re-prompts after an unparseable value instead of throwing', async () => {
+    await writeConfig();
+    const attempts: string[] = [];
+    const reported: string[] = [];
+    const prompts: ConfigPrompts = {
+      selectCategory: async () => 'Search',
+      selectField: async () => 'search.vector.enabled',
+      inputValue: async () => {
+        attempts.push('asked');
+        return attempts.length === 1 ? 'yes' : 'false';
+      },
+      confirmSave: async () => true,
+      continueEditing: async () => false,
+      reportError: async (_field, message) => { reported.push(message); },
+    };
+
+    const result = await runConfigUi(ROOT, prompts);
+
+    expect(attempts).toHaveLength(2);
+    expect(reported[0]).toMatch(/true or false/i);
+    expect(result.saved).toBe(true);
+    expect(await getConfigValue(ROOT, 'search.vector.enabled')).toBe(false);
+  });
+
+  it('exposes type metadata so values can be picked rather than typed', async () => {
+    await writeConfig();
+    let seen: ConfigFieldView[] = [];
+    const prompts: ConfigPrompts = {
+      selectCategory: async () => 'Search',
+      selectField: async fields => { seen = fields; return CONFIG_UI_BACK; },
+      inputValue: async () => '',
+      confirmSave: async () => false,
+      continueEditing: async () => false,
+    };
+    await runConfigUi(ROOT, { ...prompts, selectCategory: async () => seen.length ? CONFIG_UI_QUIT : 'Search' });
+
+    expect(seen.find(field => field.key === 'search.vector.enabled')?.type).toBe('boolean');
+    const dtype = seen.find(field => field.key === 'search.vector.dtype');
+    expect(dtype?.type).toBe('enum');
+    expect(dtype?.values).toEqual(['q4', 'q8', 'fp16', 'fp32']);
   });
 
   it('redacts secret values in the confirmation diff', async () => {

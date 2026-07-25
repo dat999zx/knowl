@@ -20,10 +20,20 @@ export type ConfigKey =
 
 export type ConfigCategory = 'Search' | 'Security' | 'AI provider' | 'Memory namespaces';
 
+/**
+ * How a value should be asked for. Without this the UI had only `parse`, so every field
+ * was a free-text box: booleans required typing the literal `true`, and enums required
+ * knowing the allowed values by heart, with a throw on the first typo.
+ */
+export type ConfigFieldType = 'boolean' | 'enum' | 'number' | 'string' | 'list';
+
 export interface ConfigField {
   key: ConfigKey;
   category: ConfigCategory;
   secret?: boolean;
+  type: ConfigFieldType;
+  /** Allowed values, for `enum` fields. */
+  values?: readonly string[];
   parse(raw: string): unknown;
   defaultValue?: unknown;
 }
@@ -47,23 +57,27 @@ const optionalNumber = (raw: string) => {
 
 const stringList = (raw: string) => raw.split(',').map(value => value.trim()).filter(Boolean);
 
+const VECTOR_PROVIDERS = ['local'] as const;
+const VECTOR_DTYPES = ['q4', 'q8', 'fp16', 'fp32'] as const;
+const AI_PROVIDERS = ['openai', 'anthropic', 'ollama', 'custom'] as const;
+
 export const CONFIG_FIELDS: ConfigField[] = [
-  { key: 'search.vector.enabled', category: 'Search', parse: booleanValue, defaultValue: DEFAULT_CONFIG.search?.vector?.enabled },
-  { key: 'search.vector.provider', category: 'Search', parse: enumValue(['local'] as const), defaultValue: DEFAULT_CONFIG.search?.vector?.provider },
-  { key: 'search.vector.model', category: 'Search', parse: String, defaultValue: DEFAULT_CONFIG.search?.vector?.model },
-  { key: 'search.vector.dtype', category: 'Search', parse: enumValue(['q4', 'q8', 'fp16', 'fp32'] as const), defaultValue: DEFAULT_CONFIG.search?.vector?.dtype },
-  { key: 'search.vector.cacheDir', category: 'Search', parse: String },
-  { key: 'security.rejectSecrets', category: 'Security', parse: booleanValue, defaultValue: DEFAULT_CONFIG.security.rejectSecrets },
-  { key: 'security.secretPatterns', category: 'Security', parse: stringList, defaultValue: DEFAULT_CONFIG.security.secretPatterns },
-  { key: 'ai.provider', category: 'AI provider', parse: enumValue(['openai', 'anthropic', 'ollama', 'custom'] as const) },
-  { key: 'ai.model', category: 'AI provider', parse: String },
-  { key: 'ai.temperature', category: 'AI provider', parse: optionalNumber },
-  { key: 'ai.baseUrl', category: 'AI provider', parse: String },
-  { key: 'ai.apiKey', category: 'AI provider', parse: String, secret: true },
-  { key: 'memory.organization.enabled', category: 'Memory namespaces', parse: booleanValue, defaultValue: false },
-  { key: 'memory.organization.path', category: 'Memory namespaces', parse: String },
-  { key: 'memory.global.enabled', category: 'Memory namespaces', parse: booleanValue, defaultValue: false },
-  { key: 'memory.global.path', category: 'Memory namespaces', parse: String },
+  { key: 'search.vector.enabled', category: 'Search', type: 'boolean', parse: booleanValue, defaultValue: DEFAULT_CONFIG.search?.vector?.enabled },
+  { key: 'search.vector.provider', category: 'Search', type: 'enum', values: VECTOR_PROVIDERS, parse: enumValue(VECTOR_PROVIDERS), defaultValue: DEFAULT_CONFIG.search?.vector?.provider },
+  { key: 'search.vector.model', category: 'Search', type: 'string', parse: String, defaultValue: DEFAULT_CONFIG.search?.vector?.model },
+  { key: 'search.vector.dtype', category: 'Search', type: 'enum', values: VECTOR_DTYPES, parse: enumValue(VECTOR_DTYPES), defaultValue: DEFAULT_CONFIG.search?.vector?.dtype },
+  { key: 'search.vector.cacheDir', category: 'Search', type: 'string', parse: String },
+  { key: 'security.rejectSecrets', category: 'Security', type: 'boolean', parse: booleanValue, defaultValue: DEFAULT_CONFIG.security.rejectSecrets },
+  { key: 'security.secretPatterns', category: 'Security', type: 'list', parse: stringList, defaultValue: DEFAULT_CONFIG.security.secretPatterns },
+  { key: 'ai.provider', category: 'AI provider', type: 'enum', values: AI_PROVIDERS, parse: enumValue(AI_PROVIDERS) },
+  { key: 'ai.model', category: 'AI provider', type: 'string', parse: String },
+  { key: 'ai.temperature', category: 'AI provider', type: 'number', parse: optionalNumber },
+  { key: 'ai.baseUrl', category: 'AI provider', type: 'string', parse: String },
+  { key: 'ai.apiKey', category: 'AI provider', type: 'string', parse: String, secret: true },
+  { key: 'memory.organization.enabled', category: 'Memory namespaces', type: 'boolean', parse: booleanValue, defaultValue: false },
+  { key: 'memory.organization.path', category: 'Memory namespaces', type: 'string', parse: String },
+  { key: 'memory.global.enabled', category: 'Memory namespaces', type: 'boolean', parse: booleanValue, defaultValue: false },
+  { key: 'memory.global.path', category: 'Memory namespaces', type: 'string', parse: String },
 ];
 
 export function getConfigField(key: string): ConfigField {

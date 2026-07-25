@@ -59,6 +59,31 @@ describe('validateKnowledgeWrite', () => {
     })).toThrow(/path/i);
   });
 
+  it('allows env template files, which exist to be committed', () => {
+    // .env.example and friends are documentation of the configuration surface, not
+    // secrets. Rejecting them blocks storing legitimate knowledge about a project's
+    // own setup, which is exactly what a memory tool is for.
+    for (const path of ['.env.example', '.env.sample', '.env.template', 'apps/api/.env.dist', '.env.local.example']) {
+      expect(() => validateKnowledgeWrite({ affectedPaths: [path] })).not.toThrow();
+    }
+  });
+
+  it('still rejects real env and key paths that resemble templates', () => {
+    for (const path of ['.env', '.env.production', 'deploy/.env.exampled', 'certs/server.key', 'id_rsa']) {
+      expect(() => validateKnowledgeWrite({ affectedPaths: [path] })).toThrow(/path/i);
+    }
+  });
+
+  it('honours rejectSecrets: false for sensitive paths too', () => {
+    // The observable contract of the only knob users have is "secret rejection is off".
+    // Leaving the path check enabled made `rejectSecrets: false` silently partial and
+    // left `knowl doctor` failing with no way to clear it.
+    expect(() => validateKnowledgeWrite(
+      { affectedPaths: ['apps/api/.env.production'] },
+      { rejectSecrets: false },
+    )).not.toThrow();
+  });
+
   it('rejects oversized payloads', () => {
     expect(() => validateKnowledgeWrite(
       { rawOutput: 'x'.repeat(11) },
