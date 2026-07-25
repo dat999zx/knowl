@@ -3,6 +3,54 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.3.0 — 2026-07-25
+
+Memory can now move between two machines more than once, and deletes move with it.
+
+### Added
+
+- **Repeatable import.** `knowl import` classifies each incoming item as new, identical,
+  or divergent, and resolves divergence with `--on-divergence`: `newer` (default — latest
+  `updated_at` wins, `version` breaks ties), `skip`, `theirs`, or `fail`. Previously a
+  single divergent item discarded the entire import, so a machine that had done any work
+  could never receive anything again — including unrelated new knowledge with no conflict
+  at all. Measured on a real 372-item export: one locally edited item used to block a
+  peer's new decision from landing; now it lands and the divergence is reported by id and
+  title.
+- **Convergence.** An adopted item is written verbatim — the peer's own `content_hash`,
+  `version` and `updated_at` — so a repeat import is a no-op. Applying it as an ordinary
+  update would stamp a new timestamp and version, making the copy newer than the peer's
+  and leaving two machines to trade a fresh winner back and forth forever.
+- **Deletes travel.** Purging an item records a tombstone that export carries and import
+  replays. A local item is removed only when it is older than the delete, so an edit made
+  after the remote delete wins. `knowl gc --tombstone-days` (default 90) prunes them.
+
+### Fixed
+
+- **An agent was told about its own writes.** On Windows the same project reaches Knowl
+  with different drive-letter case — a hook payload reports `D:\project` while
+  `process.cwd()` reports `d:\project` — and the binding key preserved that difference.
+  One agent therefore held two independent change watermarks: a write advanced one, and
+  the next tool event read the other, found it stale, and reported the write back as a
+  foreign change. The continuation-reminder counter was split the same way.
+- **Imported knowledge was invisible to vector search.** Import wrote raw SQL and never
+  called the embedding indexer that every other write path calls. Importing 372 items
+  produced 372 full-text rows and zero embeddings, so retrieval silently fell back to
+  BM25 until someone ran `knowl reindex --vectors` by hand.
+- **`knowl --help` described half its commands.** `timeline`, `query`, `conflicts`,
+  `supersede`, `context`, `export`, `import`, `synthesize` and `view` had no description
+  at all.
+- **`knowl doctor` named a command that does not exist.** Its integrity hint suggested
+  `knowl update`, which exists only as an MCP tool. It now names `knowl supersede`.
+
+### Changed
+
+- **`knowl import` output has a new shape.** `skipped` is now `identical`, and `updated`,
+  `keptLocal`, `deleted` and `divergent` join it. A dry run or a failed import reports
+  every count as zero with the projection under `wouldApply`, replacing output that
+  showed a non-zero `inserted` beside `applied: false` and read as partial success.
+  Anything parsing this output needs updating.
+
 ## 2.2.0 — 2026-07-25
 
 Live verification of the 2.1.0 subagent work found it shipped half-working, and fixing it
