@@ -87,7 +87,9 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         : `Knowledge integrity audit found ${integrityErrors} error(s) and ${integrityWarnings} warning(s)`,
       fix: integrity.findings.length === 0
         ? undefined
-        : 'run `knowl audit` to list the records, then correct an item with `knowl update` or adjust security settings with `knowl config`',
+        // Only name commands that exist: there is no `knowl update`, so a secret finding
+        // is cleared either by retiring the item or by changing the security setting.
+        : 'run `knowl audit` to list the records, then retire an item with `knowl supersede <itemId> <replacementId>` or adjust security settings with `knowl config`',
     });
     try {
       await (getDb() as any).all(sql`SELECT 1 FROM knowledge_embeddings LIMIT 1`);

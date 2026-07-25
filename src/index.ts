@@ -360,23 +360,23 @@ program
     }
   });
 
-program.command('timeline').argument('<itemId>').action(async itemId => {
+program.command('timeline').argument('<itemId>').description('Show the recorded history of one knowledge item').action(async itemId => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listAssertions(itemId), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading timeline: ${error.message}`); process.exit(1); }
 });
 
-program.command('query').argument('[query]').option('--as-of <timestamp>').option('--limit <count>').action(async (query, options) => {
+program.command('query').argument('[query]').description('Search project memory by keywords').option('--as-of <timestamp>').option('--limit <count>').action(async (query, options) => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); const items = await queryKnowledgeBase(project.id, { query, limit: options.limit === undefined ? undefined : Number(options.limit), asOf: options.asOf }); console.log(JSON.stringify(items, null, 2)); await closeDb(); } catch (error: any) { console.error(`Error querying knowledge: ${error.message}`); process.exit(1); }
 });
 
-program.command('conflicts').action(async () => {
+program.command('conflicts').description('List knowledge items that contradict each other').action(async () => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify((await listActiveConflictKeys()).map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness })), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error listing conflicts: ${error.message}`); process.exit(1); }
 });
 
-program.command('supersede').argument('<itemId>').argument('<replacementId>').action(async (itemId, replacementId) => {
+program.command('supersede').argument('<itemId>').argument('<replacementId>').description('Retire one item and point it at its replacement').action(async (itemId, replacementId) => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await repo.supersedeKnowledgeItem(itemId, replacementId), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error superseding knowledge: ${error.message}`); process.exit(1); }
 });
 
-program.command('context').option('--query <query>').option('--task <task>').requiredOption('--token-budget <budget>').action(async options => {
+program.command('context').description('Print a token-budgeted context pack for an agent').option('--query <query>').option('--task <task>').requiredOption('--token-budget <budget>').action(async options => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await composeContext(project.id, { query: options.query, task: options.task, tokenBudget: Number(options.tokenBudget), namespaceRoot: root }), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error composing context: ${error.message}`); process.exit(1); }
 });
 
@@ -384,13 +384,13 @@ const codeCommand = program.command('code').description('Index and inspect proje
 codeCommand.command('index').action(async () => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); await indexCode(root); console.log('Code symbols indexed.'); await closeDb(); } catch (error: any) { console.error(`Error indexing code: ${error.message}`); process.exit(1); } });
 codeCommand.command('symbols').argument('<path>').action(async filePath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listCodeSymbols(filePath), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading code symbols: ${error.message}`); process.exit(1); } });
 
-program.command('export').argument('<path>').action(async outputPath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await exportKnowledge(project.id, path.resolve(outputPath), root), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error exporting knowledge: ${error.message}`); process.exit(1); } });
+program.command('export').argument('<path>').description('Write portable JSONL memory to a file').action(async outputPath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await exportKnowledge(project.id, path.resolve(outputPath), root), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error exporting knowledge: ${error.message}`); process.exit(1); } });
 
-program.command('import').argument('<path>').option('--dry-run').action(async (inputPath, options) => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await importKnowledge(path.resolve(inputPath), { dryRun: options.dryRun, projectRoot: root }), null, 2)); await closeDb(); } catch (error: any) { await closeDb().catch(() => {}); console.error(`Error importing knowledge: ${error.message}`); process.exit(1); } });
+program.command('import').argument('<path>').description('Load portable JSONL memory from a file').option('--dry-run').action(async (inputPath, options) => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await importKnowledge(path.resolve(inputPath), { dryRun: options.dryRun, projectRoot: root }), null, 2)); await closeDb(); } catch (error: any) { await closeDb().catch(() => {}); console.error(`Error importing knowledge: ${error.message}`); process.exit(1); } });
 
-program.command('synthesize').requiredOption('--scope <path-or-tag>').action(async options => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await synthesizeKnowledge(project.id, options.scope), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error synthesizing knowledge: ${error.message}`); process.exit(1); } });
+program.command('synthesize').description('Summarize knowledge for a path or tag into one item').requiredOption('--scope <path-or-tag>').action(async options => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await synthesizeKnowledge(project.id, options.scope), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error synthesizing knowledge: ${error.message}`); process.exit(1); } });
 
-program.command('view').option('--port <port>').action(async options => { try { const root = await findProjectRoot(process.cwd()); const viewer = await startViewer(root, { port: options.port === undefined ? 0 : Number(options.port) }); console.log(`Knowl viewer: ${viewer.url}`); const stop = async () => { await viewer.close(); process.exit(0); }; process.once('SIGINT', stop); process.once('SIGTERM', stop); } catch (error: any) { console.error(`Error starting viewer: ${error.message}`); process.exit(1); } });
+program.command('view').description('Serve the local knowledge viewer in a browser').option('--port <port>').action(async options => { try { const root = await findProjectRoot(process.cwd()); const viewer = await startViewer(root, { port: options.port === undefined ? 0 : Number(options.port) }); console.log(`Knowl viewer: ${viewer.url}`); const stop = async () => { await viewer.close(); process.exit(0); }; process.once('SIGINT', stop); process.once('SIGTERM', stop); } catch (error: any) { console.error(`Error starting viewer: ${error.message}`); process.exit(1); } });
 
 
 // --- 4. DECIDE COMMAND ---
