@@ -7,7 +7,9 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  # `contents: write` is needed only to create the GitHub release at the end of a
+  # successful publish; the OIDC exchange itself needs only id-token.
+  contents: write
   id-token: write
 
 jobs:
@@ -60,3 +62,24 @@ jobs:
 
       - name: Publish to npm
         run: npm publish --access public
+
+      # Runs only after a successful publish, so a release never advertises a version
+      # that is not on npm.
+      - name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          awk -v v="## $VERSION" '$0 ~ "^" v {flag=1; next} flag && /^## / {exit} flag' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "No CHANGELOG section for $VERSION; falling back to generated notes."
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes --latest
+            exit 0
+          fi
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --notes-file notes.md --latest
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md --latest
+          fi
