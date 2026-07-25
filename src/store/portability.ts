@@ -7,6 +7,7 @@ import { getClient } from './database.js';
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { listEvidenceForItem } from './evidence-repository.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
+import { listTombstones } from './tombstones.js';
 import type { KnowledgeItem } from '../core/types.js';
 
 async function skillFiles(root: string, directory: string, base = directory): Promise<Array<{ path: string; content: string }>> {
@@ -38,10 +39,14 @@ export async function exportKnowledge(projectId: string, outputPath: string, pro
       if (entry.isDirectory()) records.push({ type: 'skill_package', name: entry.name, files: await skillFiles(projectRoot, `${skillsDir}/${entry.name}`) });
     }
   }
+  // Tombstones ride after the items so an older importer, which ignores unknown record
+  // types, still reads a valid stream.
+  const tombstones = await listTombstones();
+  for (const tombstone of tombstones) records.push({ type: 'tombstone', tombstone });
   const body = `${records.map(record => JSON.stringify(record)).join('\n')}\n`;
   const manifest = crypto.createHash('sha256').update(body).digest('hex');
   await fs.writeFile(outputPath, `${body}${JSON.stringify({ type: 'manifest', sha256: manifest })}\n`, 'utf8');
-  return { items: items.length, sha256: manifest };
+  return { items: items.length, tombstones: tombstones.length, sha256: manifest };
 }
 
 export type ImportResult = { inserted: number; skipped: number; conflicts: number; applied: boolean };

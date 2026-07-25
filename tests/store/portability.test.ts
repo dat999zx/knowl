@@ -13,7 +13,14 @@ vi.mock('../../src/store/write-embedding.js', async (importOriginal) => {
 import { indexKnowledgeItemsBestEffort } from '../../src/store/write-embedding.js';
 import { closeDb, initDb } from '../../src/store/database.js';
 import { getClient } from '../../src/store/database.js';
-import { createKnowledgeItem, listKnowledgeItems } from '../../src/store/repository.js';
+import { createHash } from 'node:crypto';
+import {
+  createKnowledgeItem,
+  deleteKnowledgeItem,
+  getKnowledgeItem,
+  listKnowledgeItems,
+  updateKnowledgeItem,
+} from '../../src/store/repository.js';
 import * as portability from '../../src/store/portability.js';
 import { createEvidence, linkKnowledgeEvidence, listEvidenceForItem } from '../../src/store/evidence-repository.js';
 
@@ -48,6 +55,22 @@ describe('portability', () => {
     const links = await getClient().execute('SELECT * FROM knowledge_evidence');
     expect(links.rows).toEqual(expect.arrayContaining([expect.objectContaining({ knowledge_item_id: imported.id })]));
     expect(await listEvidenceForItem(imported.id)).toEqual([expect.objectContaining({ locator: 'tests/portability.test.ts', relationship: 'supports' })]);
+  });
+
+  it('exports tombstones so deletes can travel', async () => {
+    const doomed = await createKnowledgeItem('local', {
+      category: 'fact', title: 'Temporary fact', content: 'Removed before export.',
+    });
+    await deleteKnowledgeItem(doomed.id);
+
+    const target = path.join(TARGET, 'with-tombstone.jsonl');
+    const result = await portability.exportKnowledge('local', target, TARGET);
+
+    expect(result.tombstones).toBeGreaterThanOrEqual(1);
+    const records = (await fs.readFile(target, 'utf8'))
+      .split('\n').filter(Boolean).map(line => JSON.parse(line));
+    const tombstones = records.filter(record => record.type === 'tombstone');
+    expect(tombstones.map(record => record.tombstone.id)).toContain(doomed.id);
   });
 
   it('hands imported items to the embedding indexer', async () => {
