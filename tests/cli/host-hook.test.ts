@@ -1,6 +1,8 @@
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { IncompleteHostHookPayloadError, normalizeHostHook } from '../../src/cli/agents/host-hook.js';
+import { readLifecyclePayload } from '../../src/cli/agents/lifecycle.js';
 
 const ROOT = path.resolve('.knowl-host-hook-test');
 
@@ -343,5 +345,40 @@ describe('host hook normalization', () => {
       tool_response: {},
     });
     expect(nonKnowl.knowlChangeKeys).toBeUndefined();
+  });
+
+  // Normalization alone cannot prove the feature works: the CLI first strips the hook
+  // payload through readLifecyclePayload's allowlist. Testing normalization on
+  // hand-built payloads is exactly how the missing agent_id/tool_input fields went
+  // unnoticed, so every field this feature depends on is asserted through both stages.
+  describe('through the CLI payload filter', () => {
+    const chain = async (raw: Record<string, unknown>) =>
+      normalizeHostHook('claude', 'PostToolUse', await readLifecyclePayload(
+        Readable.from([JSON.stringify({ session_id: 'chain', cwd: ROOT, ...raw })]) as NodeJS.ReadStream,
+      ));
+
+    it('preserves subagent identity end to end', async () => {
+      const result = await chain({
+        agent_id: 'adc54472c7d8cad78',
+        agent_type: 'Explore',
+        tool_name: 'Grep',
+        tool_input: { pattern: 'foo' },
+      });
+
+      expect(result.agentId).toBe('adc54472c7d8cad78');
+      expect(result.agentType).toBe('Explore');
+    });
+
+    it.each([
+      ['knowl_store', { category: 'fact', title: 'Store title', content: 'body', supersedes: 'old-1' }, { ids: ['old-1'], titles: ['Store title'] }],
+      ['knowl_decide', { title: 'Decide title', content: 'body' }, { ids: [], titles: ['Decide title'] }],
+      ['knowl_update', { id: 'item-9', supersedeId: 'item-8', title: 'New' }, { ids: ['item-9', 'item-8'], titles: ['New'] }],
+      ['knowl_ingest_atoms', { atoms: [{ title: 'Atom A', content: 'x' }, { title: 'Atom B' }] }, { ids: [], titles: ['Atom A', 'Atom B'] }],
+    ])('extracts attribution keys for %s', async (tool, toolInput, expected) => {
+      const result = await chain({ tool_name: `mcp__knowl__${tool}`, tool_input: toolInput });
+
+      expect(result.knowlTool).toBe(true);
+      expect(result.knowlChangeKeys).toEqual(expected);
+    });
   });
 });

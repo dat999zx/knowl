@@ -59,7 +59,7 @@ describe('agent lifecycle CLI', () => {
       prompt_id: 'discard me',
       tool_name: 'mcp__knowl__knowl_ingest_atoms',
       tool_input: {
-        atoms: [{ title: 'First atom', content: 'discard me' }],
+        atoms: [{ title: 'First atom', content: 'discard me', reasoning: 'discard me' }],
         id: 'item-9',
         supersedeId: 'item-8',
         title: 'A title',
@@ -70,9 +70,15 @@ describe('agent lifecycle CLI', () => {
     expect(payload.agent_id).toBe('adc54472c7d8cad78');
     expect(payload.agent_type).toBe('Explore');
     expect(payload.prompt_id).toBeUndefined();
-    expect(payload.tool_input).toMatchObject({ id: 'item-9', supersedeId: 'item-8', title: 'A title' });
-    expect((payload.tool_input as any).atoms[0].title).toBe('First atom');
-    expect((payload.tool_input as any).unsafe).toBeUndefined();
+    expect(payload.tool_input).toEqual({
+      id: 'item-9',
+      supersedeId: 'item-8',
+      title: 'A title',
+      // Only the atom title survives: allowing the `atoms` array must not drag whole
+      // atom bodies into the hook process.
+      atoms: [{ title: 'First atom' }],
+    });
+    expect(JSON.stringify(payload)).not.toContain('discard me');
   });
 
   it('captures bounded lifecycle events from stdin', () => {

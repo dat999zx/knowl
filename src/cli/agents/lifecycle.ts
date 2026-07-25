@@ -31,6 +31,12 @@ const NESTED_FIELDS: Record<string, Set<string>> = {
   toolResponse: new Set(['exit_code', 'exitCode']),
   error: new Set(['code', 'type', 'message', 'error']),
 };
+// Fields kept inside an allowlisted array of objects, e.g. tool_input.atoms[i].
+// Without this, allowing `atoms` above would retain whole atom bodies; only the
+// title is needed to recognise a commit as the caller's own.
+const NESTED_ARRAY_ITEM_FIELDS: Record<string, Set<string>> = {
+  atoms: new Set(['title']),
+};
 const ARRAY_FIELDS = new Set(['workspace_roots', 'changedPaths', 'changed_paths', 'file_paths', 'filePaths']);
 
 function shouldDiscardPath(stack: Array<string | number | null>): boolean {
@@ -43,6 +49,10 @@ function shouldDiscardPath(stack: Array<string | number | null>): boolean {
     return true;
   }
   const parent = String(stack[0]);
+  if (stack.length >= 4 && typeof stack[2] === 'number') {
+    // A field of an object inside an allowlisted array. Nothing deeper is ever kept.
+    return stack.length > 4 || !NESTED_ARRAY_ITEM_FIELDS[String(stack[1])]?.has(String(stack[3]));
+  }
   if (NESTED_FIELDS[parent]) return !NESTED_FIELDS[parent].has(String(stack[1]));
   return true;
 }
