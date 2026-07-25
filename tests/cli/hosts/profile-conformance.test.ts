@@ -1,0 +1,78 @@
+import { describe, expect, it } from 'vitest';
+import { HOST_PROFILES, hostProfile } from '../../../src/cli/agents/hosts/index.js';
+import { HookHost } from '../../../src/cli/agents/host-hook.js';
+
+const ALL_HOSTS: HookHost[] = ['codex', 'claude', 'cursor', 'claude-desktop', 'generic'];
+
+describe('host profile registry', () => {
+  it('has exactly one profile per HookHost', () => {
+    expect(Object.keys(HOST_PROFILES).sort()).toEqual([...ALL_HOSTS].sort());
+    for (const host of ALL_HOSTS) expect(hostProfile(host).host).toBe(host);
+  });
+
+  it('rejects an unknown host', () => {
+    expect(() => hostProfile('nope' as HookHost)).toThrow('Unsupported hook host');
+  });
+
+  describe.each(ALL_HOSTS)('%s', host => {
+    const profile = () => hostProfile(host);
+
+    it('maps every registered hook event to a normalized event', () => {
+      for (const event of profile().hookEvents) {
+        expect(profile().normalizedEvent(event), `${host}:${event}`).toBeDefined();
+      }
+    });
+
+    it('maps its prompt event when it declares one', () => {
+      const { promptEvent } = profile();
+      if (promptEvent) expect(profile().normalizedEvent(promptEvent)).toBe('turn-start');
+    });
+
+    it('returns undefined for an unknown event name', () => {
+      expect(profile().normalizedEvent('NotARealEvent')).toBeUndefined();
+    });
+
+    it('either returns a non-empty envelope or undefined for mid-turn context', () => {
+      const output = profile().midTurnContext('hello');
+      if (output !== undefined) {
+        expect(Object.keys(output).length).toBeGreaterThan(0);
+        expect(JSON.stringify(output)).toContain('hello');
+      }
+    });
+
+    it('either returns a non-empty envelope or undefined for start context', () => {
+      const output = profile().startContext('session-start', 'hello');
+      if (output !== undefined) {
+        expect(JSON.stringify(output)).toContain('hello');
+      }
+    });
+
+    it('declares mid-turn support only when it registers a tool event', () => {
+      // A host with no tool-call event has nowhere to attach a mid-turn card.
+      const hasToolEvent = profile().hookEvents.some(event => /posttooluse|aftershellexecution/i.test(event));
+      if (profile().midTurnContext('x') !== undefined) expect(hasToolEvent).toBe(true);
+    });
+  });
+
+  it('gives claude-desktop no hook events and no envelopes', () => {
+    // Regression: the old eventMap ternary silently routed claude-desktop through
+    // Cursor's event map because only codex and claude were checked by name.
+    const profile = hostProfile('claude-desktop');
+    expect(profile.hookEvents).toEqual([]);
+    expect(profile.normalizedEvent('postToolUse')).toBeUndefined();
+    expect(profile.normalizedEvent('PostToolUse')).toBeUndefined();
+    expect(profile.startContext('session-start', 'x')).toBeUndefined();
+    expect(profile.midTurnContext('x')).toBeUndefined();
+  });
+
+  it('extracts identity from each host\'s own payload keys', () => {
+    expect(hostProfile('claude').identity({ session_id: 's', agent_id: 'a', agent_type: 'Explore' }))
+      .toEqual({ externalSessionId: 's', externalTurnId: undefined, agentId: 'a', agentType: 'Explore' });
+    expect(hostProfile('codex').identity({ session_id: 's', turn_id: 't' }))
+      .toMatchObject({ externalSessionId: 's', externalTurnId: 't' });
+    expect(hostProfile('cursor').identity({ conversation_id: 'c', generation_id: 'g' }))
+      .toMatchObject({ externalSessionId: 'c', externalTurnId: 'g' });
+    expect(hostProfile('generic').identity({ sessionId: 's', turnId: 't' }))
+      .toMatchObject({ externalSessionId: 's', externalTurnId: 't' });
+  });
+});
