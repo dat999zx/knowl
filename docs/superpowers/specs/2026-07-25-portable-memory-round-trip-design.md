@@ -2,7 +2,8 @@
 
 **Date:** 2026-07-25
 
-**Status:** Draft — one open decision for the owner (see [Open decision](#open-decision)).
+**Status:** Verified against real data 2026-07-25. Default `--on-divergence` set to `newer`
+(see [Open decision](#open-decision)); reversible, it is a flag default.
 
 ## Problem
 
@@ -41,6 +42,37 @@ forever.
 
 Everything else in GC uses `status = 'archived'` and is already portable.
 
+### The round trip is broken in practice, not just in theory
+
+Run 2026-07-25 against a real 372-item DuckPrep export. Imported into scratch project A
+(372 inserted, applied) and project B; added one new decision on B; edited one item on A to
+simulate local work; imported B's export into A:
+
+```
+inserted: 1   skipped: 371   conflicts: 1   applied: false
+B's new decision present on A: NO
+```
+
+One locally-edited item blocked B's unrelated new decision from landing. Since divergence
+is the *normal* state of two machines that have both done work, export/import works exactly
+once into an empty database and never again.
+
+The same output shows a second, smaller defect: `inserted: 1` is reported alongside
+`applied: false`. The count describes what *would* have been inserted, so the reply reads
+as partial success when nothing was written.
+
+### Import writes raw SQL and never indexes embeddings
+
+`portability.ts` contains no reference to `indexKnowledgeItemsBestEffort`, which every
+other write path calls (`knowledge-writer.ts`, `knowledge-actions.ts`). Verified: importing
+372 items produced **372 FTS rows and 0 embeddings**.
+
+FTS survives because `bootstrap.ts` defines `knowledge_items_fts_ai` / `_au` / `_ad`
+triggers, so raw `INSERT` and `UPDATE` keep it correct for free. Vector search has no such
+trigger — it needs a model — so all imported knowledge is invisible to the primary
+retrieval path until `knowl reindex --vectors` is run by hand. Retrieval degrades to the
+BM25 fallback rather than failing outright, which is why this was never noticed.
+
 ### Timestamps are sufficient; causality tracking is not needed
 
 `knowledge_items` carries `updated_at` (refreshed on every update) and `version` (an
@@ -72,8 +104,18 @@ Policies, selected by `--on-divergence`:
 Divergent items that lose are reported by id and title, never silently dropped — the same
 principle applied to `knowl_store` in `78e8f4d`.
 
-Applying a divergent winner is an update, not an insert, so it must go through
-`updateKnowledgeItem` to refresh `content_hash` and bump `version` rather than raw SQL.
+**A divergent winner is written verbatim, not through `updateKnowledgeItem`.** An earlier
+draft of this spec said the opposite; verification showed that would never converge.
+`updateKnowledgeItem` (`src/store/repository.ts`) sets `updatedAt = now` and computes
+`nextVersion` by incrementing whenever `content` or `title` changes. So if A adopts B's
+item through it, A's copy immediately differs from B's and is *newer*. On the next round B
+adopts A's, bumps again, and the two machines ping-pong forever, each import manufacturing
+a fresh winner. Sync must copy the peer's row exactly — `content`, `content_hash`,
+`version`, `updated_at` — so that both sides hold byte-identical rows and the following
+round classifies the item as `identical`.
+
+This is why the acceptance test below asserts agreement on `content_hash`: it is the only
+thing that proves convergence rather than oscillation.
 
 ### 2. Tombstones so deletes travel
 
@@ -95,7 +137,23 @@ and the tombstone is reported as skipped.
 Tombstones are pruned by age (default 90 days, configurable). A tombstone older than any
 plausible export round is dead weight, and unbounded growth would be its own defect.
 
-### 3. Round-trip test as the acceptance criterion
+### 3. Imported knowledge is indexed for vector search
+
+Import calls `indexKnowledgeItemsBestEffort` for every item it writes or updates, matching
+every other write path. Best-effort means a project with vectors disabled or a model
+unavailable still imports successfully — it just stays on the BM25 path, which is the
+current behaviour for everyone.
+
+Without this the feature is hollow: memory that arrives but cannot be found by the primary
+retrieval path has not really travelled.
+
+### 4. Reported counts describe what happened
+
+`ImportResult` reports per-class counts that match the writes actually performed, so
+`applied: false` can never sit beside a non-zero `inserted`. Dry runs report what *would*
+happen under a clearly separate shape.
+
+### 5. Round-trip test as the acceptance criterion
 
 The feature is defined by a test that today is impossible: export from A, import into B,
 diverge both, export from B, import into A, and assert both databases agree on every item's
