@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -9,6 +10,11 @@ import { resetWriteEmbeddingCache } from '../../src/store/write-embedding.js';
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
 
 const MODEL_CACHE = path.resolve('./.knowl/models');
+const MODEL_ID = 'Xenova/all-MiniLM-L6-v2';
+// Write-time indexing never downloads (see write-embedding.ts), and `.knowl/` is
+// gitignored, so the model is only on disk where knowl has actually run. On a
+// fresh clone or in CI the cached-model case is unobservable rather than broken.
+const MODEL_CACHED = existsSync(path.join(MODEL_CACHE, ...MODEL_ID.split('/')));
 let root = '';
 let projectId = '';
 
@@ -42,8 +48,8 @@ describe('write-time vector indexing', () => {
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});
   });
 
-  it('indexes a newly written atom when the model is already cached', async () => {
-    await setup({ enabled: true, provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dtype: 'q8', cacheDir: MODEL_CACHE });
+  it.skipIf(!MODEL_CACHED)('indexes a newly written atom when the model is already cached', async () => {
+    await setup({ enabled: true, provider: 'local', model: MODEL_ID, dtype: 'q8', cacheDir: MODEL_CACHE });
 
     expect(await embeddingCount()).toBe(0);
     const result = await storeKnowledgeItemDeduped(projectId, {
