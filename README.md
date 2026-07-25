@@ -60,6 +60,7 @@ Knowl deliberately **does not** clone the "silently record every transcript" app
 - 🔍 **Vector-first retrieval** — default-on local vector search, BM25 as fallback + exact-identifier booster, freshness-aware re-rank.
 - 🔁 **Automatic work loop** — agents query memory before work and write back verified state after.
 - 🪝 **Agent lifecycle hooks** — verified project-local capture for Claude Code, Codex, and Cursor.
+- 👥 **Subagent memory** — spawned Claude Code subagents get their own memory snapshot, and any agent is told when memory changed underneath it.
 - 🧾 **Evidence & provenance** — link items to files, commits, tests, commands, symbols, and URLs.
 - ⏳ **Temporal memory** — immutable assertions, `--as-of` queries, and exclusive conflict identities.
 - 🧩 **Learned skills** — file-backed, runnable skill packages under `.knowl/skills/`.
@@ -261,6 +262,8 @@ knowl doctor                        # verify readiness
 
 `KNOWL.md` is the canonical full workflow; `AGENTS.md` carries the synchronized managed reference; `CLAUDE.md` imports `@KNOWL.md` and `GEMINI.md` imports `@./KNOWL.md` via native imports. Start a new agent session after setup and trust the repository when the host asks before running project hooks. Rerun `knowl init` after upgrades so imports and hook registrations reload.
 
+> **After upgrading Knowl, rerun `knowl init` for your hosts.** A release can add lifecycle events that an existing configuration does not register, and those hooks stay inert until you rerun it — `knowl doctor` reports the configuration as stale in the meantime. Your database needs no action: schema changes apply automatically the next time any Knowl process opens it. See [CHANGELOG.md](CHANGELOG.md) for what a given version changed.
+
 ---
 
 ## ⌨️ CLI reference
@@ -408,13 +411,43 @@ knowl task finish <task-id> "Verified search UI implementation"
 
 `knowl init` installs **verified** project-local hooks for Codex CLI, Claude Code, and Cursor. Lifecycle hooks call short-lived `knowl agent-hook <host> <event>` processes that normalize vendor payloads into bounded session events. MCP tools use a separate host-spawned `knowl serve` process — hooks never launch or manage `serve`.
 
-- **SessionStart** is the sole automatic retrieved-memory injection.
-- **Claude Code** additionally gets a fixed prompt-time guidance card (`knowl agent-reminder claude --json`) and a throttled continuation reminder after every eighth accepted tool event in a turn. Neither reads the prompt or opens the database.
+- **SessionStart** injects retrieved memory for the main session; **SubagentStart** does the same for each spawned Claude Code subagent, at half the context budget.
+- **Claude Code** additionally gets a fixed prompt-time guidance card (`knowl agent-reminder claude --json`) and a drift-adaptive continuation reminder: it fires only after 12 consecutive accepted tool events that ignored Knowl, and any Knowl tool call resets the counter. An agent actively using memory never sees it. Neither reads the prompt.
+- **Memory that changes mid-session** is reported on the next tool event, per agent. See [Subagent memory & change notification](#subagent-memory--change-notification).
 - On a **hard-stop failure**, Knowl stores a host-scoped `pending_handoff` state item; the next matching-host SessionStart injects it once, then archives it.
 
 Raw prompts, transcripts, stdout/stderr, and environment variables are **never** retained. Malformed or secret-bearing payloads are rejected; duplicate stop events are idempotently dropped; stale sessions recover at the next session start. Knowl never guesses or writes an unverified host configuration.
 
 > Unsupported hosts keep full MCP access; `knowl task run` is the manual fallback. Gemini uses native `@./KNOWL.md` imports and stays on the manual loop.
+
+### Subagent memory & change notification
+
+Parallel agents on one machine all open the same `.knowl/knowl.db`. Nothing is replicated, so there is nothing to merge — but an agent that loaded a snapshot at startup will happily keep reasoning from it while a sibling rewrites the very decision it depends on. That is cache invalidation, not synchronization, and Knowl treats it as such.
+
+**Subagents get their own memory.** `SessionStart` fires once per session, so a spawned Claude Code subagent never sees it; subagents get a separate `SubagentStart` event instead. Knowl registers that event, so each subagent starts with its own snapshot, capped at half the normal context budget because fan-out multiplies whatever a subagent costs.
+
+**Each agent gets its own identity.** Subagent hook events carry an `agent_id`, which Knowl uses as the binding scope. Every subagent therefore has an independent watermark *and* an independent reminder counter, isolated from its siblings and from the main thread.
+
+**Changed memory is reported once, to whoever did not write it.** Every accepted tool event compares a per-agent watermark against the latest knowledge commit. When it has moved, the agent gets a compact card naming what changed:
+
+```
+KNOWL CHANGED: 2 items since you last looked.
+- decision: Session bindings are scoped per subagent
+- fact (update): Vector search falls back to BM25 when no model is cached
+Call knowl_query before relying on earlier memory in these areas.
+```
+
+Titles only — enough to decide whether the change matters, with `knowl_query` for the content. At most five lines, titles truncated to 90 characters, and a corrected item is marked with its action so a supersede is never mistaken for a new note.
+
+Three properties make it cheap enough to run on every tool call:
+
+- **Nothing changed costs nothing.** The check is one integer comparison on a connection the hook already has open and already writes to. No card is emitted, so no tokens are spent.
+- **It replaces the continuation reminder** when both would fire, rather than adding to it, and delivering it resets the drift counter — the agent already has its reason to re-query.
+- **It never reports your own writes back to you.** A new commit is recognised as the caller's own by matching the arguments of the call that produced it, so storing a fact does not notify you about it. No extra bookkeeping, and no attribution column.
+
+**Host coverage.** **Claude Code** gets the full behaviour. **Codex** and **Cursor** maintain the watermark but emit no card, pending verification that they accept mid-turn context on tool events. Host-neutral integrations receive the same information as `changes` in the `knowl agent-hook … --json` result, which needs no host protocol at all.
+
+**Known limits.** A sibling commit that lands between your own write and its hook event is absorbed silently. Knowl used through the CLI rather than MCP appears to the hook as a shell command, so your own CLI write is reported back to you as foreign.
 
 ### Evidence & provenance
 
@@ -565,6 +598,8 @@ Claude Code's fixed prompt-time card is intentionally cheap: it emits static wor
 <div align="center">
 <img src="docs/assets/benchmark-overhead.svg" alt="Always-on guidance footprint: 424 tokens, 1695 characters, 11 lines, 0 database reads" width="82%" />
 </div>
+
+The two mid-turn cards are smaller by design and neither is constant overhead. The continuation reminder is a single 302-character line that fires only after 12 consecutive tool events which ignored Knowl. The change card is emitted only when memory actually moved, and is bounded by construction — five item lines, titles truncated to 90 characters — so it stays under roughly 600 characters at its largest and costs nothing on a session where nothing changed.
 
 Reproduce the card and its size:
 
