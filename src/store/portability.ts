@@ -6,6 +6,8 @@ import { listAssertions } from './assertions.js';
 import { getClient } from './database.js';
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { listEvidenceForItem } from './evidence-repository.js';
+import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
+import type { KnowledgeItem } from '../core/types.js';
 
 async function skillFiles(root: string, directory: string, base = directory): Promise<Array<{ path: string; content: string }>> {
   const files: Array<{ path: string; content: string }> = [];
@@ -60,6 +62,7 @@ export async function importKnowledge(inputPath: string, options: { dryRun?: boo
   const links = records.filter(record => record.type === 'knowledge_evidence').map(record => record.link);
   const skills = records.filter(record => record.type === 'skill_package');
   const client = getClient();
+  const written: KnowledgeItem[] = [];
   let inserted = 0; let skipped = 0; let conflicts = 0;
   for (const item of items) {
     validateKnowledgeWrite({ title: item.title, content: item.content, reasoning: item.reasoning, source: item.source, affectedPaths: item.affectedPaths });
@@ -78,6 +81,7 @@ export async function importKnowledge(inputPath: string, options: { dryRun?: boo
     for (const item of items) {
       const existing = await client.execute({ sql: 'SELECT 1 FROM knowledge_items WHERE id = ?', args: [item.id] });
       if (existing.rows[0]) continue;
+      written.push(item as KnowledgeItem);
       await client.execute({ sql: `INSERT INTO knowledge_items (id, category, status, title, content, reasoning, alternatives, tags, source, source_commit, affected_paths, content_hash, freshness, confidence, conflict_key, conflict_scope, conflict_exclusive, superseded_by_id, version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, args: [item.id, item.category, item.status, item.title, item.content, item.reasoning ?? null, item.alternatives ? JSON.stringify(item.alternatives) : null, item.tags ? JSON.stringify(item.tags) : null, item.source ?? null, item.sourceCommit ?? null, item.affectedPaths ? JSON.stringify(item.affectedPaths) : null, item.contentHash ?? null, item.freshness, item.confidence, item.conflictKey ?? null, item.conflictScope ? JSON.stringify(item.conflictScope) : null, item.conflictExclusive ? 1 : 0, item.supersededById ?? null, item.version, item.createdAt, item.updatedAt] });
     }
     for (const entry of evidence) await client.execute({ sql: 'INSERT OR IGNORE INTO evidence (id, type, locator, content_hash, excerpt, observed_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [entry.id, entry.type, entry.locator, entry.contentHash ?? null, entry.excerpt ?? null, entry.observedAt, entry.metadata ? JSON.stringify(entry.metadata) : null] });
@@ -95,5 +99,14 @@ export async function importKnowledge(inputPath: string, options: { dryRun?: boo
     await client.execute('ROLLBACK;');
     throw error;
   }
+
+  // Every other write path indexes on write. Import wrote raw SQL and skipped this, so
+  // imported knowledge was invisible to vector search -- the primary retrieval path --
+  // until someone ran `knowl reindex --vectors` by hand. FTS was never affected because
+  // bootstrap defines insert/update/delete triggers for it; vectors need a model, so no
+  // trigger can cover them. Runs after COMMIT so a rolled-back import indexes nothing,
+  // and stays best-effort: a project without vectors enabled simply stays on BM25.
+  await indexKnowledgeItemsBestEffort('local', written);
+
   return { inserted, skipped, conflicts, applied: true };
 }
