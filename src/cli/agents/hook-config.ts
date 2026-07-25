@@ -1,13 +1,16 @@
 import { readTextIfExists, MergeStatus, writeWithBackup } from './files.js';
 import { HookHost } from './host-hook.js';
+import { hostProfile } from './hosts/index.js';
 
 type NestedHook = { type: 'command'; command: string; timeout: number; statusMessage: string };
 type NestedEntry = { matcher: string; hooks: NestedHook[] };
 type CursorEntry = { command: string; timeout: number };
 
-export const CODEX_HOOK_EVENTS = ['SessionStart', 'PostToolUse', 'PostToolUseFailure', 'PreCompact', 'Stop'] as const;
-export const CLAUDE_HOOK_EVENTS = ['SessionStart', 'SubagentStart', 'PostToolUse', 'PostToolUseFailure', 'PreCompact', 'Stop', 'StopFailure', 'SubagentStop', 'SessionEnd'] as const;
-export const CURSOR_HOOK_EVENTS = ['sessionStart', 'afterShellExecution', 'postToolUse', 'postToolUseFailure', 'afterFileEdit', 'preCompact', 'stop', 'sessionEnd'] as const;
+// One definition per host, in that host's profile. These re-exports keep existing
+// importers working without duplicating the lists.
+export const CODEX_HOOK_EVENTS = hostProfile('codex').hookEvents;
+export const CLAUDE_HOOK_EVENTS = hostProfile('claude').hookEvents;
+export const CURSOR_HOOK_EVENTS = hostProfile('cursor').hookEvents;
 const CLAUDE_PROMPT_EVENT = 'UserPromptSubmit';
 const RETIRED_CURSOR_EVENTS = ['beforeSubmitPrompt'];
 
@@ -93,7 +96,7 @@ export async function mergeNestedHookConfig(
   const hooks = config.hooks && typeof config.hooks === 'object' && !Array.isArray(config.hooks)
     ? config.hooks as Record<string, unknown>
     : {};
-  const events = host === 'codex' ? CODEX_HOOK_EVENTS : CLAUDE_HOOK_EVENTS;
+  const events = hostProfile(host).hookEvents;
   let hadOwnEntry = false;
   const nextHooks = { ...hooks };
   for (const event of events) {
@@ -102,20 +105,22 @@ export async function mergeNestedHookConfig(
     hadOwnEntry ||= filtered.removed;
     nextHooks[event] = [...filtered.entries, nestedEntry(platform, host, event)];
   }
-  const promptCurrent = Array.isArray(hooks[CLAUDE_PROMPT_EVENT])
-    ? hooks[CLAUDE_PROMPT_EVENT] as Record<string, any>[]
+  // A host without a declared prompt event never gets a prompt-time reminder handler.
+  const promptEvent = hostProfile(host).promptEvent ?? CLAUDE_PROMPT_EVENT;
+  const promptCurrent = Array.isArray(hooks[promptEvent])
+    ? hooks[promptEvent] as Record<string, any>[]
     : [];
   const withoutLegacy = removeOwnedNestedHandlers(promptCurrent, command => ownsCommand(command, host));
   hadOwnEntry ||= withoutLegacy.removed;
-  const withoutReminder = host === 'claude'
+  const withoutReminder = hostProfile(host).promptEvent
     ? removeOwnedNestedHandlers(withoutLegacy.entries, ownsReminderCommand)
     : { entries: withoutLegacy.entries, removed: false };
   hadOwnEntry ||= withoutReminder.removed;
-  const promptNext = host === 'claude'
+  const promptNext = hostProfile(host).promptEvent
     ? [...withoutReminder.entries, reminderEntry(platform)]
     : withoutReminder.entries;
-  if (promptNext.length > 0) nextHooks[CLAUDE_PROMPT_EVENT] = promptNext;
-  else delete nextHooks[CLAUDE_PROMPT_EVENT];
+  if (promptNext.length > 0) nextHooks[promptEvent] = promptNext;
+  else delete nextHooks[promptEvent];
   const next = { ...config, hooks: nextHooks };
   if (existing !== undefined && equal(config, next)) return 'unchanged';
   await writeWithBackup(configPath, `${JSON.stringify(next, null, 2)}\n`, existing);
@@ -129,14 +134,14 @@ export async function verifyNestedHookConfig(
 ): Promise<boolean> {
   try {
     const config = JSON.parse(await readTextIfExists(configPath) ?? '{}') as Record<string, any>;
-    const events = host === 'codex' ? CODEX_HOOK_EVENTS : CLAUDE_HOOK_EVENTS;
+    const events = hostProfile(host).hookEvents;
     const promptEntries = Array.isArray(config.hooks?.[CLAUDE_PROMPT_EVENT])
       ? config.hooks[CLAUDE_PROMPT_EVENT]
       : [];
     const promptHandlers = promptEntries.flatMap((entry: any) => Array.isArray(entry.hooks) ? entry.hooks : []);
     const noRetiredPromptHandler = !promptHandlers.some((hook: any) => ownsCommand(hook.command, host));
     const reminderHandlers = promptHandlers.filter((hook: any) => ownsReminderCommand(hook.command));
-    const promptValid = host === 'claude'
+    const promptValid = hostProfile(host).promptEvent
       ? reminderHandlers.length === 1 && promptEntries.some((entry: unknown) => equal(entry, reminderEntry(platform)))
       : reminderHandlers.length === 0;
     return noRetiredPromptHandler && promptValid

@@ -1,38 +1,17 @@
-import {
-  KNOWL_CLAUDE_CONTINUATION_REMINDER,
-  KNOWL_CLAUDE_PROMPT_REMINDER,
-} from '../../core/knowl-guidance.js';
+import { KNOWL_CLAUDE_PROMPT_REMINDER } from '../../core/knowl-guidance.js';
+import { hostProfile, isHookHost, HostOutput } from './hosts/index.js';
 
-export interface ClaudePromptReminderOutput {
-  hookSpecificOutput: {
-    hookEventName: 'UserPromptSubmit';
-    additionalContext: string;
-  };
-}
-
-// Alias rather than interface for the implicit index signature — see change-card.ts.
-export type ClaudePostToolReminderOutput = {
-  hookSpecificOutput: {
-    hookEventName: 'PostToolUse';
-    additionalContext: string;
-  };
-};
-
-export function createAgentReminderOutput(host: string): ClaudePromptReminderOutput {
-  if (host !== 'claude') throw new Error(`Unsupported reminder host: ${host}`);
-  return {
-    hookSpecificOutput: {
-      hookEventName: 'UserPromptSubmit',
-      additionalContext: KNOWL_CLAUDE_PROMPT_REMINDER,
-    },
-  };
-}
-
-export function createClaudePostToolReminderOutput(): ClaudePostToolReminderOutput {
-  return {
-    hookSpecificOutput: {
-      hookEventName: 'PostToolUse',
-      additionalContext: KNOWL_CLAUDE_CONTINUATION_REMINDER,
-    },
-  };
+/**
+ * Prompt-time guidance card for hosts that declare a prompt event. The envelope comes
+ * from the host profile, so a host is supported here exactly when it says it can
+ * receive context at turn start.
+ */
+export function createAgentReminderOutput(host: string): HostOutput {
+  const unsupported = new Error(`Unsupported reminder host: ${host}`);
+  if (!isHookHost(host)) throw unsupported;
+  const profile = hostProfile(host);
+  if (!profile.promptEvent) throw unsupported;
+  const output = profile.startContext('turn-start', KNOWL_CLAUDE_PROMPT_REMINDER);
+  if (!output) throw unsupported;
+  return output;
 }

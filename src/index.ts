@@ -56,6 +56,7 @@ import { exportKnowledge, importKnowledge } from './store/portability.js';
 import { synthesizeKnowledge } from './store/synthesis.js';
 import { startViewer } from './viewer/server.js';
 import { createAgentReminderOutput } from './cli/agents/reminder.js';
+import { hostProfile } from './cli/agents/hosts/index.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -1035,7 +1036,7 @@ program
       if (!project) throw new Error('Project not found in database.');
       const result = await handleHostLifecycleEvent(project.id, normalized);
       if (result.hostOutput) console.log(JSON.stringify(result.hostOutput));
-      else if (host !== 'codex' && host !== 'claude') console.log(JSON.stringify(result));
+      else if (!hostProfile(normalized.host).nativeOutput) console.log(JSON.stringify(result));
       await closeDb();
     } catch (error: any) {
       if (error instanceof IncompleteHostHookPayloadError) {
