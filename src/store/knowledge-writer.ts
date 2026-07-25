@@ -110,16 +110,20 @@ function normalizedTitle(item: { title: string }): string {
 }
 
 // Decide whether a detected duplicate should be superseded by the new write rather
-// than causing the new write to be dropped. `state` is inherently "current status",
-// so a *changed* near-duplicate replaces the old one (like decisions do); an explicit
-// `supersedes` id always wins. Facts/constraints/architecture/goals keep coexisting.
+// than causing the new write to be dropped. An explicit `supersedes` id always wins.
+//
+// Otherwise the rule is the same for every category: an identical normalized title with
+// materially different content is "same subject, new information", so the new write
+// supersedes. Dropping it instead would leave the STALE value active and lose the
+// correction with no durable trace -- the worst outcome for a memory system, and the
+// reason this is not restricted to `state`. Supersession is not deletion: the
+// predecessor keeps status 'superseded' and stays queryable via supersededById.
+//
+// Distinct titles (e.g. a work loop's start / checkpoint / finish records) stay side by
+// side even though their text overlaps heavily, and are reported to the caller instead.
 function supersedesDuplicate(input: { category: KnowledgeCategory; title: string; content: string; supersedes?: string }, duplicate: KnowledgeItem): boolean {
   if (input.supersedes && input.supersedes === duplicate.id) return true;
-  // Only a re-report of the *same* state under the *same* title supersedes: "same
-  // thing, new status". Distinct titles (e.g. a work loop's start / checkpoint /
-  // finish records) stay side by side even though their text overlaps heavily.
-  return input.category === 'state'
-    && normalizedTitle(input) === normalizedTitle(duplicate)
+  return normalizedTitle(input) === normalizedTitle(duplicate)
     && normalizedIdentity(input) !== normalizedIdentity(duplicate);
 }
 

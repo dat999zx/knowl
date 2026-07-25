@@ -651,8 +651,10 @@ export function registerTools(
           : await withNamespaceDatabase(namespaceDescriptor(projectRoot!, namespace, config ?? undefined), store);
 
         if (result.action === 'duplicate') {
+          // Say plainly that nothing was written. A caller that skims this as success
+          // loses the content it just tried to store, so name the recovery explicitly.
           return {
-            content: [{ type: 'text', text: `Matched existing ${category} ${result.item.id}; skipped duplicate insert` }],
+            content: [{ type: 'text', text: `NOT STORED — this ${category} closely matches existing item ${result.item.id} ("${result.item.title}"), so nothing was written. If your content is new or corrects that item, call knowl_update on ${result.item.id}, or retry knowl_store with supersedes: "${result.item.id}".` }],
           };
         }
 

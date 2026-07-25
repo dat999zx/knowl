@@ -463,7 +463,11 @@ describe('MCP Server Layer', () => {
 
     expect(res.error).toBeUndefined();
     expect(res.result.isError).toBeUndefined();
-    expect(res.result.content[0].text).toContain('Matched existing fact');
+    // The titles differ, so this is a restatement rather than a correction: nothing is
+    // written. The reply has to read as a non-write, because a caller that mistakes it
+    // for success loses the content it just tried to store.
+    expect(res.result.content[0].text).toContain('NOT STORED');
+    expect(res.result.content[0].text).toContain('knowl_update');
 
     const db = (await import('../../src/store/database.js')).getDb();
     const items = await db.select().from((await import('../../src/store/schema.js')).knowledgeItems);

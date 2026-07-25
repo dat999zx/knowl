@@ -43,16 +43,44 @@ describe('supersede on write', () => {
     expect((await repo.getKnowledgeItem(first.item.id))!.status).toBe('active');
   });
 
-  it('facts still coexist instead of superseding each other', async () => {
+  it('a corrected fact supersedes its same-titled predecessor instead of being dropped', async () => {
     const first = await storeKnowledgeItemDeduped(projectId, {
       category: 'fact', title: 'Cache TTL', content: 'The product cache expires after 5 minutes.',
     });
     const second = await storeKnowledgeItemDeduped(projectId, {
       category: 'fact', title: 'Cache TTL', content: 'The product cache expires after 30 minutes now.',
     });
-    // near-duplicate fact is dropped, and the original stays active (no silent retirement)
-    expect(second.action).toBe('duplicate');
+    // Dropping the new write leaves the STALE value active and loses the correction with
+    // no durable trace. Superseding keeps both: the correction becomes the active answer
+    // and the predecessor stays queryable with status 'superseded'.
+    expect(second.action).toBe('inserted');
+    const old = await repo.getKnowledgeItem(first.item.id);
+    expect(old!.status).toBe('superseded');
+    expect(old!.supersededById).toBe(second.item.id);
+  });
+
+  it('an identical fact re-store is still deduped, not churned', async () => {
+    const first = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Queue driver', content: 'Background jobs run on Redis.',
+    });
+    const repeat = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Queue driver', content: 'Background jobs run on Redis.',
+    });
+    expect(repeat.action).toBe('duplicate');
+    expect(repeat.item.id).toBe(first.item.id);
     expect((await repo.getKnowledgeItem(first.item.id))!.status).toBe('active');
+  });
+
+  it('a differently-titled near-duplicate is still reported rather than superseding', async () => {
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Deploy target', content: 'The web app deploys to Fly.io in the iad region.',
+    });
+    const restated = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Deploy target for web', content: 'The web app deploys to Fly.io in the iad region.',
+    });
+    // Only an exact title match reads as "same subject, new information". A different
+    // title is a restatement, so the caller is told rather than silently retiring an item.
+    expect(restated.action).toBe('duplicate');
   });
 
   it('an explicit supersedes id retires the named item for any category', async () => {
