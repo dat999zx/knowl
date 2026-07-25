@@ -15,6 +15,7 @@ import {
   incrementHostSuccessfulToolCount,
   resetHostSuccessfulToolCount,
 } from './host-session-bindings.js';
+import { bootstrapAgentSession } from './context-bootstrap.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
 
@@ -40,19 +41,26 @@ function bindingKey(input: NormalizedHostHook, scope: 'session' | 'turn'): HostS
     host: input.host,
     projectRoot: input.projectRoot,
     externalSessionId: input.externalSessionId,
-    externalTurnId: scope === 'session' ? '__session__' : input.externalTurnId ?? '__turn__',
+    // A Claude subagent has no turn id but always has an agent id, so its events get
+    // their own row: its own drift counter and its own watermark, isolated from
+    // siblings and from the main thread. Main-thread events keep `__turn__`.
+    externalTurnId: scope === 'session'
+      ? '__session__'
+      : input.agentId
+        ? `__agent__:${input.agentId}`
+        : input.externalTurnId ?? '__turn__',
   };
 }
 
 function hostContextOutput(input: NormalizedHostHook, context: string | undefined): Record<string, unknown> | undefined {
   if (!context) return undefined;
   if (input.host === 'codex' || input.host === 'claude') {
-    return {
-      hookSpecificOutput: {
-        hookEventName: input.event === 'session-start' ? 'SessionStart' : 'UserPromptSubmit',
-        additionalContext: context,
-      },
-    };
+    const hookEventName = input.event === 'session-start'
+      ? 'SessionStart'
+      : input.event === 'agent-start'
+        ? 'SubagentStart'
+        : 'UserPromptSubmit';
+    return { hookSpecificOutput: { hookEventName, additionalContext: context } };
   }
   if (input.host === 'cursor') {
     return {
@@ -116,6 +124,22 @@ async function bootstrapWithHandoff(projectId: string, input: NormalizedHostHook
   };
 }
 
+// Subagent bootstrap deliberately halves the recent-context cap: fan-out multiplies
+// whatever a subagent costs. The operational card is retained, because it is unverified
+// whether MCP instructions reach subagents and a wrong bet there silently disables the
+// workflow, while a wrong bet the other way only costs tokens.
+async function bootstrapAgentContext(projectId: string, input: NormalizedHostHook, sessionId: string) {
+  const bootstrap = await bootstrapAgentSession({
+    projectId,
+    title: input.title ?? 'Agent session (subagent)',
+    agent: String(input.host),
+    sessionId,
+  }, { includeContext: true });
+  const cap = Math.floor(DEFAULT_CONTEXT_MAX_CHARS / 2);
+  const context = bootstrap.context ? truncateText(bootstrap.context, cap) : undefined;
+  return { context, truncated: Boolean(bootstrap.context && bootstrap.context.length > cap) };
+}
+
 async function finalizeFailedStop(projectId: string, input: NormalizedHostHook, sessionId: string) {
   await finishMemorySession(
     sessionId,
@@ -166,6 +190,40 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       contextTruncated: started.truncated,
       hostOutput: hostContextOutput(input, started.context),
     };
+  }
+
+  if (input.event === 'agent-start') {
+    // One memory session per host session, N bindings. The subagent shares the
+    // parent's session_id, so it joins the parent's memory session rather than
+    // creating one that would need separate finalization.
+    const sessionBinding = await findHostSession(bindingKey(input, 'session'));
+    let memorySessionId = sessionBinding?.id;
+    if (!memorySessionId) {
+      // SubagentStart normally arrives after SessionStart, but an event loss must not
+      // leave the subagent unbound. includeContext is false here because
+      // bootstrapAgentContext below composes the subagent's own bounded context.
+      const started = await bootstrapWithHandoff(projectId, input, 'session', false);
+      memorySessionId = started.session.id;
+      await bindHostSession(bindingKey(input, 'session'), memorySessionId);
+    }
+
+    await bindHostSession(bindingKey(input, 'turn'), memorySessionId);
+    const bootstrap = await bootstrapAgentContext(projectId, input, memorySessionId);
+    return {
+      accepted: true,
+      sessionId: memorySessionId,
+      context: bootstrap.context,
+      contextTruncated: bootstrap.truncated,
+      hostOutput: hostContextOutput(input, bootstrap.context),
+    };
+  }
+
+  if (input.event === 'agent-stop') {
+    const agentKey = bindingKey(input, 'turn');
+    const closed = await closeHostSessionBinding(agentKey);
+    // Emits no host output: SubagentStop may block a subagent from stopping and
+    // this never does.
+    return { accepted: closed, ...(closed ? {} : { reason: 'event-loss' as const }) };
   }
 
   if (input.event === 'session-event' || input.event === 'checkpoint') {

@@ -8,6 +8,7 @@ import { handleHostLifecycleEvent } from '../../src/store/host-lifecycle.js';
 import {
   bindHostSession,
   closeHostSessionBinding,
+  findHostSession,
   HostSessionKey,
   incrementHostSuccessfulToolCount,
 } from '../../src/store/host-session-bindings.js';
@@ -701,5 +702,110 @@ describe('host lifecycle orchestration', () => {
       payload: { status: 'finished' },
     }));
     expect(stop.handoff).toBeFalsy();
+  });
+
+  it('binds a subagent to the parent memory session and returns SubagentStart context', async () => {
+    const parent = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'subagent-parent',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+
+    const child = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'agent-start',
+      externalSessionId: 'subagent-parent',
+      externalTurnId: undefined,
+      agentId: 'agent-alpha',
+      agentType: 'Explore',
+      title: 'Agent session (Explore)',
+    }));
+
+    expect(child.accepted).toBe(true);
+    expect(child.sessionId).toBe(parent.sessionId);
+    expect(child.hostOutput).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'SubagentStart',
+        additionalContext: child.context,
+      },
+    });
+    expect(child.context).toContain('KNOWL - RECENT SESSION CONTEXT');
+    // Subagent bootstrap is capped at half DEFAULT_CONTEXT_MAX_CHARS (3000) because
+    // fan-out multiplies whatever a subagent costs.
+    expect(child.context!.length).toBeLessThanOrEqual(1_500);
+  });
+
+  it('routes subagent tool events to an agent-scoped binding, isolated from the parent', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'sibling-session',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+
+    const agentKey: HostSessionKey = {
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'sibling-session',
+      externalTurnId: '__agent__:agent-beta',
+    };
+    const parentTurnKey: HostSessionKey = { ...agentKey, externalTurnId: '__turn__' };
+
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-event',
+      type: 'checkpoint',
+      externalSessionId: 'sibling-session',
+      externalTurnId: undefined,
+      agentId: 'agent-beta',
+      agentType: 'Explore',
+      payload: { summary: 'Grep completed' },
+    }));
+
+    expect(await findHostSession(agentKey)).not.toBeNull();
+    expect(await findHostSession(parentTurnKey)).toBeNull();
+  });
+
+  it('closes only the subagent binding on agent-stop', async () => {
+    const agentKey: HostSessionKey = {
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'agent-stop-session',
+      externalTurnId: '__agent__:agent-gamma',
+    };
+    const sessionKey: HostSessionKey = { ...agentKey, externalTurnId: '__session__' };
+
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'agent-stop-session',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'agent-start',
+      externalSessionId: 'agent-stop-session',
+      externalTurnId: undefined,
+      agentId: 'agent-gamma',
+      agentType: 'Plan',
+    }));
+    expect(await findHostSession(agentKey)).not.toBeNull();
+
+    const stopped = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'agent-stop',
+      externalSessionId: 'agent-stop-session',
+      externalTurnId: undefined,
+      agentId: 'agent-gamma',
+    }));
+
+    expect(stopped.accepted).toBe(true);
+    expect(stopped.hostOutput).toBeUndefined();
+    expect(await findHostSession(agentKey)).toBeNull();
+    expect(await findHostSession(sessionKey)).not.toBeNull();
   });
 });
