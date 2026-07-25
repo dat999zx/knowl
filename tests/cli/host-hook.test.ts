@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { normalizeHostHook } from '../../src/cli/agents/host-hook.js';
+import { IncompleteHostHookPayloadError, normalizeHostHook } from '../../src/cli/agents/host-hook.js';
 
 const ROOT = path.resolve('.knowl-host-hook-test');
 
@@ -236,5 +236,112 @@ describe('host hook normalization', () => {
 
   it('does not treat Gemini MCP support as a verified lifecycle hook host', () => {
     expect(() => normalizeHostHook('gemini', 'SessionStart', {})).toThrow('Unsupported hook host: gemini');
+  });
+
+  it('carries agent identity on subagent tool events and omits it on main-thread events', () => {
+    const subagent = normalizeHostHook('claude', 'PostToolUse', {
+      session_id: 'session-3',
+      agent_id: 'adc54472c7d8cad78',
+      agent_type: 'Explore',
+      cwd: ROOT,
+      tool_name: 'Grep',
+      tool_input: { pattern: 'foo' },
+      tool_response: {},
+    });
+    expect(subagent).toMatchObject({
+      event: 'session-event',
+      externalSessionId: 'session-3',
+      agentId: 'adc54472c7d8cad78',
+      agentType: 'Explore',
+    });
+
+    const mainThread = normalizeHostHook('claude', 'PostToolUse', {
+      session_id: 'session-3',
+      cwd: ROOT,
+      tool_name: 'Grep',
+      tool_input: { pattern: 'foo' },
+      tool_response: {},
+    });
+    expect(mainThread.agentId).toBeUndefined();
+  });
+
+  it('normalizes SubagentStart and SubagentStop, titling the session by agent type', () => {
+    const start = normalizeHostHook('claude', 'SubagentStart', {
+      session_id: 'session-4',
+      agent_id: 'agent-4',
+      agent_type: 'Explore',
+      cwd: ROOT,
+      prompt_id: 'prompt-4',
+    });
+    expect(start).toMatchObject({
+      event: 'agent-start',
+      externalSessionId: 'session-4',
+      agentId: 'agent-4',
+      agentType: 'Explore',
+      title: 'Agent session (Explore)',
+      payload: {},
+    });
+
+    const stop = normalizeHostHook('claude', 'SubagentStop', {
+      session_id: 'session-4',
+      agent_id: 'agent-4',
+      agent_type: 'Explore',
+      cwd: ROOT,
+      last_assistant_message: 'Private subagent output must not be retained',
+    });
+    expect(stop).toMatchObject({ event: 'agent-stop', agentId: 'agent-4' });
+    expect(JSON.stringify(stop)).not.toContain('Private subagent output');
+  });
+
+  it('normalizes a subagent event with no agent type', () => {
+    const result = normalizeHostHook('claude', 'SubagentStart', {
+      session_id: 'session-4b',
+      agent_id: 'agent-4b',
+      cwd: ROOT,
+    });
+
+    expect(result).toMatchObject({
+      event: 'agent-start',
+      agentId: 'agent-4b',
+      title: 'Agent session (subagent)',
+    });
+    expect(result.agentType).toBeUndefined();
+  });
+
+  it('rejects a subagent event with no agent id', () => {
+    expect(() => normalizeHostHook('claude', 'SubagentStart', {
+      session_id: 'session-5',
+      cwd: ROOT,
+    })).toThrow(IncompleteHostHookPayloadError);
+  });
+
+  it('extracts attribution keys from Knowl write tool input only', () => {
+    const store = normalizeHostHook('claude', 'PostToolUse', {
+      session_id: 'session-6',
+      cwd: ROOT,
+      tool_name: 'mcp__knowl__knowl_ingest_atoms',
+      tool_input: { atoms: [{ title: 'First atom' }, { title: 'Second atom' }] },
+      tool_response: {},
+    });
+    expect(store.knowlTool).toBe(true);
+    expect(store.knowlChangeKeys).toEqual({ ids: [], titles: ['First atom', 'Second atom'] });
+
+    const update = normalizeHostHook('claude', 'PostToolUse', {
+      session_id: 'session-6',
+      cwd: ROOT,
+      tool_name: 'mcp__knowl__knowl_update',
+      tool_input: { id: 'item-9', supersedeId: 'item-8', title: 'New title' },
+      tool_response: {},
+    });
+    expect(update.knowlChangeKeys).toEqual({ ids: ['item-9', 'item-8'], titles: ['New title'] });
+
+    const nonKnowl = normalizeHostHook('claude', 'PostToolUse', {
+      session_id: 'session-6',
+      cwd: ROOT,
+      tool_name: 'Grep',
+      tool_input: { title: 'not a knowl call' },
+      tool_response: {},
+    });
+    expect(nonKnowl.knowlChangeKeys).toBeUndefined();
   });
 });

@@ -11,7 +11,9 @@ export type NormalizedHookEventName =
   | 'session-event'
   | 'checkpoint'
   | 'turn-stop'
-  | 'session-stop';
+  | 'session-stop'
+  | 'agent-start'
+  | 'agent-stop';
 
 export interface NormalizedHostHook {
   host: HookHost;
@@ -25,6 +27,16 @@ export interface NormalizedHostHook {
   payload: Record<string, unknown>;
   /** True when this tool event is a Knowl MCP/CLI call — used to reset the drift reminder. */
   knowlTool?: boolean;
+  /** Claude subagent id. Present on every subagent event, absent on main-thread events. */
+  agentId?: string;
+  /** Claude subagent type, e.g. "Explore". Used only to title the binding. */
+  agentType?: string;
+  /**
+   * Titles and ids the caller supplied in its own tool_input, used to recognise
+   * this agent's own writes in new commits. Held in memory for comparison only and
+   * never persisted, so no attribution column is needed.
+   */
+  knowlChangeKeys?: { ids: string[]; titles: string[] };
 }
 
 const MAX_STRING = 2_000;
@@ -72,6 +84,12 @@ function externalIds(host: HookHost, raw: Record<string, unknown>) {
       ? stringValue(raw.turnId)
       : stringValue(raw.turn_id) ?? stringValue(raw.generation_id);
   return { externalSessionId, externalTurnId };
+}
+
+function agentIdentity(raw: Record<string, unknown>) {
+  const agentId = stringValue(raw.agent_id) ?? stringValue(raw.agentId);
+  const agentType = stringValue(raw.agent_type) ?? stringValue(raw.agentType);
+  return { ...(agentId ? { agentId } : {}), ...(agentType ? { agentType } : {}) };
 }
 
 function relativePath(projectRoot: string, value: unknown): string | undefined {
@@ -128,18 +146,41 @@ function commandEvent(projectRoot: string, raw: Record<string, unknown>): Pick<N
   return { type: 'command', payload: { command, exitCode } };
 }
 
-function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'knowlTool'> {
+const MAX_CHANGE_KEYS = 20;
+const MAX_CHANGE_KEY_LENGTH = 200;
+
+const changeKey = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.length > 0 ? value.slice(0, MAX_CHANGE_KEY_LENGTH) : undefined;
+
+/**
+ * Pull the ids and titles this call wrote from its own tool_input. A new commit whose
+ * changes match one of these is the caller's own work and must not be reported back.
+ */
+function knowlChangeKeys(input: Record<string, unknown>): { ids: string[]; titles: string[] } {
+  const ids = [changeKey(input.id), changeKey(input.supersedeId), changeKey(input.supersedes)]
+    .filter((value): value is string => Boolean(value));
+  const titles = [changeKey(input.title)].filter((value): value is string => Boolean(value));
+  const atoms = Array.isArray(input.atoms) ? input.atoms : [];
+  for (const atom of atoms) {
+    const title = changeKey(recordValue(atom)?.title);
+    if (title) titles.push(title);
+  }
+  return { ids: ids.slice(0, MAX_CHANGE_KEYS), titles: titles.slice(0, MAX_CHANGE_KEYS) };
+}
+
+function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'knowlTool' | 'knowlChangeKeys'> {
   const input = toolInput(raw);
   const toolName = stringValue(raw.tool_name) ?? stringValue(raw.toolName) ?? '';
   const knowlTool = /knowl/i.test(toolName);
+  const changeKeys = knowlTool ? { knowlChangeKeys: knowlChangeKeys(input) } : {};
   const isShell = host === 'cursor'
     ? eventName === 'afterShellExecution'
     : toolName.toLocaleLowerCase() === 'bash' || toolName.toLocaleLowerCase() === 'shell';
-  if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, knowlTool };
+  if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, knowlTool, ...changeKeys };
 
   const paths = changedPaths(projectRoot, { ...raw, ...input });
-  if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths }, knowlTool };
-  return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) }, knowlTool };
+  if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths }, knowlTool, ...changeKeys };
+  return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) }, knowlTool, ...changeKeys };
 }
 
 function failurePayload(raw: Record<string, unknown>, failed: boolean): Record<string, unknown> {
@@ -205,6 +246,7 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
   const normalizedHost = host as HookHost;
   const projectRoot = requireProjectRoot(raw);
   const ids = externalIds(normalizedHost, raw);
+  const agent = agentIdentity(raw);
   if (normalizedHost === 'generic') return normalizeGeneric(eventName, raw, projectRoot, ids);
 
   const eventMap: Record<string, NormalizedHookEventName> = normalizedHost === 'codex' || normalizedHost === 'claude'
@@ -212,6 +254,7 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
         SessionStart: 'session-start', UserPromptSubmit: 'turn-start', PostToolUse: 'session-event',
         PostToolUseFailure: 'session-event', PreCompact: 'checkpoint', Stop: 'turn-stop',
         StopFailure: 'turn-stop', SessionEnd: 'session-stop',
+        SubagentStart: 'agent-start', SubagentStop: 'agent-stop',
       }
     : {
         sessionStart: 'session-start', beforeSubmitPrompt: 'turn-start', afterShellExecution: 'session-event',
@@ -222,6 +265,18 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
   if (!event) throw new Error(`Unsupported ${normalizedHost} hook event: ${eventName}`);
   if (event === 'session-start' || event === 'turn-start') {
     return { host: normalizedHost, event, ...ids, projectRoot, title: event === 'turn-start' ? 'Agent turn' : 'Agent session', payload: {} };
+  }
+  if (event === 'agent-start' || event === 'agent-stop') {
+    if (!agent.agentId) throw new IncompleteHostHookPayloadError('Subagent hook payload requires agent_id.');
+    return {
+      host: normalizedHost,
+      event,
+      ...ids,
+      ...agent,
+      projectRoot,
+      title: `Agent session (${agent.agentType ?? 'subagent'})`,
+      payload: {},
+    };
   }
   if (event === 'checkpoint') {
     const summary = stringValue(raw.summary);
@@ -252,7 +307,7 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
   if (eventName === 'PostToolUseFailure' || eventName === 'postToolUseFailure') {
     return { host: normalizedHost, event, ...ids, projectRoot, type: 'error', status: 'failed', payload: { message: stringValue(raw.error) ?? 'Tool failed' } };
   }
-  return { host: normalizedHost, event, ...ids, projectRoot, ...toolEvent(normalizedHost, eventName, projectRoot, raw) };
+  return { host: normalizedHost, event, ...ids, ...agent, projectRoot, ...toolEvent(normalizedHost, eventName, projectRoot, raw) };
 }
 
 export function normalizeHostHook(host: string, eventName: string, raw: Record<string, unknown>): NormalizedHostHook {
