@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-25
 
-**Status:** Approved, with one open blocker (see [Open blocker](#open-blocker-does-subagentstart-actually-fire))
+**Status:** Approved. No open blockers.
 
 ## Problem
 
@@ -32,7 +32,27 @@ hook calls from main-thread calls." `SessionStart`, by contrast, fires "once per
 subagents get a separate `SubagentStart` event, which also supports `additionalContext` and
 matches on agent type.
 
-So the hook channel *is* available to subagents, and it supplies exact per-agent identity.
+Confirmed empirically on 2026-07-25 by registering a raw-payload dump handler on
+`SubagentStart`, `SubagentStop`, and `PostToolUse`, then spawning an `Explore` subagent
+(Knowl item `14195a48267d4d84`):
+
+| Observation | Result |
+| --- | --- |
+| `SubagentStart` fires | Yes — `session_id`, `transcript_path`, `cwd`, `prompt_id`, `agent_id`, `agent_type`, `hook_event_name` |
+| `SubagentStop` fires | Yes — adds `permission_mode`, `effort`, `stop_hook_active`, `agent_transcript_path`, `last_assistant_message`, `background_tasks`, `session_crons` |
+| Subagent `PostToolUse` | Carries `agent_id` and `agent_type` (observed `agent_id="adc54472c7d8cad78"`, `agent_type="Explore"`) |
+| Main-session tool calls | Carry **no** `agent_id` |
+| `session_id` | Shared — subagent events carry the parent's session id |
+| Ordering | `SubagentStart` fires before the subagent's first `PostToolUse` |
+| `tool_input` | Present on `PostToolUse` |
+
+So the hook channel is available to subagents, it supplies exact per-agent identity, and
+bootstrap is guaranteed to precede the first watermark check.
+
+Two design choices rest directly on these payloads. Shared `session_id` is what makes "one
+memory session, N bindings" correct rather than merely convenient. And the absence of
+`agent_id` on main-session events is what keeps the non-agent binding path alive — see
+[Agent-scoped binding key](#agent-scoped-binding-key).
 
 ### Subagents currently receive no bootstrap at all
 
@@ -125,6 +145,24 @@ The column's real meaning is "sub-session scope key"; a comment saying so costs 
 
 This also fixes the live bug where siblings corrupt each other's drift counter.
 
+**The non-agent branch stays.** The probe confirms main-session tool calls carry no
+`agent_id`, so main-thread events continue to key on `__turn__` or a host turn id exactly as
+today. What the probe *does* retire is any subagent-side fallback: a subagent event always
+carries `agent_id`, so agent scope never needs to degrade to session or turn scope, and no
+code should be written for that case.
+
+**`agent_type` is used for one thing only: naming.** The binding title for an agent-scope row
+becomes `Agent session (<agent_type>)`, which makes `host_session_bindings` and the memory
+session event log readable when eight subagents are live — worth the zero marginal cost, since
+the field is already in the payload.
+
+Gating bootstrap by `agent_type` — skipping the snapshot for cheap read-only agents like
+`Explore` — is explicitly rejected. Agent types are user- and plugin-definable, so any
+built-in skip list is guesswork that silently blinds whichever agent the user most wants
+informed, and "read-only" is a property of a prompt rather than of a type. If subagent
+bootstrap cost later proves to matter, the honest lever is the context cap, which is already
+a knob.
+
 ### Two new events
 
 `SubagentStart` normalizes to a new event `agent-start`; `SubagentStop` to `agent-stop`.
@@ -157,41 +195,35 @@ decides it: if the assumption is wrong, omitting the card silently disables the 
 every subagent, while including it merely costs tokens. Halving recent context recovers most
 of the cost, since fan-out multiplies whatever a subagent bootstrap costs.
 
-### Open blocker: does `SubagentStart` actually fire?
+### Verified payload contract
 
-**This is unresolved and must not be assumed.** No code in Section 1 may be built until it
-is settled empirically.
+`SubagentStart` and `SubagentStop` both fire, and the implementation may rely on the payload
+fields listed under
+[Subagents fire `PostToolUse` but not `SessionStart`](#subagents-fire-posttooluse-but-not-sessionstart).
+Concretely, `normalizeHostHook` may treat as guaranteed:
 
-Static evidence is strong but not conclusive. The installed `claude.exe` contains
-`executeSubagentStartHooks` in the same dispatch table as `executeSessionStartHooks`,
-`executeStopHooks`, and `executeUserPromptSubmitHooks` — a handler implementation, not a
-type-union entry. Adjacent strings are reachable only while executing that path:
-`"SubagentStart hooks cancelled (control stream closed)"`, `hook_blocking_error`,
-`hook_additional_context`, and `agent '`. The last two indicate `additionalContext` is
-honoured there. `agent_id` also appears in the binary.
+- `agent_id` on every subagent event, including `PostToolUse`, and absent on main-thread
+  events. It is the binding-scope discriminator.
+- `agent_type` on `SubagentStart` and subagent `PostToolUse`.
+- `session_id` shared with the parent, which is how `agent-start` locates the parent memory
+  session.
+- `cwd`, so `requireProjectRoot` resolves without needing `workspace_roots`.
+- `SubagentStart` arriving before the subagent's first `PostToolUse`, so a bootstrapped
+  watermark always precedes the first change check.
 
-What this does not establish is that *our* config shape is correct: matcher semantics and
-exact payload field names remain unconfirmed. Registration alone proves nothing about
-firing.
+Registration alone proves nothing about firing, which is why this was probed rather than
+inferred; corroborating strings in the installed `claude.exe`
+(`executeSubagentStartHooks` in the same dispatch table as `executeSessionStartHooks`, plus
+`"SubagentStart hooks cancelled (control stream closed)"` and `hook_additional_context`) are
+consistent with the probe but were not sufficient on their own.
 
-The check, which cannot run in-session because hook configuration is snapshotted at session
-startup:
-
-1. Register a no-op `SubagentStart` handler that appends its raw stdin payload to a file.
-2. Restart the session so the new configuration is snapshotted.
-3. Spawn a subagent.
-4. Confirm the handler fired, and confirm `agent_id` is present in the recorded payload
-   along with `cwd` or `workspace_roots` and `session_id`.
-5. Repeat for `SubagentStop`.
-
-If `SubagentStart` does not fire, Section 1 degrades to agent-scoped identity only: subagents
-still get their own binding row and watermark on their first `PostToolUse`, initialized to
-the head at that moment, and receive no bootstrap snapshot. Section 2 works unchanged under
-that degradation.
-
-One assumption behind the original scepticism was checked and did not hold: the binary also
-contains `executeStopFailureHooks`, and `PostToolUseFailure` sits in the same event-name
-table as every other event, so `CLAUDE_HOOK_EVENTS` is not carrying dead names.
+Two related assumptions were checked and did not hold. The binary also contains
+`executeStopFailureHooks`, and `PostToolUseFailure` sits in the same event-name table as
+every other event, so `CLAUDE_HOOK_EVENTS` is not carrying dead names. And hook configuration
+is **not** snapshotted at session start: the probe's own handlers were written to
+`.claude/settings.local.json` and fired seconds later in the same session with no restart.
+Hook-config changes therefore take effect live, which means the `mergeNestedHookConfig`
+cleanup path must stay correct for a session already in flight, not merely for the next one.
 
 ## Section 2: watermark and trigger
 
@@ -359,9 +391,13 @@ table-driven:
   verbs, `itemId` dedup to the latest action, `before.title` fallback, and a change with
   neither title being dropped from lines but counted in the header.
 - Agent-scope key derivation from `agent_id`, including the main-thread case where it is
-  absent.
-- `agent-start` binding to the parent's memory session rather than creating a new one, and
-  `agent-stop` closing only its own row.
+  absent and the key must remain `__turn__`.
+- `agent_type` reaching the binding title as `Agent session (<agent_type>)`, and a subagent
+  event missing `agent_type` still binding successfully.
+- `agent-start` binding to the parent's shared `session_id` memory session rather than
+  creating a new one, and `agent-stop` closing only its own row.
+- `mergeNestedHookConfig` remaining idempotent across the two new event registrations, since
+  hook config takes effect live rather than at next session start.
 - Sibling isolation: two agent-scope rows must maintain independent watermarks and drift
   counters.
 
