@@ -46,7 +46,11 @@ describe('portability', () => {
 
     const importer = (portability as any).importKnowledge;
     expect(importer).toBeTypeOf('function');
-    expect(await importer(EXPORT_PATH, { dryRun: true })).toMatchObject({ inserted: 0, skipped: 1, applied: false });
+    // A dry run writes nothing, so every count is zero and the projection lives in
+    // `wouldApply` rather than being reported as though it happened.
+    expect(await importer(EXPORT_PATH, { dryRun: true })).toMatchObject({
+      inserted: 0, identical: 0, applied: false, wouldApply: { identical: 1 },
+    });
     await closeDb();
     await fs.mkdir(path.join(TARGET, '.knowl'), { recursive: true });
     await initDb(TARGET);
@@ -71,6 +75,98 @@ describe('portability', () => {
       .split('\n').filter(Boolean).map(line => JSON.parse(line));
     const tombstones = records.filter(record => record.type === 'tombstone');
     expect(tombstones.map(record => record.tombstone.id)).toContain(doomed.id);
+  });
+
+  it('applies new items even when another item diverged', async () => {
+    // The defect this replaces: one divergent item discarded the whole import, so
+    // unrelated new knowledge could never land on a machine that had done any work.
+    const shared = await createKnowledgeItem('local', {
+      category: 'fact', title: 'Shared fact', content: 'Original content.',
+    });
+    const target = path.join(TARGET, 'round-trip.jsonl');
+    await portability.exportKnowledge('local', target, TARGET);
+
+    await updateKnowledgeItem(shared.id, { content: 'Edited locally.' });
+
+    const result = await portability.importKnowledge(target, { projectRoot: TARGET, onDivergence: 'skip' });
+
+    expect(result.applied).toBe(true);
+    expect(result.conflicts).toBe(0);
+    expect(result.keptLocal).toBe(1);
+    expect(result.divergent[0]).toMatchObject({ id: shared.id, taken: 'local' });
+    expect((await getKnowledgeItem(shared.id))!.content).toBe('Edited locally.');
+  });
+
+  it('adopts a newer incoming item verbatim so both sides converge', async () => {
+    const item = await createKnowledgeItem('local', {
+      category: 'fact', title: 'Convergent fact', content: 'Peer wrote this.',
+    });
+    const target = path.join(TARGET, 'converge.jsonl');
+    await portability.exportKnowledge('local', target, TARGET);
+    const exported = (await fs.readFile(target, 'utf8'))
+      .split('\n').filter(Boolean).map(line => JSON.parse(line))
+      .find(record => record.type === 'item' && record.item.id === item.id)!.item;
+
+    await updateKnowledgeItem(item.id, { content: 'Stale local copy.' });
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET updated_at = ? WHERE id = ?',
+      args: ['2020-01-01T00:00:00.000Z', item.id],
+    });
+
+    const result = await portability.importKnowledge(target, { projectRoot: TARGET, onDivergence: 'newer' });
+
+    expect(result.applied).toBe(true);
+    expect(result.updated).toBe(1);
+    // Verbatim adoption is what makes a second round classify this as identical instead
+    // of manufacturing a new winner and ping-ponging forever.
+    const local = await getKnowledgeItem(item.id);
+    expect(local!.contentHash).toBe(exported.contentHash);
+    expect(local!.updatedAt).toBe(exported.updatedAt);
+    expect(local!.version).toBe(exported.version);
+
+    const second = await portability.importKnowledge(target, { projectRoot: TARGET, onDivergence: 'newer' });
+    expect(second.updated).toBe(0);
+    expect(second.identical).toBeGreaterThan(0);
+  });
+
+  it('fails the whole import only under the fail policy', async () => {
+    const item = await createKnowledgeItem('local', {
+      category: 'fact', title: 'Fail policy fact', content: 'Original.',
+    });
+    const target = path.join(TARGET, 'fail-policy.jsonl');
+    await portability.exportKnowledge('local', target, TARGET);
+    await updateKnowledgeItem(item.id, { content: 'Diverged.' });
+
+    const result = await portability.importKnowledge(target, { projectRoot: TARGET, onDivergence: 'fail' });
+
+    expect(result.applied).toBe(false);
+    expect(result.conflicts).toBe(1);
+    // Nothing was written, so every count must say so.
+    expect(result.inserted).toBe(0);
+    expect(result.updated).toBe(0);
+  });
+
+  it('replays a tombstone only when the local copy is older than the delete', async () => {
+    const removed = await createKnowledgeItem('local', {
+      category: 'fact', title: 'Deleted on peer', content: 'Gone over there.',
+    });
+    const target = path.join(TARGET, 'tombstone-replay.jsonl');
+    await portability.exportKnowledge('local', target, TARGET);
+    const stream = (await fs.readFile(target, 'utf8')).split('\n').filter(Boolean);
+    const body = stream.slice(0, -1)
+      .concat(JSON.stringify({
+        type: 'tombstone',
+        tombstone: { id: removed.id, deletedAt: new Date().toISOString(), reason: 'purged' },
+      }));
+    const joined = `${body.join('\n')}\n`;
+    const sha = createHash('sha256').update(joined).digest('hex');
+    const rebuilt = path.join(TARGET, 'tombstone-replay-2.jsonl');
+    await fs.writeFile(rebuilt, `${joined}${JSON.stringify({ type: 'manifest', sha256: sha })}\n`, 'utf8');
+
+    const result = await portability.importKnowledge(rebuilt, { projectRoot: TARGET, onDivergence: 'newer' });
+
+    expect(result.deleted).toBe(1);
+    expect(await getKnowledgeItem(removed.id)).toBeNull();
   });
 
   it('hands imported items to the embedding indexer', async () => {
