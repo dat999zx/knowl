@@ -23,7 +23,7 @@ can work across repos.
 
 **The end state this document commits to:** one shared database that linked repos read and
 write, with a single owning repo and an explicit visibility per item. That is v2 below. v1 is a
-smaller, zero-schema-change
+smaller, behaviorally inert
 increment that is independently useful and that de-risks v2 — it is a stepping stone, not a
 substitute, and shipping v1 without v2 would not satisfy the request.
 
@@ -56,6 +56,23 @@ the v2 contradictions followed from that conflation. The data model below separa
 | Renaming each local database protects old clients | An old client opens `<repo>/.knowl/knowl.db`, finds nothing there, and creates a **fresh** database — never meeting the version guard. Partial renames are outside the per-import transaction | The canonical path is never renamed. Migration is journalled, copies rather than moves, and flips mode last |
 | One embedding per item is fine | Repos may configure different vector models; the schema stores one embedding row per item (`schema.ts:124`) and search filters by provider and model (`vector.ts:86`), so mismatched items are invisible | The workspace pins one embedding identity; `add` refuses a mismatch, `migrate` re-embeds |
 | Category-driven routing at the MCP surface is sufficient | Synthesis, promotion, and the pipeline write below that surface and would bypass it; mixed `knowl_ingest_atoms` batches have no defined destination | Routing moves below every write surface, and batch writes report a per-atom destination |
+
+A third round, against that revision, found that separating origin from visibility had created
+contracts the document then stated inconsistently, and that the portability layer cannot carry
+the new fields at all.
+
+| Third-round finding | Reality | Design consequence |
+| --- | --- | --- |
+| Visibility, applicability, and mode each had one meaning | The document said foreign repo-private items are never returned in one place and readable in another, and called the applies-to set rank-only in one place and filtering in another | One matrix, stated once. `visibility` moves into the prerequisites so v1 and v2 share one rule |
+| Only the origin repo may mutate an item | `knowl_update` was also described as able to change another repo's item. Worse, `storeKnowledgeItemDeduped` looks up a likely duplicate across the whole database and can supersede it (`knowledge-writer.ts:202-236`), so an ordinary write in one repo can retire another repo's item | Ownership is absolute; duplicate detection is scoped to the writing repo |
+| Migration is safe because it is journalled | Repos stay writable while being exported and imported, and mode was to be flipped across a manifest *and* every repo's config — so a write after export vanishes, and a crash leaves mixed modes | Write fence per repo, snapshot at the fence, and mode stored **only** in the manifest so activation is one atomic write |
+| Export/import can carry promotion and retirement | `content_hash` covers title, content, reasoning, source, and paths only. Equal hashes classify as `identical` and are skipped entirely (`import-policy.ts:15-21`, `portability.ts:130`), so status, freshness, supersession, origin, and visibility never converge | A separate lifecycle fingerprint, compared alongside `content_hash`, with metadata-only updates that leave `content_hash` verbatim |
+| Tombstones make deletes converge | Import plans an insert without consulting local tombstones, and the tombstone upsert overwrites `deleted_at` unconditionally (`portability.ts:193-207`) — a stale export resurrects a newer delete, and an old tombstone rewinds a newer one | Tombstones are consulted before planning inserts and only ever move forward in time |
+| Merging repos collapses duplicate knowledge | Import matches on **id** (`portability.ts:116-118`), and ids are random per repo. Nothing collapses | Corrected. Same-content items from two repos both survive under different owners; collapsing is a retrieval-time concern |
+| `gc undo` can restore a purge | The commit records only the base item (`gc.ts:219`); cascades take assertions, evidence links, telemetry, skill steps, and embeddings with it | Purge is disabled outright in a workspace. Archive and compress remain |
+| Adding two FTS columns is a schema edit | The FTS table and its triggers are `CREATE ... IF NOT EXISTS` (`bootstrap.ts:33-41`), so new columns are silently ignored on every existing database | A versioned drop, recreate, and backfill under the `user_version` guard |
+| Telemetry belongs to the `local` role | `knowledge_access` has a same-database foreign key to `knowledge_items` (`schema.ts:76-79`), so it cannot reference items in another file | Telemetry follows the `knowledge` role, not `local` |
+| Scoping three bootstrap paths covers implicit reads | `knowl_state`, `knowl_recent`, MCP resources, and synthesis are all still broad. `synthesizeKnowledge` reads every item (`synthesis.ts:34`) and would re-emit another repo's private content as new workspace-visible architecture | Every read surface is enumerated and scoped; synthesis inherits its sources' most restrictive visibility |
 
 The first round also found four hazards the original draft did not mention at all: `listKnowledgeItems` accepts a
 `projectId` and **ignores it** (`repository.ts:336-341`), so GC's candidate set is every
@@ -98,6 +115,16 @@ Every row checked against source. Corrections from review are folded in.
 | `getRecentContext` and `startWorkLoop` read ambient with no scope | `context-bootstrap.ts:27`, `work-loop.ts:106` | Session bootstrap auto-injects whatever the active database holds |
 | `knowledge_embeddings` holds one row per item; vector search filters by provider and model | `schema.ts:124-131`, `vector.ts:86-91` | An item embedded with one repo's model is invisible to a repo configured with another |
 | `knowl_update` accepts a bare item id; evidence staleness is evaluated against the current `projectRoot` | `tools.ts:798`, `tools.ts:740-743` | Item-scoped operations have no repo dimension |
+| `storeKnowledgeItemDeduped` finds a likely duplicate across the whole database and may supersede it | `knowledge-writer.ts:202-236` | An ordinary write in one repo can retire another repo's item |
+| Import matches existing rows by **id**, not content | `portability.ts:116-118` | Merging two repos' databases collapses nothing; ids are random per repo |
+| `classifyIncomingItem` returns `identical` on equal `content_hash` and the plan skips it entirely | `import-policy.ts:15-21`, `portability.ts:130` | Status, freshness, supersession, and any new column never propagate |
+| The tombstone upsert overwrites `deleted_at` unconditionally, and inserts are planned without consulting tombstones | `portability.ts:193-207`, `portability.ts:130-131` | Deletes are not monotonic; a stale export resurrects them |
+| The FTS table and its three triggers are `CREATE ... IF NOT EXISTS` | `bootstrap.ts:33-41`, `bootstrap.ts:165-184` | New FTS columns are silently ignored on every existing database |
+| `knowledge_access` has a same-database foreign key to `knowledge_items` | `schema.ts:76-79` | Telemetry cannot live in a different file from the items it references |
+| `synthesizeKnowledge` reads every item in the database | `synthesis.ts:34` | Synthesis would launder another repo's private content into new shared knowledge |
+| GC records only the base item as the before-image; delete cascades take assertions, evidence links, telemetry, skill steps, and embeddings | `gc.ts:219`, `schema.ts:34,60,70,78,92,125` | A purge is not undoable from the commit log |
+| `resolveSymbolEvidence` resolves against the ambient connection's `code_symbols` | `evidence-repository.ts:145-160` | Foreign symbol evidence would be judged against the wrong repo's index |
+| The export header is `version: 1` | `portability.ts:31` | Any new persisted field needs a format bump |
 | Skill atoms carry `source`/`affectedPaths` pointing at `<root>/.knowl/skills/...`, matched by exact `source` equality | `skills/knowledge-index.ts:21,33-38` | A shared skill atom refers to files that do not exist in the reading repo |
 | `host_session_bindings` keys on `(host, project_root, external_session_id, external_turn_id)` | `schema.ts:108-122` | Already multi-root safe. Do not "fix" it |
 | `canonicalProjectRoot` lowercases on Windows only | `project-path.ts:16-19` | Reuse it for every root-keyed identifier or Windows splits one repo in two |
@@ -127,7 +154,8 @@ at query time.
 
 Ship both, in order, as one feature with one vocabulary.
 
-**v1 is federation.** Linked repos read each other's project databases. Zero schema change.
+**v1 is federation.** Linked repos read each other's project databases. Two additive columns
+(P8) and no data movement.
 Fully reversible by deleting a manifest. It delivers "my repos can see each other" — the
 majority of the day-to-day value — and it forces every hard *retrieval* problem (labels
 surviving compaction, fusion across corpora, per-repo caps, silent-failure visibility) to be
@@ -173,10 +201,16 @@ everything uses it. A workspace splits it, so the roles must be named before any
 
 | Role | Always resolves to | Holds |
 | --- | --- | --- |
-| `local` | `<repo>/.knowl/knowl.db` — **never** redirected | Code index, host session bindings, access telemetry, drift watermarks, caches |
+| `local` | `<repo>/.knowl/knowl.db` — **never** redirected | Code index, host session bindings, drift watermarks, caches |
 | `session` | `<repo>/.knowl/session.db` | Session namespace, unchanged |
-| `knowledge` | The project database, or the workspace database in `shared` mode | `knowledge_items` and everything keyed to it |
+| `knowledge` | The project database, or the workspace database in `shared` mode | `knowledge_items` and **everything keyed to it, including access telemetry** |
+| `workspace` | `<workspace-dir>/knowl.db`, writable | `linked` mode's shared-scope writes. In `shared` mode this is the same connection as `knowledge` |
 | `peer` | Another repo's `knowledge` database, opened read-only | Federated reads only |
+
+Telemetry follows `knowledge`, not `local`, because `knowledge_access` has a same-database
+foreign key to `knowledge_items` (`schema.ts:76-79`) and cannot reference rows in another file.
+`linked` mode needs a separate writable `workspace` role because its shared-scope writes go
+somewhere the `knowledge` role does not point.
 
 `resolveStorage(root, config) → { local, session, knowledge, peers[] }` replaces the three
 independent path derivations (`database.ts:21`, `namespaces.ts:12`, `snapshots.ts:17`). Delete
@@ -214,6 +248,12 @@ and refuse to open a database whose version exceeds what this client understands
 shared database defeats every mitigation in v2 — its `CREATE TABLE IF NOT EXISTS` succeeds, it
 sees nothing missing, and it proceeds.
 
+The guard is also what makes the FTS change possible. `knowledge_items_fts` and its three
+triggers are `CREATE ... IF NOT EXISTS` (`bootstrap.ts:33-41`, `bootstrap.ts:165-184`), so
+adding columns to the declaration is a silent no-op on every existing database. Adding them
+requires a versioned drop, recreate, and backfill from `knowledge_items`, gated on
+`user_version` so it runs exactly once.
+
 **P6 — Embeddings follow the database, not the process.** Carry an explicit config root with
 the connection instead of deriving it from `getProjectRoot()`, and add a regression test that a
 write to a non-project namespace produces a `knowledge_embeddings` row. Today that write
@@ -225,6 +265,31 @@ argument and ignores it. Replace the signature with `listKnowledgeItems(filter?:
 `{id: 'local'}`), and `repos` is the scoping that will actually be needed. Leaving a parameter
 that looks like scoping but is not is a trap for every workspace call site added later; GC is
 the one that bites.
+
+**P8 — Ownership and visibility columns, before either version ships.**
+
+```sql
+ALTER TABLE knowledge_items ADD COLUMN origin_repo TEXT;                      -- NULL = not in a workspace
+ALTER TABLE knowledge_items ADD COLUMN visibility  TEXT NOT NULL DEFAULT 'repo';
+```
+
+The revised draft put these in v2 and called v1 "zero schema change". That produced the
+contradiction the third round found: v1 had no way to express "this item is private to my repo",
+so linking necessarily shared everything, while the document elsewhere promised repo-private
+items are never returned across repos.
+
+Visibility is a property of the item, not of the storage topology, so it belongs in both
+versions or neither. Adding it here also means `promote` and category-driven routing work in v1,
+which is what makes v1 a usable product rather than an all-or-nothing switch.
+
+**The slogan is dropped, the guarantee is not.** v1 is no longer "zero schema change". It is
+still behaviorally inert for a project with no workspace: `origin_repo` stays NULL, `visibility`
+stays `'repo'`, and every query returns what it returns today.
+
+`workspace add` backfills `origin_repo` for every existing row in the joining repo's database —
+a single `UPDATE` on a database the user is explicitly linking, at the one moment when the
+answer is unambiguous. Without the backfill, every pre-existing item would be ownerless, which
+means unfilterable, unlabelled, and immune to the ownership rules below.
 
 ## v1 — linked repos read each other
 
@@ -383,41 +448,59 @@ context on every session.
 | `knowl_state` | A workspace section listing the workspace name, mode, and linked repos (v1) |
 | `knowl_context` | Never auto-injects knowledge from another repo. Foreign knowledge is returned only when explicitly queried (v1) |
 | `knowl_store` / `knowl_decide` / `knowl_ingest_atoms` | `namespace: 'workspace'`, defaulted by category (v2) |
-| `knowl_update` | May target an item in another repo; the response names the repo it changed (v2 only — see above) |
+| `knowl_update` | Refuses any item this repo did not originate, in **both** versions, naming the owning repo |
 | `knowl_skill_*` | Unchanged. Skills never cross repos |
 
-### What `repo` and `repos` mean, precisely
+### The visibility matrix
 
-Every item is tagged with the repo that produced it, and every query can be restricted to a set
-of repos. Both need exact semantics, because `origin_repo` and the advisory applies-to set are
-different fields and a filter that quietly matched both would be unpredictable.
+Three fields decide what a query returns, and they were previously described inconsistently in
+different sections. This is the single statement; nothing elsewhere overrides it.
 
-- **`repo` on a returned item is its `origin_repo`** — the one repo that produced it and owns it.
-  Singular, always present when a workspace is active, and it survives to the serialized payload
-  (P4). This is the field an agent reads to decide where a fact applies.
-- **`repos: string[]` filters on `origin_repo`, hard.** `repos: ["server"]` returns only items
-  the server repo produced, including when run from the web repo — "what does the server repo
-  know about auth?" is the useful question, and it must not be diluted by items that merely
-  claim to apply there.
-- **The advisory applies-to set only boosts ranking.** It never adds or removes results. An item
-  the server produced and marked as also applying to `web` ranks higher in `web`'s unfiltered
-  queries; it does not appear under `repos: ["web"]`, because `web` did not produce it. Keeping
-  the filter on one field is what makes the result set explainable.
-- **The default, unfiltered, is the current repo's items plus workspace-visible items from
-  linked repos.** Repo-visibility items from other repos are never returned. Ties break toward
-  the current repo.
+| Item | Query from its own repo | Query from another linked repo | Under `repos: ["<its repo>"]` from elsewhere |
+| --- | --- | --- | --- |
+| `visibility = 'repo'` | Returned | **Never returned** | **Never returned** |
+| `visibility = 'workspace'` | Returned | Returned, labelled with its `repo` | Returned |
+| Listed in the applies-to set of another repo | — | Ranks higher in that repo's unfiltered queries | Unchanged — the set never adds or removes results |
+
+The rule is identical in v1 and v2. That is the reason `visibility` moved into the
+prerequisites: it is a property of the item, and making it depend on which version you are
+running is how the two contradictory sentences got written in the first place.
+
+- **`repo` on a returned item is its `origin_repo`** — the one repo that produced it and owns
+  it. Singular, always present when a workspace is active, and it survives to the serialized
+  payload (P4).
+- **`repos: string[]` is a hard filter on `origin_repo` alone.** `repos: ["server"]` from the
+  web repo returns only what the server repo produced and marked workspace-visible. "What does
+  the server repo know about auth?" must not be diluted by items that merely claim to apply
+  there.
+- **The applies-to set only boosts ranking.** It never adds or removes results, in any mode,
+  under any filter. Keeping the filter on one field is what makes a result set explainable.
+- **The unfiltered default** is the current repo's items at any visibility, plus
+  `visibility = 'workspace'` items from linked repos. Ties break toward the current repo.
 - **Names, not opaque ids.** The identifier appears in every result, in the filter an agent has
   to type, in guidance text, and in CLI output, so it is `server`, not `r_7f3a9c`. An agent
   writing `repos: ["server"]` is far likelier to be correct than one writing an opaque handle,
   and Knowl's retrieval is already tuned around imperfect agent wording.
 
-Names are immutable in v2; rename is `remove` plus `add`. Now that path qualification is cut,
-a real rename would be an `UPDATE` across `origin_repo`, the applies-to table, tombstones, the
-denormalized repo in commit payloads, the FTS shadow columns, the manifest, and each repo's
-config — six places and one JSON rewrite, but no `content_hash` involvement. That is cheap
-enough to reconsider in v3; it is not cheap enough to ship untested in v2.
+### Names are owned, and stay owned
 
-### Visibility
+A name is not just a label — it is the ownership key on every item that repo produced, so a name
+that changes hands silently transfers knowledge.
+
+- Names are immutable. Rename is `remove` plus `add`.
+- `workspace remove <name>` **refuses while that repo still owns items in the workspace**, and
+  names the two ways out: `--transfer-to <repo>` reassigns ownership in one transaction, or
+  `--export-first` writes them out before removal. Neither is a default.
+- A removed name is recorded in the manifest's `retiredNames` and cannot be reused. Otherwise
+  adding a different repo under an old name would silently adopt whatever that name still owns
+  — including rows an interrupted `remove` left behind.
+
+Now that path qualification is cut, a true rename is an `UPDATE` across `origin_repo`, the
+applies-to table, tombstones, the denormalized repo in commit payloads, the FTS shadow columns,
+and the manifest — six places and one JSON rewrite, but no `content_hash` involvement. Cheap
+enough to reconsider in v3, not cheap enough to ship untested.
+
+### Observability
 
 Shipped in v1, not deferred, because every failure mode of query-time fan-out is silent:
 
@@ -447,10 +530,12 @@ knowl workspace add [<path>] [--name <repo-name>]
 knowl workspace join <manifest-path>
 knowl workspace list
 knowl workspace status
-knowl workspace remove <repo-name>
+knowl workspace remove <repo-name> [--transfer-to <repo> | --export-first]
+knowl workspace promote --category <list> | --id <id>...
 ```
 
-v2 adds `migrate [--repo <name>] [--apply]`, `promote`, `unlink`, and `--migrate` on `add`.
+v2 adds `migrate [--repo <name>] [--apply]`, `unlink`, and `--migrate` on `add`. `promote` is v1,
+because `visibility` is (P8) and sharing existing decisions is most of what makes v1 useful.
 
 `knowl init` offers to join a workspace already registered for a sibling path — a registry
 lookup, not a filesystem scan. (The first draft listed filesystem scanning as a non-goal while
@@ -498,10 +583,9 @@ v2 contradiction came from that. They are separated:
 | Is this repo-only or workspace-wide? | `visibility` on `knowledge_items` — `'repo'` \| `'workspace'` | Exactly one, mutable |
 | Which other repos does this apply to? | `knowledge_item_repos` | Zero or more, advisory |
 
-```sql
-ALTER TABLE knowledge_items ADD COLUMN origin_repo TEXT;
-ALTER TABLE knowledge_items ADD COLUMN visibility  TEXT NOT NULL DEFAULT 'repo';
+`origin_repo` and `visibility` ship in P8, ahead of v1. Only the advisory table is new here:
 
+```sql
 CREATE TABLE knowledge_item_repos (          -- applies-to, advisory only
   knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
   repo_name         TEXT NOT NULL,
@@ -515,6 +599,20 @@ GC, export, tombstones, and supersede are all item-global mutable state, so they
 by exactly one repo. A many-to-many key cannot scope them: drift computed in repo A would stale
 an item repo B also claims, and a GC run in A would delete it out from under B. Everything that
 mutates an item is keyed to `origin_repo`, and a repo may only mutate items it originated.
+
+**Ownership is absolute, and one shipped code path violates it by default.**
+`storeKnowledgeItemDeduped` looks for a likely duplicate across the entire database and, on a
+`supersede` resolution, retires it (`knowledge-writer.ts:202-236`). In a shared database an
+ordinary `knowl_store` in the web repo could therefore retire a server-repo item as a
+"duplicate" — no cross-repo intent, no warning, and the write reports success. Duplicate
+detection is scoped to `origin_repo = <writing repo>`. The same applies to
+`checkKnowledgeConflict`: a conflict key held by another repo's item surfaces as a *reported*
+conflict, never as an automatic supersede.
+
+An agent that finds a stale fact in another repo records that finding in its own repo and names
+the other; it does not reach across and edit. Cross-repo correction needs a review step this
+design does not have, and inventing one here would be scope creep on top of an already large
+feature.
 
 **`visibility` persists logical scope independently of the database path.** This is what makes
 `shared` mode coherent: when the project and workspace namespaces resolve to the same file, the
@@ -554,6 +652,23 @@ there is no default. Implicit reads resolve to `origin_repo = <current>` only �
 explicit `knowl_query`, where it arrives labelled and the agent has asked for it. Silently
 widening what lands in an agent's context at session start is how a linked repo turns into an
 injection channel.
+
+Scoping three bootstrap paths is not enough — every read surface has to be enumerated, because
+the ones that are missed are exactly the ones nobody thinks of as retrieval:
+
+| Surface | Today | Scoped to |
+| --- | --- | --- |
+| `getRecentContext`, `composeContext` pinned constraints, `startWorkLoop` | Unscoped ambient | `origin_repo = <current>` |
+| `knowl_state` | Whole database | Current repo, plus a separate workspace section naming the other repos without quoting their content |
+| `knowl_recent` | Whole database | `origin_repo = <current>` |
+| MCP resources | Whole database | `origin_repo = <current>` |
+| `synthesizeKnowledge` | Reads every item (`synthesis.ts:34`) | Current repo's items only |
+
+Synthesis is the dangerous one. It reads the whole table, merges what it finds, and writes a new
+`architecture` item — so under category-driven routing it would take another repo's private
+content, blend it, and publish the result as workspace-visible. Sources are restricted to the
+current repo, and the synthesized item inherits the **most restrictive** visibility among its
+sources: any `repo`-visibility source makes the output `repo`-visibility, regardless of category.
 
 ### One embedding identity per workspace
 
@@ -602,6 +717,19 @@ In `shared` mode the code index remains in the repo-local database, which contin
 exactly this purpose and for `session.db`. Cross-repo symbol search is a v3 candidate, not a
 v2 obligation.
 
+**Evidence staleness follows the owning repo, or returns unknown.** This is a direct consequence
+of the split. Symbol evidence resolves against `code_symbols` on the ambient connection
+(`evidence-repository.ts:145-160`), and that index now lives in each repo's `local` database;
+file evidence needs the owning repo's filesystem root. Evaluating either from the wrong repo
+produces a confident, wrong answer — almost always "stale", because the file or symbol is
+genuinely absent here.
+
+So staleness is computed only for items the current repo owns. For a foreign item it is
+`unknown`, never `stale`, in both versions and both modes — including when the owning repo is
+checked out on this machine, because resolving it would mean opening that repo's `local`
+database mid-query for a field the agent did not ask for. A `stale` flag that is wrong is worse
+than one that is absent: it tells an agent to go re-verify knowledge that is perfectly current.
+
 ### Writes
 
 `namespace: 'workspace'` on `knowl_store` / `knowl_decide` / `knowl_ingest_atoms`. No `scope`
@@ -640,19 +768,30 @@ local database**:
 1. Dry-run by default. Per repo: items, divergences, resulting `origin_repo` and `visibility`,
    embedding re-work required.
 2. Write a journal at `<workspace-dir>/migration.json` recording each repo's state —
-   `pending` → `exported` → `imported` → `done`. The journal, not the filesystem, is the source
-   of truth for what has happened.
-3. **Copy**, do not move: export each repo's knowledge and import it into the workspace with
-   `--on-divergence newer`, setting `origin_repo` and routing `visibility` by category, and
+   `pending` → `fenced` → `exported` → `imported` → `done`. The journal, not the filesystem, is
+   the source of truth.
+3. **Fence the repo before reading it.** A `migrating` marker in its `knowl_meta` makes every
+   knowledge write fail with a message saying migration is in progress. Without the fence a
+   write landing between export and activation is simply lost: it goes into a database that
+   stops being read the moment mode flips, and nothing reports it. The fence is per repo and
+   short-lived, so the other repos stay fully usable.
+4. **Copy, do not move**, from a snapshot taken at the fence: export the repo's knowledge and
+   import it into the workspace, setting `origin_repo`, routing `visibility` by category, and
    re-embedding anything that does not match the pinned embedding identity. Item identity and
-   `content_hash` are untouched, so this is idempotent and safe to re-run after a partial
-   failure — the journal says where to resume.
-4. Mark each repo's local knowledge retired in a `knowl_meta` row and bump its `user_version`.
-   The database stays exactly where it was, still serving the `local` and `session` roles.
-5. **Flip mode last**, in the manifest and every repo's config, only once every repo reports
-   `done`. Until then the workspace is populated but unused, and abandoning the migration costs
-   nothing.
-6. Report the rollback command.
+   `content_hash` are untouched, so this is idempotent and safe to re-run — the journal says
+   where to resume.
+5. Mark the repo's local knowledge retired in `knowl_meta`, bump its `user_version`, and lift
+   the fence. The database stays exactly where it was, still serving `local` and `session`.
+6. **Activate by writing the manifest, once.** Mode lives **only** in `workspace.json`; a repo's
+   `config.json` records which workspace it belongs to and nothing about mode. Activation is
+   therefore a single atomic file write after every repo reports `done`, and there is no state
+   in which some repos are `shared` and others are not. The revised draft flipped mode across
+   the manifest *and* every repo's config, which is a multi-writer cutover with no atomicity —
+   a crash midway left exactly the mixed-mode state that has no recovery procedure.
+7. Report the rollback command.
+
+`promote` and `unlink` use the same journal for the same reason: both move items between
+databases in `linked` mode, and a crash halfway through either one is otherwise unrecoverable.
 
 The revised draft renamed each local database to `knowl.db.pre-workspace`, which defeats the
 version guard it depends on: an old client opening `<repo>/.knowl/knowl.db` would find nothing
@@ -682,9 +821,17 @@ its own history stayed behind in a file nothing reads any more — the single mo
 a user to conclude their memory was deleted. `add` refuses to set `shared` mode for a repo with
 un-migrated local knowledge unless `--migrate` or an explicit `--discard-local` is given.
 
-Divergence between repos is the shipped import problem, not a new one: identical items collapse
-by `content_hash`, and genuine conflicts resolve by `--on-divergence newer` with the same policy
-choices `knowl import` already offers.
+**Correction: merging repos does not collapse duplicates.** An earlier revision of this document
+said identical items collapse by `content_hash`. They do not. Import matches existing rows by
+**id** (`portability.ts:116-118`), and ids are random 16-hex per repo, so two repos that
+independently recorded the same fact produce two rows with different ids that both survive.
+`--on-divergence` never engages, because there is no id collision to adjudicate.
+
+That is the right behavior — each repo genuinely did record it, and each copy keeps its own
+owner, evidence, and history — but it means a migrated workspace contains real duplicates.
+Collapsing them is a retrieval concern, handled by the existing content-hash dedup in
+`queryLayeredKnowledge` and by extending it to `conflict_key`, not a migration concern. The
+migration dry-run reports the count so the number is not a surprise.
 
 **Backfilling existing knowledge into the shared scope.** In `linked` mode, migration is not
 what a user wants — repo-scoped knowledge should stay in its repo. But the motivating story is a
@@ -695,6 +842,9 @@ writes. Without a backfill, linking would share nothing a team has already learn
 knowl workspace promote --category decision,constraint,architecture   # dry-run by default
 knowl workspace promote --id <item-id>...
 ```
+
+`promote` ships in **v1** — `visibility` exists from P8, and backfilling existing decisions is
+most of what makes v1 worth using. The rest of this section is v2.
 
 `promote` sets `visibility = 'workspace'` on selected items the current repo originated. It is a
 one-column update, so it does not touch `content_hash`, does not create duplicates, and does not
@@ -713,17 +863,66 @@ The revised draft's `--copy-back` had undefined behavior for an item claimed by 
 `knowl workspace remove <name>` in v2 leaves that repo's knowledge in the workspace by default
 and prints the export command to retrieve it. It never deletes.
 
+### Portability must carry lifecycle, and deletes must only move forward
+
+Two shipped behaviors in `portability.ts` make the new fields non-convergent, and both have to
+change before `promote`, `unlink --copy-back`, or any cross-machine workspace export can work.
+
+**Metadata-only changes are invisible to import.** `content_hash` covers title, content,
+reasoning, source, and paths. Equal hashes classify as `identical` (`import-policy.ts:15-21`)
+and the plan skips the item entirely (`portability.ts:130`). So promoting an item to
+workspace visibility, retiring it, superseding it, or marking it stale changes nothing an
+export can carry — the receiving side keeps its old copy and the two never converge.
+
+The fix is a second fingerprint, not a wider `content_hash`. Widening it would change every
+existing item's identity and break the verbatim adoption that makes re-import idempotent — the
+same trap that killed path qualification. Instead `lifecycle_hash` covers `status`, `freshness`,
+`superseded_by_id`, `origin_repo`, and `visibility`. `classifyIncomingItem` compares both and
+gains a fourth verdict, `metadata-divergent`, resolved by the existing `newer` policy and
+applied as a metadata-only `UPDATE` that writes `content_hash` verbatim. Content convergence
+behaves exactly as it does today; lifecycle convergence is new.
+
+`confidence` is deliberately excluded — it moves on ordinary use and would make almost every
+item permanently divergent.
+
+**Deletes can currently run backwards.** Import plans an insert without consulting local
+tombstones, so a stale export resurrects an item deleted after that export was taken. And the
+tombstone upsert overwrites `deleted_at` unconditionally (`portability.ts:193-207`), so an old
+tombstone rewinds a newer one. Both are one-line-shaped fixes with real consequences: consult
+tombstones before planning an insert and skip when the tombstone is newer than the incoming
+item's `updated_at`, and make the upsert conditional —
+`DO UPDATE ... WHERE excluded.deleted_at > knowledge_tombstones.deleted_at`.
+
+**The export format bumps to version 2.** The header is `version: 1` (`portability.ts:31`), and
+`origin_repo`, `visibility`, and `lifecycle_hash` are new persisted fields. A version-2 reader
+accepts version-1 files by treating the missing fields as NULL, `'repo'`, and recomputed; a
+version-1 reader must refuse version 2 rather than silently dropping ownership.
+
 ### Operations that must be blocked or scoped in a shared database
 
 | Operation | Today | In a workspace |
 | --- | --- | --- |
 | `restoreSnapshot` | `DELETE FROM knowledge_items` then reinsert (`snapshots.ts:74-89`) | Refused in `shared` mode. It would roll back every repo and pass the integrity audit while doing it |
 | `exportKnowledge` | Exports every item in the active DB (`portability.ts:29`) | Defaults to `origin_repo = <current>`; `--all-repos` is explicit |
-| GC purge | Hard delete plus a tombstone that propagates to peers | `duplicateKey` gains `origin_repo`; cross-repo purge is structurally impossible, not merely off by default. Purge is gated on `isHot` like archive is. `knowl gc undo` ships with this |
+| GC purge | Hard delete plus a tombstone that propagates to peers | **Disabled entirely in a workspace.** Archive and compress remain |
+| `createSnapshot` | Copies the whole active database | In `shared` mode it would write every repo's knowledge into one repo's `.knowl/snapshots/`. Refused unless `--all-repos` |
 | GC candidates | `listKnowledgeItems` ignores scope | Honors it (P7); a repo only collects items it originated, and repos absent from this machine are excluded always |
 | Change notification | Every foreign write notifies | Only changes whose `origin_repo` is the current repo. Hardcoded, not configurable — a knob for a behavior nobody has experienced yet |
 | Implicit context reads | Unscoped ambient (`context-bootstrap.ts:27`, `context-composer.ts:20`, `work-loop.ts:106`) | Required repo scope, `origin_repo = <current>` only |
 | Item mutation | Any item in the open database | A repo may only mutate items it originated |
+| Duplicate detection on write | Scans the whole database and may supersede a match (`knowledge-writer.ts:202-236`) | Scoped to `origin_repo = <writing repo>`; a cross-repo conflict key is reported, never auto-superseded |
+
+**Why purge is disabled rather than scoped.** The earlier revision promised `knowl gc undo`. It
+cannot exist: the commit records only the base item (`gc.ts:219`), while the delete cascades
+take assertions, evidence links, telemetry, skill steps, and embeddings
+(`schema.ts:34,60,70,78,92,125`). Restoring the row restores none of that, and the tombstone
+written alongside would need a cancellation record that has no representation in the format.
+
+Purge exists to reclaim space from genuinely dead knowledge in a single-owner database. In a
+workspace the blast radius crosses an ownership boundary and the recovery story is a fiction, so
+it is switched off — archive and compress already deliver most of the benefit, and both are
+reversible from the commit log. A workspace that genuinely needs purging can unlink a repo and
+purge it locally, where the consequences are visible to whoever owns them.
 
 ### Concurrency
 
@@ -794,7 +993,7 @@ Mitigations, in v2:
 | --- | --- | --- |
 | An old client opens a newer shared database and defeats every schema-level mitigation | Data loss | P5 ships in an earlier release; refuse-to-open-if-newer |
 | Agent applies one repo's fact while working in another | Wrong work, silently | P4 `repo` on the serialized item, tested at the boundary; category-driven scoping; no auto-injection of foreign knowledge |
-| GC purges a cross-repo "duplicate" and propagates the delete to teammates | Data loss | Repo-aware `duplicateKey`, cross-repo purge impossible, purge gated on `isHot`, `gc undo` |
+| GC purges a cross-repo "duplicate" and propagates the delete to teammates | Data loss | Purge disabled in a workspace; archive and compress remain and are reversible from the commit log |
 | Concurrent writers lose updates without any error | Silent loss | `BEGIN IMMEDIATE`, optimistic version checks, a test that detects lost updates specifically |
 | `withDbPath` interleaving files writes into the wrong database | Silent misfiling | P3 explicit connections; a mutex alone is insufficient |
 | Workspace on a synced folder corrupts | Data loss | Runtime lock probe; refuse |
@@ -808,6 +1007,15 @@ Mitigations, in v2:
 | Implicit context assembly pulls another repo's knowledge into an agent at session start | Injection channel | Repo scope is a required parameter on every implicit read; foreign knowledge only via explicit query |
 | Two repos configured with different embedding models cannot see each other's items | Silent retrieval gap | One embedding identity pinned per workspace; `add` refuses a mismatch, `migrate` re-embeds |
 | Writes below the MCP layer bypass routing | Items land with a visibility nobody chose | `routeWrite` lives in `knowledge-writer`, beneath every write surface |
+| An ordinary write in one repo supersedes another repo's item as a "duplicate" | Silent loss of owned knowledge | Duplicate detection and conflict resolution scoped to `origin_repo = <writing repo>` |
+| A write lands between export and activation and is never read again | Silent loss | Per-repo write fence during migration; snapshot taken at the fence |
+| A crash mid-migration leaves some repos shared and some not | Unrecoverable mixed state | Mode lives only in the manifest; activation is one atomic write after every repo reports done |
+| Promotion or retirement never reaches another machine | Divergence that looks like data loss | `lifecycle_hash` compared alongside `content_hash`; metadata-only updates preserve `content_hash` verbatim |
+| A stale export resurrects a deleted item, or an old tombstone rewinds a newer one | Deleted knowledge returns | Tombstones consulted before planning inserts; the upsert only moves `deleted_at` forward |
+| Synthesis launders another repo's private content into shared architecture | Confidentiality break | Sources restricted to the current repo; output inherits the most restrictive source visibility |
+| Foreign items reported stale against the wrong filesystem | Wasted re-verification, distrust of the label | Staleness computed only for owned items; `unknown` otherwise |
+| A removed name is reused and adopts orphaned knowledge | Ownership transfer nobody intended | `remove` refuses while items remain; retired names are reserved |
+| New FTS columns silently ignored on existing databases | Filtering that appears to work and does not | Versioned drop, recreate, and backfill under the `user_version` guard |
 | Weakest repo's secret policy becomes the workspace's | Exposure | Policy in the manifest, enforced at maximum strictness |
 
 ## Testing
@@ -839,6 +1047,23 @@ partition does not roll back the others. A repo with existing knowledge joining 
 already-migrated `shared` workspace is refused without `--migrate`, and with it, every one of
 its items is reachable afterward. `promote` changes visibility without changing `content_hash`
 or item count.
+
+**v2 ownership and convergence.** A `knowl_store` in one repo whose content closely matches
+another repo's item inserts rather than superseding it. `knowl_update` refuses a foreign item by
+name. A write attempted during that repo's migration fence fails with the migration message
+rather than succeeding into a database about to be retired. Killing the process after export but
+before activation leaves mode unflipped and the repo usable. Promoting an item, exporting, and
+importing on a second machine converges — the receiving side sees the new visibility, which is
+the case that fails today. A tombstone newer than an incoming item blocks its insert; an older
+tombstone does not overwrite a newer one. A version-1 reader refuses a version-2 export. Purge
+is unavailable in a workspace. Synthesis run in one repo cannot cite or reproduce another
+repo's `repo`-visibility content. Foreign items report `stale: unknown`, never `stale: true`.
+`remove` refuses while the repo owns items, and a retired name cannot be re-added.
+
+**Read-surface enumeration.** One test per surface in the table above — `knowl_state`,
+`knowl_recent`, MCP resources, synthesis, and the three bootstrap paths — asserting that a
+populated multi-repo database yields only current-repo items. These are separate call sites, so
+a single shared assertion would pass while individual surfaces leak.
 
 **Concurrency.** 8 writers across processes: zero lost updates (asserted by content, not by
 absence of errors), zero escaped `SQLITE_BUSY`, p95 under 50 ms.
