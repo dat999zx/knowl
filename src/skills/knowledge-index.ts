@@ -29,7 +29,7 @@ export async function indexSkillPackage(projectId: string, manifest: SkillManife
 
 export async function recordSkillRun(projectId: string, name: string, succeeded: boolean): Promise<void> {
   const source = skillSourcePath(name);
-  const items = await repo.listKnowledgeItems(projectId);
+  const items = await repo.listKnowledgeItems();
   const item = items.find(candidate =>
     candidate.category === 'skill' &&
     candidate.status === 'active' &&

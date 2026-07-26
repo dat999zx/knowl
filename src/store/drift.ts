@@ -78,7 +78,7 @@ export async function checkKnowledgeDrift(
     apply?: boolean;
   }
 ): Promise<DriftCheckResult> {
-  const items = (await repo.listKnowledgeItems(projectId))
+  const items = (await repo.listKnowledgeItems())
     .filter(item => item.status === 'active');
   const entries = await Promise.all(items.map(async item => {
     const evidence = await listEvidenceForItem(item.id);

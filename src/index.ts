@@ -913,7 +913,7 @@ program
 
       if (result.candidates.length === 0) {
         const staleDays = gcOptions.staleStateDays ?? 60;
-        const items = await repo.listKnowledgeItems(project.id);
+        const items = await repo.listKnowledgeItems();
         const now = new Date();
         const ageOf = (item: any) => Math.floor((now.getTime() - new Date(item.updatedAt).getTime()) / 86_400_000);
         const states = items.filter(item => item.status === 'active' && item.category === 'state');

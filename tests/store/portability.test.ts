@@ -55,7 +55,7 @@ describe('portability', () => {
     await fs.mkdir(path.join(TARGET, '.knowl'), { recursive: true });
     await initDb(TARGET);
     expect(await importer(EXPORT_PATH)).toMatchObject({ inserted: 1, conflicts: 0, applied: true });
-    const imported = (await listKnowledgeItems('local')).find(entry => entry.title === 'Portable decision')!;
+    const imported = (await listKnowledgeItems()).find(entry => entry.title === 'Portable decision')!;
     const links = await getClient().execute('SELECT * FROM knowledge_evidence');
     expect(links.rows).toEqual(expect.arrayContaining([expect.objectContaining({ knowledge_item_id: imported.id })]));
     expect(await listEvidenceForItem(imported.id)).toEqual([expect.objectContaining({ locator: 'tests/portability.test.ts', relationship: 'supports' })]);
