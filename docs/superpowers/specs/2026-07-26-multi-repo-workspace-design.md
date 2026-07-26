@@ -155,7 +155,7 @@ at query time.
 Ship both, in order, as one feature with one vocabulary.
 
 **v1 is federation.** Linked repos read each other's project databases. Two additive columns
-(P8) and no data movement.
+(P9) and no data movement.
 Fully reversible by deleting a manifest. It delivers "my repos can see each other" — the
 majority of the day-to-day value — and it forces every hard *retrieval* problem (labels
 surviving compaction, fusion across corpora, per-repo caps, silent-failure visibility) to be
@@ -189,14 +189,42 @@ repos", so the collision is accepted and the docs say plainly what a Knowl works
 These are correctness preconditions. Each is independently valuable, each is a separate PR, and
 none of them mention workspaces.
 
-**P1 — Retrieval parity, then enable layering.** Give `queryLayeredKnowledge` full parameter
-parity (`category`, `status`, `tags`, `explain`, vector, `asOf`) and a test asserting
-equivalence with the direct path, *then* remove the bypass at `tools.ts:734`. Order matters:
-enabling first activates a path that silently ignores `status` and `category` filters. This
-also fixes a live bug — the `organization` and `global` namespaces are dead code for every
-default-config user today.
+**P1 — One embedding identity, before layering can span anything.** `fc6171e` settled the
+ordering here, and this document previously had it wrong: it treated embedding identity as a v2
+workspace concern and the layering bypass as an independent P1. It is the reverse dependency.
+`searchKnowledgeEmbeddings` filters on provider and model, and that filter is load-bearing
+because cosine similarity across different dimensions is meaningless. A namespace embedded with
+a different model returns zero rows — so removing the bypass without a shared embedding identity
+trades one silent narrowing for another.
 
-**P2 — Named connection roles, one resolver.** Today there is one ambient database and
+`fc6171e` chose disclosure over a wrong fix: the reply now names the skipped namespaces rather
+than letting scope narrow quietly. That disclosure is the marker for this work, and it is
+removed when the identity exists — not before.
+
+So: one embedding identity (provider, model, dtype), pinned per workspace and recorded in the
+manifest, is the first prerequisite. `workspace add` refuses a repo whose vector config differs
+and offers to align it; `migrate` re-embeds anything that does not match; `doctor` reports
+drift. Changing the pinned model is a workspace-wide re-embed and is a v3 command.
+
+**P2 — Retrieval parity, then enable layering.** Give `queryLayeredKnowledge` full parameter
+parity (`category`, `status`, `tags`, `explain`, vector) and a test asserting equivalence with
+the direct path, *then* remove the bypass at `tools.ts:791`. Order matters: enabling first
+activates a path that silently ignores `status` and `category` filters. This also fixes a live
+bug — the `organization` and `global` namespaces are dead code for every default-config user
+today.
+
+`asOf` is no longer part of this. `fc6171e` gave it its own retry-without-category path and
+deliberately keeps access recording off it, since logging time-travel reads would make stale
+items look hot and shield them from GC. Leave that branch alone.
+
+**When a repo is skipped, disclose it the way `fc6171e` already does:** a second content block,
+leaving the first block a bare JSON array so existing callers are unaffected, and the
+`configuredNamespaces` lookup wrapped in `try`/`catch` so a misconfigured optional entry cannot
+fail an otherwise good query. This design previously said skips must be "reported, not
+swallowed" without saying how; there is now a shipped pattern and it should be followed rather
+than reinvented.
+
+**P3 — Named connection roles, one resolver.** Today there is one ambient database and
 everything uses it. A workspace splits it, so the roles must be named before anything moves:
 
 | Role | Always resolves to | Holds |
@@ -223,7 +251,7 @@ The `local` role is why the canonical path is never renamed and why the code ind
 `getProjectRoot()` consumer and classify it as *where the database is* or *which repo I am in* —
 they are about to stop being the same thing, and this is where the schedule slips.
 
-**P3 — Explicit connections, and a read-only open.** Thread a connection handle through the
+**P4 — Explicit connections, and a read-only open.** Thread a connection handle through the
 query path so `getClient()` is never consulted for a namespace operation, and cache connections
 by resolved path instead of closing and reopening. A mutex over a shared mutable "current
 database" pointer does not fix the interleaving, because `run()` bodies read the pointer after
@@ -237,12 +265,12 @@ it unconditionally.
 This is also a straight win today: every namespace query currently closes and reopens the
 database twice.
 
-**P4 — Provenance survives compaction.** Add `repo` to `CompactKnowledgeItem`, populated
+**P5 — Provenance survives compaction.** Add `repo` to `CompactKnowledgeItem`, populated
 whenever a workspace is active, and add `affectedPaths` where the budget allows. Test the
 **serialized** `compactMcpJson` output, not the in-memory item — the compaction boundary is
 where provenance dies.
 
-**P5 — Schema version guard, shipped in a release *before* workspaces.** Set `PRAGMA user_version`
+**P6 — Schema version guard, shipped in a release *before* workspaces.** Set `PRAGMA user_version`
 and refuse to open a database whose version exceeds what this client understands. Wrap
 `migrateLegacyProjectSchema` in a transaction. Without this, the first old client to open a
 shared database defeats every mitigation in v2 — its `CREATE TABLE IF NOT EXISTS` succeeds, it
@@ -254,19 +282,19 @@ adding columns to the declaration is a silent no-op on every existing database. 
 requires a versioned drop, recreate, and backfill from `knowledge_items`, gated on
 `user_version` so it runs exactly once.
 
-**P6 — Embeddings follow the database, not the process.** Carry an explicit config root with
+**P7 — Embeddings follow the database, not the process.** Carry an explicit config root with
 the connection instead of deriving it from `getProjectRoot()`, and add a regression test that a
 write to a non-project namespace produces a `knowledge_embeddings` row. Today that write
 silently produces none, and vector-first ranking then makes it unretrievable.
 
-**P7 — Honest scoping in the repository layer.** `listKnowledgeItems(projectId)` accepts a scope
+**P8 — Honest scoping in the repository layer.** `listKnowledgeItems(projectId)` accepts a scope
 argument and ignores it. Replace the signature with `listKnowledgeItems(filter?: { repos?: string[] })`
 — the vestigial `projectId` carries no information (`getProjectByRootPath` returns a synthetic
 `{id: 'local'}`), and `repos` is the scoping that will actually be needed. Leaving a parameter
 that looks like scoping but is not is a trap for every workspace call site added later; GC is
 the one that bites.
 
-**P8 — Ownership and visibility columns, before either version ships.**
+**P9 — Ownership and visibility columns, before either version ships.**
 
 ```sql
 ALTER TABLE knowledge_items ADD COLUMN origin_repo TEXT;                      -- NULL = not in a workspace
@@ -393,7 +421,7 @@ Reads fan out across linked repos' **project** databases. There is no workspace 
   zero local results when a chatty linked repo fills the window.
 - Ties break toward the current repo. That is not a tunable, and it is the whole of the
   local-preference behavior in v1.
-- Every item carries `repo` through to the serialized response (P4).
+- Every item carries `repo` through to the serialized response (P5).
 - Linked repos that are absent from this machine are skipped, and the skip is *reported*, not
   swallowed. `queryLayeredKnowledge` currently discards errors for optional descriptors, which
   makes "absent" and "empty" indistinguishable — the exact ambiguity behind the support
@@ -468,7 +496,7 @@ running is how the two contradictory sentences got written in the first place.
 
 - **`repo` on a returned item is its `origin_repo`** — the one repo that produced it and owns
   it. Singular, always present when a workspace is active, and it survives to the serialized
-  payload (P4).
+  payload (P5).
 - **`repos: string[]` is a hard filter on `origin_repo` alone.** `repos: ["server"]` from the
   web repo returns only what the server repo produced and marked workspace-visible. "What does
   the server repo know about auth?" must not be diluted by items that merely claim to apply
@@ -535,7 +563,7 @@ knowl workspace promote --category <list> | --id <id>...
 ```
 
 v2 adds `migrate [--repo <name>] [--apply]`, `unlink`, and `--migrate` on `add`. `promote` is v1,
-because `visibility` is (P8) and sharing existing decisions is most of what makes v1 useful.
+because `visibility` is (P9) and sharing existing decisions is most of what makes v1 useful.
 
 `knowl init` offers to join a workspace already registered for a sibling path — a registry
 lookup, not a filesystem scan. (The first draft listed filesystem scanning as a non-goal while
@@ -560,7 +588,7 @@ Two modes:
   repos; cross-cutting knowledge lives in the workspace database where supersede and conflict
   detection work.
 - **`shared`**: the repo's project namespace resolves to the workspace database via
-  `resolveStorage` (P2). One database for knowledge, so there is nothing to fan out to. The
+  `resolveStorage` (P3). One database for knowledge, so there is nothing to fan out to. The
   local database stays at its canonical path serving the `local` and `session` roles — code
   index, host bindings, telemetry, watermarks — and its retired knowledge tables are the
   rollback artifact.
@@ -583,7 +611,7 @@ v2 contradiction came from that. They are separated:
 | Is this repo-only or workspace-wide? | `visibility` on `knowledge_items` — `'repo'` \| `'workspace'` | Exactly one, mutable |
 | Which other repos does this apply to? | `knowledge_item_repos` | Zero or more, advisory |
 
-`origin_repo` and `visibility` ship in P8, ahead of v1. Only the advisory table is new here:
+`origin_repo` and `visibility` ship in P9, ahead of v1. Only the advisory table is new here:
 
 ```sql
 CREATE TABLE knowledge_item_repos (          -- applies-to, advisory only
@@ -600,19 +628,38 @@ by exactly one repo. A many-to-many key cannot scope them: drift computed in rep
 an item repo B also claims, and a GC run in A would delete it out from under B. Everything that
 mutates an item is keyed to `origin_repo`, and a repo may only mutate items it originated.
 
-**Ownership is absolute, and one shipped code path violates it by default.**
-`storeKnowledgeItemDeduped` looks for a likely duplicate across the entire database and, on a
+**Ownership is absolute, and write-time dedup is where it will be breached.**
+`storeKnowledgeItemDeduped` finds a likely duplicate across the entire database and, on a
 `supersede` resolution, retires it (`knowledge-writer.ts:202-236`). In a shared database an
-ordinary `knowl_store` in the web repo could therefore retire a server-repo item as a
-"duplicate" — no cross-repo intent, no warning, and the write reports success. Duplicate
-detection is scoped to `origin_repo = <writing repo>`. The same applies to
-`checkKnowledgeConflict`: a conflict key held by another repo's item surfaces as a *reported*
-conflict, never as an automatic supersede.
+ordinary `knowl_store` in the web repo could retire a server-repo item — no cross-repo intent,
+no warning, and the write reports success.
+
+`46596c7` widened this. Supersession is now gated on `sameSubjectTitle` — one title's
+significant tokens being a subset of the other's — rather than an exact title match, and its own
+worked example is "Database is SQLite" against "Project database uses SQLite". Across two repos
+of one product that is not an edge case, it is Tuesday.
+
+The same commit also supplies the fix. `resolveDuplicate` already has a third outcome,
+`coexist`: insert, leave the other active, and tell the caller what it was left beside. So the
+rule is not to narrow detection but to clamp resolution:
+
+- **Detection may span repos.** Learning that the server repo holds an overlapping item is
+  exactly the signal a cross-repo workspace exists to provide. Scoping detection to the writing
+  repo would throw it away.
+- **Resolution never crosses an ownership boundary.** When the detected duplicate has a
+  different `origin_repo`, the outcome is forced to `coexist`, whatever `resolveDuplicate`
+  would otherwise return — including an explicit `supersedes` id naming a foreign item, which
+  is refused for the same reason `knowl_update` refuses one.
+- **The `nearDuplicate` report carries the repo.** The existing message already tells the agent
+  which item it was left beside and how to retire it; for a foreign item it names the owning
+  repo and says the retirement must happen there.
+
+`checkKnowledgeConflict` follows the same shape: a conflict key held by another repo's item is a
+*reported* conflict, never an automatic supersede.
 
 An agent that finds a stale fact in another repo records that finding in its own repo and names
 the other; it does not reach across and edit. Cross-repo correction needs a review step this
-design does not have, and inventing one here would be scope creep on top of an already large
-feature.
+design does not have, and inventing one here would be scope creep on an already large feature.
 
 **`visibility` persists logical scope independently of the database path.** This is what makes
 `shared` mode coherent: when the project and workspace namespaces resolve to the same file, the
@@ -669,18 +716,6 @@ Synthesis is the dangerous one. It reads the whole table, merges what it finds, 
 content, blend it, and publish the result as workspace-visible. Sources are restricted to the
 current repo, and the synthesized item inherits the **most restrictive** visibility among its
 sources: any `repo`-visibility source makes the output `repo`-visibility, regardless of category.
-
-### One embedding identity per workspace
-
-`knowledge_embeddings` stores one row per item with a provider and model
-(`schema.ts:124-131`), and vector search filters on both (`vector.ts:86-91`). Two repos
-configured with different models would write items the other cannot retrieve — invisibly, since
-a filtered-out embedding looks identical to no embedding.
-
-The workspace manifest pins `provider`, `model`, and `dtype`. `workspace add` refuses a repo
-whose vector config differs and offers to align it; `migrate` re-embeds any item whose
-embedding does not match the pinned identity; `doctor` reports drift. Changing the pinned model
-is a workspace-wide re-embed, and is a v3 command.
 
 ### Paths and item identity stay exactly as they are
 
@@ -843,7 +878,7 @@ knowl workspace promote --category decision,constraint,architecture   # dry-run 
 knowl workspace promote --id <item-id>...
 ```
 
-`promote` ships in **v1** — `visibility` exists from P8, and backfilling existing decisions is
+`promote` ships in **v1** — `visibility` exists from P9, and backfilling existing decisions is
 most of what makes v1 worth using. The rest of this section is v2.
 
 `promote` sets `visibility = 'workspace'` on selected items the current repo originated. It is a
@@ -992,7 +1027,7 @@ Mitigations, in v2:
 | Risk | Severity | Mitigation |
 | --- | --- | --- |
 | An old client opens a newer shared database and defeats every schema-level mitigation | Data loss | P5 ships in an earlier release; refuse-to-open-if-newer |
-| Agent applies one repo's fact while working in another | Wrong work, silently | P4 `repo` on the serialized item, tested at the boundary; category-driven scoping; no auto-injection of foreign knowledge |
+| Agent applies one repo's fact while working in another | Wrong work, silently | P5 `repo` on the serialized item, tested at the boundary; category-driven scoping; no auto-injection of foreign knowledge |
 | GC purges a cross-repo "duplicate" and propagates the delete to teammates | Data loss | Purge disabled in a workspace; archive and compress remain and are reversible from the commit log |
 | Concurrent writers lose updates without any error | Silent loss | `BEGIN IMMEDIATE`, optimistic version checks, a test that detects lost updates specifically |
 | `withDbPath` interleaving files writes into the wrong database | Silent misfiling | P3 explicit connections; a mutex alone is insufficient |
@@ -1078,7 +1113,7 @@ conditional schema is not the contract, because `bootstrapSchema` cannot impleme
 1. **Does `linked` mode earn its keep?** If category-driven defaults route well, `shared` may be
    the only mode worth maintaining, and `linked` reduces to v1's fan-out with no workspace
    database. Decide from v1 usage, not now.
-2. **Does the `repo` label change agent behavior?** P4 makes it present. Whether agents actually
+2. **Does the `repo` label change agent behavior?** P5 makes it present. Whether agents actually
    condition on it is measurable in the eval set and should be measured before weights are tuned.
 3. **What is the right `busy_timeout` replacement policy** for a shared database on a slow local
    volume — bounded retry with a deadline is specified, but the deadline needs a measurement.
