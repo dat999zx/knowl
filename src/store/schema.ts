@@ -13,6 +13,10 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
   sourceCommit: text('source_commit'),
   affectedPaths: text('affected_paths', { mode: 'json' }), // string[]
   contentHash: text('content_hash'),
+  /** Owning repo in a workspace; NULL outside one. The only lifecycle key. */
+  originRepo: text('origin_repo'),
+  /** 'repo' | 'workspace'. Logical scope, persisted independently of which file holds the row. */
+  visibility: text('visibility').notNull().default('repo'),
   freshness: text('freshness').notNull().default('fresh'), // 'fresh', 'stale', 'needs_review'
   confidence: real('confidence').notNull().default(1.0),
   conflictKey: text('conflict_key'), conflictScope: text('conflict_scope', { mode: 'json' }), conflictExclusive: integer('conflict_exclusive', { mode: 'boolean' }).notNull().default(false),
