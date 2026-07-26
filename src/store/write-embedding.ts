@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { KnowledgeItem } from '../core/types.js';
-import { getProjectRoot } from './database.js';
+import { getConfigRoot } from './database.js';
 import { buildKnowledgeEmbeddingText, KnowledgeEmbedder } from './vector-index.js';
 import { upsertKnowledgeEmbedding } from './vector.js';
 
@@ -28,7 +28,11 @@ async function resolveEmbedder(): Promise<KnowledgeEmbedder | null> {
 
   let root: string;
   try {
-    root = getProjectRoot();
+    // Config root, not the database's location: a namespace or shared store lives outside
+    // the `<root>/.knowl/` layout, and reading config from a path derived from the database
+    // file made loadConfig throw -- which the catch below turned into "no embeddings", with
+    // no error and no way to notice.
+    root = getConfigRoot();
   } catch {
     return null; // no active project store
   }

@@ -191,7 +191,7 @@ export async function previewKnowledgeGc(
   projectId: string,
   options: KnowledgeGcOptions = {}
 ): Promise<KnowledgeGcResult> {
-  const items = await repo.listKnowledgeItems(projectId);
+  const items = await repo.listKnowledgeItems();
   const access = await getAccessSummary();
   const candidates = buildCandidates(items, options, access);
   return {
@@ -207,7 +207,7 @@ export async function applyKnowledgeGc(
   const db = getDb();
   const access = await getAccessSummary();
   return db.transaction(async (tx) => {
-    const items = await repo.listKnowledgeItems(projectId, tx);
+    const items = await repo.listKnowledgeItems(tx);
     const candidates = buildCandidates(items, options, access);
     const byId = new Map(items.map(item => [item.id, item]));
     const changes: CommitChange[] = [];

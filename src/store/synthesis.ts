@@ -32,7 +32,7 @@ async function replaceDerivedEvidence(itemId: string, sources: KnowledgeItem[]):
 }
 
 export async function synthesizeKnowledge(projectId: string, scope: string) {
-  const items = await listKnowledgeItems(projectId);
+  const items = await listKnowledgeItems();
   const sources = sourceItems(items, scope);
   if (sources.length < 2) throw new Error('Synthesis requires at least two durable fresh active sources.');
 

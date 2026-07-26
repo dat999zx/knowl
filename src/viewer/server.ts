@@ -28,7 +28,7 @@ type GraphLink = { source: string; target: string; weight: number; kind: 'tag' |
 // groups fan out from a hub to avoid a hairball; otherwise pairs are fully linked.
 // Any atom left isolated is tied to a same-category neighbour so nothing floats free.
 async function buildGraph(): Promise<{ nodes: GraphNode[]; links: GraphLink[] }> {
-  const items = await listKnowledgeItems('local');
+  const items = await listKnowledgeItems();
   const nodes: GraphNode[] = items.map((item: any) => ({
     id: item.id,
     title: item.title,
@@ -94,9 +94,9 @@ export async function startViewer(projectRoot: string, options: { port?: number 
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
     const pathname = url.pathname;
     if (pathname === '/api/graph') return json(response, await buildGraph());
-    if (pathname === '/api/brain') return json(response, await listKnowledgeItems('local'));
-    if (pathname === '/api/decisions') return json(response, (await listKnowledgeItems('local')).filter(item => item.category === 'decision'));
-    if (pathname === '/api/stale') return json(response, (await listKnowledgeItems('local')).filter(item => item.freshness !== 'fresh'));
+    if (pathname === '/api/brain') return json(response, await listKnowledgeItems());
+    if (pathname === '/api/decisions') return json(response, (await listKnowledgeItems()).filter(item => item.category === 'decision'));
+    if (pathname === '/api/stale') return json(response, (await listKnowledgeItems()).filter(item => item.freshness !== 'fresh'));
     if (pathname === '/api/conflicts') return json(response, await listActiveConflictKeys());
     if (pathname === '/api/access') return json(response, await getKnowledgeAccessReport());
     if (pathname === '/api/skills') return json(response, await listSkillPackages(projectRoot));

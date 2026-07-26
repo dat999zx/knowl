@@ -366,9 +366,18 @@ describe('Storage Layer', () => {
     expect(updated.content).toBe('Auth flow completed with JWT.');
   });
 
+  it('lists every item in the open database, and does not pretend to scope', async () => {
+    const all = await repo.listKnowledgeItems();
+    expect(Array.isArray(all)).toBe(true);
+    // The old signature took a projectId and ignored it, so every call site read as
+    // scoped while scanning the whole table. Pin the arity so a scope argument cannot
+    // reappear without honouring it.
+    expect(repo.listKnowledgeItems.length).toBeLessThanOrEqual(1);
+  });
+
   it('rejects secret-like direct repository and decision writes without commits', async () => {
     const project = await repo.getProjectByRootPath(TEST_ROOT);
-    const beforeItems = await repo.listKnowledgeItems(project!.id);
+    const beforeItems = await repo.listKnowledgeItems();
     const beforeCommits = await repo.getKnowledgeCommits(project!.id);
     const secret = 'sk-test-123456789012345678901234567890';
 
@@ -379,7 +388,7 @@ describe('Storage Layer', () => {
       title: 'Secret decision', content: secret,
     })).rejects.toMatchObject({ code: 'KNOWLEDGE_SECRET_TOKEN' });
 
-    expect(await repo.listKnowledgeItems(project!.id)).toHaveLength(beforeItems.length);
+    expect(await repo.listKnowledgeItems()).toHaveLength(beforeItems.length);
     expect(await repo.getKnowledgeCommits(project!.id)).toHaveLength(beforeCommits.length);
   });
 

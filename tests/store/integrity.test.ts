@@ -78,7 +78,7 @@ describe('knowledge store integrity', () => {
     });
     await restoreSnapshot(TEST_ROOT, snapshot.path, { confirm: true });
 
-    const titles = (await repo.listKnowledgeItems(project.id)).map(item => item.title);
+    const titles = (await repo.listKnowledgeItems()).map(item => item.title);
     expect(titles).toContain('Snapshot item');
     expect(titles).not.toContain('After snapshot');
   });

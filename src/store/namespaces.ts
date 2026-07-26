@@ -1,7 +1,8 @@
 import path from 'node:path';
-import type { KnowledgeItem, ProjectConfig } from '../core/types.js';
+import type { KnowledgeCategory, KnowledgeItem, KnowledgeStatus, ProjectConfig } from '../core/types.js';
 import { withDbPath } from './database.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
+import { resolveStorage } from './storage-roles.js';
 
 export type MemoryNamespace = 'session' | 'project' | 'organization' | 'global';
 export type NamespaceDescriptor = { namespace: MemoryNamespace; databasePath: string; precedence: number; optional?: boolean };
@@ -9,8 +10,8 @@ export type NamespacedKnowledgeItem = KnowledgeItem & { namespace: MemoryNamespa
 
 const RANK: Record<MemoryNamespace, number> = { session: 1, project: 2, organization: 3, global: 4 };
 
-export function projectNamespace(root: string): NamespaceDescriptor { return { namespace: 'project', databasePath: path.join(root, '.knowl', 'knowl.db'), precedence: RANK.project }; }
-export function sessionNamespace(root: string): NamespaceDescriptor { return { namespace: 'session', databasePath: path.join(root, '.knowl', 'session.db'), precedence: RANK.session }; }
+export function projectNamespace(root: string): NamespaceDescriptor { return { namespace: 'project', databasePath: resolveStorage(root).knowledge, precedence: RANK.project }; }
+export function sessionNamespace(root: string): NamespaceDescriptor { return { namespace: 'session', databasePath: resolveStorage(root).session, precedence: RANK.session }; }
 export function namespacePrecedence<T extends { namespace: MemoryNamespace }>(items: T[]): T[] { return [...items].sort((a, b) => RANK[a.namespace] - RANK[b.namespace]); }
 
 export function defaultNamespaces(root: string): NamespaceDescriptor[] {
@@ -43,18 +44,41 @@ export async function withNamespaceDatabase<T>(descriptor: NamespaceDescriptor, 
   return withDbPath(descriptor.databasePath, run);
 }
 
+/**
+ * Filters every namespace query must honour.
+ *
+ * These were previously dropped: only `{ query, limit, surface }` reached each namespace,
+ * so an agent asking for a category or for archived items got neither. It is invisible
+ * today because vector search is on by default and bypasses the layered branch, but that
+ * bypass is what a cross-store read path has to remove -- and removing it first would
+ * activate a path that silently ignores its own filters.
+ */
+export type LayeredFilters = {
+  category?: KnowledgeCategory;
+  status?: KnowledgeStatus;
+  tags?: string[];
+};
+
 export async function queryLayeredKnowledge(
   root: string,
   query: string,
-  descriptors = defaultNamespaces(root),
+  descriptors: NamespaceDescriptor[],
   limit = 3,
   surface = 'namespace_query',
+  filters: LayeredFilters = {},
 ): Promise<NamespacedKnowledgeItem[]> {
   const results: NamespacedKnowledgeItem[] = [];
   const seen = new Set<string>();
   for (const descriptor of namespacePrecedence(descriptors)) {
     try {
-      const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgent('local', { query, limit, surface }));
+      const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgent('local', {
+        query,
+        limit,
+        surface,
+        category: filters.category,
+        status: filters.status,
+        tags: filters.tags,
+      }));
       for (const item of items) {
         const key = item.contentHash ?? `${item.title}\n${item.content}`;
         if (!seen.has(key)) {

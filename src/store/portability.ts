@@ -27,7 +27,7 @@ async function skillFiles(root: string, directory: string, base = directory): Pr
 }
 
 export async function exportKnowledge(projectId: string, outputPath: string, projectRoot?: string) {
-  const items = (await listKnowledgeItems(projectId)).sort((a, b) => a.id.localeCompare(b.id));
+  const items = (await listKnowledgeItems()).sort((a, b) => a.id.localeCompare(b.id));
   const records: unknown[] = [{ type: 'header', format: 'knowl-jsonl', version: 1, namespace: 'project' }];
   const seenEvidence = new Set<string>();
   for (const item of items) {

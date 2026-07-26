@@ -742,7 +742,7 @@ describe('MCP Server Layer', () => {
     expect(finishPayload.taskId).toBe(startPayload.taskId);
     expect(finishPayload.itemId).toBeTruthy();
 
-    const items = await repo.listKnowledgeItems(projectId);
+    const items = await repo.listKnowledgeItems();
     expect(items.some(item => item.title === 'Work Loop: Implement search UI')).toBe(true);
     expect(items.some(item => item.title === 'Work Loop checkpoint')).toBe(true);
     expect(items.some(item => item.title === 'Work Loop finish')).toBe(true);
@@ -806,7 +806,7 @@ describe('MCP Server Layer', () => {
     expect(run.exitCode).toBe(0);
     expect(run.stdout).toContain('mcp-skill-ok');
 
-    const items = await repo.listKnowledgeItems(projectId);
+    const items = await repo.listKnowledgeItems();
     const indexed = items.find(item => item.category === 'skill' && item.title === 'run_app');
     expect(indexed).toBeTruthy();
     expect(indexed!.content).toContain('.knowl/skills/run_app/SKILL.md');

@@ -1,5 +1,6 @@
 import { Client } from '@libsql/client';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
+import { assertSchemaSupported, stampSchemaVersion } from './schema-version.js';
 
 const BASE_STATEMENTS = [
   'PRAGMA foreign_keys = ON;',
@@ -368,6 +369,31 @@ async function ensureConflictColumns(client: Client): Promise<void> {
   await client.execute('CREATE INDEX IF NOT EXISTS idx_knowledge_conflict_active ON knowledge_items(conflict_key, conflict_scope, status, conflict_exclusive);');
 }
 
+/**
+ * Ownership and visibility for multi-repo workspaces.
+ *
+ * Created unconditionally. bootstrapSchema receives only a client -- no root, no config --
+ * so it cannot know whether a workspace exists, which makes "create these only when one
+ * does" inexpressible. Outside a workspace origin_repo stays NULL and visibility stays
+ * 'repo', which is exactly today's behavior; the columns cost one page and keep a single
+ * code path instead of a tableExists guard on every read.
+ */
+async function ensureOwnershipColumns(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'knowledge_items'))) return;
+  const columns = await tableColumns(client, 'knowledge_items');
+  if (!columns.includes('origin_repo')) {
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN origin_repo TEXT;');
+  }
+  if (!columns.includes('visibility')) {
+    await client.execute("ALTER TABLE knowledge_items ADD COLUMN visibility TEXT NOT NULL DEFAULT 'repo';");
+  }
+  // A NOT NULL default does not apply retroactively to rows written before the column
+  // existed, and SQLite backfills an added NOT NULL column with its default only for the
+  // ALTER itself -- a row inserted by an older client into an older table can still be null.
+  await client.execute("UPDATE knowledge_items SET visibility = 'repo' WHERE visibility IS NULL OR visibility = '';");
+  await client.execute('CREATE INDEX IF NOT EXISTS idx_knowledge_items_origin ON knowledge_items(origin_repo, visibility, status);');
+}
+
 async function ensureMemorySessionColumns(client: Client): Promise<void> {
   if (!(await tableExists(client, 'memory_sessions'))) return;
   const columns = await tableColumns(client, 'memory_sessions');
@@ -520,13 +546,18 @@ async function migrateLegacyProjectSchema(client: Client): Promise<void> {
  */
 export async function bootstrapSchema(client: Client): Promise<void> {
   await executeAll(client, BASE_STATEMENTS);
+  // Before any migration touches the file. Running migrateLegacyProjectSchema against a
+  // database written by a newer Knowl is the case this exists to prevent.
+  await assertSchemaSupported(client, '(open database)');
   await migrateLegacyProjectSchema(client);
   await executeAll(client, SCHEMA_STATEMENTS);
   await ensureFreshnessColumns(client);
   await ensureConflictColumns(client);
+  await ensureOwnershipColumns(client);
   await ensureMemorySessionColumns(client);
   await ensureHostSessionBindingColumns(client);
   await ensureCodeIndexColumns(client);
   await backfillKnowledgeAssertions(client);
   await repairSkillForeignKeys(client);
+  await stampSchemaVersion(client);
 }

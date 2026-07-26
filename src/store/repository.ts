@@ -333,7 +333,18 @@ export async function supersedeKnowledgeItem(id: string, supersededById: string)
   return updateKnowledgeItem(id, { status: 'superseded', supersededById });
 }
 
-export async function listKnowledgeItems(projectId: string, dbConnection?: DbConnection): Promise<KnowledgeItem[]> {
+/**
+ * Every knowledge item in the currently open database.
+ *
+ * Deliberately takes no scope argument. It used to accept a projectId and ignore it, which
+ * read as scoping at every call site -- GC, synthesis, integrity, drift, export and the
+ * viewer all looked bounded while scanning the whole table. getProjectByRootPath returns a
+ * synthetic {id: 'local'}, so the argument never carried information in the first place.
+ *
+ * Real filtering belongs here once the schema can express it. Until then the honest
+ * signature is the one that cannot be mistaken for filtering.
+ */
+export async function listKnowledgeItems(dbConnection?: DbConnection): Promise<KnowledgeItem[]> {
   const conn = dbConnection || getDb();
   try {
     const result = await conn

@@ -22,7 +22,7 @@ describe('knowledge synthesis', () => {
 
   it('replaces synthesized content and provenance when a supporting source changes', async () => {
     const first = await synthesizeKnowledge('local', 'auth');
-    const auth = (await listKnowledgeItems('local')).find(item => item.title === 'Auth tokens')!;
+    const auth = (await listKnowledgeItems()).find(item => item.title === 'Auth tokens')!;
     await updateKnowledgeItem(auth.id, { content: 'Auth uses short-lived JWT access tokens.' });
     const replacement = await synthesizeKnowledge('local', 'auth');
     expect(replacement.id).toBe(first.id);

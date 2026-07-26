@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { auditKnowledgeStore } from './integrity.js';
 import { getClient } from './database.js';
+import { resolveStorage } from './storage-roles.js';
 
 export type SnapshotManifest = {
   schemaVersion: number;
@@ -14,7 +15,7 @@ export type SnapshotManifest = {
 export type Snapshot = { path: string; manifestPath: string; manifest: SnapshotManifest };
 
 function databasePath(projectRoot: string): string {
-  return path.resolve(projectRoot, '.knowl', 'knowl.db');
+  return path.resolve(resolveStorage(projectRoot).knowledge);
 }
 
 async function sha256(filePath: string): Promise<string> {
