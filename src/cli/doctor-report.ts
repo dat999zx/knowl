@@ -2,6 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { sql } from 'drizzle-orm';
 import { findProjectRoot, loadConfig } from '../core/config.js';
+import { resolveWorkspace } from '../workspace/resolve.js';
+import { workspaceDoctorChecks } from './workspace-report.js';
 import { isKnowlProjectGuidanceCurrent } from '../core/agents-guidance.js';
 import { closeDb, getDb, initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
@@ -219,6 +221,9 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         message: 'Vector search disabled; BM25 retrieval remains active',
       });
     }
+    // Fan-out failures are all silent -- an absent peer, a moved manifest, a drifted
+    // embedding identity. This is where they surface.
+    checks.push(...workspaceDoctorChecks(await resolveWorkspace(root, config), config));
   } catch (error: any) {
     checks.push({ status: 'FAIL', message: error.message });
   } finally {

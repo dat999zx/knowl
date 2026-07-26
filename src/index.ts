@@ -22,6 +22,7 @@ import { runPipeline, runDecisionPipeline } from './pipeline/pipeline.js';
 import { startMcpServer } from './mcp/server.js';
 import { formatHierarchyToMarkdown } from './core/format.js';
 import { formatStatusReport } from './cli/status-report.js';
+import { resolveWorkspace } from './workspace/resolve.js';
 import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue } from './cli/config/service.js';
@@ -320,6 +321,7 @@ program
       console.log(formatStatusReport({
         project,
         config,
+        workspace: await resolveWorkspace(root, config),
         activeItems,
         supersededItems,
         deprecatedItems,

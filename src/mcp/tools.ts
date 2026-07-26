@@ -634,8 +634,17 @@ export function registerTools(
         const hierarchy = await getHierarchicalKnowledge(projectId!);
         const { maxChars } = args as any;
         const md = formatHierarchyToMarkdown(hierarchy, { maxChars });
+        // Names the linked repos without quoting their content: an agent should know a
+        // workspace exists and what to filter by, but foreign knowledge arrives only
+        // through an explicit query.
+        const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        const workspaceNote = active
+          ? `\n\n## WORKSPACE\n\nThis repo is "${active.repo}" in workspace "${active.name}". Linked repos: ${
+            active.peers.length ? active.peers.map(peer => `${peer.name}${peer.present ? '' : ' (missing here)'}`).join(', ') : 'none yet'
+          }. Their workspace-visible knowledge is searchable with knowl_query; filter with \`repos\`.`
+          : '';
         return {
-          content: [{ type: 'text', text: md }],
+          content: [{ type: 'text', text: `${md}${workspaceNote}` }],
         };
       }
 
@@ -867,6 +876,21 @@ export function registerTools(
           blocks.push({
             type: 'text',
             text: `SCOPE: linked repos NOT searched: ${described}. Their knowledge is absent from these results; a miss here does not mean it does not exist.`,
+          });
+        }
+        if (explain && active) {
+          // Per-repo reach, so "returned nothing" can be told apart from "was not searched".
+          const contributed = new Map<string, number>();
+          for (const item of resolvedItems) {
+            const repoName = item.repo ?? active.repo;
+            contributed.set(repoName, (contributed.get(repoName) ?? 0) + 1);
+          }
+          const reached = [active.repo, ...active.peers.map(peer => peer.name)]
+            .filter(repoName => !skippedRepos.some(skip => skip.repo === repoName))
+            .map(repoName => `${repoName}: ${contributed.get(repoName) ?? 0}`);
+          blocks.push({
+            type: 'text',
+            text: `WORKSPACE REACH: searched ${reached.join(', ')}${skippedRepos.length ? `; skipped ${skippedRepos.map(skip => skip.repo).join(', ')}` : ''}.`,
           });
         }
         if (skippedNamespaces.length) {
