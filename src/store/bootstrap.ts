@@ -1,5 +1,6 @@
 import { Client } from '@libsql/client';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
+import { assertSchemaSupported, stampSchemaVersion } from './schema-version.js';
 
 const BASE_STATEMENTS = [
   'PRAGMA foreign_keys = ON;',
@@ -520,6 +521,9 @@ async function migrateLegacyProjectSchema(client: Client): Promise<void> {
  */
 export async function bootstrapSchema(client: Client): Promise<void> {
   await executeAll(client, BASE_STATEMENTS);
+  // Before any migration touches the file. Running migrateLegacyProjectSchema against a
+  // database written by a newer Knowl is the case this exists to prevent.
+  await assertSchemaSupported(client, '(open database)');
   await migrateLegacyProjectSchema(client);
   await executeAll(client, SCHEMA_STATEMENTS);
   await ensureFreshnessColumns(client);
@@ -529,4 +533,5 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await ensureCodeIndexColumns(client);
   await backfillKnowledgeAssertions(client);
   await repairSkillForeignKeys(client);
+  await stampSchemaVersion(client);
 }

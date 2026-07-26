@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { createClient, Client } from '@libsql/client';
 import { bootstrapSchema } from './bootstrap.js';
+import { assertSchemaSupported } from './schema-version.js';
 
 /**
  * Clients keyed by resolved path and open mode.
@@ -29,7 +30,11 @@ export async function acquireClient(dbPath: string, options: { readOnly?: boolea
   if (existing) return existing;
 
   const client = createClient({ url: `file:${path.resolve(dbPath)}` });
-  if (!readOnly) await bootstrapSchema(client);
+  // A read-only open skips bootstrap, and the version guard lives inside bootstrap -- so
+  // without this it would skip the guard too, which is exactly backwards for the case the
+  // guard matters most: reading a database someone else's Knowl wrote.
+  if (readOnly) await assertSchemaSupported(client, dbPath);
+  else await bootstrapSchema(client);
   clients.set(key, client);
   return client;
 }
