@@ -152,11 +152,12 @@ describe('evidence repository', () => {
         type: 'test', locator: 'tests/evidence.test.ts', observedAt: '2026-07-11T00:00:00.000Z', relationship: 'supports',
       }],
     } as any);
-    expect(await listEvidenceForItem(decision.id)).toEqual([
+    expect(decision.action).toBe('inserted');
+    expect(await listEvidenceForItem(decision.item.id)).toEqual([
       expect.objectContaining({ type: 'test', relationship: 'supports' }),
     ]);
-    await repo.updateKnowledgeItem(decision.id, { content: 'Use evidence for durable trust.' });
-    expect(await listEvidenceForItem(decision.id)).toHaveLength(1);
+    await repo.updateKnowledgeItem(decision.item.id, { content: 'Use evidence for durable trust.' });
+    expect(await listEvidenceForItem(decision.item.id)).toHaveLength(1);
 
     const result = await storeKnowledgeAtomsDeduped(projectId, [{
       category: 'fact', title: 'Batch evidence', content: 'Batch atom has provenance.',

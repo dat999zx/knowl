@@ -71,16 +71,47 @@ describe('supersede on write', () => {
     expect((await repo.getKnowledgeItem(first.item.id))!.status).toBe('active');
   });
 
-  it('a differently-titled near-duplicate is still reported rather than superseding', async () => {
-    await storeKnowledgeItemDeduped(projectId, {
+  it('a subset-titled restatement supersedes rather than being dropped', async () => {
+    const original = await storeKnowledgeItemDeduped(projectId, {
       category: 'fact', title: 'Deploy target', content: 'The web app deploys to Fly.io in the iad region.',
     });
     const restated = await storeKnowledgeItemDeduped(projectId, {
-      category: 'fact', title: 'Deploy target for web', content: 'The web app deploys to Fly.io in the iad region.',
+      category: 'fact', title: 'Deploy target for web', content: 'The web app deploys to Fly.io in the iad region, pinned to iad only.',
     });
-    // Only an exact title match reads as "same subject, new information". A different
-    // title is a restatement, so the caller is told rather than silently retiring an item.
-    expect(restated.action).toBe('duplicate');
+    // "Deploy target" is a token subset of "Deploy target for web", so this is the same
+    // subject and the newer write becomes the single active answer.
+    expect(restated.action).toBe('inserted');
+    expect(restated.superseded?.id).toBe(original.item.id);
+    expect((await repo.getKnowledgeItem(original.item.id))!.status).toBe('superseded');
+  });
+
+  it('an unrelated-title overlap keeps both active and reports the near-duplicate', async () => {
+    const original = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Rate limiter buckets', content: 'The API throttles clients with a token bucket of 100 requests per minute.',
+    });
+    const other = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Throttling headers returned to clients', content: 'The API throttles clients and returns Retry-After on a token bucket rejection.',
+    });
+    // The engine cannot tell a correction from a genuinely distinct record here, so it
+    // writes the content and names the overlap instead of discarding either one.
+    expect(other.action).toBe('inserted');
+    expect(other.superseded).toBeUndefined();
+    expect(other.nearDuplicate?.id).toBe(original.item.id);
+    expect((await repo.getKnowledgeItem(original.item.id))!.status).toBe('active');
+  });
+
+  it('never drops a write: a reworded correction is always persisted', async () => {
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Upload size limit', content: 'Uploads are capped at 10 MB by the edge proxy.',
+    });
+    const corrected = await storeKnowledgeItemDeduped(projectId, {
+      category: 'constraint', title: 'Maximum upload size enforced at the edge', content: 'Uploads are capped at 50 MB by the edge proxy since the tier upgrade.',
+    });
+    // Whatever the title similarity, the new content exists in the database afterwards.
+    expect(corrected.action).toBe('inserted');
+    const stored = await repo.getKnowledgeItem(corrected.item.id);
+    expect(stored!.content).toContain('50 MB');
+    expect(stored!.status).toBe('active');
   });
 
   it('an explicit supersedes id retires the named item for any category', async () => {
@@ -118,6 +149,39 @@ describe('supersede on write', () => {
       category: 'state', title: 'Session outcome', content: 'Finished the retrieval refactor and the viewer rewrite, tests passing.',
     }], 'Finalize memory session');
     expect(result.insertedCount).toBe(1);
+    expect(result.supersededIds).toEqual([seed.item.id]);
+    expect(result.outcomes[0].supersededId).toBe(seed.item.id);
     expect((await repo.getKnowledgeItem(seed.item.id))!.status).toBe('superseded');
+  });
+
+  it('batch outcomes separate a verbatim no-op from a real insert', async () => {
+    const seed = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Search backend', content: 'Full-text search runs on SQLite FTS5.',
+    });
+    const result = await storeKnowledgeAtomsDeduped(projectId, [
+      { category: 'fact', title: 'Search backend', content: 'Full-text search runs on SQLite FTS5.' },
+      { category: 'fact', title: 'Ranking function', content: 'Result ordering uses the BM25 scorer.' },
+    ], 'Mixed batch');
+
+    // The old reply counted both as "stored", so a caller could not tell that the first
+    // atom wrote nothing.
+    expect(result.insertedCount).toBe(1);
+    expect(result.duplicateCount).toBe(1);
+    expect(result.outcomes[0]).toMatchObject({ action: 'duplicate', itemId: seed.item.id });
+    expect(result.outcomes[1].action).toBe('inserted');
+  });
+
+  it('an explicit supersedes id works in the batch path too', async () => {
+    const original = await storeKnowledgeItemDeduped(projectId, {
+      category: 'architecture', title: 'Transport layer', content: 'Clients talk to the server over REST.',
+    });
+    const result = await storeKnowledgeAtomsDeduped(projectId, [{
+      category: 'architecture', title: 'Clients now speak gRPC to the server', content: 'Clients talk to the server over gRPC with protobuf schemas.',
+      supersedes: original.item.id,
+    }], 'Transport migration');
+
+    expect(result.insertedCount).toBe(1);
+    expect(result.supersededIds).toEqual([original.item.id]);
+    expect((await repo.getKnowledgeItem(original.item.id))!.status).toBe('superseded');
   });
 });

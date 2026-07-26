@@ -493,8 +493,12 @@ program
         }, config);
 
         if (mergeResult.unresolvedContradictions.length > 0) {
-          const item = await recordDecisionDirect(project.id, atom, `Record decision (fallback): ${title}`, config);
-          console.log(`✅ Recorded decision successfully! ID: ${item.id}`);
+          const decision = await recordDecisionDirect(project.id, atom, `Record decision (fallback): ${title}`, config);
+          console.log(decision.action === 'duplicate'
+            ? `ℹ️ Already recorded verbatim, nothing written. ID: ${decision.item.id}`
+            : `✅ Recorded decision successfully! ID: ${decision.item.id}`);
+          if (decision.superseded) console.log(`🔄 Superseded older decision: ${decision.superseded.id}`);
+          if (decision.nearDuplicate) console.log(`⚠️ Left active beside "${decision.nearDuplicate.title}" (${decision.nearDuplicate.id}) — run \`knowl supersede ${decision.nearDuplicate.id} ${decision.item.id}\` if it replaces that one.`);
         } else if (mergeResult.supersededIds.length > 0) {
           const newId = mergeResult.insertedIds[0];
           console.log(`✅ Recorded decision successfully! ID: ${newId}`);
@@ -508,8 +512,12 @@ program
         }
       } else {
         console.log(`⚠️ No AI provider configured or API keys found. Falling back to direct insertion without conflict detection.`);
-        const item = await recordDecisionDirect(project.id, atom, `Record decision: ${title}`, config);
-        console.log(`✅ Recorded decision successfully! ID: ${item.id}`);
+        const decision = await recordDecisionDirect(project.id, atom, `Record decision: ${title}`, config);
+        console.log(decision.action === 'duplicate'
+          ? `ℹ️ Already recorded verbatim, nothing written. ID: ${decision.item.id}`
+          : `✅ Recorded decision successfully! ID: ${decision.item.id}`);
+        if (decision.superseded) console.log(`🔄 Superseded older decision: ${decision.superseded.id}`);
+        if (decision.nearDuplicate) console.log(`⚠️ Left active beside "${decision.nearDuplicate.title}" (${decision.nearDuplicate.id}) — run \`knowl supersede ${decision.nearDuplicate.id} ${decision.item.id}\` if it replaces that one.`);
       }
 
       await closeDb();

@@ -443,8 +443,8 @@ describe('MCP Server Layer', () => {
     expect(second.result.content[0].text).toContain('KNOWLEDGE_CONFLICT');
   });
 
-  it('should skip duplicate structured knowledge when BM25 finds an existing match', async () => {
-    await repo.createKnowledgeItem(projectId, {
+  it('should retire the predecessor when a restatement names the same subject', async () => {
+    const original = await repo.createKnowledgeItem(projectId, {
       category: 'fact',
       title: 'Project database uses SQLite',
       content: 'The server persists durable data with SQLite through sqlite-jdbc.',
@@ -463,16 +463,57 @@ describe('MCP Server Layer', () => {
 
     expect(res.error).toBeUndefined();
     expect(res.result.isError).toBeUndefined();
-    // The titles differ, so this is a restatement rather than a correction: nothing is
-    // written. The reply has to read as a non-write, because a caller that mistakes it
-    // for success loses the content it just tried to store.
-    expect(res.result.content[0].text).toContain('NOT STORED');
-    expect(res.result.content[0].text).toContain('knowl_update');
+    // "Database is SQLite" is a token subset of "Project database uses SQLite", so this is
+    // the same subject. The write is kept and the predecessor is retired, leaving exactly
+    // one active answer. Dropping the write instead would have lost the content silently.
+    expect(res.result.content[0].text).toContain('Successfully stored');
+    expect(res.result.content[0].text).toContain(original.id);
 
+    expect((await repo.getKnowledgeItem(original.id))!.status).toBe('superseded');
     const db = (await import('../../src/store/database.js')).getDb();
     const items = await db.select().from((await import('../../src/store/schema.js')).knowledgeItems);
-    expect(items).toHaveLength(1);
-    expect(items[0].title).toBe('Project database uses SQLite');
+    expect(items).toHaveLength(2);
+    expect(items.filter(item => item.status === 'active')).toHaveLength(1);
+  });
+
+  it('should report a verbatim re-store as a non-write that lost nothing', async () => {
+    const args = {
+      category: 'fact',
+      title: 'Verbatim restore probe',
+      content: 'The scheduler polls every 30 seconds.',
+    };
+    const first = await runRpcRequest('tools/call', { name: 'knowl_store', arguments: args });
+    const again = await runRpcRequest('tools/call', { name: 'knowl_store', arguments: args });
+
+    expect(first.result.content[0].text).toContain('Successfully stored');
+    expect(again.result.content[0].text).toContain('NOT STORED');
+    expect(again.result.content[0].text).toContain('already held verbatim');
+  });
+
+  it('should report each ingested atom instead of counting a no-op as stored', async () => {
+    const seed = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Atom reporting probe',
+      content: 'Metrics ship to Prometheus.',
+    });
+
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_ingest_atoms',
+      arguments: {
+        atoms: [
+          { category: 'fact', title: 'Atom reporting probe', content: 'Metrics ship to Prometheus.' },
+          { category: 'fact', title: 'Tracing exporter probe', content: 'Traces ship to Honeycomb over OTLP.' },
+        ],
+      },
+    });
+
+    expect(res.error).toBeUndefined();
+    expect(res.result.isError).toBeUndefined();
+    const text = res.result.content[0].text;
+    // Reporting "Stored 2" here hid a write that never happened.
+    expect(text).toContain('Stored 1 of 2');
+    expect(text).toContain('NOT STORED');
+    expect(text).toContain(seed.id);
   });
 
   it('should refresh freshness metadata through knowl_update', async () => {
@@ -530,7 +571,7 @@ describe('MCP Server Layer', () => {
 
     expect(res.error).toBeUndefined();
     expect(res.result.isError).toBeUndefined();
-    expect(res.result.content[0].text).toContain('Stored 2 knowledge atom(s)');
+    expect(res.result.content[0].text).toContain('Stored 2 of 2 atom(s)');
 
     const db = (await import('../../src/store/database.js')).getDb();
     const items = await db.select().from((await import('../../src/store/schema.js')).knowledgeItems);

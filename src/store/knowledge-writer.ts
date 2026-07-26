@@ -26,17 +26,41 @@ export interface StoreKnowledgeInput {
   evidence?: EvidenceInput[];
   /** Explicitly mark this active item id superseded by the new write. */
   supersedes?: string;
+  // Declared because both store paths already forward these to checkKnowledgeConflict and
+  // createKnowledgeItem at runtime; without them the exclusive-conflict contract was
+  // reachable only through an object literal that failed its own excess-property check.
+  conflictKey?: string | null;
+  conflictScope?: Record<string, unknown> | null;
+  conflictExclusive?: boolean;
 }
 
 export interface StoreKnowledgeResult {
+  /** 'duplicate' means nothing was written because the item was already held verbatim. */
   action: 'inserted' | 'duplicate';
   item: KnowledgeItem;
+  /** The active item this write retired, when it replaced one. */
+  superseded?: KnowledgeItem;
+  /** An overlapping active item deliberately left active beside this write. */
+  nearDuplicate?: KnowledgeItem;
+}
+
+export interface StoreKnowledgeAtomOutcome {
+  action: 'inserted' | 'duplicate';
+  itemId: string;
+  title: string;
+  supersededId?: string;
+  nearDuplicateId?: string;
+  nearDuplicateTitle?: string;
 }
 
 export interface StoreKnowledgeBatchResult {
+  /** One id per atom: the inserted item, or the existing item for a verbatim no-op. */
   itemIds: string[];
   insertedCount: number;
   duplicateCount: number;
+  supersededIds: string[];
+  /** Per-atom outcomes, so a caller can report exactly what happened to each one. */
+  outcomes: StoreKnowledgeAtomOutcome[];
 }
 
 function duplicateTokens(value: string): Set<string> {
@@ -105,26 +129,52 @@ function normalizedIdentity(item: { title: string; content: string }): string {
   return `${item.title}\n${item.content}`.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-function normalizedTitle(item: { title: string }): string {
-  return item.title.toLowerCase().replace(/\s+/g, ' ').trim();
+// Whether two items are about the same subject, judged on titles alone: one title's
+// significant tokens are wholly contained in the other's. This is deliberately a title
+// test and not a whole-text similarity test, because content overlap cannot tell a
+// correction apart from a lifecycle trail. "Work Loop: Implement search UI" and
+// "Work Loop finish" overlap on ~86% of their body tokens yet must stay side by side,
+// while their titles are not in a subset relation. "Cache TTL" twice, and
+// "Database is SQLite" against "Project database uses SQLite", are.
+//
+// A one-token title ("Auth") is too coarse to carry this and is excluded.
+function sameSubjectTitle(a: { title: string }, b: { title: string }): boolean {
+  const left = duplicateTokens(a.title);
+  const right = duplicateTokens(b.title);
+  const [smaller, larger] = left.size <= right.size ? [left, right] : [right, left];
+  if (smaller.size < 2) return false;
+  for (const token of smaller) {
+    if (!larger.has(token)) return false;
+  }
+  return true;
 }
 
-// Decide whether a detected duplicate should be superseded by the new write rather
-// than causing the new write to be dropped. An explicit `supersedes` id always wins.
+export type DuplicateResolution =
+  /** Byte-for-byte the knowledge already held: write nothing, report the existing item. */
+  | 'no-op'
+  /** Same subject, different content: insert and retire the predecessor. */
+  | 'supersede'
+  /** Overlapping but not the same subject: insert, leave the other active, report it. */
+  | 'coexist';
+
+// How a detected near-duplicate is reconciled with the incoming write. The one
+// invariant that holds for every category and every calling agent: content is never
+// silently discarded. Only an exact re-store is a no-op, because only then is there
+// nothing to lose. Everything else is written.
 //
-// Otherwise the rule is the same for every category: an identical normalized title with
-// materially different content is "same subject, new information", so the new write
-// supersedes. Dropping it instead would leave the STALE value active and lose the
-// correction with no durable trace -- the worst outcome for a memory system, and the
-// reason this is not restricted to `state`. Supersession is not deletion: the
-// predecessor keeps status 'superseded' and stays queryable via supersededById.
-//
-// Distinct titles (e.g. a work loop's start / checkpoint / finish records) stay side by
-// side even though their text overlaps heavily, and are reported to the caller instead.
-function supersedesDuplicate(input: { category: KnowledgeCategory; title: string; content: string; supersedes?: string }, duplicate: KnowledgeItem): boolean {
-  if (input.supersedes && input.supersedes === duplicate.id) return true;
-  return normalizedTitle(input) === normalizedTitle(duplicate)
-    && normalizedIdentity(input) !== normalizedIdentity(duplicate);
+// An explicit `supersedes` id always wins. Otherwise a subset-title match reads as
+// "same subject, new information" and supersedes, which keeps exactly one active answer
+// and leaves the predecessor queryable via supersededById -- supersession is not
+// deletion. When the titles are unrelated the engine cannot know whether this is a
+// correction or a genuinely distinct record, so it keeps both and tells the caller,
+// which is recoverable in a way that dropping the write is not.
+export function resolveDuplicate(
+  input: { category: KnowledgeCategory; title: string; content: string; supersedes?: string },
+  duplicate: KnowledgeItem,
+): DuplicateResolution {
+  if (input.supersedes && input.supersedes === duplicate.id) return 'supersede';
+  if (normalizedIdentity(input) === normalizedIdentity(duplicate)) return 'no-op';
+  return sameSubjectTitle(input, duplicate) ? 'supersede' : 'coexist';
 }
 
 // Resolve the item (if any) that a new write should mark superseded: the detected
@@ -151,8 +201,8 @@ export async function storeKnowledgeItemDeduped(
   const conflicts = await checkKnowledgeConflict(input);
   if (conflicts.length) throw new KnowledgeConflictError(conflicts.map(item => ({ id: item.id, title: item.title })));
   const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, input);
-  const qualifies = duplicate ? supersedesDuplicate(input, duplicate) : false;
-  if (duplicate && !qualifies && !input.supersedes) {
+  const resolution = duplicate ? resolveDuplicate(input, duplicate) : null;
+  if (duplicate && resolution === 'no-op' && !input.supersedes) {
     return { action: 'duplicate', item: duplicate };
   }
 
@@ -180,7 +230,7 @@ export async function storeKnowledgeItemDeduped(
   await attachEvidenceToKnowledge(item.id, input.evidence, input);
 
   const changes: CommitChange[] = [];
-  const superseded = await resolveSupersedeTarget(input, duplicate, qualifies);
+  const superseded = await resolveSupersedeTarget(input, duplicate, resolution === 'supersede');
   if (superseded && superseded.id !== item.id) {
     await repo.updateKnowledgeItem(superseded.id, { status: 'superseded', supersededById: item.id });
     changes.push({ itemId: superseded.id, action: 'supersede', before: superseded });
@@ -189,7 +239,12 @@ export async function storeKnowledgeItemDeduped(
   await repo.createKnowledgeCommit(projectId, commitMessage || `Store ${input.category}: ${input.title}`, changes);
   await indexKnowledgeItemsBestEffort(projectId, [item]);
 
-  return { action: 'inserted', item };
+  return {
+    action: 'inserted',
+    item,
+    superseded: superseded || undefined,
+    nearDuplicate: resolution === 'coexist' && duplicate ? duplicate : undefined,
+  };
 }
 
 export async function storeKnowledgeAtomsDeduped(
@@ -201,6 +256,8 @@ export async function storeKnowledgeAtomsDeduped(
   const changes: CommitChange[] = [];
   const itemIds: string[] = [];
   const inserted: KnowledgeItem[] = [];
+  const supersededIds: string[] = [];
+  const outcomes: StoreKnowledgeAtomOutcome[] = [];
   let duplicateCount = 0;
   let insertedCount = 0;
 
@@ -213,10 +270,11 @@ export async function storeKnowledgeAtomsDeduped(
       tags: atom.tags,
     });
 
-    const qualifies = duplicate ? supersedesDuplicate(atom, duplicate) : false;
-    if (duplicate && !qualifies && !atom.supersedes) {
+    const resolution = duplicate ? resolveDuplicate(atom, duplicate) : null;
+    if (duplicate && resolution === 'no-op' && !atom.supersedes) {
       itemIds.push(duplicate.id);
       duplicateCount++;
+      outcomes.push({ action: 'duplicate', itemId: duplicate.id, title: atom.title });
       continue;
     }
 
@@ -240,16 +298,26 @@ export async function storeKnowledgeAtomsDeduped(
     );
     await attachEvidenceToKnowledge(item.id, atom.evidence, atom);
 
-    const superseded = await resolveSupersedeTarget(atom, duplicate, qualifies);
+    const superseded = await resolveSupersedeTarget(atom, duplicate, resolution === 'supersede');
     if (superseded && superseded.id !== item.id) {
       await repo.updateKnowledgeItem(superseded.id, { status: 'superseded', supersededById: item.id });
       changes.push({ itemId: superseded.id, action: 'supersede', before: superseded });
+      supersededIds.push(superseded.id);
     }
 
     itemIds.push(item.id);
     insertedCount++;
     inserted.push(item);
     changes.push({ itemId: item.id, action: 'insert', after: item });
+    outcomes.push({
+      action: 'inserted',
+      itemId: item.id,
+      title: atom.title,
+      ...(superseded && superseded.id !== item.id ? { supersededId: superseded.id } : {}),
+      ...(resolution === 'coexist' && duplicate
+        ? { nearDuplicateId: duplicate.id, nearDuplicateTitle: duplicate.title }
+        : {}),
+    });
   }
 
   if (changes.length > 0) {
@@ -265,5 +333,7 @@ export async function storeKnowledgeAtomsDeduped(
     itemIds,
     insertedCount,
     duplicateCount,
+    supersededIds,
+    outcomes,
   };
 }

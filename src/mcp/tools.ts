@@ -26,6 +26,26 @@ import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withN
 
 const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
+// The write engine never discards content, so a write can leave memory in one of two
+// states the caller should know about: a predecessor was retired, or an overlapping item
+// is still active beside the new one. Both are reported in the tool result rather than
+// only in the tool description, because that is the one channel every MCP client model
+// reads back regardless of how it treats schema prose.
+function describeWriteReconciliation(result: {
+  item: { id: string };
+  superseded?: { id: string; title: string };
+  nearDuplicate?: { id: string; title: string };
+}): string {
+  const notes: string[] = [];
+  if (result.superseded) {
+    notes.push(`Retired the superseded predecessor ${result.superseded.id} ("${result.superseded.title}"); it is no longer active but stays queryable.`);
+  }
+  if (result.nearDuplicate) {
+    notes.push(`STILL ACTIVE: overlapping item ${result.nearDuplicate.id} ("${result.nearDuplicate.title}") was kept, so memory now holds both. If your write corrects or replaces it, retire it now with knowl_update using id "${result.item.id}" and supersedeId "${result.nearDuplicate.id}". If both are genuinely true, leave it.`);
+  }
+  return notes.length ? ` ${notes.join(' ')}` : '';
+}
+
 export function registerTools(
   server: Server,
   getProjectId: () => string | null,
@@ -87,7 +107,7 @@ export function registerTools(
         },
         {
           name: 'knowl_store',
-          description: 'Store one concise structured knowledge atom directly, not raw chat transcripts. Use immediately after discovering durable project knowledge or completing each subtask, not only at the end. This is deterministic and does not require Knowl AI configuration.',
+          description: 'Store one concise structured knowledge atom directly, not raw chat transcripts. Use immediately after discovering durable project knowledge or completing each subtask, not only at the end. This is deterministic and does not require Knowl AI configuration. When this atom corrects or replaces knowledge a query already returned, pass that item id as `supersedes` in this same call so the outdated item is retired in one write; never leave two active items asserting different values for the same thing. The result reports any item left active beside this one and the exact call to retire it.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -138,7 +158,7 @@ export function registerTools(
               conflictKey: { type: 'string', description: 'Optional normalized semantic identity key.' },
               conflictScope: { type: 'object', description: 'Optional scope for the conflict key.' },
               conflictExclusive: { type: 'boolean', description: 'Whether only one active value may exist for this key/scope.' },
-              supersedes: { type: 'string', description: 'Optional id of an active item this write replaces; it is marked superseded. A changed `state` atom supersedes its near-duplicate automatically.' },
+              supersedes: { type: 'string', description: 'Id of an active item this write replaces; it is marked superseded (retired but still queryable), not deleted. Pass it whenever you are correcting knowledge a query returned. Independently of this field, any category whose title names the same subject as an existing item supersedes it automatically, and content is never silently dropped.' },
               steps: {
                 type: 'array',
                 items: { type: 'string' },
@@ -151,7 +171,7 @@ export function registerTools(
         },
         {
           name: 'knowl_ingest_atoms',
-          description: 'Store pre-extracted structured knowledge atoms from an MCP client. Do not store raw chat transcripts; extract durable facts, decisions, constraints, architecture, state, skills, and batch store implementation summaries during execution or after each completed subtask. This is the preferred MCP ingestion path and does not require Knowl AI configuration.',
+          description: 'Store pre-extracted structured knowledge atoms from an MCP client. Do not store raw chat transcripts; extract durable facts, decisions, constraints, architecture, state, skills, and batch store implementation summaries during execution or after each completed subtask. This is the preferred MCP ingestion path and does not require Knowl AI configuration. When an atom corrects or replaces knowledge a query already returned, set `supersedes` on that atom to the outdated item id so it is retired in the same write; never leave two active items asserting different values for the same thing. The result reports each atom individually, including any overlapping item left active and the exact call to retire it.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -171,6 +191,7 @@ export function registerTools(
                     affectedPaths: { type: 'array', items: { type: 'string' } },
                     confidence: { type: 'number' },
                     steps: { type: 'array', items: { type: 'string' } },
+                    supersedes: { type: 'string', description: 'Id of an active item this atom replaces; it is marked superseded (retired but still queryable), not deleted.' },
                   },
                   required: ['category', 'title', 'content'],
                 },
@@ -186,7 +207,7 @@ export function registerTools(
         },
         {
           name: 'knowl_decide',
-          description: 'Record a specific project decision directly into the knowledge base without requiring Knowl AI configuration.',
+          description: 'Record a specific project decision directly into the knowledge base without requiring Knowl AI configuration. When this decision reverses or replaces an earlier one, pass that item id as `supersedes` so the superseded decision is retired in the same write; never leave two active decisions contradicting each other. The result reports any decision left active beside this one and the exact call to retire it.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -211,6 +232,10 @@ export function registerTools(
                 type: 'array',
                 items: { type: 'string' },
                 description: 'Tags to organize this decision.',
+              },
+              supersedes: {
+                type: 'string',
+                description: 'Id of an active decision this one replaces; it is marked superseded (retired but still queryable), not deleted.',
               },
             },
             required: ['title', 'content', 'reasoning'],
@@ -311,7 +336,7 @@ export function registerTools(
         },
         {
           name: 'knowl_update',
-          description: 'Update the metadata, status, or content of an existing knowledge item. Use immediately when execution reveals stale or contradicted memory instead of adding duplicates.',
+          description: 'Update the metadata, status, or content of an existing knowledge item. Use immediately when execution reveals stale or contradicted memory instead of adding duplicates. To retire an outdated item in favour of one you just stored, call this with `id` set to the NEW item and `supersedeId` set to the OUTDATED item.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -354,7 +379,7 @@ export function registerTools(
                 enum: ['fresh', 'stale', 'needs_review'],
                 description: 'Optional freshness override. Defaults to fresh when updating reviewed knowledge content or provenance.',
               },
-              supersedeId: { type: 'string', description: 'Explicitly supersede this active item after the update.' },
+              supersedeId: { type: 'string', description: 'Id of a DIFFERENT active item to retire, pointing it at the item named by `id` as its replacement. This is not the item being updated.' },
             },
             required: ['id'],
           },
@@ -651,15 +676,13 @@ export function registerTools(
           : await withNamespaceDatabase(namespaceDescriptor(projectRoot!, namespace, config ?? undefined), store);
 
         if (result.action === 'duplicate') {
-          // Say plainly that nothing was written. A caller that skims this as success
-          // loses the content it just tried to store, so name the recovery explicitly.
           return {
-            content: [{ type: 'text', text: `NOT STORED — this ${category} closely matches existing item ${result.item.id} ("${result.item.title}"), so nothing was written. If your content is new or corrects that item, call knowl_update on ${result.item.id}, or retry knowl_store with supersedes: "${result.item.id}".` }],
+            content: [{ type: 'text', text: `NOT STORED — this ${category} is already held verbatim as item ${result.item.id} ("${result.item.title}"), so nothing was written and nothing was lost. No action needed.` }],
           };
         }
 
         return {
-          content: [{ type: 'text', text: `Successfully stored ${category} ${result.item.id}` }],
+          content: [{ type: 'text', text: `Successfully stored ${category} ${result.item.id}${describeWriteReconciliation(result)}` }],
         };
       }
 
@@ -683,25 +706,47 @@ export function registerTools(
           config?.security,
         );
 
+        // Report per atom. Counting result.itemIds as "stored" reported a verbatim no-op
+        // as a successful write, and said nothing about atoms left beside an overlapping
+        // item, so a caller had no way to know memory still held a contradiction.
+        const lines = result.outcomes.map(outcome => {
+          if (outcome.action === 'duplicate') {
+            return `- NOT STORED (already held verbatim as ${outcome.itemId}): "${outcome.title}" — no action needed.`;
+          }
+          const parts = [`- stored ${outcome.itemId}: "${outcome.title}"`];
+          if (outcome.supersededId) parts.push(`retired predecessor ${outcome.supersededId}`);
+          if (outcome.nearDuplicateId) {
+            parts.push(`STILL ACTIVE beside overlapping item ${outcome.nearDuplicateId} ("${outcome.nearDuplicateTitle}") — if this atom corrects it, retire it with knowl_update using id "${outcome.itemId}" and supersedeId "${outcome.nearDuplicateId}"`);
+          }
+          return parts.join('; ') + '.';
+        });
+        const summary = `Stored ${result.insertedCount} of ${atoms.length} atom(s); ${result.duplicateCount} already held verbatim; ${result.supersededIds.length} predecessor(s) retired.`;
         return {
-          content: [{ type: 'text', text: `Stored ${result.itemIds.length} knowledge atom(s): ${result.itemIds.join(', ')}` }],
+          content: [{ type: 'text', text: `${summary}\n${lines.join('\n')}` }],
         };
       }
       
       else if (name === 'knowl_decide') {
-        const { title, content, reasoning, alternatives, tags } = args as any;
-        const item = await recordDecisionDirect(projectId!, {
+        const { title, content, reasoning, alternatives, tags, supersedes } = args as any;
+        const result = await recordDecisionDirect(projectId!, {
           title,
           content,
           reasoning,
           alternatives,
           tags: tags || [],
+          supersedes,
         }, `Record decision via MCP: ${title}`, config || undefined);
 
+        if (result.action === 'duplicate') {
+          return {
+            content: [{ type: 'text', text: `NOT STORED — this decision is already held verbatim as item ${result.item.id} ("${result.item.title}"), so nothing was written and nothing was lost. No action needed.` }],
+          };
+        }
+
         return {
-          content: [{ type: 'text', text: `Successfully recorded decision ${item.id}` }],
+          content: [{ type: 'text', text: `Successfully recorded decision ${result.item.id}${describeWriteReconciliation(result)}` }],
         };
-      } 
+      }
       
       else if (name === 'knowl_query') {
         const { query, category, status, tags, limit, includeEvidence, explain, asOf } = args as any;

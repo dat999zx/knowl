@@ -1,6 +1,6 @@
 import { ProjectConfig, CommitChange, EvidenceInput, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import * as repo from './repository.js';
-import { findLikelyDuplicateKnowledgeItem } from './knowledge-writer.js';
+import { findLikelyDuplicateKnowledgeItem, resolveDuplicate } from './knowledge-writer.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
 import { getCurrentGitCommit } from './drift.js';
@@ -15,6 +15,18 @@ export type DirectDecisionInput = {
   alternatives?: string[] | null;
   tags?: string[] | null;
   evidence?: EvidenceInput[];
+  /** Explicitly mark this active item id superseded by the new decision. */
+  supersedes?: string;
+};
+
+export type DirectDecisionResult = {
+  /** 'duplicate' means nothing was written because the decision was already held verbatim. */
+  action: 'inserted' | 'duplicate';
+  item: KnowledgeItem;
+  /** The active decision this one retired, when it replaced one. */
+  superseded?: KnowledgeItem;
+  /** An overlapping active decision deliberately left active beside this one. */
+  nearDuplicate?: KnowledgeItem;
 };
 
 export async function recordDecisionDirect(
@@ -22,7 +34,7 @@ export async function recordDecisionDirect(
   input: DirectDecisionInput,
   commitMessage = `Record decision: ${input.title}`,
   config?: ProjectConfig
-): Promise<KnowledgeItem> {
+): Promise<DirectDecisionResult> {
   const existing = await findLikelyDuplicateKnowledgeItem(projectId, {
     category: 'decision',
     title: input.title,
@@ -30,6 +42,16 @@ export async function recordDecisionDirect(
     reasoning: input.reasoning,
     tags: input.tags,
   });
+
+  // Reconciled by the same rule as every other write path. This used to retire any
+  // fuzzy match unconditionally, which silently clobbered decisions that merely shared
+  // vocabulary with the new one.
+  const resolution = existing
+    ? resolveDuplicate({ category: 'decision', ...input }, existing)
+    : null;
+  if (existing && resolution === 'no-op' && !input.supersedes) {
+    return { action: 'duplicate', item: existing };
+  }
 
   const item = await repo.createKnowledgeItem(projectId, {
     category: 'decision',
@@ -41,16 +63,19 @@ export async function recordDecisionDirect(
   }, undefined, undefined, config?.security);
   await attachEvidenceToKnowledge(item.id, input.evidence);
 
-  if (existing) {
-    await repo.updateKnowledgeItem(existing.id, {
-      status: 'superseded',
-      supersededById: item.id,
-    });
+  let superseded: KnowledgeItem | null = resolution === 'supersede' ? existing : null;
+  if (!superseded && input.supersedes) {
+    const explicit = await repo.getKnowledgeItem(input.supersedes);
+    if (explicit && explicit.status === 'active') superseded = explicit;
   }
 
   const changes: CommitChange[] = [];
-  if (existing) {
-    changes.push({ itemId: existing.id, action: 'supersede', before: existing });
+  if (superseded && superseded.id !== item.id) {
+    await repo.updateKnowledgeItem(superseded.id, {
+      status: 'superseded',
+      supersededById: item.id,
+    });
+    changes.push({ itemId: superseded.id, action: 'supersede', before: superseded });
   }
   changes.push({ itemId: item.id, action: 'insert', after: item });
 
@@ -67,7 +92,12 @@ export async function recordDecisionDirect(
     }
   }
 
-  return item;
+  return {
+    action: 'inserted',
+    item,
+    superseded: superseded || undefined,
+    nearDuplicate: resolution === 'coexist' && existing ? existing : undefined,
+  };
 }
 
 export async function updateKnowledgeItemWithCommit(
