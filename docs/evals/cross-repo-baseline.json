@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "recordedAt": "2026-07-26",
+  "suite": "docs/evals/cross-repo-suite.json",
+  "runner": "tests/workspace/cross-repo-eval.test.ts",
+  "fusion": "reciprocal rank across corpora, k=60, no weights, no boosts; ties break toward the local repo",
+  "metrics": {
+    "recallAt3": 1.0,
+    "mrr": 0.8333333333333334,
+    "forbiddenHitCount": 0,
+    "failedCaseIds": []
+  },
+  "knownWeakness": {
+    "case": "xrepo-answer-elsewhere",
+    "observed": "The correct answer ranks second. Web's 'Web scratch note' mentions auth in passing and is rank 1 of its own corpus, so it scores identically to server's rank-1 'Auth token TTL is fifteen minutes' and the local tie-break puts the weaker local match first.",
+    "why": "Reciprocal-rank fusion compares positions, not strengths. A weak rank-1 in a small corpus is indistinguishable from a strong rank-1 in a large one, and the local tie-break then decides.",
+    "cost": "A strongly-matching answer in a linked repo can be outranked by a weakly-matching local one.",
+    "notFixedBecause": "Fixing it means making cross-corpus scores genuinely comparable, which is a retrieval change this project requires an ablation to justify. This number is that ablation's starting point; raising it has to be demonstrated, not assumed."
+  }
+}
