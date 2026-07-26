@@ -1,9 +1,9 @@
 import { Evidence, KnowledgeAssertion, KnowledgeItem } from '../core/types.js';
-import { compactKnowledgeItem, CompactKnowledgeItem, MAX_EVIDENCE_ITEMS, MAX_ITEM_CONTENT_CHARS, truncateText } from '../core/token-budget.js';
+import { compactKnowledgeItem, CompactKnowledgeItem, CompactProvenance, MAX_EVIDENCE_ITEMS, MAX_ITEM_CONTENT_CHARS, truncateText } from '../core/token-budget.js';
 
 export const DEFAULT_EVIDENCE_LIMIT = MAX_EVIDENCE_ITEMS;
 export function compactMcpJson(value: unknown): string { return JSON.stringify(value); }
-export function compactItemResponse(item: KnowledgeItem): CompactKnowledgeItem { return compactKnowledgeItem(item); }
+export function compactItemResponse(item: KnowledgeItem, provenance?: CompactProvenance): CompactKnowledgeItem { return compactKnowledgeItem(item, provenance); }
 export function compactAssertionResponse(assertion: KnowledgeAssertion): Record<string, unknown> {
   return {
     id: assertion.id,

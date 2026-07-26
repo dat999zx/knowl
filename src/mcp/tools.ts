@@ -764,7 +764,9 @@ export function registerTools(
           // Access is deliberately not recorded here: retrieval counts feed the
           // access-weighted GC decay, so logging time-travel reads would make stale items
           // look hot and shield them from collection.
-          return { content: [{ type: 'text', text: compactMcpJson(items.map(compactItemResponse)) }] };
+          // Wrapped rather than passed point-free: compactItemResponse now takes provenance
+          // as its second argument, and map would hand it the array index.
+          return { content: [{ type: 'text', text: compactMcpJson(items.map(item => compactItemResponse(item))) }] };
         }
         let vector;
         if (config && projectRoot && query && isVectorSearchEnabled(config)) {

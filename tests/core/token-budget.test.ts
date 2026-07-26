@@ -22,4 +22,27 @@ describe('token budget', () => {
     expect(compactKnowledgeItem(item)).not.toHaveProperty('alternatives');
     expect(compactKnowledgeItem(item)).not.toHaveProperty('affectedPaths');
   });
+
+  it('omits repo and namespace when none are supplied, so existing output is unchanged', () => {
+    const compact = compactKnowledgeItem(item);
+    expect(compact).not.toHaveProperty('repo');
+    expect(compact).not.toHaveProperty('namespace');
+  });
+
+  it('carries a repo label into the compact shape', () => {
+    expect(compactKnowledgeItem(item, { repo: 'server' }).repo).toBe('server');
+  });
+
+  it('carries a namespace label, which layered queries attach and this dropped', () => {
+    expect(compactKnowledgeItem(item, { namespace: 'organization' }).namespace).toBe('organization');
+  });
+
+  it('survives the MCP serialization boundary, which is where provenance actually died', async () => {
+    // compactItemResponse -> compactMcpJson is the path every knowl_query result takes.
+    // Asserting on the in-memory object would pass even with the field stripped downstream.
+    const { compactItemResponse, compactMcpJson } = await import('../../src/mcp/response-format.js');
+    const serialized = JSON.parse(compactMcpJson([compactItemResponse(item, { repo: 'server', namespace: 'project' })]));
+    expect(serialized[0].repo).toBe('server');
+    expect(serialized[0].namespace).toBe('project');
+  });
 });
