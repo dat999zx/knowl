@@ -3,6 +3,75 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.4.0 — 2026-07-26
+
+A release of things that were quietly not working. Nothing here is a new feature you can
+point at; several are cases where Knowl reported success while losing or hiding your
+knowledge. Most were found while designing multi-repo workspaces — a shared database turns
+each of them from latent into destructive — but every one of them is a bug in the
+single-repo product today.
+
+### Fixed
+
+- **A correction could be silently dropped.** Identical content produced different memory
+  depending on which agent wrote it: Codex deprecated the stale item first, while Claude
+  relied on auto-dedup and had its correction discarded. Only an exact title match
+  superseded; everything else was thrown away. All three write paths now share one
+  resolution — `no-op` only for a byte-identical re-store, `supersede` when one title's
+  significant tokens are a subset of the other's, and `coexist` otherwise, which keeps both
+  and tells the caller what it was left beside. Superseding is judged on titles, not whole
+  text, because content overlap cannot separate a correction from a lifecycle trail: a work
+  loop's start and finish records share most of their body tokens and must stay side by
+  side. `knowl_ingest_atoms` now reports each atom individually, having previously counted
+  a verbatim no-op toward its stored total and called an empty batch a success.
+- **`knowl_query` returned less than it found, without saying so.** An `asOf` query
+  hard-filtered on category, unlike every other path, so a wrong category guess returned
+  nothing where the same query without `asOf` recovered; it now retries without the filter
+  when the filtered result is empty. Separately, vector search and `explain` silently fell
+  back to the project database alone, dropping session and any configured
+  organization/global knowledge — that scope narrowing is now disclosed in the reply
+  instead of being invisible.
+- **Writes outside the project layout were stored with no embedding.** The embedding writer
+  derived its config directory from the database's location, which only holds for
+  `<root>/.knowl/knowl.db`. Any other database produced a nonsense path, config loading
+  threw, and the best-effort catch swallowed it — so the item was written with no vector
+  and no error. Vector-first ranking then made it effectively unretrievable.
+- **Layered retrieval dropped status and tag filters.** Only the query, limit and surface
+  reached each namespace, so asking for archived items or a specific tag got neither.
+  Category remains a ranking boost rather than a filter, matching the direct path, because
+  a wrong category guess must not empty a result set.
+- **Reading a database migrated it.** Schema bootstrap runs on every open and includes the
+  legacy-schema migration, which drops foreign keys and rebuilds tables outside a
+  transaction. Opening a database to read from it therefore rewrote it. There is now a
+  read-only open that skips bootstrap entirely.
+- **`listKnowledgeItems` accepted a scope and ignored it.** It took a project id and
+  selected the whole table, so garbage collection, synthesis, integrity checking, drift,
+  export and the viewer all read as bounded while scanning everything. The argument is
+  gone rather than quietly honored, so nothing reads as scoped that isn't.
+
+### Added
+
+- **Knowl refuses to open a database written by a newer version.** There was no schema
+  version marker at all, and because the schema is built from `CREATE TABLE IF NOT EXISTS`
+  plus additive `ALTER`s, an older client saw every table it expected, found nothing
+  missing, and proceeded — writing rows the newer schema's rules do not hold for. Databases
+  now carry a version and an older build declines with a message naming both.
+- **Connections are pooled.** Each namespace query previously closed and reopened the
+  database twice. Clients are now cached per resolved path and open mode.
+- **Query results can carry provenance.** The compact response shape is an allowlist, so
+  any label attached upstream was discarded before reaching the agent — including the
+  namespace label layered queries have always attached. `repo` and `namespace` now survive
+  serialization. Both are absent unless supplied, so existing output is unchanged.
+- **`origin_repo` and `visibility` columns on knowledge items.** Groundwork for linking
+  repositories into one knowledge base. Nothing reads them yet: outside a workspace
+  `origin_repo` stays null and `visibility` stays `repo`, which is exactly current
+  behavior.
+
+### Changed
+
+- Database paths are resolved in one place instead of being derived independently in three,
+  which had no visible effect only because the three happened to agree.
+
 ## 2.3.0 — 2026-07-25
 
 Memory can now move between two machines more than once, and deletes move with it.
