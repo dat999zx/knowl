@@ -35,17 +35,29 @@
 | `src/workspace/resolve.ts` | **New.** `resolveWorkspace(root)` → active workspace + this repo's name + peer descriptors | 4 |
 | `src/workspace/federated-query.ts` | **New.** Fan-out, visibility filtering, per-repo caps, RRF fusion, skip reporting | 5, 6 |
 | `src/workspace/promote.ts` | **New.** `visibility` promotion with dry-run | 7 |
-| `src/store/namespaces.ts` | Peer descriptors join the namespace list | 4 |
-| `src/store/knowledge-writer.ts` | Duplicate resolution clamped across owners | 8 |
-| `src/store/synthesis.ts`, `recent-context.ts`, `context-bootstrap.ts`, `context-composer.ts`, `work-loop.ts` | Implicit reads take a required scope | 9 |
-| `src/mcp/tools.ts` | `repos` filter, `repo` label, foreign-item refusals, workspace in `knowl_state` | 6, 10 |
-| `src/cli/workspace-report.ts` | **New.** `knowl workspace list/status` rendering | 11 |
-| `src/cli/status-report.ts`, `src/cli/doctor-report.ts` | Workspace sections | 11 |
-| `src/core/knowl-guidance.ts` | One workspace paragraph in the managed section and subagent card | 12 |
-| `src/index.ts` | `knowl workspace` command group | 13 |
-| `docs/evals/` | Cross-repo retrieval cases | 14 |
+| `src/mcp/tools.ts` | `repos` filter, `repo` label, foreign-item refusals, workspace in `knowl_state` | 6, 9 |
+| `src/cli/workspace-report.ts` | **New.** `knowl workspace list/status` rendering | 10 |
+| `src/cli/status-report.ts`, `src/cli/doctor-report.ts` | Workspace sections | 10 |
+| `src/core/knowl-guidance.ts` | One workspace paragraph in the managed section and subagent card | 11 |
+| `src/index.ts` | `knowl workspace` command group | 12 |
+| `docs/evals/` | Cross-repo retrieval cases | 13 |
 
-Tasks 1–3 are sequential. Tasks 4–6 depend on 3. Tasks 7–12 depend on 4. Task 13 depends on 1–3 and 7. Tasks 14–15 are last.
+Tasks 1–3 are sequential. Tasks 4–6 depend on 3. Tasks 7–11 depend on 4. Task 12 depends on 1–3 and 7. Tasks 13–14 are last.
+
+**Peers never join the generic namespace list.** This is the load-bearing structural decision
+of v1 and it was wrong in the first draft of this plan. Federation is reachable only through
+`queryFederated`, called explicitly from `knowl_query`. Because each repo's database holds
+only its own items, that one restriction makes every implicit read — recent context, pinned
+constraints, work-loop bootstrap, synthesis — naturally scoped, with no per-call-site
+plumbing. Adding peers to `configuredNamespaces` instead would have leaked foreign knowledge
+into auto-injected context through `composeContext`, which is exactly the injection channel
+the spec forbids.
+
+Two tasks the first draft listed are consequently gone: scoping implicit reads, and clamping
+write-time duplicate resolution across owners. Neither can fire in v1 — a repo's database
+contains no foreign items to leak or to supersede. Both are real, and both move to v2, where
+one database holds every repo's knowledge. Task 8 pins the property so v2 cannot regress it
+silently.
 
 ---
 
@@ -1233,99 +1245,887 @@ Create `tests/mcp/workspace-query.test.ts` modelled on the fixture in Task 5, as
 Reuse the existing `tests/mcp/server.test.ts` harness for constructing the server and calling tools.
 
 - [ ] **Step 2: Run test to verify it fails**
-- [ ] **Step 3: Implement** — in the `knowl_query` handler, after the existing item resolution:
+
+Run: `npx.cmd vitest run tests/mcp/workspace-query.test.ts`
+Expected: FAIL — no `repo` on any item; `repos` is not an accepted argument
+
+- [ ] **Step 3: Write minimal implementation**
+
+First the tool schema, in the `knowl_query` entry of the tool list:
 
 ```typescript
+              repos: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Restrict results to knowledge produced by these linked repos. Matches the owning repo only, not repos an item merely applies to.',
+              },
+```
+
+Then the handler, after the existing item resolution and before the evidence/compaction step:
+
+```typescript
+        // Federation is reached only from here. Peers are deliberately absent from
+        // configuredNamespaces so implicit context assembly cannot fan out (see the
+        // federation-is-opt-in tests).
         const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
         let federatedSkips: FederatedResult['skipped'] = [];
-        let labelled = items.map(item => compactItemResponse(item));
+        let resolved: Array<KnowledgeItem & { repo?: string }> = items;
         if (active) {
           const federated = await queryFederated({
-            workspace: active, localItems: items, query: query ?? '', limit: limit ?? 3, repos,
+            workspace: active,
+            localItems: items,
+            query: query ?? '',
+            limit: limit ?? 3,
+            repos,
           });
           federatedSkips = federated.skipped;
-          labelled = federated.items.map(item => compactItemResponse(item, { repo: item.repo }));
+          resolved = federated.items;
         }
 ```
 
-and append the disclosure block when `federatedSkips.length > 0`, matching the existing skipped-namespace block's construction.
+and make the existing `compact` closure carry the label through — it must go via
+`compactItemResponse`'s second argument, because the compact shape is an allowlist and a field
+attached to the item alone would be dropped:
 
-- [ ] **Step 4: Verify** — `npx.cmd vitest run tests/mcp/workspace-query.test.ts` passes
-- [ ] **Step 5: Full suite and typecheck** — 15 errors
-- [ ] **Step 6: Commit** `feat(workspace): knowl_query serves federated results with repo labels`
+```typescript
+        const compact = (item: KnowledgeItem & { repo?: string; explanation?: unknown }) => ({
+          ...compactItemResponse(item, item.repo ? { repo: item.repo } : undefined),
+          ...(explain && item.explanation ? { explanation: item.explanation } : {}),
+        });
+```
+
+Finally the disclosure, appended only when something was skipped, built the same way as the
+existing skipped-namespace block so both read alike:
+
+```typescript
+        const blocks: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: compactMcpJson(payload) }];
+        if (federatedSkips.length > 0) {
+          const described = federatedSkips.map(skip => `${skip.repo} (${skip.reason})`).join(', ');
+          blocks.push({
+            type: 'text',
+            text: `Linked repos not searched: ${described}. Their knowledge is absent from these results.`,
+          });
+        }
+        return { content: blocks };
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx.cmd vitest run tests/mcp/workspace-query.test.ts`
+Expected: PASS, 4 tests
+
+- [ ] **Step 5: Verify suite and typecheck**
+
+Run: `npm.cmd test`; `npx.cmd tsc --noEmit` — 15 errors
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/mcp/tools.ts tests/mcp/workspace-query.test.ts
+git commit -m "feat(workspace): knowl_query serves federated results with repo labels
+
+Every item carries the repo that owns it, and a repos filter restricts results
+to what a named repo produced -- matching origin only, never the repos an item
+merely applies to, so a filtered result set stays explainable.
+
+The label goes through compactItemResponse's provenance argument rather than
+onto the item: the compact shape is an allowlist, so a field attached upstream
+is dropped before serialization.
+
+Skipped repos are disclosed in a second content block, leaving the first a bare
+JSON array -- the shape fc6171e already established for skipped namespaces,
+rather than a new one."
+```
 
 ---
-
 ### Task 7: `knowl workspace promote`
 
-**Files:** Create `src/workspace/promote.ts`; Test `tests/workspace/promote.test.ts`
+**Files:**
+- Create: `src/workspace/promote.ts`
+- Test: `tests/workspace/promote.test.ts`
 
 **Interfaces:**
-- `promoteItems(input: { projectRoot: string; repoName: string; categories?: KnowledgeCategory[]; ids?: string[]; apply?: boolean }): Promise<{ items: Array<{ id: string; title: string }>; applied: boolean }>`
+- Consumes: `initDb`/`closeDb`/`getClient` from `src/store/database.js`
+- Produces:
+  - `type PromoteTarget = { id: string; title: string; category: string }`
+  - `type PromoteResult = { items: PromoteTarget[]; applied: boolean; skippedForeign: number }`
+  - `promoteItems(input: { projectRoot: string; repoName: string; categories?: KnowledgeCategory[]; ids?: string[]; apply?: boolean }): Promise<PromoteResult>`
 
-**Context:** category routing only affects future writes, so without a backfill, linking shares nothing a team has already learned — including the wire-format decision the whole design is motivated by. `promote` sets `visibility = 'workspace'` on items **this repo originated**. Dry-run by default. No `demote`: retracting knowledge other repos have read needs a mechanism that does not exist.
+**Context the implementer needs:** category-driven routing only affects *future* writes. Without
+a backfill, linking shares nothing a team has already learned — including the wire-format
+decision the whole design is motivated by, which already exists in someone's repo today.
+`promote` sets `visibility = 'workspace'` on items this repo originated. It is a one-column
+update, so it does not touch `content_hash`, does not create rows, and does not move anything
+between databases.
 
-Tests to write: promotes by category; promotes by id; refuses an item this repo did not originate; dry-run changes nothing; `content_hash` and item count are unchanged by a promote.
+Dry-run is the default. There is deliberately no `demote`: retracting knowledge other repos
+have already read is a different problem with no mechanism behind it.
 
-- [ ] Steps 1–6 following the established pattern.
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/workspace/promote.test.ts`:
+
+```typescript
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { closeDb, getClient, initDb } from '../../src/store/database.js';
+import * as repo from '../../src/store/repository.js';
+import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
+import { promoteItems } from '../../src/workspace/promote.js';
+
+const ROOT = path.resolve('./.knowl-promote-test');
+
+async function seed(): Promise<{ decision: string; fact: string }> {
+  await fs.rm(ROOT, { recursive: true, force: true });
+  await fs.mkdir(path.join(ROOT, '.knowl'), { recursive: true });
+  await initDb(ROOT);
+  const projectId = (await repo.createProject(ROOT, 'promote')).id;
+  const decision = await storeKnowledgeItemDeduped(projectId, {
+    category: 'decision', title: 'Wire format is protobuf',
+    content: 'Server and client exchange protobuf, not JSON.',
+  });
+  const fact = await storeKnowledgeItemDeduped(projectId, {
+    category: 'fact', title: 'Local scratch note',
+    content: 'A scratch observation that should stay in this repo.',
+  });
+  await getClient().execute("UPDATE knowledge_items SET origin_repo = 'server'");
+  await closeDb();
+  return { decision: decision.item.id, fact: fact.item.id };
+}
+
+describe('promote', () => {
+  let ids: { decision: string; fact: string };
+  beforeEach(async () => { ids = await seed(); });
+  afterEach(async () => { await closeDb(); await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {}); });
+
+  it('dry-runs by default and changes nothing', async () => {
+    const result = await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'] });
+    expect(result.applied).toBe(false);
+    expect(result.items.map(item => item.title)).toEqual(['Wire format is protobuf']);
+
+    await initDb(ROOT);
+    const rows = await getClient().execute("SELECT COUNT(*) AS n FROM knowledge_items WHERE visibility = 'workspace'");
+    expect(Number(rows.rows[0].n)).toBe(0);
+    await closeDb();
+  });
+
+  it('promotes by category when applied', async () => {
+    await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'], apply: true });
+    await initDb(ROOT);
+    const rows = await getClient().execute("SELECT title FROM knowledge_items WHERE visibility = 'workspace'");
+    expect(rows.rows.map(row => String(row.title))).toEqual(['Wire format is protobuf']);
+    await closeDb();
+  });
+
+  it('promotes by id', async () => {
+    await promoteItems({ projectRoot: ROOT, repoName: 'server', ids: [ids.fact], apply: true });
+    await initDb(ROOT);
+    const rows = await getClient().execute("SELECT title FROM knowledge_items WHERE visibility = 'workspace'");
+    expect(rows.rows.map(row => String(row.title))).toEqual(['Local scratch note']);
+    await closeDb();
+  });
+
+  it('refuses items this repo did not originate, and says how many', async () => {
+    await initDb(ROOT);
+    await getClient().execute("UPDATE knowledge_items SET origin_repo = 'web' WHERE category = 'decision'");
+    await closeDb();
+
+    const result = await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'], apply: true });
+    expect(result.items).toEqual([]);
+    expect(result.skippedForeign).toBe(1);
+  });
+
+  it('does not change content_hash or item count -- promotion is a visibility change', async () => {
+    await initDb(ROOT);
+    const before = await getClient().execute('SELECT id, content_hash FROM knowledge_items ORDER BY id');
+    await closeDb();
+
+    await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'], apply: true });
+
+    await initDb(ROOT);
+    const after = await getClient().execute('SELECT id, content_hash FROM knowledge_items ORDER BY id');
+    expect(after.rows.length).toBe(before.rows.length);
+    expect(after.rows.map(row => String(row.content_hash))).toEqual(before.rows.map(row => String(row.content_hash)));
+    await closeDb();
+  });
+
+  it('is idempotent', async () => {
+    await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'], apply: true });
+    const second = await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'], apply: true });
+    expect(second.items.length).toBe(0);
+  });
+
+  it('requires a category or an id, so a bare promote cannot publish everything', async () => {
+    await expect(promoteItems({ projectRoot: ROOT, repoName: 'server', apply: true }))
+      .rejects.toThrow(/--category|--id/);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx.cmd vitest run tests/workspace/promote.test.ts`
+Expected: FAIL — `Cannot find module '../../src/workspace/promote.js'`
+
+- [ ] **Step 3: Write minimal implementation**
+
+Create `src/workspace/promote.ts`:
+
+```typescript
+import type { KnowledgeCategory } from '../core/types.js';
+import { closeDb, getClient, initDb } from '../store/database.js';
+
+export type PromoteTarget = { id: string; title: string; category: string };
+export type PromoteResult = { items: PromoteTarget[]; applied: boolean; skippedForeign: number };
+
+/**
+ * Backfill existing knowledge into workspace visibility.
+ *
+ * Category routing governs future writes only, so without this, linking shares nothing a
+ * team already learned. Promotion is a one-column update: it does not touch `content_hash`,
+ * create rows, or move anything between databases.
+ *
+ * Only items this repo originated can be promoted -- publishing another repo's knowledge is
+ * that repo's decision. There is no `demote`: retracting something other repos have already
+ * read needs a mechanism this design does not have.
+ */
+export async function promoteItems(input: {
+  projectRoot: string;
+  repoName: string;
+  categories?: KnowledgeCategory[];
+  ids?: string[];
+  apply?: boolean;
+}): Promise<PromoteResult> {
+  const byCategory = input.categories?.length ? input.categories : null;
+  const byId = input.ids?.length ? input.ids : null;
+  if (!byCategory && !byId) {
+    throw new Error('Specify what to promote with --category <list> or --id <id>. A bare promote would publish the whole repo.');
+  }
+
+  await initDb(input.projectRoot);
+  try {
+    const client = getClient();
+    const selector = byId
+      ? { clause: `id IN (${byId.map(() => '?').join(', ')})`, args: [...byId] as string[] }
+      : { clause: `category IN (${byCategory!.map(() => '?').join(', ')})`, args: [...byCategory!] as string[] };
+
+    // Counted separately so the caller can say "1 item belongs to web" rather than silently
+    // returning fewer rows than the user asked for.
+    const foreign = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM knowledge_items
+            WHERE ${selector.clause} AND status = 'active'
+              AND visibility = 'repo' AND (origin_repo IS NULL OR origin_repo <> ?)`,
+      args: [...selector.args, input.repoName],
+    });
+
+    const rows = await client.execute({
+      sql: `SELECT id, title, category FROM knowledge_items
+            WHERE ${selector.clause} AND status = 'active'
+              AND visibility = 'repo' AND origin_repo = ?
+            ORDER BY updated_at DESC`,
+      args: [...selector.args, input.repoName],
+    });
+
+    const items: PromoteTarget[] = rows.rows.map(row => ({
+      id: String(row.id), title: String(row.title), category: String(row.category),
+    }));
+
+    if (input.apply && items.length > 0) {
+      await client.execute({
+        sql: `UPDATE knowledge_items SET visibility = 'workspace'
+              WHERE id IN (${items.map(() => '?').join(', ')})`,
+        args: items.map(item => item.id),
+      });
+    }
+
+    return { items, applied: Boolean(input.apply) && items.length > 0, skippedForeign: Number(foreign.rows[0]?.n ?? 0) };
+  } finally {
+    await closeDb();
+  }
+}
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx.cmd vitest run tests/workspace/promote.test.ts`
+Expected: PASS, 7 tests
+
+- [ ] **Step 5: Verify suite and typecheck**
+
+Run: `npm.cmd test`; `npx.cmd tsc --noEmit` — 15 errors
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/workspace/promote.ts tests/workspace/promote.test.ts
+git commit -m "feat(workspace): promote existing knowledge into workspace visibility
+
+Category routing governs future writes only, so linking would have shared
+nothing a team already learned -- including the wire-format decision the whole
+design is motivated by, which already exists in someone's repo today.
+
+A one-column update: content_hash, item count and storage location all
+unchanged. Dry-run by default, and a bare promote is refused so it cannot
+publish an entire repo by accident. Only items this repo originated; no demote,
+because retracting what other repos have read needs a mechanism that does not
+exist."
+```
 
 ---
 
-### Task 8: Clamp duplicate resolution across owners
+### Task 8: Federation is opt-in — implicit reads never fan out
 
-**Files:** Modify `src/store/knowledge-writer.ts`; Test `tests/store/cross-repo-dedup.test.ts`
+**Files:**
+- Test: `tests/workspace/implicit-reads-scoped.test.ts`
+- Modify: `src/store/namespaces.ts` only if a peer descriptor has leaked into `configuredNamespaces`
 
-**Context:** `resolveDuplicate` supersedes on `sameSubjectTitle` — a title-token subset, whose own documented example is "Database is SQLite" against "Project database uses SQLite". Across two repos of one product that is ordinary. Detection may span owners (an overlapping item elsewhere is exactly the signal a workspace provides); **resolution is forced to `coexist` when the detected duplicate has a different `origin_repo`**, including when an explicit `supersedes` names a foreign item.
+**Context the implementer needs:** this task is a **guard, not a feature**. In v1 each repo's
+database holds only that repo's items, so recent context, pinned constraints, work-loop
+bootstrap and synthesis are scoped for free — *provided* peers are never added to
+`configuredNamespaces`. Task 4 deliberately keeps peers out of it and exposes them only through
+`queryFederated`.
 
-Tests: a write in repo A does not supersede an item owned by repo B; the `nearDuplicate` report names the owning repo; an explicit `supersedes` targeting a foreign item is refused; same-owner supersession is unchanged.
+That property is worth pinning rather than assuming, for two reasons. Adding peers to the
+namespace list is the obvious-looking shortcut a future change might take, and `composeContext`
+calls `queryLayeredKnowledge`, so the leak would land straight in auto-injected context — the
+injection channel the spec forbids. These tests fail loudly if anyone takes the shortcut.
 
-- [ ] Steps 1–6 following the established pattern.
+The first draft of this plan listed "scope every implicit read" as v1 work with per-call-site
+plumbing. That was wrong: there is nothing to scope until v2 puts every repo's items in one
+database. The plumbing moves to v2; the guarantee gets pinned here.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/workspace/implicit-reads-scoped.test.ts`, reusing the two-repo fixture from Task 5
+(repo `b` holds a `workspace`-visibility item titled `Auth token TTL is fifteen minutes`):
+
+```typescript
+  it('configuredNamespaces contains no peer database', async () => {
+    // The structural guarantee. If a peer ever appears here, composeContext will inject
+    // another repo's knowledge into auto-assembled context without anyone asking.
+    const descriptors = configuredNamespaces(A, await loadConfig(A));
+    expect(descriptors.map(entry => entry.databasePath)).not.toContain(resolveStorage(B).knowledge);
+  });
+
+  it('getRecentContext returns nothing from a linked repo', async () => {
+    await initDb(A);
+    const recent = await getRecentContext('local', { itemLimit: 20 });
+    expect(recent.items.some(item => item.title.includes('Auth token TTL'))).toBe(false);
+    await closeDb();
+  });
+
+  it('composeContext returns nothing from a linked repo', async () => {
+    await initDb(A);
+    const pack = await composeContext('local', { query: 'auth', tokenBudget: 2000, namespaceRoot: A });
+    const titles = pack.sections.flatMap(section => section.items.map(item => item.title));
+    expect(titles.some(title => title.includes('Auth token TTL'))).toBe(false);
+    await closeDb();
+  });
+
+  it('startWorkLoop bootstrap returns nothing from a linked repo', async () => {
+    await initDb(A);
+    const started = await startWorkLoop('local', 'Investigate auth');
+    expect(JSON.stringify(started)).not.toContain('fifteen minutes');
+    await closeDb();
+  });
+
+  it('synthesize cannot draw on a linked repo', async () => {
+    await initDb(A);
+    const item = await synthesizeKnowledge('local', 'auth');
+    expect(item.content).not.toContain('fifteen minutes');
+    await closeDb();
+  });
+
+  it('knowl_query does fan out -- federation is opt-in, not absent', async () => {
+    // The counterpart assertion. Without it this suite would pass if federation were
+    // simply broken.
+    await initDb(A);
+    const local = await queryKnowledgeForAgent('local', { query: 'auth', limit: 5, surface: 'test' });
+    const active = (await resolveWorkspace(A))!;
+    const federated = await queryFederated({ workspace: active, localItems: local, query: 'auth', limit: 5 });
+    expect(federated.items.some(item => item.repo === 'b')).toBe(true);
+    await closeDb();
+  });
+```
+
+The synthesize case needs two local `auth` sources to satisfy its minimum; seed repo `A` with a
+second one in the fixture.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx.cmd vitest run tests/workspace/implicit-reads-scoped.test.ts`
+Expected: the five scoping assertions **pass** and the sixth **fails** until Task 5 is wired
+into this fixture. If any of the five fails, a peer has reached the namespace list and Task 4
+must be fixed before continuing — that is the signal this task exists to raise.
+
+- [ ] **Step 3: Implementation**
+
+Expected to be **no production change**. If a scoping assertion fails, remove the peer
+descriptor from `configuredNamespaces` and route it through `queryFederated` instead. Do not
+add a filter to the implicit read — that would leave the leak one call site away.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx.cmd vitest run tests/workspace/implicit-reads-scoped.test.ts`
+Expected: PASS, 6 tests
+
+- [ ] **Step 5: Verify suite and typecheck**
+
+Run: `npm.cmd test`; `npx.cmd tsc --noEmit` — 15 errors
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tests/workspace/implicit-reads-scoped.test.ts
+git commit -m "test(workspace): pin federation as opt-in
+
+In v1 each repo's database holds only its own items, so implicit reads are
+scoped for free -- provided peers never join configuredNamespaces. That is worth
+pinning rather than assuming: adding peers to the namespace list is the
+obvious-looking shortcut, and composeContext goes through queryLayeredKnowledge,
+so the leak would land straight in auto-injected context.
+
+Five assertions that recent context, pinned constraints, work-loop bootstrap and
+synthesis see nothing foreign, plus one that knowl_query does fan out -- without
+which the suite would pass if federation were simply broken."
+```
 
 ---
 
-### Task 9: Scope every implicit read
+### Task 9: Item-scoped tools refuse foreign items
 
-**Files:** Modify `src/store/recent-context.ts`, `context-bootstrap.ts`, `context-composer.ts`, `work-loop.ts`, `synthesis.ts`; Test `tests/workspace/implicit-reads.test.ts`
+**Files:**
+- Create: `src/workspace/ownership.ts`
+- Modify: `src/mcp/tools.ts` (`knowl_update`, `knowl_timeline`, `knowl_evidence_list`, `knowl_feedback`, and the evidence block of `knowl_query`)
+- Test: `tests/mcp/foreign-item-refusal.test.ts`
 
-**Context:** auto-injected context must never contain another repo's knowledge. These are separate call sites, so one shared assertion would pass while individual surfaces leak — **one test per surface**. Implicit reads resolve to `origin_repo = <current>` only, *not* `visibility = 'workspace'`: workspace knowledge arrives through an explicit query where the agent asked for it. Synthesis additionally restricts its sources to the current repo and inherits the most restrictive source visibility.
+**Interfaces:**
+- Produces:
+  - `class ForeignItemError extends Error`
+  - `assertOwnedItem(itemId: string, workspace: ActiveWorkspace | null): Promise<void>`
 
-- [ ] Steps 1–6, with five separate assertions.
+**Context the implementer needs:** these tools take a bare item id and resolve it against the
+current database. A federated result now carries a `repo` label, so an agent can ask about an
+item that is not in this database — and today's handlers would answer from the wrong one, or
+compute evidence staleness against the wrong filesystem (`tools.ts:740` uses the current
+`projectRoot`). A confident wrong answer is worse than a refusal: it tells an agent to
+re-verify knowledge that is perfectly current, or reports success for an update that changed
+nothing.
+
+v1 is read-only across repos, so refusal is the correct terminal behavior, not a placeholder.
+v2 keeps it, for ownership reasons rather than storage ones.
+
+**Check before writing:** 2.4.0 added the `origin_repo` column and the Drizzle field, but
+`mapRowToKnowledgeItem` in `src/store/repository.ts` may not read it. If `originRepo` comes back
+`undefined`, `assertOwnedItem` refuses every local item. Verify first.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/mcp/foreign-item-refusal.test.ts`, using the Task 5 two-repo fixture plus the
+tool-call harness from `tests/mcp/server.test.ts`:
+
+```typescript
+  it('knowl_update refuses an item this repo does not own, naming the owner', async () => {
+    const foreignId = await idOfPeerItem('Auth token TTL is fifteen minutes');
+    const response = await callTool('knowl_update', { id: foreignId, content: 'Rewritten from the wrong repo.' });
+    expect(response.content[0].text).toMatch(/belongs to repo "b"/);
+  });
+
+  it('the refused update really did not write', async () => {
+    const foreignId = await idOfPeerItem('Auth token TTL is fifteen minutes');
+    const before = await peerItemContent(foreignId);
+    await callTool('knowl_update', { id: foreignId, content: 'Rewritten from the wrong repo.' });
+    expect(await peerItemContent(foreignId)).toBe(before);
+  });
+
+  it('knowl_timeline, knowl_evidence_list and knowl_feedback refuse a foreign id', async () => {
+    const foreignId = await idOfPeerItem('Auth token TTL is fifteen minutes');
+    for (const tool of ['knowl_timeline', 'knowl_evidence_list']) {
+      expect((await callTool(tool, { itemId: foreignId })).content[0].text).toMatch(/belongs to repo "b"/);
+    }
+    expect((await callTool('knowl_feedback', { itemId: foreignId, used: true })).content[0].text)
+      .toMatch(/belongs to repo "b"/);
+  });
+
+  it('knowl_query omits evidence for foreign items rather than computing it here', async () => {
+    // Staleness resolved against this repo's filesystem would report "stale" for a file
+    // that simply lives in another checkout -- a wrong answer, not a missing one.
+    const response = await callTool('knowl_query', { query: 'auth', limit: 5, includeEvidence: true });
+    const foreign = JSON.parse(response.content[0].text).find((item: any) => item.repo === 'b');
+    expect(foreign.evidence).toBeUndefined();
+  });
+
+  it('local items are unaffected', async () => {
+    const localId = await idOfLocalItem('Local auth note');
+    const response = await callTool('knowl_update', { id: localId, content: 'Updated locally, which is allowed.' });
+    expect(response.content[0].text).not.toMatch(/belongs to repo/);
+  });
+
+  it('an unlinked repo behaves exactly as before', async () => {
+    const response = await callToolInUnlinkedRepo('knowl_update', { id: unlinkedItemId, content: 'Fine.' });
+    expect(response.content[0].text).not.toMatch(/belongs to repo/);
+  });
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx.cmd vitest run tests/mcp/foreign-item-refusal.test.ts`
+Expected: FAIL — the handlers answer instead of refusing
+
+- [ ] **Step 3: Write minimal implementation**
+
+Create `src/workspace/ownership.ts`:
+
+```typescript
+import { getKnowledgeItem } from '../store/repository.js';
+import { acquireClient } from '../store/connection-pool.js';
+import type { ActiveWorkspace } from './resolve.js';
+
+export class ForeignItemError extends Error {
+  constructor(itemId: string, repo: string) {
+    super(`Item ${itemId} belongs to repo "${repo}" and was not changed. Run this from that repo.`);
+    this.name = 'ForeignItemError';
+  }
+}
+
+async function ownerFromPeers(itemId: string, workspace: ActiveWorkspace): Promise<string | null> {
+  for (const peer of workspace.peers) {
+    if (!peer.present) continue;
+    try {
+      const client = await acquireClient(peer.databasePath, { readOnly: true });
+      const rows = await client.execute({ sql: 'SELECT 1 FROM knowledge_items WHERE id = ? LIMIT 1', args: [itemId] });
+      if (rows.rows.length > 0) return peer.name;
+    } catch {
+      // An unreadable peer cannot claim the item; keep looking.
+    }
+  }
+  return null;
+}
+
+/**
+ * An item-scoped tool takes a bare id and resolves it against the current database. Now that
+ * federated results carry a repo label, an agent can ask about an item that is not here --
+ * and answering from the wrong database, or computing staleness against the wrong
+ * filesystem, is a confident wrong answer rather than a missing one.
+ *
+ * A null origin means the item predates workspace ownership and is local by definition.
+ */
+export async function assertOwnedItem(itemId: string, workspace: ActiveWorkspace | null): Promise<void> {
+  if (!workspace) return; // no workspace: every id is local
+  const local = await getKnowledgeItem(itemId);
+  if (local && (local.originRepo == null || local.originRepo === workspace.repo)) return;
+
+  const owner = local?.originRepo ?? await ownerFromPeers(itemId, workspace);
+  throw new ForeignItemError(itemId, owner ?? 'another linked repo');
+}
+```
+
+In `src/mcp/tools.ts`, guard each item-scoped handler:
+
+```typescript
+        const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        try {
+          await assertOwnedItem(id, active);
+        } catch (error) {
+          return { content: [{ type: 'text', text: (error as Error).message }] };
+        }
+```
+
+and in the `knowl_query` evidence path, skip evidence resolution when the item's `repo` is not
+the current repo.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx.cmd vitest run tests/mcp/foreign-item-refusal.test.ts`
+Expected: PASS, 6 tests
+
+- [ ] **Step 5: Verify suite and typecheck**
+
+Run: `npm.cmd test`; `npx.cmd tsc --noEmit` — 15 errors
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/workspace/ownership.ts src/mcp/tools.ts src/store/repository.ts tests/mcp/foreign-item-refusal.test.ts
+git commit -m "feat(workspace): item-scoped tools refuse items they do not own
+
+knowl_update, knowl_timeline, knowl_evidence_list and knowl_feedback take a bare
+id and resolve it against the current database. Federated results now carry a
+repo label, so an agent can ask about an item that is not here -- and the
+handlers would have answered from the wrong database, or computed evidence
+staleness against the wrong filesystem, reporting 'stale' for a file that simply
+lives in another checkout.
+
+Each refuses by naming the owning repo, and knowl_query omits evidence for
+foreign items rather than computing it here. A wrong answer is worse than an
+absent one: it sends an agent to re-verify knowledge that is current."
+```
 
 ---
 
-### Task 10: Item-scoped tools refuse foreign items
+### Task 10: Visibility — status, doctor, explain
 
-**Files:** Modify `src/mcp/tools.ts`; Test `tests/mcp/foreign-item-refusal.test.ts`
+**Files:**
+- Create: `src/cli/workspace-report.ts`
+- Modify: `src/cli/status-report.ts`, `src/cli/doctor-report.ts`, `src/mcp/tools.ts` (`knowl_state`, `explain`)
+- Test: `tests/cli/workspace-report.test.ts`
 
-**Context:** `knowl_update`, `knowl_timeline`, `knowl_evidence_list` and `knowl_feedback` take a bare item id and resolve it against the current database; evidence staleness is evaluated against the current `projectRoot`. Left alone they answer confidently about the wrong repo. Each refuses a foreign item naming the owning repo, and `knowl_query` omits `evidence`/`stale` for foreign items rather than computing them against the wrong filesystem. **A wrong answer is worse than an absent one here.**
+**Interfaces:**
+- Produces:
+  - `type DoctorCheck = { status: 'OK' | 'WARN' | 'FAIL'; message: string; fix?: string }`
+  - `formatWorkspaceBlock(active: ActiveWorkspace | null, options?: { verbose?: boolean }): string[]`
+  - `workspaceDoctorChecks(active: ActiveWorkspace | null, config: ProjectConfig): DoctorCheck[]`
 
-- [ ] Steps 1–6.
+**Context the implementer needs:** every failure mode of query-time fan-out is silent. A peer
+whose path is gone, a manifest that moved, a repo whose vector config drifted, a nesting
+violation created by moving a directory — each degrades retrieval with no error. "Why did my
+cross-repo query return nothing" is the support question this feature will generate most, and
+the answer has to be one command away.
+
+Repo names by default; absolute paths only under `--verbose`, matching the existing decision to
+keep resolved roots out of routine output.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/cli/workspace-report.test.ts`:
+
+```typescript
+import path from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { formatWorkspaceBlock, workspaceDoctorChecks } from '../../src/cli/workspace-report.js';
+import { createManifest } from '../../src/workspace/manifest.js';
+import type { ActiveWorkspace } from '../../src/workspace/resolve.js';
+import { DEFAULT_CONFIG } from '../../src/core/config.js';
+
+const active = (overrides: Partial<ActiveWorkspace> = {}): ActiveWorkspace => ({
+  name: 'duckprep',
+  repo: 'server',
+  manifest: createManifest('duckprep', { provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dtype: 'q8' }),
+  peers: [
+    { name: 'web', root: path.resolve('/repos/web'), databasePath: path.resolve('/repos/web/.knowl/knowl.db'), present: true },
+    { name: 'protocol', root: path.resolve('/repos/protocol'), databasePath: path.resolve('/repos/protocol/.knowl/knowl.db'), present: false },
+  ],
+  ...overrides,
+});
+
+describe('workspace status block', () => {
+  it('is empty when there is no workspace, so unlinked output is unchanged', () => {
+    expect(formatWorkspaceBlock(null)).toEqual([]);
+  });
+
+  it('names the workspace, this repo, and each peer', () => {
+    const text = formatWorkspaceBlock(active()).join('\n');
+    expect(text).toContain('duckprep');
+    expect(text).toContain('server');
+    expect(text).toContain('web');
+  });
+
+  it('marks a peer that is missing from this machine', () => {
+    expect(formatWorkspaceBlock(active()).join('\n')).toMatch(/protocol.*(missing|not on this machine)/i);
+  });
+
+  it('shows names, not absolute paths, unless verbose', () => {
+    expect(formatWorkspaceBlock(active()).join('\n')).not.toContain(path.resolve('/repos/web'));
+    expect(formatWorkspaceBlock(active(), { verbose: true }).join('\n')).toContain(path.resolve('/repos/web'));
+  });
+});
+
+describe('workspace doctor checks', () => {
+  it('returns nothing for an unlinked project', () => {
+    expect(workspaceDoctorChecks(null, DEFAULT_CONFIG)).toEqual([]);
+  });
+
+  it('warns about an absent peer rather than reporting OK', () => {
+    const checks = workspaceDoctorChecks(active(), DEFAULT_CONFIG);
+    expect(checks.some(check => check.status === 'WARN' && /protocol/.test(check.message))).toBe(true);
+  });
+
+  it('warns when this repo embeds differently from the workspace', () => {
+    const drifted = {
+      ...DEFAULT_CONFIG,
+      search: { vector: { enabled: true, provider: 'local', model: 'other', dtype: 'q8' } },
+    } as typeof DEFAULT_CONFIG;
+    // A mismatched embedding makes items mutually invisible, and a filtered-out embedding
+    // looks exactly like no embedding -- nothing else would report this.
+    expect(workspaceDoctorChecks(active(), drifted).some(check => check.status === 'WARN' && /embed/i.test(check.message))).toBe(true);
+  });
+
+  it('reports OK when every peer is present and the identity matches', () => {
+    const healthy = active({
+      peers: [{ name: 'web', root: '/repos/web', databasePath: '/repos/web/.knowl/knowl.db', present: true }],
+    });
+    expect(workspaceDoctorChecks(healthy, DEFAULT_CONFIG).every(check => check.status === 'OK')).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx.cmd vitest run tests/cli/workspace-report.test.ts`
+Expected: FAIL — module not found
+
+- [ ] **Step 3: Write minimal implementation**
+
+Create `src/cli/workspace-report.ts`:
+
+```typescript
+import type { ProjectConfig } from '../core/types.js';
+import type { ActiveWorkspace } from '../workspace/resolve.js';
+import { embeddingIdentityFromConfig, formatEmbeddingIdentity, sameEmbeddingIdentity } from '../store/embedding-identity.js';
+
+export type DoctorCheck = { status: 'OK' | 'WARN' | 'FAIL'; message: string; fix?: string };
+
+const LINE = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
+
+/** Empty for an unlinked project, so existing status output stays byte-identical. */
+export function formatWorkspaceBlock(active: ActiveWorkspace | null, options: { verbose?: boolean } = {}): string[] {
+  if (!active) return [];
+  const lines = [LINE, '🔗 WORKSPACE', `  Workspace:     ${active.name}`, `  This repo:     ${active.repo}`];
+  if (active.peers.length === 0) {
+    lines.push('  Linked repos:  none yet');
+    return lines;
+  }
+  lines.push('  Linked repos:');
+  for (const peer of active.peers) {
+    const state = peer.present ? 'present' : 'missing from this machine';
+    // Names by default; resolved roots stay out of routine output.
+    lines.push(`    ${peer.name.padEnd(16)} ${state}${options.verbose ? ` (${peer.root})` : ''}`);
+  }
+  return lines;
+}
+
+/**
+ * Every failure mode of query-time fan-out is silent, so these checks are the answer to
+ * "why did my cross-repo query return nothing".
+ */
+export function workspaceDoctorChecks(active: ActiveWorkspace | null, config: ProjectConfig): DoctorCheck[] {
+  if (!active) return [];
+  const checks: DoctorCheck[] = [
+    { status: 'OK', message: `Workspace "${active.name}" reachable; this repo is "${active.repo}"` },
+  ];
+
+  for (const peer of active.peers) {
+    checks.push(peer.present
+      ? { status: 'OK', message: `Linked repo "${peer.name}" present` }
+      : {
+        status: 'WARN',
+        message: `Linked repo "${peer.name}" is missing from this machine; its knowledge is skipped`,
+        fix: `re-add it with \`knowl workspace add <path> --name ${peer.name}\`, or remove it`,
+      });
+  }
+
+  const local = embeddingIdentityFromConfig(config);
+  if (!sameEmbeddingIdentity(local, active.manifest.embedding)) {
+    checks.push({
+      status: 'WARN',
+      message: `This repo embeds with ${formatEmbeddingIdentity(local)} but the workspace uses ${formatEmbeddingIdentity(active.manifest.embedding)}; vector search filters on provider and model, so the two sets of items are invisible to each other`,
+      fix: 'align `search.vector` with the workspace, then run `knowl reindex --vectors`',
+    });
+  }
+
+  return checks;
+}
+```
+
+Wire `formatWorkspaceBlock` into `formatStatusReport` (an optional `workspace` input, absent for
+unlinked projects), append `workspaceDoctorChecks` to the doctor's check list, add a workspace
+section to `knowl_state`, and extend `knowl_query`'s `explain` payload with per-repo `reached` /
+`skipped` / `candidates` counts derived from `FederatedResult`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx.cmd vitest run tests/cli/workspace-report.test.ts`
+Expected: PASS, 8 tests
+
+- [ ] **Step 5: Verify suite and typecheck**
+
+Run: `npm.cmd test`; `npx.cmd tsc --noEmit` — 15 errors
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/cli/workspace-report.ts src/cli/status-report.ts src/cli/doctor-report.ts src/mcp/tools.ts tests/cli/workspace-report.test.ts
+git commit -m "feat(workspace): make fan-out failures visible in status, doctor and explain
+
+Every failure mode of query-time fan-out is silent: a peer whose path is gone, a
+manifest that moved, a repo whose vector config drifted. 'Why did my cross-repo
+query return nothing' is the support question this generates most, and the
+answer is now one command away.
+
+Embedding drift gets its own check because nothing else would report it -- a
+filtered-out embedding looks exactly like no embedding. Names by default,
+resolved roots only under --verbose."
+```
 
 ---
 
-### Task 11: Visibility — status, doctor, explain
+### Task 11: Agent guidance
 
-**Files:** Create `src/cli/workspace-report.ts`; modify `src/cli/status-report.ts`, `src/cli/doctor-report.ts`, `src/mcp/tools.ts`; Test `tests/cli/workspace-report.test.ts`
+**Files:**
+- Modify: `src/core/knowl-guidance.ts`, `README.md` (token-overhead table)
+- Test: `tests/core/knowl-guidance.test.ts`
 
-**Context:** every failure mode of query-time fan-out is silent. `knowl status` gains a workspace block; `knowl doctor` gains manifest reachability, repos present/missing, version agreement, nesting violations, and embedding-identity drift; `knowl_query --explain` reports per-repo reached/skipped/candidate counts. Repo names by default, absolute paths only under `--verbose`.
+**Context the implementer needs:** the MCP `instructions` block **does not reach subagents** —
+this repo probed it live and documented the finding at `knowl-guidance.ts:120`, which is why
+`KNOWL_SUBAGENT_BOOTSTRAP_CARD` exists. Putting workspace guidance only in the server
+instructions would leave every subagent unaware of it. It goes in `renderFullKnowlGuidance()`
+(the managed `KNOWL.md` / `AGENTS.md` section) and in the subagent card.
 
-- [ ] Steps 1–6.
+One paragraph, because guidance is charged to every agent on every session. The README
+publishes measured token overhead; update the figure rather than invalidating it.
+
+- [ ] **Step 1: Write the failing test**
+
+Add to `tests/core/knowl-guidance.test.ts`:
+
+```typescript
+  it('tells agents what a repo label means, in the surfaces that reach them', () => {
+    // The MCP instructions block does not reach subagents (probed; see knowl-guidance.ts).
+    // These two do.
+    for (const text of [renderFullKnowlGuidance(), KNOWL_SUBAGENT_BOOTSTRAP_CARD]) {
+      expect(text).toMatch(/repo/i);
+      expect(text).toMatch(/applies (to that repo|there)/i);
+    }
+  });
+
+  it('names the command that shares knowledge across repos', () => {
+    expect(renderFullKnowlGuidance()).toContain('knowl workspace promote');
+  });
+
+  it('stays within the published guidance budget', () => {
+    expect(estimateTokens(renderFullKnowlGuidance())).toBeLessThan(GUIDANCE_TOKEN_BUDGET);
+  });
+```
+
+Set `GUIDANCE_TOKEN_BUDGET` from the README's current published figure plus the new paragraph's
+measured cost, and update the README table in the same commit.
+
+- [ ] **Step 2: Run test to verify it fails** — `npx.cmd vitest run tests/core/knowl-guidance.test.ts`
+- [ ] **Step 3: Implement** the paragraph in `renderFullKnowlGuidance()` and `KNOWL_SUBAGENT_BOOTSTRAP_CARD`
+- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Verify suite and typecheck** — 15 errors
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/core/knowl-guidance.ts README.md tests/core/knowl-guidance.test.ts
+git commit -m "docs(workspace): tell agents what a repo label means
+
+Guidance goes in the managed KNOWL.md section and the subagent bootstrap card,
+not the MCP instructions block -- this repo probed that block and found it does
+not reach subagents, which is why the card exists.
+
+One paragraph, because guidance is charged to every agent on every session, and
+the README's published token overhead is updated rather than invalidated."
+```
 
 ---
 
-### Task 12: Agent guidance
+### Task 12: The `knowl workspace` command group
 
-**Files:** Modify `src/core/knowl-guidance.ts`; Test `tests/core/knowl-guidance.test.ts`
-
-**Context:** the MCP `instructions` block does not reach subagents — this repo probed it and documented the finding at `knowl-guidance.ts:120`, which is why `KNOWL_SUBAGENT_BOOTSTRAP_CARD` exists. Workspace guidance goes in `renderFullKnowlGuidance()` and the subagent card. One paragraph: knowledge from another repo is labelled with its repo name and applies *there* unless it says otherwise; cross-repo knowledge is shared with `knowl workspace promote`. Update the README's token-overhead table rather than invalidating it.
-
-- [ ] Steps 1–6.
-
----
-
-### Task 13: The `knowl workspace` command group
-
-**Files:** Modify `src/index.ts`; Test `tests/cli/workspace-cli.test.ts`
+**Files:**
+- Modify: `src/index.ts`
+- Test: `tests/cli/workspace-cli.test.ts`
 
 ```
 knowl workspace init <name> [--path <dir>]
@@ -1337,40 +2137,310 @@ knowl workspace remove <repo-name> [--transfer-to <repo> | --export-first]
 knowl workspace promote --category <list> | --id <id>... [--apply]
 ```
 
-`knowl init` offers to join a workspace already registered for a sibling path — a registry lookup via `listKnownWorkspaces`, not a filesystem scan.
+**Context the implementer needs:** follow the `codeCommand` pattern at `src/index.ts:384` — a
+`program.command('workspace')` group whose subcommands resolve the project root, do their work,
+and close the database in a `finally`.
 
-- [ ] Steps 1–6.
+`knowl init` offers to join a workspace already registered for a sibling path, via
+`listKnownWorkspaces()`. That is a **registry lookup, not a filesystem scan** — scanning is a
+stated non-goal, and the first draft of the design contradicted itself on exactly this point.
+
+`remove` refuses while the named repo still owns items, offering `--transfer-to` or
+`--export-first`. A name is the ownership key on every item its repo wrote, so removing it
+without deciding what happens to those items orphans them.
+
+- [ ] **Step 1: Write the failing test** covering: each subcommand's happy path; `add` refusing
+  without `--force` when `.knowl/config.json` is tracked by git; `remove` refusing while items
+  remain and succeeding after `--export-first`; `promote` defaulting to dry-run; `list` on a
+  machine with no workspaces printing a useful empty state rather than erroring.
+- [ ] **Step 2: Run test to verify it fails**
+- [ ] **Step 3: Implement** the command group, delegating to Tasks 1–3, 7 and 10
+- [ ] **Step 4: Run test to verify it passes**
+- [ ] **Step 5: Verify suite, typecheck and `npm.cmd run build`**
+- [ ] **Step 6: Commit** — `feat(workspace): knowl workspace command group`
 
 ---
 
-### Task 14: Cross-repo eval cases
+### Task 13: Cross-repo eval cases
 
-**Files:** Add fixtures under `docs/evals/`; Test via the existing benchmark runner
+**Files:**
+- Modify: `docs/evals/retrieval-suite.json`, `docs/evals/retrieval-baseline.json`
+- Test: the existing benchmark runner
 
-**Context:** Task 5 ships fusion with no tunables specifically so that weights can later be justified by measurement. This task supplies the measurement: cross-repo cases in the eval set, and a recorded baseline for cross-repo MRR and R@3 so a future weighting change can be shown to help or hurt.
+**Context the implementer needs:** Task 5 ships fusion with **no weights and no boosts**
+specifically so a later weighting change can be justified by measurement. This task supplies
+the measurement. Without it there is no way to tell whether cross-repo retrieval helps or
+quietly degrades single-repo quality — and this repo has a standing convention of justifying
+retrieval changes with a checked-in ablation (the README records equal-weight fusion →
+vector-first lifting MRR from 78.4% to 96.1%).
 
-- [ ] Steps 1–6.
+- [ ] **Step 1: Read the existing suite shape**
+
+Run: `npx.cmd tsx -e "console.log(Object.keys(require('./docs/evals/retrieval-suite.json')))"`
+or simply open `docs/evals/retrieval-suite.json`. Match its case shape exactly rather than
+inventing a parallel format — the benchmark runner reads it directly.
+
+- [ ] **Step 2: Add the three case shapes**
+
+Append to `docs/evals/retrieval-suite.json`, tagged so cross-repo cases can be scored separately:
+
+```jsonc
+{
+  "id": "xrepo-answer-elsewhere",
+  "tags": ["cross-repo"],
+  "repos": {
+    "web": [{ "category": "fact", "title": "Client retry budget", "content": "The web client retries idempotent calls three times.", "visibility": "repo" }],
+    "server": [{ "category": "decision", "title": "Auth token TTL is fifteen minutes", "content": "Auth tokens expire after fifteen minutes.", "visibility": "workspace" }]
+  },
+  "queryFrom": "web",
+  "query": "how long do auth tokens last",
+  "expectedItemTitle": "Auth token TTL is fifteen minutes",
+  "expectedRepo": "server"
+},
+{
+  "id": "xrepo-local-wins-on-tie",
+  "tags": ["cross-repo"],
+  "repos": {
+    "web": [{ "category": "decision", "title": "Retry policy", "content": "Retry idempotent calls three times with jitter.", "visibility": "repo" }],
+    "server": [{ "category": "decision", "title": "Retry policy", "content": "Retry idempotent calls three times with jitter.", "visibility": "workspace" }]
+  },
+  "queryFrom": "web",
+  "query": "retry policy",
+  "expectedRepo": "web"
+},
+{
+  "id": "xrepo-foreign-distractor",
+  "tags": ["cross-repo"],
+  "repos": {
+    "web": [{ "category": "fact", "title": "Web build output directory", "content": "The web build emits to dist/web.", "visibility": "repo" }],
+    "server": [{ "category": "fact", "title": "Server build output directory", "content": "The server build emits to dist/server.", "visibility": "workspace" }]
+  },
+  "queryFrom": "web",
+  "query": "where does the build output go",
+  "expectedItemTitle": "Web build output directory",
+  "expectedRepo": "web"
+}
+```
+
+The second and third cases matter more than the first. Anyone can make cross-repo retrieval
+return *something*; the risk this feature actually carries is a foreign item outranking the
+local answer, and these two are the cases that would catch it.
+
+- [ ] **Step 3: Teach the runner to build a two-repo fixture**
+
+The runner currently seeds one database. For a case with a `repos` key it seeds one temporary
+repo per entry, links them into a scratch workspace under a temporary `KNOWL_HOME`, and issues
+the query from `queryFrom` through `queryFederated`. Reuse the fixture helper from Task 5's test
+rather than writing a second one.
+
+- [ ] **Step 4: Run the benchmark and record the baseline**
+
+Run: `npm.cmd run benchmark` (or whatever `package.json` exposes — check `scripts`).
+Record cross-repo MRR and R@3 into `docs/evals/retrieval-baseline.json` under a `crossRepo` key,
+kept separate from the single-repo figures so a regression in either is visible on its own.
+
+- [ ] **Step 5: Verify single-repo numbers did not move**
+
+Compare the single-repo MRR and R@3 against the existing baseline. **They must be unchanged** —
+federation adds a code path that unlinked projects never enter, so any movement here means
+something leaked into the default path and Task 8's guard missed it.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add docs/evals/retrieval-suite.json docs/evals/retrieval-baseline.json
+git commit -m "test(evals): cross-repo retrieval cases and baseline
+
+Task 5 ships fusion with no weights and no boosts specifically so a later
+weighting change can be justified by measurement. This is the measurement.
+
+The two cases that matter are not 'does a linked repo's answer come back' --
+anyone can make that work. They are 'does the local answer still win on a tie'
+and 'does a plausible foreign distractor outrank the correct local answer',
+which is the failure this feature actually risks.
+
+Single-repo figures are asserted unchanged: federation is a path unlinked
+projects never enter, so any movement means something leaked into the default."
+```
 
 ---
 
-### Task 15: The no-workspace guarantee, end to end
+### Task 14: The no-workspace guarantee, end to end
 
-**Files:** Test `tests/workspace/no-workspace-regression.test.ts`
+**Files:**
+- Test: `tests/workspace/no-workspace-regression.test.ts`
 
-Assert on a project with no workspace: `knowl_query` output is byte-identical to a recorded baseline (no `repo` field, one content block); `origin_repo` stays NULL and `visibility` stays `'repo'` on every write; `knowl status` and `knowl doctor` output contain no workspace section; implicit reads return what they returned before; `resolveWorkspace` returns null and no manifest is read.
+Assert, on a project with no workspace:
 
-**This is the contract that makes the feature safe to ship.** It goes last so it runs against everything.
+- `knowl_query` output is byte-identical to a recorded baseline — no `repo` field, exactly one
+  content block.
+- Every write leaves `origin_repo` NULL and `visibility` `'repo'`.
+- `knowl status` and `knowl doctor` output contain no workspace section.
+- `getRecentContext`, `composeContext`, `startWorkLoop` and `synthesizeKnowledge` return what
+  they returned before.
+- `resolveWorkspace` returns null without opening a manifest — assert by pointing `KNOWL_HOME`
+  at a path that does not exist, so an attempted read would throw.
 
-- [ ] Steps 1–6.
+**This is the contract that makes the feature safe to ship**, and it goes last so it runs
+against every other task's changes rather than a subset.
+
+- [ ] **Step 1: Write the test**
+
+Create `tests/workspace/no-workspace-regression.test.ts`:
+
+```typescript
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { closeDb, getClient, initDb } from '../../src/store/database.js';
+import * as repo from '../../src/store/repository.js';
+import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
+import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
+import { compactItemResponse, compactMcpJson } from '../../src/mcp/response-format.js';
+import { resolveWorkspace } from '../../src/workspace/resolve.js';
+import { formatWorkspaceBlock, workspaceDoctorChecks } from '../../src/cli/workspace-report.js';
+import { getRecentContext } from '../../src/store/recent-context.js';
+import { composeContext } from '../../src/store/context-composer.js';
+import { DEFAULT_CONFIG } from '../../src/core/config.js';
+
+const ROOT = path.resolve('./.knowl-no-workspace-test');
+
+describe('a project with no workspace is untouched by v1', () => {
+  let projectId = '';
+  beforeAll(async () => {
+    // KNOWL_HOME points somewhere that does not exist. Any attempt to read a manifest
+    // would throw, so this also proves nothing tries.
+    process.env.KNOWL_HOME = path.resolve('./.knowl-does-not-exist');
+    await fs.rm(ROOT, { recursive: true, force: true });
+    await fs.mkdir(path.join(ROOT, '.knowl'), { recursive: true });
+    await initDb(ROOT);
+    projectId = (await repo.createProject(ROOT, 'no-workspace')).id;
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'decision', title: 'Storage is libSQL',
+      content: 'Knowledge is stored in a libSQL database under .knowl.',
+    });
+  });
+  afterAll(async () => {
+    delete process.env.KNOWL_HOME;
+    await closeDb();
+    await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('resolves no workspace, without reading a manifest', async () => {
+    await expect(resolveWorkspace(ROOT, DEFAULT_CONFIG)).resolves.toBeNull();
+  });
+
+  it('serializes query results with no repo field and no second block', async () => {
+    const items = await queryKnowledgeForAgent('local', { query: 'storage', limit: 3, surface: 'test' });
+    const serialized = JSON.parse(compactMcpJson(items.map(item => compactItemResponse(item))));
+    expect(serialized.length).toBeGreaterThan(0);
+    expect(serialized.every((item: Record<string, unknown>) => !('repo' in item))).toBe(true);
+    expect(serialized.every((item: Record<string, unknown>) => !('namespace' in item))).toBe(true);
+  });
+
+  it('leaves every write unowned and repo-visible', async () => {
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Vector search is on by default',
+      content: 'search.vector.enabled defaults to true.',
+    });
+    const rows = await getClient().execute('SELECT origin_repo, visibility FROM knowledge_items');
+    expect(rows.rows.every(row => row.origin_repo === null)).toBe(true);
+    expect(rows.rows.every(row => row.visibility === 'repo')).toBe(true);
+  });
+
+  it('renders no workspace section in status or doctor', () => {
+    expect(formatWorkspaceBlock(null)).toEqual([]);
+    expect(workspaceDoctorChecks(null, DEFAULT_CONFIG)).toEqual([]);
+  });
+
+  it('leaves implicit reads returning exactly what they returned before', async () => {
+    const recent = await getRecentContext('local', { itemLimit: 5 });
+    expect(recent.items.length).toBeGreaterThan(0);
+    const pack = await composeContext('local', { query: 'storage', tokenBudget: 2000, namespaceRoot: ROOT });
+    expect(pack.sections.flatMap(section => section.items).length).toBeGreaterThan(0);
+  });
+
+  it('creates no workspace files anywhere', async () => {
+    await expect(fs.access(path.resolve('./.knowl-does-not-exist'))).rejects.toThrow();
+  });
+});
+```
+
+- [ ] **Step 2: Run it**
+
+Run: `npx.cmd vitest run tests/workspace/no-workspace-regression.test.ts`
+Expected: PASS, 6 tests. **If any assertion fails, that is a v1 bug, not a test bug** — trace it
+to the task that introduced it rather than adjusting the expectation.
+
+- [ ] **Step 3: Run the whole suite**
+
+Run: `npm.cmd test`
+Expected: all pass
+
+- [ ] **Step 4: Typecheck and build**
+
+Run: `npx.cmd tsc --noEmit` — 15 errors
+Run: `npm.cmd run build` — clean
+
+- [ ] **Step 5: Confirm the unlinked path really is untouched**
+
+Run: `git diff --stat main -- src/` and read the list. Every changed file should either be new
+(`src/workspace/*`, `src/cli/workspace-report.ts`) or contain a workspace branch guarded by
+`resolveWorkspace(...) === null`. A change on the unconditional path is the thing this task
+exists to catch, and the diff is faster to audit than the test suite is to reason about.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add tests/workspace/no-workspace-regression.test.ts
+git commit -m "test(workspace): pin the no-workspace guarantee end to end
+
+The contract that makes this feature safe to ship: a project with no workspace
+returns the same results, writes no ownership, renders no workspace section,
+and creates no files.
+
+KNOWL_HOME points at a path that does not exist, so the suite also proves
+nothing attempts to read a manifest -- an attempt would throw rather than
+quietly returning null.
+
+Runs last, against every other task's changes rather than a subset."
+```
 
 ---
 
 ## Self-review
 
-**Spec coverage.** Manifest and paths → 1. Two-sided membership, nesting, tracked-config → 2. Ownership backfill and embedding pinning → 3. Workspace resolution → 4. Visibility matrix, fusion, caps, skip reporting → 5. MCP query surface → 6. `promote` → 7. Cross-owner dedup clamp → 8. Implicit read scoping → 9. Foreign-item refusals → 10. Status/doctor/explain → 11. Guidance → 12. CLI → 13. Evals → 14. No-workspace guarantee → 15.
+**Spec coverage.** Manifest and paths → 1. Two-sided membership, nesting, tracked-config → 2.
+Ownership backfill and embedding pinning → 3. Workspace resolution → 4. Visibility matrix,
+fusion, caps, skip reporting → 5. MCP query surface → 6. `promote` → 7. Federation opt-in
+guarantee → 8. Foreign-item refusals → 9. Status/doctor/explain → 10. Guidance → 11. CLI → 12.
+Evals → 13. No-workspace guarantee → 14.
 
-**Deliberately out of scope:** the shared workspace database, `namespace: 'workspace'` writes, the advisory applies-to table, migration, `lifecycle_hash`, tombstone monotonicity, purge disabling, snapshot/export scoping. All v2.
+**Correction made while finishing this plan.** The first draft had a task for scoping implicit
+reads and a task for clamping cross-owner duplicate resolution. Neither can fire in v1: a repo's
+database contains no foreign items to leak or to supersede. Both were symptoms of one unstated
+assumption — that peers would join `configuredNamespaces` — which would have leaked foreign
+knowledge into auto-injected context through `composeContext`. Peers are now explicitly kept out
+of the namespace list, Task 8 pins that as a property, and the two tasks move to v2 where one
+database really does hold every repo's items.
 
-**Known gap.** Tasks 7–15 are specified with context, interfaces and test intent but not full code. Tasks 1–6 carry the load-bearing design and are written out completely; the later tasks follow established patterns in this codebase and should be expanded to full TDD steps by the implementer before starting each one, or by a follow-up pass on this document. This is called out rather than hidden — a plan that claims completeness it does not have is worse than one that says where it thins out.
+**Scope boundary.** No shared database, no `namespace: 'workspace'` writes, no applies-to table,
+no migration, no `lifecycle_hash`, no tombstone monotonicity, no purge disabling, no
+snapshot/export scoping. All v2.
 
-**Type consistency.** `ActiveWorkspace`/`PeerRepo` from Task 4 are consumed with those field names in Tasks 5, 6 and 11. `FederatedResult.skipped` from Task 5 is consumed in Task 6. `compactItemResponse(item, { repo })` matches the 2.4.0 signature. `RRF_K` is imported from `agent-query.ts`, not restated.
+**Type consistency.** `ActiveWorkspace` / `PeerRepo` (Task 4) are consumed with those field names
+in 5, 6, 9 and 10. `FederatedResult.skipped` (Task 5) is consumed in 6 and 10.
+`compactItemResponse(item, { repo })` matches the 2.4.0 signature. `PromoteResult` (Task 7) is
+consumed by the CLI in 12. `DoctorCheck` (Task 10) matches the doctor's existing check shape.
+`RRF_K` is imported from `agent-query.ts`, never restated.
+
+**Known risk.** Task 9 depends on `mapRowToKnowledgeItem` exposing `originRepo`. 2.4.0 added the
+column and the Drizzle field, but the row mapper may not read it — the task says to check first
+rather than assume, because the failure mode is `undefined === workspace.repo` evaluating false
+and refusing every local item.
+
+**Placeholder scan.** Every task carries executable steps. Tasks 12 and 13 name their test
+obligations rather than printing full fixture code — the CLI group because it is mechanical
+delegation to Tasks 1–3, 7 and 10, and the eval task because its case shapes are given as
+literal JSON and the runner change depends on a fixture helper Task 5 already produces. No
+"TBD", no "add error handling", no task deferred to the reader.
