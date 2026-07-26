@@ -50,6 +50,10 @@ export interface KnowledgeItem {
   sourceCommit?: string | null;
   affectedPaths?: string[] | null; // stored as JSON array of repository-relative paths
   contentHash?: string | null;
+  /** Owning repo in a workspace; null outside one. The only lifecycle key. */
+  originRepo?: string | null;
+  /** 'repo' | 'workspace'. Logical scope, independent of which file holds the row. */
+  visibility?: string | null;
   freshness: KnowledgeFreshness;
   confidence: number;
   conflictKey?: string | null;

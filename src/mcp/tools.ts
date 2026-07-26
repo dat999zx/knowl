@@ -2,6 +2,7 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
+import { assertOwnedItem } from '../workspace/ownership.js';
 import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
@@ -879,6 +880,8 @@ export function registerTools(
 
       else if (name === 'knowl_timeline') {
         const { itemId } = args as any;
+        const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const { listAssertions } = await import('../store/assertions.js');
         return { content: [{ type: 'text', text: compactMcpJson((await listAssertions(itemId)).slice(0, 5).map(compactAssertionResponse)) }] };
       }
@@ -904,6 +907,8 @@ export function registerTools(
 
       else if (name === 'knowl_evidence_list') {
         const { itemId } = args as any;
+        const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const evidence = await Promise.all((await listEvidenceForItem(itemId)).map(async item => ({
           ...item,
           stale: projectRoot ? await isEvidenceStale(item, projectRoot) : false,
@@ -913,6 +918,8 @@ export function registerTools(
 
       else if (name === 'knowl_feedback') {
         const { itemId, used, useful, causedCorrection } = args as any;
+        const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const feedback = await recordKnowledgeFeedback({ itemId, used, useful, causedCorrection });
         return { content: [{ type: 'text', text: `Recorded feedback for ${itemId}:\n\n${JSON.stringify(feedback, null, 2)}` }] };
       }
@@ -926,6 +933,8 @@ export function registerTools(
       
       else if (name === 'knowl_update') {
         const { id, title, content, status, reasoning, source, sourceCommit, affectedPaths, freshness, supersedeId } = args as any;
+        const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        try { await assertOwnedItem(id, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const updated = await updateKnowledgeItemWithCommit(projectId!, id, {
           title,
           content,
