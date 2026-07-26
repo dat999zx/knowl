@@ -386,6 +386,37 @@ context on every session.
 | `knowl_update` | May target an item in another repo; the response names the repo it changed (v2 only — see above) |
 | `knowl_skill_*` | Unchanged. Skills never cross repos |
 
+### What `repo` and `repos` mean, precisely
+
+Every item is tagged with the repo that produced it, and every query can be restricted to a set
+of repos. Both need exact semantics, because `origin_repo` and the advisory applies-to set are
+different fields and a filter that quietly matched both would be unpredictable.
+
+- **`repo` on a returned item is its `origin_repo`** — the one repo that produced it and owns it.
+  Singular, always present when a workspace is active, and it survives to the serialized payload
+  (P4). This is the field an agent reads to decide where a fact applies.
+- **`repos: string[]` filters on `origin_repo`, hard.** `repos: ["server"]` returns only items
+  the server repo produced, including when run from the web repo — "what does the server repo
+  know about auth?" is the useful question, and it must not be diluted by items that merely
+  claim to apply there.
+- **The advisory applies-to set only boosts ranking.** It never adds or removes results. An item
+  the server produced and marked as also applying to `web` ranks higher in `web`'s unfiltered
+  queries; it does not appear under `repos: ["web"]`, because `web` did not produce it. Keeping
+  the filter on one field is what makes the result set explainable.
+- **The default, unfiltered, is the current repo's items plus workspace-visible items from
+  linked repos.** Repo-visibility items from other repos are never returned. Ties break toward
+  the current repo.
+- **Names, not opaque ids.** The identifier appears in every result, in the filter an agent has
+  to type, in guidance text, and in CLI output, so it is `server`, not `r_7f3a9c`. An agent
+  writing `repos: ["server"]` is far likelier to be correct than one writing an opaque handle,
+  and Knowl's retrieval is already tuned around imperfect agent wording.
+
+Names are immutable in v2; rename is `remove` plus `add`. Now that path qualification is cut,
+a real rename would be an `UPDATE` across `origin_repo`, the applies-to table, tombstones, the
+denormalized repo in commit payloads, the FTS shadow columns, the manifest, and each repo's
+config — six places and one JSON rewrite, but no `content_hash` involvement. That is cheap
+enough to reconsider in v3; it is not cheap enough to ship untested in v2.
+
 ### Visibility
 
 Shipped in v1, not deferred, because every failure mode of query-time fan-out is silent:
