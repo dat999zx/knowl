@@ -19,7 +19,11 @@ async function makeRepo(root: string) {
 describe('two-sided membership', () => {
   beforeEach(async () => {
     process.env.KNOWL_HOME = HOME;
-    for (const dir of [HOME, REPO_A, REPO_B]) await fs.rm(dir, { recursive: true, force: true });
+    // Close before removing, and tolerate a failed removal: on Windows libSQL can hold the
+    // WAL sidecars for a moment after close, and a leftover directory is harmless because
+    // makeRepo overwrites the config the tests read.
+    await closeDb();
+    for (const dir of [HOME, REPO_A, REPO_B]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     await makeRepo(REPO_A);
     await makeRepo(REPO_B);
     await writeManifest(workspaceManifestPath('ws'), createManifest('ws', null));

@@ -3,6 +3,10 @@ import { spawnSync } from 'node:child_process';
 import type { ProjectConfig } from '../core/types.js';
 import { loadConfig, saveConfig } from '../core/config.js';
 import { canonicalProjectRoot } from '../core/project-path.js';
+import { closeDb, getClient, initDb } from '../store/database.js';
+import {
+  embeddingIdentityFromConfig, formatEmbeddingIdentity, sameEmbeddingIdentity,
+} from '../store/embedding-identity.js';
 import { assertNameAvailable, readManifest, writeManifest, WorkspaceManifest } from './manifest.js';
 import { workspaceManifestPath } from './paths.js';
 
@@ -71,6 +75,18 @@ export async function joinWorkspace(input: {
 
   const config = await loadConfig(input.projectRoot);
 
+  // Checked before anything is written, so a refusal leaves no half-joined state.
+  const identity = embeddingIdentityFromConfig(config);
+  if (manifest.repos.length === 0) {
+    manifest.embedding = identity;
+  } else if (!sameEmbeddingIdentity(manifest.embedding, identity)) {
+    throw new Error(
+      `This repo embeds with ${formatEmbeddingIdentity(identity)} but workspace "${manifest.name}" uses ` +
+      `${formatEmbeddingIdentity(manifest.embedding)}. Vector search filters on provider and model, so the two ` +
+      'sets of items would be invisible to each other. Align this repo\'s search.vector config first.',
+    );
+  }
+
   manifest.repos.push({
     name: input.repoName,
     path: path.resolve(input.projectRoot),
@@ -78,8 +94,33 @@ export async function joinWorkspace(input: {
   });
   await writeManifest(manifestPath, manifest);
   await saveConfig(input.projectRoot, { ...config, workspace: { workspace: input.workspaceName, repo: input.repoName } });
+  await backfillOriginRepo(input.projectRoot, input.repoName);
 
   return manifest;
+}
+
+/**
+ * Claim every unowned item for the joining repo.
+ *
+ * `origin_repo` is nullable, and an unowned item is unfilterable, unlabelled and outside
+ * every ownership rule. Joining is the one moment when the answer is unambiguous: everything
+ * already in this database was written by this repo.
+ *
+ * Ownership only. Visibility stays 'repo' -- claiming is not publishing, and sharing existing
+ * knowledge is an explicit `knowl workspace promote`. Rows that already carry an owner are
+ * left alone, since overwriting one would be a silent ownership transfer.
+ */
+export async function backfillOriginRepo(projectRoot: string, repoName: string): Promise<number> {
+  await initDb(projectRoot);
+  try {
+    const result = await getClient().execute({
+      sql: 'UPDATE knowledge_items SET origin_repo = ? WHERE origin_repo IS NULL',
+      args: [repoName],
+    });
+    return Number(result.rowsAffected ?? 0);
+  } finally {
+    await closeDb();
+  }
 }
 
 export async function leaveWorkspace(projectRoot: string): Promise<void> {
