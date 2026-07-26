@@ -4,6 +4,7 @@ import { drizzle, LibSQLDatabase } from 'drizzle-orm/libsql';
 import * as schema from './schema.js';
 import { bootstrapSchema } from './bootstrap.js';
 import { DatabaseError } from '../core/errors.js';
+import { resolveStorage } from './storage-roles.js';
 
 /** Shared type for database connection or transaction context. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -31,8 +32,7 @@ export type InitDbOptions = {
  * Initializes the database connection and runs schema bootstrap.
  */
 export async function initDb(projectRoot: string): Promise<LibSQLDatabase<typeof schema>> {
-  const dbPath = path.join(projectRoot, '.knowl', 'knowl.db');
-  return initDbPath(dbPath, { configRoot: projectRoot });
+  return initDbPath(resolveStorage(projectRoot).knowledge, { configRoot: projectRoot });
 }
 
 export async function initDbPath(dbPath: string, options: InitDbOptions = {}): Promise<LibSQLDatabase<typeof schema>> {

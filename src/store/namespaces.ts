@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { KnowledgeCategory, KnowledgeItem, KnowledgeStatus, ProjectConfig } from '../core/types.js';
 import { withDbPath } from './database.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
+import { resolveStorage } from './storage-roles.js';
 
 export type MemoryNamespace = 'session' | 'project' | 'organization' | 'global';
 export type NamespaceDescriptor = { namespace: MemoryNamespace; databasePath: string; precedence: number; optional?: boolean };
@@ -9,8 +10,8 @@ export type NamespacedKnowledgeItem = KnowledgeItem & { namespace: MemoryNamespa
 
 const RANK: Record<MemoryNamespace, number> = { session: 1, project: 2, organization: 3, global: 4 };
 
-export function projectNamespace(root: string): NamespaceDescriptor { return { namespace: 'project', databasePath: path.join(root, '.knowl', 'knowl.db'), precedence: RANK.project }; }
-export function sessionNamespace(root: string): NamespaceDescriptor { return { namespace: 'session', databasePath: path.join(root, '.knowl', 'session.db'), precedence: RANK.session }; }
+export function projectNamespace(root: string): NamespaceDescriptor { return { namespace: 'project', databasePath: resolveStorage(root).knowledge, precedence: RANK.project }; }
+export function sessionNamespace(root: string): NamespaceDescriptor { return { namespace: 'session', databasePath: resolveStorage(root).session, precedence: RANK.session }; }
 export function namespacePrecedence<T extends { namespace: MemoryNamespace }>(items: T[]): T[] { return [...items].sort((a, b) => RANK[a.namespace] - RANK[b.namespace]); }
 
 export function defaultNamespaces(root: string): NamespaceDescriptor[] {
