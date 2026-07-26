@@ -1,10 +1,10 @@
 import path from 'node:path';
-import { createClient, Client } from '@libsql/client';
+import { Client } from '@libsql/client';
 import { drizzle, LibSQLDatabase } from 'drizzle-orm/libsql';
 import * as schema from './schema.js';
-import { bootstrapSchema } from './bootstrap.js';
 import { DatabaseError } from '../core/errors.js';
 import { resolveStorage } from './storage-roles.js';
+import { acquireClient, releaseAll } from './connection-pool.js';
 
 /** Shared type for database connection or transaction context. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -40,11 +40,10 @@ export async function initDbPath(dbPath: string, options: InitDbOptions = {}): P
   const configRoot = options.configRoot ?? path.dirname(path.dirname(dbPath));
 
   try {
-    const client = createClient({ url: fileUrl });
+    // Pooled: the same path is not reopened, and bootstrap runs once per file rather than
+    // on every namespace swap.
+    const client = await acquireClient(dbPath);
     clientInstance = client;
-
-    // Run schema bootstrap SQL directly on the raw client
-    await bootstrapSchema(client);
 
     dbInstance = drizzle(client, { schema });
     projectRootInstance = path.resolve(configRoot);
@@ -114,7 +113,10 @@ export function getConfigRoot(): string {
  */
 export async function closeDb(): Promise<void> {
   if (clientInstance) {
-    clientInstance.close();
+    // Release the whole pool, not just the active handle. Tests and CLI commands delete
+    // their project directory after closing, and a client still holding the file would
+    // keep the WAL sidecars open.
+    await releaseAll();
     clientInstance = null;
     dbInstance = null;
     projectRootInstance = null;
