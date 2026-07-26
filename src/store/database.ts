@@ -12,18 +12,32 @@ export type DbConnection = LibSQLDatabase<typeof schema> | Parameters<Parameters
 let dbInstance: LibSQLDatabase<typeof schema> | null = null;
 let clientInstance: Client | null = null;
 let projectRootInstance: string | null = null;
+let configRootInstance: string | null = null;
 let databasePathInstance: string | null = null;
+
+export type InitDbOptions = {
+  /**
+   * Directory whose `.knowl/config.json` and `.knowl/models` govern this connection.
+   *
+   * Deriving it from the database path only holds for the `<root>/.knowl/x.db` layout. A
+   * namespace database anywhere else yielded a nonsense root, `loadConfig` threw, and the
+   * embedding writer's best-effort catch turned that into a silent no-op -- storing items
+   * with no vector that vector-first ranking can then never surface.
+   */
+  configRoot?: string;
+};
 
 /**
  * Initializes the database connection and runs schema bootstrap.
  */
 export async function initDb(projectRoot: string): Promise<LibSQLDatabase<typeof schema>> {
   const dbPath = path.join(projectRoot, '.knowl', 'knowl.db');
-  return initDbPath(dbPath, projectRoot);
+  return initDbPath(dbPath, { configRoot: projectRoot });
 }
 
-export async function initDbPath(dbPath: string, projectRoot = path.dirname(path.dirname(dbPath))): Promise<LibSQLDatabase<typeof schema>> {
+export async function initDbPath(dbPath: string, options: InitDbOptions = {}): Promise<LibSQLDatabase<typeof schema>> {
   const fileUrl = `file:${dbPath}`;
+  const configRoot = options.configRoot ?? path.dirname(path.dirname(dbPath));
 
   try {
     const client = createClient({ url: fileUrl });
@@ -33,7 +47,8 @@ export async function initDbPath(dbPath: string, projectRoot = path.dirname(path
     await bootstrapSchema(client);
 
     dbInstance = drizzle(client, { schema });
-    projectRootInstance = path.resolve(projectRoot);
+    projectRootInstance = path.resolve(configRoot);
+    configRootInstance = path.resolve(configRoot);
     databasePathInstance = path.resolve(dbPath);
     return dbInstance;
   } catch (error: any) {
@@ -43,14 +58,16 @@ export async function initDbPath(dbPath: string, projectRoot = path.dirname(path
 
 export async function withDbPath<T>(dbPath: string, run: () => Promise<T>): Promise<T> {
   const previousPath = databasePathInstance;
-  const previousRoot = projectRootInstance;
+  const previousConfigRoot = configRootInstance;
   await closeDb();
-  await initDbPath(dbPath);
+  // The swapped-in database keeps the caller's config root. A namespace store lives outside
+  // the `<root>/.knowl/` layout, so deriving one from its path would point at nothing.
+  await initDbPath(dbPath, previousConfigRoot ? { configRoot: previousConfigRoot } : {});
   try {
     return await run();
   } finally {
     await closeDb();
-    if (previousPath) await initDbPath(previousPath, previousRoot ?? path.dirname(path.dirname(previousPath)));
+    if (previousPath) await initDbPath(previousPath, previousConfigRoot ? { configRoot: previousConfigRoot } : {});
   }
 }
 
@@ -79,6 +96,20 @@ export function getProjectRoot(): string {
 }
 
 /**
+ * The directory whose `.knowl/config.json` and `.knowl/models` govern the open database.
+ *
+ * Distinct from the database's own location: a namespace or shared store sits outside any
+ * `<root>/.knowl/` layout, and config still has to come from the project the caller is
+ * working in.
+ */
+export function getConfigRoot(): string {
+  if (!configRootInstance) {
+    throw new DatabaseError('Config root has not been initialized. Run initDb() first.');
+  }
+  return configRootInstance;
+}
+
+/**
  * Closes the database connection.
  */
 export async function closeDb(): Promise<void> {
@@ -87,6 +118,7 @@ export async function closeDb(): Promise<void> {
     clientInstance = null;
     dbInstance = null;
     projectRootInstance = null;
+    configRootInstance = null;
     databasePathInstance = null;
   }
 }
