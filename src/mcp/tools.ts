@@ -751,7 +751,19 @@ export function registerTools(
       else if (name === 'knowl_query') {
         const { query, category, status, tags, limit, includeEvidence, explain, asOf } = args as any;
         if (asOf) {
-          const items = await queryKnowledgeBase(projectId!, { query, category, status, tags, limit, asOf });
+          // queryKnowledgeBase hard-filters on category, unlike every other query path,
+          // which passes category: undefined and uses it only as a ranking boost. Without
+          // this retry a wrong category guess returns nothing on a historical query while
+          // the same query without asOf recovers, contradicting the documented contract.
+          // Retrying only when the filtered result is empty means exact-category hits
+          // still win and non-empty results never reorder.
+          let items = await queryKnowledgeBase(projectId!, { query, category, status, tags, limit, asOf });
+          if (items.length === 0 && category) {
+            items = await queryKnowledgeBase(projectId!, { query, status, tags, limit, asOf });
+          }
+          // Access is deliberately not recorded here: retrieval counts feed the
+          // access-weighted GC decay, so logging time-travel reads would make stale items
+          // look hot and shield them from collection.
           return { content: [{ type: 'text', text: compactMcpJson(items.map(compactItemResponse)) }] };
         }
         let vector;
@@ -776,11 +788,30 @@ export function registerTools(
           surface: 'mcp',
           vector,
         };
-        const items = projectRoot && !explain && !vector?.enabled
-          ? await queryLayeredKnowledge(projectRoot, query ?? '', configuredNamespaces(projectRoot, config ?? undefined), limit ?? 3, 'mcp')
+        const layered = Boolean(projectRoot) && !explain && !vector?.enabled;
+        const items = layered
+          ? await queryLayeredKnowledge(projectRoot!, query ?? '', configuredNamespaces(projectRoot!, config ?? undefined), limit ?? 3, 'mcp')
           : explain
           ? await queryKnowledgeForAgentExplained(projectId!, queryOptions)
           : await queryKnowledgeForAgent(projectId!, queryOptions);
+
+        // Only the layered path spans namespaces. Vector search and explain both fall
+        // through to the ambient project database, so knowledge in other namespaces is
+        // absent from these results. Spanning namespaces under vector search needs one
+        // workspace-wide embedding identity first: searchKnowledgeEmbeddings filters on
+        // provider and model, and that filter is load-bearing because cosine similarity
+        // across different dimensions is meaningless. Until then, say what was skipped
+        // rather than let the scope narrow silently.
+        let skippedNamespaces: string[] = [];
+        if (!layered && projectRoot) {
+          try {
+            skippedNamespaces = configuredNamespaces(projectRoot, config ?? undefined)
+              .filter(descriptor => descriptor.namespace !== 'project')
+              .map(descriptor => descriptor.namespace);
+          } catch {
+            // A misconfigured optional namespace must not fail an otherwise good query.
+          }
+        }
 
         const withStaleStatus = async (itemId: string) => Promise.all((await listEvidenceForItem(itemId)).map(async evidence => ({
           ...evidence,
@@ -790,8 +821,17 @@ export function registerTools(
         const payload = includeEvidence
           ? await Promise.all(items.map(async item => ({ ...compact(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
           : items.map(compact);
-        return { content: [{ type: 'text', text: compactMcpJson(payload) }] };
-      } 
+        // The notice is a separate block so the first block stays a bare JSON array for
+        // every existing caller.
+        const blocks: { type: 'text'; text: string }[] = [{ type: 'text', text: compactMcpJson(payload) }];
+        if (skippedNamespaces.length) {
+          blocks.push({
+            type: 'text',
+            text: `SCOPE: ${explain ? '`explain`' : 'vector search'} limits this query to the project namespace, so ${skippedNamespaces.join(' and ')} knowledge was NOT searched. A miss here does not mean the knowledge is absent; re-run without it for full scope.`,
+          });
+        }
+        return { content: blocks };
+      }
 
       else if (name === 'knowl_timeline') {
         const { itemId } = args as any;

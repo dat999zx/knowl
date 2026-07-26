@@ -342,6 +342,86 @@ describe('MCP Server Layer', () => {
     expect(() => JSON.parse(res.result.content[0].text)).not.toThrow();
   });
 
+  it('should recover an asOf query when the client guesses the wrong category', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Point in time deployment fact',
+      content: 'Deployments ran through the legacy pipeline at this point in time.',
+      tags: ['history'],
+    });
+
+    const asOf = new Date(Date.now() + 60_000).toISOString();
+    const wrongCategory = await runRpcRequest('tools/call', {
+      name: 'knowl_query',
+      arguments: { query: 'point in time deployment', category: 'decision', asOf, limit: 5 },
+    });
+
+    expect(wrongCategory.error).toBeUndefined();
+    expect(wrongCategory.result.isError).toBeUndefined();
+    // queryKnowledgeBase hard-filters category, so without the retry this returned [] while
+    // the same query without asOf recovers. That contradicted the documented contract.
+    const items = JSON.parse(wrongCategory.result.content[0].text);
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.some((item: any) => item.title === 'Point in time deployment fact')).toBe(true);
+  });
+
+  it('should prefer exact-category asOf hits over the recovery retry', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Caching layer note',
+      content: 'The caching layer note recorded as a fact.',
+    });
+    await repo.createKnowledgeItem(projectId, {
+      category: 'decision',
+      title: 'Caching layer choice',
+      content: 'The caching layer note recorded as a decision.',
+    });
+
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_query',
+      arguments: {
+        query: 'caching layer note',
+        category: 'decision',
+        asOf: new Date(Date.now() + 60_000).toISOString(),
+        limit: 5,
+      },
+    });
+
+    // The retry fires only on an empty result, so a matching category still wins outright
+    // and non-empty results are never reordered.
+    const items = JSON.parse(res.result.content[0].text);
+    expect(items.length).toBeGreaterThan(0);
+    expect(items.every((item: any) => item.category === 'decision')).toBe(true);
+  });
+
+  it('should disclose the narrowed namespace scope when explain bypasses layered query', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Scope disclosure probe',
+      content: 'Stored so the explain path has a hit to rank.',
+    });
+
+    const explained = await runRpcRequest('tools/call', {
+      name: 'knowl_query',
+      arguments: { query: 'scope disclosure probe', explain: true, limit: 3 },
+    });
+    const layered = await runRpcRequest('tools/call', {
+      name: 'knowl_query',
+      arguments: { query: 'scope disclosure probe', limit: 3 },
+    });
+
+    // Only the layered path spans namespaces, so explain silently dropped the session
+    // namespace. The first block stays a bare JSON array for existing callers; the notice
+    // is a second block.
+    expect(() => JSON.parse(explained.result.content[0].text)).not.toThrow();
+    expect(explained.result.content).toHaveLength(2);
+    expect(explained.result.content[1].text).toContain('SCOPE');
+    expect(explained.result.content[1].text).toContain('session');
+
+    // The default full-scope path must not emit the notice.
+    expect(layered.result.content).toHaveLength(1);
+  });
+
   it('should return at most three knowledge hits by default for MCP queries', async () => {
     for (let i = 1; i <= 4; i++) {
       await repo.createKnowledgeItem(projectId, {
