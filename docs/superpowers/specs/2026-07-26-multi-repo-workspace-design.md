@@ -228,10 +228,46 @@ the one that bites.
 
 ## v1 — linked repos read each other
 
-### The manifest
+### Where things live
 
-A workspace lives outside every repo, at `<KNOWL_HOME>/workspaces/<name>/workspace.json` by
-default:
+A workspace lives **outside every repo**, at `~/.knowl/workspaces/<name>/` by default —
+`os.homedir()`, overridable by a `KNOWL_HOME` environment variable and per-workspace by
+`--path`. (`KNOWL_HOME` does not exist in the source today; `src/profile/` is empty and the
+profiles design that referenced it was never implemented. This feature introduces it.)
+
+```
+~/.knowl/workspaces/duckprep/
+  workspace.json        # the manifest — authoritative repo list (v1)
+  knowl.db              # the shared knowledge database (v2)
+  migration.json        # migration journal, present only during migrate (v2)
+```
+
+Each linked repo keeps its own directory unchanged:
+
+```
+<repo>/.knowl/
+  config.json           # gains a pointer to the workspace
+  knowl.db              # the `local` role — NEVER moved, renamed, or redirected
+  session.db            # the `session` role — unchanged
+  skills/  models/  cache/  snapshots/
+```
+
+| Mode | Knowledge lives in | `<repo>/.knowl/knowl.db` holds |
+| --- | --- | --- |
+| No workspace (today) | `<repo>/.knowl/knowl.db` | Everything |
+| v1 federation | Each repo's own `knowl.db`; reads fan out | Everything, as today |
+| v2 `linked` | Both — repo-scoped in the repo, workspace-scoped in `workspaces/<name>/knowl.db` | Repo-scoped knowledge, plus code index, sessions, host bindings, telemetry, watermarks |
+| v2 `shared` | `workspaces/<name>/knowl.db` only | Code index, sessions, host bindings, telemetry, watermarks — and retired knowledge tables kept as the rollback artifact |
+
+The workspace database must be outside every repo, which `externalNamespace`
+(`namespaces.ts:20-28`) already enforces for external namespaces and which this reuses. It must
+also not be on a network or cloud-synced folder — WAL needs working advisory locks and `-shm`
+coordination, and `workspace init` refuses when a runtime probe says it does not have them.
+
+Nothing needs a new `.gitignore` entry: the workspace is outside the repos, and `.knowl/` is
+already ignored.
+
+The manifest:
 
 ```jsonc
 {
