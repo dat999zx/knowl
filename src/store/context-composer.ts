@@ -1,7 +1,7 @@
 import { KnowledgeItem } from '../core/types.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
 import { queryKnowledgeBase } from './queries.js';
-import { queryLayeredKnowledge } from './namespaces.js';
+import { defaultNamespaces, queryLayeredKnowledge } from './namespaces.js';
 import { estimateTokens } from '../core/token-budget.js';
 import { truncateText } from '../core/token-budget.js';
 
@@ -14,7 +14,10 @@ const tokens = (item: KnowledgeItem & { namespace?: string }) => estimateTokens(
 export async function composeContext(projectId: string, request: ContextRequest): Promise<ContextPack> {
   if (!Number.isFinite(request.tokenBudget) || request.tokenBudget < 1) throw new Error('tokenBudget must be positive.');
   const candidates: ContextKnowledgeItem[] = request.namespaceRoot
-    ? await queryLayeredKnowledge(request.namespaceRoot, request.query ?? request.task ?? '', undefined, 30, 'context_composer')
+    // Descriptors are passed explicitly. They used to be omitted, taking queryLayeredKnowledge's
+    // config-free default, which meant context composition and MCP query could read different
+    // namespace sets with nothing reporting the divergence.
+    ? await queryLayeredKnowledge(request.namespaceRoot, request.query ?? request.task ?? '', defaultNamespaces(request.namespaceRoot), 30, 'context_composer')
     : await queryKnowledgeForAgent(projectId, { query: request.query ?? request.task, limit: 30, surface: 'context_composer' });
   const pinned = await queryKnowledgeBase(projectId, { category: 'constraint', status: 'active' });
   const rest = candidates.filter(item => item.category !== 'constraint' && !pinned.some(constraint => constraint.id === item.id));

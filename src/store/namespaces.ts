@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { KnowledgeItem, ProjectConfig } from '../core/types.js';
+import type { KnowledgeCategory, KnowledgeItem, KnowledgeStatus, ProjectConfig } from '../core/types.js';
 import { withDbPath } from './database.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
 
@@ -43,18 +43,41 @@ export async function withNamespaceDatabase<T>(descriptor: NamespaceDescriptor, 
   return withDbPath(descriptor.databasePath, run);
 }
 
+/**
+ * Filters every namespace query must honour.
+ *
+ * These were previously dropped: only `{ query, limit, surface }` reached each namespace,
+ * so an agent asking for a category or for archived items got neither. It is invisible
+ * today because vector search is on by default and bypasses the layered branch, but that
+ * bypass is what a cross-store read path has to remove -- and removing it first would
+ * activate a path that silently ignores its own filters.
+ */
+export type LayeredFilters = {
+  category?: KnowledgeCategory;
+  status?: KnowledgeStatus;
+  tags?: string[];
+};
+
 export async function queryLayeredKnowledge(
   root: string,
   query: string,
-  descriptors = defaultNamespaces(root),
+  descriptors: NamespaceDescriptor[],
   limit = 3,
   surface = 'namespace_query',
+  filters: LayeredFilters = {},
 ): Promise<NamespacedKnowledgeItem[]> {
   const results: NamespacedKnowledgeItem[] = [];
   const seen = new Set<string>();
   for (const descriptor of namespacePrecedence(descriptors)) {
     try {
-      const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgent('local', { query, limit, surface }));
+      const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgent('local', {
+        query,
+        limit,
+        surface,
+        category: filters.category,
+        status: filters.status,
+        tags: filters.tags,
+      }));
       for (const item of items) {
         const key = item.contentHash ?? `${item.title}\n${item.content}`;
         if (!seen.has(key)) {
