@@ -1,6 +1,8 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { ProjectConfig, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
+import { ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
+import { resolveWorkspace } from '../workspace/resolve.js';
+import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
 import { runPipeline } from '../pipeline/pipeline.js';
@@ -279,6 +281,11 @@ export function registerTools(
                 description: 'Include ranking explanations. Omit for compact results.',
               },
               asOf: { type: 'string', description: 'ISO-8601 timestamp for historically valid content.' },
+              repos: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Only in a workspace. Restrict results to knowledge produced by these linked repos. Matches the owning repo, not repos an item merely applies to.',
+              },
             },
           },
         },
@@ -749,7 +756,7 @@ export function registerTools(
       }
       
       else if (name === 'knowl_query') {
-        const { query, category, status, tags, limit, includeEvidence, explain, asOf } = args as any;
+        const { query, category, status, tags, limit, includeEvidence, explain, asOf, repos } = args as any;
         if (asOf) {
           // queryKnowledgeBase hard-filters on category, unlike every other query path,
           // which passes category: undefined and uses it only as a ranking boost. Without
@@ -815,17 +822,52 @@ export function registerTools(
           }
         }
 
+        // Federation is reached only from here. Peers are deliberately absent from
+        // configuredNamespaces so implicit context assembly cannot fan out.
+        const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        let skippedRepos: FederatedResult['skipped'] = [];
+        let resolvedItems: Array<KnowledgeItem & { repo?: string; explanation?: unknown }> = items as any;
+        if (active) {
+          const federated = await queryFederated({
+            workspace: active,
+            localItems: items as KnowledgeItem[],
+            query: query ?? '',
+            limit: limit ?? 3,
+            repos,
+          });
+          skippedRepos = federated.skipped;
+          resolvedItems = federated.items;
+        }
+
         const withStaleStatus = async (itemId: string) => Promise.all((await listEvidenceForItem(itemId)).map(async evidence => ({
           ...evidence,
           stale: projectRoot ? await isEvidenceStale(evidence, projectRoot) : false,
         })));
-        const compact = (item: any) => ({ ...compactItemResponse(item), ...(explain && item.explanation ? { explanation: item.explanation } : {}) });
+        // The repo label goes through compactItemResponse's provenance argument: the compact
+        // shape is an allowlist, so a field attached to the item alone is dropped here.
+        const compact = (item: any) => ({
+          ...compactItemResponse(item, item.repo ? { repo: item.repo } : undefined),
+          ...(explain && item.explanation ? { explanation: item.explanation } : {}),
+        });
+        // Evidence and staleness resolve against THIS repo's filesystem and database, so a
+        // foreign item would be judged against the wrong checkout -- reporting "stale" for a
+        // file that is simply somewhere else. Omitting it beats answering wrongly.
+        const isForeign = (item: any) => Boolean(active) && item.repo && item.repo !== active!.repo;
         const payload = includeEvidence
-          ? await Promise.all(items.map(async item => ({ ...compact(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
-          : items.map(compact);
+          ? await Promise.all(resolvedItems.map(async item => (isForeign(item)
+            ? compact(item)
+            : { ...compact(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
+          : resolvedItems.map(compact);
         // The notice is a separate block so the first block stays a bare JSON array for
         // every existing caller.
         const blocks: { type: 'text'; text: string }[] = [{ type: 'text', text: compactMcpJson(payload) }];
+        if (skippedRepos.length) {
+          const described = skippedRepos.map(skip => `${skip.repo} (${skip.reason})`).join(', ');
+          blocks.push({
+            type: 'text',
+            text: `SCOPE: linked repos NOT searched: ${described}. Their knowledge is absent from these results; a miss here does not mean it does not exist.`,
+          });
+        }
         if (skippedNamespaces.length) {
           blocks.push({
             type: 'text',
