@@ -66,6 +66,12 @@ const SAFETY = `### Safety and freshness
 - All writes are secret-validated. Never retry rejected secret material in altered form.
 - \`Auth: Unsupported\` is normal for a local stdio MCP server when the focused retrieval tool is listed.`;
 
+const WORKSPACE = `### Linked repositories
+
+- When this repo is in a workspace, \`knowl_query\` results carry a \`repo\` field naming the repo that produced each item. A fact from another repo describes **that** repo unless it says otherwise; do not apply it here without checking.
+- Restrict a search to one repo with \`knowl_query\` \`repos: ["<name>"]\`. It matches the repo that owns an item.
+- Knowledge stays private to its repo until someone runs \`knowl workspace promote\`. Only the owning repo can promote, update, or retire its own items.`;
+
 export function renderFullKnowlGuidance(): string {
   const table = [
     '| Group | Tools | Routing |',
@@ -73,7 +79,7 @@ export function renderFullKnowlGuidance(): string {
     ...KNOWL_MCP_TOOL_GROUPS.map(group =>
       `| ${group.label} | ${group.tools.map(tool => `\`${tool}\``).join(', ')} | ${group.routing} |`),
   ].join('\n');
-  return ['## Knowl Project Memory', REQUIRED_WORKFLOW, LIFECYCLE_MODES, `### Complete MCP tool routing\n\n${table}`, SAFETY].join('\n\n');
+  return ['## Knowl Project Memory', REQUIRED_WORKFLOW, LIFECYCLE_MODES, `### Complete MCP tool routing\n\n${table}`, WORKSPACE, SAFETY].join('\n\n');
 }
 
 export function renderManagedKnowlGuidanceSection(): string {
@@ -128,5 +134,6 @@ export const KNOWL_SUBAGENT_BOOTSTRAP_CARD = [
   'Before reading repository files, call knowl_query with 2-6 keywords and use a relevant active hit directly; inspect files only on a miss, conflict, or stale result.',
   'Store verified durable findings with knowl_store or knowl_update before you return; never store secrets or routine noise.',
   'Do not call knowl_task_start/checkpoint/finish — the host session owns the lifecycle.',
+  'If a result carries a repo field, that knowledge belongs to that repo and describes it, not necessarily this one.',
   'If the knowl tools are listed but not callable, load their schemas before calling them.',
 ].join(' ');
