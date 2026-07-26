@@ -123,6 +123,26 @@ export async function backfillOriginRepo(projectRoot: string, repoName: string):
   }
 }
 
+/**
+ * How many active items in this repo's database it still owns.
+ *
+ * `remove` refuses while this is non-zero. A repo name is the ownership key on every item
+ * that repo wrote, so removing it without deciding what happens to those items orphans
+ * them -- they stay in the database, owned by a name nothing resolves.
+ */
+export async function countOwnedItems(projectRoot: string, repoName: string): Promise<number> {
+  await initDb(projectRoot);
+  try {
+    const rows = await getClient().execute({
+      sql: "SELECT COUNT(*) AS n FROM knowledge_items WHERE origin_repo = ? AND status = 'active'",
+      args: [repoName],
+    });
+    return Number(rows.rows[0]?.n ?? 0);
+  } finally {
+    await closeDb();
+  }
+}
+
 export async function leaveWorkspace(projectRoot: string): Promise<void> {
   const config = await loadConfig(projectRoot);
   const link = config.workspace;

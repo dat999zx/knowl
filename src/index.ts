@@ -22,6 +22,12 @@ import { runPipeline, runDecisionPipeline } from './pipeline/pipeline.js';
 import { startMcpServer } from './mcp/server.js';
 import { formatHierarchyToMarkdown } from './core/format.js';
 import { formatStatusReport } from './cli/status-report.js';
+import type { KnowledgeCategory } from './core/types.js';
+import { createManifest, isValidRepoName, readManifest, writeManifest } from './workspace/manifest.js';
+import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js';
+import { countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
+import { promoteItems } from './workspace/promote.js';
+import { formatWorkspaceBlock } from './cli/workspace-report.js';
 import { resolveWorkspace } from './workspace/resolve.js';
 import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
@@ -382,6 +388,139 @@ program.command('supersede').argument('<itemId>').argument('<replacementId>').de
 program.command('context').description('Print a token-budgeted context pack for an agent').option('--query <query>').option('--task <task>').requiredOption('--token-budget <budget>').action(async options => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await composeContext(project.id, { query: options.query, task: options.task, tokenBudget: Number(options.tokenBudget), namespaceRoot: root }), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error composing context: ${error.message}`); process.exit(1); }
 });
+
+const workspaceCommand = program.command('workspace').description('Link several repositories so agents can read across them');
+
+workspaceCommand
+  .command('init')
+  .argument('<name>')
+  .description('Create a workspace outside every repo')
+  .action(async (name: string) => {
+    try {
+      if (!isValidRepoName(name)) throw new Error(`Workspace name "${name}" must be lowercase letters, digits and hyphens.`);
+      const manifestPath = workspaceManifestPath(name);
+      if (existsSync(manifestPath)) throw new Error(`Workspace "${name}" already exists at ${manifestPath}.`);
+      await writeManifest(manifestPath, createManifest(name, null));
+      console.log(`Created workspace "${name}". Link this repo with: knowl workspace add ${name}`);
+    } catch (error: any) {
+      console.error(`Error creating workspace: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('add')
+  .argument('<workspace>')
+  .description('Link this repo into a workspace')
+  .option('--name <repo-name>', 'Name this repo carries inside the workspace; defaults to the directory name')
+  .option('--force', 'Link even though .knowl/config.json is tracked by git')
+  .action(async (workspaceName: string, options: { name?: string; force?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const repoName = options.name ?? path.basename(root).toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+      await joinWorkspace({ projectRoot: root, workspaceName, repoName, force: options.force });
+      console.log(`Linked this repo as "${repoName}" in workspace "${workspaceName}".`);
+      console.log('Its existing knowledge is now owned by that name and stays private until you run knowl workspace promote.');
+    } catch (error: any) {
+      console.error(`Error linking repo: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('list')
+  .description('List workspaces known to this machine')
+  .action(async () => {
+    try {
+      const names = await listKnownWorkspaces();
+      if (names.length === 0) {
+        console.log('No workspaces on this machine. Create one with: knowl workspace init <name>');
+        return;
+      }
+      for (const name of names) {
+        const manifest = await readManifest(workspaceManifestPath(name)).catch(() => null);
+        console.log(manifest ? `${name} (${manifest.repos.length} repo(s), ${manifest.mode})` : `${name} (unreadable manifest)`);
+      }
+    } catch (error: any) {
+      console.error(`Error listing workspaces: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('status')
+  .description("Show this repo's workspace membership")
+  .option('--verbose', 'Include resolved repo paths')
+  .action(async (options: { verbose?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const active = await resolveWorkspace(root, await loadConfig(root));
+      if (!active) {
+        console.log('This repo is not linked to a workspace.');
+        return;
+      }
+      console.log(formatWorkspaceBlock(active, { verbose: options.verbose }).join('\n'));
+    } catch (error: any) {
+      console.error(`Error reading workspace status: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('remove')
+  .argument('<repo-name>')
+  .description('Unlink a repo from its workspace')
+  .option('--export-first', 'Acknowledge this repo still owns knowledge and unlink anyway')
+  .action(async (repoName: string, options: { exportFirst?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const active = await resolveWorkspace(root, await loadConfig(root));
+      if (!active) throw new Error('This repo is not linked to a workspace.');
+      if (repoName !== active.repo) {
+        throw new Error(`This repo is "${active.repo}", not "${repoName}". Run remove from the repo being unlinked.`);
+      }
+      const owned = await countOwnedItems(root, repoName);
+      if (owned > 0 && !options.exportFirst) {
+        throw new Error(
+          `"${repoName}" still owns ${owned} active item(s). Export them first with "knowl export <path>", then re-run with --export-first. The name is retired on removal and cannot be reused.`,
+        );
+      }
+      await leaveWorkspace(root);
+      console.log(`Unlinked "${repoName}". Its name is retired and cannot be reused in that workspace.`);
+    } catch (error: any) {
+      console.error(`Error removing repo: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('promote')
+  .description('Share existing knowledge with the other repos in this workspace')
+  .option('--category <list>', 'Comma-separated categories, e.g. decision,constraint,architecture')
+  .option('--id <id...>', 'Specific item ids')
+  .option('--apply', 'Actually promote; without this it is a dry run')
+  .action(async (options: { category?: string; id?: string[]; apply?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const active = await resolveWorkspace(root, await loadConfig(root));
+      if (!active) throw new Error('This repo is not linked to a workspace.');
+      const categories = options.category
+        ? options.category.split(',').map(entry => entry.trim()).filter(Boolean) as KnowledgeCategory[]
+        : undefined;
+      const result = await promoteItems({ projectRoot: root, repoName: active.repo, categories, ids: options.id, apply: options.apply });
+      if (result.items.length === 0) {
+        console.log(`Nothing to promote.${result.skippedForeign ? ` ${result.skippedForeign} matching item(s) belong to another repo.` : ''}`);
+        return;
+      }
+      console.log(`${result.applied ? 'Promoted' : 'Would promote'} ${result.items.length} item(s):`);
+      for (const item of result.items) console.log(`  [${item.category}] ${item.title}`);
+      if (result.skippedForeign) console.log(`${result.skippedForeign} matching item(s) belong to another repo and were skipped.`);
+      if (!result.applied) console.log('Dry run. Re-run with --apply to promote.');
+    } catch (error: any) {
+      console.error(`Error promoting knowledge: ${error.message}`);
+      process.exit(1);
+    }
+  });
 
 const codeCommand = program.command('code').description('Index and inspect project code symbols');
 codeCommand.command('index').action(async () => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); await indexCode(root); console.log('Code symbols indexed.'); await closeDb(); } catch (error: any) { console.error(`Error indexing code: ${error.message}`); process.exit(1); } });
