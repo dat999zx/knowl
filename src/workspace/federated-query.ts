@@ -24,18 +24,43 @@ const DEFAULT_PER_REPO_CAP = 10;
  * The visibility filter is in the SQL, not applied afterwards. A peer's repo-private items
  * must never enter this process at all.
  */
+/**
+ * Query tokens, not the raw string.
+ *
+ * A whole-phrase LIKE only matches when the exact phrase appears, so "wire format protobuf"
+ * missed a decision titled "Wire format is protobuf" -- one filler word away and the peer
+ * returned nothing. Agents query in keywords, which is precisely the shape that breaks.
+ */
+function queryTokens(query: string): string[] {
+  return Array.from(new Set(
+    query.toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length > 1),
+  )).slice(0, 12);
+}
+
 async function peerCandidates(peer: PeerRepo, query: string, cap: number): Promise<KnowledgeItem[]> {
   const client = await acquireClient(peer.databasePath, { readOnly: true });
-  const like = `%${query.toLowerCase()}%`;
+  const tokens = queryTokens(query);
+  if (tokens.length === 0) return [];
+
+  // Any token may match, and the count of matching tokens orders the result -- a title hit
+  // counts double, mirroring the weighting the local ranker gives titles. This stays a
+  // deliberately cheap scan: it only has to produce a sane candidate ordering, because RRF
+  // fuses on position and the per-repo cap bounds how far a weak candidate can travel.
+  const where = tokens.map(() => '(lower(title) LIKE ? OR lower(content) LIKE ?)').join(' OR ');
+  const score = tokens
+    .map(() => '(CASE WHEN lower(title) LIKE ? THEN 2 ELSE 0 END) + (CASE WHEN lower(content) LIKE ? THEN 1 ELSE 0 END)')
+    .join(' + ');
+  const patterns = tokens.flatMap(token => [`%${token}%`, `%${token}%`]);
+
   const rows = await client.execute({
     sql: `SELECT id, category, status, title, content, reasoning, tags, source, content_hash,
-                 freshness, confidence, version, created_at, updated_at, origin_repo, visibility
+                 freshness, confidence, version, created_at, updated_at, origin_repo, visibility,
+                 ${score} AS match_score
           FROM knowledge_items
-          WHERE status = 'active' AND visibility = 'workspace'
-            AND (lower(title) LIKE ? OR lower(content) LIKE ?)
-          ORDER BY updated_at DESC
+          WHERE status = 'active' AND visibility = 'workspace' AND (${where})
+          ORDER BY match_score DESC, updated_at DESC
           LIMIT ?`,
-    args: [like, like, cap],
+    args: [...patterns, ...patterns, cap],
   });
 
   return rows.rows.map(row => ({

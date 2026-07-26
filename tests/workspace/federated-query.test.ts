@@ -77,6 +77,21 @@ describe('federated read', () => {
     expect(fromB!.title).toBe('Auth token TTL is fifteen minutes');
   });
 
+  it('matches a keyword query, not just an exact phrase', async () => {
+    // Found by using the feature rather than by a test: a whole-phrase LIKE meant
+    // "auth token expire" missed a peer item titled "Auth token TTL is fifteen minutes",
+    // because one filler word breaks the phrase. Agents query in keywords, which is
+    // exactly the shape that failed.
+    const result = await federate('auth token expire', 5);
+    expect(result.items.some(item => item.repo === 'b' && item.title.includes('Auth token TTL'))).toBe(true);
+  });
+
+  it('orders peer candidates by how many query tokens they match', async () => {
+    const result = await federate('auth token TTL fifteen minutes', 5);
+    const fromPeer = result.items.filter(item => item.repo === 'b');
+    expect(fromPeer[0].title).toBe('Auth token TTL is fifteen minutes');
+  });
+
   it('never returns a peer repo-private item', async () => {
     const result = await federate('auth', 5);
     expect(result.items.some(item => item.title === 'Auth scratch note')).toBe(false);

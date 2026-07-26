@@ -27,6 +27,7 @@ import { createManifest, isValidRepoName, readManifest, writeManifest } from './
 import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js';
 import { countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
 import { promoteItems } from './workspace/promote.js';
+import { queryFederated } from './workspace/federated-query.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
 import { resolveWorkspace } from './workspace/resolve.js';
 import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
@@ -374,7 +375,31 @@ program.command('timeline').argument('<itemId>').description('Show the recorded 
 });
 
 program.command('query').argument('[query]').description('Search project memory by keywords').option('--as-of <timestamp>').option('--limit <count>').action(async (query, options) => {
-  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); const items = await queryKnowledgeBase(project.id, { query, limit: options.limit === undefined ? undefined : Number(options.limit), asOf: options.asOf }); console.log(JSON.stringify(items, null, 2)); await closeDb(); } catch (error: any) { console.error(`Error querying knowledge: ${error.message}`); process.exit(1); }
+  try {
+    const root = await findProjectRoot(process.cwd());
+    await initDb(root);
+    const project = await repo.getProjectByRootPath(root);
+    if (!project) throw new Error('Project not found in database.');
+    const limit = options.limit === undefined ? undefined : Number(options.limit);
+    const items = await queryKnowledgeBase(project.id, { query, limit, asOf: options.asOf });
+
+    // Fan out for the same reason knowl_query does. Leaving this local-only meant a user
+    // in a linked repo got an empty result for knowledge that plainly existed next door,
+    // while an agent on the MCP tool found it -- the same command disagreeing with itself
+    // depending on who ran it.
+    // `asOf` stays local: historical reconstruction across repos has no defined semantics.
+    const active = options.asOf ? null : await resolveWorkspace(root, await loadConfig(root));
+    if (active) {
+      const federated = await queryFederated({ workspace: active, localItems: items, query: query ?? '', limit: limit ?? 3 });
+      console.log(JSON.stringify(federated.items.map(item => ({ ...item, repo: item.repo })), null, 2));
+      for (const skip of federated.skipped) {
+        console.error(`Note: linked repo "${skip.repo}" was not searched (${skip.reason}).`);
+      }
+    } else {
+      console.log(JSON.stringify(items, null, 2));
+    }
+    await closeDb();
+  } catch (error: any) { console.error(`Error querying knowledge: ${error.message}`); process.exit(1); }
 });
 
 program.command('conflicts').description('List knowledge items that contradict each other').action(async () => {
