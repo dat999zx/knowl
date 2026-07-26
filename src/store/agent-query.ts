@@ -4,7 +4,8 @@ import { searchKnowledgeEmbeddings } from './vector.js';
 import { recordKnowledgeAccessBestEffort } from './access-feedback.js';
 
 const DEFAULT_AGENT_QUERY_LIMIT = 3;
-const RRF_K = 60;
+/** Exported so cross-store fusion uses the same constant rather than restating it. */
+export const RRF_K = 60;
 const CATEGORY_HINT_BOOST = 0.015;
 const RECENCY_BOOST = 0.005;
 const CONFIDENCE_BOOST = 0.005;
