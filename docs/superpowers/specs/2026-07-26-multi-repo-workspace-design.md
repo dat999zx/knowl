@@ -419,6 +419,8 @@ knowl workspace status
 knowl workspace remove <repo-name>
 ```
 
+v2 adds `migrate [--repo <name>] [--apply]`, `promote`, `unlink`, and `--migrate` on `add`.
+
 `knowl init` offers to join a workspace already registered for a sibling path — a registry
 lookup, not a filesystem scan. (The first draft listed filesystem scanning as a non-goal while
 describing discovery; registry lookup is the resolution.)
@@ -628,6 +630,49 @@ into a file nothing reads. Leaving the file in place with a bumped `user_version
 the old client refuse. Partial renames were also outside the per-import transaction, which the
 journal now covers.
 
+### Linking a repo that already has knowledge
+
+The expected case. A greenfield workspace over empty repos is the rare one, and the design has
+to be good at the common path rather than the clean one.
+
+**Linking in v1 moves nothing.** `workspace add` writes a manifest entry and a config pointer.
+The repo's database is not opened for writing, not migrated, not touched. Its existing knowledge
+becomes visible to the other linked repos on the next query, and unlinking restores the previous
+state exactly, because there was no previous state to restore.
+
+**Migrating at workspace creation.** `knowl workspace migrate` is the journalled copy described
+above: every repo's knowledge is copied into the workspace database with `origin_repo` set and
+`visibility` routed by category.
+
+**A repo that joins after the workspace is already in `shared` mode** needs the same treatment
+for itself alone: `knowl workspace add --migrate`, which is `knowl workspace migrate --repo <name>`
+run as part of the join. Without it the repo would flip to the shared knowledge database while
+its own history stayed behind in a file nothing reads any more — the single most likely way for
+a user to conclude their memory was deleted. `add` refuses to set `shared` mode for a repo with
+un-migrated local knowledge unless `--migrate` or an explicit `--discard-local` is given.
+
+Divergence between repos is the shipped import problem, not a new one: identical items collapse
+by `content_hash`, and genuine conflicts resolve by `--on-divergence newer` with the same policy
+choices `knowl import` already offers.
+
+**Backfilling existing knowledge into the shared scope.** In `linked` mode, migration is not
+what a user wants — repo-scoped knowledge should stay in its repo. But the motivating story is a
+wire-format decision *that already exists*, and category-driven routing only applies to future
+writes. Without a backfill, linking would share nothing a team has already learned.
+
+```
+knowl workspace promote --category decision,constraint,architecture   # dry-run by default
+knowl workspace promote --id <item-id>...
+```
+
+`promote` sets `visibility = 'workspace'` on selected items the current repo originated. It is a
+one-column update, so it does not touch `content_hash`, does not create duplicates, and does not
+move rows between databases in `shared` mode. In `linked` mode it copies the item into the
+workspace database by the same import path as `migrate` and retires the local copy. Dry-run
+prints the affected titles; only the originating repo may promote its own items; and per open
+question 5, there is no `demote` — retracting knowledge other repos have already read needs a
+mechanism this design does not have.
+
 `knowl workspace unlink` un-retires the local knowledge tables and flips mode back. Copy-back is
 *not* a bespoke flag: it is `knowl export --repo <name>` from the workspace followed by
 `knowl import` into the local database — shipped, tested machinery with a divergence policy.
@@ -759,7 +804,10 @@ another's items stale. Implicit reads (`getRecentContext`, `composeContext` pinn
 `startWorkLoop`) return only current-repo items in a populated multi-repo database — asserted
 per path, since each is a separate call site. A repo whose vector model differs is refused by
 `add`. A mixed `knowl_ingest_atoms` batch reports a destination per atom, and one failing
-partition does not roll back the others.
+partition does not roll back the others. A repo with existing knowledge joining an
+already-migrated `shared` workspace is refused without `--migrate`, and with it, every one of
+its items is reachable afterward. `promote` changes visibility without changing `content_hash`
+or item count.
 
 **Concurrency.** 8 writers across processes: zero lost updates (asserted by content, not by
 absence of errors), zero escaped `SQLITE_BUSY`, p95 under 50 ms.
