@@ -1,7 +1,7 @@
 import { and, eq, SQL } from 'drizzle-orm';
 import { KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
-import { getDb } from './database.js';
+import { getClient, getDb } from './database.js';
 import { getKnowledgeItem } from './repository.js';
 import * as schema from './schema.js';
 
@@ -19,7 +19,12 @@ export type VectorSearchResult = {
   score: number;
 };
 
-function cosineSimilarity(left: number[], right: number[]): number {
+/**
+ * Exported so cross-repo fusion scores peer items with the same function rather than a
+ * parallel implementation. Comparable across repos only because a workspace pins one
+ * embedding identity -- see `sameEmbeddingIdentity`.
+ */
+export function cosineSimilarity(left: number[], right: number[]): number {
   if (left.length !== right.length || left.length === 0) return 0;
 
   let dot = 0;
@@ -120,4 +125,33 @@ export async function searchKnowledgeEmbeddings(
   } catch (error: any) {
     throw new DatabaseError(`Failed to search knowledge embeddings: ${error.message}`);
   }
+}
+
+/**
+ * Stored vectors for specific items, from the currently open database.
+ *
+ * Cross-repo fusion needs local vectors in the same shape it reads peer ones, so local and
+ * foreign candidates can be scored by the same cosine rather than compared by position.
+ * Items written before embeddings were enabled simply have no row, and the caller falls
+ * back to positional scoring for those.
+ */
+export async function getEmbeddingsForItems(itemIds: string[]): Promise<Map<string, number[]>> {
+  const found = new Map<string, number[]>();
+  if (itemIds.length === 0) return found;
+
+  const rows = await getClient().execute({
+    sql: `SELECT knowledge_item_id, vector FROM knowledge_embeddings
+          WHERE knowledge_item_id IN (${itemIds.map(() => '?').join(', ')})`,
+    args: itemIds,
+  });
+
+  for (const row of rows.rows) {
+    try {
+      const parsed = JSON.parse(String(row.vector));
+      if (Array.isArray(parsed) && parsed.length > 0) found.set(String(row.knowledge_item_id), parsed as number[]);
+    } catch {
+      // A malformed vector is treated as absent rather than failing the query.
+    }
+  }
+  return found;
 }

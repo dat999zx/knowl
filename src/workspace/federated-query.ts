@@ -1,5 +1,6 @@
 import type { KnowledgeItem } from '../core/types.js';
 import { RRF_K } from '../store/agent-query.js';
+import { cosineSimilarity } from '../store/vector.js';
 import { acquireClient } from '../store/connection-pool.js';
 import { SchemaTooNewError } from '../store/schema-version.js';
 import type { ActiveWorkspace, PeerRepo } from './resolve.js';
@@ -37,7 +38,9 @@ function queryTokens(query: string): string[] {
   )).slice(0, 12);
 }
 
-async function peerCandidates(peer: PeerRepo, query: string, cap: number): Promise<KnowledgeItem[]> {
+type Candidate = { item: KnowledgeItem; vector: number[] | null };
+
+async function peerCandidates(peer: PeerRepo, query: string, cap: number): Promise<Candidate[]> {
   const client = await acquireClient(peer.databasePath, { readOnly: true });
   const tokens = queryTokens(query);
   if (tokens.length === 0) return [];
@@ -52,18 +55,26 @@ async function peerCandidates(peer: PeerRepo, query: string, cap: number): Promi
     .join(' + ');
   const patterns = tokens.flatMap(token => [`%${token}%`, `%${token}%`]);
 
+  // The embedding travels with the candidate. A workspace pins one embedding identity, so
+  // a peer's vectors live in the same space as ours and cosine is directly comparable --
+  // which is what lets the fusion below rank on match strength instead of on position.
   const rows = await client.execute({
-    sql: `SELECT id, category, status, title, content, reasoning, tags, source, content_hash,
-                 freshness, confidence, version, created_at, updated_at, origin_repo, visibility,
-                 ${score} AS match_score
-          FROM knowledge_items
-          WHERE status = 'active' AND visibility = 'workspace' AND (${where})
-          ORDER BY match_score DESC, updated_at DESC
+    sql: `SELECT i.id, i.category, i.status, i.title, i.content, i.reasoning, i.tags, i.source,
+                 i.content_hash, i.freshness, i.confidence, i.version, i.created_at, i.updated_at,
+                 i.origin_repo, i.visibility, e.vector AS embedding,
+                 ${score.replace(/lower\(title\)/g, 'lower(i.title)').replace(/lower\(content\)/g, 'lower(i.content)')} AS match_score
+          FROM knowledge_items i
+          LEFT JOIN knowledge_embeddings e ON e.knowledge_item_id = i.id
+          WHERE i.status = 'active' AND i.visibility = 'workspace'
+            AND (${where.replace(/lower\(title\)/g, 'lower(i.title)').replace(/lower\(content\)/g, 'lower(i.content)')})
+          ORDER BY match_score DESC, i.updated_at DESC
           LIMIT ?`,
     args: [...patterns, ...patterns, cap],
   });
 
   return rows.rows.map(row => ({
+    vector: parseVector(row.embedding),
+    item: {
     id: String(row.id),
     category: String(row.category),
     status: String(row.status),
@@ -80,7 +91,19 @@ async function peerCandidates(peer: PeerRepo, query: string, cap: number): Promi
     updatedAt: String(row.updated_at),
     originRepo: row.origin_repo === null ? null : String(row.origin_repo),
     visibility: String(row.visibility),
-  })) as unknown as KnowledgeItem[];
+    } as unknown as KnowledgeItem,
+  }));
+}
+
+/** Stored as a JSON array; a peer written without embeddings simply has none. */
+function parseVector(value: unknown): number[] | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) && parsed.length > 0 ? parsed as number[] : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -101,19 +124,41 @@ export async function queryFederated(input: {
   limit: number;
   repos?: string[];
   perRepoCap?: number;
+  /**
+   * The query embedding, when the caller has one.
+   *
+   * Supplying it is what makes cross-repo ranking compare match *strength* rather than
+   * position. Without it the fusion falls back to reciprocal rank, where a weak rank-1 in
+   * one repo ties a strong rank-1 in another and the local tie-break decides -- which is
+   * exactly the failure recorded in docs/evals/cross-repo-baseline.json.
+   */
+  queryEmbedding?: number[];
+  /** Local vectors by item id, so local candidates are scored the same way peers are. */
+  localVectors?: Map<string, number[]>;
 }): Promise<FederatedResult> {
   const cap = input.perRepoCap ?? DEFAULT_PER_REPO_CAP;
   const wanted = input.repos && input.repos.length > 0 ? new Set(input.repos) : null;
   const skipped: FederatedResult['skipped'] = [];
-  const ranked: Array<{ item: FederatedItem; score: number; local: boolean }> = [];
+  const ranked: Array<{ item: FederatedItem; score: number; local: boolean; semantic: boolean }> = [];
+  const embedding = input.queryEmbedding;
+
+  /**
+   * Cosine when both sides have a vector, otherwise the reciprocal-rank position score.
+   *
+   * The two live on different scales, so a semantically scored candidate is never compared
+   * against a positionally scored one -- `semantic` partitions them and every semantic hit
+   * sorts above the fallback group. Mixing them would let an unembedded item's 1/(k+1)
+   * outrank a genuine 0.8 cosine for no reason but arithmetic.
+   */
+  const scoreFor = (vector: number[] | null | undefined, position: number) => {
+    if (embedding && vector) return { score: cosineSimilarity(embedding, vector), semantic: true };
+    return { score: 1 / (RRF_K + position + 1), semantic: false };
+  };
 
   if (!wanted || wanted.has(input.workspace.repo)) {
     input.localItems.slice(0, cap).forEach((item, index) => {
-      ranked.push({
-        item: { ...item, repo: input.workspace.repo },
-        score: 1 / (RRF_K + index + 1),
-        local: true,
-      });
+      const { score, semantic } = scoreFor(input.localVectors?.get(item.id), index);
+      ranked.push({ item: { ...item, repo: input.workspace.repo }, score, local: true, semantic });
     });
   }
 
@@ -125,8 +170,9 @@ export async function queryFederated(input: {
     }
     try {
       const candidates = await peerCandidates(peer, input.query, cap);
-      candidates.forEach((item, index) => {
-        ranked.push({ item: { ...item, repo: peer.name }, score: 1 / (RRF_K + index + 1), local: false });
+      candidates.forEach((candidate, index) => {
+        const { score, semantic } = scoreFor(candidate.vector, index);
+        ranked.push({ item: { ...candidate.item, repo: peer.name }, score, local: false, semantic });
       });
     } catch (error) {
       skipped.push({ repo: peer.name, reason: error instanceof SchemaTooNewError ? 'schema-too-new' : 'unreadable' });
@@ -135,7 +181,12 @@ export async function queryFederated(input: {
 
   const seen = new Set<string>();
   const items = ranked
-    .sort((a, b) => (b.score - a.score) || (Number(b.local) - Number(a.local)))
+    // Semantic hits first as a group, then by score, then local. Ties break toward the
+    // local repo and nothing else -- that remains the whole of the local preference.
+    .sort((a, b) =>
+      (Number(b.semantic) - Number(a.semantic))
+      || (b.score - a.score)
+      || (Number(b.local) - Number(a.local)))
     .filter(entry => {
       const key = entry.item.contentHash ?? `${entry.item.title}\n${entry.item.content}`;
       if (seen.has(key)) return false;

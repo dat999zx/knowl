@@ -838,12 +838,21 @@ export function registerTools(
         let skippedRepos: FederatedResult['skipped'] = [];
         let resolvedItems: Array<KnowledgeItem & { repo?: string; explanation?: unknown }> = items as any;
         if (active) {
+          // Hand the fusion the query embedding and the local vectors so cross-repo ranking
+          // compares match strength, not corpus position. A workspace pins one embedding
+          // identity, so a peer's vectors are in the same space as ours.
+          const { getEmbeddingsForItems } = await import('../store/vector.js');
+          const localVectors = vector?.embedding
+            ? await getEmbeddingsForItems((items as KnowledgeItem[]).map(item => item.id))
+            : undefined;
           const federated = await queryFederated({
             workspace: active,
             localItems: items as KnowledgeItem[],
             query: query ?? '',
             limit: limit ?? 3,
             repos,
+            queryEmbedding: vector?.embedding,
+            localVectors,
           });
           skippedRepos = federated.skipped;
           resolvedItems = federated.items;
