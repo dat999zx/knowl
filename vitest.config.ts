@@ -2,6 +2,10 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
+    // Benchmark harness lives under benchmarks/ with its own vitest project (`npm run
+    // test:bench`). Excluding it keeps `npm test` scoped to the product, so research tooling can
+    // never slow down or destabilise the suite that gates releases.
+    exclude: ['**/node_modules/**', '**/dist/**', 'benchmarks/**'],
     // Several suites are true integration tests that spawn `node dist/index.js`
     // per assertion. Process start-up costs 1-3s on Windows, so vitest's 5s
     // default makes them flake even when the code is correct.

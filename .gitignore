@@ -30,3 +30,10 @@ Thumbs.db
 .codex/
 .claude/*.backup
 .mcp.json
+# Benchmark datasets (LongMemEval_S is ~265MB; download per docs/evals/longmemeval.md)
+data/
+.dist-bench/
+docs/evals/results/shards/
+.benchmark-dist/
+.benchmark-tsc/
+benchmarks/*/data/

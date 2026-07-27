@@ -93,19 +93,61 @@ Most agent memory is **recall**: embed what the agent said, hand back the neares
 
 ### Published performance
 
-Each project measures on its own dataset, so this is **not one leaderboard** — it's what each team reports:
+These are **two separate tables on purpose.** A score on a corpus we wrote ourselves and a score on a third-party benchmark are different kinds of evidence, and putting them in one table would imply a ranking that does not exist.
+
+**What Knowl measures on its own corpus.** Self-reported, and near-ceiling partly *because* we chose the atoms and the queries — treat it as a regression baseline, not as proof we beat anyone:
+
+| Suite | Result |
+| --- | --- |
+| 500-case adversarial retrieval suite ([`docs/evals/`](docs/evals/)) | Recall@10 **99.4%** · MRR **96.1%** |
+| Governance suite — 22 migrations, 24 rejected-decision traps | current-truth MRR **94%** · **0/24** rejected leaked |
+
+**What other projects report on their own chosen benchmarks.** Different tasks, metrics, readers and top-*k*. Not comparable to the table above, and mostly not comparable to each other:
 
 | System | Benchmark (its own) | Reported result |
 | --- | --- | --- |
-| **Knowl** | own 500-case adversarial suite — **ships in this repo** | Recall@10 **99.4%** · MRR **96.1%** · governance MRR **94%**, 0/24 rejected leaked |
-| AgentMemory | LongMemEval-S (500 Q) | Recall@10 **98.6%** · Recall@5 95.2% · MRR **88.2%** |
-| Mem0 | LoCoMo / LongMemEval (managed platform) | **92.5** / **94.4** · ~7K tokens · p50 0.88–1.09s |
-| Zep / Graphiti | DMR / LongMemEval | DMR **94.8%** · up to **+18.5%** accuracy, −90% latency |
+| AgentMemory | its own long-context suite | Recall@10 **98.6%** · Recall@5 95.2% · MRR **88.2%** |
+| Mem0 | LoCoMo (managed platform) | **92.5** / **94.4** · ~7K tokens · p50 0.88–1.09s |
+| Zep / Graphiti | DMR | DMR **94.8%** · up to **+18.5%** accuracy, −90% latency |
 | Letta (MemGPT) | DMR | **93.4%** |
 
-A LongMemEval or LoCoMo score is not a Recall@k on our corpus — the tasks and metrics differ, so don't read across rows. The difference that matters: **our datasets ship in [`docs/evals/`](docs/evals/)**, so you can rerun our numbers (or point our harness at your own project) rather than take them on trust. Mem0's figures are from its managed platform, which it notes includes optimizations absent from the open-source SDK; Letta's DMR figure is as reported in the Zep paper.
+Mem0's figures are from its managed platform, which it notes includes optimizations absent from the open-source SDK; Letta's DMR figure is as reported in the Zep paper. On LoCoMo specifically, note that a plain full-context baseline scores ~73% — above Mem0's reported ~68% — so a LoCoMo number does not establish that a memory system beats having no memory system at all.
 
-<sub>Sources: [AgentMemory](https://github.com/rohitg00/agentmemory), [Mem0](https://github.com/mem0ai/mem0), [Graphiti](https://github.com/getzep/graphiti) and [Zep: A Temporal Knowledge Graph Architecture for Agent Memory (arXiv 2501.13956)](https://arxiv.org/abs/2501.13956), [Letta](https://github.com/letta-ai/letta). Retrieved 2026-07.</sub>
+### Measured on MemoryAgentBench — conflict resolution
+
+[MemoryAgentBench](https://github.com/HUST-AI-HYZ/MemoryAgentBench) (ICLR 2026, MIT) defines
+conflict resolution as *"detecting and overwriting outdated facts when new, contradictory
+information is introduced, ensuring subsequent queries reflect only the newest valid data."* That
+is the public benchmark closest to what Knowl's write path exists to do, so it is the one we run.
+
+Single-hop track, 455 facts, 100 questions. **The only difference between these rows is whether
+Knowl is allowed to retire a superseded fact** — same corpus, same retrieval, same metric:
+
+| Configuration | top-1 accuracy | Stale answers returned |
+| --- | --- | --- |
+| **Supersession on** (shipped) | **96.0%** | **3 / 100** |
+| Supersession off (ablation) | 40.0% | 62 / 100 |
+
+**Governance is worth +56 points here**, and cuts stale answers from 62 to 3. Of 455 ingested
+facts, 149 were retired at write time, so a query can only ever see the current value.
+
+**Read the comparison honestly.** Three limits travel with this number:
+
+- Published baselines on this track are 45.0% (long-context agents), 56.0% (best RAG) and 28.0%
+  (MemGPT) — but those measure an **LLM reader** answering from the memory system, while the
+  figure above is **retrieval-level** with no reader. Not the same measurement; not subtractable.
+  The controlled ablation is the rigorous claim, the baseline comparison is indicative only.
+- **This track tests one kind of conflict: the value changed and the newest wins.** That is
+  exactly the rule Knowl implements, so the benchmark is aligned with the design by construction.
+  It does not show Knowl is good at conflict resolution *in general* — a claim that would need
+  cases where the newest mention should **not** win, which this data does not contain.
+- Few memory products have run it. MemGPT is the only one in the table; Mem0, Zep, Letta and
+  Cognee report on other benchmarks, so there is little peer context here.
+
+Protocol, the preregistered titling rule, and what is deliberately not attempted:
+[conflict-resolution results](docs/evals/memoryagentbench-cr.md).
+
+<sub>Sources: [AgentMemory](https://github.com/rohitg00/agentmemory), [Mem0](https://github.com/mem0ai/mem0), [Graphiti](https://github.com/getzep/graphiti) and [Zep: A Temporal Knowledge Graph Architecture for Agent Memory (arXiv 2501.13956)](https://arxiv.org/abs/2501.13956), [Letta](https://github.com/letta-ai/letta), [MemoryAgentBench (arXiv 2507.05257)](https://arxiv.org/pdf/2507.05257), [LoCoMo](https://snap-research.github.io/locomo/), [Zep on LoCoMo's flaws](https://blog.getzep.com/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/). Retrieved 2026-07.</sub>
 
 Where Knowl is deliberately strict: project **decisions** are the unit (reasoning + alternatives, with `rejected` hard-excluded from retrieval), evidence is **code-linked** (file/commit/`symbol://`, flagged stale when the code moves), and everything lives **per-repo in `.knowl/`** with no service to run. Governance is measured, not asserted — see [Benchmarks](#-benchmarks).
 

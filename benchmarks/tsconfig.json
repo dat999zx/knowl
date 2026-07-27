@@ -1,0 +1,9 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "..",
+    "outDir": "../.benchmark-tsc"
+  },
+  "include": ["**/*.ts", "../src/**/*.ts"]
+}
