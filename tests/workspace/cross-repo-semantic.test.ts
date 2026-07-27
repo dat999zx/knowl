@@ -102,6 +102,28 @@ describe('cross-repo ranking with a shared embedding identity', () => {
     }
   }, 180_000);
 
+  it('finds a peer item that shares no query token at all', async () => {
+    // The case lexical selection cannot reach, and the reason vector search exists. The
+    // query says nothing about tokens, expiry or minutes; only meaning connects it.
+    const query = 'session credential lifetime policy';
+    await initDb(WEB);
+    try {
+      const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, WEB);
+      const [queryEmbedding] = await embedder.embed([query]);
+      const local = await queryKnowledgeForAgent('local', { query, limit: 10, surface: 'test' });
+      const localVectors = await getEmbeddingsForItems(local.map(item => item.id));
+      const active = (await resolveWorkspace(WEB))!;
+
+      const federated = await queryFederated({
+        workspace: active, localItems: local, query, limit: 5, queryEmbedding, localVectors,
+      });
+
+      expect(federated.items.some(item => item.repo === 'server' && item.title === 'Auth token TTL')).toBe(true);
+    } finally {
+      await closeDb();
+    }
+  }, 180_000);
+
   it('still returns the local item, ranked below it', async () => {
     const query = 'how long do auth tokens last before they expire';
     await initDb(WEB);

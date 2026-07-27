@@ -40,59 +40,102 @@ function queryTokens(query: string): string[] {
 
 type Candidate = { item: KnowledgeItem; vector: number[] | null };
 
-async function peerCandidates(peer: PeerRepo, query: string, cap: number): Promise<Candidate[]> {
+const ITEM_COLUMNS = `i.id, i.category, i.status, i.title, i.content, i.reasoning, i.tags, i.source,
+  i.content_hash, i.freshness, i.confidence, i.version, i.created_at, i.updated_at,
+  i.origin_repo, i.visibility, e.vector AS embedding`;
+
+/**
+ * Peer candidates, selected the way the local ranker selects its own.
+ *
+ * Locally, candidates come from BM25 *and* vector search unioned, with cosine as the
+ * primary score and BM25 only a bounded fallback for items the vector search missed
+ * (`agent-query.ts`, VECTOR_PRIMARY_WEIGHT / BM25_FALLBACK_WEIGHT). Selecting peers
+ * lexically alone would invert that: an item that is semantically on-point but shares no
+ * query token would never become a candidate, so cosine would never get to rank it -- which
+ * is the exact case vector search exists for.
+ *
+ * So this does both. Every embedded item is scored by cosine and the best `cap` are taken;
+ * the lexical scan then adds what vectors missed, which is also the whole answer for a peer
+ * written without embeddings.
+ */
+async function peerCandidates(
+  peer: PeerRepo,
+  query: string,
+  cap: number,
+  queryEmbedding?: number[],
+): Promise<Candidate[]> {
   const client = await acquireClient(peer.databasePath, { readOnly: true });
+  const byId = new Map<string, Candidate>();
+
+  // Primary: semantic. A full scan of the peer's vectors, scored in JS -- the same shape
+  // searchKnowledgeEmbeddings already uses locally, so this is not a new cost profile.
+  if (queryEmbedding) {
+    const embedded = await client.execute({
+      sql: `SELECT ${ITEM_COLUMNS}
+            FROM knowledge_items i
+            JOIN knowledge_embeddings e ON e.knowledge_item_id = i.id
+            WHERE i.status = 'active' AND i.visibility = 'workspace'`,
+      args: [],
+    });
+    const scored = embedded.rows
+      .map(row => ({ row, vector: parseVector(row.embedding) }))
+      .filter(entry => entry.vector)
+      .map(entry => ({ entry, score: cosineSimilarity(queryEmbedding, entry.vector!) }))
+      .filter(entry => entry.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, cap);
+    for (const { entry } of scored) byId.set(String(entry.row.id), toCandidate(entry.row));
+  }
+
+  // Fallback: lexical. Catches items with no embedding, and query terms the vector missed.
+  // A title hit counts double, mirroring the weight the local ranker gives titles.
   const tokens = queryTokens(query);
-  if (tokens.length === 0) return [];
+  if (tokens.length > 0) {
+    const where = tokens.map(() => '(lower(i.title) LIKE ? OR lower(i.content) LIKE ?)').join(' OR ');
+    const score = tokens
+      .map(() => '(CASE WHEN lower(i.title) LIKE ? THEN 2 ELSE 0 END) + (CASE WHEN lower(i.content) LIKE ? THEN 1 ELSE 0 END)')
+      .join(' + ');
+    const patterns = tokens.flatMap(token => [`%${token}%`, `%${token}%`]);
 
-  // Any token may match, and the count of matching tokens orders the result -- a title hit
-  // counts double, mirroring the weighting the local ranker gives titles. This stays a
-  // deliberately cheap scan: it only has to produce a sane candidate ordering, because RRF
-  // fuses on position and the per-repo cap bounds how far a weak candidate can travel.
-  const where = tokens.map(() => '(lower(title) LIKE ? OR lower(content) LIKE ?)').join(' OR ');
-  const score = tokens
-    .map(() => '(CASE WHEN lower(title) LIKE ? THEN 2 ELSE 0 END) + (CASE WHEN lower(content) LIKE ? THEN 1 ELSE 0 END)')
-    .join(' + ');
-  const patterns = tokens.flatMap(token => [`%${token}%`, `%${token}%`]);
+    const rows = await client.execute({
+      sql: `SELECT ${ITEM_COLUMNS}, ${score} AS match_score
+            FROM knowledge_items i
+            LEFT JOIN knowledge_embeddings e ON e.knowledge_item_id = i.id
+            WHERE i.status = 'active' AND i.visibility = 'workspace' AND (${where})
+            ORDER BY match_score DESC, i.updated_at DESC
+            LIMIT ?`,
+      args: [...patterns, ...patterns, cap],
+    });
+    for (const row of rows.rows) {
+      if (!byId.has(String(row.id))) byId.set(String(row.id), toCandidate(row));
+    }
+  }
 
-  // The embedding travels with the candidate. A workspace pins one embedding identity, so
-  // a peer's vectors live in the same space as ours and cosine is directly comparable --
-  // which is what lets the fusion below rank on match strength instead of on position.
-  const rows = await client.execute({
-    sql: `SELECT i.id, i.category, i.status, i.title, i.content, i.reasoning, i.tags, i.source,
-                 i.content_hash, i.freshness, i.confidence, i.version, i.created_at, i.updated_at,
-                 i.origin_repo, i.visibility, e.vector AS embedding,
-                 ${score.replace(/lower\(title\)/g, 'lower(i.title)').replace(/lower\(content\)/g, 'lower(i.content)')} AS match_score
-          FROM knowledge_items i
-          LEFT JOIN knowledge_embeddings e ON e.knowledge_item_id = i.id
-          WHERE i.status = 'active' AND i.visibility = 'workspace'
-            AND (${where.replace(/lower\(title\)/g, 'lower(i.title)').replace(/lower\(content\)/g, 'lower(i.content)')})
-          ORDER BY match_score DESC, i.updated_at DESC
-          LIMIT ?`,
-    args: [...patterns, ...patterns, cap],
-  });
+  return [...byId.values()];
+}
 
-  return rows.rows.map(row => ({
+function toCandidate(row: Record<string, unknown>): Candidate {
+  return {
     vector: parseVector(row.embedding),
     item: {
-    id: String(row.id),
-    category: String(row.category),
-    status: String(row.status),
-    title: String(row.title),
-    content: String(row.content),
-    reasoning: row.reasoning === null ? null : String(row.reasoning),
-    tags: row.tags ? JSON.parse(String(row.tags)) : null,
-    source: row.source === null ? null : String(row.source),
-    contentHash: row.content_hash === null ? null : String(row.content_hash),
-    freshness: String(row.freshness),
-    confidence: Number(row.confidence),
-    version: Number(row.version),
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-    originRepo: row.origin_repo === null ? null : String(row.origin_repo),
-    visibility: String(row.visibility),
+      id: String(row.id),
+      category: String(row.category),
+      status: String(row.status),
+      title: String(row.title),
+      content: String(row.content),
+      reasoning: row.reasoning === null ? null : String(row.reasoning),
+      tags: row.tags ? JSON.parse(String(row.tags)) : null,
+      source: row.source === null ? null : String(row.source),
+      contentHash: row.content_hash === null ? null : String(row.content_hash),
+      freshness: String(row.freshness),
+      confidence: Number(row.confidence),
+      version: Number(row.version),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+      originRepo: row.origin_repo === null ? null : String(row.origin_repo),
+      visibility: String(row.visibility),
     } as unknown as KnowledgeItem,
-  }));
+  };
 }
 
 /** Stored as a JSON array; a peer written without embeddings simply has none. */
@@ -169,7 +212,7 @@ export async function queryFederated(input: {
       continue;
     }
     try {
-      const candidates = await peerCandidates(peer, input.query, cap);
+      const candidates = await peerCandidates(peer, input.query, cap, embedding);
       candidates.forEach((candidate, index) => {
         const { score, semantic } = scoreFor(candidate.vector, index);
         ranked.push({ item: { ...candidate.item, repo: peer.name }, score, local: false, semantic });
