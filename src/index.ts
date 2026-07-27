@@ -390,7 +390,27 @@ program.command('query').argument('[query]').description('Search project memory 
     // `asOf` stays local: historical reconstruction across repos has no defined semantics.
     const active = options.asOf ? null : await resolveWorkspace(root, await loadConfig(root));
     if (active) {
-      const federated = await queryFederated({ workspace: active, localItems: items, query: query ?? '', limit: limit ?? 3 });
+      // Compute the embedding here too, or the CLI silently ranks on position while the MCP
+      // tool ranks on meaning -- the same question answered differently depending on whether
+      // a human or an agent asked it.
+      const config = await loadConfig(root);
+      let queryEmbedding: number[] | undefined;
+      let localVectors: Map<string, number[]> | undefined;
+      if (query && isVectorSearchEnabled(config)) {
+        try {
+          const embedder = await createLocalEmbeddingProvider(config, root);
+          [queryEmbedding] = await embedder.embed([query]);
+          const { getEmbeddingsForItems } = await import('./store/vector.js');
+          localVectors = await getEmbeddingsForItems(items.map(item => item.id));
+        } catch {
+          // An unavailable embedder degrades to positional ranking rather than failing the
+          // query outright.
+        }
+      }
+      const federated = await queryFederated({
+        workspace: active, localItems: items, query: query ?? '', limit: limit ?? 3,
+        queryEmbedding, localVectors,
+      });
       console.log(JSON.stringify(federated.items.map(item => ({ ...item, repo: item.repo })), null, 2));
       for (const skip of federated.skipped) {
         console.error(`Note: linked repo "${skip.repo}" was not searched (${skip.reason}).`);
