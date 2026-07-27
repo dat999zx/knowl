@@ -3,6 +3,62 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.5.0 — 2026-07-27
+
+Link several repositories so agents can work across them. Plus a fix that affects every
+project, workspace or not.
+
+### ⚠️ Run this once after upgrading
+
+**`knowl reindex --vectors`** — in every existing project.
+
+Knowledge saved before your first search was never indexed for semantic search, so it is
+invisible to it today. The fix below stops it happening again, but it does not go back and
+index what is already there. `knowl doctor` now tells you how many items are affected.
+
+### Added
+
+- **Workspaces.** `knowl workspace init <name>`, then `knowl workspace add <name>` in each
+  repo. An agent in one repo can then read knowledge from the others, and every result says
+  which repo it came from so a fact about the server is not applied to the web client.
+- **Nothing is shared until you say so.** Everything you already have stays private to its
+  repo. `knowl workspace promote --category decision --apply` shares what you choose. There
+  is no un-share, because other repos may already have read it.
+- **`knowl workspace join <manifest>`** for a second machine or a teammate. Repo paths
+  differ per machine, so joining points the workspace at your checkouts.
+- **`knowl workspace status`, `list`, `remove`.** `doctor` reports linked repos that are
+  missing from this machine, and a repo whose embedding settings do not match the
+  workspace — mismatched settings make items invisible to each other with no error.
+- **`knowl init` prepares the embedding model**, so knowledge is indexed from the first
+  note onward. It never fails your setup: offline or behind a proxy you get keyword search
+  and a message saying so. Skip it with `KNOWL_SKIP_MODEL_DOWNLOAD=1`.
+
+### Fixed
+
+- **Knowledge saved before your first search was never indexed.** Embedding on write
+  deliberately never downloads the model, and nothing else fetched it until the first
+  search — so everything written before that was permanently invisible to semantic search,
+  with no error. An agent saving twenty notes in a session left all twenty unreachable.
+- **`knowl doctor` said vector search was fine when it was not.** It reported that the
+  feature was switched on, which was true and useless. It now reports how many items are
+  actually indexed, and names the command to fix a gap.
+- **`knowl reindex --vectors` claimed to download a model it already had.** It said
+  "Downloading" on every run. Nothing was being fetched; it now says "Loading".
+- **Cross-repo results were ranked by keyword overlap rather than meaning.** A repo's
+  knowledge is now ranked the same way local knowledge is, so the answer that actually
+  answers your question comes first even when it lives in another repo.
+- **`knowl query` and the agent tool gave different answers.** The command-line search did
+  not search linked repos, and later ranked them differently from the agent tool. Both now
+  behave the same way.
+- **`knowl status` never showed workspace information** even when the repo was linked.
+
+### Known limits
+
+- No notification when a linked repo adds knowledge — you see it when you search.
+- Linked repos are read-only. You cannot edit another repo's knowledge from here; run the
+  command there.
+- Code symbol indexing stays per repo.
+
 ## 2.4.0 — 2026-07-26
 
 A release of things that were quietly not working. Nothing here is a new feature you can
