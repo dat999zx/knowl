@@ -4,6 +4,7 @@ import { sql } from 'drizzle-orm';
 import { findProjectRoot, loadConfig } from '../core/config.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { workspaceDoctorChecks } from './workspace-report.js';
+import { vectorCoverageCheck } from './vector-coverage.js';
 import { isKnowlProjectGuidanceCurrent } from '../core/agents-guidance.js';
 import { closeDb, getDb, initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
@@ -211,15 +212,24 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
 
     if (isVectorSearchEnabled(config)) {
       const vector = getVectorSearchConfig(config);
-      checks.push({
-        status: 'OK',
-        message: `Vector search enabled with ${vector.provider}/${vector.model}`,
-      });
+      // Coverage, not configuration. "Enabled" was always true and told the user nothing
+      // about whether their knowledge is actually reachable by semantic search.
+      const counts = await (getDb() as any).all(sql`
+        SELECT
+          (SELECT COUNT(*) FROM knowledge_items WHERE status = 'active') AS active,
+          (SELECT COUNT(*) FROM knowledge_items i
+             JOIN knowledge_embeddings e ON e.knowledge_item_id = i.id
+           WHERE i.status = 'active') AS embedded
+      `);
+      checks.push(vectorCoverageCheck({
+        enabled: true,
+        model: `${vector.provider}/${vector.model}`,
+        activeItems: Number(counts[0]?.active ?? 0),
+        embeddedItems: Number(counts[0]?.embedded ?? 0),
+        writeEmbeddingDisabled: process.env.KNOWL_DISABLE_WRITE_EMBEDDING === '1',
+      }));
     } else {
-      checks.push({
-        status: 'OK',
-        message: 'Vector search disabled; BM25 retrieval remains active',
-      });
+      checks.push(vectorCoverageCheck({ enabled: false, model: '', activeItems: 0, embeddedItems: 0 }));
     }
     // Fan-out failures are all silent -- an absent peer, a moved manifest, a drifted
     // embedding identity. This is where they surface.

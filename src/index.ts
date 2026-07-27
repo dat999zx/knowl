@@ -36,6 +36,7 @@ import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue } from
 import { runConfigUi } from './cli/config/ui.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from './store/import-policy.js';
 import { formatAgentInitSummary, runAgentInitFlow } from './cli/init-flow.js';
+import { formatWarmResult, warmEmbeddingModel } from './cli/warm-embeddings.js';
 import { parseAgentNames } from './cli/agents/registry.js';
 import { reindexKnowledgeEmbeddings } from './store/vector-index.js';
 import { applyKnowledgeGc, previewKnowledgeGc, isHot } from './store/gc.js';
@@ -291,6 +292,13 @@ program
         console.log(`Updated .gitignore with .knowl/ entry.`);
       }
       console.log(`⚙️  Local project store ready.`);
+
+      // Fetch the embedding model now. Write-time embedding never downloads, so without
+      // this every item written before the first query stays invisible to semantic search.
+      const warm = await warmEmbeddingModel(cwd, defaultConfig, { log: message => console.log(message) });
+      const warmMessage = formatWarmResult(warm);
+      if (warmMessage) console.log(warmMessage);
+
       console.log(`👉 Run "knowl status" to see repository status.`);
       const flow = await runAgentInitFlow(cwd, {
         agentNames: agents,
