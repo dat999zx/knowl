@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { getDb } from './database.js';
 import type { DbConnection } from './database.js';
 import * as schema from './schema.js';
@@ -205,6 +205,32 @@ export async function createKnowledgeItem(
   } catch (error: any) {
     if (error instanceof KnowledgeConflictError) throw error;
     throw new DatabaseError(`Failed to create knowledge item: ${error.message}`);
+  }
+}
+
+/**
+ * Fetch many items in one round-trip, returned by id.
+ *
+ * Exists because vector search used to call `getKnowledgeItem` once per scored candidate, which
+ * made a search cost roughly one query per stored atom. Callers that already hold a list of ids
+ * should use this instead of looping.
+ */
+export async function getKnowledgeItems(
+  ids: string[],
+  dbConnection?: DbConnection,
+): Promise<Map<string, KnowledgeItem>> {
+  const found = new Map<string, KnowledgeItem>();
+  if (ids.length === 0) return found;
+  const conn = dbConnection || getDb();
+  try {
+    const rows = await conn.select().from(schema.knowledgeItems).where(inArray(schema.knowledgeItems.id, ids));
+    for (const row of rows) {
+      const item = mapRowToKnowledgeItem(row);
+      found.set(item.id, item);
+    }
+    return found;
+  } catch (error: any) {
+    throw new DatabaseError(`Failed to get knowledge items: ${error.message}`);
   }
 }
 

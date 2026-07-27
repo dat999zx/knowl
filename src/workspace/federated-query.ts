@@ -1,6 +1,6 @@
 import type { KnowledgeItem } from '../core/types.js';
 import { RRF_K } from '../store/agent-query.js';
-import { cosineSimilarity } from '../store/vector.js';
+import { cosineSimilarity, decodeVector } from '../store/vector.js';
 import { acquireClient } from '../store/connection-pool.js';
 import { SchemaTooNewError } from '../store/schema-version.js';
 import type { ActiveWorkspace, PeerRepo } from './resolve.js';
@@ -138,15 +138,17 @@ function toCandidate(row: Record<string, unknown>): Candidate {
   };
 }
 
-/** Stored as a JSON array; a peer written without embeddings simply has none. */
+/**
+ * Peer vectors are decoded with the same function the local store uses.
+ *
+ * This was previously a second, JSON-only parser living here. When local storage moved to a
+ * packed float32 BLOB, every peer vector silently failed to parse and dropped out of semantic
+ * scoring -- peers still appeared via the lexical fallback, so nothing errored and cross-repo
+ * search just quietly got worse. One decoder, shared, so an encoding change cannot desync again.
+ */
 function parseVector(value: unknown): number[] | null {
-  if (typeof value !== 'string') return null;
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) && parsed.length > 0 ? parsed as number[] : null;
-  } catch {
-    return null;
-  }
+  const decoded = decodeVector(value);
+  return decoded && decoded.length > 0 ? decoded : null;
 }
 
 /**
