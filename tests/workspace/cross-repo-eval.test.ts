@@ -6,6 +6,9 @@ import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { createKnowledgeItem } from '../../src/store/repository.js';
 import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
+import { getEmbeddingsForItems } from '../../src/store/vector.js';
+import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
+import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
 import { evaluateRetrieval, type RetrievalEvaluationCase } from '../../src/store/retrieval-evaluation.js';
 import { queryFederated } from '../../src/workspace/federated-query.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
@@ -80,7 +83,14 @@ describe('cross-repo retrieval', () => {
     for (const dir of [HOME, ...Object.values(ROOTS)]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   });
 
-  it('meets the recorded cross-repo baseline', async () => {
+  /**
+   * Score the suite on one of the two ranking paths.
+   *
+   * `semantic` supplies a query embedding and local vectors, which is the production
+   * default; without it the fusion falls back to reciprocal rank. Both are measured because
+   * both ship, and quoting one number for "cross-repo MRR" would describe neither.
+   */
+  async function scoreSuite(semantic: boolean) {
     const byId = new Map(SUITE.cases.map(entry => [entry.id, entry]));
     const cases: RetrievalEvaluationCase[] = SUITE.cases.map(entry => ({
       id: entry.id,
@@ -90,7 +100,7 @@ describe('cross-repo retrieval', () => {
       limit: entry.limit,
     }));
 
-    const evaluation = await evaluateRetrieval(cases, async testCase => {
+    return await evaluateRetrieval(cases, async testCase => {
       const spec = byId.get(testCase.id)!;
       const root = ROOTS[spec.queryFrom];
       const started = Date.now();
@@ -98,8 +108,16 @@ describe('cross-repo retrieval', () => {
       try {
         const local = await queryKnowledgeForAgent('local', { query: testCase.query, limit: 10, surface: 'eval' });
         const active = (await resolveWorkspace(root))!;
+        let queryEmbedding: number[] | undefined;
+        let localVectors: Map<string, number[]> | undefined;
+        if (semantic) {
+          const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, root);
+          [queryEmbedding] = await embedder.embed([testCase.query]);
+          localVectors = await getEmbeddingsForItems(local.map(item => item.id));
+        }
         const federated = await queryFederated({
           workspace: active, localItems: local, query: testCase.query, limit: testCase.limit,
+          queryEmbedding, localVectors,
         });
         return {
           itemIds: federated.items.map(item => item.id),
@@ -111,6 +129,10 @@ describe('cross-repo retrieval', () => {
         await closeDb();
       }
     });
+  }
+
+  it('meets the recorded baseline on the positional fallback path', async () => {
+    const evaluation = await scoreSuite(false);
 
     // Recorded so a future weighting change can be shown to help or hurt. A drop here is a
     // regression, not noise.
@@ -132,6 +154,26 @@ describe('cross-repo retrieval', () => {
     // ablation exists to justify.
     expect(evaluation.metrics.mrr).toBeCloseTo(0.833, 2);
   });
+
+  it('scores the suite on the semantic path, which is the production default', async () => {
+    // Embeddings are off suite-wide (KNOWL_DISABLE_WRITE_EMBEDDING), so build them here --
+    // this is the only place the shipped default gets measured end to end.
+    for (const name of Object.keys(ROOTS)) {
+      await initDb(ROOTS[name]);
+      const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, ROOTS[name]);
+      await reindexKnowledgeEmbeddings('local', embedder);
+      await closeDb();
+    }
+
+    const evaluation = await scoreSuite(true);
+    // eslint-disable-next-line no-console
+    console.log(`SEMANTIC cross-repo MRR=${evaluation.metrics.mrr.toFixed(4)} R@3=${evaluation.metrics.recallAt3.toFixed(4)} forbidden=${evaluation.metrics.forbiddenHitCount} failed=[${evaluation.failedCaseIds.join(',')}]`);
+
+    expect(evaluation.metrics.forbiddenHitCount).toBe(0);
+    expect(evaluation.metrics.recallAt3).toBe(1);
+    // The positional path scores 0.833 here; the semantic path must not be worse.
+    expect(evaluation.metrics.mrr).toBeGreaterThanOrEqual(0.8333);
+  }, 300_000);
 
   it('never returns a peer repo-private item, however well it matches', async () => {
     // Its own test because the scored suite cannot express it: evaluateRetrieval treats an
