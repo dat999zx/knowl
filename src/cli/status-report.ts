@@ -1,4 +1,6 @@
 import { KnowledgeCategory, KnowledgeCommit, KnowledgeItem, Project, ProjectConfig } from '../core/types.js';
+import type { ActiveWorkspace } from '../workspace/resolve.js';
+import { formatWorkspaceBlock } from './workspace-report.js';
 
 const STATUS_LINE = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
 const CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
@@ -10,6 +12,8 @@ export function formatStatusReport(input: {
   supersededItems: KnowledgeItem[];
   deprecatedItems: KnowledgeItem[];
   commits: KnowledgeCommit[];
+  /** Absent for an unlinked project, which keeps its output byte-identical. */
+  workspace?: ActiveWorkspace | null;
 }): string {
   const countsByCategory = input.activeItems.reduce((acc, item) => {
     acc[item.category] = (acc[item.category] || 0) + 1;
@@ -43,6 +47,7 @@ export function formatStatusReport(input: {
       lines.push(`  [${commit.id}] ${new Date(commit.createdAt).toLocaleString()} - ${commit.message}`);
     }
   }
+  lines.push(...formatWorkspaceBlock(input.workspace ?? null));
   lines.push(STATUS_LINE);
 
   return lines.join('\n');

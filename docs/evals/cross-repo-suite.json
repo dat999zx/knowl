@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "description": "Cross-repo retrieval suite. Federated reads ship with no weights and no boosts (only ties break toward the local repo), so a future weighting change has to be justified against these numbers. The cases that matter are not 'does a linked repo's answer come back' -- anyone can make that work -- but 'does the local answer still win on a tie' and 'does a plausible foreign distractor outrank the correct local answer'.",
+  "repos": {
+    "web": [
+      { "id": "web-retry", "category": "decision", "title": "Retry policy", "content": "Retry idempotent calls three times with jitter.", "visibility": "repo" },
+      { "id": "web-build", "category": "fact", "title": "Web build output directory", "content": "The web build emits to dist/web.", "visibility": "repo" },
+      { "id": "web-scratch", "category": "state", "title": "Web scratch note", "content": "Temporary debugging note about the auth screen.", "visibility": "repo" }
+    ],
+    "server": [
+      { "id": "server-ttl", "category": "decision", "title": "Auth token TTL is fifteen minutes", "content": "Auth tokens expire after fifteen minutes.", "visibility": "workspace" },
+      { "id": "server-retry", "category": "decision", "title": "Retry policy", "content": "Retry idempotent calls three times with jitter.", "visibility": "workspace" },
+      { "id": "server-build", "category": "fact", "title": "Server build output directory", "content": "The server build emits to dist/server.", "visibility": "workspace" },
+      { "id": "server-private", "category": "state", "title": "Server auth scratch", "content": "Auth debugging scratch that must never leave the server repo.", "visibility": "repo" }
+    ]
+  },
+  "cases": [
+    {
+      "id": "xrepo-answer-elsewhere",
+      "queryFrom": "web",
+      "query": "auth token",
+      "expectedItemIds": ["server-ttl"],
+      "mustNotReturn": ["server-private"],
+      "limit": 3,
+      "why": "The answer lives in a linked repo and must be reachable, while that repo's private auth note must not be, even though it also matches 'auth'. Both properties in one case: the evaluator scores an empty expectedItemIds as a miss, so a pure must-not-return case cannot be expressed here."
+    },
+    {
+      "id": "xrepo-local-wins-on-tie",
+      "queryFrom": "web",
+      "query": "retry policy",
+      "expectedItemIds": ["web-retry"],
+      "mustNotReturn": [],
+      "limit": 1,
+      "why": "Identical content in two repos. Ties break toward the local repo, so the local copy must be the single result."
+    },
+    {
+      "id": "xrepo-foreign-distractor",
+      "queryFrom": "web",
+      "query": "web build output directory",
+      "expectedItemIds": ["web-build"],
+      "mustNotReturn": [],
+      "limit": 1,
+      "why": "A plausible foreign item exists. The correct local answer must still rank first."
+    }
+  ]
+}

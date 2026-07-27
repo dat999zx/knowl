@@ -642,6 +642,8 @@ Memory is only useful if it's cheap enough to keep on. Knowl is bounded at every
 
 The always-on Claude guidance dropped from **424 → 131 tokens/prompt** — over a 50-prompt session that's ~15K tokens saved. Retrieval returns compact, budgeted context by default; ask for `includeEvidence` or a larger `limit` only when you need the detail.
 
+Workspace guidance is charged where it is cheapest. The per-prompt reminder is **unchanged at 131 tokens** — linking repos adds nothing to it. The cost lands on the once-per-session `KNOWL.md` section (~1,015 tokens, +90) and the subagent bootstrap card (157 tokens, +25), each paid once rather than on every turn.
+
 ---
 
 ## 🔌 MCP tools & resources

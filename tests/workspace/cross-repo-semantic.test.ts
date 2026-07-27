@@ -1,0 +1,146 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { closeDb, getClient, initDb } from '../../src/store/database.js';
+import { releaseAll } from '../../src/store/connection-pool.js';
+import * as repo from '../../src/store/repository.js';
+import { createKnowledgeItem } from '../../src/store/repository.js';
+import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
+import { getEmbeddingsForItems } from '../../src/store/vector.js';
+import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
+import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
+import { queryFederated } from '../../src/workspace/federated-query.js';
+import { resolveWorkspace } from '../../src/workspace/resolve.js';
+import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
+import { workspaceManifestPath } from '../../src/workspace/paths.js';
+import { joinWorkspace } from '../../src/workspace/membership.js';
+import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
+
+const HOME = path.resolve('./.knowl-semantic-home');
+const WEB = path.resolve('./.knowl-semantic-web');
+const SERVER = path.resolve('./.knowl-semantic-server');
+
+/**
+ * The case recorded in docs/evals/cross-repo-baseline.json as a known weakness.
+ *
+ * `web` holds a note that merely mentions auth in passing; `server` holds the real answer.
+ * Under positional fusion both are rank 1 of their own corpus, tie, and the local
+ * tie-break puts the weaker local note first. With a shared embedding identity, cosine
+ * separates them on meaning.
+ */
+const WEB_DISTRACTOR = 'Temporary debugging note about the auth screen layout.';
+const SERVER_ANSWER = 'Access tokens issued by the server expire after fifteen minutes and must be refreshed.';
+
+async function seed(root: string, name: string, title: string, content: string, visibility: string) {
+  await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
+  await saveConfig(root, { ...DEFAULT_CONFIG });
+  await initDb(root);
+  await getClient().execute('DELETE FROM knowledge_commits');
+  await getClient().execute('DELETE FROM knowledge_items');
+  await repo.createProject(root, name);
+  const created = await createKnowledgeItem('local', { category: 'decision', title, content });
+  await getClient().execute({
+    sql: 'UPDATE knowledge_items SET visibility = ?, origin_repo = ? WHERE id = ?',
+    args: [visibility, name, created.id],
+  });
+  // The suite disables write-time embedding, so build the index explicitly -- this test
+  // exists precisely to exercise the path the rest of the suite cannot.
+  const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, root);
+  await reindexKnowledgeEmbeddings('local', embedder);
+  await closeDb();
+}
+
+describe('cross-repo ranking with a shared embedding identity', () => {
+  beforeAll(async () => {
+    process.env.KNOWL_HOME = HOME;
+    await closeDb();
+    await releaseAll();
+    for (const dir of [HOME, WEB, SERVER]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await writeManifest(workspaceManifestPath('sem'), createManifest('sem', null));
+    await seed(WEB, 'web', 'Web scratch note', WEB_DISTRACTOR, 'repo');
+    await seed(SERVER, 'server', 'Auth token TTL', SERVER_ANSWER, 'workspace');
+    await joinWorkspace({ projectRoot: WEB, workspaceName: 'sem', repoName: 'web' });
+    await joinWorkspace({ projectRoot: SERVER, workspaceName: 'sem', repoName: 'server' });
+  }, 180_000);
+
+  afterAll(async () => {
+    delete process.env.KNOWL_HOME;
+    await closeDb();
+    await releaseAll();
+    for (const dir of [HOME, WEB, SERVER]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('embeds both repos with the identity the workspace pinned', async () => {
+    for (const [root, expected] of [[WEB, 1], [SERVER, 1]] as const) {
+      await initDb(root);
+      const rows = await getClient().execute('SELECT COUNT(*) AS n FROM knowledge_embeddings');
+      await closeDb();
+      expect(Number(rows.rows[0].n)).toBe(expected);
+    }
+  }, 180_000);
+
+  it('ranks the correct foreign answer above a weak local match', async () => {
+    const query = 'how long do auth tokens last before they expire';
+    await initDb(WEB);
+    try {
+      const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, WEB);
+      const [queryEmbedding] = await embedder.embed([query]);
+      const local = await queryKnowledgeForAgent('local', { query, limit: 10, surface: 'test' });
+      const localVectors = await getEmbeddingsForItems(local.map(item => item.id));
+      const active = (await resolveWorkspace(WEB))!;
+
+      const federated = await queryFederated({
+        workspace: active, localItems: local, query, limit: 3, queryEmbedding, localVectors,
+      });
+
+      // The recorded weakness, resolved: the answer that actually answers the question
+      // ranks first even though it lives in another repo and a local item also matched.
+      expect(federated.items[0].repo).toBe('server');
+      expect(federated.items[0].title).toBe('Auth token TTL');
+    } finally {
+      await closeDb();
+    }
+  }, 180_000);
+
+  it('finds a peer item that shares no query token at all', async () => {
+    // The case lexical selection cannot reach, and the reason vector search exists. The
+    // query says nothing about tokens, expiry or minutes; only meaning connects it.
+    const query = 'session credential lifetime policy';
+    await initDb(WEB);
+    try {
+      const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, WEB);
+      const [queryEmbedding] = await embedder.embed([query]);
+      const local = await queryKnowledgeForAgent('local', { query, limit: 10, surface: 'test' });
+      const localVectors = await getEmbeddingsForItems(local.map(item => item.id));
+      const active = (await resolveWorkspace(WEB))!;
+
+      const federated = await queryFederated({
+        workspace: active, localItems: local, query, limit: 5, queryEmbedding, localVectors,
+      });
+
+      expect(federated.items.some(item => item.repo === 'server' && item.title === 'Auth token TTL')).toBe(true);
+    } finally {
+      await closeDb();
+    }
+  }, 180_000);
+
+  it('still returns the local item, ranked below it', async () => {
+    const query = 'how long do auth tokens last before they expire';
+    await initDb(WEB);
+    try {
+      const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, WEB);
+      const [queryEmbedding] = await embedder.embed([query]);
+      const local = await queryKnowledgeForAgent('local', { query, limit: 10, surface: 'test' });
+      const localVectors = await getEmbeddingsForItems(local.map(item => item.id));
+      const active = (await resolveWorkspace(WEB))!;
+
+      const federated = await queryFederated({
+        workspace: active, localItems: local, query, limit: 5, queryEmbedding, localVectors,
+      });
+      // Reordering, not exclusion: the local note is still there, just no longer first.
+      expect(federated.items.some(item => item.repo === 'web')).toBe(true);
+    } finally {
+      await closeDb();
+    }
+  }, 180_000);
+});

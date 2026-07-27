@@ -8,6 +8,7 @@ import {
   KNOWL_MCP_SERVER_INSTRUCTIONS,
   KNOWL_MCP_TOOL_GROUPS,
   KNOWL_MCP_TOOL_NAMES,
+  KNOWL_SUBAGENT_BOOTSTRAP_CARD,
   renderFullKnowlGuidance,
   renderManagedKnowlGuidanceSection,
 } from '../../src/core/knowl-guidance.js';
@@ -86,5 +87,30 @@ describe('canonical Knowl agent guidance', () => {
     expect(readme).toContain('GEMINI.md');
     expect(readme).toContain('agent-reminder claude --json');
     expect(readme).toContain('previewed maintenance after explicit approval');
+  });
+});
+
+describe('workspace guidance', () => {
+  it('tells agents what a repo label means, in the surfaces that reach them', () => {
+    // The MCP instructions block does not reach subagents -- probed, which is why the
+    // bootstrap card exists. These two are the surfaces that do.
+    for (const text of [renderFullKnowlGuidance(), KNOWL_SUBAGENT_BOOTSTRAP_CARD]) {
+      expect(text).toMatch(/repo/i);
+      expect(text).toMatch(/not necessarily this one|describes \*\*that\*\* repo/i);
+    }
+  });
+
+  it('names the command that shares knowledge across repos', () => {
+    expect(renderFullKnowlGuidance()).toContain('knowl workspace promote');
+  });
+
+  it('explains the repos filter matches the owning repo', () => {
+    expect(renderFullKnowlGuidance()).toMatch(/repos: \["<name>"\]/);
+  });
+
+  it('keeps the subagent card to a single paragraph', () => {
+    // Charged to every subagent on every dispatch, so growth has to stay deliberate.
+    expect(KNOWL_SUBAGENT_BOOTSTRAP_CARD.split('\n').length).toBe(1);
+    expect(KNOWL_SUBAGENT_BOOTSTRAP_CARD.length).toBeLessThan(1000);
   });
 });

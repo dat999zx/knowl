@@ -50,6 +50,10 @@ export interface KnowledgeItem {
   sourceCommit?: string | null;
   affectedPaths?: string[] | null; // stored as JSON array of repository-relative paths
   contentHash?: string | null;
+  /** Owning repo in a workspace; null outside one. The only lifecycle key. */
+  originRepo?: string | null;
+  /** 'repo' | 'workspace'. Logical scope, independent of which file holds the row. */
+  visibility?: string | null;
   freshness: KnowledgeFreshness;
   confidence: number;
   conflictKey?: string | null;
@@ -196,6 +200,12 @@ export interface ProjectConfig {
     organization?: { enabled?: boolean; path?: string };
     global?: { enabled?: boolean; path?: string };
   };
+  /**
+   * This repo's half of workspace membership. The other half is the workspace manifest
+   * listing this repo; either alone is not membership, which is what makes linkage
+   * un-forgeable by a cloned repository.
+   */
+  workspace?: { workspace: string; repo: string };
   security: {
     rejectSecrets: boolean;
     secretPatterns: string[];

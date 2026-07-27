@@ -1,6 +1,9 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
-import { ProjectConfig, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
+import { ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
+import { resolveWorkspace } from '../workspace/resolve.js';
+import { assertOwnedItem } from '../workspace/ownership.js';
+import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
 import { runPipeline } from '../pipeline/pipeline.js';
@@ -279,6 +282,11 @@ export function registerTools(
                 description: 'Include ranking explanations. Omit for compact results.',
               },
               asOf: { type: 'string', description: 'ISO-8601 timestamp for historically valid content.' },
+              repos: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Only in a workspace. Restrict results to knowledge produced by these linked repos. Matches the owning repo, not repos an item merely applies to.',
+              },
             },
           },
         },
@@ -626,8 +634,17 @@ export function registerTools(
         const hierarchy = await getHierarchicalKnowledge(projectId!);
         const { maxChars } = args as any;
         const md = formatHierarchyToMarkdown(hierarchy, { maxChars });
+        // Names the linked repos without quoting their content: an agent should know a
+        // workspace exists and what to filter by, but foreign knowledge arrives only
+        // through an explicit query.
+        const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        const workspaceNote = active
+          ? `\n\n## WORKSPACE\n\nThis repo is "${active.repo}" in workspace "${active.name}". Linked repos: ${
+            active.peers.length ? active.peers.map(peer => `${peer.name}${peer.present ? '' : ' (missing here)'}`).join(', ') : 'none yet'
+          }. Their workspace-visible knowledge is searchable with knowl_query; filter with \`repos\`.`
+          : '';
         return {
-          content: [{ type: 'text', text: md }],
+          content: [{ type: 'text', text: `${md}${workspaceNote}` }],
         };
       }
 
@@ -749,7 +766,7 @@ export function registerTools(
       }
       
       else if (name === 'knowl_query') {
-        const { query, category, status, tags, limit, includeEvidence, explain, asOf } = args as any;
+        const { query, category, status, tags, limit, includeEvidence, explain, asOf, repos } = args as any;
         if (asOf) {
           // queryKnowledgeBase hard-filters on category, unlike every other query path,
           // which passes category: undefined and uses it only as a ranking boost. Without
@@ -815,17 +832,76 @@ export function registerTools(
           }
         }
 
+        // Federation is reached only from here. Peers are deliberately absent from
+        // configuredNamespaces so implicit context assembly cannot fan out.
+        const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        let skippedRepos: FederatedResult['skipped'] = [];
+        let resolvedItems: Array<KnowledgeItem & { repo?: string; explanation?: unknown }> = items as any;
+        if (active) {
+          // Hand the fusion the query embedding and the local vectors so cross-repo ranking
+          // compares match strength, not corpus position. A workspace pins one embedding
+          // identity, so a peer's vectors are in the same space as ours.
+          const { getEmbeddingsForItems } = await import('../store/vector.js');
+          const localVectors = vector?.embedding
+            ? await getEmbeddingsForItems((items as KnowledgeItem[]).map(item => item.id))
+            : undefined;
+          const federated = await queryFederated({
+            workspace: active,
+            localItems: items as KnowledgeItem[],
+            query: query ?? '',
+            limit: limit ?? 3,
+            repos,
+            queryEmbedding: vector?.embedding,
+            localVectors,
+          });
+          skippedRepos = federated.skipped;
+          resolvedItems = federated.items;
+        }
+
         const withStaleStatus = async (itemId: string) => Promise.all((await listEvidenceForItem(itemId)).map(async evidence => ({
           ...evidence,
           stale: projectRoot ? await isEvidenceStale(evidence, projectRoot) : false,
         })));
-        const compact = (item: any) => ({ ...compactItemResponse(item), ...(explain && item.explanation ? { explanation: item.explanation } : {}) });
+        // The repo label goes through compactItemResponse's provenance argument: the compact
+        // shape is an allowlist, so a field attached to the item alone is dropped here.
+        const compact = (item: any) => ({
+          ...compactItemResponse(item, item.repo ? { repo: item.repo } : undefined),
+          ...(explain && item.explanation ? { explanation: item.explanation } : {}),
+        });
+        // Evidence and staleness resolve against THIS repo's filesystem and database, so a
+        // foreign item would be judged against the wrong checkout -- reporting "stale" for a
+        // file that is simply somewhere else. Omitting it beats answering wrongly.
+        const isForeign = (item: any) => Boolean(active) && item.repo && item.repo !== active!.repo;
         const payload = includeEvidence
-          ? await Promise.all(items.map(async item => ({ ...compact(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
-          : items.map(compact);
+          ? await Promise.all(resolvedItems.map(async item => (isForeign(item)
+            ? compact(item)
+            : { ...compact(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
+          : resolvedItems.map(compact);
         // The notice is a separate block so the first block stays a bare JSON array for
         // every existing caller.
         const blocks: { type: 'text'; text: string }[] = [{ type: 'text', text: compactMcpJson(payload) }];
+        if (skippedRepos.length) {
+          const described = skippedRepos.map(skip => `${skip.repo} (${skip.reason})`).join(', ');
+          blocks.push({
+            type: 'text',
+            text: `SCOPE: linked repos NOT searched: ${described}. Their knowledge is absent from these results; a miss here does not mean it does not exist.`,
+          });
+        }
+        if (explain && active) {
+          // Per-repo reach, so "returned nothing" can be told apart from "was not searched".
+          const contributed = new Map<string, number>();
+          for (const item of resolvedItems) {
+            const repoName = item.repo ?? active.repo;
+            contributed.set(repoName, (contributed.get(repoName) ?? 0) + 1);
+          }
+          const reached = [active.repo, ...active.peers.map(peer => peer.name)]
+            .filter(repoName => !skippedRepos.some(skip => skip.repo === repoName))
+            .map(repoName => `${repoName}: ${contributed.get(repoName) ?? 0}`);
+          blocks.push({
+            type: 'text',
+            text: `WORKSPACE REACH: searched ${reached.join(', ')}${skippedRepos.length ? `; skipped ${skippedRepos.map(skip => skip.repo).join(', ')}` : ''}.`,
+          });
+        }
         if (skippedNamespaces.length) {
           blocks.push({
             type: 'text',
@@ -837,6 +913,8 @@ export function registerTools(
 
       else if (name === 'knowl_timeline') {
         const { itemId } = args as any;
+        const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const { listAssertions } = await import('../store/assertions.js');
         return { content: [{ type: 'text', text: compactMcpJson((await listAssertions(itemId)).slice(0, 5).map(compactAssertionResponse)) }] };
       }
@@ -862,6 +940,8 @@ export function registerTools(
 
       else if (name === 'knowl_evidence_list') {
         const { itemId } = args as any;
+        const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const evidence = await Promise.all((await listEvidenceForItem(itemId)).map(async item => ({
           ...item,
           stale: projectRoot ? await isEvidenceStale(item, projectRoot) : false,
@@ -871,6 +951,8 @@ export function registerTools(
 
       else if (name === 'knowl_feedback') {
         const { itemId, used, useful, causedCorrection } = args as any;
+        const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const feedback = await recordKnowledgeFeedback({ itemId, used, useful, causedCorrection });
         return { content: [{ type: 'text', text: `Recorded feedback for ${itemId}:\n\n${JSON.stringify(feedback, null, 2)}` }] };
       }
@@ -884,6 +966,8 @@ export function registerTools(
       
       else if (name === 'knowl_update') {
         const { id, title, content, status, reasoning, source, sourceCommit, affectedPaths, freshness, supersedeId } = args as any;
+        const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+        try { await assertOwnedItem(id, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const updated = await updateKnowledgeItemWithCommit(projectId!, id, {
           title,
           content,

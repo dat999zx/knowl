@@ -95,6 +95,12 @@ Casual conversation, a single memory lookup, and trivial non-resumable work do n
 | Learned skills | `knowl_skill_list`, `knowl_skill_read`, `knowl_skill_run`, `knowl_skill_create` | Discover and read a matching skill before running a trusted entrypoint; create only when explicitly requested. |
 | Special and maintenance | `knowl_ingest`, `knowl_synthesize`, `knowl_session_finish`, `knowl_gc_preview`, `knowl_gc_apply` | Raw-source ingest requires an explicit request and configured AI; never send the current conversation silently. Synthesis is explicitly scoped and never automatic. Session finish is only for an explicitly owned manual memory-session ID, never a hook session. Preview GC first; apply only after explicit approval. |
 
+### Linked repositories
+
+- When this repo is in a workspace, `knowl_query` results carry a `repo` field naming the repo that produced each item. A fact from another repo describes **that** repo unless it says otherwise; do not apply it here without checking.
+- Restrict a search to one repo with `knowl_query` `repos: ["<name>"]`. It matches the repo that owns an item.
+- Knowledge stays private to its repo until someone runs `knowl workspace promote`. Only the owning repo can promote, update, or retire its own items.
+
 ### Safety and freshness
 
 - Correct stale or contradicted memory with `knowl_update` instead of adding a duplicate.

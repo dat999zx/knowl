@@ -1,0 +1,44 @@
+{
+  "version": 2,
+  "recordedAt": "2026-07-27",
+  "suite": "docs/evals/cross-repo-suite.json",
+  "runner": "tests/workspace/cross-repo-eval.test.ts",
+  "note": "Two ranking paths exist and both are scored. The semantic path is the production default; the positional path is the fallback when no embedding is available. Quoting one number for 'cross-repo MRR' would describe neither.",
+  "paths": {
+    "semantic": {
+      "when": "The caller supplies a query embedding and the items carry vectors. This is the default in production, because write-time embedding is on unless disabled.",
+      "scoring": "Cosine against the query embedding, for local and peer candidates alike. Comparable across repos only because a workspace pins one embedding identity.",
+      "verifiedBy": "tests/workspace/cross-repo-eval.test.ts (scored) and tests/workspace/cross-repo-semantic.test.ts (behaviour)",
+      "metrics": {
+        "recallAt3": 1.0,
+        "mrr": 1.0,
+        "forbiddenHitCount": 0,
+        "failedCaseIds": []
+      },
+      "result": "The weakness recorded against the positional path is resolved. xrepo-answer-elsewhere ranked the correct foreign answer second under reciprocal rank; cosine separates it from the weak local match on meaning and it ranks first, taking MRR from 0.833 to 1.0.",
+      "selection": "Candidates are chosen vector-first and topped up lexically, mirroring the local union of vector and BM25 candidates. Selecting lexically alone would exclude any peer item sharing no query token, so cosine would never get to rank it."
+    },
+    "positional": {
+      "when": "No query embedding, or items without vectors -- an unembedded repo, or a caller that did not compute one.",
+      "scoring": "Reciprocal rank across corpora, k=60, no weights, no boosts; ties break toward the local repo.",
+      "verifiedBy": "tests/workspace/cross-repo-eval.test.ts (the suite runs with KNOWL_DISABLE_WRITE_EMBEDDING=1, so it measures this path)",
+      "metrics": {
+        "recallAt3": 1.0,
+        "mrr": 0.8333333333333334,
+        "forbiddenHitCount": 0,
+        "failedCaseIds": []
+      },
+      "knownWeakness": {
+        "case": "xrepo-answer-elsewhere",
+        "observed": "The correct answer ranks second. Web's 'Web scratch note' mentions auth in passing and is rank 1 of its own corpus, so it scores identically to server's rank-1 'Auth token TTL' and the local tie-break puts the weaker local match first.",
+        "why": "Reciprocal-rank fusion compares positions, not strengths. A weak rank-1 in a small corpus is indistinguishable from a strong rank-1 in a large one.",
+        "status": "Accepted for this path and not tuned away. It is the honest cost of ranking without a comparable signal, and it is why the semantic path exists. A repo with embeddings does not hit it."
+      }
+    }
+  },
+  "invariants": {
+    "recallAt3": 1.0,
+    "forbiddenHitCount": 0,
+    "comment": "A peer's repo-private item must never appear on either path, however well it matches."
+  }
+}
