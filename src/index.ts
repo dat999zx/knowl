@@ -965,7 +965,14 @@ program
       if (!project) throw new Error('Project not found in database.');
 
       const embedder = await createLocalEmbeddingProvider(config, root, {
-        onFirstLoad: ({ model }) => console.log(`Downloading local embedding model ${model}...`),
+        // Only claim a download when one is actually going to happen. This announced
+        // "Downloading" on every run, cached or not, because the callback fires whenever
+        // the pipeline is not in memory -- which is always in a fresh CLI process.
+        onFirstLoad: ({ model, cached }) => console.log(
+          cached
+            ? `Loading local embedding model ${model}...`
+            : `Downloading local embedding model ${model} (first run)...`,
+        ),
       });
       const result = await reindexKnowledgeEmbeddings(project.id, embedder);
       console.log(`Indexed ${result.indexed} vector embedding(s).`);

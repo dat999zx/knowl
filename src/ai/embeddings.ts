@@ -1,4 +1,5 @@
 import path from 'node:path';
+import fsPromises from 'node:fs/promises';
 import { ProjectConfig } from '../core/types.js';
 import { KnowledgeEmbedder } from '../store/vector-index.js';
 
@@ -12,11 +13,22 @@ type TransformersPipeline = (texts: string[], options: { pooling: 'mean'; normal
 
 export interface LocalEmbeddingProviderOptions {
   loadPipeline?: (model: string, dtype: string, cacheDir: string) => Promise<TransformersPipeline>;
-  onFirstLoad?: (details: { model: string; cacheDir: string }) => void;
+  /**
+   * Fires when the pipeline has to be built, which is every fresh process -- not only when
+   * something is fetched. `cached` distinguishes the two, because a caller that announces
+   * "Downloading..." on every run is describing work that is not happening.
+   */
+  onFirstLoad?: (details: { model: string; cacheDir: string; cached: boolean }) => void;
 }
 
 let localPipeline: TransformersPipeline | null = null;
 let localPipelineKey: string | null = null;
+
+/** Drop the in-process pipeline. Tests need it; nothing in the product does. */
+export function resetLocalEmbeddingPipeline(): void {
+  localPipeline = null;
+  localPipelineKey = null;
+}
 
 export function isVectorSearchEnabled(config: ProjectConfig): boolean {
   return config.search?.vector?.enabled === true;
@@ -50,7 +62,12 @@ export async function createLocalEmbeddingProvider(
   const pipelineKey = `${vector.model}:${vector.dtype}:${cacheDir}`;
 
   if (!localPipeline || localPipelineKey !== pipelineKey) {
-    options.onFirstLoad?.({ model: vector.model, cacheDir });
+    // Whether the weights are already on disk, so a caller can say "loading" rather than
+    // "downloading". Same location write-time embedding checks before deciding it can embed.
+    const cached = await fsPromises.access(path.join(cacheDir, ...vector.model.split('/')))
+      .then(() => true)
+      .catch(() => false);
+    options.onFirstLoad?.({ model: vector.model, cacheDir, cached });
     if (options.loadPipeline) {
       localPipeline = await options.loadPipeline(vector.model, vector.dtype, cacheDir);
     } else {

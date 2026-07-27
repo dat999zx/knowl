@@ -45,10 +45,15 @@ export async function warmEmbeddingModel(
   if (!isVectorSearchEnabled(config)) return { status: 'disabled' };
 
   const model = getVectorSearchConfig(config).model;
-  log(`⬇️  Preparing local embedding model (${model}) — first run downloads it once...`);
 
   try {
-    const embedder = await createLocalEmbeddingProvider(config, root);
+    const embedder = await createLocalEmbeddingProvider(config, root, {
+      // Report what is actually happening: re-running init on a machine that already has
+      // the weights should not claim to be downloading them again.
+      onFirstLoad: ({ cached }) => log(cached
+        ? `🧠 Local embedding model (${model}) already present.`
+        : `⬇️  Downloading local embedding model (${model}) — this happens once...`),
+    });
     // Embed a token string: the provider is lazy, so only an actual call proves the model
     // is on disk and usable rather than merely configured.
     await embedder.embed(['knowl']);
