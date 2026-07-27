@@ -656,6 +656,10 @@ describe('CLI Integration', () => {
     expect(output).toContain('[OK] MCP tools expose knowl_query and hide knowl_ask');
     expect(output).toContain('[OK] MCP tools expose work-loop task tools');
     expect(output).toContain('[OK] codex lifecycle hooks configured');
+    // Prefix match on purpose: the message now continues with coverage ("all N active
+    // item(s) embedded", or why coverage was not checked). This suite runs with
+    // KNOWL_DISABLE_WRITE_EMBEDDING=1, so it gets the not-checked variant; the coverage
+    // states themselves are asserted in tests/cli/vector-coverage.test.ts.
     expect(output).toContain('[OK] Vector search enabled with local/Xenova/all-MiniLM-L6-v2');
     expect(output).toContain('Result: READY');
 
