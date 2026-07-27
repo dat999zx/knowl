@@ -658,6 +658,15 @@ neither can fire while each repo has its own database: scoping implicit reads, a
 cross-owner duplicate resolution. Both live in Task 9. v1's Task 8 pins the property they
 protect, so a regression there fails in v1's suite before v2 work begins.
 
+A third thing lands here by default rather than by choice. **v1 has no cross-repo change
+notification at all**: the watermark reads the local `knowledge_commits`
+(`change-watermark.ts:12,58`) and federation reaches peers through a read-only path that
+records nothing, so an agent is never told when a linked repo promotes knowledge. Covering that
+under federation would mean polling every peer's commit log on each tool event; the shared
+database makes it one log and removes the problem rather than solving it. Task 10's
+notification row is therefore the *first* time cross-repo notification exists, not a
+restriction of something v1 shipped.
+
 **Deliberately excluded.** Cross-repo code symbol index. `indexCode` deletes every row absent
 from the current root, so sharing it means a composite primary key, a matching composite foreign
 key on `code_symbols`, a locator format change breaking four consumers plus already-persisted

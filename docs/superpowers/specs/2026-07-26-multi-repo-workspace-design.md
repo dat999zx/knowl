@@ -1021,6 +1021,12 @@ Mitigations, in v2:
 - No filesystem scanning for workspaces. Discovery is a registry lookup.
 - No transactional repo rename, no runtime mode switch, no git-root-commit auto-rebinding.
 - No cross-repo writes in v1. Federation is read-only; v2 delivers cross-repo update.
+- **No cross-repo change notification in v1.** The watermark reads the local
+  `knowledge_commits` only (`change-watermark.ts:12,58`), and federation reaches peers through
+  a separate read-only path that records nothing. So an agent is never told when a linked repo
+  promotes something new — it finds out by querying. Covering it needs either a workspace-level
+  commit log or polling every peer on each tool event, and the shared database in v2 gives the
+  first of those for free. Building it against federated peers would be work thrown away.
 
 ## Risks
 
