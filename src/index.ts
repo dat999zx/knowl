@@ -7,7 +7,7 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { PACKAGE_NAME, PACKAGE_VERSION } from './version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from './core/version-check.js';
-import { DEFAULT_CONFIG, findProjectRoot, loadConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
+import { DEFAULT_CONFIG, findProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
 import {
   installKnowlProjectGuidance,
   KnowlProjectGuidanceInstallResult,
@@ -25,7 +25,7 @@ import { formatStatusReport } from './cli/status-report.js';
 import type { KnowledgeCategory } from './core/types.js';
 import { createManifest, isValidRepoName, readManifest, writeManifest } from './workspace/manifest.js';
 import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js';
-import { countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
+import { backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
 import { promoteItems } from './workspace/promote.js';
 import { queryFederated } from './workspace/federated-query.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
@@ -448,6 +448,55 @@ workspaceCommand
       console.log('Its existing knowledge is now owned by that name and stays private until you run knowl workspace promote.');
     } catch (error: any) {
       console.error(`Error linking repo: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('join')
+  .argument('<manifest-path>')
+  .description('Adopt a workspace manifest copied from another machine')
+  .option('--name <repo-name>', 'Which repo in the manifest this checkout is')
+  .action(async (manifestPath: string, options: { name?: string }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const incoming = await readManifest(path.resolve(manifestPath));
+
+      // Repo paths in a manifest are machine-local. A copy from another machine names
+      // repos that exist here at different paths, or not at all, so joining re-points this
+      // repo's entry rather than trusting the path it arrived with.
+      const local = workspaceManifestPath(incoming.name);
+      const existing = await readManifest(local).catch(() => null);
+      const merged = existing ?? { ...incoming, repos: [], retiredNames: incoming.retiredNames };
+      if (!existing) {
+        merged.repos = incoming.repos.map(entry => ({ ...entry, path: undefined }));
+        await writeManifest(local, merged);
+      }
+
+      const candidates = merged.repos.map(entry => entry.name);
+      const repoName = options.name ?? path.basename(root).toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+      if (!candidates.includes(repoName)) {
+        throw new Error(
+          `The manifest names ${candidates.length ? candidates.map(name => `"${name}"`).join(', ') : 'no repos'}, and this checkout does not match any of them. Re-run with --name <repo-name>.`,
+        );
+      }
+
+      // Adopt: point the named entry at this checkout and write this repo's half.
+      const adopted = await readManifest(local);
+      adopted.repos = adopted.repos.map(entry =>
+        entry.name === repoName ? { ...entry, path: path.resolve(root), addedAt: new Date().toISOString() } : entry);
+      await writeManifest(local, adopted);
+      const config = await loadConfig(root);
+      await saveConfig(root, { ...config, workspace: { workspace: adopted.name, repo: repoName } });
+      await backfillOriginRepo(root, repoName);
+
+      console.log(`Joined workspace "${adopted.name}" as "${repoName}".`);
+      const missing = adopted.repos.filter(entry => !entry.path).map(entry => entry.name);
+      if (missing.length) {
+        console.log(`Not yet on this machine: ${missing.join(', ')}. Run knowl workspace join from each checkout.`);
+      }
+    } catch (error: any) {
+      console.error(`Error joining workspace: ${error.message}`);
       process.exit(1);
     }
   });

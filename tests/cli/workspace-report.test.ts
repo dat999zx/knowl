@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { formatWorkspaceBlock, workspaceDoctorChecks } from '../../src/cli/workspace-report.js';
+import { formatStatusReport } from '../../src/cli/status-report.js';
 import { createManifest } from '../../src/workspace/manifest.js';
 import type { ActiveWorkspace } from '../../src/workspace/resolve.js';
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
@@ -40,6 +41,29 @@ describe('workspace status block', () => {
 
   it('says so plainly when a workspace has no other repos yet', () => {
     expect(formatWorkspaceBlock(active({ peers: [] })).join('\n')).toMatch(/none yet/i);
+  });
+});
+
+describe('formatStatusReport wiring', () => {
+  const base = {
+    project: { id: 'local', name: 'demo', rootPath: '/demo' } as never,
+    config: DEFAULT_CONFIG,
+    activeItems: [], supersededItems: [], deprecatedItems: [], commits: [],
+  };
+
+  it('renders the workspace block when one is passed', () => {
+    // This assertion exists because the block was wired at the call site and in the type
+    // but never actually rendered -- a scripted edit silently no-opped, and nothing caught
+    // it until the CLI was run by hand against two real repos.
+    const report = formatStatusReport({ ...base, workspace: active() });
+    expect(report).toContain('WORKSPACE');
+    expect(report).toContain('duckprep');
+    expect(report).toContain('server');
+  });
+
+  it('renders nothing extra when there is no workspace', () => {
+    expect(formatStatusReport({ ...base, workspace: null })).not.toContain('WORKSPACE');
+    expect(formatStatusReport(base)).not.toContain('WORKSPACE');
   });
 });
 

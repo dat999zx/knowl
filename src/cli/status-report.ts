@@ -47,6 +47,7 @@ export function formatStatusReport(input: {
       lines.push(`  [${commit.id}] ${new Date(commit.createdAt).toLocaleString()} - ${commit.message}`);
     }
   }
+  lines.push(...formatWorkspaceBlock(input.workspace ?? null));
   lines.push(STATUS_LINE);
 
   return lines.join('\n');

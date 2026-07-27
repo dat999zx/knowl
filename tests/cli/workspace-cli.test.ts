@@ -91,6 +91,34 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
   // a subprocess. Every spawn here costs seconds and this suite is already the heaviest
   // addition to a run that vitest.config.ts caps at 4 workers for exactly this reason.
 
+  it('joins from a manifest copied off another machine, re-pointing paths locally', async () => {
+    // The reason join exists: repo paths in a manifest are machine-local, so a copy names
+    // repos that live somewhere else or not at all. Without this, a second developer or a
+    // second machine could not use a workspace at all.
+    const other = path.resolve('./.knowl-cli-machine2');
+    await fs.rm(other, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(other, '.knowl'), { recursive: true });
+    await saveConfig(other, { ...DEFAULT_CONFIG });
+
+    const manifest = path.join(HOME, 'workspaces', 'duckprep', 'workspace.json');
+    const joined = knowl(other, 'workspace', 'join', manifest, '--name', 'server');
+    expect(joined.status).toBe(0);
+    expect(joined.stdout).toMatch(/Joined workspace "duckprep" as "server"/);
+
+    const written = JSON.parse(await fs.readFile(manifest, 'utf-8'));
+    const entry = written.repos.find((repo: { name: string }) => repo.name === 'server');
+    expect(path.resolve(entry.path)).toBe(other);
+
+    await fs.rm(other, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('refuses a join when this checkout matches no repo in the manifest', () => {
+    const manifest = path.join(HOME, 'workspaces', 'duckprep', 'workspace.json');
+    const result = knowl(A, 'workspace', 'join', manifest, '--name', 'not-in-manifest');
+    expect(result.status).toBe(1);
+    expect(result.stderr).toMatch(/does not match any of them/);
+  });
+
   it('removes the repo once the owner acknowledges the export', () => {
     const result = knowl(A, 'workspace', 'remove', 'server', '--export-first');
     expect(result.status).toBe(0);
