@@ -3,6 +3,32 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.5.1 — 2026-07-28
+
+A startup race between Knowl processes could leave the MCP server permanently stuck.
+
+### Fixed
+
+- **The MCP server could get permanently stuck after starting up alongside another Knowl
+  process.** Two or more `knowl serve` processes bootstrapping the same project at nearly
+  the same moment — several host windows opening at once, or reconnecting in quick
+  succession — could make one of them hit a momentary database lock during startup. That
+  process then failed every tool call for the rest of its life, even though the database
+  itself was fine throughout; reconnecting or restarting the host was the only recovery.
+  The lock is now waited out instead of failing instantly, and a startup that does still
+  fail no longer leaves a connection abandoned holding the lock open.
+- **A locked-database startup failure told you to run `knowl init`.** That's the right
+  advice for a project that was never initialized, and the wrong one for a healthy project
+  that was just momentarily locked by another process. The two cases now get different
+  messages.
+
+### Changed
+
+- **Reading a linked workspace repo's knowledge is now read-only enforced by SQLite
+  itself**, not only by which code path is used to open it. A future bug that mistakenly
+  wrote through that connection would previously have silently changed a repo you don't
+  own; it now fails immediately instead.
+
 ## 2.5.0 — 2026-07-27
 
 Link several repositories so agents can work across them. Plus a fix that affects every
