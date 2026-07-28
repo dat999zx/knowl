@@ -184,12 +184,13 @@ exact-identifier, freshness, status, confidence, and recency adjustments. Normal
 return active items unless another status is requested. Exact filenames, item IDs, and
 `symbol://` locators receive lexical support even when semantic similarity is weak.
 
-The public `knowl query` CLI currently uses the project-local FTS/BM25/LIKE path and does not
-embed its query. Use it for direct lexical inspection; use `knowl_query` from an MCP agent for the
-default vector-primary path.
+In a single repository, the public `knowl query` CLI uses a project-local FTS/BM25/LIKE candidate
+path. A current query in a linked workspace also fans out to peers; when vectors are enabled, it
+attempts a query embedding and local vectors for federated semantic ranking, then falls back to
+lexical results if embedding preparation fails. Historical `--as-of` queries remain local.
 
 ```bash
-# Project-local lexical query.
+# Current CLI query; single-repository candidates are lexical.
 knowl query "auth token design"
 
 # Prepare and control vectors used by MCP/agent retrieval.
@@ -201,8 +202,6 @@ knowl config set search.vector.enabled false
 Offline BM25 retrieval remains available. A normal write embeds the item only when the model is
 already cached: write-time embedding never downloads a model and never fails the write.
 `knowl reindex --vectors` is the explicit model-preparation and backfill path for existing items.
-The default MiniLM tokenizer embeds only the first 128 tokens; place distinguishing content early
-or split long atoms. BM25 still indexes the full text.
 
 Two environment controls support offline or deliberately lexical operation:
 
@@ -514,9 +513,10 @@ knowl import ./knowl-export.jsonl --dry-run
 knowl import ./knowl-export.jsonl --on-divergence newer
 ```
 
-The checksummed JSONL export includes items in every status, assertions, evidence and links,
-file-backed skill files, and tombstones. It excludes knowledge commits, access telemetry,
-sessions, code indexes, vector embeddings, project configuration, and workspace metadata.
+The checksummed JSONL export includes complete item objects in every status, so `originRepo` and
+`visibility` travel with them. It also includes assertions, evidence and links, file-backed skill
+files, and tombstones. It excludes knowledge commits, access telemetry, sessions, code indexes,
+vector embeddings, project configuration, workspace manifests, and workspace membership.
 
 Import only JSONL that you created or otherwise trust. The checksum detects corruption; it does
 not authenticate the source or make malicious skill-package paths safe. `--dry-run` checks the
@@ -532,10 +532,12 @@ After checking the checksum, header, and item records, import supports four dive
 
 Use `--dry-run` to see `wouldApply` counts without applying records. Only `fail` treats a
 divergence as an import-wide abort condition; the other policies select or skip individual
-records. When `newer` or `theirs` selects an incoming item, Knowl adopts that record verbatim
-rather than rerunning local reconciliation. When IDs and `contentHash` match, the item is treated
-as identical, so a change limited to status, freshness, or supersession does not propagate
-through that comparison.
+records. When `newer` or `theirs` selects an incoming item, Knowl writes supported content and
+history columns with the incoming `contentHash`, version, and timestamps without normal
+reconciliation. Import omits `originRepo` and `visibility`: inserts receive local defaults, while
+updates retain local ownership and visibility. When IDs and `contentHash` match, the item is
+treated as identical, so a change limited to status, freshness, or supersession does not
+propagate through that comparison.
 
 After checksum, header, and item validation, non-dry-run database changes apply in one SQL
 transaction and roll back together on failure. Imported skill-package files are filesystem
@@ -613,9 +615,8 @@ assertions.
   <img src="docs/assets/viewer-inspect.png" alt="Knowl local viewer showing details for a selected knowledge atom" width="48%" />
 </p>
 
-The viewer does not mutate knowledge atoms. Its retrieval inspector does record access telemetry,
-so read-only here means no knowledge mutation, not a database connection that performs no
-writes.
+The graph and filter UI do not write telemetry. A direct GET to `/api/retrieval` records retrieval
+access telemetry, so GET-only does not mean every endpoint is free of database writes.
 
 ## Architecture and security boundaries
 
@@ -823,9 +824,9 @@ The vector figures were reproduced from the checked-in dataset on 2026-07-28; no
 is checked in. The run passed 492 of 500 evaluator cases, including expected, stale, and forbidden
 conditions rather than only search hits.
 
-A fresh BM25-only run reproduced 20 failures, 23 stale hits, and 4 forbidden hits. Equal-score
-ordering changed its aggregate rank metrics, so none are published as stable values. Results
-depend on the corpus, evaluator, and runtime ordering; no cross-hardware latency is claimed.
+Fresh BM25-only runs varied under equal-score ordering, including their failure counts. Exact
+BM25 outcome and rank values are therefore not published; rerun the command below in the target
+environment. No cross-hardware latency is claimed.
 
 ```bash
 knowl eval retrieval --dataset docs/evals/retrieval-suite.json --vector --json
