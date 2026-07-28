@@ -21,6 +21,11 @@ A startup race between Knowl processes could leave the MCP server permanently st
   advice for a project that was never initialized, and the wrong one for a healthy project
   that was just momentarily locked by another process. The two cases now get different
   messages.
+- **`knowl doctor` could report `READY` (exit 0) on a project with real problems.** Its
+  exit code was set after an unrelated, best-effort check for a newer published version —
+  a network call with its own timing — instead of right after the checks that determine
+  readiness. A script gating on `knowl doctor`'s exit code could occasionally see success
+  for a project that was not actually ready.
 
 ### Changed
 
