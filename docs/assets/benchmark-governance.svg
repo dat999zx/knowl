@@ -1,23 +1,29 @@
-<svg width="760" height="212" viewBox="0 0 760 212" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Governance benchmark: current-truth MRR 94%, current truth in top-3 100 percent, zero rejected decisions surfaced across 24 traps">
-  <rect x="1" y="1" width="758" height="210" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
+<svg width="760" height="228" viewBox="0 0 760 228" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-labelledby="governance-title governance-desc">
+  <title id="governance-title">Internal governance retrieval benchmark</title>
+  <desc id="governance-desc">Across 44 top-three cases, mean reciprocal rank was 94.3 percent. Stale active decisions appeared 43 times and caused 22 stale-trap failures. Rejected decisions appeared zero times.</desc>
 
-  <text x="28" y="42" font-size="21" font-weight="700" fill="#ffffff">Governance — current truth over history</text>
-  <text x="28" y="66" font-size="14" fill="#898781">after a project migrates, does memory resolve to the current decision, not the old one?</text>
+  <rect x="1" y="1" width="758" height="226" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
+
+  <text x="28" y="40" font-size="21" font-weight="700" fill="#ffffff">Governance — current truth over history</text>
+  <text x="28" y="64" font-size="14" fill="#898781">56 decision fixtures · 44 top-3 cases · expected current decision in top 3: 100%</text>
 
   <g>
-    <rect x="28" y="88" width="221" height="96" rx="12" fill="#0f141c" stroke="#242b36"/>
-    <rect x="269.5" y="88" width="221" height="96" rx="12" fill="#0f141c" stroke="#242b36"/>
-    <rect x="511" y="88" width="221" height="96" rx="12" fill="#0f141c" stroke="#242b36"/>
+    <rect x="28" y="88" width="221" height="112" rx="12" fill="#0f141c" stroke="#242b36"/>
+    <rect x="269.5" y="88" width="221" height="112" rx="12" fill="#0f141c" stroke="#242b36"/>
+    <rect x="511" y="88" width="221" height="112" rx="12" fill="#0f141c" stroke="#242b36"/>
   </g>
 
   <g text-anchor="middle">
-    <text x="138" y="140" font-size="40" font-weight="800" fill="#3987e5">94%</text>
-    <text x="138" y="166" font-size="13" font-weight="600" fill="#c3c2b7">MRR — current decision ranked #1</text>
+    <text x="138" y="142" font-size="40" font-weight="800" fill="#3987e5">94.3<tspan font-size="20" font-weight="700" fill="#7cb0f5">%</tspan></text>
+    <text x="138" y="169" font-size="13" font-weight="600" fill="#c3c2b7">mean reciprocal rank</text>
+    <text x="138" y="188" font-size="12" fill="#898781">not a top-1 percentage</text>
 
-    <text x="380" y="140" font-size="40" font-weight="800" fill="#3987e5">100<tspan font-size="20" font-weight="700" fill="#7cb0f5">%</tspan></text>
-    <text x="380" y="166" font-size="13" font-weight="600" fill="#c3c2b7">current truth in top-3</text>
+    <text x="380" y="142" font-size="40" font-weight="800" fill="#eda100">43</text>
+    <text x="380" y="169" font-size="13" font-weight="600" fill="#c3c2b7">stale-active returns</text>
+    <text x="380" y="188" font-size="12" fill="#898781">22 stale-trap failures</text>
 
-    <text x="621.5" y="140" font-size="40" font-weight="800" fill="#0ca30c">0<tspan font-size="20" font-weight="700" fill="#7fdca0"> / 24</tspan></text>
-    <text x="621.5" y="166" font-size="13" font-weight="600" fill="#c3c2b7">rejected decisions surfaced</text>
+    <text x="621.5" y="142" font-size="40" font-weight="800" fill="#0ca30c">0</text>
+    <text x="621.5" y="169" font-size="13" font-weight="600" fill="#c3c2b7">rejected items returned</text>
+    <text x="621.5" y="188" font-size="12" fill="#898781">status filtering</text>
   </g>
 </svg>
