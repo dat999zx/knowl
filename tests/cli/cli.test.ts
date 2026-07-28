@@ -328,7 +328,11 @@ describe('CLI Integration', () => {
     await fs.mkdir(root, { recursive: true });
     execFileSync(process.execPath, [CLI_PATH, 'init', 'claude', '--yes'], { cwd: root, encoding: 'utf8' });
     await fs.writeFile(path.join(root, 'CLAUDE.md'), 'No active Knowl import.\n');
-    const result = spawnSync(process.execPath, [CLI_PATH, 'doctor'], { cwd: root, encoding: 'utf8' });
+    const result = spawnSync(process.execPath, [CLI_PATH, 'doctor'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, KNOWL_NO_UPDATE_CHECK: '1' },
+    });
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('[WARN] claude native instructions missing or stale');
     expect(result.stdout).toContain('run `knowl init claude`');
@@ -644,6 +648,7 @@ describe('CLI Integration', () => {
     const output = execSync(`node "${CLI_PATH}" doctor`, {
       cwd: doctorDir,
       encoding: 'utf-8',
+      env: { ...process.env, KNOWL_NO_UPDATE_CHECK: '1' },
     });
 
     expect(output).toContain('KNOWL AGENT READINESS');
@@ -684,6 +689,10 @@ describe('CLI Integration', () => {
         cwd: staleDir,
         encoding: 'utf-8',
         stdio: 'pipe',
+        // doctor's best-effort update check hits the real npm registry unless this
+        // is set. A real network call has no business deciding whether this
+        // assertion -- about locally-written file staleness -- passes or times out.
+        env: { ...process.env, KNOWL_NO_UPDATE_CHECK: '1' },
       });
     } catch (error: any) {
       output = error.stdout.toString();

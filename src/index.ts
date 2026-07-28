@@ -1768,6 +1768,15 @@ program
     const result = await runDoctor(process.cwd());
     console.log(formatDoctorReport(result));
 
+    // Set the code instead of process.exit(), and set it here rather than after the
+    // best-effort update check below: a hard exit while sockets/timers are still
+    // tearing down crashes the process on Windows (STATUS_STACK_BUFFER_OVERRUN)
+    // instead of reporting status 1, and the exit code must not depend on the
+    // timing of an unrelated network call that is allowed to be slow or fail.
+    if (!result.ready) {
+      process.exitCode = 1;
+    }
+
     try {
       const root = await findProjectRoot(process.cwd());
       const config = await loadConfig(root);
@@ -1777,13 +1786,6 @@ program
       }
     } catch {
       // never let the update check affect doctor's verdict
-    }
-
-    if (!result.ready) {
-      // Set the code instead of process.exit(): a hard exit while the update
-      // check's socket/timer handles are still tearing down crashes the process
-      // on Windows (STATUS_STACK_BUFFER_OVERRUN) instead of reporting status 1.
-      process.exitCode = 1;
     }
   });
 
