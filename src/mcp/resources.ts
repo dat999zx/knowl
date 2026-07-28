@@ -5,6 +5,7 @@ import { getRecentContext } from '../store/recent-context.js';
 import { formatRecentContextToMarkdown, formatHierarchyToMarkdown } from '../core/format.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, truncateText } from '../core/token-budget.js';
+import { formatInitError } from './init-error.js';
 
 export function registerResources(
   server: Server,
@@ -43,7 +44,7 @@ export function registerResources(
           {
             uri,
             mimeType: 'text/plain',
-            text: `❌ Knowl MCP Server is active but not initialized for the current directory.\nReason: ${initError}\n\nPlease run 'knowl init' in your project root to initialize this project.`,
+            text: formatInitError(initError),
           },
         ],
       };

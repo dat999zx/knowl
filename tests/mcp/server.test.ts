@@ -142,6 +142,57 @@ describe('MCP Server Layer', () => {
     await initialized.server.close();
   });
 
+  it('gives a SQLITE_BUSY init failure its own retry message instead of telling the user to run knowl init', async () => {
+    // The database was healthy; a concurrent process just held it momentarily. Sending
+    // the user to `knowl init` for a transient lock is actively wrong advice.
+    const busyError = 'Failed to initialize database at "d:\\proj\\.knowl\\knowl.db": SQLITE_BUSY: database is locked';
+    const initialized = await initializeServer(createMcpServer(null, null, null, busyError));
+    const transport = initialized.transport;
+    const responsePromise = new Promise<any>(resolve => {
+      transport.onSend = message => { if (message.id === 'busy-tool') resolve(message); };
+    });
+    transport.onmessage!({
+      jsonrpc: '2.0', id: 'busy-tool', method: 'tools/call',
+      params: { name: 'knowl_query', arguments: { query: 'x' } },
+    });
+    const res = await responsePromise;
+    expect(res.result.content[0].text).toContain('temporarily locked');
+    expect(res.result.content[0].text).not.toContain("run 'knowl init'");
+    await initialized.server.close();
+  });
+
+  it('keeps the run-knowl-init guidance for a genuine missing-project error', async () => {
+    const initialized = await initializeServer(createMcpServer(null, null, null, 'Knowl project is not initialized. Run "knowl init" first.'));
+    const transport = initialized.transport;
+    const responsePromise = new Promise<any>(resolve => {
+      transport.onSend = message => { if (message.id === 'noinit-tool') resolve(message); };
+    });
+    transport.onmessage!({
+      jsonrpc: '2.0', id: 'noinit-tool', method: 'tools/call',
+      params: { name: 'knowl_query', arguments: { query: 'x' } },
+    });
+    const res = await responsePromise;
+    expect(res.result.content[0].text).toContain("run 'knowl init'");
+    await initialized.server.close();
+  });
+
+  it('applies the same SQLITE_BUSY message to resource reads', async () => {
+    const busyError = 'Failed to initialize database at "d:\\proj\\.knowl\\knowl.db": SQLITE_BUSY: database is locked';
+    const initialized = await initializeServer(createMcpServer(null, null, null, busyError));
+    const transport = initialized.transport;
+    const responsePromise = new Promise<any>(resolve => {
+      transport.onSend = message => { if (message.id === 'busy-resource') resolve(message); };
+    });
+    transport.onmessage!({
+      jsonrpc: '2.0', id: 'busy-resource', method: 'resources/read',
+      params: { uri: 'knowl://recent' },
+    });
+    const res = await responsePromise;
+    expect(res.result.contents[0].text).toContain('temporarily locked');
+    expect(res.result.contents[0].text).not.toContain("run 'knowl init'");
+    await initialized.server.close();
+  });
+
   it('keeps tools/list exactly aligned with the canonical inventory', async () => {
     const res = await runRpcRequest('tools/list');
     const names = res.result.tools.map((tool: any) => tool.name);

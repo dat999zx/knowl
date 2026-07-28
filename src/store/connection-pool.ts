@@ -30,11 +30,28 @@ export async function acquireClient(dbPath: string, options: { readOnly?: boolea
   if (existing) return existing;
 
   const client = createClient({ url: `file:${path.resolve(dbPath)}` });
-  // A read-only open skips bootstrap, and the version guard lives inside bootstrap -- so
-  // without this it would skip the guard too, which is exactly backwards for the case the
-  // guard matters most: reading a database someone else's Knowl wrote.
-  if (readOnly) await assertSchemaSupported(client, dbPath);
-  else await bootstrapSchema(client);
+  try {
+    // A read-only open skips bootstrap, and the version guard lives inside bootstrap --
+    // so without this it would skip the guard too, which is exactly backwards for the
+    // case the guard matters most: reading a database someone else's Knowl wrote.
+    if (readOnly) {
+      // "Read-only" here is otherwise just a naming convention: this code path happens
+      // not to call a write function. query_only makes SQLite itself refuse any write
+      // this connection ever attempts, so a future bug can't silently mutate a peer
+      // repo's database -- it fails loudly instead.
+      await client.execute('PRAGMA query_only = ON;');
+      await assertSchemaSupported(client, dbPath);
+    } else {
+      await bootstrapSchema(client);
+    }
+  } catch (error) {
+    // An un-closed client on a failed open keeps whatever lock its partial bootstrap
+    // took, and nothing else in this process ever calls close() on it -- every later
+    // acquire for this path would then contend against a lock this process itself is
+    // still holding, for as long as the process lives.
+    await client.close();
+    throw error;
+  }
   clients.set(key, client);
   return client;
 }

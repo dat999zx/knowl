@@ -18,6 +18,7 @@ import { isVectorSearchEnabled, createLocalEmbeddingProvider, getVectorSearchCon
 import { queryKnowledgeForAgent, queryKnowledgeForAgentExplained } from '../store/agent-query.js';
 import { previewKnowledgeGc, applyKnowledgeGc } from '../store/gc.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop } from '../store/work-loop.js';
+import { formatInitError } from './init-error.js';
 import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage } from '../skills/registry.js';
 import { KnowledgeValidationError } from '../core/knowledge-validation.js';
@@ -596,7 +597,7 @@ export function registerTools(
         content: [
           {
             type: 'text',
-            text: `❌ Knowl MCP Server is active but not initialized for the current directory.\nReason: ${initError}\n\nPlease run 'knowl init' in your project root to initialize this project.`,
+            text: formatInitError(initError),
           },
         ],
       };

@@ -27,6 +27,9 @@ export async function readSchemaVersion(client: Client): Promise<number> {
 }
 
 export async function stampSchemaVersion(client: Client): Promise<void> {
+  // Every rw open runs this. Writing unconditionally means several processes racing to
+  // bootstrap the same file each take a header-write lock even when nothing changed.
+  if ((await readSchemaVersion(client)) === KNOWL_SCHEMA_VERSION) return;
   // PRAGMA does not accept bound parameters, and the value is a module constant.
   await client.execute(`PRAGMA user_version = ${KNOWL_SCHEMA_VERSION}`);
 }

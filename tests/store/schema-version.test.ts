@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createClient } from '@libsql/client';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
   KNOWL_SCHEMA_VERSION,
   SchemaTooNewError,
@@ -67,6 +67,26 @@ describe('schema version guard', () => {
     await stampSchemaVersion(client);
     await stampSchemaVersion(client);
     expect(await readSchemaVersion(client)).toBe(KNOWL_SCHEMA_VERSION);
+    client.close();
+  });
+
+  it('does not re-issue the header write once the version is already current', async () => {
+    // Every rw open runs this. A concurrent process's open re-stamping an unchanged
+    // value is a write it didn't need to make, and one more thing briefly holding a
+    // lock while several processes race to bootstrap the same file at once.
+    const client = createClient({ url: `file:${path.join(ROOT, 'no-rewrite.db')}` });
+    await stampSchemaVersion(client);
+
+    const originalExecute = client.execute.bind(client);
+    const statements: string[] = [];
+    vi.spyOn(client, 'execute').mockImplementation(((stmt: any) => {
+      statements.push(typeof stmt === 'string' ? stmt : stmt.sql);
+      return originalExecute(stmt);
+    }) as any);
+
+    await stampSchemaVersion(client);
+
+    expect(statements.some(sql => /user_version\s*=/i.test(sql))).toBe(false);
     client.close();
   });
 

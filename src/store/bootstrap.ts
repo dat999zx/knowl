@@ -3,9 +3,12 @@ import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from 
 import { assertSchemaSupported, stampSchemaVersion } from './schema-version.js';
 
 const BASE_STATEMENTS = [
+  // Must come first: journal_mode = WAL (and everything after it) takes locks, and a
+  // connection's default busy_timeout is 0. Applied last, a concurrent writer at that
+  // instant fails this whole bootstrap with SQLITE_BUSY instead of waiting for it.
+  'PRAGMA busy_timeout = 5000;',
   'PRAGMA foreign_keys = ON;',
   'PRAGMA journal_mode = WAL;',
-  'PRAGMA busy_timeout = 5000;',
 ];
 
 const SCHEMA_STATEMENTS = [
