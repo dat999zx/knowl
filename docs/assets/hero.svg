@@ -1,4 +1,4 @@
-<svg width="1200" height="340" viewBox="0 0 1200 340" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Knowl — the Knowledge Operating System for AI Agents">
+<svg width="1200" height="340" viewBox="0 0 1200 340" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Governed project memory for AI coding agents">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="340" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#0d1117"/>
@@ -26,7 +26,7 @@
       <circle cx="26" cy="26" r="7" fill="#3987e5"/>
     </g>
     <text x="70" y="20" font-size="58" font-weight="800" fill="#ffffff" letter-spacing="-1.5">Knowl</text>
-    <text x="72" y="66" font-size="23" font-weight="500" fill="#c3c2b7">The Knowledge Operating System for AI Agents</text>
+    <text x="72" y="66" font-size="23" font-weight="500" fill="#c3c2b7">Governed project memory for AI coding agents</text>
 
     <!-- chips -->
     <g transform="translate(72,96)" font-size="14" font-weight="600">
@@ -36,11 +36,16 @@
         <text x="30" y="20" fill="#e6edf3">Local-first</text>
       </g>
       <g transform="translate(146,0)">
-        <rect x="0" y="0" width="176" height="30" rx="15" fill="#1b2330" stroke="#2c313a"/>
+        <rect x="0" y="0" width="174" height="30" rx="15" fill="#1b2330" stroke="#2c313a"/>
         <circle cx="18" cy="15" r="4" fill="#3987e5"/>
-        <text x="30" y="20" fill="#e6edf3">Structured memory</text>
+        <text x="30" y="20" fill="#e6edf3">Governed memory</text>
       </g>
-      <g transform="translate(336,0)">
+      <g transform="translate(334,0)">
+        <rect x="0" y="0" width="140" height="30" rx="15" fill="#1b2330" stroke="#2c313a"/>
+        <circle cx="18" cy="15" r="4" fill="#199e70"/>
+        <text x="30" y="20" fill="#e6edf3">Workspaces</text>
+      </g>
+      <g transform="translate(488,0)">
         <rect x="0" y="0" width="128" height="30" rx="15" fill="#1b2330" stroke="#2c313a"/>
         <circle cx="18" cy="15" r="4" fill="#eda100"/>
         <text x="30" y="20" fill="#e6edf3">MCP-native</text>

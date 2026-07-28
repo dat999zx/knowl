@@ -1,798 +1,414 @@
 <div align="center">
 
-<img src="docs/assets/hero.svg" alt="Knowl — the Knowledge Operating System for AI Agents" width="100%" />
+<img src="docs/assets/hero.svg" alt="Knowl — governed project memory for AI coding agents" width="100%" />
 
 <br/>
 
-**Durable, local-first project memory for AI coding agents — structured, queryable, and governed.**
+**Local-first, structured project memory for AI coding agents.**
 
 [![npm](https://img.shields.io/npm/v/%40dat999zx%2Fknowl?color=3987e5&label=npm)](https://www.npmjs.com/package/@dat999zx/knowl)
 [![license](https://img.shields.io/badge/license-Apache--2.0-199e70)](LICENSE)
 [![node](https://img.shields.io/badge/node-%E2%89%A522-3987e5)](package.json)
 [![MCP](https://img.shields.io/badge/protocol-MCP-eda100)](https://modelcontextprotocol.io)
-[![platform](https://img.shields.io/badge/platform-local--first-8b949e)](#-local-data)
+[![platform](https://img.shields.io/badge/platform-local--first-8b949e)](#local-data)
 
-[Quick start](#-quick-start) ·
-[Features](#-features-in-depth) ·
-[Benchmarks](#-benchmarks) ·
-[MCP tools](#-mcp-tools--resources) ·
-[CLI](#-cli-reference)
+[Quick start](#quick-start) ·
+[Workspaces](#workspaces) ·
+[How it works](#how-it-works) ·
+[Benchmarks](#benchmarks) ·
+[CLI](#cli-reference) ·
+[MCP](#mcp-tools-and-resources)
 
 </div>
 
 ---
 
-## What is Knowl?
+## Overview
 
-Knowl gives an AI coding agent **durable project memory** without shipping that memory to a hosted service by default. It stores structured **knowledge atoms** — decisions, architecture, goals, constraints, facts, current state, and reusable skills — in a per-project SQLite database under `.knowl/`, exposes them through a CLI, and serves them over the **Model Context Protocol (MCP)** so agents such as Claude Code, Codex, Cursor, and Gemini can retrieve and update project context while they work.
+Knowl gives coding agents durable engineering context across sessions. It stores decisions,
+architecture, goals, constraints, facts, current state, and reusable skills as structured
+knowledge atoms in a repository-local SQLite database under `.knowl/`.
 
-The point is *continuity*. A new agent session should answer "why did we pick SQLite?" or "what's the auth architecture?" from memory in milliseconds — instead of re-reading the repository every time. Knowl is built for durable engineering context, **not** for archiving raw chat logs.
+Agents access the same governed memory through the `knowl` CLI or the Model Context Protocol
+(MCP). Items carry status, freshness, confidence, tags, history, and optional evidence pointing
+to files, commits, tests, commands, URLs, or indexed symbols. Core storage and retrieval do not
+require an external AI provider.
+
+Knowl 2.5 also links related repositories into a workspace. Each repository keeps its own
+database and ownership boundary; only explicitly promoted knowledge is visible to peers.
+
+## Quick start
+
+Requires Node.js 22 or later.
 
 ```bash
 npm install -g @dat999zx/knowl
-cd your-project && knowl init
-```
-
-> **Local-first by design.** Structured MCP memory works with **zero API keys**. AI providers are optional and only power a couple of natural-language commands.
-
----
-
-## Why Knowl?
-
-| Without project memory | With Knowl |
-| --- | --- |
-| Every new session re-reads files to rebuild context | Agents answer stable questions from memory first |
-| "Why did we do X?" is lost when the chat ends | Decisions, reasoning, and alternatives are durable atoms |
-| Superseded/rejected choices resurface as if current | Freshness, conflicts, and `rejected` status keep memory honest |
-| Memory lives in a vendor cloud | Memory lives in your repo's `.knowl/`, git-ignored |
-| Context blobs are unbounded and opaque | Compact, token-budgeted, provenance-backed retrieval |
-
-Knowl deliberately **does not** clone the "silently record every transcript" approach. It differentiates on **governed** project knowledge: typed atoms, provenance, reviewable updates, decision/conflict handling, task-scoped context packs, and verifiable retrieval quality.
-
-> **The thesis:** most agent-memory tools are *better RAG* — they retrieve text. Knowl aims to be **the Git of project knowledge**: it doesn't just recall what was said, it tracks *what is true now*, *why it was decided*, and *what was rejected* — as typed, versioned, evidence-backed records living in your repo.
-
----
-
-## ✨ Highlights
-
-- 🧠 **Structured knowledge atoms** — seven first-class categories with status, freshness, tags, and history.
-- 🔌 **MCP-native** — a deterministic MCP server (`knowl serve`) that needs no AI provider for core memory.
-- 🔍 **Vector-first retrieval** — default-on local vector search, BM25 as fallback + exact-identifier booster, freshness-aware re-rank.
-- 🔁 **Automatic work loop** — agents query memory before work and write back verified state after.
-- 🪝 **Agent lifecycle hooks** — verified project-local capture for Claude Code, Codex, and Cursor.
-- 👥 **Subagent memory** — spawned subagents get their own memory snapshot, and any agent is told when memory changed underneath it. Verified live on Claude Code and Codex CLI.
-- 🧾 **Evidence & provenance** — link items to files, commits, tests, commands, symbols, and URLs.
-- ⏳ **Temporal memory** — immutable assertions, `--as-of` queries, and exclusive conflict identities.
-- 🧩 **Learned skills** — file-backed, runnable skill packages under `.knowl/skills/`.
-- 🌳 **Symbol index** — Tree-sitter TS/JS symbols with durable `symbol://` evidence locators.
-- 🔒 **Secret-safe writes** — every write passes secret, sensitive-path, and size validation.
-- 📦 **Portable** — versioned, manifest-verified JSONL export/import.
-- 👀 **Neural graph viewer** — a read-only `127.0.0.1` force-directed map of your memory via `knowl view`.
-
----
-
-## 🧭 How Knowl compares
-
-Most agent memory is **recall**: embed what the agent said, hand back the nearest text. That will happily quote a decision you reversed three months ago. Knowl is **governed knowledge** — typed atoms with a status, a history, and evidence pointing at your code, so answers reflect what is *true now*.
-
-| Capability | **Knowl** | AgentMemory | Mem0 | Zep / Graphiti | Letta |
-| --- | :---: | :---: | :---: | :---: | :---: |
-| Primary model | Typed **decision** atoms (7 categories) | Observations → 4-tier semantic/procedural | Vector memories (+ graph) | Temporal knowledge graph | Memory tiers / blocks |
-| Core reads/writes with **zero API keys** | ✅ | ✅ | ✖ | ✖ | ✖ |
-| Local-first (SQLite, no server) | ✅ per-repo `.knowl/` | ✅ local store | ✖ cloud/self-host | ✖ self-host + graph DB | ✖ self-host/cloud |
-| Decision + **reasoning + alternatives** | ✅ first-class `decide` | ➖ decision patterns | ✖ | ➖ graph facts | ✖ |
-| **Rejected** decisions excluded from active answers | ✅ hard filter | ➖ supersession/eviction | ✖ | ➖ temporal invalidation | ✖ |
-| Current-truth over history (temporal) | ✅ freshness + `--as-of` | ➖ versioning/evolution | ➖ | ✅ bi-temporal | ✖ |
-| Reviewable history / commits | ✅ knowledge commits | ✅ versioning + git snapshots | ✖ | ➖ edge history | ✖ |
-| Provenance to **code** (file·commit·symbol) | ✅ | ➖ to source observations | ✖ | ✖ | ✖ |
-| Learned runnable skills | ✅ | ➖ skills | ✖ | ✖ | ➖ tools |
-| MCP server | ✅ | ✅ | ✅ | ➖ | ✅ |
-| License | Apache-2.0 | Apache-2.0 | Apache-2.0 | Graphiti Apache-2.0 (Zep cloud) | Apache-2.0 |
-
-✅ first-class · ➖ partial/adjacent · ✖ not a feature.
-
-### Published performance
-
-These are **two separate tables on purpose.** A score on a corpus we wrote ourselves and a score on a third-party benchmark are different kinds of evidence, and putting them in one table would imply a ranking that does not exist.
-
-**What Knowl measures on its own corpus.** Self-reported, and near-ceiling partly *because* we chose the atoms and the queries — treat it as a regression baseline, not as proof we beat anyone:
-
-| Suite | Result |
-| --- | --- |
-| 500-case adversarial retrieval suite ([`docs/evals/`](docs/evals/)) | Recall@10 **99.4%** · MRR **96.1%** |
-| Governance suite — 22 migrations, 24 rejected-decision traps | current-truth MRR **94%** · **0/24** rejected leaked |
-
-**What other projects report on their own chosen benchmarks.** Different tasks, metrics, readers and top-*k*. Not comparable to the table above, and mostly not comparable to each other:
-
-| System | Benchmark (its own) | Reported result |
-| --- | --- | --- |
-| AgentMemory | its own long-context suite | Recall@10 **98.6%** · Recall@5 95.2% · MRR **88.2%** |
-| Mem0 | LoCoMo (managed platform) | **92.5** / **94.4** · ~7K tokens · p50 0.88–1.09s |
-| Zep / Graphiti | DMR | DMR **94.8%** · up to **+18.5%** accuracy, −90% latency |
-| Letta (MemGPT) | DMR | **93.4%** |
-
-Mem0's figures are from its managed platform, which it notes includes optimizations absent from the open-source SDK; Letta's DMR figure is as reported in the Zep paper. On LoCoMo specifically, note that a plain full-context baseline scores ~73% — above Mem0's reported ~68% — so a LoCoMo number does not establish that a memory system beats having no memory system at all.
-
-### Measured on MemoryAgentBench — conflict resolution
-
-[MemoryAgentBench](https://github.com/HUST-AI-HYZ/MemoryAgentBench) (ICLR 2026, MIT) defines
-conflict resolution as *"detecting and overwriting outdated facts when new, contradictory
-information is introduced, ensuring subsequent queries reflect only the newest valid data."* That
-is the public benchmark closest to what Knowl's write path exists to do, so it is the one we run.
-
-Single-hop track, 455 facts, 100 questions. **The only difference between these rows is whether
-Knowl is allowed to retire a superseded fact** — same corpus, same retrieval, same metric:
-
-| Configuration | top-1 accuracy | Stale answers returned |
-| --- | --- | --- |
-| **Supersession on** (shipped) | **96.0%** | **3 / 100** |
-| Supersession off (ablation) | 40.0% | 62 / 100 |
-
-**Governance is worth +56 points here**, and cuts stale answers from 62 to 3. Of 455 ingested
-facts, 149 were retired at write time, so a query can only ever see the current value.
-
-**Read the comparison honestly.** Three limits travel with this number:
-
-- Published baselines on this track are 45.0% (long-context agents), 56.0% (best RAG) and 28.0%
-  (MemGPT) — but those measure an **LLM reader** answering from the memory system, while the
-  figure above is **retrieval-level** with no reader. Not the same measurement; not subtractable.
-  The controlled ablation is the rigorous claim, the baseline comparison is indicative only.
-- **This track tests one kind of conflict: the value changed and the newest wins.** That is
-  exactly the rule Knowl implements, so the benchmark is aligned with the design by construction.
-  It does not show Knowl is good at conflict resolution *in general* — a claim that would need
-  cases where the newest mention should **not** win, which this data does not contain.
-- Few memory products have run it. MemGPT is the only one in the table; Mem0, Zep, Letta and
-  Cognee report on other benchmarks, so there is little peer context here.
-
-Protocol, the preregistered titling rule, and what is deliberately not attempted:
-[conflict-resolution results](docs/evals/memoryagentbench-cr.md).
-
-<sub>Sources: [AgentMemory](https://github.com/rohitg00/agentmemory), [Mem0](https://github.com/mem0ai/mem0), [Graphiti](https://github.com/getzep/graphiti) and [Zep: A Temporal Knowledge Graph Architecture for Agent Memory (arXiv 2501.13956)](https://arxiv.org/abs/2501.13956), [Letta](https://github.com/letta-ai/letta), [MemoryAgentBench (arXiv 2507.05257)](https://arxiv.org/pdf/2507.05257), [LoCoMo](https://snap-research.github.io/locomo/), [Zep on LoCoMo's flaws](https://blog.getzep.com/lies-damn-lies-statistics-is-mem0-really-sota-in-agent-memory/). Retrieved 2026-07.</sub>
-
-Where Knowl is deliberately strict: project **decisions** are the unit (reasoning + alternatives, with `rejected` hard-excluded from retrieval), evidence is **code-linked** (file/commit/`symbol://`, flagged stale when the code moves), and everything lives **per-repo in `.knowl/`** with no service to run. Governance is measured, not asserted — see [Benchmarks](#-benchmarks).
-
----
-
-## 🏗️ Architecture
-
-Knowl keeps **thin protocol boundaries**: the MCP and CLI adapters delegate to shared core services, so retrieval, storage, and write-back rules stay testable and reusable.
-
-```mermaid
-flowchart TB
-    subgraph agents["AI agents"]
-        A1["Claude Code"]
-        A2["Codex CLI"]
-        A3["Cursor"]
-        A4["Gemini CLI"]
-    end
-
-    subgraph proto["Protocol adapters · thin"]
-        MCP["MCP server<br/>knowl serve"]
-        CLI["CLI<br/>knowl …"]
-    end
-
-    subgraph core["Core services"]
-        RET["Retrieval<br/>BM25 + vector fusion · freshness · conflicts"]
-        WR["Deduped writes<br/>+ knowledge commits"]
-        LC["Lifecycle & work-loop<br/>sessions · checkpoints · handoffs"]
-        AI["Optional AI pipeline<br/>filter → extract → verify → merge → derive"]
-    end
-
-    subgraph store["Store · SQLite under .knowl/"]
-        DB[("knowl.db<br/>atoms · commits · FTS · vectors")]
-        SK["skills/<br/>SKILL.md · skill.json"]
-    end
-
-    agents --> proto
-    proto --> core
-    RET --> DB
-    WR --> DB
-    LC --> DB
-    AI --> DB
-    core --> SK
-```
-
-| Layer | Path | Responsibility |
-| --- | --- | --- |
-| Protocol | `src/mcp`, `src/cli` | Thin MCP + CLI adapters that delegate to core |
-| Retrieval / store | `src/store` | Schema, repository CRUD, BM25/FTS + vector search, agent-query behavior, deduped writes, commit-backed updates |
-| Pipeline (optional AI) | `src/pipeline`, `src/ai` | Filter → extract → verify → merge → optional truth derivation, and `ask` |
-| Code intelligence | `src/code` | Tree-sitter symbol indexing and `symbol://` evidence |
-| Skills | `src/skills` | File-backed learned skill packages |
-| Viewer | `src/viewer` | Read-only localhost inspector |
-
----
-
-## 🔄 How it works
-
-### Memory lifecycle
-
-Work produces either **ephemeral** session scratch (bounded, expires in 48h) or **durable** atoms. Durable writes are validated, deduped, merged, and recorded as knowledge commits so memory has history. When a terminal session finishes normally, Knowl deterministically promotes **at most five** evidence-backed candidates.
-
-```mermaid
-flowchart LR
-    W["Agent does work"] --> C{"Durable?"}
-    C -- "no" --> E["Ephemeral session event<br/>bounded · expires 48h"]
-    C -- "yes" --> V["Validate<br/>secret · path · size"]
-    V --> M["Dedupe + merge"]
-    M --> K[("Knowledge atom")]
-    K --> H["Knowledge commit<br/>(history)"]
-    E -. "promote ≤ 5 with evidence" .-> V
-```
-
-### Knowl-first retrieval policy
-
-Agents are guided to consult memory **before** inspecting repository files, and to fall back to files only on a miss, conflict, or stale/low-confidence result — then store what they verified.
-
-```mermaid
-flowchart TD
-    Q["New project question"] --> Hh{"Active lifecycle<br/>hit already?"}
-    Hh -- "yes" --> USE["Answer from memory"]
-    Hh -- "no" --> QRY["knowl_query · 2–6 keywords"]
-    QRY --> R{"Relevant active hit?"}
-    R -- "yes" --> USE
-    R -- "no / stale / conflict" --> F["Inspect repository files"]
-    F --> S["Store verified finding"]
-    S --> USE
-```
-
----
-
-## 🚀 Quick start
-
-### 1. Install
-
-```bash
-# Published CLI
-npm install -g @dat999zx/knowl
-knowl --version
-```
-
-<details>
-<summary>Build and link from source</summary>
-
-```bash
-git clone <repo-url>
-cd knowl
-npm install
-npm run build
-npm link
-```
-</details>
-
-### 2. Initialize a project
-
-From your project root:
-
-```bash
+cd your-project
 knowl init
 ```
 
-This creates `.knowl/config.json`, bootstraps `.knowl/knowl.db`, installs canonical `KNOWL.md` plus a synchronized managed section in `AGENTS.md`, ensures `.knowl/` is git-ignored, and offers project-local MCP + host setup for every detected agent.
+`knowl init` creates or upgrades `.knowl/`, initializes the database, installs the project
+guidance files, updates `.gitignore`, and offers MCP and lifecycle setup for detected agents.
+It also prepares the local embedding model on a best-effort basis. If the model is unavailable,
+setup still completes and retrieval falls back to BM25.
 
-### 3. Record your first decision
+Record a decision:
 
 ```bash
 knowl decide "Use SQLite" "Use SQLite for local project memory." \
-  --reasoning "Keeps Knowl local-first and simple to install." \
+  --reasoning "Keeps storage repository-local and simple to operate." \
   --alternatives PostgreSQL MongoDB \
   --tags database local-first
 ```
 
-### 4. Inspect and query
+Inspect and query the project memory:
 
 ```bash
-knowl status        # counts, categories, AI config, recent commits
-knowl state         # full active hierarchical memory
-knowl doctor        # is this project ready for agent memory?
-knowl query "why sqlite"
-```
-
-That's it. Start a fresh agent session, and it will pull relevant context at startup and query Knowl before reaching for files.
-
----
-
-## 🤝 Agent setup
-
-`knowl init` detects **Codex, Claude Code, Cursor, Gemini CLI, and Claude Desktop**, then presents a multi-select UI. Re-run it any time to add an agent or repair a stale registration — it preserves unrelated MCP servers and host rules, backs up existing configs before changing them, and never duplicates correct entries.
-
-```bash
-knowl init                          # interactive multi-select
-knowl init codex claude cursor gemini   # configure explicitly
-knowl doctor                        # verify readiness
-```
-
-`KNOWL.md` is the canonical full workflow; `AGENTS.md` carries the synchronized managed reference; `CLAUDE.md` imports `@KNOWL.md` and `GEMINI.md` imports `@./KNOWL.md` via native imports. Start a new agent session after setup and trust the repository when the host asks before running project hooks. Rerun `knowl init` after upgrades so imports and hook registrations reload.
-
-> **After upgrading Knowl, rerun `knowl init` for your hosts.** A release can add lifecycle events that an existing configuration does not register, and those hooks stay inert until you rerun it — `knowl doctor` reports the configuration as stale in the meantime. Your database needs no action: schema changes apply automatically the next time any Knowl process opens it. See [CHANGELOG.md](CHANGELOG.md) for what a given version changed.
-
----
-
-## ⌨️ CLI reference
-
-<details open>
-<summary><b>Project & status</b></summary>
-
-| Command | Description |
-| --- | --- |
-| `knowl init [agents...]` | Initialize **or** upgrade this project, then register detected agents (`codex`, `claude`, `cursor`, `gemini`, `claude-desktop`). Safe to re-run. |
-| `knowl upgrade` | The project-files half of `init` — refresh config, schema, guidance, and `.gitignore` with **no** agent setup or prompts (scriptable/CI-safe) |
-| `knowl status` | Repo path, item/category counts, AI config status, recent knowledge commits, and a new-version notice |
-| `knowl doctor` | Check whether the project is ready for agent memory usage (also reports a new version) |
-| `knowl state` | Print the full active hierarchical project memory |
-| `knowl audit` | Read-only validation, reference, JSON, status, and FTS integrity audit |
-
-</details>
-
-<details>
-<summary><b>Memory: decisions, queries, history</b></summary>
-
-| Command | Description |
-| --- | --- |
-| `knowl decide [title] [content]` | Record a decision (interactive if title/content omitted) |
-| `knowl query <query> [--as-of <ts>]` | Query current or historically valid content |
-| `knowl timeline <item-id>` | Print immutable content assertions for one item |
-| `knowl conflicts` | List active exclusive conflict identities |
-| `knowl supersede <item-id> <replacement-id>` | Mark one item superseded by an explicit replacement |
-| `knowl evidence list <item-id>` | List linked file/commit/test/command/URL/symbol evidence |
-| `knowl context --token-budget <n>` | Compose a compact task context pack |
-| `knowl eval retrieval --dataset <path> [--json]` | Run a checked-in retrieval evaluation dataset |
-
-</details>
-
-<details>
-<summary><b>Work loops & sessions</b></summary>
-
-| Command | Description |
-| --- | --- |
-| `knowl task start <title>` | Start a work loop, query memory, store active task state |
-| `knowl task checkpoint <task-id> <summary> [--goal ...] [--completed ...] [--next-action ...] [--blocker ...] [--artifact ...] [--verification-status ...]` | Store durable progress + optional structured task state |
-| `knowl task finish <task-id> <summary>` | Store durable completion state |
-| `knowl task run <title> -- <command...>` | Start a loop, run a command, finish on success or checkpoint on failure |
-| `knowl session start\|event\|finish\|recover` | Manage bounded, expiring scratch session events and recover stale sessions |
-
-</details>
-
-<details>
-<summary><b>Skills, code & AI</b></summary>
-
-| Command | Description |
-| --- | --- |
-| `knowl skill list\|read\|create\|run` | Manage and run file-backed learned skill packages |
-| `knowl code index` | Incrementally index TS/JS symbols and import/export edges |
-| `knowl code symbols <path>` | Print indexed symbols for one repo-relative file |
-| `knowl synthesize --scope <tag>` | Create/refresh deterministic evidence-backed understanding |
-| `knowl ask <question>` | Natural-language question over memory (requires AI config) |
-| `knowl ingest <text>` | Extract and merge knowledge from raw text (requires AI config) |
-
-</details>
-
-<details>
-<summary><b>Data, config & serving</b></summary>
-
-| Command | Description |
-| --- | --- |
-| `knowl export <path>` / `knowl import <path> [--dry-run]` | Versioned, manifest-verified JSONL portability |
-| `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Transactional SQLite snapshots with SHA-256 manifest |
-| `knowl config [get\|set\|reset] [key] [value]` | Interactive or scriptable configuration |
-| `knowl reindex --vectors` | Fetch the embedding model and backfill embeddings for existing atoms (new writes index themselves) |
-| `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access]` | Preview / apply memory GC; tune the archive/compress thresholds, and use `--ignore-access` to archive stale state even if it's hot (recently retrieved) |
-| `knowl view` | Start the read-only local viewer on `127.0.0.1` |
-| `knowl serve` | Start the stdio MCP server |
-| `knowl agent-event\|agent-hook\|agent-reminder` | Internal host lifecycle capture and the Claude prompt card |
-
-</details>
-
-Every structured and raw write passes deterministic **secret, sensitive-path, and size validation**. `knowl audit` never mutates data.
-
----
-
-## 🧩 Features in depth
-
-### Structured knowledge atoms
-
-Memory is organized into seven first-class categories, each a durable, typed atom with status, freshness, confidence, tags, and immutable history:
-
-| Category | Holds |
-| --- | --- |
-| `decision` | Choices with reasoning and alternatives |
-| `architecture` | How the system is built |
-| `goal` | What the project is trying to achieve |
-| `constraint` | Rules and boundaries that must hold |
-| `fact` | Stable truths and gotchas |
-| `state` | Current status and work-in-progress |
-| `skill` | Reusable, sometimes runnable, playbooks |
-
-```bash
-knowl decide "Adopt MCP" "Expose memory over MCP." --tags protocol
+knowl status
 knowl state
-knowl timeline <item-id>     # immutable content assertions over time
+knowl query "why sqlite"
+knowl doctor
 ```
 
-### Deterministic MCP memory (no API keys)
+## Workspaces
 
-The MCP server is the preferred surface for agents. Core tools — `knowl_store`, `knowl_ingest_atoms`, `knowl_decide`, `knowl_query`, `knowl_recent`, `knowl_state`, `knowl_update` — are **fully deterministic and require no Knowl-side AI provider**. The client model does the extraction; Knowl does the governed storage and retrieval. See [MCP tools & resources](#-mcp-tools--resources).
-
-### Vector-first retrieval, freshness-aware
-
-Retrieval leads with default-on local vector search (a MiniLM model is lazily downloaded on first use) and layers a bounded freshness/status/confidence/exact-identifier re-rank on top, so the current decision beats its stale sibling. **BM25 is the fallback** — it powers retrieval when vectors are disabled/unavailable and boosts exact filename/`symbol://` lookups where embeddings are weak. (This ordering came from a checked-in [ablation](#-benchmarks); the earlier equal-weight fusion diluted vector's ranking.) Rejected and superseded items never surface as current answers.
+Workspaces let an agent query promoted knowledge across related repositories without merging
+their databases.
 
 ```bash
-knowl query "auth token design"
-knowl query "sqlite persistence" --as-of 2026-01-01T00:00:00Z
-knowl reindex --vectors             # one-time: fetch the model + backfill existing atoms
-knowl config set search.vector.enabled false   # BM25-only if you prefer
+# Create a machine-local workspace.
+knowl workspace init product
+
+# Run inside each repository that should join it.
+knowl workspace add product
+knowl workspace status
+
+# Preview, then promote selected local knowledge.
+knowl workspace promote --category decision
+knowl workspace promote --category decision --apply
 ```
 
-**Embeddings stay fresh on their own.** New atoms are indexed as they're written, so vector search doesn't decay between manual reindexes. Two guardrails keep that safe: indexing is best-effort (it can never fail a write), and it **never downloads** — if the model isn't cached yet it silently skips, leaving the fetch to an explicit `knowl reindex --vectors`. So the flow is: run `reindex --vectors` once to pull the model and backfill, and writes keep themselves current from then on. Opt out with `KNOWL_DISABLE_WRITE_EMBEDDING=1`.
-
-Retrieval quality is measured, not asserted — see [Benchmarks](#-benchmarks).
-
-### Automatic work loop
-
-Wrap a command so the agent queries relevant memory first, then writes back success or a failure checkpoint with the child exit code:
+For another checkout or machine, copy the workspace manifest and join from each repository:
 
 ```bash
-knowl task run "Run tests" --query "test verification" -- npm test
+knowl workspace join /path/to/workspace.json --name api
 ```
 
-Or drive checkpoints manually for resumable work:
+The shipped workspace commands are:
+
+| Command | Purpose |
+| --- | --- |
+| `knowl workspace init <name>` | Create a workspace outside its member repositories |
+| `knowl workspace add <name> [--name <repo-name>]` | Link the current repository |
+| `knowl workspace join <manifest> [--name <repo-name>]` | Adopt a copied manifest and map this checkout |
+| `knowl workspace list` | List workspaces known to this machine |
+| `knowl workspace status [--verbose]` | Show this repository's membership and peer health |
+| `knowl workspace remove <repo-name> [--export-first]` | Unlink the current repository and retire its workspace name |
+| `knowl workspace promote (--category <list> \| --id <id...>) [--apply]` | Preview or publish selected locally owned atoms |
+
+Knowledge remains repository-private until it is promoted. Federated query results include a
+`repo` field naming the repository that owns each item. Peer items are read-only from the current
+repository; update them from their owning repository. Code-symbol indexing and `symbol://`
+evidence resolution remain repository-local.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["Coding agents"] --> P["CLI · MCP"]
+    P --> C["Retrieval · governance · lifecycle"]
+    C --> D[("Local .knowl/knowl.db")]
+    C --> S["File-backed skills"]
+    P -. "workspace query" .-> W[("Promoted peer atoms<br/>read-only")]
+```
+
+1. **Retrieve first.** An agent queries focused project memory before re-reading the repository.
+2. **Verify when needed.** A miss, conflict, or stale/low-confidence result sends the agent to
+   repository evidence.
+3. **Write governed memory.** Durable findings are validated, deduplicated, and recorded with
+   knowledge-commit history. Superseded and rejected items stay available to history without
+   appearing as active answers.
+4. **Resume with context.** Lifecycle hooks, task checkpoints, and bounded session events carry
+   useful state across agent turns and sessions.
+
+The CLI and MCP adapters share the same storage and retrieval services. Structured writes pass
+secret, sensitive-path, and size validation before reaching the database.
+
+### Local vector search
+
+Local vector search is enabled by default and combined with BM25 retrieval. `knowl init` prepares
+the embedding model without making setup depend on a successful download:
+
+- Offline setup continues with BM25.
+- New writes are embedded when the model is already cached; write-time embedding never downloads
+  the model or fails the write.
+- `knowl reindex --vectors` prepares the model and backfills embeddings for existing atoms.
+
+After upgrading an existing project, run `knowl reindex --vectors` once to cover knowledge written
+before vector indexing was available.
+
+## Current capabilities
+
+| Area | What is available |
+| --- | --- |
+| Structured memory | Seven atom categories, status, freshness, confidence, tags, immutable assertions, and knowledge commits |
+| Retrieval | Local vector-first ranking with BM25 fallback, exact-identifier support, `--as-of` history, and token-budgeted context packs |
+| Governance | Explicit decisions, alternatives, supersession, conflict identities, rejected-state filtering, and evidence-backed updates |
+| Agent lifecycle | Automatic host hooks plus manual task loops, checkpoints, session recovery, and subagent context |
+| Provenance | File, commit, test, command, URL, and Tree-sitter TS/JS `symbol://` evidence |
+| Learned skills | File-backed `SKILL.md` packages with inspected, named entrypoints |
+| Operations | Export/import, snapshots, integrity audit, access reporting, PR drift checks, and preview-before-apply GC |
+| Inspection | Status and doctor reports plus a read-only graph viewer on `127.0.0.1` |
+
+### Local viewer
+
+Run `knowl view` to inspect atoms, relationships, evidence, freshness, and history without changing
+the database.
+
+<p align="center">
+  <img src="docs/assets/viewer-graph.png" alt="Knowl local viewer showing the project-memory graph" width="48%" />
+  <img src="docs/assets/viewer-inspect.png" alt="Knowl local viewer showing details for a selected knowledge atom" width="48%" />
+</p>
+
+## Agent setup
+
+`knowl init` detects Codex, Claude Code, Cursor, Gemini CLI, and Claude Desktop. Run it
+interactively or name the integrations explicitly:
 
 ```bash
-knowl task start "Implement search UI" --query "search retrieval"
-knowl task checkpoint <task-id> "Added search UI tests" \
-  --goal "Ship search UI" \
-  --completed "Added search UI tests" \
-  --next-action "Finish implementation" \
-  --artifact "src/search-ui.ts" \
-  --verification-status "tests-passing"
-knowl task finish <task-id> "Verified search UI implementation"
+knowl init
+knowl init codex claude cursor gemini claude-desktop
+knowl doctor
 ```
 
-### Agent lifecycle automation
+`KNOWL.md` contains the canonical workflow. `AGENTS.md` receives a synchronized managed section;
+`CLAUDE.md` imports `@KNOWL.md`, and `GEMINI.md` imports `@./KNOWL.md`. For Claude Code, the
+installed prompt hook invokes `knowl agent-reminder claude --json`. Existing unrelated MCP
+servers and host rules are preserved, and changed configuration files are backed up.
 
-`knowl init` installs **verified** project-local hooks for Codex CLI, Claude Code, and Cursor. Lifecycle hooks call short-lived `knowl agent-hook <host> <event>` processes that normalize vendor payloads into bounded session events. MCP tools use a separate host-spawned `knowl serve` process — hooks never launch or manage `serve`.
+Start a new agent session after setup. Re-run `knowl init` after an upgrade that adds lifecycle
+events so host registrations and managed guidance are refreshed; database migrations apply when
+Knowl next opens the project.
 
-- **SessionStart** injects retrieved memory for the main session; **SubagentStart** does the same for each spawned subagent on hosts that have subagents, at half the context budget.
-- **Claude Code** additionally gets a fixed prompt-time guidance card (`knowl agent-reminder claude --json`). Hosts with a mid-turn channel also get a drift-adaptive continuation reminder: it fires only after 12 consecutive accepted tool events that ignored Knowl, and any Knowl tool call resets the counter. An agent actively using memory never sees it. Neither reads the prompt.
-- **Memory that changes mid-session** is reported on the next tool event, per agent. See [Subagent memory & change notification](#subagent-memory--change-notification).
-- On a **hard-stop failure**, Knowl stores a host-scoped `pending_handoff` state item; the next matching-host SessionStart injects it once, then archives it.
+## Benchmarks
 
-Raw prompts, transcripts, stdout/stderr, and environment variables are **never** retained. Malformed or secret-bearing payloads are rejected; duplicate stop events are idempotently dropped; stale sessions recover at the next session start. Knowl never guesses or writes an unverified host configuration.
+The two suites below answer different questions. MemoryAgentBench is an external dataset used for
+a controlled governance ablation. The retrieval suite is an internal repository regression suite.
 
-> Unsupported hosts keep full MCP access; `knowl task run` is the manual fallback. Gemini uses native `@./KNOWL.md` imports and stays on the manual loop.
+### MemoryAgentBench Conflict Resolution
 
-### Subagent memory & change notification
-
-Parallel agents on one machine all open the same `.knowl/knowl.db`. Nothing is replicated, so there is nothing to merge — but an agent that loaded a snapshot at startup will happily keep reasoning from it while a sibling rewrites the very decision it depends on. That is cache invalidation, not synchronization, and Knowl treats it as such.
-
-**Subagents get their own memory.** `SessionStart` fires once per session, so a spawned Claude Code subagent never sees it; subagents get a separate `SubagentStart` event instead. Knowl registers that event, so each subagent starts with its own snapshot, capped at half the normal context budget because fan-out multiplies whatever a subagent costs.
-
-**Each agent gets its own identity.** Subagent hook events carry an `agent_id`, which Knowl uses as the binding scope. Every subagent therefore has an independent watermark *and* an independent reminder counter, isolated from its siblings and from the main thread.
-
-**Changed memory is reported once, to whoever did not write it.** Every accepted tool event compares a per-agent watermark against the latest knowledge commit. When it has moved, the agent gets a compact card naming what changed:
-
-```
-KNOWL CHANGED: 2 items since you last looked.
-- decision: Session bindings are scoped per subagent
-- fact (update): Vector search falls back to BM25 when no model is cached
-Call knowl_query before relying on earlier memory in these areas.
-```
-
-Titles only — enough to decide whether the change matters, with `knowl_query` for the content. At most five lines, titles truncated to 90 characters, and a corrected item is marked with its action so a supersede is never mistaken for a new note.
-
-Three properties make it cheap enough to run on every tool call:
-
-- **Nothing changed costs nothing.** The check is one integer comparison on a connection the hook already has open and already writes to. No card is emitted, so no tokens are spent.
-- **It replaces the continuation reminder** when both would fire, rather than adding to it, and delivering it resets the drift counter — the agent already has its reason to re-query.
-- **It never reports your own writes back to you.** A new commit is recognised as the caller's own by matching the arguments of the call that produced it, so storing a fact does not notify you about it. No extra bookkeeping, and no attribution column.
-
-**Host coverage.** **Claude Code** and **Codex CLI** both get the full behaviour — subagent
-bootstrap and change cards over `hookSpecificOutput.additionalContext`, each verified with a
-live subagent and a live model run. **Cursor** is sent `additional_context`; its hooks accept
-it, though upstream reports say it is not yet surfaced to the model, so it will start working
-there without any change here. **Claude Desktop** and **Gemini** have no lifecycle hook
-channel and stay MCP-only. Host-neutral integrations read the same information as `changes` in
-the `knowl agent-hook … --json` result, which needs no host protocol at all.
-
-Each host is one file under `src/cli/agents/hosts/`, declaring its identity keys, event map,
-and context envelopes. A host that cannot receive context returns nothing rather than setting
-a flag, so support can never be claimed for a channel that does not deliver. Adding a host is
-adding a file.
-
-> **Codex requires hook trust.** Codex will not execute project hooks until they are trusted
-> once — interactively when prompted, or with `--dangerously-bypass-hook-trust` in automation.
-> Until then the hooks silently do not run.
-
-**Known limits.** A sibling commit that lands between your own write and its hook event is absorbed silently. Knowl used through the CLI rather than MCP appears to the hook as a shell command, so your own CLI write is reported back to you as foreign. Subagent-scoped isolation needs a host that reports a subagent identity on its hook events; hosts without one share a single per-turn watermark.
-
-### Evidence & provenance
-
-Each atom can link multiple `supports`, `contradicts`, or `derived_from` records against files, commits, tests, commands, URLs, users, agents, or indexed symbols. File evidence reports **stale** when its stored hash no longer matches disk.
-
-```bash
-knowl evidence list <item-id>
-# e.g. src/auth/token.ts:18-55 supports a JWT decision;
-#      commit a18f7c2 derives it; tests/auth-token.spec.ts supports it.
-```
-
-### Temporal assertions & conflicts
-
-Content changes are immutable assertions, so you can ask what memory said at a point in time and reconcile mutually exclusive claims through explicit conflict identities.
-
-```bash
-knowl timeline <item-id>
-knowl conflicts
-knowl supersede <old-item-id> <replacement-id>
-```
-
-**Current truth is maintained on write, not just on read.** Recording a decision that matches an existing one retires the old decision (`status: superseded`), and a **changed `state` atom supersedes its near-duplicate predecessor** — so "what are we doing now?" resolves to the latest status instead of accumulating stale copies. This also applies to the automatic session→durable promotion. `fact`, `constraint`, `architecture`, and `goal` atoms deliberately **coexist** (two facts can both be true; nothing is silently retired on a fuzzy match) — retire those explicitly with `knowl_update`, `knowl supersede`, or `knowl_store { supersedes: <id> }`. Exclusive `conflictKey`s still reject a colliding write outright so contradictions surface instead of piling up.
-
-### Learned skills
-
-Store reusable, file-backed skill packages under `.knowl/skills/<name>/` (`SKILL.md`, `skill.json`, optional scripts), indexed as `skill` atoms and runnable through stable CLI/MCP bridges — no new tool per skill.
-
-```bash
-knowl skill create run_app \
-  --purpose "Start the app locally" \
-  --markdown "# Run App\n\nUse this to start the app.\n" \
-  --file "run.ps1=Write-Output 'run-app'" \
-  --script run.ps1
-
-knowl skill list
-knowl skill read run_app
-knowl skill run run_app
-```
-
-### Symbol index
-
-Incrementally index TypeScript/JavaScript symbols and import/export edges locally with Tree-sitter, and attach durable evidence to `symbol://` locators.
-
-```bash
-knowl code index
-knowl code symbols src/store/repository.ts
-```
-
-### Token-budgeted context packs
-
-Compose a compact, bounded context pack with pinned constraints and explicit exclusions — ideal for handing an agent exactly what fits its budget.
-
-```bash
-knowl context --token-budget 1500
-```
-
-### Portability, snapshots & audit
-
-```bash
-knowl export ./knowl-export.jsonl        # versioned, manifest-verified
-knowl import ./knowl-export.jsonl --dry-run
-knowl snapshot create                    # timestamped DB + SHA-256 manifest
-knowl snapshot restore .knowl/snapshots/<snap>.db --confirm
-knowl audit                              # read-only integrity check
-```
-
-Restore requires `--confirm`, verifies the manifest when present, creates a pre-restore snapshot, then audits the restored store.
-
-### Local viewer — your project brain, wired
-
-`knowl view` opens a read-only, localhost-only inspector that renders memory as a **force-directed neural graph** instead of a wall of JSON: every atom is a node colored by category and sized by how connected it is, every synapse is a shared tag.
-
-```bash
-knowl view      # neural memory graph on 127.0.0.1
-```
+[MemoryAgentBench](https://github.com/HUST-AI-HYZ/MemoryAgentBench)
+([ICLR 2026 paper](https://arxiv.org/abs/2507.05257)) defines a Conflict Resolution track for
+retrieving the newest valid fact after updates. Knowl's run uses the checked-in
+`factconsolidation_sh_6k` instance: 455 facts, 100 questions, top-*k* 5, and vector+BM25
+retrieval.
 
 <div align="center">
-<img src="docs/assets/viewer-graph.png" alt="Knowl neural memory graph — atoms colored by category, linked by shared tags" width="100%" />
+<img src="docs/assets/benchmark-conflict-resolution.svg" alt="MemoryAgentBench conflict-resolution ablation: supersession on reached 96 percent top-1 with 3 stale returns; supersession off reached 40 percent top-1 with 62 stale returns" width="82%" />
 </div>
 
-Hover a neuron to light up its neighborhood; click to open an inspector with the atom's content, reasoning, tags, linked **evidence**, and full **timeline**. Search highlights matching atoms live, category chips double as filters, and stale atoms get a dashed amber ring.
+| Configuration | Top-1 accuracy | Stale returns | Active atoms after ingest |
+| --- | ---: | ---: | ---: |
+| **Supersession ON** | **96.0%** | **3 / 100** | 306 |
+| Supersession OFF | 40.0% | 62 / 100 | 455 |
+
+With supersession enabled, 149 of the 455 facts were retired at write time. The two rows otherwise
+use the same corpus, retrieval path, and metric. No LLM reader is used, so this is a
+retrieval-level ablation, not an end-to-end leaderboard.
+
+See the [protocol and interpretation](docs/evals/memoryagentbench-cr.md) and the raw
+[supersession-ON](benchmarks/memoryagentbench/results/cr-sh-6k-supersede-on.json) and
+[supersession-OFF](benchmarks/memoryagentbench/results/cr-sh-6k-supersede-off.json) results.
+
+Reproduce from a source checkout with the repository-only benchmark harness:
+
+```bash
+npm run bench:cr -- fetch --row 4
+npm run bench:cr -- run --instance benchmarks/memoryagentbench/data/cr-sh-6k.json --top-k 5
+npm run bench:cr -- run --instance benchmarks/memoryagentbench/data/cr-sh-6k.json --top-k 5 --no-supersede
+```
+
+These `npm run bench:cr -- ...` commands are repository scripts, not published `knowl` CLI
+commands.
+
+### Internal retrieval regression suite
+
+The checked-in [`retrieval-suite.json`](docs/evals/retrieval-suite.json) contains 500 cases over
+168 atoms. It is maintained as a repository regression suite, not third-party evidence.
 
 <div align="center">
-<img src="docs/assets/viewer-inspect.png" alt="Knowl viewer inspector — content, tags, evidence, and timeline for a selected atom" width="100%" />
+<img src="docs/assets/benchmark-retrieval-quality.svg" alt="Internal retrieval regression suite: Recall at 3 98.9 percent, Recall at 10 99.4 percent, MRR 96.1 percent, and nDCG 96.9 percent" width="82%" />
 </div>
 
-*(Screenshots show Knowl's own project memory: 221 atoms, 593 links.)*
-
----
-
-## 📊 Benchmarks
-
-Every number below is produced by checked-in tooling and reproducible on your machine — the full datasets ship in [`docs/evals/`](docs/evals/) so you can see exactly which cases pass and which miss. We measure **two** things: ordinary **retrieval quality**, and — more importantly — **governance**, the part other memory systems don't test.
-
-### Retrieval quality
-
-Run against the checked-in **retrieval suite** ([`docs/evals/retrieval-suite.json`](docs/evals/retrieval-suite.json)) — **500 cases** over **168 knowledge atoms** across ~20 engineering domains, adversarial by design: paraphrased and vague queries, **40 near-identical microservices** as mutual distractors, filename/provenance lookups, and `stale`/`rejected` traps the retriever must avoid. The numbers below are the **default path real agents use**: local **vector search fused with BM25**.
-
-<div align="center">
-<img src="docs/assets/benchmark-retrieval-quality.svg" alt="Retrieval quality on the 500-case suite with vector+BM25 fusion: Recall@3 98.9%, Recall@10 99.4%, MRR 96.1%, nDCG 96.9%" width="82%" />
-</div>
+| Recall@3 | Recall@10 | MRR | nDCG | Misses |
+| ---: | ---: | ---: | ---: | ---: |
+| 98.9% | 99.4% | 96.1% | 96.9% | 8 / 500 |
 
 ```bash
 knowl eval retrieval --dataset docs/evals/retrieval-suite.json --vector --json
 ```
 
-```json
-{
-  "metrics": {
-    "recallAt3": 0.989, "recallAt10": 0.994,
-    "mrr": 0.961, "ndcg": 0.969,
-    "staleHitCount": 15, "forbiddenHitCount": 5,
-    "p50LatencyMs": 320, "p95LatencyMs": 1124,
-    "averageContextChars": 6524
-  },
-  "failedCaseIds": [ "db-direct", "fe-state-q", "fe-noredux", "rate-worker-vs-api", "…8 total" ]
-}
-```
+The checked-in performance commit `2cc8cd1` kept Recall@10 at 99.4%, MRR at 96.1%, and the
+same eight misses while reducing p50 latency
+from 57 ms to 26 ms and p95 from 67 ms to 31 ms in that run. Latency depends on hardware,
+model cache state, and corpus; rerun the suite for a local measurement.
 
-**492 of 500 cases hit** their expected atom in the top results. We keep the **8 honest misses** in the dataset rather than deleting them — they cluster on `stale`-beats-fresh siblings and a couple of the 40 look-alike services. `rejected`/superseded items are **never** returned (filtered from active retrieval), so the residual `forbiddenHitCount` is only stale-but-active distractors, never a rejected decision.
+## CLI reference
 
-> **Retrieval-engine note.** An ablation (BM25-only vs vector-only vs fused) found the old equal-weight fusion was *diluting* vector's ranking. Knowl now ranks **vector-first**, keeps a bounded freshness/status re-rank for governance, and treats **BM25 as a fallback + exact-identifier booster** — lifting suite MRR from **78.4% → 96.1%**. Vector search embeds the query locally (~0.3s p50 on CPU); run **without** `--vector` for the deterministic BM25-only lower bound (Recall@10 96.3%, MRR 78.4%, ~30ms) that needs no model and backs the CI smoke test. A 10-case smoke dataset ([`docs/evals/retrieval-baseline.json`](docs/evals/retrieval-baseline.json)) is also kept as a fast regression check.
+### Project and status
 
-### Governance — the part that actually differentiates
+| Command | Description |
+| --- | --- |
+| `knowl init [agents...]` | Initialize or upgrade the project and configure selected agents |
+| `knowl upgrade` | Refresh project files, schema, guidance, and `.gitignore` without agent setup |
+| `knowl status` | Show repository, memory, AI, commit, and workspace status |
+| `knowl doctor` | Check project, vector coverage, agent, and workspace readiness |
+| `knowl state` | Print the full active hierarchical project memory |
+| `knowl audit` | Run a read-only integrity audit |
 
-Retrieval asks *"can you find the text?"* Governance asks *"after the project changed its mind, do you return the **current** truth — and never a decision we **rejected**?"* This is Knowl's reason to exist, and it's measurable. The governance suite ([`docs/evals/retrieval-governance.json`](docs/evals/retrieval-governance.json)) seeds **22 migration scenarios** — each with a *current* decision, a *superseded/stale* one, and often a *rejected* alternative on the same topic — then asks "what do we use now?" and "why did we choose it?".
+### Workspaces
 
-<div align="center">
-<img src="docs/assets/benchmark-governance.svg" alt="Governance: current-truth MRR 94%, current truth in top-3 100%, 0 of 24 rejected decisions surfaced" width="82%" />
-</div>
+| Command | Description |
+| --- | --- |
+| `knowl workspace init <name>` | Create a workspace |
+| `knowl workspace add <name> [--name <repo-name>] [--force]` | Link the current repository |
+| `knowl workspace join <manifest> [--name <repo-name>]` | Join from a copied manifest |
+| `knowl workspace list` | List machine-local workspaces |
+| `knowl workspace status [--verbose]` | Show membership and resolved peers |
+| `knowl workspace remove <repo-name> [--export-first]` | Unlink the current repository |
+| `knowl workspace promote (--category <list> \| --id <id...>) [--apply]` | Preview or promote locally owned knowledge |
 
-- **Current truth wins.** The fresh decision is ranked **#1** with MRR **94%** (Recall@3 **100%**) — ask "which database do we use now?" and PostgreSQL comes back on top, not the MySQL you migrated off.
-- **Rejected decisions are never surfaced.** Across **24 rejected-decision traps, 0 leaked** — `rejected`/`superseded` status is filtered out of active retrieval entirely. A memory built on raw transcripts *cannot* make that guarantee; the rejected idea is still sitting in the chat log.
-- **By design:** the superseded sibling is *downranked below* the current decision but still reachable further down the list — history is preserved, not deleted. Filter by freshness or query `--as-of` when you want only the current answer.
+### Memory and retrieval
 
-### Speed & footprint
+| Command | Description |
+| --- | --- |
+| `knowl decide [title] [content]` | Record a decision, reasoning, alternatives, and tags |
+| `knowl query [query] [--as-of <timestamp>] [--limit <count>]` | Query current or historical memory; search text is optional |
+| `knowl timeline <item-id>` | Print immutable assertions for one item |
+| `knowl conflicts` | List active exclusive conflict identities |
+| `knowl supersede <item-id> <replacement-id>` | Retire one item in favor of its replacement |
+| `knowl evidence list <item-id>` | List evidence and symbol staleness for an item |
+| `knowl context --token-budget <n> [--query <query>] [--task <task>]` | Compose a bounded context pack |
+| `knowl eval retrieval --dataset <path> [--vector] [--json]` | Run a retrieval dataset; `--vector` enables vector+BM25 evaluation |
+| `knowl access report [--json]` | Report highly used, stale, and correction-causing knowledge |
 
-<div align="center">
-<img src="docs/assets/benchmark-speed.svg" alt="Speed and footprint: vector fusion ~0.3s p50, BM25-only ~30ms p50, avg context ~6KB per query" width="82%" />
-</div>
+### Work loops and sessions
 
-Retrieval runs in-process against local SQLite — no network round trip. With local vector search on, p50 is **~0.3s** (dominated by embedding the query on CPU); disable vectors for a **~30ms** BM25-only path. Either way it returns ~10 compact ranked atoms (latency varies with hardware).
+| Command | Description |
+| --- | --- |
+| `knowl task start <title> [-q <query>]` | Start a manual work loop with a focused lookup |
+| `knowl task checkpoint <task-id> <summary> [options]` | Store resumable progress, blockers, artifacts, and verification state |
+| `knowl task finish <task-id> <summary>` | Finish a manual work loop |
+| `knowl task run <title> -- <command...>` | Wrap one bounded command in a work loop |
+| `knowl session start\|event\|finish\|recover` | Manage bounded, expiring session scratch and recovery |
 
-### Always-on guidance overhead
+### Skills, code, and optional AI
 
-Claude Code's fixed prompt-time card is intentionally cheap: it emits static workflow guidance without reading the prompt, opening the database, or capturing a session.
+| Command | Description |
+| --- | --- |
+| `knowl skill list\|read\|create\|run` | Manage file-backed learned skills and their entrypoints |
+| `knowl code index` | Incrementally index TS/JS symbols and import/export edges |
+| `knowl code symbols <path>` | Print indexed symbols for one repository-relative file |
+| `knowl synthesize --scope <path-or-tag>` | Create or refresh one scoped evidence-backed understanding |
+| `knowl ask <question>` | Ask a natural-language question using configured AI |
+| `knowl ingest <text>` | Extract and merge knowledge from explicitly supplied text using configured AI |
 
-<div align="center">
-<img src="docs/assets/benchmark-overhead.svg" alt="Always-on guidance footprint: 424 tokens, 1695 characters, 11 lines, 0 database reads" width="82%" />
-</div>
+### Data, maintenance, and serving
 
-The two mid-turn cards are smaller by design and neither is constant overhead. The continuation reminder is a single 302-character line that fires only after 12 consecutive tool events which ignored Knowl. The change card is emitted only when memory actually moved, and is bounded by construction — five item lines, titles truncated to 90 characters — so it stays under roughly 600 characters at its largest and costs nothing on a session where nothing changed.
+| Command | Description |
+| --- | --- |
+| `knowl export <path>` | Write portable, manifest-verified JSONL |
+| `knowl import <path> [--dry-run] [--on-divergence newer\|skip\|theirs\|fail]` | Import JSONL with an explicit divergence policy |
+| `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Create or restore a verified SQLite snapshot |
+| `knowl config` / `get <key>` / `set <key> <value>` / `reset [key]` | Edit configuration interactively or from scripts |
+| `knowl reindex --vectors` | Prepare the local model and backfill existing vector embeddings |
+| `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access] [--tombstone-days N]` | Preview or apply archive, compression, and tombstone cleanup |
+| `knowl pr check --since <commit> [--dry-run]` | Find evidence tied to changed files and mark affected knowledge for review |
+| `knowl view [--port <port>]` | Start the read-only local viewer |
+| `knowl serve` | Start the stdio MCP server |
+| `knowl agent-event\|agent-hook\|agent-reminder` | Host-integration commands used by installed lifecycle configuration |
 
-Reproduce the card and its size:
+## MCP tools and resources
 
-```bash
-knowl agent-reminder claude --json
-```
+Run `knowl serve` to expose Knowl over stdio MCP. The recommended agent flow is:
 
-Launch latency is a short-lived Node process spawned per prompt and runs off the user's critical path: on a warm run this environment measured a **~1.36 s** mean (p50 1.34 s, p95 1.51 s) over 25 launches; a dedicated linked-checkout reference environment previously measured **~0.95 s** mean (p50 0.91 s, p95 1.18 s) over 100 launches, with **zero** lingering reminder processes.
+1. Use lifecycle bootstrap context when available; otherwise use `knowl_recent`.
+2. Call `knowl_query` with two to six focused keywords before inspecting repository files.
+3. Verify misses, conflicts, or stale results against the repository.
+4. Store verified durable findings and update contradicted memory promptly.
+5. Use the manual task tools only when verified lifecycle hooks are unavailable.
 
-> **How we measure.** Retrieval metrics come from `src/store/retrieval-evaluation.ts` (recall@k, MRR, nDCG, stale/forbidden counts, p50/p95 latency, average context size — all computed without database access inside the metric functions). The eval spins up a throwaway store from the dataset's `fixtures`, runs each case through the same `queryKnowledgeForAgent` path agents use, and tears it down. With `--vector` it reindexes fixture embeddings and embeds each query so the run mirrors the real vector+BM25 fusion path; without it, retrieval is BM25-only and fully deterministic (no model download — the CI path). Numbers vary with hardware; rerun the commands above to get yours.
+### Tools
 
-> **A note on leaderboards.** Every number here is measured on the datasets shipped in this repo, so you can reproduce it. We don't publish a cross-tool leaderboard: memory projects each report on their own corpus with their own protocol, and an LLM-judge score isn't a Recall@k — lining them up in one table would look rigorous and mean nothing. Run our suites against anything you like; the datasets are right there.
-
-### Token efficiency
-
-Memory is only useful if it's cheap enough to keep on. Knowl is bounded at every surface:
-
-| Surface | Token cost | How it's bounded |
-| --- | --- | --- |
-| Per-prompt reminder | **~131** | Short routing nudge; full 24-tool card lives in `KNOWL.md` + MCP `initialize` (loaded once, not re-injected) |
-| Mid-turn continuation nudge | **~55** | One compact line, only after every 8th accepted tool call — never per event |
-| `knowl_query` (default 3 atoms) | **~550** | Each atom's content truncated to 600 chars; evidence opt-in |
-| `knowl_context --token-budget N` | **≤ N** | Composer adds atoms only while `used + cost ≤ N`; pinned constraints first, `estimatedTokens` returned |
-| `knowl_state` (full brain) | ~24K on a 221-atom project | **Never** injected automatically — SessionStart uses compact recent context instead |
-
-The always-on Claude guidance dropped from **424 → 131 tokens/prompt** — over a 50-prompt session that's ~15K tokens saved. Retrieval returns compact, budgeted context by default; ask for `includeEvidence` or a larger `limit` only when you need the detail.
-
-Workspace guidance is charged where it is cheapest. The per-prompt reminder is **unchanged at 131 tokens** — linking repos adds nothing to it. The cost lands on the once-per-session `KNOWL.md` section (~1,015 tokens, +90) and the subagent bootstrap card (157 tokens, +25), each paid once rather than on every turn.
-
----
-
-## 🔌 MCP tools & resources
-
-MCP is the preferred way for agents to use Knowl. The server publishes this same host-neutral workflow card in its `initialize` instructions. Recommended flow:
-
-1. Lifecycle hooks deliver compact context **once** at session start — call `knowl_recent` only when hooks are unavailable or a refresh is needed.
-2. Use `knowl_query` for specific questions with 2–6 concise keywords.
-3. Use `knowl_state` only for broad full-state summaries.
-4. Re-query before each new subtask or area switch.
-5. Store durable findings immediately with `knowl_store`, `knowl_decide`, or `knowl_ingest_atoms`.
-6. Use `knowl_update` as soon as you find stale or contradicted memory.
-
-<details open>
-<summary><b>Tools</b></summary>
+Knowl exposes exactly 24 MCP tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `knowl_query` | Focused 2–6 keyword retrieval before files and before each new subtask/area switch |
+| `knowl_query` | Focused retrieval before files and before each new subtask or project area |
 | `knowl_recent` | Compact recent context when lifecycle bootstrap is unavailable or a refresh is needed |
-| `knowl_state` | Broad active project-memory status or full-state summary |
+| `knowl_state` | Broad active-memory status or full-state summary |
 | `knowl_context` | Compose an explicitly token-budgeted context pack |
 | `knowl_task_start` | Start one manual work loop when verified lifecycle hooks are unavailable |
-| `knowl_task_checkpoint` | Checkpoint meaningful manual-loop progress or blockers with its task ID |
-| `knowl_task_finish` | Finish one manual work loop once after verification |
-| `knowl_store` | Store one concise structured durable atom; optional `supersedes: <id>` retires the item it replaces |
-| `knowl_ingest_atoms` | Batch store client-extracted durable atoms, never raw transcripts |
-| `knowl_decide` | Record a confirmed project decision and reasoning |
+| `knowl_task_checkpoint` | Checkpoint meaningful manual-loop progress or blockers |
+| `knowl_task_finish` | Finish one manual work loop after verification |
+| `knowl_store` | Store one concise structured atom |
+| `knowl_ingest_atoms` | Batch-store client-extracted atoms |
+| `knowl_decide` | Record a confirmed decision and reasoning |
 | `knowl_update` | Correct or supersede stale or contradicted memory |
-| `knowl_timeline` | Inspect immutable assertions for one item's history |
+| `knowl_timeline` | Inspect one item's immutable assertion history |
 | `knowl_evidence_list` | Inspect evidence linked to one item |
 | `knowl_conflicts` | Inspect active exclusive conflict identities |
-| `knowl_feedback` | Record feedback after an item was actually used, rejected, or corrected |
+| `knowl_feedback` | Record usefulness or correction feedback after an item is used |
 | `knowl_skill_list` | List learned file-backed skills |
-| `knowl_skill_read` | Inspect one learned skill package before running it |
-| `knowl_skill_run` | Run a trusted matching learned-skill entrypoint |
-| `knowl_skill_create` | Create a reusable learned skill only when explicitly requested |
-| `knowl_ingest` | Process explicitly supplied raw source through configured AI; never silently ingest the chat |
-| `knowl_synthesize` | Create or refresh one explicitly scoped evidence-backed understanding; never automatic |
-| `knowl_session_finish` | Finish an explicitly owned manual memory session, never a hook-owned session |
-| `knowl_gc_preview` | Preview duplicate, stale, or cold memory cleanup |
+| `knowl_skill_read` | Inspect one learned skill before running it |
+| `knowl_skill_run` | Run a trusted learned-skill entrypoint |
+| `knowl_skill_create` | Create a learned skill when explicitly requested |
+| `knowl_ingest` | Process explicitly supplied raw source through configured AI |
+| `knowl_synthesize` | Create or refresh one explicitly scoped understanding |
+| `knowl_session_finish` | Finish an explicitly owned manual memory session |
+| `knowl_gc_preview` | Preview duplicate, stale, or cold-memory maintenance |
 | `knowl_gc_apply` | Apply previewed maintenance after explicit approval |
 
-</details>
-
-<details>
-<summary><b>Readable resources</b></summary>
+### Readable resources
 
 | Resource | Purpose |
 | --- | --- |
 | `knowl://recent` | Compact recent session context |
-| `knowl://brain` | Full active project brain state |
-| `knowl://category/<name>` | Active items for a category such as `decision`, `architecture`, or `state` |
+| `knowl://brain` | Full active project memory |
+| `knowl://category/<name>` | Active atoms for a category such as `decision`, `architecture`, or `state` |
 
-</details>
+`Auth: Unsupported` is expected for this local stdio server and does not indicate that the tools
+are unavailable.
 
-> If an MCP client shows `Auth: Unsupported` for this local stdio server, that is expected and does not mean Knowl is unavailable.
+## Optional AI
 
----
-
-## 🤖 Optional AI configuration
-
-Knowl needs **no** AI configuration for MCP structured tools. Configure a provider only for `knowl ask`, `knowl ingest`, MCP `knowl_ingest`, and AI-assisted decision-conflict handling. Supported providers: `openai`, `anthropic`, `ollama`, `custom`.
+Structured MCP tools, CLI memory operations, and local vector retrieval work without an AI API
+key. Configure an AI provider only for `knowl ask`, `knowl ingest`, MCP `knowl_ingest`, and
+AI-assisted decision-conflict handling. Supported providers are `openai`, `anthropic`, `ollama`,
+and `custom`.
 
 ```bash
-# OpenAI
 knowl config set ai.provider openai
-knowl config set ai.model gpt-4o-mini
+knowl config set ai.model your-model
 knowl config set ai.apiKey '${OPENAI_API_KEY}'
-
-# Anthropic
-knowl config set ai.provider anthropic
-knowl config set ai.model claude-3-5-sonnet-latest
-knowl config set ai.apiKey '${ANTHROPIC_API_KEY}'
-
-# Ollama (local)
-knowl config set ai.provider ollama
-knowl config set ai.model llama3.1
-
-# Custom OpenAI-compatible endpoint
-knowl config set ai.provider custom
-knowl config set ai.model my-model
-knowl config set ai.baseUrl http://localhost:8080/v1
-knowl config set ai.apiKey my-key
 ```
 
-Environment-variable placeholders such as `${OPENAI_API_KEY}` are resolved at runtime.
+Environment-variable placeholders are resolved at runtime. Ollama can be configured without an
+API key; a custom OpenAI-compatible provider also accepts `ai.baseUrl`.
 
----
+## Local data
 
-## 💾 Local data
+Knowl keeps project data under `.knowl/`, which `knowl init` adds to `.gitignore` by default:
 
-Knowl stores everything under `.knowl/` (git-ignored by default):
+- `.knowl/config.json` — project, search, security, AI, and optional workspace configuration.
+- `.knowl/knowl.db` — atoms, assertions, knowledge commits, FTS data, access feedback, and
+  optional embeddings.
+- `.knowl/skills/` — file-backed learned-skill packages.
 
-- `.knowl/config.json` — security, AI, and search configuration.
-- `.knowl/knowl.db` — memory, knowledge commits, search indexes, optional embeddings. Project scope is implicit from the DB location, so no separate project-name/root-path metadata is persisted.
-- `.knowl/skills/` — file-backed learned skill packages (`SKILL.md`, `skill.json`, optional scripts).
+Workspace manifests live outside member repositories because their checkout paths are
+machine-local. Portable JSONL exports and snapshots are created only when requested.
 
-`skill.json` defines path-safe metadata plus entrypoints; the `default` entrypoint should point at a repo-local script inside the package (`run.ps1`, `run.sh`, `run.cmd`). A `fallback` shell command is allowed when a direct shell invocation is needed.
+## License
 
----
-
-## 📄 License
-
-Knowl is licensed under the **Apache License 2.0** — see [LICENSE](LICENSE). Apache-2.0 does not grant trademark rights; the Knowl name and branding are kept separate.
-
-<div align="center">
-<br/>
-<sub>Built for durable engineering context — local-first, structured, and governed.</sub>
-</div>
+Knowl is licensed under the [Apache License 2.0](LICENSE). Apache-2.0 does not grant trademark
+rights.
