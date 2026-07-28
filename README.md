@@ -409,7 +409,7 @@ The shipped workspace commands are:
 | Command | Purpose |
 | --- | --- |
 | `knowl workspace init <name>` | Create a workspace outside its member repositories |
-| `knowl workspace add <name> [--name <repo-name>]` | Link the current repository |
+| `knowl workspace add <name> [--name <repo-name>] [--force]` | Link the current repository |
 | `knowl workspace join <manifest> [--name <repo-name>]` | Adopt a copied manifest and map this checkout |
 | `knowl workspace list` | List workspaces known to this machine |
 | `knowl workspace status [--verbose]` | Show this repository's membership and peer health |
@@ -421,6 +421,10 @@ The shipped workspace commands are:
 The external manifest contains machine-local checkout paths. Membership is two-sided: the
 manifest names the repository, and that repository's configuration points back to the workspace.
 Every member continues to own a separate `.knowl/knowl.db`.
+
+Normal `workspace add` refuses to link when `.knowl/config.json` is tracked by Git.
+`--force` bypasses only that tracked-config guard; it does not repair embedding-identity
+mismatches or item ownership.
 
 Only an explicit current query fans out to available peers. A promoted peer result is labeled
 with its `repo` and is read-only from the querying repository. Mutations, historical `asOf`
@@ -441,8 +445,8 @@ immediately reusable.
 
 Joining a workspace backfills existing unowned rows with the joining repository's identity.
 New writes made after the join currently do not populate `origin_repo`. Those rows cannot be
-selected for promotion until ownership is repaired. Do not rely on promotion for new post-join
-items without checking `workspace status` and the item's ownership.
+selected for promotion until ownership is repaired; the current workspace CLI has no per-item
+ownership repair command.
 
 ## Learned skills and synthesis
 
