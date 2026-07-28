@@ -92,8 +92,11 @@ obvious from a command signature.
   fields.
 - Explain bounded session events, recovery, hard-failure handoffs, and deterministic candidate
   promotion without storing transcripts.
-- State current retention: events expire after 48 hours, sessions after seven days, and inactive
-  sessions are recoverable after two hours.
+- State current retention precisely: events expire after 48 hours; active session rows receive a
+  nominal seven-day expiration timestamp but are not currently purged automatically; sessions
+  idle for two hours can be marked recovered without terminal promotion.
+- Explain deterministic terminal promotion, including the eight-candidate cap and the distinction
+  between promoted `skill` atoms and executable file-backed skill packages.
 - Explain main-session and subagent bootstrap, half-budget subagent context, per-agent bindings,
   change watermarks, own-write suppression, compact sibling-change cards, and the 12-event
   continuation reminder.
@@ -118,6 +121,9 @@ obvious from a command signature.
   packs, work loops, synthesis, code indexing, and mutations remain local.
 - Preserve shipped limits: no live peer-write notification, no cross-repository mutation, and no
   un-promotion command.
+- Document the current ownership limitation: joining backfills existing items with an origin
+  repository, but newly written rows do not yet populate `origin_repo` and therefore cannot be
+  selected for promotion until ownership is repaired.
 
 ### Learned skills and deterministic synthesis
 
@@ -131,13 +137,15 @@ obvious from a command signature.
 
 - Explain manifest-verified JSONL export/import, transactional validation, dry-run behavior,
   divergence policies, convergence, and tombstone propagation.
-- Explain verified snapshots, mandatory restore confirmation, pre-restore snapshots, and
-  post-restore audit.
+- Explain snapshot checksums, mandatory restore confirmation, validation when a manifest is
+  present, pre-restore snapshots, post-restore audit, and the exact restored table scope. Do not
+  imply assertions, evidence, access telemetry, sessions, code indexes, or tombstones are restored.
 - Explain preview-before-apply garbage collection, protected categories, access heat,
   compression, and tombstone retention controls.
 - Explain the read-only audit and the breadth of `doctor`.
 - Document the localhost-only, GET-only viewer, graph semantics, filters, stale markers, and
-  evidence/timeline inspector.
+  evidence/timeline inspector. Clarify that it does not mutate knowledge, while retrieval
+  inspection can still record access telemetry.
 
 ### Architecture and AI boundary
 
@@ -145,7 +153,8 @@ obvious from a command signature.
 - Make the deterministic boundary explicit: structured CLI/MCP memory, retrieval, governance,
   lifecycle, skills, and synthesis do not require a provider.
 - Limit optional AI claims to `ask`, explicitly supplied raw-source `ingest`, and configured
-  pipeline behavior.
+  pipeline behavior. Note that configured AI can also assist CLI decision comparison and
+  best-effort MCP state derivation; deterministic operation remains available without it.
 - Provide provider-neutral configuration templates for OpenAI, Anthropic, Ollama, and custom
   OpenAI-compatible endpoints without freezing fast-changing model recommendations.
 

@@ -143,7 +143,8 @@ matches.
 
 Show `knowl task run` and a complete start/checkpoint/finish workflow. Explain verified-hook
 ownership, bounded session scratch, recovery, failure checkpoints, hard-failure handoffs, and
-deterministic candidate promotion without raw transcript retention.
+deterministic candidate promotion without raw transcript retention. State the eight-candidate cap
+and distinguish promoted `skill` atoms from executable file-backed skill packages.
 
 - [ ] **Step 2: Document host and subagent behavior**
 
@@ -162,7 +163,8 @@ retrieval feedback, and `knowl access report`.
 
 Keep the setup commands and add separate-database federation, external manifests, ownership,
 promotion, read-only peers, repository labels, embedding identity, explicit-query fan-out, local
-implicit contexts, graceful peer failure, and shipped limits.
+implicit contexts, graceful peer failure, and shipped limits. Include the current limitation that
+post-join writes lack `origin_repo` ownership and cannot be promoted until ownership is repaired.
 
 - [ ] **Step 5: Document learned skills and synthesis**
 
@@ -203,15 +205,17 @@ indexing.
 
 - [ ] **Step 2: Document snapshots, audit, doctor, and garbage collection**
 
-Explain restore confirmation, manifest validation, pre-restore snapshot, post-restore audit,
-read-only audit behavior, doctor readiness breadth, GC preview/apply, protected categories,
-access heat, archive/compression thresholds, and tombstone retention.
+Explain restore confirmation, manifest validation when present, pre-restore snapshot,
+post-restore audit, the limited restored table set, read-only audit behavior, doctor readiness
+breadth, GC preview/apply, protected categories, access heat, archive/compression thresholds, and
+tombstone retention.
 
 - [ ] **Step 3: Restore viewer depth**
 
 Explain localhost-only binding, GET-only APIs, node/link construction, search and category
 filters, stale markers, neighborhood focus, and the evidence/timeline inspector. Keep both
-screenshots without stale atom/link counts.
+screenshots without stale atom/link counts. Clarify that retrieval inspection records access
+telemetry even though the viewer does not mutate knowledge.
 
 - [ ] **Step 4: Restore architecture**
 
@@ -223,8 +227,8 @@ skills, and viewer.
 
 State that structured storage/retrieval, governance, lifecycle, skills, and synthesis are
 deterministic. Limit provider-dependent behavior to `ask`, explicitly supplied raw-source
-`ingest`, and configured AI pipeline stages. Add provider-neutral OpenAI, Anthropic, Ollama, and
-custom endpoint examples.
+`ingest`, configured decision comparison/state derivation, and configured AI pipeline stages. Add
+provider-neutral OpenAI, Anthropic, Ollama, and custom endpoint examples.
 
 - [ ] **Step 6: Verify operational claims**
 
@@ -257,7 +261,8 @@ performance promises.
 - [ ] **Step 2: Restore the governance regression suite**
 
 Run the checked-in governance dataset, record its current metrics and scenario counts, and reuse
-`benchmark-governance.svg` only if its labels match. Clearly label this suite as internal.
+`benchmark-governance.svg` only after correcting the misleading MRR label and distinguishing
+rejected-item filtering from stale-active returns. Clearly label this suite as internal.
 
 - [ ] **Step 3: Reconcile CLI and MCP references**
 
