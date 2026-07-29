@@ -17,9 +17,6 @@ import { initDb, closeDb } from './store/database.js';
 import * as repo from './store/repository.js';
 import { recordDecisionDirect } from './store/knowledge-actions.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from './store/queries.js';
-import { initAI, askQuestion } from './ai/provider.js';
-import { runPipeline, runDecisionPipeline } from './pipeline/pipeline.js';
-import { startMcpServer } from './mcp/server.js';
 import { formatHierarchyToMarkdown } from './core/format.js';
 import { formatStatusReport } from './cli/status-report.js';
 import type { KnowledgeCategory } from './core/types.js';
@@ -729,6 +726,11 @@ program
       };
 
       if (hasAiConfigured(config)) {
+        // Loaded here, not at module scope: the AI SDK tree (ai, @ai-sdk/*, zod, ws)
+        // is hundreds of modules, and node spends more time resolving them than the
+        // libraries spend running. Only AI-backed commands need it.
+        const { initAI } = await import('./ai/provider.js');
+        const { runDecisionPipeline } = await import('./pipeline/pipeline.js');
         initAI(config.ai!);
         const mergeResult = await runDecisionPipeline(project.id, atom, {
           autoResolveContradictions: true,
@@ -788,6 +790,8 @@ program
         throw new Error('AI is not configured. Set ai.provider and ai.model, then provide an API key or configure ollama for local models.');
       }
 
+      // Deferred: the AI SDK tree is hundreds of modules and only AI-backed commands need it.
+      const { initAI, askQuestion } = await import('./ai/provider.js');
       initAI(config.ai!);
 
       const hierarchy = await getHierarchicalKnowledge(project.id);
@@ -826,6 +830,10 @@ program
         throw new Error('AI is not configured for raw ingestion. Use MCP structured tools, or set ai.provider and ai.model with an API key/local model.');
       }
 
+      // Deferred: the AI SDK tree is hundreds of modules, and only AI-backed commands
+      // need it. Resolving them dominated startup for every other command.
+      const { initAI } = await import('./ai/provider.js');
+      const { runPipeline } = await import('./pipeline/pipeline.js');
       initAI(config.ai!);
 
       console.log(`🌀 Processing text through KNOWL pipeline...`);
@@ -1796,6 +1804,9 @@ program
   .action(async () => {
     try {
       console.error(`🚀 Starting KNOWL MCP Server...`);
+      // Imported here, not at module scope: the MCP SDK costs ~530ms to load and only this
+      // command needs it, so every other CLI invocation was paying for it.
+      const { startMcpServer } = await import('./mcp/server.js');
       await startMcpServer();
     } catch (error: any) {
       console.error(`❌ Failed to start MCP Server: ${error.message}`);
