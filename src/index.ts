@@ -22,7 +22,7 @@ import { formatStatusReport } from './cli/status-report.js';
 import type { KnowledgeCategory } from './core/types.js';
 import { createManifest, isValidRepoName, readManifest, writeManifest } from './workspace/manifest.js';
 import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js';
-import { backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
+import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
 import { promoteItems } from './workspace/promote.js';
 import { queryFederated } from './workspace/federated-query.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
@@ -482,7 +482,8 @@ workspaceCommand
   .argument('<manifest-path>')
   .description('Adopt a workspace manifest copied from another machine')
   .option('--name <repo-name>', 'Which repo in the manifest this checkout is')
-  .action(async (manifestPath: string, options: { name?: string }) => {
+  .option('--force', 'Link even though .knowl/config.json is tracked by git')
+  .action(async (manifestPath: string, options: { name?: string; force?: boolean }) => {
     try {
       const root = await findProjectRoot(process.cwd());
       const incoming = await readManifest(path.resolve(manifestPath));
@@ -493,10 +494,7 @@ workspaceCommand
       const local = workspaceManifestPath(incoming.name);
       const existing = await readManifest(local).catch(() => null);
       const merged = existing ?? { ...incoming, repos: [], retiredNames: incoming.retiredNames };
-      if (!existing) {
-        merged.repos = incoming.repos.map(entry => ({ ...entry, path: undefined }));
-        await writeManifest(local, merged);
-      }
+      if (!existing) merged.repos = incoming.repos.map(entry => ({ ...entry, path: undefined }));
 
       const candidates = merged.repos.map(entry => entry.name);
       const repoName = options.name ?? path.basename(root).toLowerCase().replace(/[^a-z0-9-]+/g, '-');
@@ -505,6 +503,13 @@ workspaceCommand
           `The manifest names ${candidates.length ? candidates.map(name => `"${name}"`).join(', ') : 'no repos'}, and this checkout does not match any of them. Re-run with --name <repo-name>.`,
         );
       }
+
+      // The same gate `workspace add` applies. Joining is the other way into a workspace, so
+      // skipping it here let a second machine link under a different embedding model -- two
+      // disjoint vector spaces, reported by nothing. Checked before the manifest is written
+      // so a refusal leaves no local trace of a workspace this repo did not join.
+      assertSafeToLink({ projectRoot: root, manifest: merged, config: await loadConfig(root), force: options.force });
+      if (!existing) await writeManifest(local, merged);
 
       // Adopt: point the named entry at this checkout and write this repo's half.
       const adopted = await readManifest(local);
@@ -581,11 +586,13 @@ workspaceCommand
       const owned = await countOwnedItems(root, repoName);
       if (owned > 0 && !options.exportFirst) {
         throw new Error(
-          `"${repoName}" still owns ${owned} active item(s). Export them first with "knowl export <path>", then re-run with --export-first. The name is retired on removal and cannot be reused.`,
+          `"${repoName}" still owns ${owned} active item(s). Export them first with "knowl export <path>", then re-run with --export-first. The name is retired on removal, and only this repo can reclaim it.`,
         );
       }
-      await leaveWorkspace(root);
-      console.log(`Unlinked "${repoName}". Its name is retired and cannot be reused in that workspace.`);
+      const { retired } = await leaveWorkspace(root);
+      console.log(retired
+        ? `Unlinked "${repoName}". Its name is retired: no other repo can take it, and only this one can reclaim it by re-linking.`
+        : `Unlinked "${repoName}". It owned no knowledge, so the name stays free for any repo to use.`);
     } catch (error: any) {
       console.error(`Error removing repo: ${error.message}`);
       process.exit(1);

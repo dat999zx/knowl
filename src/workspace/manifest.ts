@@ -69,18 +69,28 @@ export async function writeManifest(manifestPath: string, manifest: WorkspaceMan
 }
 
 /**
- * A name is the ownership key on every item its repo wrote, so handing one to a different
- * repo silently transfers knowledge. Retired names are therefore never reusable, even after
- * the repo that held them is gone.
+ * A name is the ownership key on every item its repo wrote, so handing one to a *different*
+ * repo silently transfers knowledge. Retired names are therefore refused by default.
+ *
+ * `allowRetired` is for the one case where nothing is transferred: the same repo re-linking
+ * under the name it already owns items under. Only membership can establish that, since it
+ * takes reading the repo's own database, so the decision is passed in rather than made here.
  */
-export function assertNameAvailable(manifest: WorkspaceManifest, name: string): void {
+export function assertNameAvailable(
+  manifest: WorkspaceManifest,
+  name: string,
+  options: { allowRetired?: boolean } = {},
+): void {
   if (!isValidRepoName(name)) {
     throw new Error(`Repo name "${name}" must be lowercase letters, digits and hyphens, starting with a letter or digit.`);
   }
   if (manifest.repos.some(repo => repo.name === name)) {
     throw new Error(`Repo name "${name}" is already used in workspace "${manifest.name}".`);
   }
-  if (manifest.retiredNames.includes(name)) {
-    throw new Error(`Repo name "${name}" was retired from workspace "${manifest.name}" and cannot be reused; choose another.`);
+  if (!options.allowRetired && manifest.retiredNames.includes(name)) {
+    throw new Error(
+      `Repo name "${name}" was retired from workspace "${manifest.name}" and cannot be reused; choose another. ` +
+      'Only the repo whose database still owns items under that name can reclaim it.',
+    );
   }
 }

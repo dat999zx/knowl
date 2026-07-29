@@ -101,6 +101,20 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
     await saveConfig(other, { ...DEFAULT_CONFIG });
 
     const manifest = path.join(HOME, 'workspaces', 'duckprep', 'workspace.json');
+
+    // join is the second way into a workspace and used to skip every check add applies, so
+    // a second machine could adopt the same workspace under a different embedding model.
+    // Vector search filters on provider and model, so the two sides would simply not see
+    // each other's items, with nothing anywhere reporting why.
+    await saveConfig(other, {
+      ...DEFAULT_CONFIG,
+      search: { vector: { enabled: true, provider: 'local', model: 'other/model', dtype: 'q8' } },
+    });
+    const mismatched = knowl(other, 'workspace', 'join', manifest, '--name', 'server');
+    expect(mismatched.status).toBe(1);
+    expect(mismatched.stderr).toMatch(/invisible to each other/i);
+
+    await saveConfig(other, { ...DEFAULT_CONFIG });
     const joined = knowl(other, 'workspace', 'join', manifest, '--name', 'server');
     expect(joined.status).toBe(0);
     expect(joined.stdout).toMatch(/Joined workspace "duckprep" as "server"/);
@@ -126,9 +140,24 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
     expect(knowl(A, 'workspace', 'status').stdout).toMatch(/not linked/i);
   });
 
-  it('refuses to reuse the retired name', () => {
-    const result = knowl(A, 'workspace', 'add', 'duckprep', '--name', 'server');
-    expect(result.status).toBe(1);
-    expect(result.stderr).toMatch(/retired/i);
+  it('keeps a retired name away from other repos but lets its owner reclaim it', async () => {
+    // Retirement protects authorship: a name is the ownership key on every item its repo
+    // wrote, so a different repo taking it would inherit the credit. Re-linking the repo
+    // that already owns those items transfers nothing, and refusing it was pure friction --
+    // repairing an unlink meant inventing a new name and orphaning the old one's knowledge.
+    const stranger = path.resolve('./.knowl-cli-stranger');
+    await fs.rm(stranger, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(stranger, '.knowl'), { recursive: true });
+    await saveConfig(stranger, { ...DEFAULT_CONFIG });
+
+    const taken = knowl(stranger, 'workspace', 'add', 'duckprep', '--name', 'server');
+    expect(taken.status).toBe(1);
+    expect(taken.stderr).toMatch(/retired/i);
+
+    const reclaimed = knowl(A, 'workspace', 'add', 'duckprep', '--name', 'server');
+    expect(reclaimed.status).toBe(0);
+    expect(knowl(A, 'workspace', 'status').stdout).toContain('server');
+
+    await fs.rm(stranger, { recursive: true, force: true }).catch(() => {});
   });
 });

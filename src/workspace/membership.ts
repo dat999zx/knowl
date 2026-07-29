@@ -7,6 +7,7 @@ import { closeDb, getClient, initDb } from '../store/database.js';
 import {
   embeddingIdentityFromConfig, formatEmbeddingIdentity, sameEmbeddingIdentity,
 } from '../store/embedding-identity.js';
+import type { EmbeddingIdentity } from '../store/embedding-identity.js';
 import { assertNameAvailable, readManifest, writeManifest, WorkspaceManifest } from './manifest.js';
 import { workspaceManifestPath } from './paths.js';
 
@@ -56,6 +57,46 @@ export function isLinked(_projectRoot: string, manifest: WorkspaceManifest, conf
   return manifest.repos.some(repo => repo.name === link.repo);
 }
 
+/**
+ * Refuse a repo whose vectors are not comparable with the workspace's.
+ *
+ * Vector search filters on provider and model, and quantization changes the vector, so two
+ * identities are two disjoint search spaces: each repo's items would be simply absent from
+ * the other's results, with no error anywhere to explain it.
+ *
+ * Shared by both routes in. `workspace add` enforced this from the start; `workspace join`
+ * -- adopting a manifest copied off another machine -- did not, so a second machine could
+ * link the same workspace under a different model and find out only through silence.
+ */
+export function assertEmbeddingCompatible(manifest: WorkspaceManifest, identity: EmbeddingIdentity | null): void {
+  if (sameEmbeddingIdentity(manifest.embedding, identity)) return;
+  throw new Error(
+    `This repo embeds with ${formatEmbeddingIdentity(identity)} but workspace "${manifest.name}" uses ` +
+    `${formatEmbeddingIdentity(manifest.embedding)}. Vector search filters on provider and model, so the two ` +
+    'sets of items would be invisible to each other. Align this repo\'s search.vector config first.',
+  );
+}
+
+/**
+ * Every check that must pass before a repo is written into a workspace, in one place so the
+ * two entry points cannot drift apart. Name availability is deliberately not here: `add`
+ * claims a new name, while `join` adopts one the manifest already lists.
+ */
+export function assertSafeToLink(input: {
+  projectRoot: string;
+  manifest: WorkspaceManifest;
+  config: ProjectConfig;
+  force?: boolean;
+}): void {
+  assertNotNested(input.projectRoot, input.manifest);
+  if (!input.force && isConfigTrackedByGit(input.projectRoot)) {
+    throw new Error(
+      '.knowl/config.json is tracked by git, so this workspace pointer may have arrived with a clone. Re-run with --force to link anyway.',
+    );
+  }
+  assertEmbeddingCompatible(input.manifest, embeddingIdentityFromConfig(input.config));
+}
+
 export async function joinWorkspace(input: {
   projectRoot: string;
   workspaceName: string;
@@ -64,28 +105,22 @@ export async function joinWorkspace(input: {
 }): Promise<WorkspaceManifest> {
   const manifestPath = workspaceManifestPath(input.workspaceName);
   const manifest = await readManifest(manifestPath);
-  assertNameAvailable(manifest, input.repoName);
-  assertNotNested(input.projectRoot, manifest);
 
-  if (!input.force && isConfigTrackedByGit(input.projectRoot)) {
-    throw new Error(
-      '.knowl/config.json is tracked by git, so this workspace pointer may have arrived with a clone. Re-run with --force to link anyway.',
-    );
-  }
+  // A retired name is normally gone for good, because handing it to a different repo would
+  // silently transfer ownership of everything the old one wrote. Items in *this* repo's
+  // database owned by that name are proof it is the same repo coming back, which is the one
+  // case where reuse transfers nothing. Only consulted when the name is actually retired.
+  const reclaiming = manifest.retiredNames.includes(input.repoName)
+    && (await countOwnedItems(input.projectRoot, input.repoName)) > 0;
+  assertNameAvailable(manifest, input.repoName, { allowRetired: reclaiming });
 
   const config = await loadConfig(input.projectRoot);
-
+  // The first repo defines the workspace's embedding identity; every later one must match.
+  if (manifest.repos.length === 0) manifest.embedding = embeddingIdentityFromConfig(config);
   // Checked before anything is written, so a refusal leaves no half-joined state.
-  const identity = embeddingIdentityFromConfig(config);
-  if (manifest.repos.length === 0) {
-    manifest.embedding = identity;
-  } else if (!sameEmbeddingIdentity(manifest.embedding, identity)) {
-    throw new Error(
-      `This repo embeds with ${formatEmbeddingIdentity(identity)} but workspace "${manifest.name}" uses ` +
-      `${formatEmbeddingIdentity(manifest.embedding)}. Vector search filters on provider and model, so the two ` +
-      'sets of items would be invisible to each other. Align this repo\'s search.vector config first.',
-    );
-  }
+  assertSafeToLink({ projectRoot: input.projectRoot, manifest, config, force: input.force });
+
+  if (reclaiming) manifest.retiredNames = manifest.retiredNames.filter(name => name !== input.repoName);
 
   manifest.repos.push({
     name: input.repoName,
@@ -143,19 +178,32 @@ export async function countOwnedItems(projectRoot: string, repoName: string): Pr
   }
 }
 
-export async function leaveWorkspace(projectRoot: string): Promise<void> {
+/**
+ * Unlink, reporting whether the name was retired.
+ *
+ * A name is retired because it is the ownership key on the items its repo wrote: give it to
+ * another repo and that repo silently inherits the authorship. That reasoning only holds
+ * while there are items. A repo that owns nothing -- linked by mistake, or unlinked before
+ * recording anything -- attached its name to no knowledge at all, so burning the name buys
+ * no safety and costs the obvious name forever.
+ */
+export async function leaveWorkspace(projectRoot: string): Promise<{ retired: boolean }> {
   const config = await loadConfig(projectRoot);
   const link = config.workspace;
-  if (!link) return;
+  if (!link) return { retired: false };
 
+  let retired = false;
   try {
+    // Unreadable database means unknown ownership, and the safe answer to unknown is to
+    // retire: an unusable name is recoverable, a silent ownership transfer is not.
+    const owned = await countOwnedItems(projectRoot, link.repo).catch(() => 1);
     const manifestPath = workspaceManifestPath(link.workspace);
     const manifest = await readManifest(manifestPath);
     manifest.repos = manifest.repos.filter(repo => repo.name !== link.repo);
-    // The name stays retired even though the repo is gone: it is the ownership key on every
-    // item that repo wrote, so letting a different repo claim it later would silently
-    // transfer whatever it still owns.
-    if (!manifest.retiredNames.includes(link.repo)) manifest.retiredNames.push(link.repo);
+    if (owned > 0 && !manifest.retiredNames.includes(link.repo)) {
+      manifest.retiredNames.push(link.repo);
+      retired = true;
+    }
     await writeManifest(manifestPath, manifest);
   } catch {
     // An unreachable manifest must not strand the repo in a half-linked state; clearing the
@@ -164,4 +212,5 @@ export async function leaveWorkspace(projectRoot: string): Promise<void> {
 
   const { workspace: _removed, ...rest } = config;
   await saveConfig(projectRoot, rest as ProjectConfig);
+  return { retired };
 }

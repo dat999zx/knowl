@@ -75,6 +75,15 @@ describe('manifest', () => {
     expect(() => assertNameAvailable(manifest, 'server')).toThrow(/retired/i);
   });
 
+  it('allows a retired name when the caller has established the same repo is reclaiming it', () => {
+    const manifest = createManifest('retired', null);
+    manifest.retiredNames.push('server');
+    expect(() => assertNameAvailable(manifest, 'server', { allowRetired: true })).not.toThrow();
+    // A name already in use is still refused: reclaiming cannot displace a live member.
+    manifest.repos.push({ name: 'server' });
+    expect(() => assertNameAvailable(manifest, 'server', { allowRetired: true })).toThrow(/already/i);
+  });
+
   it('rejects an invalid name before it can reach a manifest', () => {
     expect(() => assertNameAvailable(createManifest('x', null), 'Bad Name')).toThrow(/lowercase/i);
   });

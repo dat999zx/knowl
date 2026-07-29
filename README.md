@@ -409,10 +409,10 @@ The shipped workspace commands are:
 | --- | --- |
 | `knowl workspace init <name>` | Create a workspace outside its member repositories |
 | `knowl workspace add <name> [--name <repo-name>] [--force]` | Link the current repository |
-| `knowl workspace join <manifest> [--name <repo-name>]` | Adopt a copied manifest and map this checkout |
+| `knowl workspace join <manifest> [--name <repo-name>] [--force]` | Adopt a copied manifest and map this checkout |
 | `knowl workspace list` | List workspaces known to this machine |
 | `knowl workspace status [--verbose]` | Show this repository's membership and peer health |
-| `knowl workspace remove <repo-name> [--export-first]` | Unlink the current repository and retire its workspace name |
+| `knowl workspace remove <repo-name> [--export-first]` | Unlink the current repository, retiring its name if it still owns atoms |
 | `knowl workspace promote (--category <list> \| --id <id...>) [--apply]` | Preview or publish selected locally owned atoms |
 
 ### Federation and ownership
@@ -432,20 +432,21 @@ lifecycle context remain local. Missing, unreadable, or schema-incompatible peer
 disclosed in the response rather than causing healthy local retrieval to fail.
 
 Promotion is preview-first and accepts active, private, locally owned atoms selected by category
-or ID. `workspace add` enforces a compatible embedding identity; `workspace join` currently does
-not perform that check. There is no live peer-write notification, cross-repository mutation,
-demote/unshare command, or workspace-wide historical view.
+or ID. Both `workspace add` and `workspace join` enforce a compatible embedding identity, reject a
+nested checkout, and refuse a Git-tracked `.knowl/config.json` without `--force`. There is no
+cross-repository mutation, demote/unshare command, or workspace-wide historical view.
 
 `workspace remove --export-first` is an acknowledgement that the repository still owns
-knowledge; it does not create an export. Removed repository names are retired rather than made
-immediately reusable.
+knowledge; it does not create an export. A removed name is retired only when the repository
+still owns active atoms, since the name is the ownership key on everything it wrote. A repository
+that owned nothing releases its name for anyone; a repository that owned atoms keeps exclusive
+claim on the name and reclaims it by re-linking, while every other repository is refused.
 
-### Current ownership limitation
+### Ownership
 
-Joining a workspace backfills existing unowned rows with the joining repository's identity.
-New writes made after the join currently do not populate `origin_repo`. Those rows cannot be
-selected for promotion until ownership is repaired; the current workspace CLI has no per-item
-ownership repair command.
+`origin_repo` is stamped when an atom is created, so every write made while linked is owned and
+promotable. Joining additionally backfills the rows that already existed, which are by definition
+the joining repository's own.
 
 ## Learned skills and synthesis
 
