@@ -19,6 +19,7 @@ import {
 } from '../core/types.js';
 import { DatabaseError, KnowledgeConflictError } from '../core/errors.js';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
+import { resolveWritingRepo } from './write-ownership.js';
 import { KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 
 export const LOCAL_PROJECT_ID = 'local';
@@ -126,9 +127,15 @@ export async function createKnowledgeItem(
   const now = new Date().toISOString();
   const id = generateId();
   const affectedPaths = normalizeAffectedPaths(item.affectedPaths);
+  // Stamped at the one point where the answer is known without guessing. Joining a
+  // workspace backfills what is already there, but nothing claimed items written
+  // afterwards -- which left `workspace promote` unable to touch them, and would leave a
+  // shared database unable to say who may edit or collect them.
+  const originRepo = await resolveWritingRepo();
 
   const newItem = {
     id,
+    originRepo,
     category: item.category,
     status: 'active' as KnowledgeStatus,
     title: item.title,
