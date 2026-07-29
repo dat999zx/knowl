@@ -39,18 +39,25 @@ export async function promoteItems(input: {
       : { clause: `category IN (${byCategory!.map(() => '?').join(', ')})`, args: [...byCategory!] as string[] };
 
     // Counted separately so the caller can say "1 item belongs to web" rather than silently
-    // returning fewer rows than the user asked for.
+    // returning fewer rows than the user asked for. An unowned item is not foreign: NULL
+    // means nobody has claimed it, and claiming it here would be wrong only if some other
+    // repo could have written it, which it cannot -- this database is this repo's.
     const foreign = await client.execute({
       sql: `SELECT COUNT(*) AS n FROM knowledge_items
             WHERE ${selector.clause} AND status = 'active'
-              AND visibility = 'repo' AND (origin_repo IS NULL OR origin_repo <> ?)`,
+              AND visibility = 'repo' AND origin_repo IS NOT NULL AND origin_repo <> ?`,
       args: [...selector.args, input.repoName],
     });
 
+    // `backfillOriginRepo` claims unowned items when a repo joins, on the grounds that
+    // everything in its database was written by it. Nothing stamps ownership at write time,
+    // so every item written *after* joining is NULL again -- which is the normal case, and
+    // which made promote unreachable for it. The same reasoning applies here, so the same
+    // claim is made, and applying the promotion below stamps it for good.
     const rows = await client.execute({
       sql: `SELECT id, title, category FROM knowledge_items
             WHERE ${selector.clause} AND status = 'active'
-              AND visibility = 'repo' AND origin_repo = ?
+              AND visibility = 'repo' AND (origin_repo IS NULL OR origin_repo = ?)
             ORDER BY updated_at DESC`,
       args: [...selector.args, input.repoName],
     });
@@ -63,8 +70,9 @@ export async function promoteItems(input: {
 
     if (input.apply && items.length > 0) {
       await client.execute({
-        sql: `UPDATE knowledge_items SET visibility = 'workspace' WHERE id IN (${items.map(() => '?').join(', ')})`,
-        args: items.map(item => item.id),
+        sql: `UPDATE knowledge_items SET visibility = 'workspace', origin_repo = ?
+              WHERE id IN (${items.map(() => '?').join(', ')})`,
+        args: [input.repoName, ...items.map(item => item.id)],
       });
       // Promotion is the moment an item becomes readable by other repos, so it is the
       // moment their agents need told. Change detection reads `knowledge_commits`; a bare

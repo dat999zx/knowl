@@ -384,6 +384,18 @@ describe('host hook normalization', () => {
       expect(result.knowlToolName).toBe(tool);
     });
 
+    it('survives a UTF-8 byte order mark on the payload', async () => {
+      // A PowerShell redirect or Out-File on Windows prefixes three invisible bytes. The
+      // streaming parser used to reject them as "expected a value", failing the whole hook.
+      const raw = JSON.stringify({ session_id: 'bom', cwd: ROOT, tool_name: 'Grep', tool_input: {} });
+      const payload = await readLifecyclePayload(
+        Readable.from([Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(raw, 'utf8')])]) as NodeJS.ReadStream,
+      );
+
+      expect(payload.session_id).toBe('bom');
+      expect(normalizeHostHook('claude', 'PostToolUse', payload).externalSessionId).toBe('bom');
+    });
+
     it('leaves the tool name unset for a non-Knowl tool', async () => {
       const result = await chain({ tool_name: 'Grep', tool_input: { pattern: 'knowl' } });
       expect(result.knowlToolName).toBeUndefined();

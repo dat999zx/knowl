@@ -83,6 +83,23 @@ describe('promote', () => {
     expect(rows.map(row => String(row.title))).toEqual(['Local scratch note']);
   });
 
+  it('promotes an item written after linking, which carries no owner yet', async () => {
+    // Ownership is only ever stamped by the join-time backfill, so everything written
+    // afterwards -- the normal case -- has origin_repo NULL. This used to be counted as
+    // foreign, which made promote unreachable for it: "Nothing to promote. 1 matching
+    // item(s) belong to another repo."
+    await execute('UPDATE knowledge_items SET origin_repo = NULL');
+
+    const result = await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'], apply: true });
+
+    expect(result.skippedForeign).toBe(0);
+    expect(result.items.map(item => item.title)).toEqual(['Wire format is protobuf']);
+
+    // Promoting claims it, so it is owned from here on rather than staying unowned.
+    const rows = await readRows("SELECT origin_repo FROM knowledge_items WHERE visibility = 'workspace'");
+    expect(rows.map(row => String(row.origin_repo))).toEqual(['server']);
+  });
+
   it('refuses items this repo did not originate, and says how many', async () => {
     await execute("UPDATE knowledge_items SET origin_repo = 'web' WHERE category = 'decision'");
     const result = await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'], apply: true });

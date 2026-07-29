@@ -106,6 +106,26 @@ export function parseLifecyclePayload(raw: string): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
+/**
+ * Drop a leading UTF-8 byte order mark from the first stdin chunk.
+ *
+ * The streaming JSON parser is handed raw chunks, and a BOM before the opening brace is
+ * not a value, so it fails the whole hook with "expected a value" and exit 1 -- no capture,
+ * no change card, for a payload that is otherwise perfectly good JSON. Hosts write clean
+ * UTF-8, but a hook wrapped in a PowerShell redirect or `Out-File` on Windows does not,
+ * and the resulting failure gives no hint that an invisible three-byte prefix caused it.
+ */
+function stripByteOrderMark(chunk: unknown): unknown {
+  if (typeof chunk === 'string') {
+    return chunk.charCodeAt(0) === 0xfeff ? chunk.slice(1) : chunk;
+  }
+  if (Buffer.isBuffer(chunk) && chunk.length >= 3
+    && chunk[0] === 0xef && chunk[1] === 0xbb && chunk[2] === 0xbf) {
+    return chunk.subarray(3);
+  }
+  return chunk;
+}
+
 export async function readLifecyclePayload(stdin = process.stdin): Promise<Record<string, unknown>> {
   if (stdin.isTTY) return {};
   const iterator = stdin[Symbol.asyncIterator]();
@@ -114,7 +134,7 @@ export async function readLifecyclePayload(stdin = process.stdin): Promise<Recor
   if (first.done) return {};
 
   const source = Readable.from((async function* () {
-    yield first.value;
+    yield stripByteOrderMark(first.value);
     for (;;) {
       const next = await iterator.next();
       if (next.done) return;

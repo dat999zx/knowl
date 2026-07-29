@@ -38,6 +38,16 @@ that never got told at all.
   title guess is only used where that exact information is unavailable.
 - **A session started in a repo with no history missed its first change.** The very first
   change committed after such a session began was treated as bookkeeping and swallowed.
+- **`knowl workspace promote` could not promote anything written after the repo was
+  linked.** Ownership is stamped when a repo joins a workspace, and nothing stamped it
+  afterwards, so everything written from then on — the normal case — was treated as
+  belonging to another repo and refused, with the misleading message "1 matching item(s)
+  belong to another repo". Unowned items are now recognised as this repo's own, which they
+  are, and promoting one records the ownership for good.
+- **A hook payload starting with a UTF-8 byte order mark failed the whole hook.** Hosts
+  send clean UTF-8, but a hook wrapped in a PowerShell redirect on Windows does not, and
+  the three invisible bytes made Knowl exit with `expected a value` — no memory capture and
+  no change cards, with nothing in the error to suggest the cause.
 
 ## 2.5.1 — 2026-07-28
 
