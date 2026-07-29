@@ -1,5 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import { captureChangeWatermark, consumeChangeNotice } from './change-notice.js';
 import { ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem } from '../workspace/ownership.js';
@@ -585,7 +587,7 @@ export function registerTools(
   });
 
   // 2. Call tool
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const callTool = async (request: CallToolRequest): Promise<CallToolResult> => {
     const { name, arguments: args } = request.params;
     const initError = getInitError();
     const projectId = getProjectId();
@@ -1086,5 +1088,26 @@ export function registerTools(
         content: [{ type: 'text', text: `Error executing tool "${name}": ${message}` }],
       };
     }
+  };
+
+  /**
+   * Every tool result carries any foreign memory change this session has not been shown.
+   *
+   * This is the host-independent half of change notification. The hook path can only
+   * reach a host that exposes a mid-turn channel; this reaches anything that can call a
+   * tool, which is every MCP client by definition.
+   *
+   * The watermark is read before dispatch on purpose: it is what lets the notice exclude
+   * this call's own writes exactly, by commit position, rather than by matching titles
+   * the way the hook path is forced to. A failure anywhere in here degrades to "no
+   * notice" -- memory news must never be able to fail a tool call.
+   */
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const projectRoot = getProjectRoot();
+    const watermark = await captureChangeWatermark(projectRoot);
+    const result = await callTool(request);
+    const notice = await consumeChangeNotice(projectRoot, request.params.name, watermark);
+    if (!notice) return result;
+    return { ...result, content: [...result.content, { type: 'text' as const, text: notice }] };
   });
 }

@@ -105,6 +105,26 @@ describe('promote', () => {
     expect(second.items.length).toBe(0);
   });
 
+  it('records a commit, so other repos can see the promotion happened', async () => {
+    await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'], apply: true });
+
+    const rows = await readRows('SELECT message, changes FROM knowledge_commits ORDER BY rowid DESC LIMIT 1');
+    expect(String(rows[0].message)).toMatch(/Promote 1 item/);
+    const changes = JSON.parse(String(rows[0].changes));
+    expect(changes).toHaveLength(1);
+    expect(changes[0].itemId).toBe(ids.decision);
+    expect(changes[0].after.title).toBe('Wire format is protobuf');
+  });
+
+  it('records no commit for a dry run or an empty promote', async () => {
+    const before = await readRows('SELECT COUNT(*) AS n FROM knowledge_commits');
+    await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'] });
+    await promoteItems({ projectRoot: ROOT, repoName: 'server', ids: ['does-not-exist'], apply: true });
+    const after = await readRows('SELECT COUNT(*) AS n FROM knowledge_commits');
+
+    expect(Number(after[0].n)).toBe(Number(before[0].n));
+  });
+
   it('requires a category or an id, so a bare promote cannot publish everything', async () => {
     await expect(promoteItems({ projectRoot: ROOT, repoName: 'server', apply: true }))
       .rejects.toThrow(/--category|--id/);

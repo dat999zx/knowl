@@ -883,13 +883,43 @@ describe('host lifecycle orchestration', () => {
     };
     const session = await startMemorySession({ title: 'Watermark init' });
     await bindHostSession(key, session.id);
-    await setHostSeenCommit(key, 0);
+    // A row as the ALTER TABLE leaves it: watermark never set. Written directly because
+    // no API produces this state -- every write path marks the row initialized.
+    await getClient().execute({
+      sql: `UPDATE host_session_bindings SET seen_commit_rowid = 0, seen_commit_initialized = 0
+        WHERE external_session_id = ? AND external_turn_id = '__turn__'`,
+      args: ['watermark-init-session'],
+    });
 
     const result = await handleHostLifecycleEvent(projectId, claudeToolEvent('watermark-init-session'));
 
     expect(result.changes).toBeUndefined();
     expect(result.hostOutput).toBeUndefined();
     expect(await readHostSeenCommit(key)).toBe(await readCommitHead());
+  });
+
+  it('reports the first commit for a session bound against a repo with no history', async () => {
+    // The case the old `seen === 0` sentinel swallowed: 0 meant both "never set" and
+    // "genuinely at zero", and the second reading is a real repo on its first commit.
+    const key: HostSessionKey = {
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'empty-history-session',
+      externalTurnId: '__turn__',
+    };
+    const session = await startMemorySession({ title: 'Empty history' });
+    await bindHostSession(key, session.id);
+    await setHostSeenCommit(key, 0); // as if bound when the commit log was empty
+
+    await repo.createKnowledgeCommit(projectId, 'First ever commit', [
+      { itemId: 'first-1', action: 'insert', after: { id: 'first-1', category: 'fact', title: 'The very first item' } },
+    ]);
+    const result = await handleHostLifecycleEvent(projectId, claudeToolEvent('empty-history-session'));
+
+    // Asserted on the summary, not the rendered card: this suite shares one database, so
+    // by now the card truncates to five lines plus a "+N more".
+    expect(result.changes?.items.map(item => item.title)).toContain('The very first item');
+    expect(result.hostOutput).toBeDefined();
   });
 
   it('emits a change card for a sibling commit and resets drift', async () => {

@@ -1,5 +1,6 @@
 import type { KnowledgeCategory } from '../core/types.js';
 import { closeDb, getClient, initDb } from '../store/database.js';
+import { createKnowledgeCommit } from '../store/repository.js';
 
 export type PromoteTarget = { id: string; title: string; category: string };
 export type PromoteResult = { items: PromoteTarget[]; applied: boolean; skippedForeign: number };
@@ -65,6 +66,19 @@ export async function promoteItems(input: {
         sql: `UPDATE knowledge_items SET visibility = 'workspace' WHERE id IN (${items.map(() => '?').join(', ')})`,
         args: items.map(item => item.id),
       });
+      // Promotion is the moment an item becomes readable by other repos, so it is the
+      // moment their agents need told. Change detection reads `knowledge_commits`; a bare
+      // column update left no trace there, which made a promote the one knowledge event
+      // that could never be noticed -- including by the repos it was performed for.
+      await createKnowledgeCommit(
+        'local',
+        `Promote ${items.length} item${items.length === 1 ? '' : 's'} to workspace visibility`,
+        items.map(item => ({
+          itemId: item.id,
+          action: 'update' as const,
+          after: { id: item.id, category: item.category as KnowledgeCategory, title: item.title },
+        })),
+      );
     }
 
     return {

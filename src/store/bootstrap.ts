@@ -107,8 +107,14 @@ const SCHEMA_STATEMENTS = [
     host TEXT NOT NULL, project_root TEXT NOT NULL, external_session_id TEXT NOT NULL, external_turn_id TEXT NOT NULL DEFAULT '',
     memory_session_id TEXT NOT NULL REFERENCES memory_sessions(id) ON DELETE CASCADE,
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)), successful_tool_count INTEGER NOT NULL DEFAULT 0,
-    seen_commit_rowid INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL,
+    seen_commit_rowid INTEGER NOT NULL DEFAULT 0, seen_commit_initialized INTEGER NOT NULL DEFAULT 0,
+    seen_peer_commits TEXT, updated_at TEXT NOT NULL,
     PRIMARY KEY (host, project_root, external_session_id, external_turn_id)
+  );`,
+
+  `CREATE TABLE IF NOT EXISTS mcp_call_commits (
+    id TEXT PRIMARY KEY, project_root TEXT NOT NULL, tool_name TEXT NOT NULL,
+    from_rowid INTEGER NOT NULL, to_rowid INTEGER NOT NULL, created_at TEXT NOT NULL
   );`,
 
   `CREATE TABLE IF NOT EXISTS knowledge_tombstones (
@@ -163,6 +169,7 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_memory_sessions_expiry ON memory_sessions(expires_at);`,
   `CREATE INDEX IF NOT EXISTS idx_memory_session_events_expiry ON memory_session_events(expires_at);`,
   `CREATE INDEX IF NOT EXISTS idx_memory_session_events_session ON memory_session_events(session_id);`,
+  `CREATE INDEX IF NOT EXISTS idx_mcp_call_commits_lookup ON mcp_call_commits(project_root, tool_name, created_at);`,
   `CREATE INDEX IF NOT EXISTS idx_host_session_bindings_memory ON host_session_bindings(memory_session_id);`,
   `CREATE INDEX IF NOT EXISTS idx_host_session_bindings_session ON host_session_bindings(host, project_root, external_session_id, active);`,
 
@@ -412,10 +419,21 @@ async function ensureHostSessionBindingColumns(client: Client): Promise<void> {
   if (!columns.includes('successful_tool_count')) {
     await client.execute('ALTER TABLE host_session_bindings ADD COLUMN successful_tool_count INTEGER NOT NULL DEFAULT 0;');
   }
-  // 0 is an "uninitialized" sentinel, not "has seen no commits". Rows migrated here
-  // adopt head on their first tool event rather than reporting all history as new.
   if (!columns.includes('seen_commit_rowid')) {
     await client.execute('ALTER TABLE host_session_bindings ADD COLUMN seen_commit_rowid INTEGER NOT NULL DEFAULT 0;');
+  }
+  // Carries what overloading `seen_commit_rowid = 0` used to: whether this row's watermark
+  // has ever been set. Rows migrated here default to 0 and so adopt head on their first
+  // tool event rather than reporting all history as new -- while a session legitimately
+  // bound at zero commits is now marked initialized and does report its first commit.
+  if (!columns.includes('seen_commit_initialized')) {
+    await client.execute('ALTER TABLE host_session_bindings ADD COLUMN seen_commit_initialized INTEGER NOT NULL DEFAULT 0;');
+  }
+  // JSON map of peer repo name -> that peer's last seen commit rowid. Nullable rather
+  // than defaulted to '{}': NULL means "never looked at peers", which adopts their heads
+  // silently, exactly as seen_commit_rowid = 0 does for the local repo.
+  if (!columns.includes('seen_peer_commits')) {
+    await client.execute('ALTER TABLE host_session_bindings ADD COLUMN seen_peer_commits TEXT;');
   }
 }
 

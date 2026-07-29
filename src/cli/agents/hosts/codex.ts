@@ -19,6 +19,7 @@ export const codexProfile: HostProfile = {
   promptEvent: undefined,
   sharesSessionBinding: true,
   nativeOutput: true,
+  midTurnDeliveryVerified: true,
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id) ?? hostString(raw.thread_id),

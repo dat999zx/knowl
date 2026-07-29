@@ -47,6 +47,12 @@ describe('host profile registry', () => {
       }
     });
 
+    it('claims verified mid-turn delivery only when it has an envelope to deliver', () => {
+      // The converse is deliberately allowed: Cursor has an envelope and unverified
+      // delivery, which is what keeps the MCP fallback channel talking to it.
+      if (profile().midTurnDeliveryVerified) expect(profile().midTurnContext('x')).toBeDefined();
+    });
+
     it('declares mid-turn support only when it registers a tool event', () => {
       // A host with no tool-call event has nowhere to attach a mid-turn card.
       const hasToolEvent = profile().hookEvents.some(event => /posttooluse|aftershellexecution/i.test(event));

@@ -16,6 +16,7 @@ export const genericProfile: HostProfile = {
   promptEvent: undefined,
   sharesSessionBinding: false,
   nativeOutput: false,
+  midTurnDeliveryVerified: false,
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.sessionId),

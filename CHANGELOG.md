@@ -3,6 +3,42 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.6.0 — 2026-07-29
+
+Agents now find out when memory changes underneath them in a linked repo, and on hosts
+that never got told at all.
+
+### Added
+
+- **A change in a linked repo now reaches agents in the repos that can read it.** Change
+  notification only ever watched your own repo's history, so when another repo promoted,
+  updated, or retired a workspace-visible item, agents working here could read the new
+  value through `knowl_query` but were never told it had moved — with no bound on how long
+  they could go on trusting the old one. Each linked repo is now tracked separately, and
+  the card names the repo a change came from, because a fact from another repo describes
+  that repo. A repo-private item is never named, and a peer that is absent or mid-write is
+  retried rather than skipped.
+- **Change cards now arrive through Knowl's own tool results, not only through hooks.**
+  Hosts without a mid-turn hook channel — Claude Desktop, generic MCP clients, and anyone
+  running Knowl with no hooks installed — had their change cards computed and then thrown
+  away, and could never be told about those changes again. The news now rides back on the
+  next `knowl_*` call, which reaches any MCP client. Hosts that already deliver cards
+  through hooks are detected and stay on that path, so nothing is announced twice.
+
+### Fixed
+
+- **`knowl workspace promote` left no trace in the project's history.** Promotion is the
+  moment an item becomes readable by other repos, and it was the one knowledge event that
+  could never be observed after the fact — including by the repos it was performed for.
+- **An agent could be told about a change it had just made itself, and could miss one it
+  hadn't.** Recognising your own writes was previously a guess based on matching titles, so
+  a write's knock-on effects — superseding a near-duplicate, collecting stale items — came
+  back to you as somebody else's work, while a genuinely foreign change that happened to
+  share a title was silently hidden. Your own writes are now identified exactly, and the
+  title guess is only used where that exact information is unavailable.
+- **A session started in a repo with no history missed its first change.** The very first
+  change committed after such a session began was treated as bookkeeping and swallowed.
+
 ## 2.5.1 — 2026-07-28
 
 A startup race between Knowl processes could leave the MCP server permanently stuck.

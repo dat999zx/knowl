@@ -38,6 +38,7 @@ export const claudeProfile: HostProfile = {
   promptEvent: 'UserPromptSubmit',
   sharesSessionBinding: true,
   nativeOutput: true,
+  midTurnDeliveryVerified: true,
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id) ?? hostString(raw.thread_id),

@@ -22,7 +22,10 @@ export function renderChangeCard(summary: ChangeSummary): string {
   const shown = summary.items.slice(0, MAX_ITEM_LINES);
   const lines = shown.map(item => {
     const action = item.action === 'insert' ? '' : ` (${item.action})`;
-    return `- ${item.category}${action}: ${item.title.slice(0, MAX_TITLE_LENGTH)}`;
+    // The repo tag is not decoration: a fact from another repo describes that repo, so
+    // an agent that cannot tell where a change landed cannot tell whether it applies here.
+    const repo = item.repo ? `[${item.repo}] ` : '';
+    return `- ${repo}${item.category}${action}: ${item.title.slice(0, MAX_TITLE_LENGTH)}`;
   });
   const remaining = summary.count - shown.length;
   if (remaining > 0) lines.push(`- +${remaining} more`);

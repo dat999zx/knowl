@@ -12,6 +12,7 @@ export const claudeDesktopProfile: HostProfile = {
   promptEvent: undefined,
   sharesSessionBinding: false,
   nativeOutput: true,
+  midTurnDeliveryVerified: false,
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id),

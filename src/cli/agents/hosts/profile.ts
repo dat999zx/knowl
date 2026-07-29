@@ -28,6 +28,16 @@ export interface HostProfile {
   readonly sharesSessionBinding: boolean;
   /** True when the CLI emits host-shaped JSON instead of the host-neutral result. */
   readonly nativeOutput: boolean;
+  /**
+   * True only when a mid-turn envelope is known to reach the model.
+   *
+   * Distinct from `midTurnContext` returning something, and the distinction is not
+   * pedantic: Cursor accepts and logs `additional_context` but open upstream reports say
+   * it never reaches the model. Anything deciding "is this host already telling the agent"
+   * has to ask this, not whether an envelope exists -- inferring it from the envelope
+   * silences the fallback channel for precisely the host that depends on it.
+   */
+  readonly midTurnDeliveryVerified: boolean;
   identity(raw: Record<string, unknown>): HostIdentity;
   normalizedEvent(hostEvent: string): NormalizedHookEventName | undefined;
   isShellEvent(hostEvent: string, toolName: string): boolean;

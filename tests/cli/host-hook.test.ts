@@ -379,6 +379,14 @@ describe('host hook normalization', () => {
 
       expect(result.knowlTool).toBe(true);
       expect(result.knowlChangeKeys).toEqual(expected);
+      // The bare name is what the MCP server recorded its commit range under; the host
+      // prefix has to come off or the two never line up.
+      expect(result.knowlToolName).toBe(tool);
+    });
+
+    it('leaves the tool name unset for a non-Knowl tool', async () => {
+      const result = await chain({ tool_name: 'Grep', tool_input: { pattern: 'knowl' } });
+      expect(result.knowlToolName).toBeUndefined();
     });
   });
 });

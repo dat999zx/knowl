@@ -25,6 +25,9 @@ export const cursorProfile: HostProfile = {
   promptEvent: undefined,
   sharesSessionBinding: false,
   nativeOutput: true,
+  // Emitted below but not surfaced to the model upstream, so nothing may treat Cursor as
+  // already-notified. Flip to true once an upstream release is confirmed to show it.
+  midTurnDeliveryVerified: false,
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.conversation_id),

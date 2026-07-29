@@ -28,6 +28,13 @@ export interface NormalizedHostHook {
   payload: Record<string, unknown>;
   /** True when this tool event is a Knowl MCP/CLI call — used to reset the drift reminder. */
   knowlTool?: boolean;
+  /**
+   * The Knowl tool this event fired for, normalized to its bare name.
+   *
+   * Hosts prefix MCP tools (`mcp__knowl__knowl_store`), so the raw name cannot be matched
+   * against what the MCP server recorded under its own tool name.
+   */
+  knowlToolName?: string;
   /** Claude subagent id. Present on every subagent event, absent on main-thread events. */
   agentId?: string;
   /** Claude subagent type, e.g. "Explore". Used only to title the binding. */
@@ -152,11 +159,27 @@ function knowlChangeKeys(input: Record<string, unknown>): { ids: string[]; title
   return { ids: ids.slice(0, MAX_CHANGE_KEYS), titles: titles.slice(0, MAX_CHANGE_KEYS) };
 }
 
-function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'knowlTool' | 'knowlChangeKeys'> {
+/**
+ * `mcp__knowl__knowl_store` -> `knowl_store`.
+ *
+ * Hosts namespace MCP tools by server, and the MCP server records its ranges under the
+ * bare tool name it was called with, so the two only line up after this.
+ */
+function bareKnowlToolName(toolName: string): string | undefined {
+  // Split on the last separator rather than searching for "knowl_": the server segment is
+  // itself called knowl, so `mcp__knowl__knowl_store` makes a leftmost match swallow the
+  // separator and yield `knowl__knowl_store`.
+  const bare = (toolName.includes('__') ? toolName.slice(toolName.lastIndexOf('__') + 2) : toolName).toLowerCase();
+  return /^knowl_[a-z_]+$/.test(bare) ? bare : undefined;
+}
+
+function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'knowlTool' | 'knowlToolName' | 'knowlChangeKeys'> {
   const input = toolInput(raw);
   const toolName = stringValue(raw.tool_name) ?? stringValue(raw.toolName) ?? '';
   const knowlTool = /knowl/i.test(toolName);
-  const changeKeys = knowlTool ? { knowlChangeKeys: knowlChangeKeys(input) } : {};
+  const changeKeys = knowlTool
+    ? { knowlChangeKeys: knowlChangeKeys(input), knowlToolName: bareKnowlToolName(toolName) }
+    : {};
   const isShell = hostProfile(host).isShellEvent(eventName, toolName);
   if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, knowlTool, ...changeKeys };
 

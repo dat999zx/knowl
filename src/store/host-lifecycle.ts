@@ -2,7 +2,17 @@ import { NormalizedHostHook } from '../cli/agents/host-hook.js';
 import { renderChangeCard } from '../cli/agents/change-card.js';
 import { hostProfile } from '../cli/agents/hosts/index.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';
-import { ChangeSummary, loadForeignChanges, readCommitHead } from './change-watermark.js';
+import {
+  ChangeSummary,
+  loadChangesInRange,
+  loadForeignChanges,
+  loadForeignPeerChanges,
+  mergeChangeSummaries,
+  readCommitHead,
+  readPeerCommitHeads,
+} from './change-watermark.js';
+import { findRecentCallRanges, rangeBelongsToCaller, type CommitRange } from './mcp-call-commits.js';
+import { resolveWorkspace } from '../workspace/resolve.js';
 import { captureMemorySessionEvent } from './session-capture.js';
 import { finalizeMemorySession } from './session-finalizer.js';
 import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions } from './session-repository.js';
@@ -16,9 +26,11 @@ import {
   getOrCreateHostSession,
   HostSessionKey,
   incrementHostSuccessfulToolCount,
-  readHostSeenCommit,
+  readHostSeenPeerCommits,
+  readHostWatermark,
   resetHostSuccessfulToolCount,
   setHostSeenCommit,
+  setHostSeenPeerCommits,
 } from './host-session-bindings.js';
 import { bootstrapAgentSession } from './context-bootstrap.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
@@ -140,20 +152,23 @@ async function bootstrapAgentContext(projectId: string, input: NormalizedHostHoo
  * not the caller's own. Returns undefined when there is nothing to report, which
  * includes the uninitialised and clamp cases.
  */
-async function evaluateChangeNotification(
+async function evaluateLocalChanges(
   input: NormalizedHostHook,
   key: HostSessionKey,
 ): Promise<ChangeSummary | undefined> {
   const head = await readCommitHead();
-  const seen = await readHostSeenCommit(key);
-  if (seen === null) return undefined;
+  const watermark = await readHostWatermark(key);
+  if (watermark === null) return undefined;
 
-  // 0 means "uninitialised", not "has seen no commits": adopt head silently rather
-  // than reporting the entire history. Covers rows migrated by the ALTER TABLE.
-  if (seen === 0 && head > 0) {
+  // A row that has never had a watermark set -- one migrated by the ALTER TABLE -- adopts
+  // head silently rather than reporting the entire history. Tracked by its own column
+  // rather than inferred from `seen === 0`, which a session bound against a repo with no
+  // commit history also produces, and which must report its first commit normally.
+  if (!watermark.initialized) {
     await setHostSeenCommit(key, head);
     return undefined;
   }
+  const seen = watermark.seen;
   // Snapshot restore reassigns rowids, so a stored watermark can exceed head.
   if (seen > head) {
     await setHostSeenCommit(key, head);
@@ -161,9 +176,105 @@ async function evaluateChangeNotification(
   }
   if (seen === head) return undefined;
 
-  const summary = await loadForeignChanges(seen, input.knowlChangeKeys);
+  // A confirmed range accounts for this call's work completely, so key matching is not
+  // just unnecessary alongside it but harmful: it is the half that hides a foreign change
+  // sharing a title. Keys are the fallback for when no range was recorded, never a
+  // supplement to one.
+  const ranges = await ownCommitRanges(input, seen, head);
+  const summary = ranges
+    ? await loadForeignChanges(seen, undefined, undefined, ranges)
+    : await loadForeignChanges(seen, input.knowlChangeKeys);
   await setHostSeenCommit(key, head);
   return summary.count > 0 ? summary : undefined;
+}
+
+/**
+ * Commit ranges in this window that this call demonstrably produced.
+ *
+ * The MCP server records the range each write produced, because it is the only party that
+ * knows: it reads the head before dispatch, so its own commits are exactly the rows above
+ * it. This side confirms a recorded range is its own by finding one of its own tool_input
+ * keys inside it, then hands back the whole range.
+ *
+ * That is strictly better than the key matching it replaces, in both directions. A write's
+ * indirect effects -- a dedup supersede of a differently-titled item, GC, promotion -- carry
+ * none of the caller's keys and used to come back as somebody else's work; they fall inside
+ * the range. And a foreign change that merely shares a title is no longer hidden, because
+ * exclusion no longer looks at titles at all.
+ *
+ * Returns nothing when no range matches, leaving the key-matching fallback in place: a CLI
+ * write, an older MCP server, or a host that does not report tool names all land there.
+ */
+async function ownCommitRanges(
+  input: NormalizedHostHook,
+  seen: number,
+  head: number,
+): Promise<CommitRange[] | undefined> {
+  if (!input.knowlToolName || !input.knowlChangeKeys) return undefined;
+  try {
+    const candidates = await findRecentCallRanges(input.projectRoot, input.knowlToolName);
+    const owned: CommitRange[] = [];
+    for (const range of candidates) {
+      // Only ranges inside the window being reported can affect its outcome.
+      if (range.to <= seen || range.from >= head) continue;
+      if (rangeBelongsToCaller(await loadChangesInRange(range), input.knowlChangeKeys)) owned.push(range);
+    }
+    return owned.length > 0 ? owned : undefined;
+  } catch {
+    return undefined; // fall back to key matching rather than failing the tool event
+  }
+}
+
+/**
+ * The same watermark rule, applied per peer repo.
+ *
+ * Peers are tracked separately rather than folded into one number because their commit
+ * rowids are independent sequences -- repo A's rowid 40 says nothing about repo B's.
+ * A peer seen for the first time adopts its head silently, exactly as the local repo
+ * does, so linking a workspace never replays a peer's entire history at you.
+ */
+async function evaluatePeerChanges(
+  projectRoot: string,
+  key: HostSessionKey,
+): Promise<ChangeSummary[]> {
+  const workspace = await resolveWorkspace(projectRoot).catch(() => null);
+  if (!workspace || workspace.peers.length === 0) return [];
+
+  const heads = await readPeerCommitHeads(workspace.peers);
+  if (Object.keys(heads).length === 0) return [];
+
+  const stored = await readHostSeenPeerCommits(key);
+  const next = { ...(stored ?? {}) };
+  const summaries: ChangeSummary[] = [];
+
+  for (const peer of workspace.peers) {
+    const head = heads[peer.name];
+    if (head === undefined) continue; // unreadable this time; leave its watermark alone
+    const seen = stored?.[peer.name];
+    next[peer.name] = head;
+    // Unknown peer, or a watermark left past head by a snapshot restore: adopt silently.
+    if (seen === undefined || seen >= head) continue;
+    try {
+      const summary = await loadForeignPeerChanges(peer, seen);
+      if (summary.count > 0) summaries.push(summary);
+    } catch {
+      // Readable a moment ago, unreadable now. Roll this peer's watermark back so the
+      // window is retried rather than skipped.
+      next[peer.name] = seen;
+    }
+  }
+
+  await setHostSeenPeerCommits(key, next);
+  return summaries;
+}
+
+async function evaluateChangeNotification(
+  input: NormalizedHostHook,
+  key: HostSessionKey,
+): Promise<ChangeSummary | undefined> {
+  const local = await evaluateLocalChanges(input, key);
+  const peers = await evaluatePeerChanges(input.projectRoot, key);
+  return mergeChangeSummaries([...(local ? [local] : []), ...peers]);
 }
 
 async function finalizeFailedStop(projectId: string, input: NormalizedHostHook, sessionId: string) {
