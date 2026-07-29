@@ -2,27 +2,79 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status: provisional.** Five of its decisions depend on questions only v1 usage can answer — see "What v1 must answer first". Do not start Task 1 until those are settled; the tasks are shaped so that answering them changes scope, not architecture.
+**Status: re-scoped, not recommended for now.** The five open questions have been answered against
+real v1 usage — see "What v1 answered". Two answers cut scope, and one invalidates a headline
+justification: **cross-repo change notification, listed here as something only a shared database
+could provide, shipped under federation in 2.6.0.** What remains uniquely v2's is narrower than
+when this plan was written, and nothing observed in v1 usage has needed it. See "Recommendation".
 
-**Goal:** Give linked repos one shared knowledge database that they all read and write, with a single owning repo per item and an explicit visibility, so cross-repo `knowl_update`, conflict detection and dedup work — the things federation structurally cannot do.
+**Goal (revised):** Give linked repos an *optional* shared knowledge database so that cross-repo
+`knowl_update`, cross-owner duplicate detection and workspace-wide conflict detection work — the
+things federation structurally cannot do. `linked` mode remains the default and stays supported;
+`shared` is a second mode, not a migration target.
 
-**Architecture:** A workspace database at `~/.knowl/workspaces/<name>/knowl.db` becomes the `knowledge` storage role. Each repo's `<repo>/.knowl/knowl.db` stays exactly where it is, serving the `local` and `session` roles — code index, host bindings, watermarks, telemetry. Migration copies rather than moves, is journalled, fences writes per repo, and flips mode last by writing one file.
+**Architecture:** A workspace database at `~/.knowl/workspaces/<name>/knowl.db` becomes the
+`knowledge` storage role. Each repo's `<repo>/.knowl/knowl.db` stays exactly where it is, serving
+the `local` and `session` roles — code index, host bindings, watermarks, telemetry. Migration
+copies rather than moves, is journalled, fences writes per repo, and flips mode last by writing
+one file.
 
 **Tech Stack:** TypeScript (ESM, NodeNext), libSQL + Drizzle, vitest, tsup, commander, MCP SDK.
 
 **Source spec:** `docs/superpowers/specs/2026-07-26-multi-repo-workspace-design.md`, section "v2 — the shared database".
 
-**Depends on:** 2.4.0 and the whole of `2026-07-26-workspace-v1-federation.md`.
+**Depends on:** 2.4.0, the whole of `2026-07-26-workspace-v1-federation.md`, and two follow-ups
+that closed prerequisites this plan assumed were already true:
 
-## What v1 must answer first
+- `2aa7f92` — `origin_repo` is stamped at write time. This plan's ownership rules are unstateable
+  without it: in one shared table, an unowned row has no answer to who may edit, collect or export
+  it. v1 survived the gap because a repo's database held only its own items.
+- `8f899f8` — `workspace join` runs the same gate as `workspace add`, and a repo name is retired
+  only when the repo still owns atoms. Both entry points must agree on embedding identity before
+  several repos can write one vector space.
 
-| Question | Why it blocks | What changes |
+## What v1 answered
+
+| Question | Answer, and the evidence | Effect on this plan |
 | --- | --- | --- |
-| Does `linked` mode earn its keep? | If category routing works, `shared` may be the only mode worth maintaining | Task 1 collapses to one mode; the `workspace` connection role disappears |
-| Do agents condition on the `repo` label? | Any ranking weight is justified by it | If not, keep v1's ties-to-local and add no weighting at all |
-| Is the advisory applies-to table worth building? | Nothing mutating reads it, and an empty table breaks nothing | Task 4 disappears entirely |
-| Should `visibility` be mutable after write? | Promotion is a one-column update; demotion is a retraction with no mechanism | Promotion-only stays; demotion needs a design that does not exist |
-| Is per-atom batch routing the right partial-failure semantic? | Alternative is rejecting mixed batches | Task 8's response shape |
+| Does `linked` mode earn its keep? | **Yes — it *is* the product.** Everything shipped runs in `linked`: peer-labelled federated query, semantic cross-repo ranking (MRR 1.0 semantic, 0.833 positional, `docs/evals/cross-repo-baseline.json`), private-by-default with explicit promote, and per-peer commit watermarks delivering cross-repo change notification (2.6.0). | The question inverts. `linked` is not a mode to collapse away; **`shared` is the one that must justify itself.** Task 1 keeps both, and there is no forced migration. |
+| Do agents condition on the `repo` label? | **Unknown — no data.** The label demonstrably *reaches* agents (`CompactKnowledgeItem` carries `repo`/`namespace`, asserted on serialized output; notification cards carry `[repo]`). Whether agents change behaviour because of it has never been measured, because no sustained multi-repo work has happened. | Take the conservative default the plan already named: **keep v1's ties-to-local and add no ranking weight at all.** Revisit only with behavioural evidence, not intuition. |
+| Is the advisory applies-to table worth building? | **No.** Nothing reads it for a lifecycle decision, an empty table breaks nothing, and no usage has produced a case for saying "this applies to repos X and Y" separately from ownership. Its only purpose is to boost ranking by repo — which the previous row says is unjustified. | **Task 4 is cut.** |
+| Should `visibility` be mutable after write? | **Promotion only.** The friction v1 usage actually produced was the *ownership* gap blocking promote (fixed in `2aa7f92`), not an inability to demote. No demotion has been asked for, and a retraction has no mechanism and no design. | Unchanged from the plan's own default. Demotion stays out of scope. |
+| Is per-atom batch routing the right partial-failure semantic? | **Yes, but on reasoning rather than new evidence.** v1 produced no data — batch writes all land in one database today, so the question is unreachable until `shared` exists. The argument stands: rejecting mixed batches pushes agents into per-atom calls, which is exactly what `knowl_ingest_atoms` exists to prevent. | Task 8's shape is unchanged, and flagged as reasoned rather than measured. |
+
+## Recommendation
+
+**Do not build this yet.** Stated plainly so the decision is on the record rather than implied by
+inaction.
+
+What v2 uniquely provides, after the re-scope above:
+
+1. Editing or superseding an item owned by another repo.
+2. Detecting that two repos hold contradictory or duplicate knowledge.
+
+What it costs: Tasks 5–7 and 12 — a journalled migration, a per-repo write fence, an atomic
+cutover, and making N short-lived processes safely share one SQLite file with optimistic
+concurrency, bounded retry, and a runtime probe that refuses synced volumes. Task 12 alone carries
+a numeric acceptance bar (8 concurrent writers, zero lost updates by content, p95 under 50 ms)
+because the failure mode is silent lost writes.
+
+Against that, the problems real v1 usage surfaced were all fixable inside `linked` mode, and all
+now are: unowned writes (`2aa7f92`), an unguarded second entry point and a needlessly burned repo
+name (`8f899f8`). None of them needed one database.
+
+**Build v2 when one of these is true**, not before:
+
+- An agent has been observed needing to correct knowledge owned by another repo, and exporting
+  from that repo and re-importing is measurably worse than doing it in place.
+- Two linked repos have been found holding contradictory active knowledge that federation's
+  read-only path could not surface.
+- Repo count grows past the point where per-peer scanning is the bottleneck — a claim to measure
+  against `docs/evals/cross-repo-suite.json`, not to assume.
+
+**If none of those hold, the higher-value work is elsewhere:** `knowl_conflicts` across peers
+read-only, which gets benefit 2 above without a shared database at all, and is a fraction of the
+cost.
 
 ## Global Constraints
 
@@ -392,13 +444,14 @@ reader accepts a v1 file with the missing fields defaulted.
 
 ---
 
-### Task 4: The advisory applies-to table
+### Task 4: The advisory applies-to table — **CUT**
 
-**Build only if v1 says it is worth it.** See "What v1 must answer first". It exists solely to
-boost and filter retrieval; nothing reads it for a lifecycle decision, and an empty table breaks
-nothing.
+Removed by the re-scope; see "What v1 answered". The table's only purpose was to boost and filter
+retrieval by repo, and there is no evidence agents condition on the repo label at all. Nothing read
+it for a lifecycle decision, so cutting it removes no guarantee.
 
-**Files:** `src/store/bootstrap.ts`, `src/store/schema.ts`; Test `tests/store/applies-to.test.ts`
+Recorded rather than deleted so a later reader can see it was decided against, not overlooked. The
+shape, should the evidence ever arrive:
 
 ```sql
 CREATE TABLE IF NOT EXISTS knowledge_item_repos (
@@ -406,13 +459,9 @@ CREATE TABLE IF NOT EXISTS knowledge_item_repos (
   repo_name         TEXT NOT NULL,
   PRIMARY KEY (knowledge_item_id, repo_name)
 );
-CREATE INDEX IF NOT EXISTS idx_knowledge_item_repos_name ON knowledge_item_repos(repo_name);
 ```
 
-Tests: membership boosts ranking; it never adds or removes a result under any filter;
-`repos: ["x"]` still matches on `origin_repo` alone; an empty table changes nothing.
-
-- [ ] **Steps 1–6.**
+Task numbering below is unchanged, so existing references stay valid.
 
 ---
 
@@ -560,7 +609,7 @@ items; each of the four implicit reads returns only current-repo items, asserted
 | `restoreSnapshot` | Refused in `shared` mode: `DELETE FROM knowledge_items` then reinsert (`snapshots.ts:74-89`) would roll back every repo and pass the integrity audit while doing it |
 | `createSnapshot` | Refused unless `--all-repos`: it copies the whole active database, so it would write every repo's knowledge into one repo's `.knowl/snapshots/` |
 | `exportKnowledge` | Defaults to `origin_repo = <current>`; `--all-repos` is explicit |
-| Change notification | Only changes whose `origin_repo` is the current repo. Hardcoded, not configurable — a knob for a behavior nobody has experienced yet |
+| Change notification | Only changes whose `origin_repo` is the current repo. Hardcoded, not configurable. **This is a regression guard, not a feature:** 2.6.0 already delivers cross-repo notification through per-peer watermarks, and in one shared database the local commit log would otherwise announce every repo's writes as if they were yours |
 
 **Why purge is disabled rather than scoped.** An earlier revision promised `knowl gc undo`. It
 cannot exist: restoring the row restores none of its dependents, and the tombstone written
@@ -650,22 +699,28 @@ produces byte-identical CLI output.
 ## Self-review
 
 **Spec coverage.** Storage redirection → 1. Lifecycle convergence → 2. Tombstone monotonicity and
-format v2 → 3. Applies-to → 4. Journal → 5. Fence and copy → 6. Atomic activation → 7. Routing →
-8. Ownership → 9. Blocked operations → 10. FTS → 11. Concurrency → 12. Unlink and regression → 13.
+format v2 → 3. ~~Applies-to → 4~~ (cut). Journal → 5. Fence and copy → 6. Atomic activation → 7.
+Routing → 8. Ownership → 9. Blocked operations → 10. FTS → 11. Concurrency → 12. Unlink and
+regression → 13.
 
 **What v1 defers into this plan.** Two tasks the v1 plan originally carried moved here, because
 neither can fire while each repo has its own database: scoping implicit reads, and clamping
 cross-owner duplicate resolution. Both live in Task 9. v1's Task 8 pins the property they
 protect, so a regression there fails in v1's suite before v2 work begins.
 
-A third thing lands here by default rather than by choice. **v1 has no cross-repo change
-notification at all**: the watermark reads the local `knowledge_commits`
-(`change-watermark.ts:12,58`) and federation reaches peers through a read-only path that
-records nothing, so an agent is never told when a linked repo promotes knowledge. Covering that
-under federation would mean polling every peer's commit log on each tool event; the shared
-database makes it one log and removes the problem rather than solving it. Task 10's
-notification row is therefore the *first* time cross-repo notification exists, not a
-restriction of something v1 shipped.
+**Corrected: cross-repo change notification is no longer a v2 feature.** This section previously
+argued that v1 had none, that covering it under federation would mean polling every peer's commit
+log on each tool event, and that Task 10's notification row would therefore be the first time it
+existed. That is now false. 2.6.0 shipped it in `linked` mode using **per-peer commit watermarks**
+— each repo tracks how far it has read into each peer's `knowledge_commits`, so a linked repo's
+promote, update or retire reaches agents in the consuming repos with a `[repo]` tag, without
+polling and without a shared log. The shared database does not add the capability; it changes the
+capability into a filtering obligation, which is why Task 10's row is a regression guard.
+
+Two lessons worth keeping. First, a v2 justification survived three review rounds and a full design
+spec while resting on a limit that turned out to be removable within v1 — the claim was never
+tested against an attempt to build it in the simpler mode. Second, this is the single largest
+reason the plan is now re-scoped rather than started: it was one of the two headline capabilities.
 
 **Deliberately excluded.** Cross-repo code symbol index. `indexCode` deletes every row absent
 from the current root, so sharing it means a composite primary key, a matching composite foreign
@@ -676,7 +731,15 @@ stays in the `local` role.
 
 **Detail level.** Tasks 1 and 2 are written out in full because they are load-bearing and
 independent of the open questions. Tasks 3–13 carry context, interfaces, the reasoning behind
-each decision, and explicit test obligations, but not literal code — deliberately, because five
-of this plan's decisions are open pending v1 usage and writing code against a guess would be
-throwaway work. Expand each task to full steps when its scope is settled. A plan claiming
-completeness it does not have is worse than one that says where it thins out.
+each decision, and explicit test obligations, but not literal code. That was originally because
+five decisions were open; they are now answered, and the reason has changed rather than gone
+away: the plan is **not recommended for build**, so expanding it to literal code would be
+throwaway work for a different reason. Expand a task when the decision to build is actually
+taken. A plan claiming completeness it does not have is worse than one that says where it thins
+out.
+
+**What changed in this revision.** Five open questions answered against v1 usage; Task 4 cut;
+`shared` demoted from migration target to optional second mode; cross-repo notification removed
+from v2's justification and reclassified as a regression guard in Task 10; two prerequisites this
+plan assumed (write-time ownership, a guarded second entry point) recorded as dependencies now
+satisfied; and an explicit recommendation with the conditions that would reverse it.
