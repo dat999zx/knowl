@@ -3,6 +3,83 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.7.0 — 2026-07-30
+
+Linked repos are now searched by the same code that searches your own, and a write is told
+when another repo already covers the same subject.
+
+### Added
+
+- **Cross-repo conflict and duplicate reporting.** Duplicate and contradiction checks only
+  ever looked in the repo doing the writing, so two linked repos could hold directly
+  contradictory knowledge and nothing noticed. A write inside a workspace now also checks
+  the linked repos and names what it found, and which repo owns it. It reports and never
+  changes anything: that item belongs to another repo, and only its owner can retire it.
+  Both the single-atom and batch writers do this, the batch naming which atom overlapped, so
+  five findings do not collapse into "something in your batch overlapped". Bounded to a few
+  candidates per repo and never fatal — a repo that cannot be read yields no report rather
+  than a failed write. Outside a workspace it costs one check.
+- **One retrieval engine, pointed at any repo.** A linked repo was searched by a separate,
+  simpler implementation: a raw substring scan, scored without the recency, confidence,
+  freshness, category or identifier handling your own results get. So a linked repo's
+  answers were ranked by older rules than your own, and every future ranking improvement
+  would have had to be made twice. Reads now take an explicit database, so the same code
+  runs against any repo.
+
+### Changed
+
+- **Results from every repo are now scored together, in one pass.** Each repo used to be
+  ranked on its own and the rankings combined afterwards. That could not work: "how recent
+  is this" was measured against each repo's own results, so every repo's newest item scored
+  as maximally recent regardless of its actual age. Scoring the combined set removes the
+  problem rather than compensating for it, and the cross-repo ranking benchmark improves
+  from 0.833 to 1.0 on the non-vector path with no weight added or changed.
+- **`knowl query` and the `knowl_query` tool now rank identically.** The command line used a
+  plainer keyword search — no vector search, none of the ranking adjustments — while an
+  agent asking the same question got the full engine. It also disagreed with itself,
+  ranking better inside a workspace than outside one and returning three results instead of
+  twenty. Both paths now use the shared engine and the same default.
+- **The portable export format is now version 2.** It carries owning repo, visibility and
+  the new lifecycle fingerprint. Version 1 files still import, with ownership defaulted,
+  which is what a file written before those fields means. A version this build does not
+  recognise is refused rather than imported with pieces silently missing.
+- **Identical knowledge held by two repos no longer takes two result slots.** It is
+  collapsed before the result limit is applied, keeping your own copy, so a shared fact
+  cannot shorten the list you asked for.
+
+### Fixed
+
+- **Search could return nothing while a matching answer sat just past its limit.** Results
+  were cut to the limit and *then* filtered, so a query whose strongest matches were all
+  archived came back empty. Filtering now happens inside the search.
+- **A linked repo's private notes could reach another repo.** One of the two search paths
+  never received the visibility filter, so items a repo had deliberately not shared could
+  come back through a cross-repo query. The filter is now part of the query itself, so an
+  unshared row is never read into another repo's process at all.
+- **Exporting and re-importing threw away who owned what.** Export wrote the owning repo and
+  visibility into the file; import's column list did not include them, so a round trip
+  returned everything owned by nobody and private, with nothing reporting the loss.
+- **Promoting, retiring or superseding a note could not travel between machines.** Those
+  changes leave the text identical, and import compared only the text, so it declared the
+  item unchanged and skipped it. A separate lifecycle fingerprint now travels with the item.
+  Promotion also records when it happened, without which no other machine could ever prefer
+  it.
+- **A delete could un-delete itself.** Two places overwrote a deletion's timestamp without
+  checking it was newer, so replaying an older delete moved the record backwards. Import
+  also now refuses to reinstate something deleted after the export was taken, and says so
+  rather than reporting it as already held.
+- **"Only one active answer to this" never worked without a scope.** An exclusive conflict
+  key with no scope matched nothing and guarded nothing, in both the check that reports a
+  conflict and the guard that prevents the write — so fixing one alone would have reported
+  the conflict and still allowed it.
+- **`--as-of` matched whole phrases instead of keywords.** It found proper candidates, threw
+  them away, and fell back to a literal substring search, so a keyword query missed items a
+  present-tense query would have found. Both paths now share one candidate list.
+- **The database file kept changing after it was closed.** Writes live in a side file until a
+  checkpoint folds them in, and closing did not wait for that — leaving the main file in
+  motion after the close returned. This is why some environments could not delete a
+  project directory immediately afterwards.
+
 ## 2.6.0 — 2026-07-29
 
 Agents now find out when memory changes underneath them in a linked repo, and on hosts
