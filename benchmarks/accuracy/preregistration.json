@@ -1,0 +1,140 @@
+{
+  "schemaVersion": 1,
+  "protocolId": "knowl-accuracy-v1",
+  "preregisteredOn": "2026-07-13",
+  "objective": "Compare agent-memory accuracy under one evaluator-owned, reproducible protocol.",
+  "scope": {
+    "included": [
+      "retrieval quality",
+      "answer quality when a fixed reader and judge are pinned",
+      "temporal correctness",
+      "failed-approach prevention",
+      "native durable-memory capture",
+      "context composition accuracy"
+    ],
+    "excludedFromLeaderboard": [
+      "latency",
+      "throughput",
+      "RAM",
+      "storage size",
+      "token usage",
+      "monetary cost",
+      "setup effort"
+    ]
+  },
+  "dataset": {
+    "id": "coding-memory-v1",
+    "generatorVersion": "coding-memory-v1",
+    "seed": "20260713",
+    "minimumProjects": 5,
+    "histories": 100,
+    "sessions": 400,
+    "questions": 200,
+    "relevanceGrades": {
+      "3": "exact answer",
+      "2": "strongly useful supporting memory",
+      "1": "weakly relevant",
+      "0": "irrelevant or harmful"
+    },
+    "goldIsolation": "Adapters receive only public records, raw native sessions, and public queries. Evaluator labels are read only by validation and scoring code.",
+    "integrity": "Every published run records and verifies the SHA-256 digest of every dataset file."
+  },
+  "controls": {
+    "runs": 3,
+    "runSeed": 20260713,
+    "aggregation": "median of the three run-level metric values",
+    "topK": 10,
+    "contextBudgetTokens": 2000,
+    "recordOrder": "ascending benchmark timestamp, then stable source ID",
+    "queryOrder": "ascending issuedAt timestamp, then stable question ID",
+    "storeIsolation": "fresh system store, project root, HOME, database, bank, or graph group for every system and run",
+    "temperature": 0,
+    "systemSpecificQueryTuning": false
+  },
+  "modes": {
+    "normalized": {
+      "input": "identical prepared memory records",
+      "systemSpecificExtraction": false,
+      "reportedSeparately": true
+    },
+    "native": {
+      "input": "identical raw agent sessions",
+      "systemSpecificCaptureAndConsolidation": true,
+      "reportedSeparately": true
+    }
+  },
+  "retrievalScoring": {
+    "relevantThreshold": 2,
+    "metrics": [
+      "strictAccuracy@10",
+      "Recall@1",
+      "Recall@3",
+      "Recall@5",
+      "Recall@10",
+      "MRR",
+      "nDCG@5",
+      "nDCG@10",
+      "stale-result rate",
+      "forbidden-result rate",
+      "duplicate-result rate",
+      "abstention accuracy"
+    ],
+    "ndcgGain": "2^grade - 1",
+    "strictCorrect": "For answerable queries, every required evidence group is represented and no forbidden source is returned. For abstention queries, the system returns an empty abstention.",
+    "missingPrediction": "incorrect for supported and applicable queries",
+    "unsupportedFeature": "N/A with a reason; never zero and never included in a denominator"
+  },
+  "nativeCaptureScoring": {
+    "metrics": [
+      "durable-memory capture precision",
+      "durable-memory capture recall",
+      "false-promotion rate",
+      "duplicate-promotion rate",
+      "secret-retention rate",
+      "evidence coverage",
+      "interrupted-session recovery",
+      "idempotency"
+    ],
+    "secretRetention": "reported separately and never hidden inside a composite"
+  },
+  "reader": {
+    "status": "unconfigured",
+    "publicationRule": "Answer-quality metrics are N/A until an immutable model revision, prompt SHA-256, decoding parameters, and context serializer hash are recorded for every system."
+  },
+  "judge": {
+    "status": "unconfigured",
+    "publicationRule": "Semantic judging is N/A until an immutable judge revision, rubric SHA-256, and decoding parameters are recorded. Gold labels and system identity must not be exposed to the judge."
+  },
+  "vectorBaseline": {
+    "semanticModelStatus": "unconfigured",
+    "publicationRule": "The semantic vector-only baseline is N/A until its exact embedding model revision and configuration hash are pinned. The deterministic signed-FNV hash-vector implementation is reported only as a hash-vector control."
+  },
+  "secondaryQualityScore": {
+    "status": "preregistered_but_not_required",
+    "weights": {
+      "codingMemoryAnswerAccuracy": 0.3,
+      "retrievalNdcgAt5": 0.25,
+      "temporalAccuracy": 0.2,
+      "failedApproachPrevention": 0.15,
+      "abstentionAccuracy": 0.1
+    },
+    "eligibility": "N/A unless all five components were reproduced under this protocol; missing components are never reweighted.",
+    "rankingRule": "Raw metrics and denominators are primary. The secondary score must not replace the separate normalized and native tables."
+  },
+  "statistics": {
+    "comparisonUnit": "question ID",
+    "interval": "paired bootstrap 95% confidence interval with 10000 resamples and seed 20260713",
+    "claimRule": "Do not claim a meaningful winner when the paired interval for the difference includes zero."
+  },
+  "publicationRequirements": [
+    "clean benchmark git commit",
+    "exact system tag and commit",
+    "container and database image digests when applicable",
+    "all extraction, embedding, reranker, reader, and judge model revisions",
+    "configuration and prompt hashes",
+    "operating system, hardware, language runtimes, and material environment variables",
+    "one raw record per system, mode, dataset, question, and run",
+    "published failures and N/A reasons",
+    "artifact SHA-256 manifest"
+  ]
+}

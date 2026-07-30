@@ -1,0 +1,111 @@
+{
+  "schemaVersion": 1,
+  "verifiedOn": "2026-07-13",
+  "systems": [
+    {
+      "id": "agentmemory",
+      "name": "AgentMemory",
+      "version": "v0.9.27",
+      "repository": "https://github.com/rohitg00/agentmemory",
+      "commit": "25158519d5d68b9060a97ba5bdcccc3e1aba6d79",
+      "status": "unavailable",
+      "reason": "The pinned release has been identified, but its benchmark adapter and isolated runtime have not been installed and executed in this checkout.",
+      "normalized": {
+        "supported": true,
+        "sourceProvenance": true,
+        "temporalAsOf": false,
+        "reason": "The REST API accepts sourceObservationIds, but it does not expose strict caller-supplied as-of retrieval."
+      },
+      "native": {
+        "supported": true,
+        "sourceProvenance": true,
+        "temporalAsOf": false,
+        "reason": "The pinned release provides coding-agent lifecycle hooks; a healthy full server and benchmark completion barrier are still required."
+      }
+    },
+    {
+      "id": "projectmem",
+      "name": "ProjectMem",
+      "version": "v0.2.0",
+      "repository": "https://github.com/riponcm/projectmem",
+      "commit": "65eb70ba02439d976e9e1449b485a8c705948ea1",
+      "status": "unavailable",
+      "reason": "The pinned release has been identified, but its benchmark adapter and fresh per-run project/HOME isolation have not been installed and executed in this checkout.",
+      "normalized": {
+        "supported": true,
+        "sourceProvenance": true,
+        "temporalAsOf": false,
+        "reason": "Stable source attribution requires the adapter to map public writes to the pinned release's events.jsonl records; strict as-of search is unavailable."
+      },
+      "native": {
+        "supported": true,
+        "sourceProvenance": true,
+        "temporalAsOf": false,
+        "reason": "Native typed-event capture can be evaluated only through a pinned clean project root; no native run has been collected."
+      }
+    },
+    {
+      "id": "aingram",
+      "name": "AIngram",
+      "version": "v1.2.0",
+      "repository": "https://github.com/bozbuilds/AIngram",
+      "commit": "bad6786046578f79aad49306de7cef67c7a253c4",
+      "status": "unavailable",
+      "reason": "The latest tagged release is pinned; the newer untagged main branch is excluded, and no isolated adapter run has been collected.",
+      "normalized": {
+        "supported": true,
+        "sourceProvenance": true,
+        "temporalAsOf": false,
+        "reason": "MemoryStore metadata can preserve benchmark source IDs, but the pinned API does not provide strict as-of retrieval."
+      },
+      "native": {
+        "supported": true,
+        "sourceProvenance": true,
+        "temporalAsOf": false,
+        "reason": "The pinned release's optional capture daemon must be explicitly enabled and run against a fresh SQLite store."
+      }
+    },
+    {
+      "id": "graphiti",
+      "name": "Graphiti",
+      "version": "v0.29.2",
+      "repository": "https://github.com/getzep/graphiti",
+      "commit": "ff7e29ccd127d8d9721b5cbb2163a6407ef915fe",
+      "status": "unavailable",
+      "reason": "The pinned release has been identified, but its graph database, model dependencies, and benchmark adapter have not been installed and executed in this checkout.",
+      "normalized": {
+        "supported": true,
+        "sourceProvenance": true,
+        "temporalAsOf": true,
+        "reason": "Pinned direct APIs support awaited episode ingestion, episode provenance, and strict temporal filtering when the adapter supplies the required filters."
+      },
+      "native": {
+        "supported": true,
+        "sourceProvenance": true,
+        "temporalAsOf": true,
+        "reason": "Native graph extraction requires separately pinned graph, extraction, embedding, and reranking dependencies before a run is publishable."
+      }
+    },
+    {
+      "id": "hindsight",
+      "name": "Hindsight",
+      "version": "v0.8.4",
+      "repository": "https://github.com/vectorize-io/hindsight",
+      "commit": "92f433c90409636804c0797071a4abbe141f76c5",
+      "status": "unavailable",
+      "reason": "The pinned release has been identified, but its bank, model dependencies, and benchmark adapter have not been installed and executed in this checkout.",
+      "normalized": {
+        "supported": true,
+        "sourceProvenance": true,
+        "temporalAsOf": false,
+        "reason": "document_id can retain benchmark provenance, but strict caller-supplied as-of retrieval is unavailable."
+      },
+      "native": {
+        "supported": true,
+        "sourceProvenance": true,
+        "temporalAsOf": false,
+        "reason": "The pinned release provides coding-agent hooks; asynchronous retain requires a completion barrier and a unique bank per run."
+      }
+    }
+  ]
+}
