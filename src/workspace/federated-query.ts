@@ -1,11 +1,13 @@
-import type { KnowledgeItem } from '../core/types.js';
-import { RRF_K } from '../store/agent-query.js';
-import { cosineSimilarity, decodeVector } from '../store/vector.js';
-import { acquireClient } from '../store/connection-pool.js';
+import type { ExplainedKnowledgeItem, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
+import { scoreCandidates, selectCandidates, type Candidate, type RankOptions } from '../store/agent-query.js';
+import { openPeerStore } from '../store/store-handle.js';
 import { SchemaTooNewError } from '../store/schema-version.js';
-import type { ActiveWorkspace, PeerRepo } from './resolve.js';
+import type { ActiveWorkspace } from './resolve.js';
 
-export type FederatedItem = KnowledgeItem & { repo: string };
+export type FederatedItem = KnowledgeItem & {
+  repo: string;
+  explanation?: ExplainedKnowledgeItem['explanation'];
+};
 export type SkipReason = 'absent' | 'unreadable' | 'schema-too-new';
 export type FederatedResult = {
   items: FederatedItem[];
@@ -14,197 +16,58 @@ export type FederatedResult = {
 
 const DEFAULT_PER_REPO_CAP = 10;
 
-/**
- * Candidates from one peer.
- *
- * A plain LIKE scan rather than the agent ranker: the ranker needs an initialized ambient
- * database, and using it here would swap the caller's connection mid-query. Candidates are
- * capped per repo and fused by rank, so a cheap peer scan can only interleave with properly
- * scored local results, never outrank them wholesale.
- *
- * The visibility filter is in the SQL, not applied afterwards. A peer's repo-private items
- * must never enter this process at all.
- */
-/**
- * Query tokens, not the raw string.
- *
- * A whole-phrase LIKE only matches when the exact phrase appears, so "wire format protobuf"
- * missed a decision titled "Wire format is protobuf" -- one filler word away and the peer
- * returned nothing. Agents query in keywords, which is precisely the shape that breaks.
- */
-function queryTokens(query: string): string[] {
-  return Array.from(new Set(
-    query.toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length > 1),
-  )).slice(0, 12);
-}
-
-type Candidate = { item: KnowledgeItem; vector: number[] | null };
-
-const ITEM_COLUMNS = `i.id, i.category, i.status, i.title, i.content, i.reasoning, i.tags, i.source,
-  i.content_hash, i.freshness, i.confidence, i.version, i.created_at, i.updated_at,
-  i.origin_repo, i.visibility, e.vector AS embedding`;
+type RepoCandidate = Candidate & { repo: string };
 
 /**
- * Peer candidates, selected the way the local ranker selects its own.
+ * Search this repo and every linked one, as a single ranking.
  *
- * Locally, candidates come from BM25 *and* vector search unioned, with cosine as the
- * primary score and BM25 only a bounded fallback for items the vector search missed
- * (`agent-query.ts`, VECTOR_PRIMARY_WEIGHT / BM25_FALLBACK_WEIGHT). Selecting peers
- * lexically alone would invert that: an item that is semantically on-point but shares no
- * query token would never become a candidate, so cosine would never get to rank it -- which
- * is the exact case vector search exists for.
+ * Federation owns selection. An earlier shape had the caller run its own local query and pass
+ * the results in, which meant two call sites reproducing the selection half of the ranker and
+ * a `localItems` parameter whose contents were scored by different rules than the peers'.
  *
- * So this does both. Every embedded item is scored by cosine and the best `cap` are taken;
- * the lexical scan then adds what vectors missed, which is also the whole answer for a peer
- * written without embeddings.
- */
-async function peerCandidates(
-  peer: PeerRepo,
-  query: string,
-  cap: number,
-  queryEmbedding?: number[],
-): Promise<Candidate[]> {
-  const client = await acquireClient(peer.databasePath, { readOnly: true });
-  const byId = new Map<string, Candidate>();
-
-  // Primary: semantic. A full scan of the peer's vectors, scored in JS -- the same shape
-  // searchKnowledgeEmbeddings already uses locally, so this is not a new cost profile.
-  if (queryEmbedding) {
-    const embedded = await client.execute({
-      sql: `SELECT ${ITEM_COLUMNS}
-            FROM knowledge_items i
-            JOIN knowledge_embeddings e ON e.knowledge_item_id = i.id
-            WHERE i.status = 'active' AND i.visibility = 'workspace'`,
-      args: [],
-    });
-    const scored = embedded.rows
-      .map(row => ({ row, vector: parseVector(row.embedding) }))
-      .filter(entry => entry.vector)
-      .map(entry => ({ entry, score: cosineSimilarity(queryEmbedding, entry.vector!) }))
-      .filter(entry => entry.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, cap);
-    for (const { entry } of scored) byId.set(String(entry.row.id), toCandidate(entry.row));
-  }
-
-  // Fallback: lexical. Catches items with no embedding, and query terms the vector missed.
-  // A title hit counts double, mirroring the weight the local ranker gives titles.
-  const tokens = queryTokens(query);
-  if (tokens.length > 0) {
-    const where = tokens.map(() => '(lower(i.title) LIKE ? OR lower(i.content) LIKE ?)').join(' OR ');
-    const score = tokens
-      .map(() => '(CASE WHEN lower(i.title) LIKE ? THEN 2 ELSE 0 END) + (CASE WHEN lower(i.content) LIKE ? THEN 1 ELSE 0 END)')
-      .join(' + ');
-    const patterns = tokens.flatMap(token => [`%${token}%`, `%${token}%`]);
-
-    const rows = await client.execute({
-      sql: `SELECT ${ITEM_COLUMNS}, ${score} AS match_score
-            FROM knowledge_items i
-            LEFT JOIN knowledge_embeddings e ON e.knowledge_item_id = i.id
-            WHERE i.status = 'active' AND i.visibility = 'workspace' AND (${where})
-            ORDER BY match_score DESC, i.updated_at DESC
-            LIMIT ?`,
-      args: [...patterns, ...patterns, cap],
-    });
-    for (const row of rows.rows) {
-      if (!byId.has(String(row.id))) byId.set(String(row.id), toCandidate(row));
-    }
-  }
-
-  return [...byId.values()];
-}
-
-function toCandidate(row: Record<string, unknown>): Candidate {
-  return {
-    vector: parseVector(row.embedding),
-    item: {
-      id: String(row.id),
-      category: String(row.category),
-      status: String(row.status),
-      title: String(row.title),
-      content: String(row.content),
-      reasoning: row.reasoning === null ? null : String(row.reasoning),
-      tags: row.tags ? JSON.parse(String(row.tags)) : null,
-      source: row.source === null ? null : String(row.source),
-      contentHash: row.content_hash === null ? null : String(row.content_hash),
-      freshness: String(row.freshness),
-      confidence: Number(row.confidence),
-      version: Number(row.version),
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-      originRepo: row.origin_repo === null ? null : String(row.origin_repo),
-      visibility: String(row.visibility),
-    } as unknown as KnowledgeItem,
-  };
-}
-
-/**
- * Peer vectors are decoded with the same function the local store uses.
+ * Selection is per store, because it is a database read. Scoring runs **once** over every
+ * repo's candidates together. That is not a tidiness preference: `normalizedRecencyScore`
+ * normalizes each item's date against the candidate set it arrives with, so ranking each repo
+ * separately and fusing the results gives every repo's newest item the same recency score
+ * regardless of how old it actually is. Scoring the union is what makes "recent" mean recent.
  *
- * This was previously a second, JSON-only parser living here. When local storage moved to a
- * packed float32 BLOB, every peer vector silently failed to parse and dropped out of semantic
- * scoring -- peers still appeared via the lexical fallback, so nothing errored and cross-repo
- * search just quietly got worse. One decoder, shared, so an encoding change cannot desync again.
- */
-function parseVector(value: unknown): number[] | null {
-  const decoded = decodeVector(value);
-  return decoded && decoded.length > 0 ? decoded : null;
-}
-
-/**
- * Fuse local and peer candidates by reciprocal rank.
- *
- * BM25 scores from different databases are not comparable -- they depend on each corpus's
- * term statistics -- so raw-score fusion would let one repo dominate or vanish for reasons
- * unrelated to relevance. Rank sidesteps that entirely.
- *
- * No weights and no boosts. This repo justifies retrieval changes with a checked-in
- * ablation, and tunables that arrive without one cannot be evaluated. Ties break toward the
- * local repo; that is the whole of the local preference.
+ * There is no separate fusion step, no reciprocal-rank blending and no semantic/positional
+ * partition. All three existed only to reconcile scores computed apart from each other.
  */
 export async function queryFederated(input: {
   workspace: ActiveWorkspace;
-  localItems: KnowledgeItem[];
   query: string;
   limit: number;
+  category?: KnowledgeCategory;
+  status?: KnowledgeStatus;
+  tags?: string[];
   repos?: string[];
   perRepoCap?: number;
   /**
-   * The query embedding, when the caller has one.
+   * The local vector config, including the query embedding when one was produced.
    *
-   * Supplying it is what makes cross-repo ranking compare match *strength* rather than
-   * position. Without it the fusion falls back to reciprocal rank, where a weak rank-1 in
-   * one repo ties a strong rank-1 in another and the local tie-break decides -- which is
-   * exactly the failure recorded in docs/evals/cross-repo-baseline.json.
+   * A workspace pins one embedding identity (`assertSafeToLink`), so the peer's vectors live
+   * in the same space and the same provider/model filter is the right one to apply there.
    */
-  queryEmbedding?: number[];
-  /** Local vectors by item id, so local candidates are scored the same way peers are. */
-  localVectors?: Map<string, number[]>;
+  vector?: RankOptions['vector'];
 }): Promise<FederatedResult> {
   const cap = input.perRepoCap ?? DEFAULT_PER_REPO_CAP;
   const wanted = input.repos && input.repos.length > 0 ? new Set(input.repos) : null;
   const skipped: FederatedResult['skipped'] = [];
-  const ranked: Array<{ item: FederatedItem; score: number; local: boolean; semantic: boolean }> = [];
-  const embedding = input.queryEmbedding;
+  const candidates: RepoCandidate[] = [];
 
-  /**
-   * Cosine when both sides have a vector, otherwise the reciprocal-rank position score.
-   *
-   * The two live on different scales, so a semantically scored candidate is never compared
-   * against a positionally scored one -- `semantic` partitions them and every semantic hit
-   * sorts above the fallback group. Mixing them would let an unembedded item's 1/(k+1)
-   * outrank a genuine 0.8 cosine for no reason but arithmetic.
-   */
-  const scoreFor = (vector: number[] | null | undefined, position: number) => {
-    if (embedding && vector) return { score: cosineSimilarity(embedding, vector), semantic: true };
-    return { score: 1 / (RRF_K + position + 1), semantic: false };
+  const selection: RankOptions = {
+    query: input.query,
+    category: input.category,
+    status: input.status ?? 'active',
+    tags: input.tags,
+    limit: cap,
+    vector: input.vector,
   };
 
   if (!wanted || wanted.has(input.workspace.repo)) {
-    input.localItems.slice(0, cap).forEach((item, index) => {
-      const { score, semantic } = scoreFor(input.localVectors?.get(item.id), index);
-      ranked.push({ item: { ...item, repo: input.workspace.repo }, score, local: true, semantic });
-    });
+    const mine = await selectCandidates('local', selection);
+    for (const candidate of mine) candidates.push({ ...candidate, repo: input.workspace.repo });
   }
 
   for (const peer of input.workspace.peers) {
@@ -214,32 +77,45 @@ export async function queryFederated(input: {
       continue;
     }
     try {
-      const candidates = await peerCandidates(peer, input.query, cap, embedding);
-      candidates.forEach((candidate, index) => {
-        const { score, semantic } = scoreFor(candidate.vector, index);
-        ranked.push({ item: { ...candidate.item, repo: peer.name }, score, local: false, semantic });
-      });
+      const store = await openPeerStore(peer.databasePath);
+      const found = await selectCandidates('local', {
+        ...selection,
+        // Not a post-filter: the predicate is in the SQL, so a peer's repo-private row is
+        // never read into this process at all.
+        visibility: 'workspace',
+      }, store);
+      for (const candidate of found) candidates.push({ ...candidate, repo: peer.name });
     } catch (error) {
       skipped.push({ repo: peer.name, reason: error instanceof SchemaTooNewError ? 'schema-too-new' : 'unreadable' });
     }
   }
 
-  const seen = new Set<string>();
-  const items = ranked
-    // Semantic hits first as a group, then by score, then local. Ties break toward the
-    // local repo and nothing else -- that remains the whole of the local preference.
-    .sort((a, b) =>
-      (Number(b.semantic) - Number(a.semantic))
-      || (b.score - a.score)
-      || (Number(b.local) - Number(a.local)))
-    .filter(entry => {
-      const key = entry.item.contentHash ?? `${entry.item.title}\n${entry.item.content}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, input.limit)
-    .map(entry => entry.item);
+  // Identical content in two repos is one fact, and the local copy is the one to keep: the
+  // querying repo owns it, and preferring local is already this file's only tie-break rule.
+  // Done before scoring so a duplicate cannot occupy a result slot and then be dropped,
+  // returning a list shorter than the caller asked for with nothing to explain the gap.
+  const byContent = new Map<string, RepoCandidate>();
+  for (const candidate of candidates) {
+    const key = candidate.item.contentHash ?? `${candidate.item.title}\n${candidate.item.content}`;
+    const held = byContent.get(key);
+    if (!held || (held.repo !== input.workspace.repo && candidate.repo === input.workspace.repo)) {
+      byContent.set(key, candidate);
+    }
+  }
 
-  return { items, skipped };
+  const scored = scoreCandidates([...byContent.values()], {
+    query: input.query,
+    category: input.category,
+    limit: input.limit,
+    usingVector: Boolean(input.vector?.enabled && input.vector.embedding),
+  });
+
+  return {
+    items: scored.map(entry => ({
+      ...entry.item,
+      repo: entry.repo ?? input.workspace.repo,
+      explanation: entry.explanation,
+    })),
+    skipped,
+  };
 }

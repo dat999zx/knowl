@@ -80,6 +80,12 @@ export async function queryKnowledgeBase(
     query?: string;
     limit?: number;
     asOf?: string;
+    /**
+     * Restricts to shared items. Must reach **both** paths below: the LIKE fallback runs
+     * whenever FTS returns nothing, which is exactly the case where a private row would
+     * otherwise slip through after the indexed path correctly excluded it.
+     */
+    visibility?: 'repo' | 'workspace';
   },
   store: StoreHandle = localStore(),
 ): Promise<KnowledgeItem[]> {
@@ -93,6 +99,7 @@ export async function queryKnowledgeBase(
         tags: options.tags,
         query: options.query,
         limit: options.limit,
+        visibility: options.visibility,
       }, store);
 
       if (ftsResults.length > 0) {
@@ -111,6 +118,10 @@ export async function queryKnowledgeBase(
     } else {
       // By default query active unless status is specified
       conditions.push(eq(schema.knowledgeItems.status, 'active'));
+    }
+
+    if (options.visibility) {
+      conditions.push(eq(schema.knowledgeItems.visibility, options.visibility));
     }
 
     // Fallback: If FTS returned no results (or wasn't matched due to FTS5 stripping special characters 

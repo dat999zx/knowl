@@ -399,22 +399,27 @@ program.command('query').argument('[query]').description('Search project memory 
       // tool ranks on meaning -- the same question answered differently depending on whether
       // a human or an agent asked it.
       const config = await loadConfig(root);
-      let queryEmbedding: number[] | undefined;
-      let localVectors: Map<string, number[]> | undefined;
+      let vector: { enabled: boolean; provider?: string; model?: string; embedding?: number[] } | undefined;
       if (query && isVectorSearchEnabled(config)) {
         try {
           const embedder = await createLocalEmbeddingProvider(config, root);
-          [queryEmbedding] = await embedder.embed([query]);
-          const { getEmbeddingsForItems } = await import('./store/vector.js');
-          localVectors = await getEmbeddingsForItems(items.map(item => item.id));
+          const [embedding] = await embedder.embed([query]);
+          vector = {
+            enabled: true,
+            provider: embedder.provider,
+            model: config.search?.vector?.model,
+            embedding,
+          };
         } catch {
-          // An unavailable embedder degrades to positional ranking rather than failing the
+          // An unavailable embedder degrades to lexical ranking rather than failing the
           // query outright.
         }
       }
+      // Federation selects from every repo including this one, so the local query above is
+      // not reused here -- passing pre-fetched local items would have them scored by
+      // different rules than the peers'.
       const federated = await queryFederated({
-        workspace: active, localItems: items, query: query ?? '', limit: limit ?? 3,
-        queryEmbedding, localVectors,
+        workspace: active, query: query ?? '', limit: limit ?? 3, vector,
       });
       console.log(JSON.stringify(federated.items.map(item => ({ ...item, repo: item.repo })), null, 2));
       for (const skip of federated.skipped) {

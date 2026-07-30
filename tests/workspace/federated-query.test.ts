@@ -36,13 +36,34 @@ async function seed(root: string, name: string, items: Seed[]) {
   await closeDb();
 }
 
-/** Local candidates the way the MCP handler produces them, then the federated fuse. */
+/**
+ * Adds items to an already-linked repo.
+ *
+ * Distinct from `seed`, which rewrites `.knowl/config.json` from DEFAULT_CONFIG and so erases
+ * the workspace pointer that `joinWorkspace` put there. Calling `seed` after joining silently
+ * unlinks the repo.
+ */
+async function addItems(root: string, name: string, items: Seed[]) {
+  await initDb(root);
+  const projectId = (await repo.createProject(root, name)).id;
+  for (const item of items) {
+    const stored = await storeKnowledgeItemDeduped(projectId, {
+      category: 'decision', title: item.title, content: item.content,
+    });
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET visibility = ?, origin_repo = ? WHERE id = ?',
+      args: [item.visibility, name, stored.item.id],
+    });
+  }
+  await closeDb();
+}
+
+/** Federation owns selection now: the caller hands it the query and the filters. */
 async function federate(query: string, limit: number, repos?: string[]) {
   await initDb(A);
   try {
-    const local = await queryKnowledgeForAgent('local', { query, limit: 10, surface: 'test' });
     const active = (await resolveWorkspace(A))!;
-    return await queryFederated({ workspace: active, localItems: local, query, limit, repos });
+    return await queryFederated({ workspace: active, query, limit, repos });
   } finally {
     await closeDb();
   }
@@ -133,5 +154,36 @@ describe('federated read', () => {
     await federate('auth', 5);
     await releaseAll();
     expect((await fs.readFile(peerDb)).equals(before)).toBe(true);
+  });
+
+  it('gives a peer item the same explanation a local item gets', async () => {
+    // The drift this replaces: the old peer scanner built items by hand and attached no
+    // explanation, so peer results could not be compared to local ones on anything but
+    // position, and none of the recency, confidence or freshness boosts applied.
+    const result = await federate('auth', 5);
+    const fromPeer = result.items.find(item => item.repo === 'b');
+
+    expect(fromPeer).toBeDefined();
+    expect(fromPeer!.explanation?.contributions).toHaveProperty('recency');
+    expect(fromPeer!.explanation?.contributions).toHaveProperty('confidence');
+    expect(fromPeer!.explanation?.contributions).toHaveProperty('freshness');
+  });
+
+  it('does not let a cross-repo duplicate eat a result slot', async () => {
+    // Deduplicating after the cap means two repos holding one fact consume two slots and
+    // then one is dropped, returning a list shorter than asked for with no explanation.
+    // Byte-identical content in both repos, on top of what beforeEach already seeded.
+    await addItems(A, 'a', [
+      { title: 'Shared auth policy', content: 'Auth policy is identical in both repos.', visibility: 'repo' },
+    ]);
+    await addItems(B, 'b', [
+      { title: 'Shared auth policy', content: 'Auth policy is identical in both repos.', visibility: 'workspace' },
+    ]);
+
+    const result = await federate('auth', 3);
+    const titles = result.items.map(item => item.title);
+
+    expect(titles).toHaveLength(3);
+    expect(new Set(titles).size).toBe(3);
   });
 });
