@@ -179,4 +179,38 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
 
     await fs.rm(stranger, { recursive: true, force: true }).catch(() => {});
   });
+
+  // These use their own repo rather than A. Every test above shares one sequential fixture --
+  // A is linked to duckprep as "server" by the first test and stays that way -- and linking a
+  // repo overwrites `workspace` in its config, so reusing A here would silently unlink it out
+  // from under everything that follows.
+  it('records repo nature and gates a workspace default behind a warning', async () => {
+    const notes = path.resolve('./.knowl-cli-notes');
+    await closeDb();
+    await releaseAll();
+    await fs.rm(notes, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(notes, '.knowl'), { recursive: true });
+    await saveConfig(notes, { ...DEFAULT_CONFIG });
+    await initDb(notes);
+    const projectId = (await repo.createProject(notes, 'notes')).id;
+    // Seeded so the "still private" count is real rather than vacuously zero.
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Reading list lives here', content: 'Everything in this repo is cross-cutting.',
+    });
+    await closeDb();
+    await releaseAll();
+
+    expect(knowl(notes, 'workspace', 'init', 'gated').status).toBe(0);
+    const added = knowl(notes, 'workspace', 'add', 'gated', '--name', 'notes',
+      '--role', 'personal notes and reading log', '--default-visibility', 'workspace', '--kin', 'forks');
+    expect(added.status).toBe(0);
+    expect(added.stdout).toMatch(/cannot be undone/i);
+    expect(added.stdout).toMatch(/still private/i);
+
+    const bad = knowl(notes, 'workspace', 'add', 'gated', '--name', 'oops', '--default-visibility', 'wokspace');
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toMatch(/must be "repo" or "workspace"/);
+
+    await fs.rm(notes, { recursive: true, force: true }).catch(() => {});
+  });
 });

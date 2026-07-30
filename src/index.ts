@@ -24,6 +24,7 @@ import { createManifest, isValidRepoName, readManifest, writeManifest } from './
 import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js';
 import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
 import { promoteItems } from './workspace/promote.js';
+import { existingItemsNotice, visibilityGateNotice } from './cli/workspace-visibility-notice.js';
 import { runCliQuery } from './cli/query-command.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
 import { resolveWorkspace } from './workspace/resolve.js';
@@ -406,6 +407,17 @@ program.command('context').description('Print a token-budgeted context pack for 
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await composeContext(project.id, { query: options.query, task: options.task, tokenBudget: Number(options.tokenBudget), namespaceRoot: root }), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error composing context: ${error.message}`); process.exit(1); }
 });
 
+/**
+ * Rejected rather than coerced. A misspelled `--default-visibility` that fell back to `repo`
+ * would look like it worked and quietly keep publishing nothing; one that fell back to
+ * `workspace` would publish without being asked. Neither default is safe, so there is none.
+ */
+function parseDefaultVisibility(value: string | undefined): 'workspace' | 'repo' | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'workspace' || value === 'repo') return value;
+  throw new Error(`--default-visibility must be "repo" or "workspace", not "${value}".`);
+}
+
 const workspaceCommand = program.command('workspace').description('Link several repositories so agents can read across them');
 
 workspaceCommand
@@ -430,14 +442,30 @@ workspaceCommand
   .argument('<workspace>')
   .description('Link this repo into a workspace')
   .option('--name <repo-name>', 'Name this repo carries inside the workspace; defaults to the directory name')
+  .option('--role <text>', 'What this repo is, for agents that have only the manifest')
+  .option('--default-visibility <repo|workspace>', 'Visibility stamped on new writes here (default: repo)')
+  .option('--kin <group>', 'Group name shared with repos of the same lineage')
   .option('--force', 'Link even though .knowl/config.json is tracked by git')
-  .action(async (workspaceName: string, options: { name?: string; force?: boolean }) => {
+  .action(async (workspaceName: string, options: { name?: string; role?: string; defaultVisibility?: string; kin?: string; force?: boolean }) => {
     try {
       const root = await findProjectRoot(process.cwd());
       const repoName = options.name ?? path.basename(root).toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-      await joinWorkspace({ projectRoot: root, workspaceName, repoName, force: options.force });
+      const visibility = parseDefaultVisibility(options.defaultVisibility);
+
+      await joinWorkspace({
+        projectRoot: root, workspaceName, repoName, force: options.force,
+        settings: { role: options.role, kin: options.kin, defaultVisibility: visibility },
+      });
       console.log(`Linked this repo as "${repoName}" in workspace "${workspaceName}".`);
-      console.log('Its existing knowledge is now owned by that name and stays private until you run knowl workspace promote.');
+
+      if (visibility === 'workspace') {
+        console.log('');
+        for (const line of visibilityGateNotice(repoName)) console.log(line);
+        console.log('');
+        for (const line of existingItemsNotice(await countOwnedItems(root, repoName))) console.log(line);
+      } else {
+        console.log('Its existing knowledge is now owned by that name and stays private until you run knowl workspace promote.');
+      }
     } catch (error: any) {
       console.error(`Error linking repo: ${error.message}`);
       process.exit(1);
