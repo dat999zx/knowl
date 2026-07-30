@@ -15,34 +15,59 @@ import { getConfigRoot } from './database.js';
  * Resolved lazily and cached per root: a write must not pay a manifest read, and the vast
  * majority of writes happen in projects with no workspace at all.
  */
-let cache: { root: string; repo: string | null } | null = null;
+/** Everything `createKnowledgeItem` needs from the workspace, resolved together and cached once. */
+export type WriteDefaults = { repo: string | null; visibility: 'repo' | 'workspace' };
+
+const UNLINKED: WriteDefaults = { repo: null, visibility: 'repo' };
+
+let cache: { root: string; defaults: WriteDefaults } | null = null;
 
 /** Tests only: the cache is process-lifetime and would otherwise leak between fixtures. */
 export function resetWriteOwnershipCache(): void {
   cache = null;
 }
 
-export async function resolveWritingRepo(): Promise<string | null> {
+/**
+ * Owner and default visibility for knowledge written right now.
+ *
+ * Both come from the same manifest entry, so they are resolved in one pass and cached
+ * together. Resolving visibility separately would mean a second `loadConfig` read and JSON
+ * parse per write -- which is exactly the 2.7.0 regression that killed the process at around
+ * 2000 writes and that 2.7.1 fixed by caching this lookup per root.
+ *
+ * The cache is process-lifetime, so `workspace set --default-visibility` -- a separate CLI
+ * process -- does not reach a long-lived MCP server until its next start. That is stated in
+ * the command's output rather than fixed here: the stale window ends at the next session, and
+ * it fails toward whichever value was already in effect.
+ */
+export async function resolveWriteDefaults(): Promise<WriteDefaults> {
   let root: string;
   try {
     root = getConfigRoot();
   } catch {
-    return null; // no open store: nothing to attribute
+    return UNLINKED; // no open store: nothing to attribute
   }
 
-  if (cache?.root === root) return cache.repo;
+  if (cache?.root === root) return cache.defaults;
 
-  let owner: string | null = null;
+  let defaults = UNLINKED;
   try {
     // Imported lazily so the store layer keeps no static dependency on the workspace layer,
     // and so an unlinked project never loads it at all.
     const { resolveWorkspace } = await import('../workspace/resolve.js');
+    const { defaultVisibilityOf } = await import('../workspace/repo-settings.js');
     const active = await resolveWorkspace(root);
-    owner = active?.repo ?? null;
+    if (active) {
+      defaults = { repo: active.repo, visibility: defaultVisibilityOf(active.manifest, active.repo) };
+    }
   } catch {
-    owner = null; // a broken workspace must not block an ordinary write
+    defaults = UNLINKED; // a broken workspace must not block an ordinary write
   }
 
-  cache = { root, repo: owner };
-  return owner;
+  cache = { root, defaults };
+  return defaults;
+}
+
+export async function resolveWritingRepo(): Promise<string | null> {
+  return (await resolveWriteDefaults()).repo;
 }

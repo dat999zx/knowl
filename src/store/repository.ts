@@ -19,7 +19,7 @@ import {
 } from '../core/types.js';
 import { DatabaseError, KnowledgeConflictError } from '../core/errors.js';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, hashKnowledgeLifecycle, normalizeAffectedPaths } from './freshness.js';
-import { resolveWritingRepo } from './write-ownership.js';
+import { resolveWriteDefaults } from './write-ownership.js';
 import { KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 
 export const LOCAL_PROJECT_ID = 'local';
@@ -131,7 +131,10 @@ export async function createKnowledgeItem(
   // workspace backfills what is already there, but nothing claimed items written
   // afterwards -- which left `workspace promote` unable to touch them, and would leave a
   // shared database unable to say who may edit or collect them.
-  const originRepo = await resolveWritingRepo();
+  //
+  // Visibility rides the same resolution: both come from this repo's manifest entry, and a
+  // second lookup per write is the 2.7.0 regression 2.7.1 fixed.
+  const { repo: originRepo, visibility } = await resolveWriteDefaults();
   const freshness = item.freshness || DEFAULT_FRESHNESS;
 
   const newItem = {
@@ -154,10 +157,13 @@ export async function createKnowledgeItem(
       source: item.source,
       affectedPaths,
     }),
-    // Visibility is not in this literal, so the column default 'repo' applies; the hash has
-    // to agree with that rather than with whatever the row ends up saying later.
+    // One variable, two sites. The row's `visibility` and the hash's must agree: lifecycle_hash
+    // is exactly what change-watermark and import-policy compare to decide an item changed, so
+    // a row saying 'workspace' beside a hash computed over 'repo' is a divergence nothing
+    // reconciles and nothing reports.
+    visibility,
     lifecycleHash: hashKnowledgeLifecycle({
-      status: 'active', freshness, supersededById: null, originRepo, visibility: 'repo',
+      status: 'active', freshness, supersededById: null, originRepo, visibility,
     }),
     freshness,
     confidence: item.confidence ?? 1.0,
