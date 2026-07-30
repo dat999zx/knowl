@@ -9,6 +9,10 @@ export type CrossRepoOverlap = {
   id: string;
   title: string;
   kind: 'conflict' | 'duplicate';
+  /** The peer shares this repo's `kin` group: same lineage, diverged conventions. */
+  kin?: boolean;
+  /** The peer's recorded role, so the advisory can say what the other repo is. */
+  role?: string;
 };
 
 export type OverlapSubject = {
@@ -24,6 +28,16 @@ export type OverlapSubject = {
 
 /** Per peer, per write. Bounded because this runs on every knowledge write in a workspace. */
 const PEER_CANDIDATES = 3;
+
+/**
+ * Kin peers are checked wider.
+ *
+ * Two repos of the same lineage hold genuinely overlapping subjects with diverged conventions,
+ * so a same-subject item is likelier to exist and likelier to matter. The matcher itself is
+ * deliberately untouched: loosening `sameSubjectTitle` for kin would surface near-miss titles
+ * on every write in a kin pair, and the decision here was to look wider, not to match looser.
+ */
+const KIN_PEER_CANDIDATES = 6;
 
 /**
  * What the linked repos already say about this subject.
@@ -54,9 +68,11 @@ export async function findCrossRepoOverlap(input: {
   ].join(' ');
 
   const found: CrossRepoOverlap[] = [];
+  const selfKin = workspace.manifest.repos.find(entry => entry.name === workspace.repo)?.kin;
 
   for (const peer of workspace.peers) {
     if (!peer.present) continue;
+    const isKin = Boolean(selfKin && peer.kin === selfKin);
     try {
       const store = await openPeerStore(peer.databasePath);
 
@@ -65,7 +81,7 @@ export async function findCrossRepoOverlap(input: {
       // private row must not be read into this process at all.
       const conflicts = await checkKnowledgeConflict({ ...input.item, visibility: 'workspace' }, store);
       for (const conflict of conflicts) {
-        found.push({ repo: peer.name, id: conflict.id, title: conflict.title, kind: 'conflict' });
+        found.push({ repo: peer.name, id: conflict.id, title: conflict.title, kind: 'conflict', kin: isKin, role: peer.role });
       }
 
       // The same ranker the local duplicate check uses, pointed at the peer.
@@ -73,7 +89,7 @@ export async function findCrossRepoOverlap(input: {
         query,
         status: 'active',
         visibility: 'workspace',
-        limit: PEER_CANDIDATES,
+        limit: isKin ? KIN_PEER_CANDIDATES : PEER_CANDIDATES,
       }, store);
 
       for (const candidate of candidates) {
@@ -82,7 +98,7 @@ export async function findCrossRepoOverlap(input: {
         // would be the duplication this whole change removes, and the two would drift the
         // moment either is tuned.
         if (!sameSubjectTitle(input.item, candidate)) continue;
-        found.push({ repo: peer.name, id: candidate.id, title: candidate.title, kind: 'duplicate' });
+        found.push({ repo: peer.name, id: candidate.id, title: candidate.title, kind: 'duplicate', kin: isKin, role: peer.role });
       }
     } catch {
       // A peer that cannot be read must never fail the write it was consulted for.

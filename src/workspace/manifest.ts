@@ -13,6 +13,21 @@ export type WorkspaceRepo = {
   /** Evidence for matching a repo on another machine, never authoritative. */
   git?: { remote?: string };
   addedAt?: string;
+  /**
+   * What this repo is, for an agent that has only the manifest. Free text: never parsed, and
+   * no behavior is inferred from it. A repo is never published because of a word someone typed.
+   */
+  role?: string;
+  /**
+   * Visibility stamped on new writes here. Only ever `'workspace'` -- absent means `'repo'`,
+   * which is both today's behavior and what every existing manifest already says by omission.
+   */
+  defaultVisibility?: 'workspace';
+  /**
+   * Repos sharing this group name are kin: same lineage, diverged conventions. Widens the
+   * cross-repo write advisory for them; changes nothing about retrieval.
+   */
+  kin?: string;
 };
 
 export type WorkspaceManifest = {
@@ -38,6 +53,40 @@ export function isValidRepoName(name: string): boolean {
   return REPO_NAME.test(name);
 }
 
+/** Role renders into every session-start block in every linked repo, so it is a budget item. */
+export const ROLE_MAX_LENGTH = 200;
+
+function normalizeRole(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const collapsed = value.replace(/\s+/g, ' ').trim();
+  if (!collapsed) return undefined;
+  return collapsed.slice(0, ROLE_MAX_LENGTH);
+}
+
+/**
+ * Normalize one repo entry without rebuilding it.
+ *
+ * Spread first and override known fields after, so a field written by a *newer* build survives
+ * a pass through this one. Older builds already give these fields that property for free, by
+ * passing `raw.repos` through untouched; rebuilding the entry here would break it in the one
+ * direction that still worked.
+ *
+ * Never throws. `discoverRepos` reads every manifest on this machine to decide what
+ * `upgrade --all` visits, so an entry rejected here would take down a machine-wide command
+ * rather than one repo. Every unparseable value resolves toward private instead: the failure
+ * mode must be "shared less than intended", never "published without being asked".
+ */
+export function normalizeRepoEntry(raw: unknown): WorkspaceRepo {
+  const entry = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    ...entry,
+    name: typeof entry.name === 'string' ? entry.name : '',
+    role: normalizeRole(entry.role),
+    defaultVisibility: entry.defaultVisibility === 'workspace' ? 'workspace' : undefined,
+    kin: typeof entry.kin === 'string' && isValidRepoName(entry.kin) ? entry.kin : undefined,
+  };
+}
+
 export function createManifest(name: string, embedding: EmbeddingIdentity | null): WorkspaceManifest {
   return {
     version: 1,
@@ -58,7 +107,7 @@ export async function readManifest(manifestPath: string): Promise<WorkspaceManif
     minKnowlVersion: String(raw.minKnowlVersion ?? PACKAGE_VERSION),
     mode: raw.mode === 'shared' ? 'shared' : 'linked',
     embedding: raw.embedding ?? null,
-    repos: raw.repos ?? [],
+    repos: (Array.isArray(raw.repos) ? raw.repos : []).map(normalizeRepoEntry),
     retiredNames: raw.retiredNames ?? [],
   };
 }

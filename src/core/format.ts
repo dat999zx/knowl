@@ -87,13 +87,61 @@ export function formatHierarchyToMarkdown(hierarchy: {
   return md.length <= maxChars ? md : truncateText(md, maxChars, '[Context truncated]');
 }
 
+export type WorkspaceContextRepo = {
+  name: string;
+  role?: string;
+  kin?: string;
+  defaultVisibility?: 'workspace';
+};
+
+export type WorkspaceContext = {
+  name: string;
+  repo: string;
+  peers: WorkspaceContextRepo[];
+  selfRole?: string;
+  selfDefaultVisibility?: 'workspace';
+};
+
+/**
+ * What each repo in this workspace is, before the agent makes its first sharing decision.
+ *
+ * Without it, repo nature is re-derived from whatever happens to be visible, and re-derived
+ * the same wrong way every time: one uniform "share selectively" posture across repos that do
+ * not share a nature. A notes repo whose entire content is cross-cutting looks exactly like a
+ * code repo with private internals when all you have is a name.
+ */
+function workspaceSection(workspace: WorkspaceContext): string {
+  const line = (repo: WorkspaceContextRepo, isSelf: boolean): string => {
+    const parts = [`- ${repo.name}${isSelf ? ' (this repo)' : ''}${repo.kin ? ` [kin: ${repo.kin}]` : ''}`];
+    if (repo.role) parts.push(repo.role);
+    parts.push(repo.defaultVisibility === 'workspace' ? 'new writes are workspace-visible' : 'new writes stay private');
+    return parts.join(' — ');
+  };
+
+  const self: WorkspaceContextRepo = {
+    name: workspace.repo, role: workspace.selfRole, defaultVisibility: workspace.selfDefaultVisibility,
+  };
+  return [
+    `## Workspace: ${workspace.name}`,
+    '',
+    line(self, true),
+    ...workspace.peers.map(peer => line(peer, false)),
+    '',
+    '',
+  ].join('\n');
+}
+
 export function formatRecentContextToMarkdown(context: {
   items: KnowledgeItem[];
   commits: KnowledgeCommit[];
-}, options: { maxChars?: number; maxItemChars?: number; includeTags?: boolean; includeCommitDetails?: boolean } = {}): string {
+}, options: { maxChars?: number; maxItemChars?: number; includeTags?: boolean; includeCommitDetails?: boolean; workspace?: WorkspaceContext } = {}): string {
   const maxChars = options.maxChars ?? DEFAULT_CONTEXT_MAX_CHARS;
   const maxItemChars = options.maxItemChars ?? MAX_ITEM_CONTENT_CHARS;
   let md = '# KNOWL - RECENT SESSION CONTEXT\n\n';
+
+  // Absent produces byte-identical output, the same rule formatWorkspaceBlock already holds
+  // for an unlinked project.
+  if (options.workspace) md += workspaceSection(options.workspace);
 
   md += '## Recent Active Knowledge\n\n';
   if (context.items.length === 0) {

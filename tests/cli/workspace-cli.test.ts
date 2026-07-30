@@ -179,4 +179,112 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
 
     await fs.rm(stranger, { recursive: true, force: true }).catch(() => {});
   });
+
+  // These use their own repo rather than A. Every test above shares one sequential fixture --
+  // A is linked to duckprep as "server" by the first test and stays that way -- and linking a
+  // repo overwrites `workspace` in its config, so reusing A here would silently unlink it out
+  // from under everything that follows.
+  it('records repo nature and gates a workspace default behind a warning', async () => {
+    const notes = path.resolve('./.knowl-cli-notes');
+    await closeDb();
+    await releaseAll();
+    await fs.rm(notes, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(notes, '.knowl'), { recursive: true });
+    await saveConfig(notes, { ...DEFAULT_CONFIG });
+    await initDb(notes);
+    const projectId = (await repo.createProject(notes, 'notes')).id;
+    // Seeded so the "still private" count is real rather than vacuously zero.
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Reading list lives here', content: 'Everything in this repo is cross-cutting.',
+    });
+    await closeDb();
+    await releaseAll();
+
+    expect(knowl(notes, 'workspace', 'init', 'gated').status).toBe(0);
+    const added = knowl(notes, 'workspace', 'add', 'gated', '--name', 'notes',
+      '--role', 'personal notes and reading log', '--default-visibility', 'workspace', '--kin', 'forks');
+    expect(added.status).toBe(0);
+    expect(added.stdout).toMatch(/cannot be undone/i);
+    expect(added.stdout).toMatch(/still private/i);
+
+    const bad = knowl(notes, 'workspace', 'add', 'gated', '--name', 'oops', '--default-visibility', 'wokspace');
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toMatch(/must be "repo" or "workspace"/);
+
+    // Recorded nature reaches status from the peer's side, which is the whole point of
+    // keeping it in the manifest: a second machine reads it without being told.
+    const peer = path.resolve('./.knowl-cli-notes-peer');
+    await fs.rm(peer, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(peer, '.knowl'), { recursive: true });
+    await saveConfig(peer, { ...DEFAULT_CONFIG });
+    expect(knowl(peer, 'workspace', 'add', 'gated', '--name', 'peer').status).toBe(0);
+    expect(knowl(peer, 'workspace', 'status').stdout).toContain('personal notes and reading log');
+    await fs.rm(peer, { recursive: true, force: true }).catch(() => {});
+
+    await fs.rm(notes, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('reads settings with no flags and changes only this repo entry', async () => {
+    const settable = path.resolve('./.knowl-cli-settable');
+    await closeDb();
+    await releaseAll();
+    await fs.rm(settable, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(settable, '.knowl'), { recursive: true });
+    await saveConfig(settable, { ...DEFAULT_CONFIG });
+
+    // Not linked yet: setting anything must refuse rather than write a stray manifest.
+    const unlinked = knowl(settable, 'workspace', 'set', '--role', 'nope');
+    expect(unlinked.status).toBe(1);
+
+    expect(knowl(settable, 'workspace', 'init', 'settable').status).toBe(0);
+    expect(knowl(settable, 'workspace', 'add', 'settable', '--name', 'main').status).toBe(0);
+
+    const shown = knowl(settable, 'workspace', 'set');
+    expect(shown.status).toBe(0);
+    expect(shown.stdout).toMatch(/role:\s+\(none\)/i);
+    expect(shown.stdout).toMatch(/default visibility:\s+repo/i);
+
+    const changed = knowl(settable, 'workspace', 'set', '--role', 'the main app', '--default-visibility', 'workspace');
+    expect(changed.status).toBe(0);
+    // The gate fires here too: `set` is the other way into standing automatic publishing.
+    expect(changed.stdout).toMatch(/cannot be undone/i);
+
+    expect(knowl(settable, 'workspace', 'set').stdout).toContain('the main app');
+
+    await fs.rm(settable, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('refuses --promote-existing without a workspace default, and shares everything with it', async () => {
+    const oneshot = path.resolve('./.knowl-cli-oneshot');
+    await closeDb();
+    await releaseAll();
+    await fs.rm(oneshot, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(oneshot, '.knowl'), { recursive: true });
+    await saveConfig(oneshot, { ...DEFAULT_CONFIG });
+    await initDb(oneshot);
+    const projectId = (await repo.createProject(oneshot, 'oneshot')).id;
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Everything here is shared', content: 'This repo has no internals.',
+    });
+    await closeDb();
+    await releaseAll();
+
+    expect(knowl(oneshot, 'workspace', 'init', 'oneshot').status).toBe(0);
+
+    // Rejected rather than ignored: a flag that silently does nothing is how you end up
+    // believing a whole repo was shared when none of it was.
+    const bad = knowl(oneshot, 'workspace', 'add', 'oneshot', '--name', 'nf', '--promote-existing');
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toMatch(/--promote-existing/);
+    expect(bad.stderr).toMatch(/--default-visibility workspace/);
+
+    const added = knowl(oneshot, 'workspace', 'add', 'oneshot', '--name', 'os',
+      '--default-visibility', 'workspace', '--promote-existing');
+    expect(added.status).toBe(0);
+    expect(added.stdout).toMatch(/Promoted \d+ existing item/);
+    // Nothing is left private, so the "still private" notice must not also print.
+    expect(added.stdout).not.toMatch(/still private/i);
+
+    await fs.rm(oneshot, { recursive: true, force: true }).catch(() => {});
+  });
 });

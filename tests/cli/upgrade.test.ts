@@ -87,6 +87,25 @@ describe('upgrade', () => {
     expect(rows.every(row => row.visibility === 'repo')).toBe(true);
   });
 
+  it('claims ownership without publishing, even where new writes default to workspace', async () => {
+    // The sharper form of the check above. A repo whose default visibility is `workspace`
+    // shares everything it writes from now on -- but the sweep is an ownership repair, and
+    // ownership says who wrote an item, never who may read it. Sweeping old private rows into
+    // visibility would be a bulk publish nobody asked for, and promotion has no reverse.
+    await joinWorkspace({
+      projectRoot: REPO, workspaceName: 'ws', repoName: 'server',
+      settings: { defaultVisibility: 'workspace' },
+    });
+    await execute('UPDATE knowledge_items SET origin_repo = NULL');
+
+    const result = await upgradeExistingRepository(REPO, 'upgrade');
+
+    expect(result.claimedItems).toBe(1);
+    const rows = await readRows('SELECT origin_repo, visibility FROM knowledge_items');
+    expect(rows.every(row => row.origin_repo === 'server')).toBe(true);
+    expect(rows.every(row => row.visibility === 'repo')).toBe(true);
+  });
+
   it('leaves ownership alone outside a workspace, where NULL is correct', async () => {
     const result = await upgradeExistingRepository(REPO, 'upgrade');
 

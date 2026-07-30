@@ -10,6 +10,7 @@ import { workspaceManifestPath } from '../../src/workspace/paths.js';
 import { joinWorkspace } from '../../src/workspace/membership.js';
 import { promoteItems } from '../../src/workspace/promote.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
+import { updateRepoSettings } from '../../src/workspace/repo-settings.js';
 import { findCrossRepoOverlap } from '../../src/workspace/cross-repo-overlap.js';
 import { resetWriteOwnershipCache } from '../../src/store/write-ownership.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
@@ -81,6 +82,37 @@ describe('cross-repo overlap', () => {
 
       expect(overlap).toHaveLength(1);
       expect(overlap[0]).toMatchObject({ repo: 'web', title: 'Session store is redis', kind: 'duplicate' });
+    } finally {
+      await closeDb();
+    }
+  });
+
+  it('marks a peer as kin only when both repos share a group, and carries its role', async () => {
+    // The advisory renders `kin` and `role`, but nothing proved this function ever produces
+    // them: the renderer's own test hands them in by hand. This is the missing half.
+    await updateRepoSettings({
+      workspaceName: 'ws', repoName: 'web', settings: { kin: 'services', role: 'the web client' },
+    });
+
+    await initDb(API);
+    try {
+      // api declares no kin, so web declaring one alone must not make them kin. Kin is a
+      // shared group, not a claim one repo can make about another.
+      const unrelated = await findCrossRepoOverlap({ workspace: (await resolveWorkspace(API))!, item: REDIS });
+      expect(unrelated).toHaveLength(1);
+      expect(unrelated[0].kin).toBe(false);
+      expect(unrelated[0].role).toBe('the web client');
+    } finally {
+      await closeDb();
+    }
+
+    await updateRepoSettings({ workspaceName: 'ws', repoName: 'api', settings: { kin: 'services' } });
+
+    await initDb(API);
+    try {
+      const related = await findCrossRepoOverlap({ workspace: (await resolveWorkspace(API))!, item: REDIS });
+      expect(related).toHaveLength(1);
+      expect(related[0].kin).toBe(true);
     } finally {
       await closeDb();
     }

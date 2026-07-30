@@ -19,11 +19,13 @@ import { recordDecisionDirect } from './store/knowledge-actions.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from './store/queries.js';
 import { formatHierarchyToMarkdown } from './core/format.js';
 import { formatStatusReport } from './cli/status-report.js';
-import type { KnowledgeCategory } from './core/types.js';
+import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory } from './core/types.js';
 import { createManifest, isValidRepoName, readManifest, writeManifest } from './workspace/manifest.js';
 import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js';
 import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
 import { promoteItems } from './workspace/promote.js';
+import { existingItemsNotice, visibilityGateNotice } from './cli/workspace-visibility-notice.js';
+import { repoEntry, updateRepoSettings } from './workspace/repo-settings.js';
 import { runCliQuery } from './cli/query-command.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
 import { resolveWorkspace } from './workspace/resolve.js';
@@ -406,6 +408,17 @@ program.command('context').description('Print a token-budgeted context pack for 
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await composeContext(project.id, { query: options.query, task: options.task, tokenBudget: Number(options.tokenBudget), namespaceRoot: root }), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error composing context: ${error.message}`); process.exit(1); }
 });
 
+/**
+ * Rejected rather than coerced. A misspelled `--default-visibility` that fell back to `repo`
+ * would look like it worked and quietly keep publishing nothing; one that fell back to
+ * `workspace` would publish without being asked. Neither default is safe, so there is none.
+ */
+function parseDefaultVisibility(value: string | undefined): 'workspace' | 'repo' | undefined {
+  if (value === undefined) return undefined;
+  if (value === 'workspace' || value === 'repo') return value;
+  throw new Error(`--default-visibility must be "repo" or "workspace", not "${value}".`);
+}
+
 const workspaceCommand = program.command('workspace').description('Link several repositories so agents can read across them');
 
 workspaceCommand
@@ -430,16 +443,89 @@ workspaceCommand
   .argument('<workspace>')
   .description('Link this repo into a workspace')
   .option('--name <repo-name>', 'Name this repo carries inside the workspace; defaults to the directory name')
+  .option('--role <text>', 'What this repo is, for agents that have only the manifest')
+  .option('--default-visibility <repo|workspace>', 'Visibility stamped on new writes here (default: repo)')
+  .option('--kin <group>', 'Group name shared with repos of the same lineage')
+  .option('--promote-existing', 'Also share knowledge already in this repo; requires --default-visibility workspace')
   .option('--force', 'Link even though .knowl/config.json is tracked by git')
-  .action(async (workspaceName: string, options: { name?: string; force?: boolean }) => {
+  .action(async (workspaceName: string, options: { name?: string; role?: string; defaultVisibility?: string; kin?: string; promoteExisting?: boolean; force?: boolean }) => {
     try {
       const root = await findProjectRoot(process.cwd());
       const repoName = options.name ?? path.basename(root).toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-      await joinWorkspace({ projectRoot: root, workspaceName, repoName, force: options.force });
+      const visibility = parseDefaultVisibility(options.defaultVisibility);
+
+      // Rejected rather than ignored. A flag that silently does nothing is how you end up
+      // believing a whole repo was shared when none of it was -- the same rule `knowl upgrade`
+      // applies to its --all-only flags.
+      if (options.promoteExisting && visibility !== 'workspace') {
+        throw new Error('--promote-existing only applies with --default-visibility workspace, because it publishes everything this repo already knows.');
+      }
+
+      await joinWorkspace({
+        projectRoot: root, workspaceName, repoName, force: options.force,
+        settings: { role: options.role, kin: options.kin, defaultVisibility: visibility },
+      });
       console.log(`Linked this repo as "${repoName}" in workspace "${workspaceName}".`);
-      console.log('Its existing knowledge is now owned by that name and stays private until you run knowl workspace promote.');
+
+      if (visibility === 'workspace') {
+        console.log('');
+        for (const line of visibilityGateNotice(repoName)) console.log(line);
+        console.log('');
+
+        if (options.promoteExisting) {
+          // After joinWorkspace, never before: promote selects on ownership, and the join's
+          // backfill is what stamps it. Run first, it would match nothing and report success.
+          const promoted = await promoteItems({
+            projectRoot: root, repoName,
+            categories: [...KNOWLEDGE_CATEGORIES], apply: true,
+          });
+          console.log(`Promoted ${promoted.items.length} existing item(s) to workspace visibility.`);
+        } else {
+          for (const line of existingItemsNotice(await countOwnedItems(root, repoName))) console.log(line);
+        }
+      } else {
+        console.log('Its existing knowledge is now owned by that name and stays private until you run knowl workspace promote.');
+      }
     } catch (error: any) {
       console.error(`Error linking repo: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('set')
+  .description("Change this repo's recorded nature in the workspace manifest")
+  .option('--role <text>', 'What this repo is; pass an empty string to clear')
+  .option('--default-visibility <repo|workspace>', 'Visibility stamped on new writes here')
+  .option('--kin <group>', 'Group name shared with repos of the same lineage; pass an empty string to clear')
+  .action(async (options: { role?: string; defaultVisibility?: string; kin?: string }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const active = await resolveWorkspace(root, await loadConfig(root));
+      if (!active) throw new Error('This repo is not linked to a workspace.');
+
+      const visibility = parseDefaultVisibility(options.defaultVisibility);
+      const nothingToSet = options.role === undefined && options.kin === undefined && visibility === undefined;
+
+      // No flags reads rather than errors, so this doubles as the way to see the values.
+      const entry = nothingToSet
+        ? repoEntry(active.manifest, active.repo)
+        : await updateRepoSettings({
+          workspaceName: active.name, repoName: active.repo,
+          settings: { role: options.role, kin: options.kin, defaultVisibility: visibility },
+        });
+
+      console.log(`Repo "${active.repo}" in workspace "${active.name}":`);
+      console.log(`  role:               ${entry?.role ?? '(none)'}`);
+      console.log(`  default visibility: ${entry?.defaultVisibility ?? 'repo'}`);
+      console.log(`  kin:                ${entry?.kin ?? '(none)'}`);
+
+      if (!nothingToSet && visibility === 'workspace') {
+        console.log('');
+        for (const line of visibilityGateNotice(active.repo)) console.log(line);
+      }
+    } catch (error: any) {
+      console.error(`Error updating workspace settings: ${error.message}`);
       process.exit(1);
     }
   });

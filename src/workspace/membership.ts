@@ -8,8 +8,9 @@ import {
   embeddingIdentityFromConfig, formatEmbeddingIdentity, sameEmbeddingIdentity,
 } from '../store/embedding-identity.js';
 import type { EmbeddingIdentity } from '../store/embedding-identity.js';
-import { assertNameAvailable, readManifest, writeManifest, WorkspaceManifest } from './manifest.js';
+import { assertNameAvailable, normalizeRepoEntry, readManifest, writeManifest, WorkspaceManifest } from './manifest.js';
 import { workspaceManifestPath } from './paths.js';
+import type { RepoSettings } from './repo-settings.js';
 
 export type WorkspaceLink = { workspace: string; repo: string };
 
@@ -102,6 +103,8 @@ export async function joinWorkspace(input: {
   workspaceName: string;
   repoName: string;
   force?: boolean;
+  /** What this repo is, and whether its writes are shared. Absent leaves every field unset. */
+  settings?: RepoSettings;
 }): Promise<WorkspaceManifest> {
   const manifestPath = workspaceManifestPath(input.workspaceName);
   const manifest = await readManifest(manifestPath);
@@ -122,11 +125,16 @@ export async function joinWorkspace(input: {
 
   if (reclaiming) manifest.retiredNames = manifest.retiredNames.filter(name => name !== input.repoName);
 
-  manifest.repos.push({
+  // Normalized on the way in, so the cap on role and the charset rule on kin are enforced at
+  // the one boundary rather than trusted from the caller.
+  manifest.repos.push(normalizeRepoEntry({
     name: input.repoName,
     path: path.resolve(input.projectRoot),
     addedAt: new Date().toISOString(),
-  });
+    role: input.settings?.role,
+    kin: input.settings?.kin,
+    defaultVisibility: input.settings?.defaultVisibility,
+  }));
   await writeManifest(manifestPath, manifest);
   await saveConfig(input.projectRoot, { ...config, workspace: { workspace: input.workspaceName, repo: input.repoName } });
   await backfillOriginRepo(input.projectRoot, input.repoName);
