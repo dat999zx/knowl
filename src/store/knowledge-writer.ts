@@ -3,6 +3,8 @@ import { searchKnowledgeItems } from './search.js';
 import * as repo from './repository.js';
 import { checkKnowledgeConflict } from './conflicts.js';
 import { KnowledgeConflictError } from '../core/errors.js';
+import { getConfigRoot } from './database.js';
+import type { CrossRepoOverlap, OverlapSubject } from '../workspace/cross-repo-overlap.js';
 import { attachEvidenceToKnowledge } from './evidence-repository.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 
@@ -42,6 +44,11 @@ export interface StoreKnowledgeResult {
   superseded?: KnowledgeItem;
   /** An overlapping active item deliberately left active beside this write. */
   nearDuplicate?: KnowledgeItem;
+  /**
+   * Overlaps with linked repos. Advisory: those items belong to another repo and cannot be
+   * retired from here.
+   */
+  crossRepo?: CrossRepoOverlap[];
 }
 
 export interface StoreKnowledgeAtomOutcome {
@@ -51,6 +58,8 @@ export interface StoreKnowledgeAtomOutcome {
   supersededId?: string;
   nearDuplicateId?: string;
   nearDuplicateTitle?: string;
+  /** Overlaps with linked repos, per atom: five findings can overlap five different repos. */
+  crossRepo?: CrossRepoOverlap[];
 }
 
 export interface StoreKnowledgeBatchResult {
@@ -138,7 +147,7 @@ function normalizedIdentity(item: { title: string; content: string }): string {
 // "Database is SQLite" against "Project database uses SQLite", are.
 //
 // A one-token title ("Auth") is too coarse to carry this and is excluded.
-function sameSubjectTitle(a: { title: string }, b: { title: string }): boolean {
+export function sameSubjectTitle(a: { title: string }, b: { title: string }): boolean {
   const left = duplicateTokens(a.title);
   const right = duplicateTokens(b.title);
   const [smaller, larger] = left.size <= right.size ? [left, right] : [right, left];
@@ -190,6 +199,36 @@ async function resolveSupersedeTarget(
     if (explicit && explicit.status === 'active') return explicit;
   }
   return null;
+}
+
+/**
+ * Linked repos, resolved once per write operation rather than once per atom.
+ *
+ * Lazy for the same reason `resolveWritingRepo` is: an unlinked project must pay nothing, and
+ * a broken workspace must not block an ordinary write.
+ */
+async function activeWorkspaceForWrite() {
+  try {
+    const { resolveWorkspace } = await import('../workspace/resolve.js');
+    return await resolveWorkspace(getConfigRoot());
+  } catch {
+    return null;
+  }
+}
+
+/** Advisory and non-fatal: a peer that cannot be consulted must not fail the write. */
+async function overlapFor(
+  workspace: Awaited<ReturnType<typeof activeWorkspaceForWrite>>,
+  item: OverlapSubject,
+): Promise<CrossRepoOverlap[] | undefined> {
+  if (!workspace) return undefined;
+  try {
+    const { findCrossRepoOverlap } = await import('../workspace/cross-repo-overlap.js');
+    const found = await findCrossRepoOverlap({ workspace, item });
+    return found.length ? found : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function storeKnowledgeItemDeduped(
@@ -244,6 +283,7 @@ export async function storeKnowledgeItemDeduped(
     item,
     superseded: superseded || undefined,
     nearDuplicate: resolution === 'coexist' && duplicate ? duplicate : undefined,
+    crossRepo: await overlapFor(await activeWorkspaceForWrite(), input),
   };
 }
 
@@ -260,6 +300,9 @@ export async function storeKnowledgeAtomsDeduped(
   const outcomes: StoreKnowledgeAtomOutcome[] = [];
   let duplicateCount = 0;
   let insertedCount = 0;
+  // Resolved once for the whole batch, not once per atom. Ten atoms against three peers is
+  // thirty workspace resolutions inside the loop, for something that cannot change mid-batch.
+  const workspace = await activeWorkspaceForWrite();
 
   for (const atom of atoms) {
     const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, {
@@ -317,6 +360,9 @@ export async function storeKnowledgeAtomsDeduped(
       ...(resolution === 'coexist' && duplicate
         ? { nearDuplicateId: duplicate.id, nearDuplicateTitle: duplicate.title }
         : {}),
+      // Per atom, so an agent can tell which of five findings overlapped rather than being
+      // told only that something in the batch did.
+      crossRepo: await overlapFor(workspace, atom),
     });
   }
 

@@ -172,7 +172,14 @@ export async function createKnowledgeItem(
     if (newItem.conflictExclusive && newItem.conflictKey) {
       const conflicts = await exec.select().from(schema.knowledgeItems).where(and(
         eq(schema.knowledgeItems.status, 'active'), eq(schema.knowledgeItems.conflictExclusive, true),
-        eq(schema.knowledgeItems.conflictKey, newItem.conflictKey), eq(schema.knowledgeItems.conflictScope, newItem.conflictScope),
+        eq(schema.knowledgeItems.conflictKey, newItem.conflictKey),
+        // Second of the two sites that compare this column. `eq(column, null)` renders
+        // `= NULL`, which never matches, so a scopeless exclusive key let the duplicate it
+        // was declared to prevent straight through. Fixing only checkKnowledgeConflict would
+        // report the conflict while still allowing the write.
+        newItem.conflictScope === null
+          ? isNull(schema.knowledgeItems.conflictScope)
+          : eq(schema.knowledgeItems.conflictScope, newItem.conflictScope),
       ));
       if (conflicts.length) throw new KnowledgeConflictError(conflicts.map((item: any) => ({ id: item.id, title: item.title })));
     }
