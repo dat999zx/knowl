@@ -40,27 +40,32 @@ There is already a scar from this shape: a second vector parser lived in `federa
 | File | Responsibility | Tasks |
 | --- | --- | --- |
 | `src/store/store-handle.ts` | **New.** `StoreHandle`, `localStore()`, `openPeerStore()` | 1 |
-| `src/store/search.ts` | FTS candidate selection; takes a handle; filters before capping | 2, 3 |
+| `src/store/search.ts` | FTS selection **and its hydration** take a handle; filters before capping | 2, 3 |
 | `src/store/queries.ts` | `queryKnowledgeBase` takes a handle | 2 |
-| `src/store/vector.ts` | Embedding search takes a handle; visibility filter in SQL | 2, 3 |
-| `src/store/agent-query.ts` | `rankKnowledge` (pure, retargetable) split from telemetry | 4 |
-| `src/workspace/federated-query.ts` | Deletes `peerCandidates`; calls the real ranker per peer | 5 |
-| `src/store/conflicts.ts` | Conflict lookup takes a handle | 6 |
+| `src/store/vector.ts` | Embedding search **and its hydration** take a handle; visibility filter in SQL | 2, 3 |
+| `src/store/agent-query.ts` | `selectCandidates` / `scoreCandidates` split out; telemetry moved to the wrapper | 4 |
+| `src/workspace/federated-query.ts` | Deletes `peerCandidates`; selects per repo, scores once over the union | 5 |
+| `src/index.ts`, `src/mcp/tools.ts` | The two `queryFederated` callers pass the pinned embedding identity | 5 |
+| `src/store/conflicts.ts` | Conflict lookup takes a handle and a visibility predicate | 6 |
 | `src/workspace/cross-repo-overlap.ts` | **New.** Reports peer conflicts and near-duplicates; never mutates | 6 |
-| `src/store/knowledge-writer.ts` | Surfaces the cross-repo report on a write | 6 |
+| `src/store/knowledge-writer.ts` | Both writers call it; exports `sameSubjectTitle` for reuse | 6 |
+| `src/mcp/tools.ts` | `describeWriteReconciliation` renders the advisory to agents | 7 |
 
 ## Task order
 
 ```
-1  store handle                    (no behaviour change)
-2  thread the handle               (no behaviour change; needs 1)
-3  filter before capping           (fixes a real bug; needs 2)
-4  split ranking from telemetry    (no behaviour change; needs 2)
-5  federated query uses the ranker (needs 3, 4; gated on the eval baseline)
-6  cross-repo conflict reporting   (needs 1, 5)
+1  store handle                       (no behaviour change)
+2  thread the handle, hydration too   (no behaviour change; needs 1)
+3  filter before capping              (fixes a real bug; needs 2)
+4  split select / score / telemetry   (no behaviour change; needs 2)
+5  federated query scores one set     (needs 3, 4; gated on the eval baseline)
+6  cross-repo conflict reporting      (needs 1, 5)
+7  deliver the report to agents       (needs 6)
 ```
 
-Tasks 1–4 are behaviour-preserving groundwork and can be reviewed and merged without 5–6. Task 3 is the exception and is called out.
+Tasks 1–4 are behaviour-preserving groundwork and can be reviewed and merged without 5–7. Task 3 is the exception and is called out.
+
+**Task 6 without Task 7 ships nothing a user can see.** They are separate tasks because they are separately reviewable, not because either is optional.
 
 ---
 
@@ -254,7 +259,9 @@ database this process does not own cannot migrate it."
 ### Task 2: Thread the handle through the read path
 
 **Files:**
-- Modify: `src/store/search.ts:50-59`, `src/store/queries.ts:73-85`, `src/store/vector.ts:125-159`, `src/store/vector.ts:216-220`
+- Modify: `src/store/search.ts:50-59` (signature) **and `:80` (hydration)**
+- Modify: `src/store/queries.ts:73-85`
+- Modify: `src/store/vector.ts:125-159` (signature) **and `:189` (hydration)**, `src/store/vector.ts:216-220`
 - Test: `tests/store/retargetable-reads.test.ts`
 
 **Interfaces:**
@@ -268,6 +275,23 @@ database this process does not own cannot migrate it."
 `localStore()`. A default parameter is evaluated at call time, not at definition, so an omitted
 handle resolves exactly when `getDb()` does today — no call site changes, and the entire existing
 suite is the regression test for this task.
+
+**The part that is easy to miss, and fatal if missed: hydration.** Neither search returns rows. FTS
+returns item *ids* and then calls `getKnowledgeItem(row.itemId)` (`search.ts:80`); vector search
+scores ids and then calls `getKnowledgeItems(batch.map(...))` (`vector.ts:189`). Both default to the
+ambient database. Retargeting only the id lookup would produce peer ids hydrated against the local
+database — which normally finds nothing and returns an empty result, and on an id collision returns
+an **unrelated local item presented as the peer's**. Silent in both directions.
+
+Both hydration functions already accept a connection: `getKnowledgeItem(id, dbConnection?)`
+(`repository.ts:250`) and `getKnowledgeItems(ids, dbConnection?)` (`repository.ts:231`). So the fix
+is to pass `store.db` at those two call sites. The pattern this task follows already exists — 13
+functions in `repository.ts` and 3 in `tombstones.ts` take a connection — which is precisely why
+forgetting to *use* it is the plausible mistake rather than plumbing it.
+
+The tests below therefore assert on returned **content**, not on counts. A test asserting "the peer
+search returned 0 results" passes both when hydration is broken and when the peer genuinely has
+nothing.
 
 Only these four functions are in the retrieval chain. `queries.ts` also has `getActiveKnowledgeByCategory`
 (`:13`) and `getHierarchicalKnowledge` (`:38`) reading the global handle; **leave them alone**. They
@@ -290,6 +314,7 @@ import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import { searchKnowledgeItems } from '../../src/store/search.js';
 import { queryKnowledgeBase } from '../../src/store/queries.js';
+import { searchKnowledgeEmbeddings } from '../../src/store/vector.js';
 import { openPeerStore } from '../../src/store/store-handle.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 
@@ -362,6 +387,73 @@ describe('reads can target another database', () => {
     }
   });
 
+  it('hydrates peer rows from the peer, not from the local database', async () => {
+    // The failure this catches: FTS returns ids, then getKnowledgeItem loads them. If that
+    // load uses the ambient handle, a peer id is looked up locally, found nowhere, and
+    // dropped -- an empty result that looks exactly like "the peer knows nothing".
+    await initDb(MINE);
+    try {
+      const peer = await openPeerStore(peerDb());
+      const found = await searchKnowledgeItems('local', { query: 'cassandra' }, peer);
+      expect(found).toHaveLength(1);
+      expect(found[0].content).toBe('That repository stores data in cassandra.');
+    } finally {
+      await closeDb();
+    }
+  });
+
+  it('does not return a local item when a peer id collides with a local one', async () => {
+    // The other half of the same bug, and the dangerous one: on an id collision the local
+    // row is returned as though it came from the peer. Assert on content, never on count.
+    await initDb(THEIRS);
+    const peerId = String((await getClient().execute(
+      "SELECT id FROM knowledge_items WHERE title = 'Peer uses cassandra'",
+    )).rows[0].id);
+    await closeDb();
+
+    await initDb(MINE);
+    try {
+      // Force the collision: give a local row the peer's id, with different content.
+      await getClient().execute({
+        sql: 'UPDATE knowledge_items SET id = ? WHERE title = ?',
+        args: [peerId, 'Local uses postgres'],
+      });
+
+      const peer = await openPeerStore(peerDb());
+      const found = await searchKnowledgeItems('local', { query: 'cassandra' }, peer);
+      expect(found.map(item => item.content)).toEqual(['That repository stores data in cassandra.']);
+    } finally {
+      await closeDb();
+    }
+  });
+
+  it('hydrates peer rows from the peer on the vector path too', async () => {
+    // Vector search hydrates through getKnowledgeItems, a different call site with the same
+    // defect. One test per path, because fixing one does not fix the other.
+    await initDb(THEIRS);
+    const stored = await getClient().execute(
+      "SELECT id FROM knowledge_items WHERE title = 'Peer uses cassandra'",
+    );
+    const peerId = String(stored.rows[0].id);
+    const vector = new Float32Array([0.1, 0.9, 0.2]);
+    await getClient().execute({
+      sql: 'INSERT INTO knowledge_embeddings (knowledge_item_id, provider, model, dtype, dimensions, vector, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      args: [peerId, 'local', 'test/model', 'fp32', 3, Buffer.from(vector.buffer), '2026-01-01T00:00:00.000Z'],
+    });
+    await closeDb();
+
+    await initDb(MINE);
+    try {
+      const peer = await openPeerStore(peerDb());
+      const results = await searchKnowledgeEmbeddings('local', {
+        vector: [0.1, 0.9, 0.2], provider: 'local', model: 'test/model', limit: 5,
+      }, peer);
+      expect(results.map(result => result.item.title)).toEqual(['Peer uses cassandra']);
+    } finally {
+      await closeDb();
+    }
+  });
+
   it('leaves the peer database unchanged after being read', async () => {
     await initDb(MINE);
     try {
@@ -411,6 +503,15 @@ export async function searchKnowledgeItems(
 Replace the `const db = getDb();` at `search.ts:59` with the line above, and drop the now-unused
 `getDb` import if nothing else in the file uses it.
 
+**Then the hydration call, which is the one that makes this work at all.** At `search.ts:80`:
+
+```typescript
+    const item = await getKnowledgeItem(row.itemId, store.db);
+```
+
+Without this, the FTS query reads the peer and the hydration reads the local database, so peer ids
+resolve to nothing — or to an unrelated local row if an id collides.
+
 In `src/store/queries.ts`, do the same for `queryKnowledgeBase` only, and **pass the handle down**
 to `searchKnowledgeItems`:
 
@@ -453,6 +554,15 @@ export async function getEmbeddingsForItems(
   store: StoreHandle = localStore(),
 ): Promise<Map<string, number[]>> {
 ```
+
+**And the vector path's hydration**, at `vector.ts:189`:
+
+```typescript
+      const items = await getKnowledgeItems(batch.map(candidate => candidate.id), store.db);
+```
+
+Same defect, different call site. Fixing one does not fix the other, which is why Task 2 has a
+separate test for each path.
 
 `upsertKnowledgeEmbedding` keeps `getClient()`.
 
@@ -727,7 +837,10 @@ already-correct candidate set rather than deciding what may be seen."
 
 **Interfaces:**
 - Consumes: `StoreHandle` from Task 1, retargetable reads from Task 2
-- Produces: `rankKnowledge(projectId, options, store?: StoreHandle): Promise<ExplainedKnowledgeItem[]>` — pure read, writes nothing
+- Produces: `type Candidate = { item: KnowledgeItem; bm25Rank?: number; vectorRank?: number; vectorScore?: number }`
+- Produces: `selectCandidates(projectId, options, store?: StoreHandle): Promise<Candidate[]>` — the database read, per store
+- Produces: `scoreCandidates(candidates: Array<Candidate & { repo?: string }>, options): Array<{ item; repo?; score; explanation }>` — pure, synchronous, no database
+- Produces: `rankKnowledge(projectId, options, store?: StoreHandle): Promise<ExplainedKnowledgeItem[]>` — the two composed, for the single-repo case
 - `queryKnowledgeForAgent` and `queryKnowledgeForAgentExplained` keep their exact signatures and behaviour
 
 **Context the implementer needs:** `queryKnowledgeForAgentExplained` ends by writing access
@@ -744,6 +857,19 @@ correct rather than a gap: the reads belong to the querying repo, and the item b
 So the split is not a workaround. Ranking is a pure read that can run against any database;
 recording that you used something is the caller's business and stays local.
 
+**There is a second seam, and Task 5 needs it.** Selection touches a database; scoring does not.
+Keeping them in one function forces cross-repo search to score each repo separately and then
+reconcile the results — and those scores are not reconcilable, because `normalizedRecencyScore`
+(`agent-query.ts:76-90, 168`) normalizes each item's date against *the candidate set it arrived
+with*. Every repo's newest item scores 1.0 on recency no matter how old it actually is.
+
+So `rankKnowledge` becomes `selectCandidates` (async, per store) plus `scoreCandidates` (pure,
+synchronous, over whatever set it is handed). Single-repo callers compose them and see no change.
+Cross-repo hands it every repo's candidates at once, and recency finally means what it says.
+
+`scoreCandidates` carries an optional `repo` through untouched, so the caller can tell where each
+item came from without scoring having any notion of repos.
+
 `options` gains `visibility` so it can be passed to the two searches, from Task 3.
 
 - [ ] **Step 1: Write the failing test**
@@ -758,7 +884,7 @@ import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
-import { rankKnowledge, queryKnowledgeForAgent } from '../../src/store/agent-query.js';
+import { rankKnowledge, scoreCandidates, queryKnowledgeForAgent } from '../../src/store/agent-query.js';
 import { openPeerStore } from '../../src/store/store-handle.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 
@@ -859,6 +985,35 @@ describe('rankKnowledge', () => {
       await closeDb();
     }
   });
+
+  it('normalizes recency across every candidate it is given, not per source', async () => {
+    // The reason selection and scoring are separate. Scored one set at a time, the newest
+    // item in each set gets recency 1.0 regardless of its actual date -- so a repo whose
+    // freshest note is a year old would tie a genuinely recent one.
+    const old = { item: { id: 'a', updatedAt: '2020-01-01T00:00:00.000Z', confidence: 1, freshness: 'fresh', title: 'A', content: 'A', category: 'fact', status: 'active' }, repo: 'stale' };
+    const recent = { item: { id: 'b', updatedAt: '2026-07-01T00:00:00.000Z', confidence: 1, freshness: 'fresh', title: 'B', content: 'B', category: 'fact', status: 'active' }, repo: 'live' };
+
+    const together = scoreCandidates([old, recent] as never, { limit: 2, usingVector: false });
+    const byId = new Map(together.map(entry => [entry.item.id, entry.explanation.contributions.recency]));
+
+    // Scored together, the 2020 item is the floor and the 2026 item is the ceiling.
+    expect(byId.get('a')).toBe(0);
+    expect(byId.get('b')).toBeGreaterThan(0);
+
+    // Scored alone, each would be the only timestamp and score 0 -- which is exactly why
+    // fusing separately-scored sets was wrong.
+    const aloneA = scoreCandidates([old] as never, { limit: 1, usingVector: false });
+    const aloneB = scoreCandidates([recent] as never, { limit: 1, usingVector: false });
+    expect(aloneA[0].explanation.contributions.recency).toBe(aloneB[0].explanation.contributions.recency);
+  });
+
+  it('carries a repo label through scoring untouched', async () => {
+    const scored = scoreCandidates(
+      [{ item: { id: 'a', updatedAt: '2026-01-01T00:00:00.000Z', confidence: 1, freshness: 'fresh', title: 'A', content: 'A', category: 'fact', status: 'active' }, repo: 'api' }] as never,
+      { limit: 1, usingVector: false },
+    );
+    expect(scored[0].repo).toBe('api');
+  });
 });
 ```
 
@@ -869,13 +1024,91 @@ Expected: FAIL — `rankKnowledge` is not exported from `agent-query.js`
 
 - [ ] **Step 3: Write minimal implementation**
 
-In `src/store/agent-query.ts`, rename `queryKnowledgeForAgentExplained` to `rankKnowledge`, give it
-the handle and the `visibility` option, delete the telemetry block from its end, and pass the handle
-to both searches:
+In `src/store/agent-query.ts`, cut the existing body at its natural seam. Everything up to and
+including the vector merge becomes `selectCandidates`; everything from `const tokens = queryTokens(...)`
+to the `items` mapping becomes `scoreCandidates`; the telemetry block moves out to the public
+wrapper.
 
 ```typescript
+export type Candidate = {
+  item: KnowledgeItem;
+  /** This repo's own lexical rank. Corpus-relative -- see the note in scoreCandidates. */
+  bm25Rank?: number;
+  vectorRank?: number;
+  vectorScore?: number;
+};
+
 /**
- * Score and order candidates. Reads only.
+ * The database half. One store, one read.
+ *
+ * Separate from scoring because scoring must be able to run over several repos' candidates at
+ * once: recency is normalized against the set it is given, so scoring each repo alone and then
+ * comparing the results makes every repo's newest item equally recent.
+ */
+export async function selectCandidates(
+  projectId: string,
+  options: { /* same shape as rankKnowledge's, including visibility */ },
+  store: StoreHandle = localStore(),
+): Promise<Candidate[]> {
+  const limit = options.limit ?? DEFAULT_AGENT_QUERY_LIMIT;
+  const { vector, ...textOptions } = options;
+  const candidateLimit = Math.max(limit * 3, 10);
+  const bm25Results = await queryKnowledgeBase(projectId, {
+    ...textOptions, category: undefined, limit: candidateLimit,
+  }, store);
+
+  const byId = new Map<string, Candidate>();
+  bm25Results.forEach((item, index) => byId.set(item.id, { item, bm25Rank: index + 1 }));
+
+  if (vector?.enabled && vector.embedding) {
+    const vectorResults = await searchKnowledgeEmbeddings(projectId, {
+      vector: vector.embedding,
+      category: undefined,
+      status: options.status,
+      tags: options.tags,
+      visibility: options.visibility,
+      provider: vector.provider,
+      model: vector.model,
+      limit: candidateLimit,
+    }, store);
+    vectorResults.forEach((result, index) => {
+      const existing = byId.get(result.item.id);
+      byId.set(result.item.id, {
+        item: result.item,
+        bm25Rank: existing?.bm25Rank,
+        vectorRank: index + 1,
+        vectorScore: result.score,
+      });
+    });
+  }
+
+  return [...byId.values()];
+}
+
+/**
+ * The scoring half. Pure, synchronous, no database, no notion of repos.
+ *
+ * `repo` rides through untouched so a cross-repo caller can attribute results without scoring
+ * knowing anything about workspaces.
+ *
+ * One term here is corpus-relative and cannot be made otherwise: `bm25Rank` is each repo's own
+ * lexical rank. It is used only as a bounded fallback for candidates with no vector -- at most
+ * about 0.006 -- and only when vector search is off or an item is unembedded. Every other term
+ * is absolute: cosine, freshness, confidence, category, text match, exact identifier. Recency is
+ * normalized over whatever set is passed in, which is why the cross-repo caller passes all of
+ * them at once.
+ */
+export function scoreCandidates<T extends Candidate & { repo?: string }>(
+  candidates: T[],
+  options: { query?: string; category?: KnowledgeCategory; limit: number; usingVector: boolean },
+): Array<{ item: KnowledgeItem; repo?: string; score: number; explanation: ExplainedKnowledgeItem['explanation'] }> {
+  // ...the existing body from `const tokens = queryTokens(options.query)` through the MMR
+  // selection and the `items` mapping, unchanged except that it reads from `candidates`
+  // rather than `ranked.values()` and returns `{ item, repo, score, explanation }`.
+}
+
+/**
+ * Score and order candidates from one store. Reads only.
  *
  * Split from `queryKnowledgeForAgentExplained` so it can run against any database. Recording
  * that an item was used cannot: a peer handle is read-only, and `knowledge_access` has a
@@ -885,46 +1118,37 @@ to both searches:
  */
 export async function rankKnowledge(
   projectId: string,
-  options: {
-    category?: KnowledgeCategory;
-    status?: KnowledgeStatus;
-    tags?: string[];
-    query?: string;
-    surface?: string;
-    limit?: number;
-    visibility?: 'repo' | 'workspace';
-    vector?: { enabled?: boolean; provider?: string; model?: string; embedding?: number[] };
-  },
+  options: { /* unchanged, plus visibility */ },
   store: StoreHandle = localStore(),
 ): Promise<ExplainedKnowledgeItem[]> {
+  const candidates = await selectCandidates(projectId, options, store);
   const limit = options.limit ?? DEFAULT_AGENT_QUERY_LIMIT;
-  const { vector, ...textOptions } = options;
-  const candidateLimit = Math.max(limit * 3, 10);
-  const bm25Results = await queryKnowledgeBase(projectId, {
-    ...textOptions,
-    category: undefined,
-    limit: candidateLimit,
-  }, store);
-
-  // ...body unchanged through the `items` mapping...
-
-  return items;   // telemetry block removed
+  return scoreCandidates(candidates, {
+    query: options.query,
+    category: options.category,
+    limit,
+    usingVector: Boolean(options.vector?.enabled && options.vector.embedding),
+  }).map(({ item, score, explanation }) => ({ ...item, explanation }));
 }
 ```
 
-The vector branch passes the handle too:
+Keep the original body's logic verbatim inside `scoreCandidates` — the boosts, the vector/lexical
+branch, the MMR selection and the explanation construction. This task moves code; it does not
+retune anything.
+
+The shared options shape, used by `selectCandidates` and `rankKnowledge` alike:
 
 ```typescript
-    const vectorResults = await searchKnowledgeEmbeddings(projectId, {
-      vector: vector!.embedding!,
-      category: undefined,
-      status: options.status,
-      tags: options.tags,
-      visibility: options.visibility,
-      provider: vector!.provider,
-      model: vector!.model,
-      limit: candidateLimit,
-    }, store);
+type RankOptions = {
+  category?: KnowledgeCategory;
+  status?: KnowledgeStatus;
+  tags?: string[];
+  query?: string;
+  surface?: string;
+  limit?: number;
+  visibility?: 'repo' | 'workspace';
+  vector?: { enabled?: boolean; provider?: string; model?: string; embedding?: number[] };
+};
 ```
 
 `queryKnowledgeBase` must forward `visibility` to `searchKnowledgeItems`; add it to the options it
@@ -981,26 +1205,43 @@ signature and becomes rank-plus-record, so no caller changes."
 ### Task 5: Federated query uses the real ranker
 
 **Files:**
-- Modify: `src/workspace/federated-query.ts` — delete `peerCandidates`, `toCandidate`, `queryTokens`, `ITEM_COLUMNS`
+- Modify: `src/workspace/federated-query.ts` — delete `peerCandidates`, `toCandidate`, `queryTokens`, `ITEM_COLUMNS`, the `semantic` partition and the `RRF_K` import
+- Modify: `src/index.ts:415` — pass `provider` and `model`
+- Modify: `src/mcp/tools.ts:851` — pass `provider` and `model`
 - Test: `tests/workspace/federated-query.test.ts` (existing, extend), `tests/workspace/cross-repo-eval.test.ts` (existing, must not regress)
 
 **Interfaces:**
-- Consumes: `rankKnowledge` (Task 4), `openPeerStore` (Task 1)
-- Produces: `queryFederated` keeps its exact signature and return type
+- Consumes: `selectCandidates`, `scoreCandidates` (Task 4), `openPeerStore` (Task 1)
+- Produces: `queryFederated` keeps its return type; its input gains optional `provider` and `model`
 
 **Context the implementer needs:** this is the task the previous four exist for. About 100 lines of
-parallel implementation are deleted and replaced with a call per peer.
+parallel implementation are deleted.
 
-**The fusion still needs the semantic/positional split.** Scores from different corpora are only
-comparable when they are cosine, because cosine depends on the query and the item, not on the
-corpus. A BM25-derived score does depend on the corpus and is not comparable across repos. The
-existing `semantic` partition (`federated-query.ts:187-201`) handles this and must stay — but it is
-now driven by the ranker's own output rather than by a locally computed flag:
-`item.explanation.vectorRank !== undefined` means the item was scored semantically.
+**Do not fuse on `explanation.finalScore`.** An earlier draft of this task did, and it is wrong:
+`finalScore` includes a recency term normalized *within one candidate set*
+(`agent-query.ts:168` — `timestamps` comes from that query's own results). Repo A's newest item and
+repo B's newest item both score 1.0 on recency regardless of their actual dates, so fusing final
+scores lets a stale repo's freshest note outrank a genuinely recent one elsewhere. The same applies
+to any future corpus-relative term, so a rule of "use finalScore but subtract recency" would rot.
 
-**Do not add weights or boosts in the fusion.** This repo justifies retrieval changes with a
-checked-in ablation, and the existing rule — ties break toward the local repo, nothing else — is
-what the baseline was measured against.
+**Score one unified candidate set instead.** Rather than ranking each repo and fusing the rankings,
+gather candidates from every repo, union them, and run the scoring pass once. Recency then
+normalizes across all repos, which is what it was always supposed to mean, and the semantic /
+positional partition and the reciprocal-rank fusion both disappear — they existed only to paper over
+comparing two separately-computed scores.
+
+This needs Task 4's split taken one step further: `selectCandidates` (per store) and
+`scoreCandidates` (over a union), with `rankKnowledge` being the two composed for the single-repo
+case. Task 4 defines both; this task uses them.
+
+**One term remains corpus-relative and cannot be fixed here: `bm25Rank`.** It is each repo's own
+lexical rank. It is used only as a bounded fallback for candidates with no vector
+(`BM25_FALLBACK_WEIGHT / (RRF_K + rank)`, at most ≈0.006), and only when vector search is off or an
+item is unembedded. State it in the code comment rather than pretending the problem is fully gone;
+with a pinned workspace embedding identity the vector path is the normal case.
+
+**Do not add weights or boosts.** This repo justifies retrieval changes with a checked-in ablation,
+and the baseline was measured without them.
 
 Two behaviour changes are expected and are the point:
 
@@ -1071,9 +1312,9 @@ Replace the peer loop body:
     }
     try {
       const store = await openPeerStore(peer.databasePath);
-      // The local ranker, pointed at the peer. Same selection, same scoring, same boosts --
-      // there is no "peer ranking" any more, only ranking against a different file.
-      const items = await rankKnowledge('local', {
+      // Candidates only -- no scoring here. Selection is per store because it is a database
+      // read; scoring happens once, below, over every repo's candidates together.
+      const found = await selectCandidates('local', {
         query: input.query,
         status: 'active',
         // Not a post-filter: the predicate is in the SQL, so a peer's private row is never
@@ -1084,28 +1325,60 @@ Replace the peer loop body:
           ? { enabled: true, embedding, provider: input.provider, model: input.model }
           : undefined,
       }, store);
-
-      items.forEach((item, index) => {
-        // Cosine is comparable across corpora; a BM25-derived score is not, because it
-        // depends on each corpus's term statistics. The partition keeps the two scales
-        // apart, exactly as before -- only the flag now comes from the ranker itself.
-        const semantic = item.explanation.vectorRank !== undefined;
-        const score = semantic ? item.explanation.finalScore : 1 / (RRF_K + index + 1);
-        ranked.push({ item: { ...item, repo: peer.name }, score, local: false, semantic });
-      });
+      for (const candidate of found) candidates.push({ ...candidate, repo: peer.name });
     } catch (error) {
       skipped.push({ repo: peer.name, reason: error instanceof SchemaTooNewError ? 'schema-too-new' : 'unreadable' });
     }
   }
 ```
 
-Score local items the same way, by ranking them through the same function rather than accepting
-pre-ranked `localItems`, **if** the caller can supply a handle; otherwise keep the existing
-`localItems` path and apply the same `semantic`/`score` rule to it so both sides use one formula.
+Local candidates join the same array before scoring:
+
+```typescript
+  if (!wanted || wanted.has(input.workspace.repo)) {
+    const mine = await selectCandidates('local', {
+      query: input.query, status: 'active', limit: cap,
+      vector: embedding ? { enabled: true, embedding, provider: input.provider, model: input.model } : undefined,
+    });
+    for (const candidate of mine) candidates.push({ ...candidate, repo: input.workspace.repo });
+  }
+
+  // One scoring pass over every repo's candidates. Recency normalizes across the union, which
+  // is what it was always meant to mean; previously each repo normalized against its own
+  // results, so every repo's newest item scored 1.0 no matter how old it actually was.
+  const scored = scoreCandidates(candidates, {
+    query: input.query,
+    category: input.category,
+    limit: input.limit,
+    usingVector: Boolean(embedding),
+  });
+
+  const seen = new Set<string>();
+  const items = scored
+    // Ties break toward the local repo. That remains the whole of the local preference.
+    .sort((a, b) => (b.score - a.score) || (Number(b.repo === input.workspace.repo) - Number(a.repo === input.workspace.repo)))
+    .filter(entry => {
+      const key = entry.item.contentHash ?? `${entry.item.title}\n${entry.item.content}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, input.limit)
+    .map(entry => ({ ...entry.item, repo: entry.repo }));
+```
+
+`RRF_K` and the `semantic` flag are no longer used by this file — remove the import and the
+partition. They existed only to compare two separately-computed scores, which no longer happens.
 
 `queryFederated` gains optional `provider` and `model` inputs so the peer vector search filters on
 the workspace's pinned embedding identity. `workspace add`/`join` guarantee every member shares it
 (`assertSafeToLink`), so passing the local values is correct.
+
+**Both callers must pass them, and neither is optional in practice.** `src/index.ts:415` and
+`src/mcp/tools.ts:851` are the only two call sites. Each already resolves the local vector config to
+build its own query embedding; pass the same `provider` and `model` through. Omitting them leaves
+the peer vector search unfiltered by model, which silently mixes incomparable vectors — the failure
+`assertSafeToLink` exists to prevent, reintroduced one layer down.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1169,10 +1442,23 @@ Refusing to mutate is not a limitation to work around. A write in repo A silentl
 knowledge is the failure a single owner per item exists to prevent, and `assertOwnedItem`
 (`src/mcp/tools.ts:972`) already enforces it on the update path.
 
-**Cost control.** This runs on every write inside a workspace, so it must be cheap and it must never
-fail a write. Peers are scanned only when a workspace is active; an unreadable peer is skipped, not
-raised; and the whole thing is wrapped so a failure degrades to "no cross-repo report" rather than a
-failed store. Outside a workspace it does nothing and costs one null check.
+**Cost control.** This runs on every knowledge write inside a workspace, so it must be cheap and it
+must never fail a write. Peers are scanned only when a workspace is active; an unreadable peer is
+skipped, not raised; and the whole thing is wrapped so a failure degrades to "no cross-repo report"
+rather than a failed store. Outside a workspace it does nothing and costs one null check.
+
+**"Every write" means both writers.** `storeKnowledgeItemDeduped` is the single-atom path;
+`storeKnowledgeAtomsDeduped` (`knowledge-writer.ts:250`) is the batch path behind
+`knowl_ingest_atoms`, and it is the one agents reach for when they have several findings at once.
+Wiring only the first would leave the feature off for the busier path — the same shape of miss as
+clamping only one of the two supersede sites. Both call `findCrossRepoOverlap`; the batch path
+resolves the workspace **once** for the whole batch rather than per atom.
+
+**Producing the report is not the same as delivering it — that is Task 7.** Adding `crossRepo` to
+`StoreKnowledgeResult` puts it in the return value of a function no agent sees. This has already
+happened once in this codebase: the workspace `repo` label reached `KnowledgeItem` but not
+`compactKnowledgeItem`'s allowlist, so it never appeared in a single MCP response. Task 7 exists so
+that is checked rather than assumed.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1308,6 +1594,36 @@ describe('cross-repo overlap', () => {
     }
   });
 
+  it('does not report an exclusive conflict the other repo kept private', async () => {
+    // The privacy rule applies to the conflict path as well as the search path, and it has
+    // to be a SQL predicate: reading a private row and then discarding it still means a
+    // repo's unshared knowledge entered another repo's process.
+    await initDb(WEB);
+    await getClient().execute(
+      "UPDATE knowledge_items SET conflict_key = 'session.store', conflict_exclusive = 1, visibility = 'repo'",
+    );
+    await closeDb();
+
+    await initDb(API);
+    try {
+      const workspace = (await resolveWorkspace(API))!;
+      const overlap = await findCrossRepoOverlap({
+        workspace,
+        item: {
+          category: 'decision',
+          title: 'Session store is memcached',
+          content: 'Sessions are kept in memcached.',
+          conflictKey: 'session.store',
+          conflictExclusive: true,
+        },
+      });
+
+      expect(overlap).toEqual([]);
+    } finally {
+      await closeDb();
+    }
+  });
+
   it('returns nothing and costs nothing outside a workspace', async () => {
     await initDb(API);
     try {
@@ -1351,7 +1667,17 @@ First give `conflicts.ts` the handle, matching Task 2's pattern:
 import { localStore, type StoreHandle } from './store-handle.js';
 
 export async function checkKnowledgeConflict(
-  input: { conflictKey?: string | null; conflictScope?: Record<string, unknown> | null; conflictExclusive?: boolean },
+  input: {
+    conflictKey?: string | null;
+    conflictScope?: Record<string, unknown> | null;
+    conflictExclusive?: boolean;
+    /**
+     * Restricts to shared items. Required when the store is a peer: a repo-private row must
+     * not be read into this process, so this is a SQL predicate and never a filter applied
+     * to the returned rows.
+     */
+    visibility?: 'repo' | 'workspace';
+  },
   store: StoreHandle = localStore(),
 ) {
   if (!input.conflictExclusive || !input.conflictKey) return [];
@@ -1362,6 +1688,7 @@ export async function checkKnowledgeConflict(
     eq(schema.knowledgeItems.conflictExclusive, true),
     eq(schema.knowledgeItems.conflictKey, key),
     eq(schema.knowledgeItems.conflictScope, scope),
+    ...(input.visibility ? [eq(schema.knowledgeItems.visibility, input.visibility)] : []),
   ));
   return rows.map(mapRowToKnowledgeItem);
 }
@@ -1435,8 +1762,11 @@ export async function findCrossRepoOverlap(input: {
       const store = await openPeerStore(peer.databasePath);
 
       // An exclusive key held by another repo is a genuine contradiction, not a near miss.
-      for (const conflict of await checkKnowledgeConflict(input.item, store)) {
-        if (conflict.visibility !== 'workspace') continue;
+      // `visibility` is passed into the query rather than checked on the way out: a peer's
+      // private row must not be read into this process at all, which is the same rule Task 3
+      // put into the search path.
+      const conflicts = await checkKnowledgeConflict({ ...input.item, visibility: 'workspace' }, store);
+      for (const conflict of conflicts) {
         found.push({ repo: peer.name, id: conflict.id, title: conflict.title, kind: 'conflict' });
       }
 
@@ -1540,11 +1870,178 @@ a failed write. Outside a workspace it costs one null check."
 
 ---
 
+### Task 7: Deliver the cross-repo report to agents
+
+**Files:**
+- Modify: `src/mcp/tools.ts:40-52` (`describeWriteReconciliation`), and the `knowl_store`, `knowl_decide` and `knowl_ingest_atoms` handlers
+- Test: `tests/mcp/cross-repo-advisory.test.ts`
+
+**Interfaces:**
+- Consumes: `CrossRepoOverlap`, `StoreKnowledgeResult.crossRepo` (Task 6)
+- Produces: no new exports; `describeWriteReconciliation` gains a `crossRepo?: CrossRepoOverlap[]` field on its input
+
+**Context the implementer needs: a field on a result object is not a delivered message.**
+`describeWriteReconciliation` (`tools.ts:40`) is a hard-coded formatter that reads exactly
+`superseded` and `nearDuplicate`. Every write handler renders through it — `knowl_store` at
+`tools.ts:704` is the pattern. A `crossRepo` field added to the result and not added here is
+invisible to every agent, and the tests in Task 6 would all still pass, because they assert on the
+return value of `findCrossRepoOverlap` rather than on what an agent receives.
+
+This exact failure has happened here before. The workspace `repo` label was added to `KnowledgeItem`
+and reached nothing, because `compactKnowledgeItem` is an allowlist and the field was not on it. The
+fix then was to assert on the **serialized output**, and that is what this task's tests do.
+
+The message has to say what the agent should do, because the answer is unusual: the overlapping item
+belongs to another repo and **cannot be edited or retired from here**. An advisory that reads like
+the existing near-duplicate note would invite exactly the `knowl_update` that `assertOwnedItem`
+refuses.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/mcp/cross-repo-advisory.test.ts`:
+
+```typescript
+import { describe, expect, it } from 'vitest';
+import { describeWriteReconciliation } from '../../src/mcp/tools.js';
+
+describe('cross-repo advisory reaches the agent', () => {
+  it('names the owning repo and says the item cannot be changed from here', () => {
+    const text = describeWriteReconciliation({
+      item: { id: 'new-1' },
+      crossRepo: [{ repo: 'web', id: 'web-9', title: 'Session store is redis', kind: 'duplicate' }],
+    });
+
+    expect(text).toContain('web');
+    expect(text).toContain('web-9');
+    expect(text).toContain('Session store is redis');
+    // The instruction that differs from the local near-duplicate note: no knowl_update here.
+    expect(text).toMatch(/cannot .*(retire|change|edit)/i);
+  });
+
+  it('distinguishes a contradiction from an overlap', () => {
+    const text = describeWriteReconciliation({
+      item: { id: 'new-1' },
+      crossRepo: [{ repo: 'api', id: 'api-3', title: 'Session store is memcached', kind: 'conflict' }],
+    });
+    expect(text).toMatch(/contradict|conflict/i);
+  });
+
+  it('says nothing when there is no overlap, so ordinary writes are unchanged', () => {
+    expect(describeWriteReconciliation({ item: { id: 'new-1' } })).toBe('');
+  });
+
+  it('still renders the local supersede and near-duplicate notes', () => {
+    // Regression guard: the existing two branches must survive the third being added.
+    const text = describeWriteReconciliation({
+      item: { id: 'new-1' },
+      superseded: { id: 'old-1', title: 'Old thing' },
+      nearDuplicate: { id: 'dup-1', title: 'Similar thing' },
+    });
+    expect(text).toContain('old-1');
+    expect(text).toContain('dup-1');
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx.cmd vitest run tests/mcp/cross-repo-advisory.test.ts`
+Expected: FAIL — `describeWriteReconciliation` is not exported, and ignores `crossRepo`.
+
+- [ ] **Step 3: Write minimal implementation**
+
+Export `describeWriteReconciliation` and add the third branch:
+
+```typescript
+export function describeWriteReconciliation(result: {
+  item: { id: string };
+  superseded?: { id: string; title: string };
+  nearDuplicate?: { id: string; title: string };
+  crossRepo?: Array<{ repo: string; id: string; title: string; kind: 'conflict' | 'duplicate' }>;
+}): string {
+  const notes: string[] = [];
+  // ...existing superseded and nearDuplicate branches, unchanged...
+
+  for (const overlap of result.crossRepo ?? []) {
+    const what = overlap.kind === 'conflict'
+      ? `CONTRADICTS linked repo "${overlap.repo}"`
+      : `OVERLAPS linked repo "${overlap.repo}"`;
+    // Deliberately different advice from the local near-duplicate note: this item belongs to
+    // another repo, so knowl_update on it is refused by assertOwnedItem. Saying "retire it"
+    // here would send the agent at an operation that cannot succeed.
+    notes.push(
+      `${what}: item ${overlap.id} ("${overlap.title}"). You cannot retire or edit it from this repo -- it belongs to "${overlap.repo}". Your write stands; if the two genuinely disagree, raise it with whoever owns that repo.`,
+    );
+  }
+  return notes.length ? ` ${notes.join(' ')}` : '';
+}
+```
+
+Then pass `crossRepo` through from the three handlers. `knowl_store` (`tools.ts:704`) already spreads
+the whole result into the formatter, so confirm the field survives; `knowl_decide` and
+`knowl_ingest_atoms` need the same treatment. For the batch handler, report per atom so an agent can
+tell which of five findings overlapped.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx.cmd vitest run tests/mcp/cross-repo-advisory.test.ts`
+Expected: PASS, 4 tests
+
+- [ ] **Step 5: End-to-end check through a real tool call**
+
+The unit tests above cover the formatter. Add one case to the existing MCP workspace suite
+(`tests/mcp/knowl-query-workspace.test.ts` or the nearest equivalent) that calls the `knowl_store`
+**handler** in a two-repo workspace and asserts the peer's repo name appears in the returned
+`content[0].text`. A formatter test alone would have passed in the `repo`-label case too.
+
+- [ ] **Step 6: Verify suite, typecheck, commit**
+
+Run: `npx.cmd vitest run` then `npx.cmd tsc --noEmit`
+Expected: full suite green; 15 typecheck errors.
+
+```bash
+git add src/mcp/tools.ts tests/mcp/cross-repo-advisory.test.ts
+git commit -m "feat(mcp): surface cross-repo overlaps in write results
+
+Task 6 produced the report; nothing delivered it. describeWriteReconciliation
+is a hard-coded formatter reading exactly superseded and nearDuplicate, so a
+crossRepo field on the result object would have reached no agent while every
+test still passed.
+
+That has happened here before: the workspace repo label was added to
+KnowledgeItem and never appeared in a response, because compactKnowledgeItem is
+an allowlist. The fix then was to assert on serialized output, which is what
+these tests do -- including one that drives the real handler rather than the
+formatter.
+
+The advice deliberately differs from the local near-duplicate note. That item
+belongs to another repo and assertOwnedItem refuses knowl_update on it, so
+telling the agent to retire it would point it at an operation that cannot
+succeed."
+```
+
+---
+
 ## Self-review
 
 **Coverage.** The three things this plan set out to do: stop duplicating retrieval (Tasks 1, 2, 4,
 5), fix the filtering bug that blocks peer visibility (Task 3), add cross-repo conflict detection
-(Task 6). Nothing in the brief is unaddressed.
+(Tasks 6 and 7). Nothing in the brief is unaddressed.
+
+**What external review found, and what it changed.** Reviewed at `ef68249`. All five findings were
+checked against source; all five held.
+
+| Finding | Severity | What changed |
+| --- | --- | --- |
+| Handle threading stopped before hydration — FTS and vector both load rows through `getKnowledgeItem`/`getKnowledgeItems` on the ambient database, so peer ids would resolve locally to nothing, or to an unrelated local row on an id collision | **Would have broken the whole plan** | Task 2 covers both hydration call sites, and its tests assert on returned *content* with an explicit id-collision case. A count-based test passes while this is broken |
+| Task 6 read a peer's private conflicting items and filtered them in JavaScript, breaking the plan's own stated boundary | Privacy | `checkKnowledgeConflict` takes a `visibility` predicate applied in SQL; a test asserts a private conflict is not reported |
+| Fusing on `explanation.finalScore` is invalid — it contains recency normalized per candidate set, so every repo's newest item scores 1.0 | Correctness | Tasks 4 and 5 restructured: select per repo, score **once** over the union. The semantic/positional partition and RRF fusion are deleted rather than patched |
+| `crossRepo` was added to a result object no agent ever sees; the batch writer was untouched despite "every write" | Feature invisible | New Task 7 for delivery, with a handler-level test; Task 6 wires both writers |
+| `provider`/`model` added to `queryFederated` with neither caller updated | Silent mis-filtering | Task 5 names `src/index.ts:415` and `src/mcp/tools.ts:851` |
+
+Two of these are the same mistake in different places — adding a field and assuming it arrives. The
+`repo` label did this in v1 and is cited in Task 7 so the next reader sees the pattern rather than
+the incident.
 
 **What this plan deliberately does not do.**
 
@@ -1563,11 +2060,14 @@ a failed write. Outside a workspace it costs one null check."
 | Risk | Cover |
 | --- | --- |
 | The default parameter is not equivalent to the old global read | Task 2 Step 5: the entire existing suite runs with every call site omitting the parameter |
+| A retargeted read hydrates from the wrong database | Task 2 asserts on content, not counts, and includes an id-collision case. This is the failure that would otherwise look like "the peer knows nothing" |
 | Ranking changes silently | Task 5 is gated on a checked-in eval baseline with recorded numbers |
-| A peer's private knowledge leaks into this process | Task 3 puts the predicate in SQL above the `LIMIT`; Task 5 and Task 6 both assert it |
+| Cross-repo scores are not comparable | Tasks 4 and 5 score one unified set, so there is nothing to make comparable. `bm25Rank` remains corpus-relative and is documented in code as a bounded fallback |
+| A peer's private knowledge leaks into this process | Task 3 puts the predicate in SQL above the `LIMIT`; Tasks 5 and 6 each assert it, on the search path and the conflict path separately |
 | A peer's database is modified by being read | `openPeerStore` sets `query_only = ON` and skips bootstrap; Tasks 1, 2 and 4 each assert the file is byte-identical after a read |
-| Cross-repo checking slows every write | Task 6 bounds it to `PEER_CANDIDATES` per peer, skips absent peers, and resolves the workspace lazily |
+| Cross-repo checking slows every write | Task 6 bounds it to `PEER_CANDIDATES` per peer, skips absent peers, and resolves the workspace lazily — once per batch on the batch path |
 | An unreadable peer breaks a write | Task 6 wraps the whole thing; a failure yields no report rather than an error |
+| The feature works but no agent ever sees it | Task 7, with a test that drives the real handler rather than the formatter |
 
 **Known flake, unrelated but likely to be seen while running these.**
 `tests/store/connection-pool.test.ts > leaves a peer database byte-identical when only read`
