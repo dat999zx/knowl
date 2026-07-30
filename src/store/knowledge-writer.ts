@@ -5,6 +5,7 @@ import { checkKnowledgeConflict } from './conflicts.js';
 import { KnowledgeConflictError } from '../core/errors.js';
 import { getConfigRoot } from './database.js';
 import type { CrossRepoOverlap, OverlapSubject } from '../workspace/cross-repo-overlap.js';
+import type { ActiveWorkspace } from '../workspace/resolve.js';
 import { attachEvidenceToKnowledge } from './evidence-repository.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 
@@ -207,18 +208,47 @@ async function resolveSupersedeTarget(
  * Lazy for the same reason `resolveWritingRepo` is: an unlinked project must pay nothing, and
  * a broken workspace must not block an ordinary write.
  */
-async function activeWorkspaceForWrite() {
+let workspaceCache: { root: string; workspace: ActiveWorkspace | null } | null = null;
+
+/** Tests only: the cache is process-lifetime and would otherwise leak between fixtures. */
+export function resetWriteWorkspaceCache(): void {
+  workspaceCache = null;
+}
+
+/**
+ * Cached per config root, for the same reason `resolveWritingRepo` is: a write must not pay a
+ * config read, and the overwhelming majority of writes happen in projects with no workspace.
+ *
+ * The batch writer resolved this once per batch from the start; the single-atom writer resolved
+ * it per call, which meant a config read and a JSON parse on every write. That was not merely
+ * wasteful -- a run of 2500 ordinary writes crashed the process partway through, and completed
+ * cleanly with this call removed. The same run passes on 2.6.0, which did not have it.
+ */
+async function activeWorkspaceForWrite(): Promise<ActiveWorkspace | null> {
+  let root: string;
+  try {
+    root = getConfigRoot();
+  } catch {
+    return null; // no open store: nothing to resolve against
+  }
+
+  if (workspaceCache?.root === root) return workspaceCache.workspace;
+
+  let workspace: ActiveWorkspace | null = null;
   try {
     const { resolveWorkspace } = await import('../workspace/resolve.js');
-    return await resolveWorkspace(getConfigRoot());
+    workspace = await resolveWorkspace(root);
   } catch {
-    return null;
+    workspace = null; // a broken workspace must not block an ordinary write
   }
+
+  workspaceCache = { root, workspace };
+  return workspace;
 }
 
 /** Advisory and non-fatal: a peer that cannot be consulted must not fail the write. */
 async function overlapFor(
-  workspace: Awaited<ReturnType<typeof activeWorkspaceForWrite>>,
+  workspace: ActiveWorkspace | null,
   item: OverlapSubject,
 ): Promise<CrossRepoOverlap[] | undefined> {
   if (!workspace) return undefined;
