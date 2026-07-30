@@ -2,6 +2,7 @@ import { eq, and, or, like, SQL } from 'drizzle-orm';
 import { getDb } from './database.js';
 import * as schema from './schema.js';
 import { searchKnowledgeItems } from './search.js';
+import { localStore, type StoreHandle } from './store-handle.js';
 import { KnowledgeItem, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 import { mapRowToKnowledgeItem } from './repository.js';
@@ -79,10 +80,11 @@ export async function queryKnowledgeBase(
     query?: string;
     limit?: number;
     asOf?: string;
-  }
+  },
+  store: StoreHandle = localStore(),
 ): Promise<KnowledgeItem[]> {
   const resultLimit = options.limit;
-  const db = getDb();
+  const db = store.db;
   try {
     if (options.query) {
       const ftsResults = await searchKnowledgeItems(projectId, {
@@ -91,7 +93,7 @@ export async function queryKnowledgeBase(
         tags: options.tags,
         query: options.query,
         limit: options.limit,
-      });
+      }, store);
 
       if (ftsResults.length > 0) {
         if (!options.asOf) return resultLimit === undefined ? ftsResults : ftsResults.slice(0, resultLimit);

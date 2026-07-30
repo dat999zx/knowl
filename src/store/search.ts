@@ -1,6 +1,6 @@
 import { sql } from 'drizzle-orm';
-import { getDb } from './database.js';
 import { getKnowledgeItem } from './repository.js';
+import { localStore, type StoreHandle } from './store-handle.js';
 import { KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 
 const SEARCH_STOP_WORDS = new Set([
@@ -55,9 +55,12 @@ export async function searchKnowledgeItems(
     tags?: string[];
     query: string;
     limit?: number;
-  }
+  },
+  // Optional and trailing, so every existing call site is unchanged and the whole suite is
+  // the regression test. Evaluated at call time, exactly like the getDb() it replaces.
+  store: StoreHandle = localStore(),
 ): Promise<KnowledgeItem[]> {
-  const db = getDb();
+  const db = store.db;
   const ftsQuery = buildFtsQuery(options.query);
   if (!ftsQuery) return [];
 
@@ -77,7 +80,10 @@ export async function searchKnowledgeItems(
     if (seen.has(row.itemId)) continue;
     seen.add(row.itemId);
 
-    const item = await getKnowledgeItem(row.itemId);
+    // Hydrated from the same database the ids came from. Loading them from the ambient
+    // handle instead would silently return nothing for a peer -- or, on an id collision, an
+    // unrelated local row presented as the peer's.
+    const item = await getKnowledgeItem(row.itemId, store.db);
     if (!item) continue;
     if (item.status !== status) continue;
     if (options.category && item.category !== options.category) continue;
