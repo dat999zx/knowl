@@ -60,7 +60,34 @@ export function poolSize(): number {
   return clients.size;
 }
 
+/**
+ * Close every pooled client, folding the write-ahead log back into the main file first.
+ *
+ * The schema sets `journal_mode = WAL` (`bootstrap.ts`), so a writable connection's changes
+ * live in a `-wal` sidecar until a checkpoint moves them. `close()` alone does not guarantee
+ * that has finished, which leaves the main database file still changing after this function
+ * returns. Two symptoms came from it: several suites had to tolerate a failed directory
+ * removal because Windows still held the sidecars, and a byte-comparison test on a
+ * read-only peer open failed under load when the checkpoint landed between its two reads.
+ *
+ * Checkpointing explicitly makes the file stable at the moment this resolves. `TRUNCATE`
+ * rather than `PASSIVE` because the point is to leave nothing behind. Read-only clients are
+ * skipped: `query_only` refuses the pragma, and they wrote nothing to fold in.
+ *
+ * Failures are swallowed deliberately -- the client is being discarded either way, and an
+ * un-checkpointable database must not turn closing into an error.
+ */
 export async function releaseAll(): Promise<void> {
-  for (const client of clients.values()) client.close();
+  const entries = [...clients.entries()];
   clients.clear();
+  for (const [key, client] of entries) {
+    if (key.startsWith('rw:')) {
+      try {
+        await client.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+      } catch {
+        // Already closed, locked by another process, or not in WAL. Closing regardless.
+      }
+    }
+    client.close();
+  }
 }

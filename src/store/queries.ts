@@ -104,6 +104,12 @@ export async function queryKnowledgeBase(
 
       if (ftsResults.length > 0) {
         if (!options.asOf) return resultLimit === undefined ? ftsResults : ftsResults.slice(0, resultLimit);
+        // An `asOf` query used to compute these and throw them away, dropping to the
+        // whole-phrase LIKE below -- so "auth token expire" missed "Auth token TTL is
+        // fifteen minutes", one filler word from a match, exactly as the peer scan did
+        // before it was tokenized. Historical resolution is a filter over the same
+        // candidates, not a reason to select them differently.
+        return resolveAsOf(ftsResults, options.asOf, resultLimit);
       }
     }
 
@@ -158,13 +164,26 @@ export async function queryKnowledgeBase(
     }
 
     if (!options.asOf) return resultLimit === undefined ? mapped : mapped.slice(0, resultLimit);
-    const historical = await Promise.all(mapped.map(async item => {
-      const assertion = await findAssertionAsOf(item.id, options.asOf!);
-      return assertion ? { ...item, content: assertion.content, confidence: assertion.confidence } : null;
-    }));
-    const resolved = historical.filter((item): item is KnowledgeItem => item !== null);
-    return resultLimit === undefined ? resolved : resolved.slice(0, resultLimit);
+    return resolveAsOf(mapped, options.asOf, resultLimit);
   } catch (error: any) {
     throw new DatabaseError(`Failed to query knowledge base: ${error.message}`);
   }
+}
+
+/**
+ * Rewind candidates to the content they held at a point in time, dropping any that did not
+ * exist yet. Shared by both selection paths so historical results are the same candidates the
+ * present-tense query would have found.
+ */
+async function resolveAsOf(
+  candidates: KnowledgeItem[],
+  asOf: string,
+  resultLimit: number | undefined,
+): Promise<KnowledgeItem[]> {
+  const historical = await Promise.all(candidates.map(async item => {
+    const assertion = await findAssertionAsOf(item.id, asOf);
+    return assertion ? { ...item, content: assertion.content, confidence: assertion.confidence } : null;
+  }));
+  const resolved = historical.filter((item): item is KnowledgeItem => item !== null);
+  return resultLimit === undefined ? resolved : resolved.slice(0, resultLimit);
 }
