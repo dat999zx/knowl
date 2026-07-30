@@ -2,6 +2,7 @@ import { eq, and, or, like, SQL } from 'drizzle-orm';
 import { getDb } from './database.js';
 import * as schema from './schema.js';
 import { searchKnowledgeItems } from './search.js';
+import { localStore, type StoreHandle } from './store-handle.js';
 import { KnowledgeItem, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 import { mapRowToKnowledgeItem } from './repository.js';
@@ -79,10 +80,17 @@ export async function queryKnowledgeBase(
     query?: string;
     limit?: number;
     asOf?: string;
-  }
+    /**
+     * Restricts to shared items. Must reach **both** paths below: the LIKE fallback runs
+     * whenever FTS returns nothing, which is exactly the case where a private row would
+     * otherwise slip through after the indexed path correctly excluded it.
+     */
+    visibility?: 'repo' | 'workspace';
+  },
+  store: StoreHandle = localStore(),
 ): Promise<KnowledgeItem[]> {
   const resultLimit = options.limit;
-  const db = getDb();
+  const db = store.db;
   try {
     if (options.query) {
       const ftsResults = await searchKnowledgeItems(projectId, {
@@ -91,10 +99,17 @@ export async function queryKnowledgeBase(
         tags: options.tags,
         query: options.query,
         limit: options.limit,
-      });
+        visibility: options.visibility,
+      }, store);
 
       if (ftsResults.length > 0) {
         if (!options.asOf) return resultLimit === undefined ? ftsResults : ftsResults.slice(0, resultLimit);
+        // An `asOf` query used to compute these and throw them away, dropping to the
+        // whole-phrase LIKE below -- so "auth token expire" missed "Auth token TTL is
+        // fifteen minutes", one filler word from a match, exactly as the peer scan did
+        // before it was tokenized. Historical resolution is a filter over the same
+        // candidates, not a reason to select them differently.
+        return resolveAsOf(ftsResults, options.asOf, resultLimit);
       }
     }
 
@@ -109,6 +124,10 @@ export async function queryKnowledgeBase(
     } else {
       // By default query active unless status is specified
       conditions.push(eq(schema.knowledgeItems.status, 'active'));
+    }
+
+    if (options.visibility) {
+      conditions.push(eq(schema.knowledgeItems.visibility, options.visibility));
     }
 
     // Fallback: If FTS returned no results (or wasn't matched due to FTS5 stripping special characters 
@@ -145,13 +164,26 @@ export async function queryKnowledgeBase(
     }
 
     if (!options.asOf) return resultLimit === undefined ? mapped : mapped.slice(0, resultLimit);
-    const historical = await Promise.all(mapped.map(async item => {
-      const assertion = await findAssertionAsOf(item.id, options.asOf!);
-      return assertion ? { ...item, content: assertion.content, confidence: assertion.confidence } : null;
-    }));
-    const resolved = historical.filter((item): item is KnowledgeItem => item !== null);
-    return resultLimit === undefined ? resolved : resolved.slice(0, resultLimit);
+    return resolveAsOf(mapped, options.asOf, resultLimit);
   } catch (error: any) {
     throw new DatabaseError(`Failed to query knowledge base: ${error.message}`);
   }
+}
+
+/**
+ * Rewind candidates to the content they held at a point in time, dropping any that did not
+ * exist yet. Shared by both selection paths so historical results are the same candidates the
+ * present-tense query would have found.
+ */
+async function resolveAsOf(
+  candidates: KnowledgeItem[],
+  asOf: string,
+  resultLimit: number | undefined,
+): Promise<KnowledgeItem[]> {
+  const historical = await Promise.all(candidates.map(async item => {
+    const assertion = await findAssertionAsOf(item.id, asOf);
+    return assertion ? { ...item, content: assertion.content, confidence: assertion.confidence } : null;
+  }));
+  const resolved = historical.filter((item): item is KnowledgeItem => item !== null);
+  return resultLimit === undefined ? resolved : resolved.slice(0, resultLimit);
 }

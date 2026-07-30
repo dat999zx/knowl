@@ -20,20 +20,22 @@
     },
     "positional": {
       "when": "No query embedding, or items without vectors -- an unembedded repo, or a caller that did not compute one.",
-      "scoring": "Reciprocal rank across corpora, k=60, no weights, no boosts; ties break toward the local repo.",
+      "scoring": "One scoring pass over every repo's candidates together: absolute text-match strength, freshness, confidence, category and recency, plus a bounded reciprocal-rank term from each repo's own lexical position. Ties break toward the local repo.",
       "verifiedBy": "tests/workspace/cross-repo-eval.test.ts (the suite runs with KNOWL_DISABLE_WRITE_EMBEDDING=1, so it measures this path)",
       "metrics": {
         "recallAt3": 1.0,
-        "mrr": 0.8333333333333334,
+        "mrr": 1.0,
         "forbiddenHitCount": 0,
         "failedCaseIds": []
       },
-      "knownWeakness": {
+      "resolvedWeakness": {
         "case": "xrepo-answer-elsewhere",
-        "observed": "The correct answer ranks second. Web's 'Web scratch note' mentions auth in passing and is rank 1 of its own corpus, so it scores identically to server's rank-1 'Auth token TTL' and the local tie-break puts the weaker local match first.",
-        "why": "Reciprocal-rank fusion compares positions, not strengths. A weak rank-1 in a small corpus is indistinguishable from a strong rank-1 in a large one.",
-        "status": "Accepted for this path and not tuned away. It is the honest cost of ranking without a comparable signal, and it is why the semantic path exists. A repo with embeddings does not hit it."
-      }
+        "wasRecorded": "2026-07-27 at MRR 0.833. The correct answer ranked second: web's 'Web scratch note' mentions auth in passing and, as rank 1 of its own corpus, scored identically to server's rank-1 'Auth token TTL', so the local tie-break put the weaker local match first.",
+        "resolvedAt": "2026-07-30",
+        "why": "The 2026-07-27 entry said raising this number 'means giving cross-corpus scores real comparability, which is the work the ablation exists to justify'. That work is done, and it removed the fusion rather than tuning it. Each repo is selected separately and every candidate is scored in one pass, so no item is ever 'rank 1 of its own corpus' relative to another. The dominant term is now absolute text-match strength (up to 0.2) rather than the corpus-relative rank term (at most ~0.016), and a passing mention no longer ties a direct answer.",
+        "notTuned": "No weight was added or changed. The improvement comes from deleting the fusion step, and the semantic path's numbers are unchanged, which is what rules out an accidental re-tune of the shared scorer."
+      },
+      "remainingCorpusRelativeTerm": "bm25Rank is still each repo's own lexical position. It survives as a bounded fallback for candidates with no vector -- at most about 0.006 -- and is now outweighed by absolute terms rather than deciding the order."
     }
   },
   "invariants": {

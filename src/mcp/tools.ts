@@ -37,10 +37,11 @@ const KNOWLEDGE_CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', '
 // is still active beside the new one. Both are reported in the tool result rather than
 // only in the tool description, because that is the one channel every MCP client model
 // reads back regardless of how it treats schema prose.
-function describeWriteReconciliation(result: {
+export function describeWriteReconciliation(result: {
   item: { id: string };
   superseded?: { id: string; title: string };
   nearDuplicate?: { id: string; title: string };
+  crossRepo?: Array<{ repo: string; id: string; title: string; kind: 'conflict' | 'duplicate' }>;
 }): string {
   const notes: string[] = [];
   if (result.superseded) {
@@ -48,6 +49,15 @@ function describeWriteReconciliation(result: {
   }
   if (result.nearDuplicate) {
     notes.push(`STILL ACTIVE: overlapping item ${result.nearDuplicate.id} ("${result.nearDuplicate.title}") was kept, so memory now holds both. If your write corrects or replaces it, retire it now with knowl_update using id "${result.item.id}" and supersedeId "${result.nearDuplicate.id}". If both are genuinely true, leave it.`);
+  }
+  // Deliberately different advice from the near-duplicate note above: that item belongs to
+  // another repo, and knowl_update on it is refused by assertOwnedItem. Telling the agent to
+  // retire it would point it at an operation that cannot succeed.
+  for (const overlap of result.crossRepo ?? []) {
+    const what = overlap.kind === 'conflict'
+      ? `CONTRADICTS linked repo "${overlap.repo}"`
+      : `OVERLAPS linked repo "${overlap.repo}"`;
+    notes.push(`${what}: item ${overlap.id} ("${overlap.title}"). You cannot retire or edit it from this repo -- it belongs to "${overlap.repo}". Your write stands; if the two genuinely disagree, raise it with whoever owns that repo.`);
   }
   return notes.length ? ` ${notes.join(' ')}` : '';
 }
@@ -738,6 +748,11 @@ export function registerTools(
           if (outcome.nearDuplicateId) {
             parts.push(`STILL ACTIVE beside overlapping item ${outcome.nearDuplicateId} ("${outcome.nearDuplicateTitle}") — if this atom corrects it, retire it with knowl_update using id "${outcome.itemId}" and supersedeId "${outcome.nearDuplicateId}"`);
           }
+          // Per atom, so an agent can tell which of five findings overlapped rather than
+          // being told only that something in the batch did.
+          for (const overlap of outcome.crossRepo ?? []) {
+            parts.push(`${overlap.kind === 'conflict' ? 'CONTRADICTS' : 'OVERLAPS'} linked repo "${overlap.repo}" item ${overlap.id} ("${overlap.title}") — you cannot retire or edit it from this repo`);
+          }
           return parts.join('; ') + '.';
         });
         const summary = `Stored ${result.insertedCount} of ${atoms.length} atom(s); ${result.duplicateCount} already held verbatim; ${result.supersededIds.length} predecessor(s) retired.`;
@@ -841,21 +856,20 @@ export function registerTools(
         let skippedRepos: FederatedResult['skipped'] = [];
         let resolvedItems: Array<KnowledgeItem & { repo?: string; explanation?: unknown }> = items as any;
         if (active) {
-          // Hand the fusion the query embedding and the local vectors so cross-repo ranking
-          // compares match strength, not corpus position. A workspace pins one embedding
-          // identity, so a peer's vectors are in the same space as ours.
-          const { getEmbeddingsForItems } = await import('../store/vector.js');
-          const localVectors = vector?.embedding
-            ? await getEmbeddingsForItems((items as KnowledgeItem[]).map(item => item.id))
-            : undefined;
+          // Federation selects from every repo including this one and scores the union in a
+          // single pass, so the local result above is not passed in. Handing it pre-selected
+          // local items would score them by different rules than the peers' -- and recency,
+          // which normalizes against the candidate set it is given, would make every repo's
+          // newest item equally recent.
           const federated = await queryFederated({
             workspace: active,
-            localItems: items as KnowledgeItem[],
             query: query ?? '',
+            category: category as KnowledgeCategory,
+            status: status as KnowledgeStatus,
+            tags,
             limit: limit ?? 3,
             repos,
-            queryEmbedding: vector?.embedding,
-            localVectors,
+            vector,
           });
           skippedRepos = federated.skipped;
           resolvedItems = federated.items;

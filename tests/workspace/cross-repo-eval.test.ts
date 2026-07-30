@@ -106,18 +106,21 @@ describe('cross-repo retrieval', () => {
       const started = Date.now();
       await initDb(root);
       try {
-        const local = await queryKnowledgeForAgent('local', { query: testCase.query, limit: 10, surface: 'eval' });
         const active = (await resolveWorkspace(root))!;
-        let queryEmbedding: number[] | undefined;
-        let localVectors: Map<string, number[]> | undefined;
+        // Federation selects from every repo including this one, so no local pre-query.
+        let vector: { enabled: boolean; provider?: string; model?: string; embedding?: number[] } | undefined;
         if (semantic) {
           const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, root);
-          [queryEmbedding] = await embedder.embed([testCase.query]);
-          localVectors = await getEmbeddingsForItems(local.map(item => item.id));
+          const [embedding] = await embedder.embed([testCase.query]);
+          vector = {
+            enabled: true,
+            provider: embedder.provider,
+            model: DEFAULT_CONFIG.search?.vector?.model,
+            embedding,
+          };
         }
         const federated = await queryFederated({
-          workspace: active, localItems: local, query: testCase.query, limit: testCase.limit,
-          queryEmbedding, localVectors,
+          workspace: active, query: testCase.query, limit: testCase.limit, vector,
         });
         return {
           itemIds: federated.items.map(item => item.id),
@@ -142,17 +145,22 @@ describe('cross-repo retrieval', () => {
     expect(evaluation.metrics.forbiddenHitCount).toBe(0);
     expect(evaluation.failedCaseIds).toEqual([]);
 
-    // MRR is 0.833, not 1, and that is the honest number rather than a target to tune to.
-    // In `xrepo-answer-elsewhere` the correct answer ranks second: web's "Web scratch note"
-    // mentions "auth" in passing and, as rank 1 of its own corpus, scores identically to
-    // server's rank-1 "Auth token TTL" -- so the local tie-break puts the weaker local
-    // match first.
+    // Was 0.833, recorded 2026-07-27 with `xrepo-answer-elsewhere` ranking second: web's
+    // "Web scratch note" mentions "auth" in passing and, as rank 1 of its own corpus, scored
+    // identically to server's rank-1 "Auth token TTL", so the local tie-break preferred the
+    // weaker local match.
     //
-    // This is the cost of shipping fusion with no weights, recorded deliberately. It is the
-    // number a future weighting change has to beat, and it cannot be beaten by accident:
-    // raising it means giving cross-corpus scores real comparability, which is the work the
-    // ablation exists to justify.
-    expect(evaluation.metrics.mrr).toBeCloseTo(0.833, 2);
+    // That entry said the number could only be raised by "giving cross-corpus scores real
+    // comparability". That is what happened, by deleting the fusion rather than weighting it:
+    // repos are selected separately and every candidate is scored in one pass, so nothing is
+    // "rank 1 of its own corpus" relative to anything else. Absolute text-match strength (up
+    // to 0.2) now outweighs the corpus-relative rank term (at most ~0.006), and a passing
+    // mention no longer ties a direct answer.
+    //
+    // A drop below this is a regression. No weight was added to reach it -- the semantic
+    // path's numbers are unchanged, which is what rules out an accidental re-tune of the
+    // shared scorer.
+    expect(evaluation.metrics.mrr).toBe(1);
   });
 
   it('scores the suite on the semantic path, which is the production default', async () => {

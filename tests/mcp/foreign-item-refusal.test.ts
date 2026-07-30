@@ -96,6 +96,42 @@ describe('item-scoped tools and foreign items', () => {
     for (const dir of [HOME, A, B, SOLO]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   });
 
+  it('tells the agent, through a real tool call, that a write overlaps a linked repo', async () => {
+    // The formatter has its own unit tests. This one exists because a formatter test alone
+    // would have passed in the `repo`-label case too: that field reached KnowledgeItem and
+    // never appeared in a single MCP response, because compactKnowledgeItem is an allowlist.
+    // Assert on what the agent actually receives.
+    await initDb(A);
+    const result = await callTool(A, await loadConfig(A), 'knowl_store', {
+      category: 'decision',
+      title: 'Auth token TTL',
+      content: 'Auth tokens are valid for fifteen minutes before refresh.',
+    });
+    await closeDb();
+
+    const text = String(result.content[0].text);
+    expect(text).toContain('b');
+    expect(text).toContain(foreignId);
+    expect(text).toMatch(/cannot .*(retire|edit)/i);
+  });
+
+  it('names which atom of a batch overlapped, through a real tool call', async () => {
+    await initDb(A);
+    const result = await callTool(A, await loadConfig(A), 'knowl_ingest_atoms', {
+      atoms: [
+        { category: 'fact', title: 'Unrelated subject entirely', content: 'Nothing else mentions this.' },
+        { category: 'decision', title: 'Auth token TTL', content: 'Auth tokens are valid for fifteen minutes before refresh.' },
+      ],
+    });
+    await closeDb();
+
+    const text = String(result.content[0].text);
+    // The overlapping atom is named; the unrelated one is not dragged into the advisory.
+    expect(text).toContain('Auth token TTL');
+    expect(text).toContain(foreignId);
+    expect(text).not.toMatch(/Unrelated subject entirely[^\n]*linked repo/);
+  });
+
   it('knowl_update refuses an item this repo does not own, naming the owner', async () => {
     await initDb(A);
     const result = await callTool(A, await loadConfig(A), 'knowl_update', { id: foreignId, content: 'Rewritten from the wrong repo.' });

@@ -50,6 +50,18 @@ async function seed(root: string, name: string, title: string, content: string, 
   await closeDb();
 }
 
+/** The vector config a caller hands federation: identity plus the query embedding. */
+async function vectorConfig(query: string) {
+  const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, WEB);
+  const [embedding] = await embedder.embed([query]);
+  return {
+    enabled: true,
+    provider: embedder.provider,
+    model: DEFAULT_CONFIG.search?.vector?.model,
+    embedding,
+  };
+}
+
 describe('cross-repo ranking with a shared embedding identity', () => {
   beforeAll(async () => {
     process.env.KNOWL_HOME = HOME;
@@ -83,14 +95,9 @@ describe('cross-repo ranking with a shared embedding identity', () => {
     const query = 'how long do auth tokens last before they expire';
     await initDb(WEB);
     try {
-      const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, WEB);
-      const [queryEmbedding] = await embedder.embed([query]);
-      const local = await queryKnowledgeForAgent('local', { query, limit: 10, surface: 'test' });
-      const localVectors = await getEmbeddingsForItems(local.map(item => item.id));
       const active = (await resolveWorkspace(WEB))!;
-
       const federated = await queryFederated({
-        workspace: active, localItems: local, query, limit: 3, queryEmbedding, localVectors,
+        workspace: active, query, limit: 3, vector: await vectorConfig(query),
       });
 
       // The recorded weakness, resolved: the answer that actually answers the question
@@ -108,14 +115,9 @@ describe('cross-repo ranking with a shared embedding identity', () => {
     const query = 'session credential lifetime policy';
     await initDb(WEB);
     try {
-      const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, WEB);
-      const [queryEmbedding] = await embedder.embed([query]);
-      const local = await queryKnowledgeForAgent('local', { query, limit: 10, surface: 'test' });
-      const localVectors = await getEmbeddingsForItems(local.map(item => item.id));
       const active = (await resolveWorkspace(WEB))!;
-
       const federated = await queryFederated({
-        workspace: active, localItems: local, query, limit: 5, queryEmbedding, localVectors,
+        workspace: active, query, limit: 5, vector: await vectorConfig(query),
       });
 
       expect(federated.items.some(item => item.repo === 'server' && item.title === 'Auth token TTL')).toBe(true);
@@ -128,14 +130,9 @@ describe('cross-repo ranking with a shared embedding identity', () => {
     const query = 'how long do auth tokens last before they expire';
     await initDb(WEB);
     try {
-      const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, WEB);
-      const [queryEmbedding] = await embedder.embed([query]);
-      const local = await queryKnowledgeForAgent('local', { query, limit: 10, surface: 'test' });
-      const localVectors = await getEmbeddingsForItems(local.map(item => item.id));
       const active = (await resolveWorkspace(WEB))!;
-
       const federated = await queryFederated({
-        workspace: active, localItems: local, query, limit: 5, queryEmbedding, localVectors,
+        workspace: active, query, limit: 5, vector: await vectorConfig(query),
       });
       // Reordering, not exclusion: the local note is still there, just no longer first.
       expect(federated.items.some(item => item.repo === 'web')).toBe(true);

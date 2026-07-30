@@ -24,7 +24,7 @@ import { createManifest, isValidRepoName, readManifest, writeManifest } from './
 import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js';
 import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
 import { promoteItems } from './workspace/promote.js';
-import { queryFederated } from './workspace/federated-query.js';
+import { runCliQuery } from './cli/query-command.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
 import { resolveWorkspace } from './workspace/resolve.js';
 import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
@@ -386,42 +386,18 @@ program.command('query').argument('[query]').description('Search project memory 
     const project = await repo.getProjectByRootPath(root);
     if (!project) throw new Error('Project not found in database.');
     const limit = options.limit === undefined ? undefined : Number(options.limit);
-    const items = await queryKnowledgeBase(project.id, { query, limit, asOf: options.asOf });
 
-    // Fan out for the same reason knowl_query does. Leaving this local-only meant a user
-    // in a linked repo got an empty result for knowledge that plainly existed next door,
-    // while an agent on the MCP tool found it -- the same command disagreeing with itself
-    // depending on who ran it.
-    // `asOf` stays local: historical reconstruction across repos has no defined semantics.
-    const active = options.asOf ? null : await resolveWorkspace(root, await loadConfig(root));
-    if (active) {
-      // Compute the embedding here too, or the CLI silently ranks on position while the MCP
-      // tool ranks on meaning -- the same question answered differently depending on whether
-      // a human or an agent asked it.
-      const config = await loadConfig(root);
-      let queryEmbedding: number[] | undefined;
-      let localVectors: Map<string, number[]> | undefined;
-      if (query && isVectorSearchEnabled(config)) {
-        try {
-          const embedder = await createLocalEmbeddingProvider(config, root);
-          [queryEmbedding] = await embedder.embed([query]);
-          const { getEmbeddingsForItems } = await import('./store/vector.js');
-          localVectors = await getEmbeddingsForItems(items.map(item => item.id));
-        } catch {
-          // An unavailable embedder degrades to positional ranking rather than failing the
-          // query outright.
-        }
-      }
-      const federated = await queryFederated({
-        workspace: active, localItems: items, query: query ?? '', limit: limit ?? 3,
-        queryEmbedding, localVectors,
-      });
-      console.log(JSON.stringify(federated.items.map(item => ({ ...item, repo: item.repo })), null, 2));
-      for (const skip of federated.skipped) {
-        console.error(`Note: linked repo "${skip.repo}" was not searched (${skip.reason}).`);
-      }
-    } else {
-      console.log(JSON.stringify(items, null, 2));
+    // One engine, whether or not this repo is linked and whether an agent or a human asked.
+    // The ranking used to differ on both axes: this command read queryKnowledgeBase directly
+    // while knowl_query used the shared ranker, and the workspace branch used the ranker while
+    // the solo branch did not -- the same command disagreeing with itself.
+    const { items, skipped } = await runCliQuery({
+      projectRoot: root, projectId: project.id, query, limit, asOf: options.asOf,
+    });
+
+    console.log(JSON.stringify(items, null, 2));
+    for (const skip of skipped) {
+      console.error(`Note: linked repo "${skip.repo}" was not searched (${skip.reason}).`);
     }
     await closeDb();
   } catch (error: any) { console.error(`Error querying knowledge: ${error.message}`); process.exit(1); }

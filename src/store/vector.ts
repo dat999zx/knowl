@@ -3,6 +3,7 @@ import { KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types
 import { DatabaseError } from '../core/errors.js';
 import { getClient, getDb } from './database.js';
 import { getKnowledgeItems } from './repository.js';
+import { localStore, type StoreHandle } from './store-handle.js';
 import * as schema from './schema.js';
 
 export type KnowledgeEmbeddingInput = {
@@ -132,7 +133,10 @@ export async function searchKnowledgeEmbeddings(
     provider?: string;
     model?: string;
     limit?: number;
-  }
+    /** Restricts to shared items; required for a peer store. See searchKnowledgeItems. */
+    visibility?: 'repo' | 'workspace';
+  },
+  store: StoreHandle = localStore(),
 ): Promise<VectorSearchResult[]> {
   const status = options.status || 'active';
   const limit = options.limit ?? 20;
@@ -147,6 +151,12 @@ export async function searchKnowledgeEmbeddings(
       where.push('i.category = ?');
       args.push(options.category);
     }
+    // Same rule as the FTS path: a peer's private row must not be read into this process, so
+    // the predicate goes in the query rather than filtering what came back.
+    if (options.visibility) {
+      where.push('i.visibility = ?');
+      args.push(options.visibility);
+    }
     if (options.provider) {
       where.push('e.provider = ?');
       args.push(options.provider);
@@ -156,7 +166,7 @@ export async function searchKnowledgeEmbeddings(
       args.push(options.model);
     }
 
-    const rows = await getClient().execute({
+    const rows = await store.client.execute({
       sql: `SELECT e.knowledge_item_id AS id, e.vector AS vector
             FROM knowledge_embeddings e
             JOIN knowledge_items i ON i.id = e.knowledge_item_id
@@ -186,7 +196,9 @@ export async function searchKnowledgeEmbeddings(
     const batchSize = Math.max(limit * 4, 32);
     for (let start = 0; start < scored.length && results.length < limit; start += batchSize) {
       const batch = scored.slice(start, start + batchSize);
-      const items = await getKnowledgeItems(batch.map(candidate => candidate.id));
+      // Hydrated from the store the ids came from -- same reason as the FTS path. The
+      // ambient handle would return nothing for a peer, or the wrong row on a collision.
+      const items = await getKnowledgeItems(batch.map(candidate => candidate.id), store.db);
       for (const candidate of batch) {
         const item = items.get(candidate.id);
         if (!item) continue;
@@ -213,11 +225,14 @@ export async function searchKnowledgeEmbeddings(
  * Items written before embeddings were enabled simply have no row, and the caller falls
  * back to positional scoring for those.
  */
-export async function getEmbeddingsForItems(itemIds: string[]): Promise<Map<string, number[]>> {
+export async function getEmbeddingsForItems(
+  itemIds: string[],
+  store: StoreHandle = localStore(),
+): Promise<Map<string, number[]>> {
   const found = new Map<string, number[]>();
   if (itemIds.length === 0) return found;
 
-  const rows = await getClient().execute({
+  const rows = await store.client.execute({
     sql: `SELECT knowledge_item_id, vector FROM knowledge_embeddings
           WHERE knowledge_item_id IN (${itemIds.map(() => '?').join(', ')})`,
     args: itemIds,
