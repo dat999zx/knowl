@@ -229,7 +229,7 @@ export async function openPeerStore(databasePath: string): Promise<StoreHandle> 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx.cmd vitest run tests/store/store-handle.test.ts`
-Expected: PASS, 4 tests
+Expected: PASS, all tests in the file
 
 - [ ] **Step 5: Verify suite and typecheck**
 
@@ -314,7 +314,7 @@ import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import { searchKnowledgeItems } from '../../src/store/search.js';
 import { queryKnowledgeBase } from '../../src/store/queries.js';
-import { searchKnowledgeEmbeddings } from '../../src/store/vector.js';
+import { searchKnowledgeEmbeddings, upsertKnowledgeEmbedding } from '../../src/store/vector.js';
 import { openPeerStore } from '../../src/store/store-handle.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 
@@ -435,10 +435,17 @@ describe('reads can target another database', () => {
       "SELECT id FROM knowledge_items WHERE title = 'Peer uses cassandra'",
     );
     const peerId = String(stored.rows[0].id);
-    const vector = new Float32Array([0.1, 0.9, 0.2]);
-    await getClient().execute({
-      sql: 'INSERT INTO knowledge_embeddings (knowledge_item_id, provider, model, dtype, dimensions, vector, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-      args: [peerId, 'local', 'test/model', 'fp32', 3, Buffer.from(vector.buffer), '2026-01-01T00:00:00.000Z'],
+    // Written through the real writer rather than hand-rolled SQL. The table is
+    // (knowledge_item_id, provider, model, dimensions, vector, updated_at) -- no dtype, no
+    // created_at -- and `vector` is whatever `encodeVector` produces, which has already
+    // changed representation once. Reproducing that by hand in a test is how a test ends up
+    // failing for reasons that have nothing to do with the code under test.
+    await upsertKnowledgeEmbedding({
+      knowledgeItemId: peerId,
+      provider: 'local',
+      model: 'test/model',
+      dimensions: 3,
+      vector: [0.1, 0.9, 0.2],
     });
     await closeDb();
 
@@ -569,7 +576,7 @@ separate test for each path.
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx.cmd vitest run tests/store/retargetable-reads.test.ts`
-Expected: PASS, 4 tests
+Expected: PASS, all tests in the file
 
 - [ ] **Step 5: Verify suite and typecheck**
 
@@ -798,7 +805,7 @@ In `src/store/vector.ts`, add the option and one clause to the existing `where` 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx.cmd vitest run tests/store/filter-before-cap.test.ts`
-Expected: PASS, 3 tests
+Expected: PASS, all tests in the file
 
 - [ ] **Step 5: Verify suite and typecheck**
 
@@ -1039,6 +1046,32 @@ export type Candidate = {
 };
 
 /**
+ * The reciprocal-rank base score, reconstructed from the ranks rather than carried.
+ *
+ * The original code accumulated this into a `score` field as it merged the two result sets:
+ * BM25 set `1 / (RRF_K + index + 1)` and the vector pass added its own term on top. The
+ * lexical branch of the scorer then read that field (`rank = result.score`). Dropping the
+ * field without replacing it is why "move the body unchanged" does not work.
+ *
+ * Reconstructing is preferable to carrying it: `bm25Rank` and `vectorRank` are the actual
+ * inputs, the arithmetic is visible here rather than smeared across a merge loop, and a
+ * candidate assembled by any other caller cannot arrive with a stale precomputed score.
+ */
+function baseRankScore(candidate: Candidate): number {
+  return (candidate.bm25Rank ? 1 / (RRF_K + candidate.bm25Rank) : 0)
+    + (candidate.vectorRank ? 1 / (RRF_K + candidate.vectorRank) : 0);
+}
+```
+
+Verify the reconstruction against the original before moving on: BM25 stored
+`1 / (RRF_K + index + 1)` where `bm25Rank = index + 1`, and the vector pass added
+`1 / (RRF_K + index + 1)` where `vectorRank = index + 1`. The sum above is identical for every
+combination of present and absent ranks, including the vector-only case where the original left
+`bm25Rank` undefined and started from `existing?.score ?? 0`.
+
+```typescript
+
+/**
  * The database half. One store, one read.
  *
  * Separate from scoring because scoring must be able to run over several repos' candidates at
@@ -1132,9 +1165,13 @@ export async function rankKnowledge(
 }
 ```
 
-Keep the original body's logic verbatim inside `scoreCandidates` — the boosts, the vector/lexical
-branch, the MMR selection and the explanation construction. This task moves code; it does not
-retune anything.
+Keep the original body's logic inside `scoreCandidates` — the boosts, the vector/lexical branch, the
+MMR selection and the explanation construction — with **exactly one substitution**: the lexical
+branch's `rank = result.score` becomes `rank = baseRankScore(candidate)`. The vector branch is
+untouched; it already computes `rank` from `vectorScore` and a BM25 fallback derived from
+`bm25Rank`, neither of which used the dropped field.
+
+This task moves code and makes that one substitution. It retunes nothing.
 
 The shared options shape, used by `selectCandidates` and `rankKnowledge` alike:
 
@@ -1177,7 +1214,7 @@ export async function queryKnowledgeForAgentExplained(
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx.cmd vitest run tests/store/rank-knowledge.test.ts`
-Expected: PASS, 4 tests
+Expected: PASS, all tests in the file
 
 - [ ] **Step 5: Verify suite and typecheck**
 
@@ -1212,7 +1249,27 @@ signature and becomes rank-plus-record, so no caller changes."
 
 **Interfaces:**
 - Consumes: `selectCandidates`, `scoreCandidates` (Task 4), `openPeerStore` (Task 1)
-- Produces: `queryFederated` keeps its return type; its input gains optional `provider` and `model`
+- Produces: `queryFederated(input: { workspace, query, category?, status?, tags?, limit, repos?, perRepoCap?, vector? }): Promise<FederatedResult>` — return type unchanged
+- **Removed from the input: `localItems`, `localVectors`, `queryEmbedding`.** Federation now selects locally as well as remotely; see below.
+
+**The ownership contract has to change, and half-changing it is what an earlier draft did.** It kept
+`localItems` in the interface while the implementation ignored it, re-selected locally, and read an
+`input.category` that was never declared. Two coherent designs existed; this task takes the first:
+
+1. **Federation owns selection.** Callers hand it the query and the filters; it selects from every
+   repo including the local one, scores once, returns. *Chosen.*
+2. Callers hand it unscored candidates. Rejected: every caller would have to know how to select
+   candidates without scoring them, which is the internal shape of the ranker leaking into two
+   call sites.
+
+Option 1 also removes work the callers currently do twice. `src/mcp/tools.ts:804-812` already builds
+a `queryOptions` object with `query`, `category`, `status`, `tags`, `limit` and `vector`, runs the
+local query, and then passes the results in as `localItems` (`:851`). After this task the workspace
+branch passes `queryOptions` straight through and drops the separate local query, the
+`getEmbeddingsForItems` call at `:848` and the `localVectors` plumbing. `src/index.ts:415` gets the
+same treatment.
+
+The non-workspace path is untouched: no workspace, no `queryFederated`, ordinary local query.
 
 **Context the implementer needs:** this is the task the previous four exist for. About 100 lines of
 parallel implementation are deleted.
@@ -1316,14 +1373,16 @@ Replace the peer loop body:
       // read; scoring happens once, below, over every repo's candidates together.
       const found = await selectCandidates('local', {
         query: input.query,
-        status: 'active',
+        category: input.category,
+        status: input.status ?? 'active',
+        tags: input.tags,
         // Not a post-filter: the predicate is in the SQL, so a peer's private row is never
         // read into this process.
         visibility: 'workspace',
         limit: cap,
-        vector: embedding
-          ? { enabled: true, embedding, provider: input.provider, model: input.model }
-          : undefined,
+        // The same vector config the local selection uses. A workspace pins one embedding
+        // identity (`assertSafeToLink`), so the peer's vectors are in the same space.
+        vector: input.vector,
       }, store);
       for (const candidate of found) candidates.push({ ...candidate, repo: peer.name });
     } catch (error) {
@@ -1332,53 +1391,78 @@ Replace the peer loop body:
   }
 ```
 
-Local candidates join the same array before scoring:
+Local candidates join the same array, selected the same way — the local repo is not a special case
+any more, it is just the repo whose store is the ambient one:
 
 ```typescript
   if (!wanted || wanted.has(input.workspace.repo)) {
     const mine = await selectCandidates('local', {
-      query: input.query, status: 'active', limit: cap,
-      vector: embedding ? { enabled: true, embedding, provider: input.provider, model: input.model } : undefined,
+      query: input.query,
+      category: input.category,
+      status: input.status ?? 'active',
+      tags: input.tags,
+      limit: cap,
+      vector: input.vector,
     });
     for (const candidate of mine) candidates.push({ ...candidate, repo: input.workspace.repo });
+  }
+```
+
+**Deduplicate before scoring, not after.** Two repos holding byte-identical knowledge would
+otherwise both occupy slots inside the scorer's `limit`, and removing the loser afterwards leaves a
+result short of what was asked for — a query for 5 returning 3, with no indication why. Content
+identity is decidable without scoring, so it belongs first:
+
+```typescript
+  // Identical content in two repos is one fact, and the local copy is the one to keep: the
+  // querying repo owns it, and "ties break toward local" is already this file's only
+  // preference rule. Done before scoring so a duplicate cannot consume a result slot.
+  const byContent = new Map<string, typeof candidates[number]>();
+  for (const candidate of candidates) {
+    const key = candidate.item.contentHash ?? `${candidate.item.title}\n${candidate.item.content}`;
+    const held = byContent.get(key);
+    if (!held || (held.repo !== input.workspace.repo && candidate.repo === input.workspace.repo)) {
+      byContent.set(key, candidate);
+    }
   }
 
   // One scoring pass over every repo's candidates. Recency normalizes across the union, which
   // is what it was always meant to mean; previously each repo normalized against its own
   // results, so every repo's newest item scored 1.0 no matter how old it actually was.
-  const scored = scoreCandidates(candidates, {
+  const scored = scoreCandidates([...byContent.values()], {
     query: input.query,
     category: input.category,
     limit: input.limit,
-    usingVector: Boolean(embedding),
+    usingVector: Boolean(input.vector?.enabled && input.vector.embedding),
   });
 
-  const seen = new Set<string>();
-  const items = scored
-    // Ties break toward the local repo. That remains the whole of the local preference.
-    .sort((a, b) => (b.score - a.score) || (Number(b.repo === input.workspace.repo) - Number(a.repo === input.workspace.repo)))
-    .filter(entry => {
-      const key = entry.item.contentHash ?? `${entry.item.title}\n${entry.item.content}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, input.limit)
-    .map(entry => ({ ...entry.item, repo: entry.repo }));
+  const items = scored.map(entry => ({ ...entry.item, repo: entry.repo }));
 ```
+
+`scoreCandidates` already applies `limit` and orders by score, and its tie-break is the local
+preference, so no second sort or slice is needed here.
 
 `RRF_K` and the `semantic` flag are no longer used by this file — remove the import and the
 partition. They existed only to compare two separately-computed scores, which no longer happens.
 
-`queryFederated` gains optional `provider` and `model` inputs so the peer vector search filters on
-the workspace's pinned embedding identity. `workspace add`/`join` guarantee every member shares it
-(`assertSafeToLink`), so passing the local values is correct.
+**Both callers change, and the change makes each of them shorter.** `src/mcp/tools.ts:851` and
+`src/index.ts:415` are the only two call sites. Each currently runs its own local query and passes
+the results in; after this task each passes the query options it already built:
 
-**Both callers must pass them, and neither is optional in practice.** `src/index.ts:415` and
-`src/mcp/tools.ts:851` are the only two call sites. Each already resolves the local vector config to
-build its own query embedding; pass the same `provider` and `model` through. Omitting them leaves
-the peer vector search unfiltered by model, which silently mixes incomparable vectors — the failure
-`assertSafeToLink` exists to prevent, reintroduced one layer down.
+```typescript
+          const federated = await queryFederated({
+            workspace: active,
+            ...queryOptions,        // query, category, status, tags, limit, vector
+            repos,
+          });
+```
+
+and deletes the `getEmbeddingsForItems` / `localVectors` block above it, which existed only to feed
+the old fusion. The `vector` object inside `queryOptions` already carries `provider` and `model`
+resolved from local config; passing the whole object is what keeps the peer vector search filtered
+to the workspace's pinned identity. Dropping it would leave peer vectors unfiltered by model, which
+silently mixes incomparable vectors — the failure `assertSafeToLink` exists to prevent,
+reintroduced one layer down.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1396,8 +1480,8 @@ Expected: full suite green; 15 typecheck errors.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/workspace/federated-query.ts tests/workspace/federated-query.test.ts
-git commit -m "refactor(workspace): rank peers with the local ranker
+git add src/workspace/federated-query.ts src/index.ts src/mcp/tools.ts tests/workspace/federated-query.test.ts
+git commit -m "refactor(workspace): select per repo, score every repo at once
 
 Deletes the parallel candidate scanner. Peers were selected with a raw LIKE
 scan and scored by cosine or bare rank position, with none of the recency,
@@ -1405,10 +1489,18 @@ confidence, freshness, category or exact-identifier boosts local items get --
 so a linked repo's results were ranked by an older, simpler set of rules than
 your own, and every future ranking change would have had to be made twice.
 
-Peer selection is now FTS and peer items carry a full explanation. The
-semantic/positional partition stays, because a BM25-derived score depends on
-its corpus and is not comparable across repos; it is now driven by the
-ranker's own vectorRank rather than a locally recomputed flag.
+The semantic/positional partition and the reciprocal-rank fusion are deleted
+rather than reused. They existed to reconcile scores computed separately per
+repo, and those were never reconcilable: recency is normalized against the
+candidate set it arrives with, so every repo's newest item scored 1.0 no matter
+how old it was. Selecting per repo and scoring the union once removes the
+problem instead of compensating for it.
+
+Deduplication moves ahead of the cap, so two repos holding the same fact cannot
+consume two result slots and return a short list.
+
+queryFederated now owns selection, so both callers stop running their own local
+query and stop assembling localVectors for a fusion that no longer exists.
 
 Cross-repo eval unchanged: semantic MRR 1.0, positional MRR 0.833."
 ```
@@ -1471,7 +1563,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
-import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
+import { storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
 import { joinWorkspace } from '../../src/workspace/membership.js';
@@ -1632,6 +1724,26 @@ describe('cross-repo overlap', () => {
         item: { category: 'fact', title: 'Anything', content: 'Any content at all.' },
       });
       expect(overlap).toEqual([]);
+    } finally {
+      await closeDb();
+    }
+  });
+
+  it('attaches an overlap to the right atom in a batch', async () => {
+    // The batch path is the one agents use when they have several findings at once. Wiring
+    // only the single-atom writer would leave the feature off where it is used most.
+    await initDb(API);
+    try {
+      const projectId = (await repo.createProject(API, 'api')).id;
+      const batch = await storeKnowledgeAtomsDeduped(projectId, [
+        { category: 'fact', title: 'Unrelated to anything', content: 'Nothing else mentions this subject.' },
+        { category: 'decision', title: 'Session store is redis', content: 'Sessions live in redis and expire after thirty minutes.' },
+      ]);
+
+      const [unrelated, overlapping] = batch.outcomes;
+      expect(unrelated.crossRepo).toBeUndefined();
+      expect(overlapping.crossRepo).toHaveLength(1);
+      expect(overlapping.crossRepo![0]).toMatchObject({ repo: 'web', kind: 'duplicate' });
     } finally {
       await closeDb();
     }
@@ -1837,10 +1949,50 @@ Then, inside `storeKnowledgeItemDeduped`, after the local `nearDuplicate` is res
 and add `crossRepo: crossRepo.length ? crossRepo : undefined` to the returned
 `StoreKnowledgeResult`, with the field declared optional on the type.
 
+**Then the batch writer, which is the busier path.** `storeKnowledgeAtomsDeduped`
+(`knowledge-writer.ts:250`) returns `StoreKnowledgeBatchResult` with one
+`StoreKnowledgeAtomOutcome` per atom (`:47-55`). That outcome type carries `supersededId`,
+`nearDuplicateId` and `nearDuplicateTitle` — and needs the cross-repo report alongside them, or
+Task 7 has no per-atom data to render:
+
+```typescript
+export interface StoreKnowledgeAtomOutcome {
+  action: 'inserted' | 'duplicate';
+  itemId: string;
+  title: string;
+  supersededId?: string;
+  nearDuplicateId?: string;
+  nearDuplicateTitle?: string;
+  /** Overlaps with linked repos, per atom: five findings can overlap five different repos. */
+  crossRepo?: CrossRepoOverlap[];
+}
+```
+
+Resolve the workspace **once for the whole batch**, before the atom loop, and pass it in:
+
+```typescript
+  // Once per batch, not once per atom. Ten atoms against three peers is thirty peer opens if
+  // this sits inside the loop, for a workspace that cannot change mid-batch.
+  let workspace: ActiveWorkspace | null = null;
+  try {
+    const { resolveWorkspace } = await import('../workspace/resolve.js');
+    workspace = await resolveWorkspace(getConfigRoot());
+  } catch {
+    workspace = null;
+  }
+```
+
+then inside the loop, for each atom, `await findCrossRepoOverlap({ workspace, item: atom })` and
+attach the result to that atom's outcome. The connection pool means the peer handles are opened once
+and reused across atoms, so the per-atom cost is the queries, not the opens.
+
+Refactor the single-atom path to take the same already-resolved workspace, so both writers share one
+resolution helper rather than each having its own `try`/`catch`.
+
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx.cmd vitest run tests/workspace/cross-repo-overlap.test.ts`
-Expected: PASS, 5 tests
+Expected: PASS, all tests in the file
 
 - [ ] **Step 5: Verify suite and typecheck**
 
@@ -1977,22 +2129,65 @@ export function describeWriteReconciliation(result: {
 }
 ```
 
-Then pass `crossRepo` through from the three handlers. `knowl_store` (`tools.ts:704`) already spreads
-the whole result into the formatter, so confirm the field survives; `knowl_decide` and
-`knowl_ingest_atoms` need the same treatment. For the batch handler, report per atom so an agent can
-tell which of five findings overlapped.
+Then pass `crossRepo` through from the three handlers. `knowl_store` (`tools.ts:704`) already hands
+the whole result to the formatter, so confirm the new field survives that call rather than assuming
+it; `knowl_decide` needs the same.
+
+`knowl_ingest_atoms` renders **per atom**, from `StoreKnowledgeAtomOutcome.crossRepo` (Task 6), so
+an agent can tell which of five findings overlapped:
+
+```typescript
+        const advisories = result.outcomes
+          .filter(outcome => outcome.crossRepo?.length)
+          .map(outcome => `"${outcome.title}"${describeWriteReconciliation({ item: { id: outcome.itemId }, crossRepo: outcome.crossRepo })}`);
+```
+
+and append `advisories.join(' ')` to that handler's existing summary text. A batch-level list that
+did not name the atom would tell an agent that something in its batch overlapped without saying
+what, which is worse than silence.
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx.cmd vitest run tests/mcp/cross-repo-advisory.test.ts`
-Expected: PASS, 4 tests
+Expected: PASS, all tests in the file
 
-- [ ] **Step 5: End-to-end check through a real tool call**
+- [ ] **Step 5: End-to-end check through the real handlers**
 
-The unit tests above cover the formatter. Add one case to the existing MCP workspace suite
-(`tests/mcp/knowl-query-workspace.test.ts` or the nearest equivalent) that calls the `knowl_store`
-**handler** in a two-repo workspace and asserts the peer's repo name appears in the returned
-`content[0].text`. A formatter test alone would have passed in the `repo`-label case too.
+The tests above cover the formatter. A formatter test alone would have passed in the `repo`-label
+case too, so add these to the existing MCP workspace suite (`tests/mcp/knowl-query-workspace.test.ts`),
+reusing whatever two-repo fixture it already builds:
+
+```typescript
+  it('tells the agent about a peer overlap when storing', async () => {
+    const response = await callTool('knowl_store', {
+      category: 'decision',
+      title: 'Session store is redis',
+      content: 'Sessions live in redis and expire after thirty minutes.',
+    });
+
+    const text = response.content[0].text as string;
+    expect(text).toContain('web');
+    expect(text).toMatch(/cannot .*(retire|change|edit)/i);
+  });
+
+  it('tells the agent which atom in a batch overlapped', async () => {
+    const response = await callTool('knowl_ingest_atoms', {
+      atoms: [
+        { category: 'fact', title: 'Unrelated to anything', content: 'Nothing else mentions this subject.' },
+        { category: 'decision', title: 'Session store is redis', content: 'Sessions live in redis and expire after thirty minutes.' },
+      ],
+    });
+
+    const text = response.content[0].text as string;
+    // The overlapping atom is named; the unrelated one is not dragged into the advisory.
+    expect(text).toContain('Session store is redis');
+    expect(text).toContain('web');
+    expect(text).not.toMatch(/Unrelated to anything.*web/s);
+  });
+```
+
+Use the suite's existing helper for invoking a tool; if it calls the handler through a different
+name than `callTool`, match it rather than adding a second harness.
 
 - [ ] **Step 6: Verify suite, typecheck, commit**
 
@@ -2042,6 +2237,28 @@ checked against source; all five held.
 Two of these are the same mistake in different places — adding a field and assuming it arrives. The
 `repo` label did this in v1 and is cited in Task 7 so the next reader sees the pattern rather than
 the incident.
+
+**Second review round, at `7da80c6`.** All six findings held; all six are fixed above.
+
+| Finding | Severity | What changed |
+| --- | --- | --- |
+| `Candidate` dropped the `score` field the lexical branch reads (`agent-query.ts:189`), so "move the body unchanged" could not compile | **Blocking** | `baseRankScore` reconstructs it from `bm25Rank`/`vectorRank`, with the equivalence to the original spelled out, and the one permitted substitution named explicitly |
+| `queryFederated` kept `localItems` in its interface while the body ignored it, re-selected locally, and read an undeclared `input.category` | Incoherent contract | Federation now owns selection outright; `localItems`, `localVectors` and `queryEmbedding` are removed and both callers get shorter |
+| Deduplication ran after the cap, so duplicate top hits could consume slots and return a short list | Correctness | Dedup moves ahead of scoring, keyed on content, preferring the local copy |
+| Batch advisories were claimed in prose but specified nowhere; `StoreKnowledgeAtomOutcome` had no field for them | Feature half-wired | Task 6 defines the field, resolves the workspace once per batch, and tests per-atom attribution; Task 7 renders per atom |
+| The vector hydration test inserted `dtype` and `created_at`, which the table does not have | Test would fail regardless of the code | Written through `upsertKnowledgeEmbedding` instead of hand-rolled SQL |
+| Stale execution details: test counts, `git add` missing two files, a commit message describing the opposite of the change | Noise that erodes trust in the rest | Counts replaced with "all tests in the file"; `git add` and the message corrected |
+
+**A pattern worth naming, because it predicts where round four would land.** Every finding in rounds
+two and three sat in Tasks 4–7 — the tasks whose literal code was written against functions this
+plan has not yet created. Tasks 1–3 have survived both rounds untouched, because their code was
+written against files that exist and could be checked line by line.
+
+That is the ceiling of plan-time precision. Tasks 5–7 depend on `selectCandidates` and
+`scoreCandidates`, which do not exist yet, so their call sites cannot be typechecked and their tests
+cannot be run. **Treat Tasks 5–7's code as contract and intent, and re-derive the exact signatures
+after Task 4 lands** — at which point the compiler and the test suite verify in seconds what review
+has been catching by inspection.
 
 **What this plan deliberately does not do.**
 
