@@ -431,6 +431,25 @@ queries, recent context, context packs, work loops, synthesis, code indexing, an
 lifecycle context remain local. Missing, unreadable, or schema-incompatible peers are skipped and
 disclosed in the response rather than causing healthy local retrieval to fail.
 
+**One ranker, pointed at each repo.** Retrieval takes an explicit database handle, so a linked
+repository is searched by the same code that searches the local one: the same FTS and vector
+selection, and the same recency, confidence, freshness, category and exact-identifier scoring.
+Candidates are selected per repository, then **scored in a single pass over all of them together**
+— recency is normalized against the candidate set it is given, so ranking each repository
+separately and combining the results would make every repository's newest atom equally recent.
+Identical content held by two repositories is deduplicated before the result cap, keeping the local
+copy, so a shared fact cannot consume two slots and return a short list. A peer handle is opened
+`query_only`, and the `visibility` predicate is applied inside the SQL, so a peer's repo-private
+row is never read into the querying process at all.
+
+**Cross-repository overlap is reported on write.** A knowledge write inside a workspace also checks
+the linked repositories, and reports an exclusive conflict key or a same-subject atom held
+elsewhere, naming the owning repository. Both the single-atom and batch writers do this, the batch
+per atom. It is advisory and never mutates: that atom belongs to another repository, `knowl_update`
+refuses foreign ids, and only its owner can retire it. Bounded to a few candidates per peer, and
+non-fatal — an unreadable peer yields no report rather than a failed write. Outside a workspace it
+costs one check.
+
 Promotion is preview-first and accepts active, private, locally owned atoms selected by category
 or ID. Both `workspace add` and `workspace join` enforce a compatible embedding identity, reject a
 nested checkout, and refuse a Git-tracked `.knowl/config.json` without `--force`. There is no
