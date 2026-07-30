@@ -1,5 +1,6 @@
 import type { KnowledgeCategory } from '../core/types.js';
 import { closeDb, getClient, initDb } from '../store/database.js';
+import { hashKnowledgeLifecycle } from '../store/freshness.js';
 import { createKnowledgeCommit } from '../store/repository.js';
 
 export type PromoteTarget = { id: string; title: string; category: string };
@@ -49,13 +50,12 @@ export async function promoteItems(input: {
       args: [...selector.args, input.repoName],
     });
 
-    // `backfillOriginRepo` claims unowned items when a repo joins, on the grounds that
-    // everything in its database was written by it. Nothing stamps ownership at write time,
-    // so every item written *after* joining is NULL again -- which is the normal case, and
-    // which made promote unreachable for it. The same reasoning applies here, so the same
-    // claim is made, and applying the promotion below stamps it for good.
+    // Ownership is stamped at write time now, so a NULL owner means the row predates that
+    // and predates the join backfill. Claiming it here is still right for the same reason
+    // the backfill claims: this database is this repo's, so nothing else could have written
+    // it. Applying the promotion below stamps it for good.
     const rows = await client.execute({
-      sql: `SELECT id, title, category FROM knowledge_items
+      sql: `SELECT id, title, category, status, freshness, superseded_by_id FROM knowledge_items
             WHERE ${selector.clause} AND status = 'active'
               AND visibility = 'repo' AND (origin_repo IS NULL OR origin_repo = ?)
             ORDER BY updated_at DESC`,
@@ -69,11 +69,36 @@ export async function promoteItems(input: {
     }));
 
     if (input.apply && items.length > 0) {
-      await client.execute({
-        sql: `UPDATE knowledge_items SET visibility = 'workspace', origin_repo = ?
-              WHERE id IN (${items.map(() => '?').join(', ')})`,
-        args: [input.repoName, ...items.map(item => item.id)],
-      });
+      // Promotion changes two of the five fields the lifecycle hash covers, and it is raw
+      // SQL rather than `updateKnowledgeItem` precisely so `content_hash`, `version` and
+      // `updated_at` stay put. That means the lifecycle hash has to be written here too, or
+      // an export of a promoted item would carry the pre-promotion fingerprint and the
+      // receiving side would classify it as identical and skip it -- the exact failure
+      // `lifecycle_hash` exists to fix.
+      // `updated_at` moves as well. Divergence resolution orders by it, so a promotion that
+      // left it alone was a change no other machine could ever prefer: identical timestamp,
+      // identical version, and `newer` keeps local on a tie. `content_hash` still does not
+      // move -- the content genuinely did not change, and that is the invariant that keeps
+      // re-import idempotent.
+      const promotedAt = new Date().toISOString();
+      for (const row of rows.rows) {
+        await client.execute({
+          sql: 'UPDATE knowledge_items SET visibility = ?, origin_repo = ?, lifecycle_hash = ?, updated_at = ? WHERE id = ?',
+          args: [
+            'workspace',
+            input.repoName,
+            hashKnowledgeLifecycle({
+              status: String(row.status),
+              freshness: String(row.freshness),
+              supersededById: row.superseded_by_id === null ? null : String(row.superseded_by_id),
+              originRepo: input.repoName,
+              visibility: 'workspace',
+            }),
+            promotedAt,
+            String(row.id),
+          ],
+        });
+      }
       // Promotion is the moment an item becomes readable by other repos, so it is the
       // moment their agents need told. Change detection reads `knowledge_commits`; a bare
       // column update left no trace there, which made a promote the one knowledge event

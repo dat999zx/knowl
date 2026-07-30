@@ -514,10 +514,16 @@ knowl import ./knowl-export.jsonl --dry-run
 knowl import ./knowl-export.jsonl --on-divergence newer
 ```
 
-The checksummed JSONL export includes complete item objects in every status, so `originRepo` and
-`visibility` travel with them. It also includes assertions, evidence and links, file-backed skill
-files, and tombstones. It excludes knowledge commits, access telemetry, sessions, code indexes,
-vector embeddings, project configuration, workspace manifests, and workspace membership.
+The checksummed JSONL export is at **format version 2**. It includes complete item objects in
+every status, with `originRepo`, `visibility` and `lifecycleHash` written on import as well as
+read on export. It also includes assertions, evidence and links, file-backed skill files, and
+tombstones. It excludes knowledge commits, access telemetry, sessions, code indexes, vector
+embeddings, project configuration, workspace manifests, and workspace membership.
+
+This build reads format versions 1 and 2. A version-1 file imports with ownership defaulted —
+`originRepo` null and `visibility` `repo` — which is what a file written before those fields
+existed means. A version it does not recognise is refused rather than imported with the unknown
+fields dropped.
 
 Import only JSONL that you created or otherwise trust. The checksum detects corruption; it does
 not authenticate the source or make malicious skill-package paths safe. `--dry-run` checks the
@@ -535,18 +541,27 @@ Use `--dry-run` to see `wouldApply` counts without applying records. Only `fail`
 divergence as an import-wide abort condition; the other policies select or skip individual
 records. When `newer` or `theirs` selects an incoming item, Knowl writes supported content and
 history columns with the incoming `contentHash`, version, and timestamps without normal
-reconciliation. Import omits `originRepo` and `visibility`: inserts receive local defaults, while
-updates retain local ownership and visibility. When IDs and `contentHash` match, the item is
-treated as identical, so a change limited to status, freshness, or supersession does not
-propagate through that comparison.
+reconciliation.
+
+Content and lifecycle diverge independently. `contentHash` covers title, content, reasoning,
+source and paths; `lifecycleHash` covers status, freshness, supersession, `originRepo` and
+`visibility`. An item whose content matches but whose lifecycle does not is **metadata-divergent**,
+resolved by the same policy and applied to the lifecycle columns only, leaving `contentHash`
+untouched so the next round classifies as identical instead of trading updates. A promotion,
+retirement or supersession therefore propagates; before this it did not, because content-only
+comparison called it identical and skipped it. Promotion also advances `updatedAt`, since `newer`
+has nothing to order by otherwise.
 
 After checksum, header, and item validation, non-dry-run database changes apply in one SQL
 transaction and roll back together on failure. Imported skill-package files are filesystem
 writes and are not covered by that database rollback.
 
-Tombstones carry deletions between exports and imports, but callers should not assume a stronger
-monotonic ordering guarantee than the current manifest and divergence rules provide. Best-effort
-vector indexing after import uses only the locally available model.
+Tombstones are monotonic. `deletedAt` only moves forward, whether written locally or received in
+an import, so replaying an older delete cannot rewind a newer one. Import also consults local
+tombstones before inserting: an item whose export predates a local delete is not reinstated, and
+the count is reported as `blockedByTombstone` rather than folded into `identical`. A tie favours
+the item, matching the delete path, so knowledge deliberately re-recorded after a delete still
+lands. Best-effort vector indexing after import uses only the locally available model.
 
 ### Garbage collection
 

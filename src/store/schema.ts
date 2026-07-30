@@ -13,6 +13,12 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
   sourceCommit: text('source_commit'),
   affectedPaths: text('affected_paths', { mode: 'json' }), // string[]
   contentHash: text('content_hash'),
+  /**
+   * Fingerprint of the fields that decide lifecycle rather than content: status, freshness,
+   * supersession, owner, visibility. Separate from `content_hash` because the two diverge
+   * independently, and an import classifying on content alone skipped every lifecycle change.
+   */
+  lifecycleHash: text('lifecycle_hash'),
   /** Owning repo in a workspace; NULL outside one. The only lifecycle key. */
   originRepo: text('origin_repo'),
   /** 'repo' | 'workspace'. Logical scope, persisted independently of which file holds the row. */

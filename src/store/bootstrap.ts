@@ -397,6 +397,15 @@ async function ensureOwnershipColumns(client: Client): Promise<void> {
   if (!columns.includes('visibility')) {
     await client.execute("ALTER TABLE knowledge_items ADD COLUMN visibility TEXT NOT NULL DEFAULT 'repo';");
   }
+  // Lifecycle fingerprint, added here rather than in its own migration because it covers
+  // origin_repo and visibility and would otherwise have to run after them anyway. Left NULL
+  // for existing rows: a NULL local hash reads as "unknown", and `classifyIncomingItem`
+  // treats an incoming hash against a NULL local one as divergent, so the first export that
+  // carries one converges the row. Backfilling here would need every row's lifecycle fields
+  // read and hashed in SQL, which SQLite cannot do.
+  if (!columns.includes('lifecycle_hash')) {
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN lifecycle_hash TEXT;');
+  }
   // A NOT NULL default does not apply retroactively to rows written before the column
   // existed, and SQLite backfills an added NOT NULL column with its default only for the
   // ALTER itself -- a row inserted by an older client into an older table can still be null.

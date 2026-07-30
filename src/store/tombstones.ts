@@ -7,6 +7,12 @@ export type Tombstone = { id: string; deletedAt: string; reason: string | null }
  * A hard delete leaves no trace in `knowledge_items`, so a peer that imports a later
  * export cannot tell the item was removed from one that never existed. The tombstone is
  * the only record that a delete happened, and the only way a delete can travel.
+ *
+ * The write is monotonic. `deleted_at` decides whether a local edit or a remote delete wins,
+ * so overwriting it unconditionally let an older tombstone rewind a newer one -- replaying a
+ * stale export, or importing a peer that deleted the same item earlier, moved the recorded
+ * time backwards and with it the outcome of every future comparison. A delete cannot un-happen,
+ * so the timestamp only moves forward.
  */
 export async function recordTombstone(
   id: string,
@@ -19,6 +25,7 @@ export async function recordTombstone(
     INSERT INTO knowledge_tombstones (id, deleted_at, reason)
     VALUES (${id}, ${deletedAt}, ${reason ?? null})
     ON CONFLICT(id) DO UPDATE SET deleted_at = excluded.deleted_at, reason = excluded.reason
+    WHERE excluded.deleted_at > knowledge_tombstones.deleted_at
   `);
 }
 

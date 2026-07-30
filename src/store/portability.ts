@@ -28,7 +28,7 @@ async function skillFiles(root: string, directory: string, base = directory): Pr
 
 export async function exportKnowledge(projectId: string, outputPath: string, projectRoot?: string) {
   const items = (await listKnowledgeItems()).sort((a, b) => a.id.localeCompare(b.id));
-  const records: unknown[] = [{ type: 'header', format: 'knowl-jsonl', version: 1, namespace: 'project' }];
+  const records: unknown[] = [{ type: 'header', format: 'knowl-jsonl', version: EXPORT_FORMAT_VERSION, namespace: 'project' }];
   const seenEvidence = new Set<string>();
   for (const item of items) {
     records.push({ type: 'item', item });
@@ -62,28 +62,80 @@ export type ImportResult = {
   keptLocal: number;
   deleted: number;
   conflicts: number;
+  /**
+   * Items a local tombstone refused to reinstate. Reported rather than folded into
+   * `identical`, because "we already had it" and "we deliberately deleted it" are different
+   * facts and only one of them means the export was stale.
+   */
+  blockedByTombstone: number;
   applied: boolean;
   divergent: Array<{ id: string; title: string; taken: 'incoming' | 'local' }>;
   /** Present only on a dry run: what the counts WOULD have been. */
   wouldApply?: { inserted: number; identical: number; updated: number; keptLocal: number };
 };
 
-const ITEM_COLUMNS = 'id, category, status, title, content, reasoning, alternatives, tags, source, source_commit, affected_paths, content_hash, freshness, confidence, conflict_key, conflict_scope, conflict_exclusive, superseded_by_id, version, created_at, updated_at';
+/**
+ * The format this build writes, and the range it reads.
+ *
+ * Version 2 adds `origin_repo`, `visibility` and `lifecycle_hash`. Until then export emitted
+ * all three -- it serialises whole item objects -- while import's column list omitted them, so
+ * a round trip silently reset ownership to NULL and visibility to 'repo'. A reader that
+ * accepted an unknown version would do the same thing to whatever the next version adds, which
+ * is why the upper bound is enforced rather than assumed.
+ */
+export const EXPORT_FORMAT_VERSION = 2;
+const MIN_READABLE_FORMAT_VERSION = 1;
 
-/** Column order matches ITEM_COLUMNS; `id` first so the update path can drop it. */
+/**
+ * Columns import writes, paired with how each is read off an exported item.
+ *
+ * One list rather than a string and a matching positional array: the placeholder count used to
+ * be a hardcoded `new Array(21)`, so adding a column meant editing three things that agree only
+ * by inspection.
+ */
+const ITEM_FIELDS: Array<[column: string, read: (item: any) => any]> = [
+  ['id', item => item.id],
+  ['category', item => item.category],
+  ['status', item => item.status],
+  ['title', item => item.title],
+  ['content', item => item.content],
+  ['reasoning', item => item.reasoning ?? null],
+  ['alternatives', item => (item.alternatives ? JSON.stringify(item.alternatives) : null)],
+  ['tags', item => (item.tags ? JSON.stringify(item.tags) : null)],
+  ['source', item => item.source ?? null],
+  ['source_commit', item => item.sourceCommit ?? null],
+  ['affected_paths', item => (item.affectedPaths ? JSON.stringify(item.affectedPaths) : null)],
+  ['content_hash', item => item.contentHash ?? null],
+  ['lifecycle_hash', item => item.lifecycleHash ?? null],
+  // A version-1 file carries neither, and that is not a loss of information: it was written
+  // before ownership existed, so NULL and 'repo' are what it means.
+  ['origin_repo', item => item.originRepo ?? null],
+  ['visibility', item => item.visibility ?? 'repo'],
+  ['freshness', item => item.freshness],
+  ['confidence', item => item.confidence],
+  ['conflict_key', item => item.conflictKey ?? null],
+  ['conflict_scope', item => (item.conflictScope ? JSON.stringify(item.conflictScope) : null)],
+  ['conflict_exclusive', item => (item.conflictExclusive ? 1 : 0)],
+  ['superseded_by_id', item => item.supersededById ?? null],
+  ['version', item => item.version],
+  ['created_at', item => item.createdAt],
+  ['updated_at', item => item.updatedAt],
+];
+
+const ITEM_COLUMNS = ITEM_FIELDS.map(([column]) => column).join(', ');
+const ITEM_PLACEHOLDERS = ITEM_FIELDS.map(() => '?').join(', ');
+/** `id` first, so the update path drops it and appends it to the WHERE clause. */
+const ITEM_SET_CLAUSE = ITEM_FIELDS.slice(1).map(([column]) => `${column} = ?`).join(', ');
+
 function itemArgs(item: any): any[] {
-  return [
-    item.id, item.category, item.status, item.title, item.content, item.reasoning ?? null,
-    item.alternatives ? JSON.stringify(item.alternatives) : null,
-    item.tags ? JSON.stringify(item.tags) : null,
-    item.source ?? null, item.sourceCommit ?? null,
-    item.affectedPaths ? JSON.stringify(item.affectedPaths) : null,
-    item.contentHash ?? null, item.freshness, item.confidence, item.conflictKey ?? null,
-    item.conflictScope ? JSON.stringify(item.conflictScope) : null,
-    item.conflictExclusive ? 1 : 0, item.supersededById ?? null, item.version,
-    item.createdAt, item.updatedAt,
-  ];
+  return ITEM_FIELDS.map(([, read]) => read(item));
 }
+
+/** Lifecycle columns only, for a metadata-divergent item whose content already agrees. */
+const LIFECYCLE_FIELDS = ITEM_FIELDS.filter(([column]) => [
+  'status', 'freshness', 'superseded_by_id', 'origin_repo', 'visibility', 'lifecycle_hash',
+  'version', 'updated_at',
+].includes(column));
 
 export async function importKnowledge(
   inputPath: string,
@@ -97,7 +149,15 @@ export async function importKnowledge(
   if (manifest.type !== 'manifest' || manifest.sha256 !== crypto.createHash('sha256').update(body).digest('hex')) throw new Error('JSONL manifest checksum mismatch.');
   const records = lines.slice(0, -1).map(line => JSON.parse(line));
   const header = records.shift();
-  if (header?.type !== 'header' || header.format !== 'knowl-jsonl' || header.version !== 1) throw new Error('Unsupported Knowl JSONL format.');
+  if (header?.type !== 'header' || header.format !== 'knowl-jsonl') throw new Error('Unsupported Knowl JSONL format.');
+  const formatVersion = Number(header.version);
+  if (!Number.isInteger(formatVersion) || formatVersion < MIN_READABLE_FORMAT_VERSION || formatVersion > EXPORT_FORMAT_VERSION) {
+    throw new Error(
+      `Knowl JSONL format version ${header.version} is not supported; this build reads ` +
+      `${MIN_READABLE_FORMAT_VERSION} to ${EXPORT_FORMAT_VERSION}. ` +
+      'Upgrade Knowl to read it -- importing it here would drop the fields this build does not know about.',
+    );
+  }
   const items = records.filter(record => record.type === 'item').map(record => record.item);
   const assertions = records.filter(record => record.type === 'assertion').map(record => record.assertion);
   const evidence = records.filter(record => record.type === 'evidence').map(record => record.evidence);
@@ -107,14 +167,29 @@ export async function importKnowledge(
   const policy: DivergencePolicy = options.onDivergence ?? DEFAULT_DIVERGENCE_POLICY;
   const client = getClient();
 
-  const plan: Array<{ item: any; action: 'insert' | 'update' | 'identical' | 'keep-local' }> = [];
+  const plan: Array<{ item: any; action: 'insert' | 'update' | 'metadata' | 'identical' | 'keep-local' }> = [];
   const divergent: ImportResult['divergent'] = [];
   let conflicts = 0;
+  let blockedByTombstone = 0;
+  /**
+   * Ids a tombstone refused. Their assertions and evidence links carry a foreign key to
+   * `knowledge_items`, so letting those through while skipping the item itself fails the
+   * constraint and rolls back the entire import -- including every unrelated item in it.
+   */
+  const blockedIds = new Set<string>();
+
+  // Local deletes, consulted before planning an insert. Without this a stale export
+  // reinstated knowledge that had since been deliberately removed: the import path checked
+  // tombstones only when deciding whether to delete, never when deciding whether to create.
+  const localTombstones = new Map<string, string>();
+  for (const row of (await client.execute('SELECT id, deleted_at FROM knowledge_tombstones')).rows) {
+    localTombstones.set(String(row.id), String(row.deleted_at));
+  }
 
   for (const item of items) {
     validateKnowledgeWrite({ title: item.title, content: item.content, reasoning: item.reasoning, source: item.source, affectedPaths: item.affectedPaths });
     const existing = (await client.execute({
-      sql: 'SELECT id, content_hash, updated_at, version FROM knowledge_items WHERE id = ?',
+      sql: 'SELECT id, content_hash, lifecycle_hash, updated_at, version FROM knowledge_items WHERE id = ?',
       args: [item.id],
     })).rows[0];
 
@@ -122,27 +197,49 @@ export async function importKnowledge(
       ? {
         id: String(existing.id),
         contentHash: existing.content_hash === null ? null : String(existing.content_hash),
+        lifecycleHash: existing.lifecycle_hash === null ? null : String(existing.lifecycle_hash),
         updatedAt: String(existing.updated_at),
         version: Number(existing.version),
       }
       : undefined;
 
     const classification = classifyIncomingItem(item, local);
-    if (classification === 'new') { plan.push({ item, action: 'insert' }); continue; }
+    if (classification === 'new') {
+      // A tie favours the item, matching the delete path below, which keeps a local row whose
+      // `updated_at` equals the tombstone rather than removing it. Knowledge that was deleted
+      // and then legitimately re-recorded still lands, because its export is the newer fact.
+      const deletedAt = localTombstones.get(String(item.id));
+      if (deletedAt && String(item.updatedAt) < deletedAt) {
+        blockedByTombstone += 1;
+        blockedIds.add(String(item.id));
+        continue;
+      }
+      plan.push({ item, action: 'insert' });
+      continue;
+    }
     if (classification === 'identical') { plan.push({ item, action: 'identical' }); continue; }
 
-    // Divergent. `fail` is the only policy that abandons the whole import; every other
-    // policy resolves per item so unrelated new knowledge still lands.
+    // Divergent either way. `fail` is the only policy that abandons the whole import; every
+    // other policy resolves per item so unrelated new knowledge still lands.
     if (policy === 'fail') { conflicts += 1; plan.push({ item, action: 'keep-local' }); continue; }
     const taken = resolveDivergence(policy, item, local!);
     divergent.push({ id: item.id, title: String(item.title ?? ''), taken });
-    plan.push({ item, action: taken === 'incoming' ? 'update' : 'keep-local' });
+    // A metadata-divergent winner touches only the lifecycle columns. Rewriting content that
+    // already agrees would be a no-op at best, and at worst would rewrite `content_hash` and
+    // leave the two sides trading updates forever.
+    plan.push({
+      item,
+      action: taken === 'local' ? 'keep-local' : classification === 'metadata-divergent' ? 'metadata' : 'update',
+    });
   }
 
   const counts = {
     inserted: plan.filter(entry => entry.action === 'insert').length,
     identical: plan.filter(entry => entry.action === 'identical').length,
-    updated: plan.filter(entry => entry.action === 'update').length,
+    // A metadata convergence counts as an update: from the caller's side an item changed.
+    // Splitting it into its own count would make every existing consumer of `updated`
+    // silently under-report the promotions and retirements this change exists to deliver.
+    updated: plan.filter(entry => entry.action === 'update' || entry.action === 'metadata').length,
     keptLocal: plan.filter(entry => entry.action === 'keep-local').length,
   };
 
@@ -152,7 +249,7 @@ export async function importKnowledge(
   if (conflicts > 0 || options.dryRun) {
     return {
       inserted: 0, identical: 0, updated: 0, keptLocal: 0, deleted: 0,
-      conflicts, applied: false,
+      conflicts, blockedByTombstone, applied: false,
       divergent: options.dryRun ? divergent : [],
       ...(options.dryRun ? { wouldApply: counts } : {}),
     };
@@ -166,7 +263,7 @@ export async function importKnowledge(
       if (entry.action === 'insert') {
         written.push(entry.item as KnowledgeItem);
         await client.execute({
-          sql: `INSERT INTO knowledge_items (${ITEM_COLUMNS}) VALUES (${new Array(21).fill('?').join(', ')})`,
+          sql: `INSERT INTO knowledge_items (${ITEM_COLUMNS}) VALUES (${ITEM_PLACEHOLDERS})`,
           args: itemArgs(entry.item),
         });
       } else if (entry.action === 'update') {
@@ -176,17 +273,25 @@ export async function importKnowledge(
         // leaving the two machines to ping-pong a fresh winner forever.
         written.push(entry.item as KnowledgeItem);
         await client.execute({
-          sql: `UPDATE knowledge_items SET category = ?, status = ?, title = ?, content = ?, reasoning = ?,
-            alternatives = ?, tags = ?, source = ?, source_commit = ?, affected_paths = ?, content_hash = ?,
-            freshness = ?, confidence = ?, conflict_key = ?, conflict_scope = ?, conflict_exclusive = ?,
-            superseded_by_id = ?, version = ?, created_at = ?, updated_at = ? WHERE id = ?`,
+          sql: `UPDATE knowledge_items SET ${ITEM_SET_CLAUSE} WHERE id = ?`,
           args: [...itemArgs(entry.item).slice(1), entry.item.id],
+        });
+      } else if (entry.action === 'metadata') {
+        // Lifecycle columns only, and `content_hash` deliberately untouched -- it already
+        // matches, and rewriting it is what would restart the ping-pong. Not indexed for
+        // vectors either: the embedding is a function of content, which did not change.
+        await client.execute({
+          sql: `UPDATE knowledge_items SET ${LIFECYCLE_FIELDS.map(([column]) => `${column} = ?`).join(', ')} WHERE id = ?`,
+          args: [...LIFECYCLE_FIELDS.map(([, read]) => read(entry.item)), entry.item.id],
         });
       }
     }
     for (const entry of evidence) await client.execute({ sql: 'INSERT OR IGNORE INTO evidence (id, type, locator, content_hash, excerpt, observed_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)', args: [entry.id, entry.type, entry.locator, entry.contentHash ?? null, entry.excerpt ?? null, entry.observedAt, entry.metadata ? JSON.stringify(entry.metadata) : null] });
-    for (const assertion of assertions) await client.execute({ sql: 'INSERT OR IGNORE INTO knowledge_assertions (id, knowledge_item_id, content, valid_from, valid_to, recorded_at, replaced_at, confidence, source_evidence_id, conflict_key, conflict_scope, conflict_exclusive) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [assertion.id, assertion.knowledgeItemId, assertion.content, assertion.validFrom, assertion.validTo ?? null, assertion.recordedAt, assertion.replacedAt ?? null, assertion.confidence, assertion.sourceEvidenceId ?? null, assertion.conflictKey ?? null, assertion.conflictScope ? JSON.stringify(assertion.conflictScope) : null, assertion.conflictExclusive ? 1 : 0] });
-    for (const link of links) await client.execute({ sql: 'INSERT OR IGNORE INTO knowledge_evidence (knowledge_item_id, evidence_id, relationship) VALUES (?, ?, ?)', args: [link.knowledgeItemId, link.evidenceId, link.relationship] });
+    // Dependents of a tombstoned item are dropped with it: both tables hold a foreign key to
+    // knowledge_items, so inserting them without the item fails the constraint and rolls back
+    // every unrelated item in the same import.
+    for (const assertion of assertions.filter(entry => !blockedIds.has(String(entry.knowledgeItemId)))) await client.execute({ sql: 'INSERT OR IGNORE INTO knowledge_assertions (id, knowledge_item_id, content, valid_from, valid_to, recorded_at, replaced_at, confidence, source_evidence_id, conflict_key, conflict_scope, conflict_exclusive) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [assertion.id, assertion.knowledgeItemId, assertion.content, assertion.validFrom, assertion.validTo ?? null, assertion.recordedAt, assertion.replacedAt ?? null, assertion.confidence, assertion.sourceEvidenceId ?? null, assertion.conflictKey ?? null, assertion.conflictScope ? JSON.stringify(assertion.conflictScope) : null, assertion.conflictExclusive ? 1 : 0] });
+    for (const link of links.filter(entry => !blockedIds.has(String(entry.knowledgeItemId)))) await client.execute({ sql: 'INSERT OR IGNORE INTO knowledge_evidence (knowledge_item_id, evidence_id, relationship) VALUES (?, ?, ?)', args: [link.knowledgeItemId, link.evidenceId, link.relationship] });
 
     // A local edit made after the remote delete wins. The tombstone is recorded either
     // way, so the same decision does not have to be made again next round.
@@ -199,9 +304,13 @@ export async function importKnowledge(
         await client.execute({ sql: 'DELETE FROM knowledge_items WHERE id = ?', args: [tombstone.id] });
         deleted += 1;
       }
+      // Monotonic, same as `recordTombstone`: a peer that deleted the item earlier must not
+      // rewind a delete recorded here later. Fixing only one of the two sites would leave the
+      // bug reachable through ordinary GC.
       await client.execute({
         sql: `INSERT INTO knowledge_tombstones (id, deleted_at, reason) VALUES (?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET deleted_at = excluded.deleted_at, reason = excluded.reason`,
+          ON CONFLICT(id) DO UPDATE SET deleted_at = excluded.deleted_at, reason = excluded.reason
+          WHERE excluded.deleted_at > knowledge_tombstones.deleted_at`,
         args: [tombstone.id, tombstone.deletedAt, tombstone.reason ?? null],
       });
     }
@@ -227,5 +336,5 @@ export async function importKnowledge(
   // and stays best-effort: a project without vectors enabled simply stays on BM25.
   await indexKnowledgeItemsBestEffort('local', written);
 
-  return { ...counts, deleted, conflicts: 0, applied: true, divergent };
+  return { ...counts, deleted, conflicts: 0, blockedByTombstone, applied: true, divergent };
 }

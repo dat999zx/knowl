@@ -18,7 +18,7 @@ import {
   KnowledgeWriteValidationOptions,
 } from '../core/types.js';
 import { DatabaseError, KnowledgeConflictError } from '../core/errors.js';
-import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
+import { DEFAULT_FRESHNESS, hashKnowledgeContent, hashKnowledgeLifecycle, normalizeAffectedPaths } from './freshness.js';
 import { resolveWritingRepo } from './write-ownership.js';
 import { KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 
@@ -132,6 +132,7 @@ export async function createKnowledgeItem(
   // afterwards -- which left `workspace promote` unable to touch them, and would leave a
   // shared database unable to say who may edit or collect them.
   const originRepo = await resolveWritingRepo();
+  const freshness = item.freshness || DEFAULT_FRESHNESS;
 
   const newItem = {
     id,
@@ -153,7 +154,12 @@ export async function createKnowledgeItem(
       source: item.source,
       affectedPaths,
     }),
-    freshness: item.freshness || DEFAULT_FRESHNESS,
+    // Visibility is not in this literal, so the column default 'repo' applies; the hash has
+    // to agree with that rather than with whatever the row ends up saying later.
+    lifecycleHash: hashKnowledgeLifecycle({
+      status: 'active', freshness, supersededById: null, originRepo, visibility: 'repo',
+    }),
+    freshness,
     confidence: item.confidence ?? 1.0,
     conflictKey: item.conflictKey ? normalizeConflictKey(item.conflictKey) : null, conflictScope: normalizeConflictScope(item.conflictScope), conflictExclusive: item.conflictExclusive ?? false,
     supersededById: null,
@@ -299,10 +305,22 @@ export async function updateKnowledgeItem(
       updates.affectedPaths !== undefined
     );
 
+    // Recomputed on every update rather than only when a lifecycle field is present, so a
+    // row written before the column existed gets a hash the first time it is touched. An
+    // explicitly supplied hash still wins: an import replays a peer's value verbatim.
+    const lifecycle = {
+      status: updates.status !== undefined ? updates.status : current[0].status,
+      freshness: updates.freshness !== undefined ? updates.freshness : current[0].freshness,
+      supersededById: updates.supersededById !== undefined ? updates.supersededById : current[0].supersededById,
+      originRepo: updates.originRepo !== undefined ? updates.originRepo : current[0].originRepo,
+      visibility: updates.visibility !== undefined ? updates.visibility : current[0].visibility,
+    };
+
     const dbUpdates = {
       ...updates,
       ...(updates.affectedPaths !== undefined ? { affectedPaths } : {}),
       ...(shouldRefreshHash ? { contentHash: hashKnowledgeContent(merged) } : {}),
+      ...(updates.lifecycleHash === undefined ? { lifecycleHash: hashKnowledgeLifecycle(lifecycle) } : {}),
       version: nextVersion,
       updatedAt: now,
     };

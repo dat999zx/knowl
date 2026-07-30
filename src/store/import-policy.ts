@@ -9,15 +9,27 @@ export const DIVERGENCE_POLICIES: readonly DivergencePolicy[] = ['newer', 'skip'
  */
 export const DEFAULT_DIVERGENCE_POLICY: DivergencePolicy = 'newer';
 
-export type ImportCandidate = { id: string; contentHash?: string | null; updatedAt: string; version: number };
-export type LocalItemRow = { id: string; contentHash: string | null; updatedAt: string; version: number };
+export type ImportCandidate = { id: string; contentHash?: string | null; lifecycleHash?: string | null; updatedAt: string; version: number };
+export type LocalItemRow = { id: string; contentHash: string | null; lifecycleHash?: string | null; updatedAt: string; version: number };
 
+/**
+ * `metadata-divergent` exists because content and lifecycle diverge independently.
+ *
+ * An item whose visibility, status, freshness, supersession or owner changed has identical
+ * content, so classifying on `content_hash` alone called it `identical` and the plan skipped
+ * it. Promotion, retirement and supersession therefore could not travel through an export at
+ * all -- see `hashKnowledgeLifecycle`.
+ */
 export function classifyIncomingItem(
   incoming: ImportCandidate,
   local: LocalItemRow | undefined,
-): 'new' | 'identical' | 'divergent' {
+): 'new' | 'identical' | 'divergent' | 'metadata-divergent' {
   if (!local) return 'new';
-  return String(incoming.contentHash ?? '') === String(local.contentHash ?? '') ? 'identical' : 'divergent';
+  if (String(incoming.contentHash ?? '') !== String(local.contentHash ?? '')) return 'divergent';
+  // A version-1 export carries no lifecycle hash. Treat its absence as agreement rather than
+  // as a difference, or every legacy file would import as metadata-divergent.
+  if (incoming.lifecycleHash == null) return 'identical';
+  return String(incoming.lifecycleHash) === String(local.lifecycleHash ?? '') ? 'identical' : 'metadata-divergent';
 }
 
 export function resolveDivergence(
