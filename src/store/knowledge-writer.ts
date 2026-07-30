@@ -247,6 +247,21 @@ async function activeWorkspaceForWrite(): Promise<ActiveWorkspace | null> {
 }
 
 /** Advisory and non-fatal: a peer that cannot be consulted must not fail the write. */
+/**
+ * The cross-repo overlap report for a single write, workspace resolution included.
+ *
+ * Exported because `recordDecisionDirect` writes through the repository rather than through this
+ * module, so it never reached the private version -- and it backs both `knowl decide` and the
+ * `knowl_decide` MCP tool. The result was that the cross-repo advisory was silently off for
+ * decisions: the category most likely to contradict across repos, and the one a workspace default
+ * shares automatically. Found by linking two repos and using them, not by reading the code.
+ *
+ * Any future writer that produces a result envelope should call this rather than reimplement it.
+ */
+export async function crossRepoOverlapForWrite(item: OverlapSubject): Promise<CrossRepoOverlap[] | undefined> {
+  return overlapFor(await activeWorkspaceForWrite(), item);
+}
+
 async function overlapFor(
   workspace: ActiveWorkspace | null,
   item: OverlapSubject,

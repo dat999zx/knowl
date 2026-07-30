@@ -1,6 +1,7 @@
 import { ProjectConfig, CommitChange, EvidenceInput, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import * as repo from './repository.js';
-import { findLikelyDuplicateKnowledgeItem, resolveDuplicate } from './knowledge-writer.js';
+import { crossRepoOverlapForWrite, findLikelyDuplicateKnowledgeItem, resolveDuplicate } from './knowledge-writer.js';
+import type { CrossRepoOverlap } from '../workspace/cross-repo-overlap.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
 import { getCurrentGitCommit } from './drift.js';
@@ -27,6 +28,11 @@ export type DirectDecisionResult = {
   superseded?: KnowledgeItem;
   /** An overlapping active decision deliberately left active beside this one. */
   nearDuplicate?: KnowledgeItem;
+  /**
+   * Overlaps with linked repos. Advisory: those decisions belong to another repo and cannot be
+   * retired from here.
+   */
+  crossRepo?: CrossRepoOverlap[];
 };
 
 export async function recordDecisionDirect(
@@ -97,6 +103,10 @@ export async function recordDecisionDirect(
     item,
     superseded: superseded || undefined,
     nearDuplicate: resolution === 'coexist' && existing ? existing : undefined,
+    // This path writes through the repository rather than through knowledge-writer, so the
+    // overlap check has to be requested explicitly. Omitting it left the cross-repo advisory
+    // off for every decision, from both the CLI and the knowl_decide tool.
+    crossRepo: await crossRepoOverlapForWrite({ category: 'decision', ...input }),
   };
 }
 

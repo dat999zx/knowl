@@ -27,6 +27,7 @@ import { promoteItems } from './workspace/promote.js';
 import { existingItemsNotice, visibilityGateNotice } from './cli/workspace-visibility-notice.js';
 import { repoEntry, updateRepoSettings } from './workspace/repo-settings.js';
 import { runCliQuery } from './cli/query-command.js';
+import { formatCrossRepoNotice } from './cli/cross-repo-notice.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
 import { resolveWorkspace } from './workspace/resolve.js';
 import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
@@ -814,6 +815,7 @@ program
           console.log(decision.action === 'duplicate'
             ? `ℹ️ Already recorded verbatim, nothing written. ID: ${decision.item.id}`
             : `✅ Recorded decision successfully! ID: ${decision.item.id}`);
+          for (const line of formatCrossRepoNotice(decision.crossRepo)) console.log(line);
           if (decision.superseded) console.log(`🔄 Superseded older decision: ${decision.superseded.id}`);
           if (decision.nearDuplicate) console.log(`⚠️ Left active beside "${decision.nearDuplicate.title}" (${decision.nearDuplicate.id}) — run \`knowl supersede ${decision.nearDuplicate.id} ${decision.item.id}\` if it replaces that one.`);
         } else if (mergeResult.supersededIds.length > 0) {
@@ -833,6 +835,7 @@ program
         console.log(decision.action === 'duplicate'
           ? `ℹ️ Already recorded verbatim, nothing written. ID: ${decision.item.id}`
           : `✅ Recorded decision successfully! ID: ${decision.item.id}`);
+        for (const line of formatCrossRepoNotice(decision.crossRepo)) console.log(line);
         if (decision.superseded) console.log(`🔄 Superseded older decision: ${decision.superseded.id}`);
         if (decision.nearDuplicate) console.log(`⚠️ Left active beside "${decision.nearDuplicate.title}" (${decision.nearDuplicate.id}) — run \`knowl supersede ${decision.nearDuplicate.id} ${decision.item.id}\` if it replaces that one.`);
       }
