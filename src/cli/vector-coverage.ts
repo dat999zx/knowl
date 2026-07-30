@@ -1,4 +1,6 @@
-export type VectorCoverageCheck = { status: 'OK' | 'WARN'; message: string; fix?: string };
+import type { DoctorRemedy } from './doctor-remedy.js';
+
+export type VectorCoverageCheck = { status: 'OK' | 'WARN'; message: string; fix?: string; remedy?: DoctorRemedy };
 
 /**
  * Whether vector search actually covers this project's knowledge.
@@ -45,5 +47,6 @@ export function vectorCoverageCheck(input: {
     status: 'WARN',
     message: `Vector search is enabled with ${input.model} but ${missing} of ${input.activeItems} active item(s) have no embedding, so they are invisible to semantic search. Items written before the embedding model was first downloaded are not embedded retroactively.`,
     fix: 'run `knowl reindex --vectors`',
+    remedy: { kind: 'reindex-vectors' },
   };
 }

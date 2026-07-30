@@ -3,6 +3,57 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### Added
+
+- **`knowl upgrade --all` upgrades and repairs every repository on the machine.** A release
+  used to mean visiting each repository by hand: upgrade, run doctor, read the warnings, run
+  whichever command each warning named, run doctor again. A repository you forgot drifted
+  quietly — schema migrations apply themselves on every database open, but guidance files and
+  lifecycle hooks, the two things that change how agents behave, waited for someone to `cd`
+  in. The sweep finds every repository, snapshots it, upgrades it, applies the repairs doctor
+  found, re-checks, and prints one summary; it exits non-zero if any repository is still not
+  ready. `--dry-run` lists what it would visit and changes nothing.
+
+  Repositories are found from workspace manifests and from a registry that `init` and
+  `upgrade` now write, so a repository is known to a sweep after one visit — including one
+  belonging to no workspace, which nothing outside its own directory knew about before. Pass
+  `--root <dir>` once for repositories that predate the registry; what a scan finds is
+  remembered.
+
+- **`knowl doctor --fix` applies the repairs it just described.** Doctor already knew the
+  exact command for each finding, but only as prose, so acting on it meant reading the output
+  and retyping. Findings now carry their repair in a form the CLI can run: guidance refresh,
+  the `.knowl/` ignore entry, session recovery, and host re-registration. Findings with no
+  safe automatic answer — integrity errors, an empty knowledge store — are reported as
+  unfixable rather than quietly counted as handled.
+
+  Two deliberate limits. A host is only ever re-registered if the repository already uses it,
+  so a repair can never opt a repository into an agent it did not choose. And re-embedding is
+  never automatic, because its cost scales with how much a repository knows; it is reported
+  and waits for `--reindex`.
+
+### Fixed
+
+- **`upgrade` now claims knowledge that older versions left unowned.** Joining a workspace
+  stamps every item present at that moment with the repository that owns it, but until 2.6.0
+  nothing stamped the items written afterwards. Those rows stayed unowned, and nothing since
+  went back for them — so the count that stops `workspace remove` from orphaning a
+  repository's knowledge did not see them, and the repository could be unlinked as though it
+  held nothing. `knowl upgrade` now sweeps them, using the same rule as joining: it only ever
+  claims an unowned row, never reassigns one that already has an owner, and does nothing at
+  all outside a workspace, where unowned is the correct state. It reports what it claimed.
+
+- **`workspace promote` says what was wrong with your filter instead of "Nothing to
+  promote."** Three commands all produced that one line and exited successfully: an id given
+  in the short form the listings print, a category that does not exist, and — on Windows — a
+  perfectly correct `--category a,b,c`, because `knowl.cmd` runs through `cmd.exe`, which
+  splits arguments on commas and left the trailing categories to be silently discarded. Each
+  now fails, names the value it could not use, and the Windows one explains the quoting.
+  An unknown id refuses the whole command rather than promoting the ids that did resolve:
+  promotion has no reverse.
+
 ## 2.7.1 — 2026-07-30
 
 ### Fixed

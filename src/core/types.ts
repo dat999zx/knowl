@@ -7,6 +7,24 @@ export type KnowledgeCategory =
   | 'state'          // Current activity
   | 'skill';         // Learned procedures
 
+const CATEGORY_VALUES = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'] as const;
+
+/**
+ * The same categories as a runtime list, for validating input and for enumerating them.
+ *
+ * The `Exclude<...> extends never` guard makes a category added to the union but not to this
+ * list a compile error. Without it, the list silently drifts and the validator starts
+ * rejecting a category the rest of the system accepts -- which is the failure this constant
+ * exists to prevent, since it now backs both the MCP tool schemas and CLI input checking.
+ */
+export const KNOWLEDGE_CATEGORIES: Exclude<KnowledgeCategory, typeof CATEGORY_VALUES[number]> extends never
+  ? typeof CATEGORY_VALUES
+  : never = CATEGORY_VALUES;
+
+export function isKnowledgeCategory(value: string): value is KnowledgeCategory {
+  return (KNOWLEDGE_CATEGORIES as readonly string[]).includes(value);
+}
+
 export type KnowledgeStatus =
   | 'active'
   | 'deprecated'

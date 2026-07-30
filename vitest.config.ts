@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
@@ -29,6 +30,13 @@ export default defineConfig({
       // Write-time vector indexing would load the embedding model on every write.
       // Tests that care about it opt back in explicitly.
       KNOWL_DISABLE_WRITE_EMBEDDING: '1',
+      // Machine-local Knowl state -- workspace manifests and the known-repository registry --
+      // lives under ~/.knowl by default. Suites that spawn the real CLI would otherwise write
+      // their scratch fixtures into the developer's own home directory, where nothing cleans
+      // them up and a later `knowl upgrade --all` would try to visit them. Absolute because a
+      // spawned CLI runs with its fixture as the working directory, and `knowlHome()` resolves
+      // a relative override against that. `.knowl-` prefixed, so global teardown sweeps it.
+      KNOWL_HOME: path.resolve('./.knowl-test-home'),
     },
   },
 });

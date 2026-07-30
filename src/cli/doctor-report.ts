@@ -13,13 +13,17 @@ import { KNOWL_MCP_TOOL_NAMES } from '../core/knowl-guidance.js';
 import { getVectorSearchConfig, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
 import { createAgentRegistry } from './agents/registry.js';
+import type { DoctorRemedy } from './doctor-remedy.js';
 
 type DoctorStatus = 'OK' | 'WARN' | 'FAIL';
 
 export type DoctorCheck = {
   status: DoctorStatus;
   message: string;
+  /** Prose for a human to read and run. */
   fix?: string;
+  /** The same repair in a form `doctor --fix` can execute. Absent where none is safe. */
+  remedy?: DoctorRemedy;
 };
 
 export type DoctorResult = {
@@ -53,6 +57,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         ? 'KNOWL.md and AGENTS.md guidance current'
         : 'KNOWL.md or AGENTS.md Knowl guidance missing or stale; run knowl init',
       fix: guidanceCurrent ? undefined : 'run `knowl init`',
+      remedy: guidanceCurrent ? undefined : { kind: 'guidance' },
     });
 
     const gitignorePath = path.join(root, '.gitignore');
@@ -72,6 +77,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         ? '.gitignore ignores .knowl/'
         : '.gitignore should ignore .knowl/; run knowl upgrade',
       fix: ignoresKnowl ? undefined : 'add `.knowl/` to `.gitignore` or run `knowl upgrade`',
+      remedy: ignoresKnowl ? undefined : { kind: 'gitignore' },
     });
 
     await initDb(root);
@@ -112,7 +118,12 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     try {
       await (getDb() as any).all(sql`SELECT 1 FROM memory_sessions LIMIT 1`);
       const stale = await (getDb() as any).all(sql`SELECT 1 FROM memory_sessions WHERE status = 'active' AND last_heartbeat_at < datetime('now', '-2 hours') LIMIT 1`);
-      checks.push({ status: stale.length ? 'WARN' : 'OK', message: stale.length ? 'Stale active memory sessions found; run knowl session recover' : 'Memory session schema ready with no stale active sessions', fix: stale.length ? 'run `knowl session recover`' : undefined });
+      checks.push({
+        status: stale.length ? 'WARN' : 'OK',
+        message: stale.length ? 'Stale active memory sessions found; run knowl session recover' : 'Memory session schema ready with no stale active sessions',
+        fix: stale.length ? 'run `knowl session recover`' : undefined,
+        remedy: stale.length ? { kind: 'session-recover' } : undefined,
+      });
     } catch {
       checks.push({ status: 'WARN', message: 'Database schema missing memory sessions; run knowl upgrade' });
     }
@@ -170,6 +181,9 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
               ? `${adapter.name} native instructions configured`
               : `${adapter.name} native instructions missing or stale`,
             fix: verified ? undefined : `run \`knowl init ${adapter.name}\``,
+            // Reached only inside `if (detection.configured)`, so an automatic repair can
+            // never opt a repository into a host it has not chosen.
+            remedy: verified ? undefined : { kind: 'host-init', host: adapter.name },
           });
         }
         const capability = await adapter.lifecycleCapability?.(root) ?? 'unsupported';
@@ -181,17 +195,21 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
               ? `${adapter.name} lifecycle hooks configured`
               : `${adapter.name} lifecycle hooks missing or stale`,
             fix: verified ? undefined : `run \`knowl init ${adapter.name}\``,
+            remedy: verified ? undefined : { kind: 'host-init', host: adapter.name },
           });
         } else if (capability === 'degraded') {
           checks.push({
             status: 'WARN',
             message: `${adapter.name} lifecycle hooks degraded; MCP remains available`,
             fix: `run \`knowl init ${adapter.name}\``,
+            remedy: { kind: 'host-init', host: adapter.name },
           });
         } else {
           checks.push({ status: 'OK', message: `${adapter.name} lifecycle hooks unsupported; MCP remains available` });
         }
       } catch (error: any) {
+        // No remedy: the check itself failed, so what is wrong with the host is unknown and
+        // re-running its registration is a guess.
         checks.push({ status: 'WARN', message: `${adapter.name} lifecycle check failed: ${error.message}`, fix: `run \`knowl init ${adapter.name}\`` });
       }
     }

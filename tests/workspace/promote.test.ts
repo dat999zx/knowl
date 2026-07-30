@@ -136,7 +136,8 @@ describe('promote', () => {
   it('records no commit for a dry run or an empty promote', async () => {
     const before = await readRows('SELECT COUNT(*) AS n FROM knowledge_commits');
     await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'] });
-    await promoteItems({ projectRoot: ROOT, repoName: 'server', ids: ['does-not-exist'], apply: true });
+    // A real category the fixture has no items in: an empty result, not a rejected filter.
+    await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['goal'], apply: true });
     const after = await readRows('SELECT COUNT(*) AS n FROM knowledge_commits');
 
     expect(Number(after[0].n)).toBe(Number(before[0].n));
@@ -145,5 +146,43 @@ describe('promote', () => {
   it('requires a category or an id, so a bare promote cannot publish everything', async () => {
     await expect(promoteItems({ projectRoot: ROOT, repoName: 'server', apply: true }))
       .rejects.toThrow(/--category|--id/);
+  });
+
+  it('refuses an id that matches no item, so a truncated id is not silence', async () => {
+    // Ids are exact here, and the listings a user copies from show them truncated. Passing a
+    // prefix therefore matched nothing and printed "Nothing to promote." -- indistinguishable
+    // from a correct id whose item was already shared.
+    const truncated = ids.decision.slice(0, 8);
+    await expect(promoteItems({ projectRoot: ROOT, repoName: 'server', ids: [truncated], apply: true }))
+      .rejects.toThrow(new RegExp(`"${truncated}"`));
+  });
+
+  it('promotes nothing at all when one id of several is unknown', async () => {
+    // Refusing the whole command rather than promoting the good ids and reporting the bad
+    // one: a partial promote that also exits non-zero leaves the user unsure what happened,
+    // and promotion is not reversible -- there is deliberately no demote.
+    await expect(promoteItems({ projectRoot: ROOT, repoName: 'server', ids: [ids.fact, 'nope'], apply: true }))
+      .rejects.toThrow(/"nope"/);
+
+    const rows = await readRows("SELECT COUNT(*) AS n FROM knowledge_items WHERE visibility = 'workspace'");
+    expect(Number(rows[0].n)).toBe(0);
+  });
+
+  it('does not call an item unknown just because another repo owns it', async () => {
+    // The two are different failures with different fixes: a wrong id is the user's typo, a
+    // foreign item is someone else's to publish.
+    await execute("UPDATE knowledge_items SET origin_repo = 'web' WHERE category = 'decision'");
+    const result = await promoteItems({ projectRoot: ROOT, repoName: 'server', ids: [ids.decision], apply: true });
+
+    expect(result.items).toEqual([]);
+    expect(result.skippedForeign).toBe(1);
+  });
+
+  it('refuses a category that is not a knowledge category', async () => {
+    // `--category a,b,c` is split on the commas by cmd.exe before Knowl ever sees it, so the
+    // surviving `a` is a well-formed request for a category that cannot exist. Matching zero
+    // rows and reporting nothing made a mangled command look like an empty repo.
+    await expect(promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['a'] as any, apply: true }))
+      .rejects.toThrow(/"a"/);
   });
 });

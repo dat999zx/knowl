@@ -1,9 +1,8 @@
-import { KnowledgeCategory, KnowledgeCommit, KnowledgeItem, Project, ProjectConfig } from '../core/types.js';
+import { KNOWLEDGE_CATEGORIES, KnowledgeCommit, KnowledgeItem, Project, ProjectConfig } from '../core/types.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
 import { formatWorkspaceBlock } from './workspace-report.js';
 
 const STATUS_LINE = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
-const CATEGORIES: KnowledgeCategory[] = ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'];
 
 export function formatStatusReport(input: {
   project: Project;
@@ -35,7 +34,7 @@ export function formatStatusReport(input: {
     '📊 ACTIVE ITEMS BY CATEGORY',
   ];
 
-  for (const category of CATEGORIES) {
+  for (const category of KNOWLEDGE_CATEGORIES) {
     lines.push(`  ${category.padEnd(14)}: ${countsByCategory[category] || 0}`);
   }
 

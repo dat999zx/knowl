@@ -79,6 +79,25 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
     expect(result.stdout).toMatch(/Dry run/i);
   });
 
+  it('names a bad promote filter instead of reporting nothing to promote', () => {
+    // Both of these used to print "Nothing to promote." and exit 0 -- the same output a
+    // correct command gives for an already-shared repo, so neither was debuggable. Grouped
+    // into one test because each knowl() is a real process spawn costing seconds.
+    const truncated = knowl(A, 'workspace', 'promote', '--id', 'deadbeef', '--apply');
+    expect(truncated.status).toBe(1);
+    expect(truncated.stderr).toMatch(/deadbeef/);
+
+    // cmd.exe splits an unquoted --category list on the commas, so the trailing categories
+    // arrive as stray operands that commander silently discarded.
+    const split = knowl(A, 'workspace', 'promote', '--category', 'decision', 'constraint');
+    expect(split.status).toBe(1);
+    expect(split.stderr).toMatch(/constraint/);
+
+    const bogus = knowl(A, 'workspace', 'promote', '--category', 'decisions');
+    expect(bogus.status).toBe(1);
+    expect(bogus.stderr).toMatch(/"decisions"/);
+  });
+
   it('refuses to remove a repo that still owns knowledge', () => {
     const result = knowl(A, 'workspace', 'remove', 'server');
     expect(result.status).toBe(1);

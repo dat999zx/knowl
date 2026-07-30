@@ -1,4 +1,4 @@
-import type { KnowledgeCategory } from '../core/types.js';
+import { isKnowledgeCategory, KNOWLEDGE_CATEGORIES, type KnowledgeCategory } from '../core/types.js';
 import { closeDb, getClient, initDb } from '../store/database.js';
 import { hashKnowledgeLifecycle } from '../store/freshness.js';
 import { createKnowledgeCommit } from '../store/repository.js';
@@ -32,6 +32,19 @@ export async function promoteItems(input: {
     throw new Error('Specify what to promote with --category <list> or --id <id>. A bare promote would publish the whole repo.');
   }
 
+  // A category that cannot exist matches nothing, and "matched nothing" is also what a
+  // correctly-spelled filter reports for an already-shared repo. Rejecting it here keeps the
+  // two apart. This fires on Windows without a typo: `knowl.cmd` runs through cmd.exe, which
+  // treats commas as argument separators, so an unquoted `--category a,b,c` arrives as `a`.
+  const unknownCategories = (byCategory ?? []).filter(entry => !isKnowledgeCategory(entry));
+  if (unknownCategories.length > 0) {
+    throw new Error(
+      `Not a knowledge category: ${unknownCategories.map(entry => `"${entry}"`).join(', ')}. ` +
+      `Valid categories are ${KNOWLEDGE_CATEGORIES.join(', ')}. ` +
+      'On Windows quote the list -- --category "decision,constraint" -- because cmd.exe splits on the commas.',
+    );
+  }
+
   await initDb(input.projectRoot);
   try {
     const client = getClient();
@@ -49,6 +62,30 @@ export async function promoteItems(input: {
               AND visibility = 'repo' AND origin_repo IS NOT NULL AND origin_repo <> ?`,
       args: [...selector.args, input.repoName],
     });
+
+    // An id nobody has is a different failure from an id another repo owns, and only the
+    // first is a mistake in the command. It refuses rather than reporting an empty result,
+    // and refuses before anything is applied: promoting the ids that did resolve while
+    // reporting the one that did not would be a partial, irreversible change -- there is
+    // deliberately no demote -- announced by an error.
+    //
+    // Deliberately unfiltered by status, visibility and owner: the question is only whether
+    // the id exists, so an already-promoted or superseded item stays a known id whose absence
+    // from the results has its own explanation.
+    if (byId) {
+      const known = await client.execute({
+        sql: `SELECT id FROM knowledge_items WHERE id IN (${byId.map(() => '?').join(', ')})`,
+        args: [...byId],
+      });
+      const present = new Set(known.rows.map(row => String(row.id)));
+      const unknown = byId.filter(id => !present.has(id));
+      if (unknown.length > 0) {
+        throw new Error(
+          `No item with id ${unknown.map(id => `"${id}"`).join(', ')}. ` +
+          'Ids must be given in full -- a truncated id from a listing matches nothing.',
+        );
+      }
+    }
 
     // Ownership is stamped at write time now, so a NULL owner means the row predates that
     // and predates the join backfill. Claiming it here is still right for the same reason

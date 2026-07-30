@@ -28,6 +28,11 @@ import { runCliQuery } from './cli/query-command.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
 import { resolveWorkspace } from './workspace/resolve.js';
 import { formatDoctorReport, runDoctor } from './cli/doctor-report.js';
+import { upgradeExistingRepository, type UpgradeResult } from './cli/upgrade.js';
+import { recordKnownRepo } from './cli/repo-registry.js';
+import { discoverRepos } from './cli/repo-discovery.js';
+import { applyDoctorRemedies } from './cli/doctor-fix.js';
+import { formatSweepReport, sweepRepos } from './cli/upgrade-all.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue } from './cli/config/service.js';
 import { runConfigUi } from './cli/config/ui.js';
@@ -191,34 +196,17 @@ function createSkillEntrypoints(options: {
   return entrypoints;
 }
 
-async function upgradeExistingRepository(projectRoot: string, fallbackName: string) {
-  const configStatus = await upgradeConfigDefaults(projectRoot);
-  const config = await loadConfig(projectRoot);
-  const guidanceStatus = await installKnowlProjectGuidance(projectRoot);
-  const gitignoreStatus = await installKnowlGitignoreEntry(projectRoot);
-  await fs.mkdir(path.join(projectRoot, '.knowl', 'skills'), { recursive: true });
-
-  await initDb(projectRoot);
-  let project = await repo.getProjectByRootPath(projectRoot);
-  if (!project) {
-    project = await repo.createProject(projectRoot, fallbackName);
-  }
-  await closeDb();
-
-  return {
-    project,
-    configStatus,
-    guidanceStatus,
-    gitignoreStatus,
-  };
-}
-
-function printUpgradeStatus(result: Awaited<ReturnType<typeof upgradeExistingRepository>>) {
+function printUpgradeStatus(result: UpgradeResult) {
   console.log(`KNOWL repository upgrade complete.`);
   console.log(`Repository: ${result.project.rootPath}`);
   console.log(`Config: ${result.configStatus}`);
   printProjectGuidanceStatus(result.guidanceStatus);
   console.log(`.gitignore: ${result.gitignoreStatus}`);
+  // Only when it did something: a line reading "claimed 0" on every upgrade of every
+  // unlinked repo is noise, and this sweep is a one-time repair of older databases.
+  if (result.claimedItems > 0) {
+    console.log(`Ownership: claimed ${result.claimedItems} previously unowned item(s) for this repo`);
+  }
 }
 
 program
@@ -277,6 +265,9 @@ program
       await initDb(cwd);
       const project = await repo.createProject(cwd, name);
       await closeDb();
+      // Recorded here as well as in `upgrade`, so a repository is reachable by a machine-wide
+      // sweep from the moment it exists rather than only after its first upgrade.
+      await recordKnownRepo(cwd);
       const guidanceStatus = await installKnowlProjectGuidance(cwd);
       const gitignoreStatus = await installKnowlGitignoreEntry(cwd);
 
@@ -581,8 +572,20 @@ workspaceCommand
   .option('--category <list>', 'Comma-separated categories, e.g. decision,constraint,architecture')
   .option('--id <id...>', 'Specific item ids')
   .option('--apply', 'Actually promote; without this it is a dry run')
-  .action(async (options: { category?: string; id?: string[]; apply?: boolean }) => {
+  .action(async (options: { category?: string; id?: string[]; apply?: boolean }, command: Command) => {
     try {
+      // cmd.exe splits an unquoted `--category a,b,c` on the commas, so the trailing
+      // categories arrive as operands. Commander discards them by default, which promoted a
+      // narrower set than the user asked for and said nothing -- and when the surviving first
+      // category matched nothing, that silence was the whole of "Nothing to promote."
+      // Handled here rather than with `allowExcessArguments(false)` so the message can name
+      // the dropped values and their cause, which "too many arguments" does not.
+      if (command.args.length > 0) {
+        throw new Error(
+          `Unexpected argument(s): ${command.args.map(arg => `"${arg}"`).join(', ')}. ` +
+          'On Windows quote the category list -- --category "decision,constraint" -- because cmd.exe splits it on the commas.',
+        );
+      }
       const root = await findProjectRoot(process.cwd());
       const active = await resolveWorkspace(root, await loadConfig(root));
       if (!active) throw new Error('This repo is not linked to a workspace.');
@@ -1108,11 +1111,50 @@ program
 program
   .command('upgrade')
   .description('Refresh project files only (config, schema, guidance, .gitignore) — no agent setup. `knowl init` runs this plus agent registration.')
-  .action(async () => {
+  .option('--all', 'Upgrade and repair every Knowl repository on this machine')
+  .option('--root <dir...>', 'With --all, also scan these directories for repositories not yet known')
+  .option('--reindex', 'With --all, also re-embed items missing vector coverage (slow)')
+  .option('--no-snapshot', 'With --all, skip the per-repository snapshot')
+  .option('--dry-run', 'With --all, list the repositories that would be swept and change nothing')
+  .action(async (options: { all?: boolean; root?: string[]; reindex?: boolean; snapshot?: boolean; dryRun?: boolean }) => {
     try {
-      const root = await findProjectRoot(process.cwd());
-      const result = await upgradeExistingRepository(root, path.basename(root) || 'My Project');
-      printUpgradeStatus(result);
+      if (!options.all) {
+        // Rejected rather than ignored: a flag that silently does nothing is how you end up
+        // believing a sweep ran.
+        for (const [flag, present] of [['--root', Boolean(options.root)], ['--reindex', Boolean(options.reindex)], ['--no-snapshot', options.snapshot === false], ['--dry-run', Boolean(options.dryRun)]] as const) {
+          if (present) throw new Error(`${flag} only applies to \`knowl upgrade --all\`.`);
+        }
+        const root = await findProjectRoot(process.cwd());
+        const result = await upgradeExistingRepository(root, path.basename(root) || 'My Project');
+        printUpgradeStatus(result);
+        return;
+      }
+
+      const discovered = await discoverRepos({ roots: options.root, record: !options.dryRun });
+      if (discovered.length === 0) {
+        console.log('No Knowl repositories found. Run `knowl init` in a repository, or pass --root <dir> to scan for existing ones.');
+        return;
+      }
+
+      const verb = options.dryRun ? 'Would sweep' : 'Sweeping';
+      console.log(`${verb} ${discovered.length} repositor${discovered.length === 1 ? 'y' : 'ies'}:`);
+      for (const repository of discovered) console.log(`  ${repository.root}  (found via ${repository.source})`);
+      console.log('');
+
+      if (options.dryRun) {
+        console.log('Dry run: nothing was changed. Re-run without --dry-run to sweep.');
+        return;
+      }
+
+      const results = await sweepRepos(discovered.map(repository => repository.root), {
+        reindex: options.reindex,
+        snapshot: options.snapshot,
+      });
+      console.log(formatSweepReport(results));
+
+      // Set rather than exited: a hard exit while database handles are still closing crashes
+      // the process on Windows instead of reporting a status.
+      if (results.some(result => !result.ready)) process.exitCode = 1;
     } catch (error: any) {
       console.error(`❌ Error upgrading KNOWL: ${error.message}`);
       process.exit(1);
@@ -1755,8 +1797,28 @@ snapshotCommand
 program
   .command('doctor')
   .description('Check whether the current Knowl project is ready for agent memory usage')
-  .action(async () => {
-    const result = await runDoctor(process.cwd());
+  .option('--fix', 'Apply the repairs that are safe to automate, then re-check')
+  .option('--reindex', 'With --fix, also re-embed items missing vector coverage (slow)')
+  .action(async (options: { fix?: boolean; reindex?: boolean }) => {
+    let result = await runDoctor(process.cwd());
+
+    if (options.fix) {
+      const root = await findProjectRoot(process.cwd());
+      const fixes = await applyDoctorRemedies(root, result.checks, { reindex: options.reindex });
+
+      if (fixes.applied.length > 0) console.log(`Fixed: ${fixes.applied.join(', ')}`);
+      for (const failure of fixes.failed) console.log(`Could not fix ${failure.remedy}: ${failure.error}`);
+      if (fixes.deferred.length > 0) console.log(`Skipped (needs --reindex): ${fixes.deferred.join(', ')}`);
+      if (fixes.applied.length === 0 && fixes.failed.length === 0 && fixes.deferred.length === 0) {
+        console.log('Nothing to fix automatically.');
+      }
+      console.log('');
+
+      // Re-checked rather than assumed. A repair that reported success without resolving its
+      // finding is precisely what an automatic fix must not be able to hide.
+      result = await runDoctor(root);
+    }
+
     console.log(formatDoctorReport(result));
 
     // Set the code instead of process.exit(), and set it here rather than after the
