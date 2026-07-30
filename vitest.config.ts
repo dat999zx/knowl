@@ -11,6 +11,10 @@ export default defineConfig({
     // default makes them flake even when the code is correct.
     testTimeout: 30_000,
     hookTimeout: 30_000,
+    // Suites delete their own fixtures, but on Windows libSQL holds the -shm sidecar until
+    // the owning process lets go, so those removals routinely fail and are swallowed. This
+    // sweeps up once, after every worker is done with its files.
+    globalSetup: ['./tests/global-teardown.ts'],
     // These suites are dominated by child-process spawns rather than CPU work, so
     // extra workers buy little and instead starve vitest's own worker RPC on a
     // busy machine (surfacing as `Timeout calling "onTaskUpdate"`).
