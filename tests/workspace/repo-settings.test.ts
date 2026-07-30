@@ -4,8 +4,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createManifest, readManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
 import { defaultVisibilityOf, repoEntry, updateRepoSettings } from '../../src/workspace/repo-settings.js';
+import { resolveWorkspace } from '../../src/workspace/resolve.js';
+import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 
 const HOME = path.resolve('./.knowl-repo-settings-home');
+const PEER_HOME = path.resolve('./.knowl-peer-nature-home');
+const PEER_ROOT = path.resolve('./.knowl-peer-nature-repo');
 
 describe('repo settings', () => {
   beforeAll(async () => { process.env.KNOWL_HOME = HOME; await fs.rm(HOME, { recursive: true, force: true }); });
@@ -63,5 +67,36 @@ describe('repo settings', () => {
     const entry = repoEntry(await readManifest(workspaceManifestPath('normal')), 'server');
     expect(entry?.role).toBe('spread out');
     expect(entry?.kin).toBeUndefined();
+  });
+});
+
+describe('peers carry their recorded nature', () => {
+  beforeAll(async () => {
+    process.env.KNOWL_HOME = PEER_HOME;
+    for (const dir of [PEER_HOME, PEER_ROOT]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(PEER_ROOT, '.knowl'), { recursive: true });
+  });
+
+  afterAll(async () => {
+    delete process.env.KNOWL_HOME;
+    for (const dir of [PEER_HOME, PEER_ROOT]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('exposes role, kin and default visibility on each peer', async () => {
+    const manifest = createManifest('nature', null);
+    manifest.repos.push(
+      { name: 'here', path: PEER_ROOT },
+      {
+        name: 'duck', path: path.resolve('./.knowl-peer-nature-duck'),
+        role: 'reading log', kin: 'forks', defaultVisibility: 'workspace',
+      },
+    );
+    await writeManifest(workspaceManifestPath('nature'), manifest);
+    await saveConfig(PEER_ROOT, { ...DEFAULT_CONFIG, workspace: { workspace: 'nature', repo: 'here' } });
+
+    const active = await resolveWorkspace(PEER_ROOT);
+    expect(active?.peers[0]).toMatchObject({
+      name: 'duck', role: 'reading log', kin: 'forks', defaultVisibility: 'workspace',
+    });
   });
 });

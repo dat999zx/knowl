@@ -7,7 +7,16 @@ import { readManifest, WorkspaceManifest } from './manifest.js';
 import { workspaceManifestPath } from './paths.js';
 import { isLinked } from './membership.js';
 
-export type PeerRepo = { name: string; root: string; databasePath: string; present: boolean };
+export type PeerRepo = {
+  name: string;
+  root: string;
+  databasePath: string;
+  present: boolean;
+  /** Recorded nature, carried through so callers need not re-read the manifest per peer. */
+  role?: string;
+  kin?: string;
+  defaultVisibility?: 'workspace';
+};
 export type ActiveWorkspace = { name: string; repo: string; manifest: WorkspaceManifest; peers: PeerRepo[] };
 
 /**
@@ -45,6 +54,9 @@ export async function resolveWorkspace(projectRoot: string, config?: ProjectConf
         databasePath: resolveStorage(root).knowledge,
         // A partial checkout is normal, not an error: two of five repos on a laptop works.
         present: existsSync(root),
+        role: repo.role,
+        kin: repo.kin,
+        defaultVisibility: repo.defaultVisibility,
       };
     });
 
