@@ -19,7 +19,7 @@ import { recordDecisionDirect } from './store/knowledge-actions.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from './store/queries.js';
 import { formatHierarchyToMarkdown } from './core/format.js';
 import { formatStatusReport } from './cli/status-report.js';
-import type { KnowledgeCategory } from './core/types.js';
+import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory } from './core/types.js';
 import { createManifest, isValidRepoName, readManifest, writeManifest } from './workspace/manifest.js';
 import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js';
 import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
@@ -446,12 +446,20 @@ workspaceCommand
   .option('--role <text>', 'What this repo is, for agents that have only the manifest')
   .option('--default-visibility <repo|workspace>', 'Visibility stamped on new writes here (default: repo)')
   .option('--kin <group>', 'Group name shared with repos of the same lineage')
+  .option('--promote-existing', 'Also share knowledge already in this repo; requires --default-visibility workspace')
   .option('--force', 'Link even though .knowl/config.json is tracked by git')
-  .action(async (workspaceName: string, options: { name?: string; role?: string; defaultVisibility?: string; kin?: string; force?: boolean }) => {
+  .action(async (workspaceName: string, options: { name?: string; role?: string; defaultVisibility?: string; kin?: string; promoteExisting?: boolean; force?: boolean }) => {
     try {
       const root = await findProjectRoot(process.cwd());
       const repoName = options.name ?? path.basename(root).toLowerCase().replace(/[^a-z0-9-]+/g, '-');
       const visibility = parseDefaultVisibility(options.defaultVisibility);
+
+      // Rejected rather than ignored. A flag that silently does nothing is how you end up
+      // believing a whole repo was shared when none of it was -- the same rule `knowl upgrade`
+      // applies to its --all-only flags.
+      if (options.promoteExisting && visibility !== 'workspace') {
+        throw new Error('--promote-existing only applies with --default-visibility workspace, because it publishes everything this repo already knows.');
+      }
 
       await joinWorkspace({
         projectRoot: root, workspaceName, repoName, force: options.force,
@@ -463,7 +471,18 @@ workspaceCommand
         console.log('');
         for (const line of visibilityGateNotice(repoName)) console.log(line);
         console.log('');
-        for (const line of existingItemsNotice(await countOwnedItems(root, repoName))) console.log(line);
+
+        if (options.promoteExisting) {
+          // After joinWorkspace, never before: promote selects on ownership, and the join's
+          // backfill is what stamps it. Run first, it would match nothing and report success.
+          const promoted = await promoteItems({
+            projectRoot: root, repoName,
+            categories: [...KNOWLEDGE_CATEGORIES], apply: true,
+          });
+          console.log(`Promoted ${promoted.items.length} existing item(s) to workspace visibility.`);
+        } else {
+          for (const line of existingItemsNotice(await countOwnedItems(root, repoName))) console.log(line);
+        }
       } else {
         console.log('Its existing knowledge is now owned by that name and stays private until you run knowl workspace promote.');
       }

@@ -253,4 +253,38 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
 
     await fs.rm(settable, { recursive: true, force: true }).catch(() => {});
   });
+
+  it('refuses --promote-existing without a workspace default, and shares everything with it', async () => {
+    const oneshot = path.resolve('./.knowl-cli-oneshot');
+    await closeDb();
+    await releaseAll();
+    await fs.rm(oneshot, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(oneshot, '.knowl'), { recursive: true });
+    await saveConfig(oneshot, { ...DEFAULT_CONFIG });
+    await initDb(oneshot);
+    const projectId = (await repo.createProject(oneshot, 'oneshot')).id;
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Everything here is shared', content: 'This repo has no internals.',
+    });
+    await closeDb();
+    await releaseAll();
+
+    expect(knowl(oneshot, 'workspace', 'init', 'oneshot').status).toBe(0);
+
+    // Rejected rather than ignored: a flag that silently does nothing is how you end up
+    // believing a whole repo was shared when none of it was.
+    const bad = knowl(oneshot, 'workspace', 'add', 'oneshot', '--name', 'nf', '--promote-existing');
+    expect(bad.status).toBe(1);
+    expect(bad.stderr).toMatch(/--promote-existing/);
+    expect(bad.stderr).toMatch(/--default-visibility workspace/);
+
+    const added = knowl(oneshot, 'workspace', 'add', 'oneshot', '--name', 'os',
+      '--default-visibility', 'workspace', '--promote-existing');
+    expect(added.status).toBe(0);
+    expect(added.stdout).toMatch(/Promoted \d+ existing item/);
+    // Nothing is left private, so the "still private" notice must not also print.
+    expect(added.stdout).not.toMatch(/still private/i);
+
+    await fs.rm(oneshot, { recursive: true, force: true }).catch(() => {});
+  });
 });
