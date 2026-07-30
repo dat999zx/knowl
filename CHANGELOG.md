@@ -3,6 +3,22 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.7.1 — 2026-07-30
+
+### Fixed
+
+- **Writing a few thousand items in one process could crash it.** 2.7.0 added a check for
+  knowledge that overlaps a linked repository, and worked out which workspace you were in
+  *inside* that check — so every single write re-read and re-parsed the project config. A run
+  of 2500 ordinary writes died partway through, at around two thousand, with no workspace or
+  vector search involved. The same run completes on 2.6.0. Which workspace you are in is now
+  worked out once per process, as it already was for batch writes.
+
+  One consequence to know about: linking a repository to a workspace while a long-running
+  process is already going will not be noticed by that process until it restarts. That was
+  already true of ownership stamping, and it is now written down and covered by a test rather
+  than left to be discovered.
+
 ## 2.7.0 — 2026-07-30
 
 Linked repos are now searched by the same code that searches your own, and a write is told
