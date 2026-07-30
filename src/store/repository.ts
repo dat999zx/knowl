@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
-import { getDb } from './database.js';
+import { getDb, withClientTransaction } from './database.js';
 import type { DbConnection } from './database.js';
 import * as schema from './schema.js';
 import { recordTombstone } from './tombstones.js';
@@ -223,9 +223,10 @@ export async function createKnowledgeItem(
     if (dbConnection) {
       await operation(dbConnection);
     } else {
-      await conn.transaction(async (tx) => {
-        await operation(tx);
-      });
+      // Client-level, not conn.transaction: see withClientTransaction for the measurement.
+      // This branch only runs when no outer transaction handed us a connection, so it is
+      // always the outermost.
+      await withClientTransaction(operation);
     }
     return newItem as KnowledgeItem;
   } catch (error: any) {
@@ -383,9 +384,7 @@ export async function updateKnowledgeItem(
     if (dbConnection) {
       return await operation(dbConnection);
     } else {
-      return await conn.transaction(async (tx) => {
-        return await operation(tx);
-      });
+      return await withClientTransaction(operation);
     }
   } catch (error: any) {
     if (error instanceof KnowledgeValidationError) throw error;

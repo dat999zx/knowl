@@ -71,6 +71,48 @@ export async function withDbPath<T>(dbPath: string, run: () => Promise<T>): Prom
 }
 
 /**
+ * A transaction on the raw client rather than through Drizzle's wrapper.
+ *
+ * `drizzle-orm@0.45.2`'s libSQL `transaction()` leaks native state for every statement past the
+ * first inside one transaction, and the process dies at exit once enough have accumulated.
+ * Measured, all writing the same rows to the same table on the same connection:
+ *
+ * | shape                              | total inserts | result   |
+ * | ---------------------------------- | ------------- | -------- |
+ * | 1 statement x 2400 transactions    | 2400          | clean    |
+ * | 2 statements x 1200 transactions   | 2400          | segfault |
+ * | 2 statements x 1200, BEGIN/COMMIT  | 2400          | clean    |
+ *
+ * So it is neither statement count nor transaction count -- it is statements *within* a
+ * transaction, and going through the client instead of the wrapper avoids it entirely. Knowl
+ * writes an item and its assertion together, so every knowledge write is a two-statement
+ * transaction and a long-running writer died at roughly 1200 of them. 0.45.2 is the latest
+ * release, so there is no upgrade to take.
+ *
+ * A SQLite transaction belongs to the connection, so statements issued on the base connection
+ * between BEGIN and COMMIT are inside it. Callers therefore get the ordinary connection back
+ * rather than a transaction object, and the code inside them is unchanged.
+ *
+ * **Not nestable, deliberately.** Both callers skip this entirely when an outer transaction
+ * hands them a connection, so it only ever opens the outermost. Adding a savepoint layer would
+ * mean reimplementing the driver code this exists to avoid.
+ */
+export async function withClientTransaction<T>(run: (conn: DbConnection) => Promise<T>): Promise<T> {
+  const client = getClient();
+  const db = getDb();
+  await client.execute('BEGIN');
+  try {
+    const result = await run(db);
+    await client.execute('COMMIT');
+    return result;
+  } catch (error) {
+    // A failed rollback must not mask the error that caused it.
+    await client.execute('ROLLBACK').catch(() => {});
+    throw error;
+  }
+}
+
+/**
  * Gets the current database instance. Throws if not initialized.
  */
 export function getDb(): LibSQLDatabase<typeof schema> {
