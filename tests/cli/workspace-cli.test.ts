@@ -213,4 +213,34 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
 
     await fs.rm(notes, { recursive: true, force: true }).catch(() => {});
   });
+
+  it('reads settings with no flags and changes only this repo entry', async () => {
+    const settable = path.resolve('./.knowl-cli-settable');
+    await closeDb();
+    await releaseAll();
+    await fs.rm(settable, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(settable, '.knowl'), { recursive: true });
+    await saveConfig(settable, { ...DEFAULT_CONFIG });
+
+    // Not linked yet: setting anything must refuse rather than write a stray manifest.
+    const unlinked = knowl(settable, 'workspace', 'set', '--role', 'nope');
+    expect(unlinked.status).toBe(1);
+
+    expect(knowl(settable, 'workspace', 'init', 'settable').status).toBe(0);
+    expect(knowl(settable, 'workspace', 'add', 'settable', '--name', 'main').status).toBe(0);
+
+    const shown = knowl(settable, 'workspace', 'set');
+    expect(shown.status).toBe(0);
+    expect(shown.stdout).toMatch(/role:\s+\(none\)/i);
+    expect(shown.stdout).toMatch(/default visibility:\s+repo/i);
+
+    const changed = knowl(settable, 'workspace', 'set', '--role', 'the main app', '--default-visibility', 'workspace');
+    expect(changed.status).toBe(0);
+    // The gate fires here too: `set` is the other way into standing automatic publishing.
+    expect(changed.stdout).toMatch(/cannot be undone/i);
+
+    expect(knowl(settable, 'workspace', 'set').stdout).toContain('the main app');
+
+    await fs.rm(settable, { recursive: true, force: true }).catch(() => {});
+  });
 });

@@ -25,6 +25,7 @@ import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js
 import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
 import { promoteItems } from './workspace/promote.js';
 import { existingItemsNotice, visibilityGateNotice } from './cli/workspace-visibility-notice.js';
+import { repoEntry, updateRepoSettings } from './workspace/repo-settings.js';
 import { runCliQuery } from './cli/query-command.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
 import { resolveWorkspace } from './workspace/resolve.js';
@@ -468,6 +469,44 @@ workspaceCommand
       }
     } catch (error: any) {
       console.error(`Error linking repo: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('set')
+  .description("Change this repo's recorded nature in the workspace manifest")
+  .option('--role <text>', 'What this repo is; pass an empty string to clear')
+  .option('--default-visibility <repo|workspace>', 'Visibility stamped on new writes here')
+  .option('--kin <group>', 'Group name shared with repos of the same lineage; pass an empty string to clear')
+  .action(async (options: { role?: string; defaultVisibility?: string; kin?: string }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const active = await resolveWorkspace(root, await loadConfig(root));
+      if (!active) throw new Error('This repo is not linked to a workspace.');
+
+      const visibility = parseDefaultVisibility(options.defaultVisibility);
+      const nothingToSet = options.role === undefined && options.kin === undefined && visibility === undefined;
+
+      // No flags reads rather than errors, so this doubles as the way to see the values.
+      const entry = nothingToSet
+        ? repoEntry(active.manifest, active.repo)
+        : await updateRepoSettings({
+          workspaceName: active.name, repoName: active.repo,
+          settings: { role: options.role, kin: options.kin, defaultVisibility: visibility },
+        });
+
+      console.log(`Repo "${active.repo}" in workspace "${active.name}":`);
+      console.log(`  role:               ${entry?.role ?? '(none)'}`);
+      console.log(`  default visibility: ${entry?.defaultVisibility ?? 'repo'}`);
+      console.log(`  kin:                ${entry?.kin ?? '(none)'}`);
+
+      if (!nothingToSet && visibility === 'workspace') {
+        console.log('');
+        for (const line of visibilityGateNotice(active.repo)) console.log(line);
+      }
+    } catch (error: any) {
+      console.error(`Error updating workspace settings: ${error.message}`);
       process.exit(1);
     }
   });
