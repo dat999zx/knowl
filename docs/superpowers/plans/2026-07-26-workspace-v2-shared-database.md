@@ -2,15 +2,24 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status: complete and buildable, but not recommended yet.** The five questions this plan
-previously blocked on are answered (see "What v1 answered"), and the plan is now written to the
-level a reviewer can attack. Whether to build it is a separate decision from whether the plan is
-sound; see "Recommendation" for the case against starting now, and the conditions that reverse it.
+**Status: not executable. Blocked on one product decision, and thinner than it claimed.** An
+earlier revision of this line said "complete and buildable"; that was an overclaim, contradicted by
+this plan's own self-review, and external review called it correctly. Tasks 6–14 are design intent
+with test obligations, not steps. Do not run this document task-by-task.
 
-**Goal:** Give linked repos an *optional* shared knowledge database so cross-repo `knowl_update`,
-cross-owner duplicate detection and workspace-wide conflict detection work — the things federation
-structurally cannot do. `linked` mode stays the default and stays supported. `shared` is a second
-mode, not a migration target.
+**Blocking decision, not a task:** see "The cross-owner editing contradiction". Until it is
+settled, the goal below cannot be stated honestly, because Task 10 forbids the capability the goal
+promises.
+
+**Goal (as previously stated, and now in question):** give linked repos an *optional* shared
+knowledge database so cross-repo `knowl_update`, cross-owner duplicate detection and workspace-wide
+conflict detection work. `linked` mode stays the default and stays supported; `shared` would be a
+second mode, not a migration target.
+
+**Three of this plan's tasks have shipped as v1 bugfixes** and are struck from the task list below:
+lifecycle convergence, ownership portability and tombstone monotonicity, in commits `f0d4ff3` and
+`7725d02`. They never needed `shared` mode, which is why they were sequenced first, and taking them
+out is most of what this plan actually delivered.
 
 **Architecture:** A workspace database at `~/.knowl/workspaces/<name>/knowl.db` becomes the
 `knowledge` storage role. Each repo's `<repo>/.knowl/knowl.db` stays exactly where it is, serving
@@ -49,12 +58,43 @@ Recorded in full in Knowl as decision `21f3504656964cdc`. Condensed:
 
 ---
 
+## The cross-owner editing contradiction
+
+**This plan promises a capability it also forbids, and that voids most of its justification.**
+
+The goal claims cross-repo `knowl_update` and "editing or superseding an item owned by another
+repo". Task 10 then clamps cross-owner resolution to `coexist` and refuses an explicit `supersedes`
+naming a foreign item — deliberately, and for a good reason: a write in repo A silently retiring
+repo B's knowledge is exactly the failure a single owner per item exists to prevent.
+
+Both positions are defensible. Holding both is not. And v1 already refuses foreign edits
+(`assertOwnedItem`, `src/mcp/tools.ts:972`), so as written **v2 adds no editing capability over v1
+at all.**
+
+That leaves exactly one unique capability: detecting that two repos hold contradictory or duplicate
+knowledge. Which is the thing the cheaper alternative below already provides.
+
+Three ways out, none of them a task in this plan:
+
+1. **Drop cross-owner editing as a claimed benefit.** Honest, and reduces v2 to conflict detection
+   — at which point read-only `knowl_conflicts` across peers wins outright on cost.
+2. **Design an explicit authorization workflow**: a foreign edit becomes a proposal the owning repo
+   accepts or rejects, with its own state, storage, surfacing and conflict rules. That is a
+   feature-sized design that does not exist, and it is not obviously cheaper in `shared` mode than
+   as a federated exchange.
+3. **Allow foreign edits outright**, and accept that any repo can retire any other's knowledge.
+   This needs an argument nobody has made.
+
+**Until one is chosen, this plan cannot be executed**, because Task 10's tests and the goal
+contradict each other and there is no way to satisfy both.
+
 ## Recommendation
 
-**Do not build this yet.** Stated plainly so the decision is on the record rather than implied.
+**Do not build this.** Stronger than the previous revision's "not yet", because the contradiction
+above removes one of the two benefits rather than deferring it.
 
-What v2 uniquely provides, after the re-scope: editing or superseding an item owned by another
-repo, and detecting that two repos hold contradictory or duplicate knowledge.
+What v2 uniquely provides, after that: detecting that two repos hold contradictory or duplicate
+knowledge. Cross-owner editing is not on the list, per the section above.
 
 What it costs: Tasks 6–8 and 13 — a journalled migration, a per-repo write fence, an atomic
 cutover, and making N short-lived processes safely share one SQLite file. Task 13 alone carries a
@@ -138,9 +178,9 @@ why 2.4.0 shipped it first, and why Task 2's bump to `2` is safe rather than mer
   all move items between databases; a crash halfway through any of them must be resumable.
 - A repo with no workspace behaves exactly as today. Task 14 asserts it, and every task before it
   must leave that assertion passing.
-- **Tasks 1 and 3–5 are behaviour-preserving in `linked` mode.** They can ship independently of the
-  decision to build the rest, and two of them fix live v1 bugs. If the recommendation above is
-  accepted, these four are still worth taking.
+- **Tasks 3–5 shipped as v1 bugfixes** in `f0d4ff3` and `7725d02`. They were behaviour-preserving in
+  `linked` mode, fixed live defects, and never needed `shared` mode. Task 1 is in the same category
+  and remains available on its own terms.
 
 ## Task order and dependencies
 
@@ -148,9 +188,9 @@ why 2.4.0 shipped it first, and why Task 2's bump to `2` is safe rather than mer
 Phase A — foundations, no behaviour change in linked mode
   1  split the storage context           (blocks 2; independently valuable)
   2  shared mode redirects knowledge      (needs 1)
-  3  lifecycle convergence                (independent; fixes a v1 bug)
-  4  ownership through export/import      (independent; fixes a v1 bug)
-  5  tombstones only move forward         (independent; fixes a v1 bug)
+  3  lifecycle convergence                SHIPPED f0d4ff3, corrected 7725d02
+  4  ownership through export/import      SHIPPED f0d4ff3
+  5  tombstones only move forward         SHIPPED f0d4ff3
 
 Phase B — the migration
   6  migration journal                    (needs 2)
@@ -208,13 +248,41 @@ after it is safe without it. `database.ts:13-17` keeps one handle; `initDb` poin
 (`storage-roles.ts:31,33`), so the distinction is invisible — which is exactly why it has to be
 made *before* they diverge, not after.
 
-Three modules own local-role tables and currently reach them through the knowledge handle:
+Modules that own or read local-role tables through the knowledge handle:
 
 | Module | Tables | Why it must stay local |
 | --- | --- | --- |
 | `src/code/symbol-index.ts:132-176` | `code_files`, `code_symbols`, `code_symbol_edges` | `indexCode` deletes every row absent from the current root (`156-163`). Shared, one repo's index run wipes every other's. |
+| `src/store/evidence-repository.ts:145-149` | reads `code_symbols` | `resolveSymbolEvidence` checks a stored signature hash against the index. A *reader* of a local table, not an owner — and the kind of caller a table-only inventory misses. |
 | `src/store/host-session-bindings.ts:35-214` | `host_session_bindings` | Binds a *host session* on this machine to a memory session. Meaningless across repos, and holds the per-peer watermark JSON (`165-188`). |
 | `src/store/mcp-call-commits.ts:35-66` | `mcp_call_commits` | Keyed by `project_root`. Every repo writing one table makes the key load-bearing where it is currently incidental. |
+
+**The inventory above is still not proven complete, and that is the task's main risk.** It was
+assembled by grepping `getDb()`/`getClient()` across 29 modules and reasoning about each table.
+`evidence-repository.ts` was missed on the first pass precisely because it reads a local table
+without owning one. **Step 1 of this task is to produce a table-to-role map covering every table
+`bootstrapSchema` creates, and a caller-to-role map for all 29 modules**, checked in as a test
+fixture so a new caller landing on the wrong handle fails rather than works by luck.
+
+**A foreign key crosses the split, and the naive assignment breaks it.**
+`host_session_bindings.memory_session_id` references `memory_sessions.id` with
+`ON DELETE CASCADE` (`src/store/schema.ts:123`). `memory_sessions` is reached through
+`getClient()` (`src/store/session-repository.ts:17`), so moving bindings to `local` while sessions
+follow `knowledge` puts the two sides of a foreign key in different files, and creating a binding
+fails because the referenced session is not there.
+
+Three options, and the task must pick one before writing code:
+
+1. **`memory_sessions` is local too.** Defensible: a memory session is machine-and-repo scoped, like
+   the binding that points at it. But `session-repository` is reached under
+   `withNamespaceDatabase(sessionNamespace(root))` in some paths and the bare handle in others, so
+   this needs the caller map above before it can be asserted.
+2. **Drop the foreign key** and enforce the relationship in code. Cheap, and loses cascade delete —
+   which is what currently cleans up bindings when a session is removed.
+3. **Bindings follow `knowledge`.** Wrong: the per-peer watermark is machine-local state, and in a
+   shared database every repo's bindings would collide in one table.
+
+Option 1 is most likely correct, but it is a decision with consequences, not a detail.
 
 The pool is keyed by path (`connection-pool.ts`, `acquireClient(dbPath)`), so in `linked` mode both
 roles resolve to the same file and get the **same pooled client**. There is no second connection in
@@ -267,6 +335,10 @@ describe('storage context', () => {
   });
 
   it('keeps the code index on the local handle when knowledge points elsewhere', async () => {
+    // A source file, so the index has something to write. Asserting only
+    // `local >= 0` would pass on an empty repo while proving nothing -- and would still
+    // pass if indexCode had written every row into the shared database.
+    await fs.writeFile(path.join(ROOT, 'sample.ts'), 'export function sample() { return 1; }\n');
     await initDb(ROOT);
     await initDbPath(ELSEWHERE, { configRoot: ROOT, role: 'knowledge' });
 
@@ -275,13 +347,11 @@ describe('storage context', () => {
 
     const local = await getLocalClient().execute('SELECT COUNT(*) AS n FROM code_files');
     const shared = await getClient().execute('SELECT COUNT(*) AS n FROM code_files');
+    expect(Number(local.rows[0].n)).toBeGreaterThan(0);
     expect(Number(shared.rows[0].n)).toBe(0);
-    expect(Number(local.rows[0].n)).toBeGreaterThanOrEqual(0);
-    // The invariant that matters is separation, not a row count: an empty repo indexes nothing.
-    expect(getLocalClient()).not.toBe(getClient());
   });
 
-  it('keeps host bindings and mcp call commits local', async () => {
+  it('keeps host bindings local', async () => {
     await initDb(ROOT);
     await initDbPath(ELSEWHERE, { configRoot: ROOT, role: 'knowledge' });
 
@@ -290,8 +360,38 @@ describe('storage context', () => {
 
     const shared = await getClient().execute('SELECT COUNT(*) AS n FROM host_session_bindings');
     const local = await getLocalClient().execute('SELECT COUNT(*) AS n FROM host_session_bindings');
-    expect(Number(shared.rows[0].n)).toBe(0);
     expect(Number(local.rows[0].n)).toBe(1);
+    expect(Number(shared.rows[0].n)).toBe(0);
+  });
+
+  it('keeps mcp call commits local', async () => {
+    // Named separately because it has to be exercised separately. Folding it into the
+    // binding test above named a table the test never touched.
+    await initDb(ROOT);
+    await initDbPath(ELSEWHERE, { configRoot: ROOT, role: 'knowledge' });
+
+    const { recordMcpCallCommit } = await import('../../src/store/mcp-call-commits.js');
+    await recordMcpCallCommit({ projectRoot: ROOT, toolName: 'knowl_query', fromRowid: 0, toRowid: 1 });
+
+    const shared = await getClient().execute('SELECT COUNT(*) AS n FROM mcp_call_commits');
+    const local = await getLocalClient().execute('SELECT COUNT(*) AS n FROM mcp_call_commits');
+    expect(Number(local.rows[0].n)).toBe(1);
+    expect(Number(shared.rows[0].n)).toBe(0);
+  });
+
+  it('resolves symbol evidence against the local index, not the shared database', async () => {
+    // The reader that a table-only inventory missed.
+    await fs.writeFile(path.join(ROOT, 'sample.ts'), 'export function sample() { return 1; }\n');
+    await initDb(ROOT);
+    const { indexCode } = await import('../../src/code/symbol-index.js');
+    await indexCode(ROOT);
+    await initDbPath(ELSEWHERE, { configRoot: ROOT, role: 'knowledge' });
+
+    const { resolveSymbolEvidence } = await import('../../src/store/evidence-repository.js');
+    const locator = String((await getLocalClient().execute('SELECT locator FROM code_symbols LIMIT 1')).rows[0].locator);
+    // Resolves against a populated index rather than reporting "symbol gone" because it
+    // looked in a database that has no code index at all.
+    expect((await resolveSymbolEvidence({ locator } as never)).status).not.toBe('missing');
   });
 
   it('closes every role', async () => {
@@ -366,8 +466,8 @@ safe moment to make the split.
 ### Task 2: `shared` mode redirects the knowledge role only
 
 **Files:**
-- Modify: `src/store/storage-roles.ts`, `src/store/schema-version.ts`, `src/workspace/manifest.ts`, `src/store/namespaces.ts`, `src/store/snapshots.ts`, `src/workspace/resolve.ts`
-- Test: `tests/store/shared-mode-storage.test.ts`
+- Modify: `src/store/database.ts` (**the one that matters — see below**), `src/store/storage-roles.ts`, `src/store/schema-version.ts`, `src/workspace/manifest.ts`, `src/store/namespaces.ts`, `src/store/snapshots.ts`, `src/workspace/resolve.ts`
+- Test: `tests/store/shared-mode-storage.test.ts`, `tests/store/shared-mode-initdb.test.ts`
 
 **Interfaces:**
 - `resolveStorage(root, config?, workspace?)` — when the workspace's mode is `shared`,
@@ -382,12 +482,34 @@ manifest *and* every repo's config is a multi-writer cutover with no atomicity: 
 leaves some repos `shared` and others not, with no recovery procedure and no way to tell which
 state you are in.
 
-**The three other callers must move in the same commit.** `resolveStorage` has four call sites:
-`database.ts:35`, `namespaces.ts:13` (`projectNamespace`), `snapshots.ts:18` (`databasePath`) and
-`resolve.ts:45` (peer database paths). The header comment on `storage-roles.ts:14-18` names this
-exact hazard — the paths "agree only by coincidence", and "a query and a snapshot reading different
-files is not a failure anything reports". Threading the workspace through one caller and not the
-others reproduces the bug the file was created to prevent.
+**`initDb` is the call site that decides whether this feature exists at all.** `resolveStorage` has
+four callers: `database.ts:35`, `namespaces.ts:13` (`projectNamespace`), `snapshots.ts:18`
+(`databasePath`) and `resolve.ts:45` (peer database paths). An earlier revision of this task listed
+the last three and omitted the first — which is the one every CLI command and every MCP write goes
+through. `initDb(projectRoot)` calls `resolveStorage(projectRoot)` with no workspace argument, so
+the resolver tests would all have passed while every real write still landed in the repo's own
+database. **A resolver test is not evidence that the feature works.**
+
+The obstacle is that `initDb` is synchronous in spirit and `resolveWorkspace` is async and reads
+the manifest from disk. Options:
+
+1. **`initDb` resolves the workspace itself** (it is already `async`), accepting one manifest read
+   per open. Simple, and the read is small and cacheable per root.
+2. **Callers pass an already-resolved workspace.** Faster, but `initDb` has many call sites and any
+   one that forgets silently writes to the wrong database — the same class of bug as the omission
+   above.
+
+Option 1, with the per-root cache `src/store/write-ownership.ts` already established for exactly
+this problem.
+
+**The other three callers must move in the same commit.** The header comment on
+`storage-roles.ts:14-18` names the hazard — the paths "agree only by coincidence", and "a query and
+a snapshot reading different files is not a failure anything reports".
+
+`tests/store/shared-mode-initdb.test.ts` is the test that would have caught the omission: link two
+repos into a `shared` workspace on disk, run a real `knowl_store` through the writer, and assert
+the row lands in the workspace database and **not** in either repo's own file. It must drive the
+production entry point, not `resolveStorage`.
 
 `resolve.ts:45` is the subtle one: in `shared` mode there are no peer databases, because everyone
 is in the same file. It must resolve peers to the shared path, and Task 14 makes federation dormant
@@ -502,7 +624,18 @@ the parameter type, as written above.
 
 ---
 
-### Task 3: Lifecycle convergence
+### Task 3: Lifecycle convergence — **SHIPPED** (`f0d4ff3`, corrected by `7725d02`)
+
+Built as a v1 bugfix. Kept below as the record of what was decided and why.
+
+**One thing the first attempt got wrong, worth carrying into any similar task.** It treated a
+missing lifecycle hash as agreement, reasoning that a version-1 export carries none and every legacy
+file would otherwise read as divergent. But a version-1 export *does* carry the underlying fields —
+it serialises whole item objects — so the absence of a hash was never an absence of information. The
+effect was that a promotion exported by an older build silently never converged, and because the
+column is added without a backfill, every pre-existing row hit the same path. Both sides now derive
+the fingerprint from the fields when no hash is stored. **The lesson: a fallback that discards
+information available elsewhere is a silent feature-off switch, not a compatibility shim.**
 
 **Files:**
 - Modify: `src/store/freshness.ts`, `src/store/import-policy.ts`, `src/store/portability.ts`, `src/store/schema.ts`, `src/store/bootstrap.ts`
@@ -658,7 +791,12 @@ Write the hash wherever the fields it covers change: `createKnowledgeItem` and
 
 ---
 
-### Task 4: Ownership survives export and import
+### Task 4: Ownership survives export and import — **SHIPPED** (`f0d4ff3`)
+
+Built as a v1 bugfix. One thing the task did not anticipate: **promotion had to start advancing
+`updated_at`.** Divergence resolution orders by it and keeps local on a tie, so a promotion that
+left the timestamp alone was a change no other machine could ever prefer — the fix to the column
+list would have been inert without it. `content_hash` still does not move.
 
 **Files:**
 - Modify: `src/store/portability.ts`
@@ -695,7 +833,12 @@ first so this is one format change rather than two.
 
 ---
 
-### Task 5: Deletes only move forward
+### Task 5: Deletes only move forward — **SHIPPED** (`f0d4ff3`)
+
+Built as a v1 bugfix. One thing the task did not anticipate: **blocking an item's insert had to
+block its dependents.** Assertions and evidence links carry a foreign key to `knowledge_items`, so
+skipping the item while inserting them fails the constraint and rolls back every unrelated item in
+the same file. Found by a test, not by the plan.
 
 **Files:**
 - Modify: `src/store/tombstones.ts`, `src/store/portability.ts`
@@ -760,9 +903,28 @@ knowledge write fail with a clear message; export at the fence; import into the 
 setting `origin_repo` and routing `visibility` by category; re-embed anything not matching the
 pinned identity; mark local knowledge retired and bump its `user_version`; lift the fence.
 
-**The fence is not optional.** Without it, a write landing between export and activation is simply
-lost: it goes into a database that stops being read the moment mode flips, and nothing reports it.
-The fence is per repo and short-lived, so the other repos stay usable throughout.
+**The fence is not optional, and it must not lift before activation.** An earlier revision said the
+fence was "per repo and short-lived, so the other repos stay usable throughout" — lifted as soon as
+that repo's copy finished. That is a write-loss window, not a convenience: Task 8 flips the
+manifest only after *every* repo reports `done`, so a write made to an already-copied repo in the
+interval goes into a database that stops being read at activation, was never re-exported, and is
+reported by nothing. With N repos the window is as long as the slowest remaining migration.
+
+The fence therefore **holds from the moment a repo is fenced until activation completes**, and is
+lifted for all repos together afterwards. Migration is a maintenance operation with a stated
+outage, not a live one. Claiming otherwise is what produced the bug.
+
+**Lifting the fence is not enough on its own: live processes keep their handle.** Each host session
+runs its own `serve` process (`src/mcp/server.ts`), and `initDb` resolves storage once. A process
+that started before activation holds a handle to the repo-local database and will keep writing to
+it after the manifest flips, with no error anywhere. So the protocol needs a third element beyond
+fence and flip: **handle invalidation**. Either the fence marker is re-checked on every knowledge
+write — cheap, one `knowl_meta` read, and it makes a stale process fail loudly instead of writing
+into an abandoned file — or every `serve` process is stopped for the cutover. The first is
+preferable because the second cannot be enforced from inside Knowl.
+
+This makes the fence a *database-enforced* invariant rather than a phase of a script, which is the
+only form that survives a process the migration does not know about.
 
 **Copy, never move.** The canonical path is never renamed. An old client opening
 `<repo>/.knowl/knowl.db` and finding nothing would create a *fresh* database and never meet the
@@ -780,11 +942,13 @@ But a repo linked before that gate existed, or one whose config drifted, can hol
 another model. Migration is the only moment where every item is in hand, so re-embed anything whose
 stored identity does not match the manifest's, and report the count in the dry run.
 
-**Test obligations:** a write during the fence fails with the migration message; killing the
-process after export leaves mode unflipped and the repo usable; migrate is idempotent; the local
-file still exists at its canonical path with a bumped `user_version`; the dry run reports duplicate
-and re-embed counts; a repo whose embedding identity differs is re-embedded rather than silently
-carried across.
+**Test obligations:** a write during the fence fails with the migration message; **a write to an
+already-copied repo, while a later repo is still migrating, fails rather than being accepted and
+lost**; **a process that opened its handle before activation fails its next knowledge write rather
+than writing into the abandoned file**; killing the process after export leaves mode unflipped and
+the repo usable; migrate is idempotent; the local file still exists at its canonical path with a
+bumped `user_version`; the dry run reports duplicate and re-embed counts; a repo whose embedding
+identity differs is re-embedded rather than silently carried across.
 
 - [ ] **Steps 1–6.**
 
@@ -816,12 +980,24 @@ previous manifest readable.
 
 **Interfaces:** `routeWrite(atom, context): { visibility: 'repo' | 'workspace'; originRepo: string | null }`
 
-**Context the implementer needs:** `routeWrite` lives in `knowledge-writer`, **beneath** the MCP
-tools, because synthesis (`synthesis.ts`), candidate promotion (`candidate-promotion.ts`) and the
-extraction pipeline (`pipeline/merge.ts`) all create items without passing through a tool handler.
-Routing implemented at the MCP layer would be bypassed by every one of them, and their items would
-land with a default nobody chose. `2aa7f92` put ownership stamping in `createKnowledgeItem`
-(`repository.ts:134`) for exactly this reason — routing belongs at the same depth or below it.
+**Context the implementer needs: `routeWrite` belongs in `repository.createKnowledgeItem`, not in
+`knowledge-writer`.** An earlier revision put it in `knowledge-writer` on the grounds that
+synthesis, candidate promotion and the extraction pipeline bypass the MCP tools. They do — but they
+bypass `knowledge-writer` too, calling the repository directly:
+
+| Caller | Line |
+| --- | --- |
+| `src/store/synthesis.ts` | `:51` — `createKnowledgeItem(projectId, input)` |
+| `src/pipeline/merge.ts` | `:59` — `repo.createKnowledgeItem(...)` inside the merge transaction |
+| `src/store/knowledge-actions.ts` | `:56` — `repo.createKnowledgeItem(...)` for `knowl_decide` |
+
+Routing in `knowledge-writer` would therefore miss `knowl_decide`, every synthesized item and every
+item the extraction pipeline merges — three of the paths the placement was supposed to protect.
+
+`2aa7f92` put ownership stamping in `createKnowledgeItem` (`repository.ts:134`) precisely because
+that is the single funnel. Visibility routing has the same requirement and must sit beside it. The
+rule for this task: **anything that must be true of every knowledge row goes at the repository
+mutation boundary; nothing above it is a boundary at all.**
 
 Default is category-driven: `decision`, `constraint`, `architecture`, `goal` → `workspace`;
 `fact`, `state`, `skill` → repo. **`skill` never crosses**: a skill atom points at files under the
@@ -834,10 +1010,13 @@ partial-failure semantic, stated rather than avoided. Rejecting mixed batches wa
 and is worse: it pushes agents into per-atom calls, which is what `knowl_ingest_atoms` exists to
 prevent. Flagged in "What v1 answered" as reasoned rather than measured.
 
-**Test obligations:** a synthesis-created item is routed, not defaulted; an explicit `namespace`
-overrides the category default in both directions; `skill` never routes to workspace even when
-explicitly asked; a mixed batch reports per-atom destinations; one failing partition leaves the
-others committed; in `linked` mode routing is inert and visibility stays `'repo'`.
+**Test obligations:** items created through `synthesizeKnowledge`, `knowl_decide` and the
+extraction pipeline's merge are each routed rather than defaulted, **asserted separately** — one
+test per bypass path, because a single test through `knowledge-writer` is what hid the problem; an
+explicit `namespace` overrides the category default in both directions; `skill` never routes to
+workspace even when explicitly asked; a mixed batch reports per-atom destinations; one failing
+partition leaves the others committed; in `linked` mode routing is inert and visibility stays
+`'repo'`.
 
 - [ ] **Steps 1–6.**
 
@@ -869,12 +1048,28 @@ duplicate has a different `origin_repo`, including when an explicit `supersedes`
 item. The `nearDuplicate` report (`knowledge-writer.ts:246`) names the owning repo and says the
 retirement must happen there.
 
+**`assertOwnedItem` checks the wrong number of ids.** `knowl_update` validates `id` but not
+`supersedeId` (`src/mcp/tools.ts:970-972`), so an agent can retire a foreign item by naming it as
+the supersede target of an item it does own. That is a v1 hole today, narrow because each repo has
+its own database; in a shared one it is the whole ownership rule bypassed by a second parameter.
+Every id an operation mutates must be checked, not the first one.
+
 Implicit reads also need the scoping v1 got for free. Decision `dc955d9f869b4d2b` records why:
 peers are deliberately absent from `configuredNamespaces`, so `getRecentContext`, `composeContext`'s
 pinned-constraint read, `startWorkLoop`'s bootstrap and `synthesizeKnowledge` are scoped by the
-database boundary itself. One shared database removes that boundary, and all four need an explicit
+database boundary itself. One shared database removes that boundary, and each needs an explicit
 repo scope resolving to `origin_repo = <current>` only — **not** `visibility = 'workspace'`.
 Workspace knowledge arrives through an explicit query where the agent asked for it.
+
+**Those four are not the full list.** The same reasoning applies to every read that assumes the
+database holds only this repo's items: `knowl_state` (`src/mcp/tools.ts:636`), the MCP resource
+handlers including the per-category resources (`src/mcp/resources.ts:54`), and the commit-log reads
+behind change notification. Enumerating them by inspection is how the first four were found and how
+the rest were missed.
+
+**Scope must be a required parameter, not a filter callers remember to apply.** Make the repo scope
+a mandatory argument on the shared query entry points so a new call site fails to compile rather
+than reading every repo's knowledge. A list of call sites in a plan is not enforcement.
 
 **Test obligations:** a write in repo A does not supersede an item owned by B, **asserted through
 both `storeKnowledgeItemDeduped` and `storeKnowledgeAtomsDeduped`**; the `nearDuplicate` report
@@ -921,7 +1116,7 @@ different log. Assert this explicitly; it is the kind of thing that works until 
 
 ### Task 12: FTS rebuild with ownership columns
 
-**Files:** Modify `src/store/bootstrap.ts`; Test `tests/store/fts-ownership-migration.test.ts`
+**Files:** Modify `src/store/bootstrap.ts`, `src/store/search.ts`, `src/store/vector.ts`; Test `tests/store/fts-ownership-migration.test.ts`
 
 **Context the implementer needs:** `knowledge_items_fts` and its three triggers are
 `CREATE ... IF NOT EXISTS`, so adding `origin_repo` and `visibility` as `UNINDEXED` columns to the
@@ -929,8 +1124,13 @@ declaration is a **silent no-op on every existing database**. It requires a vers
 recreate and backfill from `knowledge_items`, gated on `user_version` so it runs exactly once, with
 all three triggers recreated to populate the new columns.
 
-**Filter before capping.** Cap-then-filter can return zero local results when a chatty repo fills
-the candidate window.
+**Filter before capping, and the schema change alone does not achieve that.** An earlier revision
+listed only `bootstrap.ts`, which adds the columns but changes no query. `searchKnowledge` applies
+`LIMIT` inside the FTS SQL and filters by status afterwards in JavaScript
+(`src/store/search.ts:63-72`), so an owner filter added the same way would be applied *after* the
+cap: a chatty repo fills the candidate window and the querying repo gets zero of its own results.
+The owner predicate has to move into the SQL, above the `LIMIT`, in **both** the FTS path and the
+vector path — vector search does its own filtering on provider and model and has the same shape.
 
 **Test obligations:** an existing database gains the columns after upgrade; the triggers populate
 them on insert and update; a second bootstrap does not rebuild again; filtering by repo happens
@@ -987,8 +1187,27 @@ complete the rest is.
 Copy-back is **not a bespoke flag**: it is `knowl export --repo <name>` from the workspace followed
 by `knowl import` into the local database — shipped machinery with a divergence policy. An earlier
 `--copy-back` had undefined behaviour for an item claimed by two repos; `origin_repo` removes the
-ambiguity, because exactly one repo owns each item. **This depends on Task 4**, without which the
-round trip drops the ownership that makes it unambiguous.
+ambiguity, because exactly one repo owns each item.
+
+**Three things that machinery does not yet have, and no earlier task adds them:**
+
+1. **`knowl export --repo <name>` does not exist.** `knowl export` takes a path and nothing else
+   (`src/index.ts:635`). Neither does `knowl workspace migrate` or `knowl workspace unlink` — Tasks
+   7, 8 and this one describe library functions with no command wired to them. This task owns all
+   three CLI surfaces, or the migration is unreachable from outside the test suite.
+2. **Tombstones have no owner.** `Tombstone` is `{ id, deletedAt, reason }`
+   (`src/store/tombstones.ts:4`) and the table has no `origin_repo`. An owner-scoped export
+   therefore cannot select this repo's deletions: it either carries every repo's tombstones out of
+   the workspace, or none, and the second silently loses deletion history on unlink. Adding an
+   owner column to `knowledge_tombstones` is a prerequisite of owner-scoped export, and it is
+   additive, so it belongs earlier than this task.
+3. **The portability format does not cover every knowledge-role table.** Export carries items,
+   assertions, evidence, links, skill packages and tombstones. It does not carry
+   `knowledge_commits` or `knowledge_access`. That is acceptable for a portable export — the README
+   documents the exclusion — but unlink is not an export, it is a *round trip out of the only copy*,
+   and history dropped there is gone. Either unlink copies those tables directly rather than through
+   the JSONL format, or the plan states plainly that unlinking discards commit history and access
+   telemetry.
 
 **Federation goes dormant in `shared` mode.** `resolveWorkspace` maps peers to per-repo database
 paths (`resolve.ts:38-49`), and `queryFederated` scans them. In `shared` mode those files still
@@ -1071,11 +1290,27 @@ the current root, so sharing it means a composite primary key, a matching compos
 That is a feature-sized project for an index of files on one machine. The code index stays in the
 `local` role, which Task 1 makes structural rather than incidental.
 
-**Where this plan is still thin.** Tasks 6–8 and 14 describe the migration state machine in prose
-and test obligations rather than code. That is deliberate — they are the tasks most likely to
-change shape once Tasks 1–5 exist and the real storage boundary is visible. Tasks 1–3 are written
-out in full because they are load-bearing and independent of everything after them. A plan claiming
-completeness it does not have is worse than one that says where it thins out.
+**Where this plan is thin, stated accurately this time.** Tasks 6–14 carry context, interfaces and
+test obligations, but use `Steps 1–6` placeholders — they are design intent, not steps. Tasks 1, 2
+and the shipped 3–5 are written out. A previous revision put "complete and buildable" in the status
+line while this section admitted the plan thinned out. External review called that contradiction,
+and it was right: **the status line was wrong, not this section.**
+
+**What external review found, and what it changed.** Reviewed at `4dbbfdf`. Every finding was
+checked against source before being acted on; all nine held.
+
+| Finding | Where it landed |
+| --- | --- |
+| Goal promises cross-owner editing that Task 10 forbids | New section, "The cross-owner editing contradiction". Blocks execution and removes one of v2's two claimed benefits |
+| Fence lifts per repo while activation is global, so writes in the window are lost | Task 7 rewritten: the fence holds through cutover, plus handle invalidation for `serve` processes that predate it |
+| Task 2 omitted `database.ts`, so no production write would have moved | Task 2 rewritten, with resolver tests called out explicitly as insufficient evidence |
+| The storage split separates a foreign key (`host_session_bindings` → `memory_sessions`) and missed local-table readers | Task 1: FK options enumerated, `evidence-repository` added, a full table-and-caller map made step 1 |
+| Routing placed above three real write paths | Task 9 moved to the repository mutation boundary, with the three bypasses named and tested separately |
+| `knowl_update` checks `id` but not `supersedeId` | Task 10, as a v1 hole that becomes total in a shared database |
+| Implicit-read list incomplete; FTS caps before filtering | Tasks 10 and 12; scope becomes a required parameter rather than a filter callers remember |
+| `export --repo`, migrate and unlink have no CLI; tombstones have no owner | Task 14, with the history-loss consequence stated rather than implied |
+| Lifecycle convergence had no end-to-end invariant | Fixed in shipped code (`7725d02`): the missing-hash fallback was discarding information the file already carried |
+| Task 1 tests vacuous; completeness overclaimed | Tests rewritten to assert non-zero and to exercise the table they name; status line corrected |
 
 **Known open question, not blocking:** what a repo should do when it opens a shared workspace whose
 `minKnowlVersion` exceeds its own build. `assertSchemaSupported` covers the database, but the
