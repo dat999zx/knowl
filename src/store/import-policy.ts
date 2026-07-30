@@ -1,3 +1,5 @@
+import { hashKnowledgeLifecycle } from './freshness.js';
+
 export type DivergencePolicy = 'newer' | 'skip' | 'theirs' | 'fail';
 
 export const DIVERGENCE_POLICIES: readonly DivergencePolicy[] = ['newer', 'skip', 'theirs', 'fail'];
@@ -9,8 +11,33 @@ export const DIVERGENCE_POLICIES: readonly DivergencePolicy[] = ['newer', 'skip'
  */
 export const DEFAULT_DIVERGENCE_POLICY: DivergencePolicy = 'newer';
 
-export type ImportCandidate = { id: string; contentHash?: string | null; lifecycleHash?: string | null; updatedAt: string; version: number };
-export type LocalItemRow = { id: string; contentHash: string | null; lifecycleHash?: string | null; updatedAt: string; version: number };
+/** The fields `lifecycle_hash` fingerprints, carried on every exported item since v1. */
+export type LifecycleFields = {
+  status?: string | null;
+  freshness?: string | null;
+  supersededById?: string | null;
+  originRepo?: string | null;
+  visibility?: string | null;
+};
+
+export type ImportCandidate = LifecycleFields & { id: string; contentHash?: string | null; lifecycleHash?: string | null; updatedAt: string; version: number };
+export type LocalItemRow = LifecycleFields & { id: string; contentHash: string | null; lifecycleHash?: string | null; updatedAt: string; version: number };
+
+/**
+ * The stored hash when there is one, otherwise computed from the fields it covers.
+ *
+ * Neither side can be relied on to have it. A version-1 export predates the column, and the
+ * column is added without a backfill so every row written before it exists holds NULL. But
+ * both sides always carry the underlying fields -- export serialises whole item objects -- so
+ * the absence of a hash is never an absence of information.
+ *
+ * Treating a missing hash as agreement was wrong in both directions: a promotion exported by
+ * an older build silently never converged, and an un-backfilled local row reported
+ * metadata-divergent on the first import even when nothing had changed.
+ */
+function lifecycleFingerprint(row: LifecycleFields & { lifecycleHash?: string | null }): string {
+  return row.lifecycleHash ?? hashKnowledgeLifecycle(row);
+}
 
 /**
  * `metadata-divergent` exists because content and lifecycle diverge independently.
@@ -26,10 +53,7 @@ export function classifyIncomingItem(
 ): 'new' | 'identical' | 'divergent' | 'metadata-divergent' {
   if (!local) return 'new';
   if (String(incoming.contentHash ?? '') !== String(local.contentHash ?? '')) return 'divergent';
-  // A version-1 export carries no lifecycle hash. Treat its absence as agreement rather than
-  // as a difference, or every legacy file would import as metadata-divergent.
-  if (incoming.lifecycleHash == null) return 'identical';
-  return String(incoming.lifecycleHash) === String(local.lifecycleHash ?? '') ? 'identical' : 'metadata-divergent';
+  return lifecycleFingerprint(incoming) === lifecycleFingerprint(local) ? 'identical' : 'metadata-divergent';
 }
 
 export function resolveDivergence(

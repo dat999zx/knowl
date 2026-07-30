@@ -211,6 +211,38 @@ describe('ownership and lifecycle survive export and import', () => {
     expect(landed).toMatchObject({ originRepo: null, visibility: 'repo' });
   });
 
+  it('converges a promotion carried by a version-1 file, which has no lifecycle hash', async () => {
+    // A version-1 export predates lifecycle_hash but still serialises visibility and
+    // origin_repo, so the promotion is in the file. Treating the missing hash as agreement
+    // discarded it, and the receiving side stayed private forever with nothing reporting it.
+    const id = await session(SOURCE, async () => {
+      const written = await write(SOURCE, 'Rate limit is per tenant', 'Quotas are counted per tenant, not per key.');
+      await exportKnowledge('local', DUMP, SOURCE);
+      return written;
+    });
+    await session(TARGET, () => importKnowledge(DUMP, { projectRoot: TARGET }));
+
+    await promoteItems({ projectRoot: SOURCE, repoName: 'server', ids: [id], apply: true });
+    await session(SOURCE, () => exportKnowledge('local', DUMP, SOURCE));
+    // Strip the file back to version 1: header version, and no lifecycleHash on the item.
+    await rewrite(DUMP, records => records.map(record => {
+      if (record.type === 'header') return { ...record, version: 1 };
+      if (record.type !== 'item') return record;
+      const { lifecycleHash, ...rest } = record.item;
+      return { ...record, item: rest };
+    }));
+
+    const { result, landed } = await session(TARGET, async () => ({
+      result: await importKnowledge(DUMP, { projectRoot: TARGET }),
+      landed: await ownership('Rate limit is per tenant'),
+    }));
+
+    expect(result.updated).toBe(1);
+    expect(landed).toMatchObject({ visibility: 'workspace', originRepo: 'server' });
+    // And the row is left fingerprinted, so the next round can compare it at all.
+    expect(landed?.lifecycleHash).toBeTruthy();
+  });
+
   it('exports at format version 2, since ownership is now a portable field', async () => {
     await session(SOURCE, async () => {
       await write(SOURCE, 'Region is eu-west-1', 'All services run in eu-west-1.');

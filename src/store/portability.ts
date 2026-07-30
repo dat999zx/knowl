@@ -8,6 +8,7 @@ import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { listEvidenceForItem } from './evidence-repository.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 import { listTombstones } from './tombstones.js';
+import { hashKnowledgeLifecycle } from './freshness.js';
 import {
   classifyIncomingItem,
   DEFAULT_DIVERGENCE_POLICY,
@@ -106,7 +107,10 @@ const ITEM_FIELDS: Array<[column: string, read: (item: any) => any]> = [
   ['source_commit', item => item.sourceCommit ?? null],
   ['affected_paths', item => (item.affectedPaths ? JSON.stringify(item.affectedPaths) : null)],
   ['content_hash', item => item.contentHash ?? null],
-  ['lifecycle_hash', item => item.lifecycleHash ?? null],
+  // Derived when the file does not carry one, so importing a version-1 export leaves the row
+  // fingerprinted rather than NULL. Writing NULL here would mean the row it just converged
+  // still could not be compared on the next round.
+  ['lifecycle_hash', item => item.lifecycleHash ?? hashKnowledgeLifecycle(item)],
   // A version-1 file carries neither, and that is not a loss of information: it was written
   // before ownership existed, so NULL and 'repo' are what it means.
   ['origin_repo', item => item.originRepo ?? null],
@@ -188,8 +192,13 @@ export async function importKnowledge(
 
   for (const item of items) {
     validateKnowledgeWrite({ title: item.title, content: item.content, reasoning: item.reasoning, source: item.source, affectedPaths: item.affectedPaths });
+    // The lifecycle fields come along so `classifyIncomingItem` can derive a fingerprint for
+    // a row whose `lifecycle_hash` is NULL -- which is every row written before the column
+    // was added, since it is not backfilled.
     const existing = (await client.execute({
-      sql: 'SELECT id, content_hash, lifecycle_hash, updated_at, version FROM knowledge_items WHERE id = ?',
+      sql: `SELECT id, content_hash, lifecycle_hash, updated_at, version,
+                   status, freshness, superseded_by_id, origin_repo, visibility
+            FROM knowledge_items WHERE id = ?`,
       args: [item.id],
     })).rows[0];
 
@@ -200,6 +209,11 @@ export async function importKnowledge(
         lifecycleHash: existing.lifecycle_hash === null ? null : String(existing.lifecycle_hash),
         updatedAt: String(existing.updated_at),
         version: Number(existing.version),
+        status: String(existing.status),
+        freshness: String(existing.freshness),
+        supersededById: existing.superseded_by_id === null ? null : String(existing.superseded_by_id),
+        originRepo: existing.origin_repo === null ? null : String(existing.origin_repo),
+        visibility: String(existing.visibility),
       }
       : undefined;
 

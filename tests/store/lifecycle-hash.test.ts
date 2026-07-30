@@ -86,17 +86,31 @@ describe('classifyIncomingItem', () => {
     expect(classifyIncomingItem({ ...local }, undefined)).toBe('new');
   });
 
-  it('treats a missing incoming lifecycle hash as agreement, so v1 exports still import', () => {
-    // A version-1 export carries no lifecycle hash at all. Reading its absence as a
-    // difference would classify every legacy file as metadata-divergent.
-    expect(classifyIncomingItem({ ...local, lifecycleHash: undefined }, local)).toBe('identical');
-    expect(classifyIncomingItem({ ...local, lifecycleHash: null }, local)).toBe('identical');
+  it('derives a missing incoming lifecycle hash from the fields the file does carry', () => {
+    // A version-1 export has no lifecycle hash, but it does carry status, freshness,
+    // supersession, origin_repo and visibility -- it serialises whole item objects. Treating
+    // the missing hash as agreement threw that information away, so a promotion exported by
+    // an older build could never converge. Same for a row whose column was never backfilled.
+    const fields = { status: 'active', freshness: 'fresh', supersededById: null, originRepo: 'server', visibility: 'repo' };
+    const localRow = { ...local, ...fields, lifecycleHash: hashKnowledgeLifecycle(fields) };
+
+    expect(classifyIncomingItem({ ...localRow, lifecycleHash: undefined }, localRow)).toBe('identical');
+    expect(classifyIncomingItem({ ...localRow, lifecycleHash: undefined, visibility: 'workspace' }, localRow))
+      .toBe('metadata-divergent');
   });
 
-  it('is metadata-divergent when the local row has no lifecycle hash but the incoming one does', () => {
-    // The upgrade direction: a v2 export landing on a database bootstrapped before the
-    // column was backfilled must still converge rather than silently skip.
-    expect(classifyIncomingItem({ ...local, lifecycleHash: 'l1' }, { ...local, lifecycleHash: null }))
-      .toBe('metadata-divergent');
+  it('derives a missing local lifecycle hash too, so an un-backfilled row still converges', () => {
+    // The column is added without a backfill, so every row written before it existed has
+    // NULL. Comparing an incoming hash against NULL as a plain string made every such row
+    // report metadata-divergent on the first import even when nothing had changed.
+    const fields = { status: 'active', freshness: 'fresh', supersededById: null, originRepo: 'server', visibility: 'repo' };
+    const unbackfilled = { ...local, ...fields, lifecycleHash: null };
+
+    expect(classifyIncomingItem({ ...unbackfilled, lifecycleHash: hashKnowledgeLifecycle(fields) }, unbackfilled))
+      .toBe('identical');
+    expect(classifyIncomingItem(
+      { ...unbackfilled, visibility: 'workspace', lifecycleHash: hashKnowledgeLifecycle({ ...fields, visibility: 'workspace' }) },
+      unbackfilled,
+    )).toBe('metadata-divergent');
   });
 });
