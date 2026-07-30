@@ -38,8 +38,16 @@ async function sweep(): Promise<void> {
   }
 }
 
-/** Clears anything a previous run crashed out of, so a run never starts on stale fixtures. */
-export const setup = sweep;
-
-/** Clears this run's, once every worker has released its files. */
+/**
+ * Teardown only, deliberately.
+ *
+ * This also ran as `setup`, to clear what a crashed run had left behind. That broke the suite:
+ * workers start staggered, and a later worker running setup deleted fixtures the earlier
+ * workers were still using -- `tests/cli/cli.test.ts` lost its AGENTS.md mid-assertion, and
+ * another test's spawn failed with a missing working directory. Both passed in isolation, which
+ * is what made it look like contention rather than deletion.
+ *
+ * Stale directories from a crashed run are collected by the next run's teardown instead. One
+ * run's worth of clutter is a much smaller problem than a sweep that can delete live fixtures.
+ */
 export const teardown = sweep;
