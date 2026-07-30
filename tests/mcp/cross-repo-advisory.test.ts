@@ -56,4 +56,26 @@ describe('cross-repo advisory reaches the agent', () => {
     expect(text).toContain('web-9');
     expect(text).toContain('api-3');
   });
+
+  it('marks a kin repo and names what it is, so a same-subject hit reads as divergence', () => {
+    const note = describeWriteReconciliation({
+      item: { id: 'new-1' },
+      crossRepo: [{
+        repo: 'duck', id: 'peer-1', title: 'Wire format is JSON',
+        kind: 'conflict', kin: true, role: 'the other fork of this service',
+      }],
+    });
+    expect(note).toContain('"duck"');
+    expect(note).toContain('the other fork of this service');
+    expect(note).toMatch(/shares this repo's lineage/i);
+  });
+
+  it('leaves an unrelated repo advisory exactly as it was', () => {
+    const note = describeWriteReconciliation({
+      item: { id: 'new-2' },
+      crossRepo: [{ repo: 'other', id: 'peer-2', title: 'Something', kind: 'duplicate' }],
+    });
+    expect(note).not.toMatch(/lineage/i);
+    expect(note).toContain('OVERLAPS linked repo "other"');
+  });
 });

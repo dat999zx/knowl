@@ -40,7 +40,7 @@ export function describeWriteReconciliation(result: {
   item: { id: string };
   superseded?: { id: string; title: string };
   nearDuplicate?: { id: string; title: string };
-  crossRepo?: Array<{ repo: string; id: string; title: string; kind: 'conflict' | 'duplicate' }>;
+  crossRepo?: Array<{ repo: string; id: string; title: string; kind: 'conflict' | 'duplicate'; kin?: boolean; role?: string }>;
 }): string {
   const notes: string[] = [];
   if (result.superseded) {
@@ -56,7 +56,13 @@ export function describeWriteReconciliation(result: {
     const what = overlap.kind === 'conflict'
       ? `CONTRADICTS linked repo "${overlap.repo}"`
       : `OVERLAPS linked repo "${overlap.repo}"`;
-    notes.push(`${what}: item ${overlap.id} ("${overlap.title}"). You cannot retire or edit it from this repo -- it belongs to "${overlap.repo}". Your write stands; if the two genuinely disagree, raise it with whoever owns that repo.`);
+    const describes = overlap.role ? ` (${overlap.role})` : '';
+    // Only for kin. An unrelated repo's advisory must stay exactly as it was, or every
+    // cross-repo note grows a clause that means nothing.
+    const lineage = overlap.kin
+      ? ` That repo shares this repo's lineage, so a same-subject item is more likely a real divergence in convention than a coincidence of wording.`
+      : '';
+    notes.push(`${what}${describes}: item ${overlap.id} ("${overlap.title}"). You cannot retire or edit it from this repo -- it belongs to "${overlap.repo}". Your write stands; if the two genuinely disagree, raise it with whoever owns that repo.${lineage}`);
   }
   return notes.length ? ` ${notes.join(' ')}` : '';
 }
