@@ -30,6 +30,12 @@ export default defineConfig({
       // Write-time vector indexing would load the embedding model on every write.
       // Tests that care about it opt back in explicitly.
       KNOWL_DISABLE_WRITE_EMBEDDING: '1',
+      // Machine-wide state gets a scratch home, so nothing a test does can reach the
+      // developer's own ~/.knowl. `knowl upgrade` records every repo it visits in a registry
+      // there, and `upgrade --all` and `doctor --fix` act on every repo in it -- so a suite
+      // that spawns the CLI without this is one bug away from sweeping real projects.
+      // Suites needing their own workspace still override this; they just no longer have to.
+      KNOWL_HOME: './.knowl-test-home',
       // Machine-local Knowl state -- workspace manifests and the known-repository registry --
       // lives under ~/.knowl by default. Suites that spawn the real CLI would otherwise write
       // their scratch fixtures into the developer's own home directory, where nothing cleans
