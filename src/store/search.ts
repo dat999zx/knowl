@@ -55,6 +55,12 @@ export async function searchKnowledgeItems(
     tags?: string[];
     query: string;
     limit?: number;
+    /**
+     * Restricts to shared items. Required when the store is a peer: a repo-private row must
+     * not be read into this process at all, so this is a SQL predicate and never a filter
+     * applied to rows that have already been loaded.
+     */
+    visibility?: 'repo' | 'workspace';
   },
   // Optional and trailing, so every existing call site is unchanged and the whole suite is
   // the regression test. Evaluated at call time, exactly like the getDb() it replaces.
@@ -64,15 +70,26 @@ export async function searchKnowledgeItems(
   const ftsQuery = buildFtsQuery(options.query);
   if (!ftsQuery) return [];
 
+  const status = options.status || 'active';
+
+  // Joined and filtered above the LIMIT. Filtering afterwards spends the candidate window on
+  // rows that can never be returned: a query whose top lexical hits are all archived came
+  // back empty even with an active match just past the cap. For a peer it is worse than
+  // empty -- a private row would have to be read into this process before being discarded.
+  //
+  // The FTS table is not aliased, because bm25() takes the table it is measuring by name.
   const rows = await (db as any).all(sql`
-    SELECT item_id AS itemId, bm25(knowledge_items_fts) AS score
+    SELECT knowledge_items_fts.item_id AS itemId, bm25(knowledge_items_fts) AS score
     FROM knowledge_items_fts
+    JOIN knowledge_items i ON i.id = knowledge_items_fts.item_id
     WHERE knowledge_items_fts MATCH ${ftsQuery}
+      AND i.status = ${status}
+      ${options.category ? sql`AND i.category = ${options.category}` : sql``}
+      ${options.visibility ? sql`AND i.visibility = ${options.visibility}` : sql``}
     ORDER BY score ASC
     LIMIT ${options.limit ?? 20}
   `) as { itemId: string; score: number }[];
 
-  const status = options.status || 'active';
   const items: KnowledgeItem[] = [];
   const seen = new Set<string>();
 
@@ -85,8 +102,9 @@ export async function searchKnowledgeItems(
     // unrelated local row presented as the peer's.
     const item = await getKnowledgeItem(row.itemId, store.db);
     if (!item) continue;
-    if (item.status !== status) continue;
-    if (options.category && item.category !== options.category) continue;
+    // Status, category and visibility are already applied in SQL. Only the JSON-array tag
+    // filter remains here, and it narrows an already-correct candidate set rather than
+    // deciding whether a row may be seen at all.
     if (options.tags && options.tags.length > 0) {
       if (!item.tags || !options.tags.every(tag => item.tags!.includes(tag))) continue;
     }

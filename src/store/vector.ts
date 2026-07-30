@@ -133,6 +133,8 @@ export async function searchKnowledgeEmbeddings(
     provider?: string;
     model?: string;
     limit?: number;
+    /** Restricts to shared items; required for a peer store. See searchKnowledgeItems. */
+    visibility?: 'repo' | 'workspace';
   },
   store: StoreHandle = localStore(),
 ): Promise<VectorSearchResult[]> {
@@ -148,6 +150,12 @@ export async function searchKnowledgeEmbeddings(
     if (options.category) {
       where.push('i.category = ?');
       args.push(options.category);
+    }
+    // Same rule as the FTS path: a peer's private row must not be read into this process, so
+    // the predicate goes in the query rather than filtering what came back.
+    if (options.visibility) {
+      where.push('i.visibility = ?');
+      args.push(options.visibility);
     }
     if (options.provider) {
       where.push('e.provider = ?');
