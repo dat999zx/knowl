@@ -7,6 +7,29 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ### Added
 
+- **A repository can record what it is, and whether its knowledge is shared by default.**
+  `knowl workspace add` stored a name and a path, so a repository's nature — code with private
+  internals, notes that are cross-cutting by definition, one of two diverged forks — lived
+  nowhere. Every agent re-derived it, and got it wrong the same way each time: one uniform
+  "share selectively" posture applied across repositories that do not share a nature.
+
+  `--role` is free text describing the repository, carried in the manifest so an agent that
+  joined on another machine has it too. It is never parsed and no behavior is inferred from it.
+  `--default-visibility workspace` stamps new writes as workspace-visible, so a notes
+  repository stops depending on someone remembering to promote each item; `--promote-existing`
+  shares what it already knows in the same command. `--kin` groups repositories of shared
+  lineage, and the cross-repo write advisory checks them wider and says what they are — a
+  same-subject hit between two forks is likelier a real divergence than a coincidence.
+
+  `knowl workspace set` changes any of the three afterwards, and with no flags prints them.
+  Every repository's role and default visibility now appears in `knowl status` and at the top
+  of the session-start context block, so an agent has them before its first sharing decision.
+
+  A workspace default is gated at both entry points, because it is standing automatic
+  publishing rather than an explicit per-batch promote: it states that sharing cannot be
+  undone, that there is no demote, and that turning it off stops future writes only. Absent
+  fields mean current behavior, so existing manifests need no migration.
+
 - **`knowl upgrade --all` upgrades and repairs every repository on the machine.** A release
   used to mean visiting each repository by hand: upgrade, run doctor, read the warnings, run
   whichever command each warning named, run doctor again. A repository you forgot drifted
