@@ -211,6 +211,16 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
     expect(bad.status).toBe(1);
     expect(bad.stderr).toMatch(/must be "repo" or "workspace"/);
 
+    // Recorded nature reaches status from the peer's side, which is the whole point of
+    // keeping it in the manifest: a second machine reads it without being told.
+    const peer = path.resolve('./.knowl-cli-notes-peer');
+    await fs.rm(peer, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(peer, '.knowl'), { recursive: true });
+    await saveConfig(peer, { ...DEFAULT_CONFIG });
+    expect(knowl(peer, 'workspace', 'add', 'gated', '--name', 'peer').status).toBe(0);
+    expect(knowl(peer, 'workspace', 'status').stdout).toContain('personal notes and reading log');
+    await fs.rm(peer, { recursive: true, force: true }).catch(() => {});
+
     await fs.rm(notes, { recursive: true, force: true }).catch(() => {});
   });
 

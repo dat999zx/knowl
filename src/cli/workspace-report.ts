@@ -21,6 +21,14 @@ export function formatWorkspaceBlock(active: ActiveWorkspace | null, options: { 
     const state = peer.present ? 'present' : 'missing from this machine';
     // Names by default; resolved roots stay out of routine output.
     lines.push(`    ${peer.name.padEnd(16)} ${state}${options.verbose ? ` (${peer.root})` : ''}`);
+
+    // Appended as their own line rather than widened into the row above, so a repo with
+    // nothing recorded produces byte-identical output to before this feature.
+    const nature: string[] = [];
+    if (peer.role) nature.push(peer.role);
+    if (peer.kin) nature.push(`kin: ${peer.kin}`);
+    if (peer.defaultVisibility === 'workspace') nature.push('new writes are workspace-visible');
+    if (nature.length) lines.push(`      ${nature.join(' — ')}`);
   }
   return lines;
 }

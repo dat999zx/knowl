@@ -34,6 +34,24 @@ describe('workspace status block', () => {
     expect(formatWorkspaceBlock(active()).join('\n')).toMatch(/protocol.*missing/i);
   });
 
+  it('shows each peer recorded nature beside its presence', () => {
+    const text = formatWorkspaceBlock(active({
+      peers: [
+        {
+          name: 'duck', root: path.resolve('/repos/duck'), databasePath: path.resolve('/repos/duck/.knowl/knowl.db'),
+          present: true, role: 'reading log', kin: 'forks', defaultVisibility: 'workspace',
+        },
+        { name: 'plain', root: path.resolve('/repos/plain'), databasePath: path.resolve('/repos/plain/.knowl/knowl.db'), present: true },
+      ],
+    })).join('\n');
+
+    expect(text).toContain('reading log');
+    expect(text).toContain('kin: forks');
+    expect(text).toMatch(/duck[\s\S]*workspace-visible/);
+    // A repo with nothing recorded reads exactly as it did before this feature.
+    expect(text).toMatch(/plain\s+present\s*$/m);
+  });
+
   it('shows names, not absolute paths, unless verbose', () => {
     expect(formatWorkspaceBlock(active()).join('\n')).not.toContain(path.resolve('/repos/web'));
     expect(formatWorkspaceBlock(active(), { verbose: true }).join('\n')).toContain(path.resolve('/repos/web'));
