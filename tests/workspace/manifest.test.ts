@@ -88,6 +88,62 @@ describe('manifest', () => {
     expect(() => assertNameAvailable(createManifest('x', null), 'Bad Name')).toThrow(/lowercase/i);
   });
 
+  it('normalizes role, defaultVisibility and kin, resolving anything unparseable toward private', async () => {
+    const target = workspaceManifestPath('shapes');
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, JSON.stringify({
+      version: 1, name: 'shapes', minKnowlVersion: '2.7.1', embedding: null,
+      repos: [
+        { name: 'notes', role: '  my   notes\nand log  ', defaultVisibility: 'workspace', kin: 'forks' },
+        { name: 'junk', role: 42, defaultVisibility: 'WORKSPACE', kin: 'Not A Name' },
+        { name: 'bare' },
+      ],
+    }), 'utf8');
+
+    const loaded = await readManifest(target);
+    expect(loaded.repos[0]).toMatchObject({ role: 'my notes and log', defaultVisibility: 'workspace', kin: 'forks' });
+    // Every unparseable value resolves toward private: no visibility, no role, no kin.
+    expect(loaded.repos[1].defaultVisibility).toBeUndefined();
+    expect(loaded.repos[1].role).toBeUndefined();
+    expect(loaded.repos[1].kin).toBeUndefined();
+    expect(loaded.repos[2].defaultVisibility).toBeUndefined();
+  });
+
+  it('caps role, because it renders into every session-start block', async () => {
+    const target = workspaceManifestPath('capped');
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, JSON.stringify({
+      version: 1, name: 'capped', minKnowlVersion: '2.7.1', embedding: null,
+      repos: [{ name: 'wordy', role: 'x'.repeat(500) }],
+    }), 'utf8');
+    expect((await readManifest(target)).repos[0].role).toHaveLength(200);
+  });
+
+  it('preserves fields a newer version wrote, so a round trip through this build is lossless', async () => {
+    const target = workspaceManifestPath('forward');
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, JSON.stringify({
+      version: 1, name: 'forward', minKnowlVersion: '2.7.1', embedding: null,
+      repos: [{ name: 'server', somethingNewer: { nested: true } }],
+    }), 'utf8');
+
+    await writeManifest(target, await readManifest(target));
+    const raw = JSON.parse(await fs.readFile(target, 'utf8'));
+    expect(raw.repos[0].somethingNewer).toEqual({ nested: true });
+  });
+
+  it('never throws on a malformed entry, because a machine-wide sweep reads every manifest', async () => {
+    const target = workspaceManifestPath('malformed');
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, JSON.stringify({
+      version: 1, name: 'malformed', minKnowlVersion: '2.7.1', embedding: null,
+      repos: [null, 'not-an-object', { name: 'ok' }],
+    }), 'utf8');
+    const loaded = await readManifest(target);
+    expect(loaded.repos).toHaveLength(3);
+    expect(loaded.repos[2].name).toBe('ok');
+  });
+
   it('tolerates a manifest written before repos or retiredNames existed', async () => {
     const target = workspaceManifestPath('legacy');
     await fs.mkdir(path.dirname(target), { recursive: true });
