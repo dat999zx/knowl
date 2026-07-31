@@ -177,5 +177,13 @@ export async function updateKnowledgeItemWithCommit(
     },
   ]);
 
+  // Demotion to deprecated/rejected says "this was wrong", which implicates the batch
+  // that produced it — unlike a supersede, which as often means "this is outdated" and
+  // must not flag siblings on every routine state refresh.
+  if ((updates.status === 'deprecated' || updates.status === 'rejected') && beforeItem.status === 'active') {
+    const { flagCorrectionSiblingsBestEffort } = await import('./blast-radius.js');
+    await flagCorrectionSiblingsBestEffort(projectId, id, `"${beforeItem.title}" (${updates.status})`);
+  }
+
   return updated;
 }

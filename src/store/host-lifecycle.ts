@@ -35,6 +35,7 @@ import {
 import { bootstrapAgentSession } from './context-bootstrap.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
+import { describeAutoDrift, runAutoDriftCheckBestEffort, type AutoDriftResult } from './drift-auto.js';
 
 // Emit the mid-turn continuation reminder after this many consecutive non-Knowl
 // tool calls; any Knowl tool call resets the counter to zero.
@@ -52,6 +53,7 @@ export type HostLifecycleResult = {
   handoff?: Awaited<ReturnType<typeof recordPendingSessionHandoff>>;
   hostOutput?: Record<string, unknown>;
   changes?: ChangeSummary;
+  drift?: AutoDriftResult;
 };
 
 function bindingKey(input: NormalizedHostHook, scope: 'session' | 'turn'): HostSessionKey {
@@ -293,15 +295,29 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     const recovered = await recoverAbandonedSessions();
     const purgedEventCount = await purgeExpiredSessionEvents();
     await closeInactiveHostSessionBindings();
+    // Detection only: names what moved and the command to review it, mutating nothing.
+    const drift = await runAutoDriftCheckBestEffort(projectId, input.projectRoot);
     const started = await bootstrapWithHandoff(projectId, input, 'session', true);
+    // The warning is charged against the cap first — the same rule the subagent card
+    // follows. Prepending it to an already-budgeted block pushed the session past the size
+    // the host was promised, and the warning is the part that must survive: the watermark
+    // has already advanced, so this line is the only record of the window.
+    const warning = truncateText(describeAutoDrift(drift) ?? '', DEFAULT_CONTEXT_MAX_CHARS);
+    const recentBudget = warning
+      ? Math.max(0, DEFAULT_CONTEXT_MAX_CHARS - warning.length - 2)
+      : DEFAULT_CONTEXT_MAX_CHARS;
+    const recent = started.context ? truncateText(started.context, recentBudget) : undefined;
+    const context = warning ? (recent ? `${warning}\n\n${recent}` : warning) : recent;
     return {
       accepted: true,
       sessionId: started.session.id,
-      context: started.context,
-      contextTruncated: started.truncated,
+      context,
+      contextTruncated: started.truncated
+        || Boolean(started.context && started.context.length > recentBudget),
       recoveredCount: recovered.length,
       purgedEventCount,
-      hostOutput: hostContextOutput(input, started.context),
+      hostOutput: hostContextOutput(input, context),
+      ...(drift ? { drift } : {}),
     };
   }
 

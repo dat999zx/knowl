@@ -1,4 +1,4 @@
-import { CommitChange, EvidenceInput, KnowledgeCategory, KnowledgeItem, KnowledgeWriteValidationOptions } from '../core/types.js';
+import { CommitChange, EvidenceInput, KnowledgeCategory, KnowledgeItem, KnowledgeProvenance, KnowledgeWriteValidationOptions } from '../core/types.js';
 import { searchKnowledgeItems } from './search.js';
 import * as repo from './repository.js';
 import { checkKnowledgeConflict } from './conflicts.js';
@@ -25,6 +25,7 @@ export interface StoreKnowledgeInput {
   sourceCommit?: string | null;
   affectedPaths?: string[] | null;
   confidence?: number;
+  provenance?: KnowledgeProvenance | null;
   steps?: string[];
   evidence?: EvidenceInput[];
   /** Explicitly mark this active item id superseded by the new write. */
@@ -303,6 +304,7 @@ export async function storeKnowledgeItemDeduped(
       sourceCommit: input.sourceCommit,
       affectedPaths: input.affectedPaths,
       confidence: input.confidence,
+      provenance: input.provenance,
       conflictKey: input.conflictKey,
       conflictScope: input.conflictScope,
       conflictExclusive: input.conflictExclusive,
@@ -379,6 +381,7 @@ export async function storeKnowledgeAtomsDeduped(
         sourceCommit: atom.sourceCommit,
         affectedPaths: atom.affectedPaths,
         confidence: atom.confidence,
+        provenance: atom.provenance,
       },
       atom.steps,
       undefined,

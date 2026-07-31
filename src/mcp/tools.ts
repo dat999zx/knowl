@@ -26,6 +26,8 @@ import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackag
 import { KnowledgeValidationError } from '../core/knowledge-validation.js';
 import { isEvidenceStale, listEvidenceForItem } from '../store/evidence-repository.js';
 import { recordKnowledgeFeedback } from '../store/access-feedback.js';
+import { flagCorrectionSiblingsBestEffort } from '../store/blast-radius.js';
+import { applyFeedbackToTierBestEffort } from '../store/tier.js';
 import { finishMemorySession } from '../store/session-repository.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
@@ -176,6 +178,11 @@ export function registerTools(
                 type: 'number',
                 description: 'Optional confidence from 0.0 to 1.0.',
               },
+              provenance: {
+                type: 'string',
+                enum: ['observed', 'user_stated', 'inferred'],
+                description: 'How this came to be believed: observed (execution or direct inspection), user_stated (the human said so), or inferred (concluded without direct evidence). Inferred items rank lower until confirmed by use.',
+              },
               conflictKey: { type: 'string', description: 'Optional normalized semantic identity key.' },
               conflictScope: { type: 'object', description: 'Optional scope for the conflict key.' },
               conflictExclusive: { type: 'boolean', description: 'Whether only one active value may exist for this key/scope.' },
@@ -211,6 +218,11 @@ export function registerTools(
                     sourceCommit: { type: 'string' },
                     affectedPaths: { type: 'array', items: { type: 'string' } },
                     confidence: { type: 'number' },
+                    provenance: {
+                      type: 'string',
+                      enum: ['observed', 'user_stated', 'inferred'],
+                      description: 'How this came to be believed: observed (execution or direct inspection), user_stated (the human said so), or inferred (concluded without direct evidence). Inferred items rank lower until confirmed by use.',
+                    },
                     steps: { type: 'array', items: { type: 'string' } },
                     supersedes: { type: 'string', description: 'Id of an active item this atom replaces; it is marked superseded (retired but still queryable), not deleted.' },
                   },
@@ -678,7 +690,7 @@ export function registerTools(
       }
 
       else if (name === 'knowl_store') {
-        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, steps, conflictKey, conflictScope, conflictExclusive, supersedes, namespace = 'project' } = args as any;
+        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, provenance, steps, conflictKey, conflictScope, conflictExclusive, supersedes, namespace = 'project' } = args as any;
 
         if (!KNOWLEDGE_CATEGORIES.includes(category)) {
           throw new Error(`Invalid knowledge category: ${category}`);
@@ -697,6 +709,7 @@ export function registerTools(
             sourceCommit,
             affectedPaths,
             confidence,
+            provenance,
             conflictKey,
             conflictScope,
             conflictExclusive,
@@ -976,7 +989,25 @@ export function registerTools(
         const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
         try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const feedback = await recordKnowledgeFeedback({ itemId, used, useful, causedCorrection });
-        return { content: [{ type: 'text', text: `Recorded feedback for ${itemId}:\n\n${JSON.stringify(feedback, null, 2)}` }] };
+        // Standing is the deliberate consequence of feedback, applied here rather than
+        // inside telemetry recording, which still never alters retrieval by itself.
+        const tierChange = await applyFeedbackToTierBestEffort(projectId!, itemId, { useful, causedCorrection });
+        // A correction implicates the corrected item's batch, not just the item: the
+        // pass that produced one wrong atom usually produced more. Explicit
+        // causedCorrection is the unambiguous signal; a routine supersede is not.
+        let blast: Awaited<ReturnType<typeof flagCorrectionSiblingsBestEffort>> = null;
+        if (causedCorrection === true) {
+          const { getKnowledgeItem } = await import('../store/repository.js');
+          const corrected = await getKnowledgeItem(itemId);
+          blast = await flagCorrectionSiblingsBestEffort(projectId!, itemId, `"${corrected?.title ?? itemId}" (correction feedback)`);
+        }
+        const tierNote = tierChange
+          ? `\n\nStanding: item ${tierChange.reason} to ${tierChange.tier}.`
+          : '';
+        const blastNote = blast && blast.flaggedIds.length > 0
+          ? `\n\nBlast radius: ${blast.flaggedIds.length} sibling item(s) marked needs_review${blast.capped ? ' (capped)' : ''}.`
+          : '';
+        return { content: [{ type: 'text', text: `Recorded feedback for ${itemId}:\n\n${JSON.stringify(feedback, null, 2)}${tierNote}${blastNote}` }] };
       }
 
       else if (name === 'knowl_session_finish') {

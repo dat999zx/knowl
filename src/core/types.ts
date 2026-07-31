@@ -37,6 +37,23 @@ export type KnowledgeFreshness =
   | 'stale'
   | 'needs_review';
 
+/**
+ * Standing earned by use, orthogonal to self-reported confidence. Every write starts
+ * `asserted`; repeated confirmed-useful feedback promotes to `verified`; a correction or a
+ * content edit resets, because verified means verified-verbatim. Deliberately absent from
+ * lifecycleHash: verification is this machine's own experience with the item, and an
+ * imported copy has not been used here yet.
+ */
+export type KnowledgeTier = 'asserted' | 'verified';
+
+/**
+ * How the knowledge came to be believed, fixed at write time. `observed` — from execution
+ * or direct inspection; `user_stated` — the human said so; `inferred` — the agent
+ * concluded it. A reflected lesson reads as authoritative once stored, so the class it
+ * was born with is the only record that it was ever a guess.
+ */
+export type KnowledgeProvenance = 'observed' | 'user_stated' | 'inferred';
+
 export type SessionStatus = 'active' | 'finished' | 'failed' | 'abandoned' | 'recovered';
 export type SessionEventType = 'start' | 'command' | 'test' | 'error' | 'git' | 'decision' | 'checkpoint' | 'stop';
 
@@ -80,6 +97,10 @@ export interface KnowledgeItem {
   visibility?: string | null;
   freshness: KnowledgeFreshness;
   confidence: number;
+  tier: KnowledgeTier;
+  /** When `tier` was last set; confirmations before it belong to a superseded standing. */
+  tierSince?: string | null;
+  provenance?: KnowledgeProvenance | null;
   conflictKey?: string | null;
   conflictScope?: Record<string, unknown> | null;
   conflictExclusive?: boolean;
@@ -272,6 +293,7 @@ export interface KnowledgeAtom {
   sourceCommit?: string | null;
   affectedPaths?: string[] | null;
   confidence?: number;
+  provenance?: KnowledgeProvenance | null;
   conflictKey?: string | null;
   conflictScope?: Record<string, unknown> | null;
   conflictExclusive?: boolean;

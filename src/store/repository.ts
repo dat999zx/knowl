@@ -14,6 +14,8 @@ import {
   CommitChange,
   KnowledgeCategory,
   KnowledgeFreshness,
+  KnowledgeTier,
+  KnowledgeProvenance,
   KnowledgeStatus,
   KnowledgeWriteValidationOptions,
 } from '../core/types.js';
@@ -85,6 +87,9 @@ export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSe
     category: row.category as KnowledgeCategory,
     status: row.status as KnowledgeStatus,
     freshness: (row.freshness || DEFAULT_FRESHNESS) as KnowledgeFreshness,
+    tier: (row.tier || 'asserted') as KnowledgeTier,
+    tierSince: (row.tierSince ?? null) as string | null,
+    provenance: (row.provenance ?? null) as KnowledgeProvenance | null,
     alternatives: row.alternatives as string[] | null,
     tags: row.tags as string[] | null,
     affectedPaths: row.affectedPaths as string[] | null,
@@ -114,6 +119,7 @@ export async function createKnowledgeItem(
     contentHash?: string | null;
     freshness?: KnowledgeFreshness;
     confidence?: number;
+    provenance?: KnowledgeProvenance | null;
     conflictKey?: string | null;
     conflictScope?: Record<string, unknown> | null;
     conflictExclusive?: boolean;
@@ -167,6 +173,9 @@ export async function createKnowledgeItem(
     }),
     freshness,
     confidence: item.confidence ?? 1.0,
+    tier: 'asserted' as const, // standing is earned by use, never granted at birth
+    tierSince: now, // the climb to verified starts here, not at some inherited history
+    provenance: item.provenance ?? null,
     conflictKey: item.conflictKey ? normalizeConflictKey(item.conflictKey) : null, conflictScope: normalizeConflictScope(item.conflictScope), conflictExclusive: item.conflictExclusive ?? false,
     supersededById: null,
     version: 1,
@@ -330,11 +339,24 @@ export async function updateKnowledgeItem(
       visibility: updates.visibility !== undefined ? updates.visibility : current[0].visibility,
     };
 
+    const tierIsSetExplicitly = updates.tier !== undefined;
+    const tierIsReset = !tierIsSetExplicitly
+      && (updates.content !== undefined || updates.title !== undefined);
+
     const dbUpdates = {
       ...updates,
       ...(updates.affectedPaths !== undefined ? { affectedPaths } : {}),
       ...(shouldRefreshHash ? { contentHash: hashKnowledgeContent(merged) } : {}),
       ...(updates.lifecycleHash === undefined ? { lifecycleHash: hashKnowledgeLifecycle(lifecycle) } : {}),
+      // Verified means verified-verbatim: standing earned by use does not survive the
+      // words changing. An explicit tier in `updates` (an import replaying a peer) wins.
+      ...(tierIsReset ? { tier: 'asserted' as const } : {}),
+      // Whenever the tier is set, stamp when it began. Confirmations are counted from this
+      // moment, so a reset restarts the climb rather than inheriting the events that
+      // confirmed wording this edit just replaced — or the standing a correction just voided.
+      ...((tierIsSetExplicitly || tierIsReset) && updates.tierSince === undefined
+        ? { tierSince: now }
+        : {}),
       version: nextVersion,
       updatedAt: now,
     };

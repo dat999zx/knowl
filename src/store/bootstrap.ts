@@ -27,6 +27,9 @@ const SCHEMA_STATEMENTS = [
     content_hash TEXT,
     freshness TEXT NOT NULL DEFAULT 'fresh',
     confidence REAL NOT NULL DEFAULT 1.0,
+    tier TEXT NOT NULL DEFAULT 'asserted',
+    tier_since TEXT,
+    provenance TEXT,
     conflict_key TEXT, conflict_scope TEXT, conflict_exclusive INTEGER NOT NULL DEFAULT 0,
     superseded_by_id TEXT,
     version INTEGER NOT NULL DEFAULT 1,
@@ -150,6 +153,14 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS code_files (path TEXT PRIMARY KEY, content_hash TEXT NOT NULL, updated_at TEXT NOT NULL);`,
   `CREATE TABLE IF NOT EXISTS code_symbols (locator TEXT PRIMARY KEY, file_path TEXT NOT NULL REFERENCES code_files(path) ON DELETE CASCADE, qualified_name TEXT NOT NULL, kind TEXT NOT NULL, start_line INTEGER NOT NULL, end_line INTEGER NOT NULL, signature TEXT, signature_hash TEXT);`,
   `CREATE TABLE IF NOT EXISTS code_symbol_edges (from_locator TEXT NOT NULL, to_locator TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (from_locator, to_locator, kind));`,
+
+  // Last git commit the automatic drift check ran against, per project root. Git history is
+  // the thing that moves here, so a knowledge-commit rowid watermark cannot track it.
+  `CREATE TABLE IF NOT EXISTS drift_state (
+    project_root TEXT PRIMARY KEY,
+    last_checked_commit TEXT NOT NULL,
+    checked_at TEXT NOT NULL
+  );`,
 
   `CREATE INDEX IF NOT EXISTS idx_ki_cat_status ON knowledge_items(category, status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_status ON knowledge_items(status);`,
@@ -319,6 +330,27 @@ async function repairSkillForeignKeys(client: Client): Promise<void> {
   }
 
   await client.execute('PRAGMA foreign_keys = ON;');
+}
+
+/**
+ * Tier (standing earned by use) and provenance (how the knowledge came to be believed).
+ * Existing rows get tier 'asserted' -- nothing has confirmed them here -- and provenance
+ * NULL, which is what a row written before the class existed means.
+ */
+async function ensureQualityColumns(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'knowledge_items'))) return;
+  const columns = await tableColumns(client, 'knowledge_items');
+  if (!columns.includes('tier')) {
+    await client.execute("ALTER TABLE knowledge_items ADD COLUMN tier TEXT NOT NULL DEFAULT 'asserted';");
+  }
+  if (!columns.includes('tier_since')) {
+    // Left NULL rather than backfilled to now: an existing row has never had its standing
+    // reset, so every confirmation it already carries still belongs to its current tier.
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN tier_since TEXT;');
+  }
+  if (!columns.includes('provenance')) {
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN provenance TEXT;');
+  }
 }
 
 async function ensureFreshnessColumns(client: Client): Promise<void> {
@@ -582,6 +614,7 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await migrateLegacyProjectSchema(client);
   await executeAll(client, SCHEMA_STATEMENTS);
   await ensureFreshnessColumns(client);
+  await ensureQualityColumns(client);
   await ensureConflictColumns(client);
   await ensureOwnershipColumns(client);
   await ensureMemorySessionColumns(client);
