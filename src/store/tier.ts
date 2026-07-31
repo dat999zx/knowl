@@ -45,10 +45,17 @@ export async function applyFeedbackToTier(
 
   if (feedback.useful !== true || item.tier === 'verified') return null;
 
+  // Counted from when the current tier began, not from the item's whole history. An
+  // unbounded count made both resets cosmetic: a correction or a rewording dropped the
+  // item to asserted, and the very next confirmation re-promoted it on the strength of
+  // events that had confirmed a claim the item no longer makes.
+  // NULL tier_since means a row written before the column existed: it has never been
+  // reset, so its full history still belongs to its current standing.
   const row = (await getClient().execute({
     sql: `SELECT COUNT(*) AS confirmations FROM knowledge_access
-          WHERE knowledge_item_id = ? AND surface = 'feedback' AND useful = 1`,
-    args: [itemId],
+          WHERE knowledge_item_id = ? AND surface = 'feedback' AND useful = 1
+            AND retrieved_at > COALESCE(?, '')`,
+    args: [itemId, item.tierSince ?? null],
   })).rows[0];
   if (Number(row?.confirmations ?? 0) < VERIFY_THRESHOLD) return null;
 

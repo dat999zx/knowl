@@ -5,7 +5,7 @@ import { sql } from 'drizzle-orm';
 import { closeDb, getClient, getDb, initDb } from '../../src/store/database.js';
 import { scoreCandidates } from '../../src/store/agent-query.js';
 import { recordKnowledgeFeedback } from '../../src/store/access-feedback.js';
-import { applyFeedbackToTier } from '../../src/store/tier.js';
+import { applyFeedbackToTier, VERIFY_THRESHOLD } from '../../src/store/tier.js';
 import * as repo from '../../src/store/repository.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
 
@@ -77,6 +77,70 @@ describe('evidence tier and provenance', () => {
     await repo.updateKnowledgeItem(item.id, { tier: 'verified' });
     const statusOnly = await repo.updateKnowledgeItem(item.id, { freshness: 'stale' });
     expect(statusOnly.tier).toBe('verified');
+  });
+
+  it('a content edit restarts the confirmation count — old useful events do not re-promote', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Reworded fact', content: 'Original wording.',
+    });
+    for (let i = 0; i < VERIFY_THRESHOLD; i++) {
+      await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+      await applyFeedbackToTier(projectId, item.id, { useful: true });
+    }
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('verified');
+
+    await repo.updateKnowledgeItem(item.id, { content: 'A materially different claim.' });
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+
+    // One confirmation of the NEW wording is below the threshold. The pre-edit events
+    // confirmed words that no longer exist and must not count toward this promotion.
+    await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+    expect(await applyFeedbackToTier(projectId, item.id, { useful: true })).toBeNull();
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+
+    // A full threshold of post-edit confirmations does promote again.
+    await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+    expect(await applyFeedbackToTier(projectId, item.id, { useful: true }))
+      .toEqual({ itemId: item.id, tier: 'verified', reason: 'promoted' });
+  });
+
+  it('a correction restarts the confirmation count — one useful event does not undo it', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Corrected fact', content: 'A claim proven wrong.',
+    });
+    for (let i = 0; i < VERIFY_THRESHOLD; i++) {
+      await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+      await applyFeedbackToTier(projectId, item.id, { useful: true });
+    }
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('verified');
+
+    await recordKnowledgeFeedback({ itemId: item.id, used: true, causedCorrection: true });
+    await applyFeedbackToTier(projectId, item.id, { causedCorrection: true });
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+
+    // Proof of wrongness must cost more than a single subsequent confirmation.
+    await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+    expect(await applyFeedbackToTier(projectId, item.id, { useful: true })).toBeNull();
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+  });
+
+  it('counts the full history of a row written before tier_since existed', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Legacy row', content: 'Written before the column existed.',
+    });
+    // Exactly what the migration leaves behind: standing has never been reset here, so the
+    // confirmations the row already carries still belong to its current tier.
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET tier_since = NULL WHERE id = ?',
+      args: [item.id],
+    });
+    expect((await repo.getKnowledgeItem(item.id))?.tierSince).toBeNull();
+
+    for (let i = 0; i < VERIFY_THRESHOLD; i++) {
+      await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+    }
+    expect(await applyFeedbackToTier(projectId, item.id, { useful: true }))
+      .toEqual({ itemId: item.id, tier: 'verified', reason: 'promoted' });
   });
 
   it('ranks verified above asserted and observed above inferred, all else equal', () => {

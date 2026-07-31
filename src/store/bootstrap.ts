@@ -28,6 +28,7 @@ const SCHEMA_STATEMENTS = [
     freshness TEXT NOT NULL DEFAULT 'fresh',
     confidence REAL NOT NULL DEFAULT 1.0,
     tier TEXT NOT NULL DEFAULT 'asserted',
+    tier_since TEXT,
     provenance TEXT,
     conflict_key TEXT, conflict_scope TEXT, conflict_exclusive INTEGER NOT NULL DEFAULT 0,
     superseded_by_id TEXT,
@@ -341,6 +342,11 @@ async function ensureQualityColumns(client: Client): Promise<void> {
   const columns = await tableColumns(client, 'knowledge_items');
   if (!columns.includes('tier')) {
     await client.execute("ALTER TABLE knowledge_items ADD COLUMN tier TEXT NOT NULL DEFAULT 'asserted';");
+  }
+  if (!columns.includes('tier_since')) {
+    // Left NULL rather than backfilled to now: an existing row has never had its standing
+    // reset, so every confirmation it already carries still belongs to its current tier.
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN tier_since TEXT;');
   }
   if (!columns.includes('provenance')) {
     await client.execute('ALTER TABLE knowledge_items ADD COLUMN provenance TEXT;');

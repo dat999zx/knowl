@@ -98,6 +98,8 @@ export interface KnowledgeItem {
   freshness: KnowledgeFreshness;
   confidence: number;
   tier: KnowledgeTier;
+  /** When `tier` was last set; confirmations before it belong to a superseded standing. */
+  tierSince?: string | null;
   provenance?: KnowledgeProvenance | null;
   conflictKey?: string | null;
   conflictScope?: Record<string, unknown> | null;
