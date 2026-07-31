@@ -32,7 +32,9 @@ export function chooseThreshold(scored: ScoredPair[]): { threshold: number; agre
   const sorted = [...scored].sort((a, b) => a.similarity - b.similarity);
   const candidates: number[] = [sorted[0].similarity - 0.01];
   for (let i = 1; i < sorted.length; i++) {
-    candidates.push((sorted[i - 1].similarity + sorted[i].similarity) / 2);
+    if (sorted[i - 1].similarity !== sorted[i].similarity) {
+      candidates.push((sorted[i - 1].similarity + sorted[i].similarity) / 2);
+    }
   }
   candidates.push(sorted[sorted.length - 1].similarity + 0.01);
 
