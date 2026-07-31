@@ -3,6 +3,70 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.9.0 — 2026-07-31
+
+### Added
+
+- **The drift check runs at session start, and reports rather than decides.**
+  `checkKnowledgeDrift` had existed since the `pr` command shipped, but its only caller was a
+  command someone had to remember to type — so in practice knowledge went stale exactly as if
+  the check did not exist. The session boundary is the right chokepoint, being the moment
+  before an agent starts relying on memory, and a watermarked check now runs there and leads
+  the session context with what moved.
+
+  It detects; it does not flip. Measured on a documentation-heavy repository, one commit
+  window matched 36 of 301 atoms and fifteen windows matched a third of the store: atoms
+  annotate hot files, hot files change daily, and an automatic freshness flip would hold those
+  atoms at `needs_review` permanently. Run by hand after a PR that flag volume is a review
+  worklist; applied silently at every session start it is corpus-wide ranking damage and a
+  warning that cries wolf. So the warning names the count, the leading titles, and the exact
+  pinned `knowl pr check --since <commit>` command, and flipping freshness stays deliberate.
+
+  The first run learns its baseline silently, and a watermark that no longer resolves — a
+  rebase, an aggressive gc — re-baselines quietly rather than guessing. The warning is charged
+  against the context budget before the recent-knowledge block, so it cannot push a session
+  past the size the host was promised, and it is the part that survives: the watermark has
+  already advanced, so that line is the only record of the window.
+
+- **A correction flags the batch that produced it.** A wrong memory is a class, not an
+  instance. The extraction pass or session promotion that produced one bad atom usually
+  produced more, and the correction is the one moment the system knows where to look. Siblings
+  of a corrected item — same insert commit, same source label, shared evidence — flip to
+  `needs_review`, capped at twelve and recorded as one knowledge commit, so the existing change
+  cards announce them.
+
+  Only two unambiguous signals fire it: `knowl_feedback` with `causedCorrection`, and demotion
+  to deprecated or rejected. A routine supersede deliberately does not — state atoms supersede
+  weekly, and firing there would be a flag storm. The insert commit defines the batch, so the
+  replacement that performed a correction is never itself flagged.
+
+- **`tier`: standing earned by use, orthogonal to self-reported confidence.** Every write
+  starts `asserted`; two confirmed-useful feedback events promote it to `verified`; a
+  correction demotes it immediately, and a content edit resets it, because verified means
+  verified-verbatim. Confirmations are counted from the moment the current tier began, so a
+  reset genuinely restarts the climb instead of inheriting events that confirmed a claim the
+  item no longer makes.
+
+  Ranking gains a bounded standing term sized below the freshness re-rank: earned standing
+  breaks ties between near-equals, and never outranks being current. Tier is deliberately
+  absent from `lifecycleHash` — verification is one machine's own experience with an item, and
+  an imported copy has not been used there yet.
+
+- **`provenance`: how the knowledge came to be believed, fixed at write time.** `observed`,
+  `user_stated`, or `inferred`, accepted on both `knowl_store` and the batch atom path, since
+  extraction and session promotion write through the batch. Inferred items take a small ranking
+  discount — a discount, never a burial, because an inferred item may still be the only answer.
+  NULL on legacy rows means exactly "written before the class existed".
+
+  The motivation is the memory-poisoning literature's central finding: a reflected "lesson"
+  reads as authoritative once stored, and the class it was born with is the only surviving
+  record that it was ever a guess.
+
+### Changed
+
+- Schema gains `tier`, `tier_since`, and `provenance` on `knowledge_items`, plus a `drift_state`
+  table. All additive and column-guarded; no migration step is required.
+
 ## 2.8.0 — 2026-07-30
 
 ### Added
