@@ -591,13 +591,37 @@ describe('chooseThreshold', () => {
     expect(threshold).toBeLessThan(0.85);
   });
 
-  it('reports agreement below 1 when the classes overlap', () => {
+  it('maximises agreement when one pair is an outlier', () => {
+    // Four cleanly separable pairs plus one outlier that no threshold can rescue. The best
+    // achievable agreement is exactly 4/5 -- asserting that exact value means a
+    // non-maximising search returning a worse threshold fails. A fixture where NO threshold
+    // can score 1 would pass for any return value and pin nothing.
     const scored = [
-      { similarity: 0.6, same: true },
-      { similarity: 0.65, same: false },
+      { similarity: 0.9, same: true },
+      { similarity: 0.85, same: true },
+      { similarity: 0.3, same: false },
+      { similarity: 0.2, same: false },
+      { similarity: 0.95, same: false },
     ];
 
-    expect(chooseThreshold(scored).agreement).toBeLessThan(1);
+    expect(chooseThreshold(scored).agreement).toBeCloseTo(0.8, 10);
+  });
+
+  // Forward-looking, not a regression test: this passes with or without the duplicate guard
+  // below, because a candidate sitting on a duplicated value classifies identically to the
+  // midpoint just under it and the strict `>` tie-break hands the win to the earlier one.
+  // It earns its place by pinning the invariant against a future change of `>` to `>=`,
+  // which would start selecting the duplicate-valued candidate. Do not delete as redundant.
+  it('never returns a threshold equal to an observed similarity, even with duplicates', () => {
+    const scored = [
+      { similarity: 1, same: true },
+      { similarity: 1, same: true },
+      { similarity: 0.2, same: false },
+    ];
+
+    const { threshold } = chooseThreshold(scored);
+
+    expect(scored.map((pair) => pair.similarity)).not.toContain(threshold);
   });
 
   it('throws on an empty set rather than inventing a threshold', () => {
@@ -674,7 +698,15 @@ export function chooseThreshold(scored: ScoredPair[]): { threshold: number; agre
   const sorted = [...scored].sort((a, b) => a.similarity - b.similarity);
   const candidates: number[] = [sorted[0].similarity - 0.01];
   for (let i = 1; i < sorted.length; i++) {
-    candidates.push((sorted[i - 1].similarity + sorted[i].similarity) / 2);
+    // Only when the neighbours differ. The midpoint of two equal similarities IS that
+    // similarity, and duplicate scores are ordinary -- two near-perfect same-fact pairs
+    // both land at ~1.0. Defensive rather than load-bearing: such a candidate can never
+    // actually win, since it classifies identically to the midpoint just below it and the
+    // strict `>` below hands ties to the earlier candidate (verified by brute force over
+    // 320 duplicate-bearing fixtures). Dropping it keeps the candidate set meaningful.
+    if (sorted[i - 1].similarity !== sorted[i].similarity) {
+      candidates.push((sorted[i - 1].similarity + sorted[i].similarity) / 2);
+    }
   }
   candidates.push(sorted[sorted.length - 1].similarity + 0.01);
 
@@ -704,7 +736,7 @@ export async function calibrate(pairs: CalibrationPair[], embed: Embed): Promise
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npm run test:bench -- benchmarks/unassisted-capture/tests/calibrate.test.ts`
-Expected: PASS, 4 tests.
+Expected: PASS, 5 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -1190,6 +1222,19 @@ describe('readStage1', () => {
     expect(reading.proceed).toBe(false);
   });
 
+  it('disqualifies on precision before considering recall, when both gates fail', () => {
+    // The only input where check ORDER is observable. The test above cannot pin precedence:
+    // its recall of 0.99 clears the gate on its own, so swapping the two checks yields the
+    // same verdict. Here both fail, so a swapped order would report the payload verdict
+    // with disqualified false.
+    const reading = readStage1(score({ recallFindable: 0.1, precision: 0.5 }));
+
+    expect(reading.disqualified).toBe(true);
+    expect(reading.proceed).toBe(false);
+    expect(reading.verdict).toMatch(/junk limit/i);
+    expect(reading.verdict).not.toMatch(/payload/i);
+  });
+
   it('treats exactly 0.30 recall and exactly 0.80 precision as passing', () => {
     expect(readStage1(score({ recallFindable: 0.3, precision: 0.8 }))).toMatchObject({
       proceed: true,
@@ -1284,7 +1329,7 @@ export function renderReport(score: MethodScore, reading: Stage1Reading): string
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npm run test:bench -- benchmarks/unassisted-capture/tests/report.test.ts`
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Write the CLI**
 
