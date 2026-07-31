@@ -35,6 +35,7 @@ import {
 import { bootstrapAgentSession } from './context-bootstrap.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
+import { describeAutoDrift, runAutoDriftCheckBestEffort, type AutoDriftResult } from './drift-auto.js';
 
 // Emit the mid-turn continuation reminder after this many consecutive non-Knowl
 // tool calls; any Knowl tool call resets the counter to zero.
@@ -52,6 +53,7 @@ export type HostLifecycleResult = {
   handoff?: Awaited<ReturnType<typeof recordPendingSessionHandoff>>;
   hostOutput?: Record<string, unknown>;
   changes?: ChangeSummary;
+  drift?: AutoDriftResult;
 };
 
 function bindingKey(input: NormalizedHostHook, scope: 'session' | 'turn'): HostSessionKey {
@@ -293,15 +295,23 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     const recovered = await recoverAbandonedSessions();
     const purgedEventCount = await purgeExpiredSessionEvents();
     await closeInactiveHostSessionBindings();
+    // Before context composition, so the freshness it flips is what the composed
+    // context reflects rather than news the next session hears first.
+    const drift = await runAutoDriftCheckBestEffort(projectId, input.projectRoot);
     const started = await bootstrapWithHandoff(projectId, input, 'session', true);
+    const driftLine = describeAutoDrift(drift);
+    const context = driftLine
+      ? (started.context ? `${driftLine}\n\n${started.context}` : driftLine)
+      : started.context;
     return {
       accepted: true,
       sessionId: started.session.id,
-      context: started.context,
+      context,
       contextTruncated: started.truncated,
       recoveredCount: recovered.length,
       purgedEventCount,
-      hostOutput: hostContextOutput(input, started.context),
+      hostOutput: hostContextOutput(input, context),
+      ...(drift ? { drift } : {}),
     };
   }
 

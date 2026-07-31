@@ -151,6 +151,14 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS code_symbols (locator TEXT PRIMARY KEY, file_path TEXT NOT NULL REFERENCES code_files(path) ON DELETE CASCADE, qualified_name TEXT NOT NULL, kind TEXT NOT NULL, start_line INTEGER NOT NULL, end_line INTEGER NOT NULL, signature TEXT, signature_hash TEXT);`,
   `CREATE TABLE IF NOT EXISTS code_symbol_edges (from_locator TEXT NOT NULL, to_locator TEXT NOT NULL, kind TEXT NOT NULL, PRIMARY KEY (from_locator, to_locator, kind));`,
 
+  // Last git commit the automatic drift check ran against, per project root. Git history is
+  // the thing that moves here, so a knowledge-commit rowid watermark cannot track it.
+  `CREATE TABLE IF NOT EXISTS drift_state (
+    project_root TEXT PRIMARY KEY,
+    last_checked_commit TEXT NOT NULL,
+    checked_at TEXT NOT NULL
+  );`,
+
   `CREATE INDEX IF NOT EXISTS idx_ki_cat_status ON knowledge_items(category, status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_status ON knowledge_items(status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_updated ON knowledge_items(updated_at);`,
