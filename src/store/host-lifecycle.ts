@@ -298,15 +298,22 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // Detection only: names what moved and the command to review it, mutating nothing.
     const drift = await runAutoDriftCheckBestEffort(projectId, input.projectRoot);
     const started = await bootstrapWithHandoff(projectId, input, 'session', true);
-    const driftLine = describeAutoDrift(drift);
-    const context = driftLine
-      ? (started.context ? `${driftLine}\n\n${started.context}` : driftLine)
-      : started.context;
+    // The warning is charged against the cap first — the same rule the subagent card
+    // follows. Prepending it to an already-budgeted block pushed the session past the size
+    // the host was promised, and the warning is the part that must survive: the watermark
+    // has already advanced, so this line is the only record of the window.
+    const warning = truncateText(describeAutoDrift(drift) ?? '', DEFAULT_CONTEXT_MAX_CHARS);
+    const recentBudget = warning
+      ? Math.max(0, DEFAULT_CONTEXT_MAX_CHARS - warning.length - 2)
+      : DEFAULT_CONTEXT_MAX_CHARS;
+    const recent = started.context ? truncateText(started.context, recentBudget) : undefined;
+    const context = warning ? (recent ? `${warning}\n\n${recent}` : warning) : recent;
     return {
       accepted: true,
       sessionId: started.session.id,
       context,
-      contextTruncated: started.truncated,
+      contextTruncated: started.truncated
+        || Boolean(started.context && started.context.length > recentBudget),
       recoveredCount: recovered.length,
       purgedEventCount,
       hostOutput: hostContextOutput(input, context),

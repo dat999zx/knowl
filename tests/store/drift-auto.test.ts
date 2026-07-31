@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
+import { DEFAULT_CONTEXT_MAX_CHARS } from '../../src/core/token-budget.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { describeAutoDrift, runAutoDriftCheck } from '../../src/store/drift-auto.js';
 import { handleHostLifecycleEvent } from '../../src/store/host-lifecycle.js';
@@ -124,6 +125,40 @@ describe('automatic drift check', () => {
     expect(warning).toContain('"Billing module"');
     expect(warning).toContain('…');
     expect(warning).toContain('knowl pr check --since abcdef012345');
+  });
+
+  it('charges the drift warning against the context budget instead of overflowing it', async () => {
+    // Enough recent knowledge to fill the budget on its own, so a warning appended after
+    // budgeting would push the total over the cap the host was promised.
+    // Recent context is 3 items (each content-capped) plus 8 commit lines, so the budget is
+    // filled from both ends.
+    for (let i = 0; i < 3; i++) {
+      await repo.createKnowledgeItem(projectId, {
+        category: 'fact',
+        title: `Bulky context item ${i} about the payments subsystem`,
+        content: `Filler paragraph ${i} describing the payments subsystem at length. `.repeat(30),
+        affectedPaths: ['src/bulky.ts'],
+      });
+    }
+    for (let i = 0; i < 8; i++) {
+      await repo.createKnowledgeCommit(
+        projectId,
+        `Bulky commit ${i}: ${`a long commit message segment ${i} `.repeat(8)}`,
+        [],
+      );
+    }
+    await commitFile('src/bulky.ts', 'export const a = 1;\n', 'add bulky');
+    await runAutoDriftCheck(projectId, ROOT); // advance the watermark past creation
+    await commitFile('src/bulky.ts', 'export const a = 2;\n', 'change bulky');
+
+    const result = await handleHostLifecycleEvent(projectId, hook({
+      externalSessionId: `drift-budget-${Date.now()}`,
+      title: 'Agent session',
+    }));
+
+    expect(result.drift?.candidateCount).toBeGreaterThan(0);
+    expect(result.context).toMatch(/^DRIFT: /);
+    expect(result.context!.length).toBeLessThanOrEqual(DEFAULT_CONTEXT_MAX_CHARS);
   });
 
   it('leads the session-start context with the drift warning', async () => {
