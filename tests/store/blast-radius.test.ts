@@ -3,7 +3,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { closeDb, getClient, getDb, initDb } from '../../src/store/database.js';
-import { flagCorrectionSiblings } from '../../src/store/blast-radius.js';
+import { flagCorrectionSiblings, MAX_BLAST_RADIUS } from '../../src/store/blast-radius.js';
 import { updateKnowledgeItemWithCommit } from '../../src/store/knowledge-actions.js';
 import { storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import * as repo from '../../src/store/repository.js';
@@ -114,6 +114,43 @@ describe('correction blast radius', () => {
     )).rows;
     expect(commits).toHaveLength(1);
     expect(String(commits[0].message)).toContain('"Commit trail one" (rejected)');
+  });
+
+  it('flags at most MAX_BLAST_RADIUS siblings and reports the overflow', async () => {
+    const corrected = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Corrected member', content: 'The wrong one.', source: 'wide-batch',
+    });
+    const siblings = [];
+    for (let i = 0; i < MAX_BLAST_RADIUS + 5; i++) {
+      siblings.push(await repo.createKnowledgeItem(projectId, {
+        category: 'fact', title: `Wide batch member ${i}`, content: `Member number ${i}.`,
+        source: 'wide-batch',
+      }));
+    }
+
+    const result = await flagCorrectionSiblings(projectId, corrected.id, 'test');
+
+    expect(result.flaggedIds).toHaveLength(MAX_BLAST_RADIUS);
+    expect(result.capped).toBe(true);
+    const flagged = new Set(result.flaggedIds);
+    for (const sibling of siblings) {
+      expect(await freshnessOf(sibling.id)).toBe(flagged.has(sibling.id) ? 'needs_review' : 'fresh');
+    }
+    // The correction's own subject is never part of its own blast radius.
+    expect(flagged.has(corrected.id)).toBe(false);
+  });
+
+  it('leaves capped false when every sibling fits', async () => {
+    const corrected = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Small batch member', content: 'The wrong one.', source: 'small-batch',
+    });
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'The only sibling', content: 'The other one.', source: 'small-batch',
+    });
+
+    const result = await flagCorrectionSiblings(projectId, corrected.id, 'test');
+    expect(result.flaggedIds).toHaveLength(1);
+    expect(result.capped).toBe(false);
   });
 
   it('a routine supersede flags nothing', async () => {
