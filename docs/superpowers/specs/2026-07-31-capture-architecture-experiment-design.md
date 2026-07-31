@@ -323,3 +323,59 @@ of the hook payload, which needs its own threat model.
    decision.
 5. If stage 2 runs, the decision rule is applied as written, with the losing method's numbers
    published alongside the winner's.
+
+## Results — stage 1, 2026-07-31
+
+Run at commit `cc544fd`. Generator: local Codex CLI 0.145.0, model `gpt-5.6-sol` (recorded
+from the CLI banner; the run itself logged `null` because the banner goes to stderr and the
+capture read stdout only — fixed afterwards, and noted here rather than back-filled into
+`results.json`). 32 sessions, 0 failed. Frozen threshold 0.4012, calibration agreement 0.80.
+
+| Measure | Value |
+| --- | --- |
+| Recall over `findable` | **0.862** |
+| Recall over `thinking-only` | 0.667 |
+| Precision | 0.243 |
+| **Achievable precision ceiling** | **0.279** |
+| Predictions | 111 (3.5 per session) |
+| Gold items | 32 (1.0 per session) |
+| Per-session recall spread | 0.00 – 1.00 |
+| Band pairs awaiting adjudication | 48 |
+
+### The reading
+
+**The precision disqualification is not readable, by the rule fixed before the run.** One-to-one
+matching caps precision at 0.279 for this answer key, so the 0.80 junk limit could not have
+been reached by any method however clean its output. Codex reached 87% of the maximum
+attainable. The number measures the key's density, not the method's noise — which is exactly
+the failure mode the ceiling rule was added to catch.
+
+**Recall of 0.862 clears the 0.30 stage-1 gate by a wide margin, and that is the substantive
+result.** The events do carry recoverable knowledge; the hook payload is not the binding
+constraint. This holds even allowing for the matcher's ~20% pairwise error, because the margin
+over the gate is far larger than that error.
+
+**The 3.5 : 1 ratio of predictions to gold is unresolved.** Inspection of individual sessions
+shows the surplus is mixed, not uniformly noise:
+- Genuine misses in the answer key — e.g. "the workspace cache does not detect a repository
+  joining mid-process", a real durable constraint the labeller did not record.
+- Inventory-style items the strictness standard rejects by construction — e.g. "repository
+  management is split across `repo-registry.ts`, `repo-discovery.ts`, `upgrade.ts`", which
+  reading the directory answers in seconds.
+
+Separating the two requires adjudicating the 48 band pairs and extending the key. Until then
+no precision figure should be quoted.
+
+### What this does and does not license
+
+- **Licensed:** proceeding on the basis that hook events contain recoverable durable knowledge.
+- **Licensed:** the signal attribution (`answer-key/signal-attribution.json`) — 52% of items
+  derive from git commit subjects, 45% from error text, 0% from changed paths alone. That
+  measurement does not route through the matcher and is the most reliable output of this run.
+- **Not licensed:** any claim about precision, the junk limit, or rules-versus-model on
+  precision grounds.
+- **Not licensed:** "a model does this well" in general. Codex is an agent, and the strong
+  recall may owe as much to its multi-turn latitude as to the payload.
+
+Stage 2 is not entered. The comparison it exists to make cannot be settled by a matcher with
+0.80 agreement against a 20-point margin.

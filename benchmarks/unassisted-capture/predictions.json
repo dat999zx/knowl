@@ -1,0 +1,676 @@
+{
+  "method": "model-events",
+  "generator": "codex-cli",
+  "generatorModel": null,
+  "generatedAt": "2026-07-31T14:17:50.159Z",
+  "sessionsSelected": 32,
+  "failures": [],
+  "predictions": [
+    {
+      "sessionId": "0dbcd506cf744c9e",
+      "category": "architecture",
+      "title": "Workspace ownership changes span multiple layers",
+      "content": "Workspace membership, manifest handling, resolution, cross-repository overlap, repository storage, write ownership, CLI reporting, MCP tools, and the public index were modified together. Future ownership-related changes should review these integration points as a coordinated surface."
+    },
+    {
+      "sessionId": "0ed635ce04d94bc8",
+      "category": "architecture",
+      "title": "Repository-wide CLI workflow",
+      "content": "Repository management is split across `src/cli/repo-registry.ts`, `repo-discovery.ts`, `upgrade.ts`, and `upgrade-all.ts`, with public CLI wiring in `src/index.ts`."
+    },
+    {
+      "sessionId": "0ed635ce04d94bc8",
+      "category": "constraint",
+      "title": "Repository discovery is machine-aware",
+      "content": "Repository discovery tests explicitly cover manifest entries whose checkout is not present on the current machine, so discovery behavior must account for locally unavailable checkout paths."
+    },
+    {
+      "sessionId": "0ed635ce04d94bc8",
+      "category": "architecture",
+      "title": "Doctor workflow separation",
+      "content": "CLI doctor behavior is divided among remedy, fix, report, and initialization modules: `doctor-remedy.ts`, `doctor-fix.ts`, `doctor-report.ts`, and `init-flow.ts`."
+    },
+    {
+      "sessionId": "0ed635ce04d94bc8",
+      "category": "state",
+      "title": "Dedicated repository CLI coverage",
+      "content": "The test suite contains focused coverage for repository registry, repository discovery, single-repository upgrade, and upgrade-all behavior under `tests/cli/`."
+    },
+    {
+      "sessionId": "1e14536b2a1c43ba",
+      "category": "architecture",
+      "title": "Vitest globally sweeps scratch fixtures",
+      "content": "The test harness uses tests/global-teardown.ts, registered through vitest.config.ts, to best-effort remove `.knowl-*` scratch directories at both the start and end of a test run. Startup removes leftovers from crashed runs; teardown waits until workers have released files and removes fixtures created by the current run."
+    },
+    {
+      "sessionId": "1e14536b2a1c43ba",
+      "category": "fact",
+      "title": "Windows libSQL handles can delay fixture deletion",
+      "content": "On Windows, libSQL may retain `-shm`/WAL sidecar handles until the owning test process exits, so per-test `afterEach` cleanup can fail even after the creating test finishes. Cleanup failures are intentionally non-fatal; locked directories are reported and left for the next run's startup sweep."
+    },
+    {
+      "sessionId": "1e14536b2a1c43ba",
+      "category": "constraint",
+      "title": "Counter-suffixed fixtures require global cleanup",
+      "content": "Some suites use counter-suffixed `.knowl-*` directories for true per-test isolation. Unlike fixed-name fixtures, these accumulate across runs if local cleanup fails, so the global start/end sweep is required to keep scratch storage bounded."
+    },
+    {
+      "sessionId": "1e14536b2a1c43ba",
+      "category": "state",
+      "title": "Cleanup verified against full test suite",
+      "content": "After adding the global sweep, a full Vitest run completed with 741 passing tests and zero remaining `.knowl-*` scratch directories; TypeScript validation also reported no errors."
+    },
+    {
+      "sessionId": "204b135e5f6142e2",
+      "category": "decision",
+      "title": "Inject database handles into retrieval and ranking",
+      "content": "The shared-retrieval plan calls for passing the database handle through retrieval/ranking functions instead of reading a process-wide handle. This keeps local and linked-repository queries on the same ranking path without swapping the caller's active connection."
+    },
+    {
+      "sessionId": "204b135e5f6142e2",
+      "category": "architecture",
+      "title": "Local and linked repositories must use identical ranking",
+      "content": "Linked-repository retrieval should reuse the local candidate selection and scoring pipeline. The existing federated path had drifted to a raw LIKE scan and omitted local BM25 behavior plus recency, confidence, freshness, category, and exact-identifier boosts."
+    },
+    {
+      "sessionId": "204b135e5f6142e2",
+      "category": "constraint",
+      "title": "Peer access telemetry cannot use peer databases",
+      "content": "Linked repository connections are read-only/query-only, and knowledge_access references knowledge_items. Ranking must therefore be separated from access telemetry; peer query telemetry has no valid place in the peer database and cannot be written there."
+    },
+    {
+      "sessionId": "204b135e5f6142e2",
+      "category": "decision",
+      "title": "Apply visibility filters before FTS LIMIT",
+      "content": "FTS queries must filter archived/private rows inside the query before LIMIT, not afterward. Post-LIMIT filtering can yield no results when top hits are archived, and linked-repository privacy requires private rows never to be read into the querying process."
+    },
+    {
+      "sessionId": "204b135e5f6142e2",
+      "category": "constraint",
+      "title": "Cross-repository conflict detection is report-only",
+      "content": "Conflict detection may report collisions with linked repositories but must not mutate or retire their items. Each repository remains responsible for changing its own knowledge records."
+    },
+    {
+      "sessionId": "204b135e5f6142e2",
+      "category": "constraint",
+      "title": "Cross-repository rollout is eval-gated",
+      "content": "The plan gates the cross-repository retrieval task on a checked-in cross-repository evaluation baseline."
+    },
+    {
+      "sessionId": "232b249687f942e1",
+      "category": "architecture",
+      "title": "Change attribution uses recorded commit ranges",
+      "content": "Store/MCP change attribution records commit ranges for tool calls and uses them to distinguish a caller’s own writes from foreign changes. Recorded ranges are scoped to the originating tool and checked against the caller’s attribution keys; key matching remains the fallback when no range was recorded."
+    },
+    {
+      "sessionId": "232b249687f942e1",
+      "category": "constraint",
+      "title": "Titles are not valid ownership signals",
+      "content": "Changes that share a title with a caller’s write must still be reported when they fall outside that caller’s recorded commit range. Attribution must not suppress foreign changes based only on title equality."
+    },
+    {
+      "sessionId": "232b249687f942e1",
+      "category": "constraint",
+      "title": "Host-hook tool names must be canonicalized",
+      "content": "The CLI host-hook payload filter must normalize namespaced MCP tool names such as `knowl__knowl_ingest_atoms` to the bare name `knowl_ingest_atoms`, because commit ranges are recorded under the bare MCP tool name."
+    },
+    {
+      "sessionId": "232b249687f942e1",
+      "category": "architecture",
+      "title": "Commit attribution spans store and host lifecycle layers",
+      "content": "The commit-range attribution path is distributed across `src/store/mcp-call-commits.ts`, `repository.ts`, `bootstrap.ts`, `change-watermark.ts`, `host-lifecycle.ts`, `src/mcp/change-notice.ts`, and `src/cli/agents/host-hook.ts`; changes to attribution behavior commonly require coordinated updates across these modules."
+    },
+    {
+      "sessionId": "23ba78ec2b4f4c8a",
+      "category": "architecture",
+      "title": "Workspace linking uses one safety gate",
+      "content": "Both `workspace add` and `workspace join` run through shared `assertSafeToLink` validation. It checks embedding-model compatibility, workspace nesting, and Git-tracked configuration before writing the local manifest. `workspace join` supports `--force` consistently with `add`."
+    },
+    {
+      "sessionId": "23ba78ec2b4f4c8a",
+      "category": "decision",
+      "title": "Repository names retire only when protecting ownership",
+      "content": "Removing a workspace repository retires its name only if that repository owns items. Empty repositories release their names for reuse. If a retired name still has authored items, only the original repository database carrying that ownership evidence may reclaim it; other repositories remain blocked. Ownership-count failures conservatively preserve retirement."
+    },
+    {
+      "sessionId": "23ba78ec2b4f4c8a",
+      "category": "fact",
+      "title": "Workspace item ownership is stamped",
+      "content": "Workspace writes have carried repository ownership identity since commit `2aa7f92`; repository names therefore act as authorship keys for stored items."
+    },
+    {
+      "sessionId": "23ba78ec2b4f4c8a",
+      "category": "architecture",
+      "title": "Linked workspaces already support change notifications",
+      "content": "Version 2.6.0 implemented cross-repository change notification in linked mode using per-peer commit watermarks. For a future shared-database mode, notification behavior is a regression guard and filtering obligation, not a new capability."
+    },
+    {
+      "sessionId": "23ba78ec2b4f4c8a",
+      "category": "decision",
+      "title": "Shared-database workspace v2 is deferred",
+      "content": "The shipped `linked` mode remains the supported architecture, and the workspace-v2 plan recommends not building shared mode yet. Shared mode's remaining unique benefits are editing another repository's items and cross-repository conflict detection, weighed against journaled migration, write fencing, atomic cutover, and multiple processes sharing one SQLite file."
+    },
+    {
+      "sessionId": "23ba78ec2b4f4c8a",
+      "category": "decision",
+      "title": "Workspace v2 ranking scope remains conservative",
+      "content": "The proposed advisory applies-to table was removed because there is no evidence agents use repository labels for ranking. Ranking retains v1's ties-to-local behavior; promotion-only visibility and per-atom batch routing remain planned."
+    },
+    {
+      "sessionId": "28de81eddadf449e",
+      "category": "architecture",
+      "title": "Workspace resolution is cached for single-item knowledge writes",
+      "content": "`storeKnowledgeItemDeduped` caches the active workspace per configuration root for cross-repository overlap checks, mirroring `resolveWritingRepo`. This avoids reading and parsing workspace configuration for every knowledge item written."
+    },
+    {
+      "sessionId": "28de81eddadf449e",
+      "category": "constraint",
+      "title": "Workspace cache does not detect mid-process membership changes",
+      "content": "If a repository joins a workspace while the process is running, write-time workspace resolution will not see the change until the cache is reset. `tests/store/write-workspace-cache.test.ts` documents and pins this behavior."
+    },
+    {
+      "sessionId": "28de81eddadf449e",
+      "category": "fact",
+      "title": "Two large-store segmentation faults remain unresolved",
+      "content": "Large benchmark stores still expose two segmentation faults that also reproduce on v2.6.0: one during process exit after work completes, and another during vector reindexing. These can prevent the benchmark from producing its final report and are separate from the v2.7.0 per-write workspace-resolution regression."
+    },
+    {
+      "sessionId": "2b86c060ca80432f",
+      "category": "architecture",
+      "title": "Federated change notifications use per-repository watermarks",
+      "content": "Change tracking spans local and peer repositories through store-level watermark, lifecycle, session-binding, repository, database, workspace promotion, and MCP notification components. Peer watermark behavior has dedicated coverage in tests/store/peer-change-watermark.test.ts and tests/store/federated-change-notification.test.ts."
+    },
+    {
+      "sessionId": "2b86c060ca80432f",
+      "category": "decision",
+      "title": "Peer change notification semantics",
+      "content": "On the first tool event, current peer heads are adopted silently. Later peer changes are reported once and tagged with their originating repository. Repository-private peer changes must never appear, and an unreadable peer window must be retried rather than advanced or skipped."
+    },
+    {
+      "sessionId": "2b86c060ca80432f",
+      "category": "decision",
+      "title": "Local and peer changes share one notification card",
+      "content": "When local and peer changes occur in the same notification window, they are merged into one KNOWL CHANGED card. Local entries precede peer entries, and only peer entries carry repository labels."
+    },
+    {
+      "sessionId": "339c502b82af4284",
+      "category": "constraint",
+      "title": "Peer knowledge propagation is promotion-gated",
+      "content": "Cross-workspace hooks and queries must surface explicitly promoted knowledge while keeping unpromoted/private peer items isolated. The relevant implementation spans src/store/mcp-call-commits.ts, src/store/host-lifecycle.ts, src/mcp/change-notice.ts, and src/cli/agents/host-hook.ts."
+    },
+    {
+      "sessionId": "3e574452b3a94c67",
+      "category": "architecture",
+      "title": "Knowledge ownership is stamped at the repository write funnel",
+      "content": "`src/store/repository.ts` resolves and stores `originRepo` inside `createKnowledgeItem`, the common persistence path used by synthesis, candidate promotion, and extraction. Ownership must be assigned there rather than only in the deduplicating writer so every newly created knowledge item is covered."
+    },
+    {
+      "sessionId": "3e574452b3a94c67",
+      "category": "constraint",
+      "title": "Workspace rows require explicit repository ownership",
+      "content": "After a project joins a workspace, new knowledge rows must carry `originRepo`; otherwise commands such as `workspace promote` cannot determine whether the repository may modify them. This becomes essential when multiple repositories share one database because ownership governs editing, collection, export, and superseding."
+    },
+    {
+      "sessionId": "3e574452b3a94c67",
+      "category": "decision",
+      "title": "Ownership resolution preserves unlinked-project behavior",
+      "content": "`resolveWritingRepo` is lazy and cached per project root. Projects without a workspace retain `originRepo: null` and avoid loading the workspace layer, while linked projects stamp their repository identity on writes."
+    },
+    {
+      "sessionId": "41f80e20c0a547c7",
+      "category": "architecture",
+      "title": "Workspace manifests store per-repository nature",
+      "content": "Each linked repository’s workspace manifest records its role, default visibility, and kin repositories."
+    },
+    {
+      "sessionId": "41f80e20c0a547c7",
+      "category": "decision",
+      "title": "New knowledge inherits repository visibility",
+      "content": "Store writes are stamped with the originating repository’s configured default visibility."
+    },
+    {
+      "sessionId": "41f80e20c0a547c7",
+      "category": "architecture",
+      "title": "Repository nature propagates through workspace membership",
+      "content": "Recorded repository nature is carried through workspace joins and onto peer repository records, and workspace status reports it for each linked repository."
+    },
+    {
+      "sessionId": "41f80e20c0a547c7",
+      "category": "skill",
+      "title": "Workspace repository settings are CLI-manageable",
+      "content": "`workspace set` reads the current repository settings when invoked without flags and changes its recorded nature when options are provided."
+    },
+    {
+      "sessionId": "41f80e20c0a547c7",
+      "category": "architecture",
+      "title": "Session context identifies linked repositories",
+      "content": "Agent session-start context includes what each linked repository is, using its recorded workspace nature."
+    },
+    {
+      "sessionId": "41f80e20c0a547c7",
+      "category": "decision",
+      "title": "Cross-repository advisories use kin metadata",
+      "content": "Cross-repository overlap checks search kin repositories more broadly and identify repository nature in the resulting advisory."
+    },
+    {
+      "sessionId": "41f80e20c0a547c7",
+      "category": "skill",
+      "title": "Existing repository knowledge can be promoted",
+      "content": "The workspace CLI supports `--promote-existing` to share knowledge already stored by a repository when it joins or is configured in a workspace."
+    },
+    {
+      "sessionId": "5687dda15273494e",
+      "category": "architecture",
+      "title": "CLI defers optional MCP and AI dependency trees",
+      "content": "`src/index.ts` uses dynamic imports so `./mcp/server.js` loads only for the `serve` command, while `./ai/provider.js` and `./pipeline/pipeline.js` load only inside AI-backed command actions. This keeps the MCP SDK and AI SDK out of the CLI's eager module graph and allows the bundler to split them into separate chunks."
+    },
+    {
+      "sessionId": "5687dda15273494e",
+      "category": "constraint",
+      "title": "Database dependencies dominate process startup for DB-backed commands",
+      "content": "Profiling found Node module resolution and filesystem work—especially loading `drizzle-orm` and `@libsql/client`—sets a substantial startup floor for commands that touch the database. Meaningfully accelerating the per-tool-event `agent-hook` path likely requires a lighter database path or avoiding a new process per event; deferring more application modules alone is insufficient."
+    },
+    {
+      "sessionId": "66be0607360f4d5c",
+      "category": "architecture",
+      "title": "Federated queries use one ranking pass across repositories",
+      "content": "queryFederated owns candidate selection for the local and linked repositories, selects candidates per repository, then scores the combined union once with the normal ranking signals. The previous semantic/positional partition and reciprocal-rank fusion were removed because corpus-relative scores, especially recency normalization, were not comparable across repositories."
+    },
+    {
+      "sessionId": "66be0607360f4d5c",
+      "category": "decision",
+      "title": "Federated deduplication occurs before result limiting",
+      "content": "Cross-repository query results are deduplicated before applying the requested limit, preventing the same fact stored in multiple repositories from consuming multiple slots and producing an undersized result list."
+    },
+    {
+      "sessionId": "66be0607360f4d5c",
+      "category": "constraint",
+      "title": "Federated reads must preserve visibility filtering",
+      "content": "queryKnowledgeBase must forward visibility constraints through both query paths. Omitting visibility can expose repository-private peer items through federation."
+    },
+    {
+      "sessionId": "66be0607360f4d5c",
+      "category": "architecture",
+      "title": "Cross-repository write overlap detection is advisory",
+      "content": "Both single-item and batch knowledge writers report overlaps found in linked repositories but never mutate the foreign items. Foreign items remain owned by their source repository and cannot be retired or updated from the writing repository. Detection is bounded to three candidates per peer, skips unreadable peers, and degrades overlap-check failures to no report rather than failing the write."
+    },
+    {
+      "sessionId": "66be0607360f4d5c",
+      "category": "architecture",
+      "title": "Batch overlap reports are per atom",
+      "content": "Batch ingestion resolves the active workspace once for the batch, then attaches crossRepo overlap details to each atom's outcome. This preserves which individual finding overlaps which linked repository while avoiding repeated workspace resolution inside the loop."
+    },
+    {
+      "sessionId": "66be0607360f4d5c",
+      "category": "fact",
+      "title": "Scopeless exclusive conflicts require SQL NULL handling",
+      "content": "Exclusive conflict keys without a conflict scope must use NULL-aware matching rather than equality because `column = NULL` never matches in SQL. This rule applies both to checkKnowledgeConflict and the conflict guard inside createKnowledgeItem."
+    },
+    {
+      "sessionId": "66be0607360f4d5c",
+      "category": "constraint",
+      "title": "MCP write responses explicitly serialize cross-repo advisories",
+      "content": "Adding crossRepo data to writer result objects is insufficient because MCP response formatters are allowlists. knowl_store and knowl_ingest_atoms explicitly include cross-repository overlap advisories, with batch output preserving per-atom attribution and without advising callers to retire foreign-owned items."
+    },
+    {
+      "sessionId": "66be0607360f4d5c",
+      "category": "constraint",
+      "title": "Cross-repo database tests need isolated directories on Windows",
+      "content": "Cross-repository tests use fresh directories per test because Windows may retain libSQL WAL sidecars briefly after database close. Reusing a directory can preserve an earlier database, turn a later write into a verbatim no-op, and falsely appear as missing overlap detection."
+    },
+    {
+      "sessionId": "676161f527c54777",
+      "category": "architecture",
+      "title": "Host behavior is centralized in profiles with cross-adapter conformance coverage",
+      "content": "Host definitions in `src/cli/agents/hosts/profile.ts` are implemented across Claude, Codex, Cursor, Claude Desktop, and generic adapters, with shared expectations enforced by `tests/cli/hosts/profile-conformance.test.ts`. Changes to host-profile behavior should update all adapters and the conformance suite together."
+    },
+    {
+      "sessionId": "676161f527c54777",
+      "category": "architecture",
+      "title": "Change notices are validated through dual notification channels",
+      "content": "Change-notice behavior in `src/mcp/change-notice.ts` is covered by `tests/mcp/dual-channel-notification.test.ts`, indicating that notices must remain consistent across two delivery channels."
+    },
+    {
+      "sessionId": "676161f527c54777",
+      "category": "decision",
+      "title": "Lifecycle change notices summarize large pending change sets",
+      "content": "When eight pending changes exist, host lifecycle output uses a compact notice headed `KNOWL CHANGED: 8 items since you last looked.`, lists a subset, adds `+3 more`, and directs the host to call `knowl_query`. Tests should assert the summarized notice rather than assume the earliest item is included."
+    },
+    {
+      "sessionId": "676161f527c54777",
+      "category": "architecture",
+      "title": "Host lifecycle persistence spans bootstrap and session bindings",
+      "content": "Lifecycle changes were coordinated across `src/store/bootstrap.ts`, `src/store/host-session-bindings.ts`, and `src/store/host-lifecycle.ts`, with coverage in `tests/store/host-lifecycle.test.ts`. These files form a coupled path for initializing, binding, and processing host sessions."
+    },
+    {
+      "sessionId": "67d22585e83640e1",
+      "category": "architecture",
+      "title": "Unassisted capture spans host lifecycle and candidate promotion",
+      "content": "The implementation work for unassisted capture is distributed across the agent host hook and store modules for host lifecycle, session candidates, candidate promotion, and session finalization; changes in this area should be reviewed as a coordinated lifecycle flow."
+    },
+    {
+      "sessionId": "67d22585e83640e1",
+      "category": "fact",
+      "title": "Unassisted capture has a durable design specification",
+      "content": "The project documents the design in docs/superpowers/specs/2026-07-31-unassisted-capture-design.md, which was revised repeatedly during implementation and should be consulted before changing the capture lifecycle."
+    },
+    {
+      "sessionId": "6bbd7cb59d6a4f74",
+      "category": "fact",
+      "title": "Workspace repository role work is documented",
+      "content": "A committed implementation plan exists at docs/superpowers/plans/2026-07-30-workspace-repo-role.md. The related session also modified workspace manifest and CLI tests plus store freshness and context-bootstrap code, indicating those are the main integration areas for this work."
+    },
+    {
+      "sessionId": "6ce1193b127f4aad",
+      "category": "architecture",
+      "title": "Content and lifecycle hashes are intentionally separate",
+      "content": "Knowledge item content identity remains based on title, content, reasoning, source, and paths. Lifecycle state uses a separate lifecycle_hash so promotion, retirement, supersession, and staleness can travel through export/import without changing content_hash."
+    },
+    {
+      "sessionId": "6ce1193b127f4aad",
+      "category": "decision",
+      "title": "Lifecycle-only import divergence has its own verdict",
+      "content": "Export/import classifies differing lifecycle metadata as metadata-divergent, resolves it through the existing import policy, and writes only lifecycle columns. The stored content_hash remains unchanged so subsequent synchronization classifies the records as identical."
+    },
+    {
+      "sessionId": "6ce1193b127f4aad",
+      "category": "constraint",
+      "title": "Promotion must advance updated_at",
+      "content": "Promotion updates updated_at because divergence resolution orders versions by that timestamp and the newer policy keeps the local record on ties. Promotion does not alter content_hash."
+    },
+    {
+      "sessionId": "6ce1193b127f4aad",
+      "category": "architecture",
+      "title": "Ownership fields must round-trip through portability",
+      "content": "Export/import preserves origin_repo and visibility. Import column names and positional values are defined from one table rather than separate hardcoded column and placeholder lists, preventing schema additions from silently dropping fields."
+    },
+    {
+      "sessionId": "6ce1193b127f4aad",
+      "category": "constraint",
+      "title": "Tombstone timestamps are monotonic",
+      "content": "Neither ordinary tombstone recording nor imported tombstone upserts may replace deleted_at with an older value. Both paths are guarded because deleted_at determines whether a local edit or remote deletion wins during synchronization."
+    },
+    {
+      "sessionId": "6ce1193b127f4aad",
+      "category": "skill",
+      "title": "Store portability invariants have focused regression coverage",
+      "content": "Durable export/import behavior is covered by lifecycle-hash, export-ownership, and tombstone-monotonicity tests under tests/store/."
+    },
+    {
+      "sessionId": "707d39e9d14c4934",
+      "category": "decision",
+      "title": "Promotion validates filters explicitly",
+      "content": "Workspace promotion must report unknown IDs via `unknownIds`, count foreign-owned matches via `skippedForeign`, and reject category values outside the supported knowledge categories instead of silently returning no items."
+    },
+    {
+      "sessionId": "707d39e9d14c4934",
+      "category": "constraint",
+      "title": "CLI promotion failures identify the bad filter",
+      "content": "`knowl workspace promote` exits unsuccessfully for invalid ID or category filters, and its error output names the offending value, including malformed category arguments caused by command-line splitting."
+    },
+    {
+      "sessionId": "707d39e9d14c4934",
+      "category": "decision",
+      "title": "Repository upgrade preserves item ownership",
+      "content": "`upgradeExistingRepository` reports `claimedItems` and does not claim items whose `origin_repo` is null or reassign items already owned by another repository."
+    },
+    {
+      "sessionId": "707d39e9d14c4934",
+      "category": "constraint",
+      "title": "Workspace repository identity remains portable and reserved",
+      "content": "Joining from a workspace manifest copied from another machine re-points repository paths locally; a checkout matching no manifest repository is rejected. Retired repository names remain unavailable to other repositories but can be reclaimed by their prior owner, and repository removal requires owner acknowledgement of the export."
+    },
+    {
+      "sessionId": "95e5bb666f564be7",
+      "category": "decision",
+      "title": "Hook payloads tolerate a UTF-8 BOM",
+      "content": "Agent lifecycle hook parsing accepts stdin JSON prefixed with a UTF-8 BOM instead of exiting with “expected a value.” The behavior is covered in tests/cli/host-hook.test.ts and prevents Windows PowerShell redirection from breaking capture."
+    },
+    {
+      "sessionId": "95e5bb666f564be7",
+      "category": "architecture",
+      "title": "Workspace promotion claims unowned records",
+      "content": "Repository ownership is backfilled when a repository joins but is not stamped on later writes. Workspace promotion therefore treats NULL-owned matching items as belonging to the current repository, records ownership when promotion is applied, and avoids repeatedly promoting them."
+    },
+    {
+      "sessionId": "95e5bb666f564be7",
+      "category": "fact",
+      "title": "Promotion enables cross-repository visibility",
+      "content": "Items must be promoted to become workspace-visible; cross-repository notification depends on that visibility. Refusing NULL-owned post-join items made the normal promotion path unreachable."
+    },
+    {
+      "sessionId": "987e4038f8204f99",
+      "category": "architecture",
+      "title": "Knowledge-item writes bypass Drizzle’s libSQL transaction wrapper",
+      "content": "createKnowledgeItem and updateKnowledgeItem use a client-level transaction helper that issues BEGIN/COMMIT and passes the ordinary connection to the callback. This avoids a drizzle-orm 0.45.2/libSQL native-state leak that caused process-exit segmentation faults after roughly 1,200 repeated two-statement transactions. The helper is intentionally outermost-only; callers receiving an existing transaction connection skip it."
+    },
+    {
+      "sessionId": "987e4038f8204f99",
+      "category": "fact",
+      "title": "Each knowledge write persists an item and an assertion atomically",
+      "content": "The normal knowledge write path performs two statements in one transaction: an insert/update of the knowledge item and an insert into knowledge_assertions. Preserving this atomic relationship is why the transaction workaround changes the transaction mechanism rather than removing transactions."
+    },
+    {
+      "sessionId": "987e4038f8204f99",
+      "category": "architecture",
+      "title": "Direct decisions share cross-repository overlap detection",
+      "content": "recordDecisionDirect, used by both `knowl decide` and the knowl_decide tool, explicitly calls crossRepoOverlapForWrite because it writes through the repository rather than knowledge-writer. Its result includes advisory crossRepo overlaps; linked-repository decisions are reported but cannot be retired from the current repository."
+    },
+    {
+      "sessionId": "987e4038f8204f99",
+      "category": "architecture",
+      "title": "CLI renders cross-repository decision notices",
+      "content": "The CLI has a dedicated cross-repository notice renderer and displays overlaps returned by direct decision recording, including the peer repository’s recorded role and shared lineage. Clean subjects remain quiet. Human-facing wording directs users to coordinate with the owning repository, distinct from MCP refusal-oriented messaging."
+    },
+    {
+      "sessionId": "987e4038f8204f99",
+      "category": "constraint",
+      "title": "Test runs use an isolated KNOWL_HOME",
+      "content": "Vitest configuration assigns the suite its own KNOWL_HOME because CLI tests spawn the real CLI, while upgrade and doctor operations can use the home-level repository registry. This prevents tests from registering, inspecting, or sweeping a developer’s real repositories. The scratch home follows the ignored `.knowl-*` naming convention and is removed during teardown."
+    },
+    {
+      "sessionId": "987e4038f8204f99",
+      "category": "fact",
+      "title": "Large-corpus benchmark exposes ranking rather than recall headroom",
+      "content": "After fixing the write-path crash, benchmark instances above roughly 1,200 facts became runnable. Recorded 2.8.0 results were: 455 facts—96% top-1, 100% any-rank, 22 ms p50; 2,310 facts—97% top-1, 98% any-rank, 50 ms p50; 4,580 facts—91% top-1, 98% any-rank, 80 ms p50. At the largest size, stable top-5 recall alongside lower top-1 accuracy points to ranking as the main retrieval opportunity."
+    },
+    {
+      "sessionId": "987e4038f8204f99",
+      "category": "constraint",
+      "title": "Multi-hop benchmark instances are not a direct retrieval signal",
+      "content": "The documented multi-hop instances reuse the single-hop corpus but ask compositional questions whose answer-bearing facts do not share terms with the query. A top-k retriever cannot solve those questions by construction, so their results should not be interpreted as ordinary retrieval quality."
+    },
+    {
+      "sessionId": "987e4038f8204f99",
+      "category": "architecture",
+      "title": "Competitor accuracy harness lives under benchmarks/accuracy",
+      "content": "The salvaged accuracy benchmark adds a 200-query dataset with gold labels separated from public records, normalized and native evaluation modes, baselines, adapter code, and scoring tests. Its adapter uses queryKnowledgeForAgent, database initialization/closure, and repository APIs. The benchmarks directory is excluded from the published build."
+    },
+    {
+      "sessionId": "9ca3320a5dbe4f98",
+      "category": "architecture",
+      "title": "Unassisted capture design and candidate storage are coupled",
+      "content": "Changes to unassisted capture were made together in `docs/superpowers/specs/2026-07-31-unassisted-capture-design.md` and `src/store/session-candidates.ts`; consult both when modifying this behavior."
+    },
+    {
+      "sessionId": "b2e561dc6eab43a4",
+      "category": "constraint",
+      "title": "Commander package metadata cannot be loaded via package subpath",
+      "content": "With commander ^12.1.0 on Node.js v24.15.0, importing or requiring `commander/package.json` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED` because that subpath is not exposed by the package's `exports` map. Obtain the Commander version without accessing that subpath."
+    },
+    {
+      "sessionId": "c454cf991aab400c",
+      "category": "architecture",
+      "title": "Store handles enable database-targeted retrieval",
+      "content": "Retrieval reads can accept a store handle containing both the Drizzle database instance and raw vector client. The handle defaults to the ambient process-wide store, preserving existing call sites while allowing reads to target linked repositories."
+    },
+    {
+      "sessionId": "c454cf991aab400c",
+      "category": "constraint",
+      "title": "Linked-repository handles are read-only",
+      "content": "Peer store handles enable SQLite query-only mode and skip database bootstrap or migration. Retrieval against peers must not perform writes, including access telemetry or embedding upserts."
+    },
+    {
+      "sessionId": "c454cf991aab400c",
+      "category": "architecture",
+      "title": "Retargeted searches must also retarget hydration",
+      "content": "FTS and vector searches first produce item IDs, then hydrate them through item-query helpers. The same store handle must be passed into hydration; otherwise peer IDs are loaded from the local database, causing false empty results or unrelated local rows when IDs collide."
+    },
+    {
+      "sessionId": "c454cf991aab400c",
+      "category": "decision",
+      "title": "Visibility and status filters run before candidate limits",
+      "content": "FTS and vector retrieval apply status, category, and visibility predicates inside the database query before LIMIT. Post-limit filtering can exhaust the candidate window with archived or repo-private rows and incorrectly report no usable matches. Tag filtering remains in application code because it narrows an already visibility-safe candidate set."
+    },
+    {
+      "sessionId": "c454cf991aab400c",
+      "category": "architecture",
+      "title": "Retrieval separates selection, scoring, and telemetry",
+      "content": "Candidate selection runs per store, while scoring runs once over the combined candidate union. This preserves meaningful recency normalization across repositories instead of making every repository's newest item equally fresh. Optional repository labels pass through scoring for result attribution."
+    },
+    {
+      "sessionId": "c454cf991aab400c",
+      "category": "constraint",
+      "title": "Peer retrieval cannot record local access telemetry",
+      "content": "Access telemetry is separated from retrieval because peer handles are query-only and local knowledge_access rows reference local knowledge_items. A peer item therefore cannot be correctly recorded in the querying repository's access table."
+    },
+    {
+      "sessionId": "c454cf991aab400c",
+      "category": "fact",
+      "title": "Ranking reconstructs lexical/vector base score from ranks",
+      "content": "After candidate selection and scoring were separated, baseRankScore was defined from bm25Rank and vectorRank rather than a previously accumulated score field, preventing externally assembled candidates from carrying stale precomputed scores."
+    },
+    {
+      "sessionId": "c4d4d003a06a4ef5",
+      "category": "architecture",
+      "title": "Change-notice delivery is coordinated across hook and MCP channels",
+      "content": "Foreign knowledge-change announcements involve both `src/store/host-session-bindings.ts` and `src/mcp/change-notice.ts`; these components must coordinate so a single change is not reported twice when hook and MCP channels are active together."
+    },
+    {
+      "sessionId": "c4d4d003a06a4ef5",
+      "category": "fact",
+      "title": "Duplicate foreign-change reporting had a regression test",
+      "content": "`tests/store/tmp-double-report.test.ts` reproduced one sibling change being announced by both the hook and MCP paths. The expected behavior is that the hook reports the change and the MCP path returns no duplicate notice."
+    },
+    {
+      "sessionId": "d34238d796a043a1",
+      "category": "architecture",
+      "title": "Lifecycle import comparison derives missing fingerprints",
+      "content": "Import comparison must fall back to deriving the lifecycle fingerprint from covered lifecycle fields whenever either the incoming item or local row lacks `lifecycleHash`. Version-1 exports lack the hash but still contain the lifecycle fields, while pre-migration database rows can have NULL because the column was added without backfill."
+    },
+    {
+      "sessionId": "d34238d796a043a1",
+      "category": "constraint",
+      "title": "Persist derived lifecycle hashes during import",
+      "content": "When importing an item without a stored lifecycle hash, persist the derived fingerprint rather than NULL. Otherwise version-1 imports remain on the fallback path indefinitely and convergence comparisons are unreliable."
+    },
+    {
+      "sessionId": "d34238d796a043a1",
+      "category": "architecture",
+      "title": "Lifecycle comparison requires complete local-row data",
+      "content": "The local-row SELECT used by import conflict classification must include all lifecycle fields covered by the fingerprint, so legacy NULL hashes can be derived accurately."
+    },
+    {
+      "sessionId": "d34238d796a043a1",
+      "category": "decision",
+      "title": "Workspace v2 shared database is blocked by ownership contradiction",
+      "content": "The workspace v2 plan promises cross-repo editing of foreign-owned knowledge while also deliberately forbidding foreign edits and supersession. Existing v1 ownership enforcement already rejects such edits, so the plan must first choose among dropping the claimed cross-owner editing benefit, designing an explicit proposal/accept authorization workflow, or allowing foreign edits outright. The documented recommendation is currently not to build the shared-database design."
+    },
+    {
+      "sessionId": "d34238d796a043a1",
+      "category": "constraint",
+      "title": "Workspace migration must coordinate active writers",
+      "content": "A per-repository copy followed by a final manifest flip can lose writes made between copying and flipping. Long-lived serve processes also retain database handles across the flip, so migration needs explicit writer quiescence or another concurrency-safe cutover mechanism."
+    },
+    {
+      "sessionId": "d34238d796a043a1",
+      "category": "architecture",
+      "title": "Database routing must cover direct repository writers",
+      "content": "Routing only through `knowledge-writer` is insufficient: synthesis, `knowl_decide`, and pipeline merge can call the repository directly. The database resolver also needs integration through `database.ts`, which is used by CLI commands and MCP writes."
+    },
+    {
+      "sessionId": "d34238d796a043a1",
+      "category": "constraint",
+      "title": "Ownership filtering has broader storage implications",
+      "content": "Owner-aware workspace work must account for foreign keys spanning proposed database splits, modules that read the code index without owning it, FTS queries that currently apply LIMIT before filtering, and tombstones that lack an owner column. These affect correct search results, splitting, and preservation of deletion history."
+    },
+    {
+      "sessionId": "e52ac7ec86a243ab",
+      "category": "architecture",
+      "title": "CLI query uses the shared ranking engine",
+      "content": "Both workspace and non-workspace `knowl query` paths use the same shared ranker and vector-search configuration as the MCP query tool. Their default result limit is 20. The logic is extracted into `runCliQuery` for direct testing."
+    },
+    {
+      "sessionId": "e52ac7ec86a243ab",
+      "category": "constraint",
+      "title": "Historical queries remain on queryKnowledgeBase",
+      "content": "The `--as-of` path intentionally stays on `queryKnowledgeBase` because the shared ranker does not model point-in-time reconstruction."
+    },
+    {
+      "sessionId": "e52ac7ec86a243ab",
+      "category": "decision",
+      "title": "As-of resolution filters normal search candidates",
+      "content": "Historical resolution now shares `resolveAsOf` and filters the same FTS candidates as ordinary search. It must not discard FTS candidates and fall back to whole-phrase LIKE matching, which misses token-level matches."
+    },
+    {
+      "sessionId": "e52ac7ec86a243ab",
+      "category": "architecture",
+      "title": "Connection pool shutdown checkpoints WAL",
+      "content": "`releaseAll` performs `PRAGMA wal_checkpoint(TRUNCATE)` before closing writable pooled clients so WAL changes are folded into the main SQLite file. Read-only/query-only clients skip the checkpoint because they cannot execute it and have no writes."
+    },
+    {
+      "sessionId": "ece54cf4fb49481e",
+      "category": "fact",
+      "title": "Cross-repository overlap includes relationship metadata",
+      "content": "`findCrossRepoOverlap` is expected to produce both the `kin` marker and the peer role; this behavior is covered by `tests/workspace/cross-repo-overlap.test.ts`."
+    },
+    {
+      "sessionId": "f0b2297951c44dc9",
+      "category": "architecture",
+      "title": "Storage roles must be split before shared-database routing",
+      "content": "`src/store/database.ts` exposes a single process-wide database handle used through `getDb()`/`getClient()` by 29 modules. The code index, host-session bindings, and MCP-call commits own tables that must remain repo-local, so knowledge storage cannot be redirected to a shared database until database access is separated by storage role."
+    },
+    {
+      "sessionId": "f0b2297951c44dc9",
+      "category": "constraint",
+      "title": "Code indexing cannot target the cross-repository knowledge database",
+      "content": "`indexCode` deletes rows absent from the current repository root. If its tables were moved into the shared knowledge database, indexing one repository could erase other repositories' index rows."
+    },
+    {
+      "sessionId": "f0b2297951c44dc9",
+      "category": "state",
+      "title": "Knowledge import loses ownership fields",
+      "content": "The current import path omits `origin_repo` and `visibility` from `ITEM_COLUMNS`, although export includes both. An export/import round trip therefore resets ownership to NULL and visibility to the default `repo` value. The workspace-v2 plan treats this as an independent v1 bug."
+    },
+    {
+      "sessionId": "f0b2297951c44dc9",
+      "category": "state",
+      "title": "Tombstone timestamps can move backward",
+      "content": "Both `recordTombstone` and the import tombstone upsert overwrite `deleted_at` unconditionally, allowing an older timestamp to replace a newer deletion timestamp. The workspace-v2 plan identifies this as an independent v1 bug."
+    },
+    {
+      "sessionId": "f0b2297951c44dc9",
+      "category": "decision",
+      "title": "Federation is dormant in shared-storage mode",
+      "content": "The workspace-v2 plan requires peer federation scanning to be disabled in shared mode because migration leaves retired per-repository databases behind, and scanning them would surface stale duplicate knowledge."
+    },
+    {
+      "sessionId": "f0b2297951c44dc9",
+      "category": "constraint",
+      "title": "Cross-owner supersede protection has two write paths",
+      "content": "Ownership-aware supersede restrictions must cover both the single-item and batch knowledge-writer paths; the batch path is commonly used by agents and cannot rely on protection at only one call site."
+    },
+    {
+      "sessionId": "f0b2297951c44dc9",
+      "category": "decision",
+      "title": "Manifest writes require atomic hardening",
+      "content": "The workspace-v2 plan requires `writeManifest` to be hardened against torn writes because a partially written workspace manifest is not recoverable through the shared-database design."
+    },
+    {
+      "sessionId": "fe0ec52be0ce48e4",
+      "category": "architecture",
+      "title": "Workspace repository role design",
+      "content": "The workspace repository role is documented in `docs/superpowers/specs/2026-07-30-workspace-repo-role-design.md`; related implementation work touches `src/workspace/promote.ts`."
+    }
+  ]
+}

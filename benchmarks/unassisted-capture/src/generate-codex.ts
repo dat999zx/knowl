@@ -83,7 +83,10 @@ export function createCodexGenerate(
       child.on('error', (error) => { clearTimeout(timer); reject(error); });
       child.on('close', (code) => {
         clearTimeout(timer);
-        if (code === 0) resolve(out);
+        // The startup banner carrying `model:` goes to stderr, so the model name is only
+        // recoverable from the two streams together. Reading stdout alone recorded a null
+        // model on the first run, and the spec requires the run to name its model.
+        if (code === 0) resolve(`${err}\n${out}`);
         else reject(new Error(`codex exec exited ${code}: ${err.slice(0, 400)}`));
       });
 
