@@ -26,6 +26,7 @@ import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackag
 import { KnowledgeValidationError } from '../core/knowledge-validation.js';
 import { isEvidenceStale, listEvidenceForItem } from '../store/evidence-repository.js';
 import { recordKnowledgeFeedback } from '../store/access-feedback.js';
+import { flagCorrectionSiblingsBestEffort } from '../store/blast-radius.js';
 import { finishMemorySession } from '../store/session-repository.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
@@ -976,7 +977,19 @@ export function registerTools(
         const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
         try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const feedback = await recordKnowledgeFeedback({ itemId, used, useful, causedCorrection });
-        return { content: [{ type: 'text', text: `Recorded feedback for ${itemId}:\n\n${JSON.stringify(feedback, null, 2)}` }] };
+        // A correction implicates the corrected item's batch, not just the item: the
+        // pass that produced one wrong atom usually produced more. Explicit
+        // causedCorrection is the unambiguous signal; a routine supersede is not.
+        let blast: Awaited<ReturnType<typeof flagCorrectionSiblingsBestEffort>> = null;
+        if (causedCorrection === true) {
+          const { getKnowledgeItem } = await import('../store/repository.js');
+          const corrected = await getKnowledgeItem(itemId);
+          blast = await flagCorrectionSiblingsBestEffort(projectId!, itemId, `"${corrected?.title ?? itemId}" (correction feedback)`);
+        }
+        const blastNote = blast && blast.flaggedIds.length > 0
+          ? `\n\nBlast radius: ${blast.flaggedIds.length} sibling item(s) marked needs_review${blast.capped ? ' (capped)' : ''}.`
+          : '';
+        return { content: [{ type: 'text', text: `Recorded feedback for ${itemId}:\n\n${JSON.stringify(feedback, null, 2)}${blastNote}` }] };
       }
 
       else if (name === 'knowl_session_finish') {
