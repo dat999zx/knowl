@@ -1,0 +1,67 @@
+[
+ {
+  "host": "claude",
+  "project_root": "d:\\coding\\knowl",
+  "external_session_id": "2d3acba9-3607-49a3-87b6-019bd0c44e32",
+  "external_turn_id": "__turn__",
+  "memory_session_id": "0ed635ce04d94bc8",
+  "active": 0,
+  "updated_at": "2026-07-30T08:46:58.290Z",
+  "successful_tool_count": 0,
+  "seen_commit_rowid": 385,
+  "seen_peer_commits": null,
+  "seen_commit_initialized": 1
+ },
+ {
+  "host": "claude",
+  "project_root": "d:\\coding\\knowl",
+  "external_session_id": "d7b8453d-7d69-45d3-b585-b6b41b2e98e3",
+  "external_turn_id": "__agent__:aca30f48f148d452a",
+  "memory_session_id": "339c502b82af4284",
+  "active": 0,
+  "updated_at": "2026-07-29T13:09:27.026Z",
+  "successful_tool_count": 0,
+  "seen_commit_rowid": 350,
+  "seen_peer_commits": null,
+  "seen_commit_initialized": 1
+ },
+ {
+  "host": "claude",
+  "project_root": "d:\\coding\\knowl",
+  "external_session_id": "d7b8453d-7d69-45d3-b585-b6b41b2e98e3",
+  "external_turn_id": "__agent__:a2046d8a936db55f3",
+  "memory_session_id": "339c502b82af4284",
+  "active": 0,
+  "updated_at": "2026-07-29T13:14:41.107Z",
+  "successful_tool_count": 0,
+  "seen_commit_rowid": 352,
+  "seen_peer_commits": null,
+  "seen_commit_initialized": 1
+ },
+ {
+  "host": "claude",
+  "project_root": "d:\\coding\\knowl",
+  "external_session_id": "d7b8453d-7d69-45d3-b585-b6b41b2e98e3",
+  "external_turn_id": "__agent__:a2123aa5457ff8fe0",
+  "memory_session_id": "339c502b82af4284",
+  "active": 0,
+  "updated_at": "2026-07-29T13:18:24.057Z",
+  "successful_tool_count": 0,
+  "seen_commit_rowid": 353,
+  "seen_peer_commits": null,
+  "seen_commit_initialized": 1
+ },
+ {
+  "host": "claude",
+  "project_root": "d:\\coding\\knowl",
+  "external_session_id": "0eb9b971-ebae-4613-9f7e-d6032c55e9f4",
+  "external_turn_id": "__turn__",
+  "memory_session_id": "67d22585e83640e1",
+  "active": 0,
+  "updated_at": "2026-07-31T09:05:59.732Z",
+  "successful_tool_count": 0,
+  "seen_commit_rowid": 398,
+  "seen_peer_commits": null,
+  "seen_commit_initialized": 1
+ }
+]
