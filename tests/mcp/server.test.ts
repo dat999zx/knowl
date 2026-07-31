@@ -257,6 +257,35 @@ describe('MCP Server Layer', () => {
 
     const gcPreviewTool = res.result.tools.find((t: any) => t.name === 'knowl_gc_preview');
     expect(gcPreviewTool.description).toContain('Preview knowledge garbage collection');
+
+    // The batch path is where extraction and session promotion write, which is exactly the
+    // population provenance exists to classify. Advertising it only on the single-atom tool
+    // left the class unreachable from the tool the guidance calls preferred.
+    const provenanceEnum = ['observed', 'user_stated', 'inferred'];
+    expect(storeTool.inputSchema.properties.provenance.enum).toEqual(provenanceEnum);
+    expect(ingestAtomsTool.inputSchema.properties.atoms.items.properties.provenance.enum)
+      .toEqual(provenanceEnum);
+  });
+
+  it('persists provenance written through the batch atom path', async () => {
+    const res = await runRpcRequest('tools/call', {
+      name: 'knowl_ingest_atoms',
+      arguments: {
+        atoms: [{
+          category: 'fact',
+          title: 'Batch provenance atom',
+          content: 'Concluded from a single log line, not observed directly.',
+          provenance: 'inferred',
+        }],
+        commitMessage: 'Batch with provenance',
+      },
+    });
+    expect(res.error).toBeUndefined();
+
+    const storedId = /stored ([a-f0-9]+):/.exec(res.result.content[0].text)?.[1];
+    expect(storedId).toBeDefined();
+    const item = await repo.getKnowledgeItem(storedId!);
+    expect(item?.provenance).toBe('inferred');
   });
 
   it('should list resources', async () => {

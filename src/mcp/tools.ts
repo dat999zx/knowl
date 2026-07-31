@@ -218,6 +218,11 @@ export function registerTools(
                     sourceCommit: { type: 'string' },
                     affectedPaths: { type: 'array', items: { type: 'string' } },
                     confidence: { type: 'number' },
+                    provenance: {
+                      type: 'string',
+                      enum: ['observed', 'user_stated', 'inferred'],
+                      description: 'How this came to be believed: observed (execution or direct inspection), user_stated (the human said so), or inferred (concluded without direct evidence). Inferred items rank lower until confirmed by use.',
+                    },
                     steps: { type: 'array', items: { type: 'string' } },
                     supersedes: { type: 'string', description: 'Id of an active item this atom replaces; it is marked superseded (retired but still queryable), not deleted.' },
                   },
