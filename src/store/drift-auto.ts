@@ -4,23 +4,39 @@ import { checkKnowledgeDrift, getCurrentGitCommit, listChangedFilesSince } from 
 export type AutoDriftResult = {
   /** False on the run that only learns the baseline; nothing was compared. */
   checked: boolean;
-  /** Items flipped to needs_review by this run. */
-  flagged: number;
+  /** Items whose files changed since the watermark. Detection only — nothing is flipped. */
+  candidateCount: number;
+  /** Up to the first few candidate titles, for the session-start warning. */
+  candidateTitles: string[];
   /** The watermark the diff ran from; absent when nothing was compared. */
   sinceCommit?: string;
 };
 
+const WARNING_TITLE_LIMIT = 3;
+
 /**
- * The drift check that `pr check` runs by hand, run automatically at session start.
+ * The drift check that `pr check` runs by hand, run automatically at session start —
+ * as DETECTION ONLY.
  *
- * `checkKnowledgeDrift` has existed since the pr command shipped, but its only caller was a
- * command someone had to remember to type — so in practice knowledge went stale exactly as if
- * the check did not exist. The session boundary is the right chokepoint: it is the moment
- * before an agent starts relying on memory, and it is already where lifecycle work happens.
+ * `checkKnowledgeDrift` has existed since the pr command shipped, but its only caller was
+ * a command someone had to remember to type, so in practice knowledge went stale exactly
+ * as if the check did not exist. The session boundary is the right chokepoint: it is the
+ * moment before an agent starts relying on memory.
  *
- * The watermark is the last git commit a check ran against, keyed by project root. rowid-style
- * head tracking (change-watermark.ts) does not work here: the thing that moves is the git
- * history, not the knowledge log.
+ * Why detection does not auto-apply: measured on a real, documentation-heavy repository,
+ * one commit window matched 36 of 301 atoms and fifteen windows matched a third of the
+ * store — atoms annotate hot files, hot files change every day, and an automatic flip
+ * would hold those atoms at needs_review permanently. Run by hand after a PR, that flag
+ * volume is a review worklist; applied silently at every session start, it is corpus-wide
+ * ranking damage and a warning that cries wolf. So the automatic path names what moved
+ * and the exact command to review it, and flipping freshness stays a deliberate act.
+ *
+ * The watermark is the last git commit a check ran against, keyed by project root.
+ * rowid-style head tracking (change-watermark.ts) does not work here: the thing that
+ * moves is the git history, not the knowledge log. It advances even when candidates go
+ * unreviewed — the warning carries the pinned `pr check --since` command for acting
+ * later, and repeating the same warning forever would punish exactly the sessions that
+ * cannot deal with it yet.
  */
 export async function runAutoDriftCheck(projectId: string, projectRoot: string): Promise<AutoDriftResult | null> {
   const current = getCurrentGitCommit(projectRoot);
@@ -33,14 +49,13 @@ export async function runAutoDriftCheck(projectId: string, projectRoot: string):
   })).rows[0];
   const watermark = row ? String(row.last_checked_commit) : null;
 
-  if (watermark === current) return { checked: true, flagged: 0, sinceCommit: watermark };
+  if (watermark === current) return { checked: true, candidateCount: 0, candidateTitles: [], sinceCommit: watermark };
 
-  // First run learns the baseline and flags nothing. Diffing from the repository's root
-  // commit would flip most of the store to needs_review in one silent wall — the same
-  // reason the embedding backfill was never made automatic.
+  // First run learns the baseline and reports nothing: diffing from the repository's
+  // root commit would announce most of the store as drift candidates in one wall.
   if (!watermark) {
     await writeWatermark(projectRoot, current);
-    return { checked: false, flagged: 0 };
+    return { checked: false, candidateCount: 0, candidateTitles: [] };
   }
 
   let changedFiles: string[];
@@ -48,25 +63,26 @@ export async function runAutoDriftCheck(projectId: string, projectRoot: string):
     changedFiles = listChangedFilesSince(projectRoot, watermark, current);
   } catch {
     // The watermark commit no longer exists — rebase, aggressive gc, a rewritten branch.
-    // Re-baseline rather than guess: a storm of wrong needs_review flags costs more trust
-    // than one missed window, and the next real change is caught from the new baseline.
+    // Re-baseline rather than guess; the next real change is caught from the new baseline.
     await writeWatermark(projectRoot, current);
-    return { checked: false, flagged: 0 };
+    return { checked: false, candidateCount: 0, candidateTitles: [] };
   }
 
-  let flagged = 0;
+  let candidateCount = 0;
+  let candidateTitles: string[] = [];
   if (changedFiles.length > 0) {
     const result = await checkKnowledgeDrift(projectId, {
       sinceCommit: watermark,
       currentCommit: current,
       changedFiles,
-      apply: true,
+      apply: false,
     });
-    flagged = result.updatedCount;
+    candidateCount = result.candidates.length;
+    candidateTitles = result.candidates.slice(0, WARNING_TITLE_LIMIT).map(candidate => candidate.title);
   }
 
   await writeWatermark(projectRoot, current);
-  return { checked: true, flagged, sinceCommit: watermark };
+  return { checked: true, candidateCount, candidateTitles, sinceCommit: watermark };
 }
 
 /** Hooks must never fail the host: any error reads as "no drift information this session". */
@@ -87,11 +103,15 @@ async function writeWatermark(projectRoot: string, commit: string): Promise<void
 }
 
 /**
- * The one-line session-start warning. Rendered here so the hook path and any future
- * surface (doctor, status) say it the same way.
+ * The session-start warning. Rendered here so the hook path and any future surface
+ * (doctor, status) say it the same way. Carries the pinned review command because the
+ * watermark has already advanced: this line is the only record of the window.
  */
 export function describeAutoDrift(result: AutoDriftResult | null): string | undefined {
-  if (!result || result.flagged === 0) return undefined;
-  const shortCommit = result.sinceCommit ? result.sinceCommit.slice(0, 7) : 'last check';
-  return `DRIFT: ${result.flagged} knowledge item(s) touch files changed since ${shortCommit} and were marked needs_review — verify before relying on them.`;
+  if (!result || result.candidateCount === 0) return undefined;
+  const names = result.candidateTitles.length > 0
+    ? ` (${result.candidateTitles.map(title => `"${title}"`).join(', ')}${result.candidateCount > result.candidateTitles.length ? ', …' : ''})`
+    : '';
+  const since = result.sinceCommit ? ` --since ${result.sinceCommit.slice(0, 12)}` : '';
+  return `DRIFT: ${result.candidateCount} knowledge item(s) reference files changed since the last session${names}. Verify before relying on them; review and apply with \`knowl pr check${since}\`.`;
 }

@@ -295,8 +295,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     const recovered = await recoverAbandonedSessions();
     const purgedEventCount = await purgeExpiredSessionEvents();
     await closeInactiveHostSessionBindings();
-    // Before context composition, so the freshness it flips is what the composed
-    // context reflects rather than news the next session hears first.
+    // Detection only: names what moved and the command to review it, mutating nothing.
     const drift = await runAutoDriftCheckBestEffort(projectId, input.projectRoot);
     const started = await bootstrapWithHandoff(projectId, input, 'session', true);
     const driftLine = describeAutoDrift(drift);

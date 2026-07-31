@@ -51,16 +51,16 @@ describe('automatic drift check', () => {
     await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
   });
 
-  it('learns the baseline on first run and flags nothing', async () => {
+  it('learns the baseline on first run and reports nothing', async () => {
     const first = await runAutoDriftCheck(projectId, ROOT);
-    expect(first).toEqual({ checked: false, flagged: 0 });
+    expect(first).toEqual({ checked: false, candidateCount: 0, candidateTitles: [] });
 
     const second = await runAutoDriftCheck(projectId, ROOT);
     expect(second?.checked).toBe(true);
-    expect(second?.flagged).toBe(0);
+    expect(second?.candidateCount).toBe(0);
   });
 
-  it('flags knowledge whose paths changed since the watermark, then advances it', async () => {
+  it('detects candidates without mutating them, then advances the watermark', async () => {
     const item = await repo.createKnowledgeItem(projectId, {
       category: 'architecture',
       title: 'Billing module',
@@ -76,19 +76,19 @@ describe('automatic drift check', () => {
     await commitFile('src/billing.ts', 'export const rate = 2;\n', 'change billing');
     const result = await runAutoDriftCheck(projectId, ROOT);
     expect(result?.checked).toBe(true);
-    expect(result?.flagged).toBe(1);
+    expect(result?.candidateCount).toBe(1);
+    expect(result?.candidateTitles).toEqual(['Billing module']);
 
+    // Detection only: freshness is untouched on both candidate and bystander.
     const rows = await getClient().execute({
       sql: 'SELECT id, freshness FROM knowledge_items WHERE id IN (?, ?)',
       args: [item.id, bystander.id],
     });
-    const freshnessById = new Map(rows.rows.map(row => [String(row.id), String(row.freshness)]));
-    expect(freshnessById.get(item.id)).toBe('needs_review');
-    expect(freshnessById.get(bystander.id)).toBe('fresh');
+    for (const row of rows.rows) expect(String(row.freshness)).toBe('fresh');
 
-    // Watermark advanced: the same change is not reported twice.
+    // Watermark advanced: the same window is not reported twice.
     const repeat = await runAutoDriftCheck(projectId, ROOT);
-    expect(repeat?.flagged).toBe(0);
+    expect(repeat?.candidateCount).toBe(0);
   });
 
   it('re-baselines quietly when the watermark commit no longer resolves', async () => {
@@ -97,7 +97,7 @@ describe('automatic drift check', () => {
       args: ['0000000000000000000000000000000000000000', ROOT],
     });
     const result = await runAutoDriftCheck(projectId, ROOT);
-    expect(result).toEqual({ checked: false, flagged: 0 });
+    expect(result).toEqual({ checked: false, candidateCount: 0, candidateTitles: [] });
   });
 
   it('returns null outside a git repository', async () => {
@@ -113,11 +113,17 @@ describe('automatic drift check', () => {
     }
   });
 
-  it('renders the warning only when something was flagged', () => {
+  it('renders the warning with the pinned review command, only when something matched', () => {
     expect(describeAutoDrift(null)).toBeUndefined();
-    expect(describeAutoDrift({ checked: true, flagged: 0, sinceCommit: 'abc' })).toBeUndefined();
-    expect(describeAutoDrift({ checked: true, flagged: 2, sinceCommit: 'abcdef0123456789' }))
-      .toContain('2 knowledge item(s)');
+    expect(describeAutoDrift({ checked: true, candidateCount: 0, candidateTitles: [], sinceCommit: 'abc' })).toBeUndefined();
+    const warning = describeAutoDrift({
+      checked: true, candidateCount: 4, candidateTitles: ['Billing module', 'Rate limits'],
+      sinceCommit: 'abcdef0123456789',
+    });
+    expect(warning).toContain('4 knowledge item(s)');
+    expect(warning).toContain('"Billing module"');
+    expect(warning).toContain('…');
+    expect(warning).toContain('knowl pr check --since abcdef012345');
   });
 
   it('leads the session-start context with the drift warning', async () => {
@@ -129,12 +135,6 @@ describe('automatic drift check', () => {
     });
     await commitFile('src/limits.ts', 'export const limit = 10;\n', 'add limits');
     await runAutoDriftCheck(projectId, ROOT); // advance watermark past the file's creation
-    // The advance itself flagged the item (its file changed); reset so the lifecycle
-    // event is what flips it — drift skips items already at needs_review.
-    await getClient().execute({
-      sql: "UPDATE knowledge_items SET freshness = 'fresh' WHERE id = ?",
-      args: [flagged.id],
-    });
     await commitFile('src/limits.ts', 'export const limit = 20;\n', 'raise limits');
 
     const result = await handleHostLifecycleEvent(projectId, hook({
@@ -143,13 +143,14 @@ describe('automatic drift check', () => {
     }));
 
     expect(result.accepted).toBe(true);
-    expect(result.drift?.flagged).toBe(1);
+    expect(result.drift?.candidateCount).toBe(1);
     expect(result.context).toMatch(/^DRIFT: 1 knowledge item/);
 
+    // Still detection only, even through the lifecycle path.
     const row = (await getClient().execute({
       sql: 'SELECT freshness FROM knowledge_items WHERE id = ?',
       args: [flagged.id],
     })).rows[0];
-    expect(String(row.freshness)).toBe('needs_review');
+    expect(String(row.freshness)).toBe('fresh');
   });
 });
