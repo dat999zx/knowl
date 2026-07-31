@@ -39,6 +39,7 @@ export function renderReport(score: MethodScore, reading: Stage1Reading): string
   const spread = perSessionRecall.length
     ? `${Math.min(...perSessionRecall).toFixed(2)} - ${Math.max(...perSessionRecall).toFixed(2)}`
     : 'n/a';
+  const failed = score.failedSessions.length;
 
   return [
     `Method: ${score.method}`,
@@ -49,6 +50,7 @@ export function renderReport(score: MethodScore, reading: Stage1Reading): string
     '',
     `  Sessions scored        ${score.perSession.length}`,
     `  Per-session recall     ${spread}`,
+    `  Sessions failed        ${failed}${failed > 0 ? '   <- these sessions never reached the model; recall is a lower bound, not a reading' : ''}`,
     `  Adjudication           ${score.bandPairs.length} pair(s) within the band, hand judgment required before this score is final`,
     '',
     reading.verdict,

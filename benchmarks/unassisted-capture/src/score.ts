@@ -1,6 +1,6 @@
 import type { Embed } from './calibrate.js';
 import { cosine, inBand, maxCardinalityMatch } from './matcher.js';
-import type { AnswerKey, MatchPair, MethodScore, PredictedAtom, SessionScore } from './types.js';
+import type { AnswerKey, MatchPair, MethodScore, PredictedAtom, SessionFailure, SessionScore } from './types.js';
 
 export interface ScoreInput {
   method: string;
@@ -8,10 +8,14 @@ export interface ScoreInput {
   predictions: PredictedAtom[];
   threshold: number;
   embed: Embed;
+  /** Sessions the method could not be run on at all (rate limits, transport errors). Carried
+   *  through to the score so a depressed recall can be read as incomplete rather than real. */
+  failedSessions?: SessionFailure[];
 }
 
 export async function scoreMethod(input: ScoreInput): Promise<MethodScore> {
   const { method, answerKey, predictions, threshold, embed } = input;
+  const failedSessions = input.failedSessions ?? [];
 
   const perSession: SessionScore[] = [];
   const bandPairs: MatchPair[] = [];
@@ -53,6 +57,8 @@ export async function scoreMethod(input: ScoreInput): Promise<MethodScore> {
             sessionId: key.sessionId,
             targetId: key.targets[g].targetId,
             predictedIndex: p,
+            predictedText: predictionTexts[p],
+            goldFact: goldTexts[g],
             similarity,
           });
         }
@@ -74,6 +80,9 @@ export async function scoreMethod(input: ScoreInput): Promise<MethodScore> {
     perSession.push({ ...empty, findableMatched, thinkingOnlyMatched, predictedMatched });
   }
 
+  // Micro-averaged: totals are pooled across sessions before dividing, so one gold item counts
+  // the same wherever it lives. A per-session mean would let a session with a single target
+  // outweigh a session with ten.
   const sum = (pick: (row: SessionScore) => number) => perSession.reduce((total, row) => total + pick(row), 0);
   const ratio = (numerator: number, denominator: number) => (denominator === 0 ? 0 : numerator / denominator);
 
@@ -84,5 +93,6 @@ export async function scoreMethod(input: ScoreInput): Promise<MethodScore> {
     precision: ratio(sum((r) => r.predictedMatched), sum((r) => r.predictedTotal)),
     perSession,
     bandPairs,
+    failedSessions,
   };
 }

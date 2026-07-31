@@ -56,15 +56,20 @@ describe('runModelOnEvents', () => {
   it('tags every returned atom with its session', async () => {
     const generate = async () => [{ category: 'fact', title: 'Lock', content: 'SQLITE_BUSY fixed in database.ts' }];
 
-    const atoms = await runModelOnEvents([session], generate);
+    const { predictions } = await runModelOnEvents([session], generate);
 
-    expect(atoms).toEqual([
+    expect(predictions).toEqual([
       { sessionId: 's1', category: 'fact', title: 'Lock', content: 'SQLITE_BUSY fixed in database.ts' },
     ]);
   });
 
   it('treats an empty return as zero atoms rather than an error', async () => {
-    expect(await runModelOnEvents([session], async () => [])).toEqual([]);
+    const result = await runModelOnEvents([session], async () => []);
+
+    expect(result.predictions).toEqual([]);
+    // An honest empty result reports no failures -- this is the case that must stay
+    // distinguishable from the rate-limited one below.
+    expect(result.failures).toEqual([]);
   });
 
   it('keeps going when one session throws, so a single failure cannot void the run', async () => {
@@ -75,9 +80,28 @@ describe('runModelOnEvents', () => {
       return [{ category: 'fact', title: 'T', content: 'C' }];
     };
 
-    const atoms = await runModelOnEvents([session, { ...session, sessionId: 's2' }], generate);
+    const { predictions } = await runModelOnEvents([session, { ...session, sessionId: 's2' }], generate);
 
-    expect(atoms).toHaveLength(1);
-    expect(atoms[0].sessionId).toBe('s2');
+    expect(predictions).toHaveLength(1);
+    expect(predictions[0].sessionId).toBe('s2');
+  });
+
+  it('returns the sessions that failed, not just a line on stderr', async () => {
+    // Without this, ten rate-limited sessions and ten sessions the model read as empty produce
+    // the same recall and the opposite conclusion.
+    const generate = async () => {
+      throw new Error('rate limited');
+    };
+
+    const { predictions, failures } = await runModelOnEvents(
+      [session, { ...session, sessionId: 's2' }],
+      generate,
+    );
+
+    expect(predictions).toEqual([]);
+    expect(failures).toEqual([
+      { sessionId: 's1', message: 'rate limited' },
+      { sessionId: 's2', message: 'rate limited' },
+    ]);
   });
 });

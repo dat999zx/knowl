@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { CorpusSession, PredictedAtom } from './types.js';
+import type { CorpusSession, PredictedAtom, SessionFailure } from './types.js';
 
 export const PredictedAtomSchema = z.object({
   atoms: z.array(
@@ -50,11 +50,21 @@ export function renderSessionEvents(session: CorpusSession): string {
   return lines.join('\n');
 }
 
+export interface ModelRunResult {
+  predictions: PredictedAtom[];
+  /** Sessions whose call threw. A run with failures reports a recall that is a lower bound,
+   *  and the caller must record this alongside the score -- "the model found nothing in ten
+   *  sessions" and "ten sessions were rate-limited" produce the same number and opposite
+   *  conclusions. */
+  failures: SessionFailure[];
+}
+
 export async function runModelOnEvents(
   sessions: CorpusSession[],
   generate: GenerateAtoms,
-): Promise<PredictedAtom[]> {
+): Promise<ModelRunResult> {
   const predictions: PredictedAtom[] = [];
+  const failures: SessionFailure[] = [];
 
   for (const session of sessions) {
     const rendered = renderSessionEvents(session);
@@ -71,11 +81,14 @@ export async function runModelOnEvents(
         });
       }
     } catch (error) {
-      // One session failing must not void a run that costs money. The miss shows up as
-      // reduced recall, which is the honest outcome, and the session is named on stderr.
-      console.error(`session ${session.sessionId} failed: ${(error as Error).message}`);
+      // One session failing must not void a run that costs money, so the loop continues --
+      // but the failure is returned, not merely logged, so the record can tell a rate limit
+      // apart from an honest empty result.
+      const message = (error as Error).message;
+      failures.push({ sessionId: session.sessionId, message });
+      console.error(`session ${session.sessionId} failed: ${message}`);
     }
   }
 
-  return predictions;
+  return { predictions, failures };
 }

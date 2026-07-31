@@ -5,7 +5,6 @@ const line = (overrides: Record<string, unknown> = {}) =>
   JSON.stringify({
     sessionId: 's1',
     targets: [{ targetId: 't1', canonicalFact: 'The retry loop was removed.', mark: 'findable' }],
-    exclusions: [],
     ...overrides,
   });
 
@@ -47,5 +46,27 @@ describe('parseAnswerKey', () => {
     const bad = line({ targets: [{ targetId: 't1', canonicalFact: '   ', mark: 'findable' }] });
 
     expect(() => parseAnswerKey(bad)).toThrow();
+  });
+
+  it('names the real file line when JSON is malformed, not a bare SyntaxError', () => {
+    // A trailing comma is the likeliest error when hand-writing 32 lines.
+    const ndjson = `${line()}\n{"sessionId":"s2","targets":[],}\n`;
+
+    expect(() => parseAnswerKey(ndjson)).toThrow(/line 2 is not valid JSON/i);
+  });
+
+  it('counts blank lines when reporting a malformed line, so it matches the editor', () => {
+    // Blank lines are skipped for parsing but must not shift the reported line number: under a
+    // filter-then-index approach this reads as line 3.
+    const malformed = `\n\n${line()}\n\n{oops}\n`;
+
+    expect(() => parseAnswerKey(malformed)).toThrow(/line 5 is not valid JSON/i);
+  });
+
+  it('counts blank lines when reporting a schema error too, so both errors agree', () => {
+    // Under a filter-then-index approach this reads as line 1.
+    const invalid = `\n\n\n${line({ targets: [{ targetId: 't1', canonicalFact: 'x', mark: 'maybe' }] })}`;
+
+    expect(() => parseAnswerKey(invalid)).toThrow(/line 4 is invalid/i);
   });
 });
