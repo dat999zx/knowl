@@ -105,10 +105,55 @@ compared against the answer key. An item the model stored that the labeller miss
 examined and the disagreement recorded. This inverts the bias: the seeds audit the labeller
 rather than seeding them.
 
+### The strictness standard, fixed before labelling began
+
+A permissive key makes any extractor look good, so the bar is written down first and applied
+uniformly. **An item enters the answer key only if all four hold:**
+
+1. **Durable** — still true and worth knowing in six months. Not "tests were run", not "the
+   session finished", not "these files changed".
+2. **Specific** — names a concrete artifact, cause, or decision. "Fixed a bug" fails.
+   "The manifest test needed its own `KNOWL_HOME` because parallel workers shared one" passes.
+3. **Not trivially recoverable** — reading the current code for thirty seconds does not
+   answer it. Facts a `grep` settles do not need memory.
+4. **Session-grounded** — actually supported by what happened in this session, not general
+   knowledge about the project.
+
+Rejected by construction, however often they appear: command inventories, "the suite
+passed", file-change lists with no conclusion attached, and restatements of a file's
+existence.
+
+**Why this is preregistered.** The labeller for this run is the same model that wrote the
+harness, and during implementation four of its prescribed tests turned out to assert nothing
+— the same instinct writes a lenient key. Fixing the bar in advance is the mitigation, and
+the bar is published so a reader can judge the number against it.
+
 **Every item is marked `findable` or `thinking-only`.** A root-cause conclusion drawn across
 a whole session appears in no event; scoring it against an event-driven method makes the
 metric unwinnable and uninformative. Headline recall is computed over `findable` items.
 `thinking-only` coverage is reported separately as the ceiling hooks cannot cross.
+
+`findable` means the **rendered event stream alone** supports it — the exact text
+`renderSessionEvents` produces, which is error messages, changed paths, commands with exit
+codes, and stop status. Not the session title, not the transcript. When genuinely unsure,
+mark `thinking-only`: that removes the item from headline recall, which is the conservative
+direction, because wrongly marking an underivable item `findable` makes every method look
+worse than it is.
+
+### The model under test is named before the run
+
+The experiment measures whether *a model* can do this, so which model is part of the result.
+The exact model identifier is recorded here **before** `run` executes; a result carrying no
+model name is not readable. The model must support structured output, since the method binds
+a zod schema.
+
+A negative result is bounded by the model tested: if a small model fails, that does not
+establish that a larger one would. Any "stop, do not use a model" reading must therefore name
+the model it applies to.
+
+**Model used: _not yet run._** As of 2026-07-31 no working credential is configured —
+`config.ai` is null and the `OPENAI_API_KEY` in the environment returns 401. Stage 1 is
+blocked on that, not on the harness.
 
 Labels reuse the `targets` shape from
 `benchmarks/accuracy/datasets/coding-memory-v1/gold/capture-labels.ndjson`, extended with the
