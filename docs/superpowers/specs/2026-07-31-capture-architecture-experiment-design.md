@@ -41,9 +41,21 @@ recall while burying the store in noise; either number alone can be gamed.
 ### Why it was captured before this document was finished
 
 `purgeExpiredSessionEvents` (`src/store/session-repository.ts:57`) hard-deletes events past
-`expires_at`. Measured 2026-07-31T10:04Z, the oldest events expired at 10:09Z — four minutes
-out — with 506 expiring inside 24 hours and the whole window gone by 2026-08-02. A snapshot
-was taken first and this spec written after.
+`expires_at`, where `EVENT_TTL_HOURS = 48`. It is not a timer: it runs on **session start**
+only (`src/store/host-lifecycle.ts:294`), so deletion is bursty and its timing depends on
+when the next session opens — 97 sessions opened in the two-day window, so the gap is
+typically short but never predictable.
+
+Measured 2026-07-31T11:36Z with an ISO comparison matching the purge's own: **114 events were
+already past expiry** and would be erased by the next session start, 506 expire within six
+hours, and **1,522 of 1,848 within twenty-four**. A snapshot was taken first and this spec
+written after.
+
+An earlier reading of these figures used `expires_at <= datetime('now')`, which compares
+ISO-8601 (`2026-07-31T10:09:04.317Z`) against SQLite's `datetime` format
+(`2026-07-31 11:36:02`); the `T`-versus-space mismatch silently matches nothing and reported
+zero expired rows. Any future check must pass `new Date().toISOString()` as a bound
+parameter, exactly as the purge does.
 
 ### What it contains
 
