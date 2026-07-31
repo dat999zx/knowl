@@ -151,9 +151,40 @@ A negative result is bounded by the model tested: if a small model fails, that d
 establish that a larger one would. Any "stop, do not use a model" reading must therefore name
 the model it applies to.
 
-**Model used: _not yet run._** As of 2026-07-31 no working credential is configured —
-`config.ai` is null and the `OPENAI_API_KEY` in the environment returns 401. Stage 1 is
-blocked on that, not on the harness.
+**Model used: the local Codex CLI, `codex-cli 0.145.0`, authenticated by ChatGPT login.**
+Recorded 2026-07-31 before the run, by the maintainer's decision, after the `OPENAI_API_KEY`
+in the environment was found to return 401 and `config.ai` was null.
+
+This is a departure worth stating plainly: Codex is a **coding agent**, not a bare model
+behind a structured-output call. It may take multiple turns and use tools. Method 2 was
+specified as "a model reading the events", and an agent is a strictly more capable thing. So
+a *good* result here does not establish that a plain model call would do as well, and the
+reading must say "an agent with the events" rather than "a model with the events". A *poor*
+result is the stronger signal, since it would mean even an agent could not recover the
+knowledge. Determinism is also weaker than an API call at fixed temperature; runs will vary.
+
+Structured output is obtained with `codex exec --output-schema`, whose JSON Schema mirrors
+`PredictedAtomSchema`, so the atoms reaching the scorer have the same shape either way.
+
+### The matcher ships below its own gate, by decision
+
+Calibration returned **0.80 agreement against a preregistered floor of 0.90** (details in
+`benchmarks/unassisted-capture/answer-key/README.md`). The maintainer's decision on
+2026-07-31 was to proceed with the existing local MiniLM matcher rather than adjudicate every
+pair by hand or adopt a stronger embedding model.
+
+The consequence is recorded here rather than discovered later. **Roughly one comparison in
+five is wrong**, in both directions, so:
+
+- Stage 1's reading is **indicative, not decisive**. Any number it produces is reported as an
+  estimate with a stated ±20% pairwise matcher error, never as a verdict.
+- The 20-point stage-2 margin cannot be reliably resolved by this matcher. If stage 2 is ever
+  reached, the margin must either be re-derived with a better matcher or the decision made on
+  other grounds.
+- A result near any threshold — 0.30 recall, 0.80 precision — should be treated as
+  unresolved rather than as clearing or failing the gate.
+
+This does not invalidate the run. It bounds what the run can be used to claim.
 
 Labels reuse the `targets` shape from
 `benchmarks/accuracy/datasets/coding-memory-v1/gold/capture-labels.ndjson`, extended with the

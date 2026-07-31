@@ -1,0 +1,23 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["atoms"],
+  "properties": {
+    "atoms": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "title", "content"],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": ["fact", "decision", "architecture", "constraint", "state", "skill"]
+          },
+          "title": { "type": "string" },
+          "content": { "type": "string" }
+        }
+      }
+    }
+  }
+}

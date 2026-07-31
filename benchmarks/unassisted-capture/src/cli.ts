@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { generateObject } from 'ai';
 import { initAI } from '../../../src/ai/provider.js';
@@ -9,7 +10,8 @@ import type { ProjectConfig } from '../../../src/core/types.js';
 import { loadAnswerKey } from './answer-key.js';
 import { calibrate, type CalibrationPair, type Embed } from './calibrate.js';
 import { loadCorpus } from './corpus.js';
-import { MODEL_EVENTS_SYSTEM_PROMPT, PredictedAtomSchema, runModelOnEvents } from './method-model-events.js';
+import { createCodexGenerate, type CodexRunMeta } from './generate-codex.js';
+import { MODEL_EVENTS_SYSTEM_PROMPT, PredictedAtomSchema, runModelOnEvents, type GenerateAtoms } from './method-model-events.js';
 import { assertAnswerKeyResolves, parseFrozenThreshold, type FrozenThreshold } from './preflight.js';
 import { readStage1, renderReport } from './report.js';
 import { scoreMethod } from './score.js';
@@ -21,6 +23,7 @@ const THRESHOLD_FILE = path.join(ANSWER_KEY_DIR, 'threshold.json');
 const PAIRS_FILE = path.join(ANSWER_KEY_DIR, 'calibration-pairs.json');
 const RESULTS_FILE = path.join('benchmarks', 'unassisted-capture', 'results.json');
 const PREDICTIONS_FILE = path.join('benchmarks', 'unassisted-capture', 'predictions.json');
+const CODEX_SCHEMA_FILE = path.join('benchmarks', 'unassisted-capture', 'atoms-schema.json');
 
 async function embedderFor(config: ProjectConfig): Promise<Embed> {
   const provider = await createLocalEmbeddingProvider(config, process.cwd());
@@ -76,29 +79,49 @@ async function commandRun(): Promise<void> {
   const scored = corpus.filter((session) => answerKey.some((key) => key.sessionId === session.sessionId));
 
   const config = await loadConfig(process.cwd());
-  if (!config.ai) throw new Error('No AI provider configured; method 2 cannot run.');
 
-  // Built before the paid loop, not after it. `createLocalEmbeddingProvider` throws when vector
-  // search is disabled, and paying for 32 model calls first would throw that away.
+  // Built before the loop, not after it. `createLocalEmbeddingProvider` throws when vector
+  // search is disabled, and spending 32 model calls first would throw that away.
   const embed = await embedderFor(config);
-  const model = initAI(config.ai);
 
-  const { predictions, failures } = await runModelOnEvents(scored, async (prompt) => {
-    const { object } = await generateObject({
-      model,
-      schema: PredictedAtomSchema,
-      system: MODEL_EVENTS_SYSTEM_PROMPT,
-      prompt,
-      temperature: 0.1,
-    });
-    return object.atoms;
-  });
+  // Two generators. The configured API provider is the specified one; the local Codex CLI is
+  // the fallback when no credential exists. They are NOT equivalent -- Codex is an agent, so a
+  // good result under it does not establish that a plain model call would match. The spec
+  // records this; `generator` carries it into the results file so no reader has to guess.
+  const codexMeta: CodexRunMeta = { model: null };
+  const generator = config.ai ? 'api' : 'codex-cli';
+  let generate: GenerateAtoms;
+
+  if (config.ai) {
+    const model = initAI(config.ai);
+    generate = async (prompt) => {
+      const { object } = await generateObject({
+        model,
+        schema: PredictedAtomSchema,
+        system: MODEL_EVENTS_SYSTEM_PROMPT,
+        prompt,
+        temperature: 0.1,
+      });
+      return object.atoms;
+    };
+  } else {
+    const workdir = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-capture-codex-'));
+    console.log(`No AI provider configured; using the local Codex CLI (workdir ${workdir}).`);
+    const codex = createCodexGenerate({ schemaPath: path.resolve(CODEX_SCHEMA_FILE), workdir }, codexMeta);
+    // Codex takes one prompt string, so the system prompt is prepended rather than passed
+    // separately. Same text either way.
+    generate = (prompt) => codex(`${MODEL_EVENTS_SYSTEM_PROMPT}\n\n---\n\nSession events:\n\n${prompt}`);
+  }
+
+  const { predictions, failures } = await runModelOnEvents(scored, generate);
 
   // Written before scoring. The predictions are the paid artifact; scoring is free and
   // repeatable from this file, and at temperature 0.1 a re-run would not reproduce them.
   const payload = `${JSON.stringify(
     {
       method: 'model-events',
+      generator,
+      generatorModel: codexMeta.model,
       generatedAt: new Date().toISOString(),
       sessionsSelected: scored.length,
       failures,
@@ -134,6 +157,8 @@ async function commandRun(): Promise<void> {
         score,
         reading,
         // Echoed so the preregistration is auditable from this file alone.
+        generator,
+        generatorModel: codexMeta.model,
         threshold: frozen.threshold,
         thresholdFrozenAt: frozen.frozenAt,
         thresholdAgreement: frozen.agreement,
