@@ -27,6 +27,8 @@ const SCHEMA_STATEMENTS = [
     content_hash TEXT,
     freshness TEXT NOT NULL DEFAULT 'fresh',
     confidence REAL NOT NULL DEFAULT 1.0,
+    tier TEXT NOT NULL DEFAULT 'asserted',
+    provenance TEXT,
     conflict_key TEXT, conflict_scope TEXT, conflict_exclusive INTEGER NOT NULL DEFAULT 0,
     superseded_by_id TEXT,
     version INTEGER NOT NULL DEFAULT 1,
@@ -329,6 +331,22 @@ async function repairSkillForeignKeys(client: Client): Promise<void> {
   await client.execute('PRAGMA foreign_keys = ON;');
 }
 
+/**
+ * Tier (standing earned by use) and provenance (how the knowledge came to be believed).
+ * Existing rows get tier 'asserted' -- nothing has confirmed them here -- and provenance
+ * NULL, which is what a row written before the class existed means.
+ */
+async function ensureQualityColumns(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'knowledge_items'))) return;
+  const columns = await tableColumns(client, 'knowledge_items');
+  if (!columns.includes('tier')) {
+    await client.execute("ALTER TABLE knowledge_items ADD COLUMN tier TEXT NOT NULL DEFAULT 'asserted';");
+  }
+  if (!columns.includes('provenance')) {
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN provenance TEXT;');
+  }
+}
+
 async function ensureFreshnessColumns(client: Client): Promise<void> {
   if (!(await tableExists(client, 'knowledge_items'))) {
     return;
@@ -590,6 +608,7 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await migrateLegacyProjectSchema(client);
   await executeAll(client, SCHEMA_STATEMENTS);
   await ensureFreshnessColumns(client);
+  await ensureQualityColumns(client);
   await ensureConflictColumns(client);
   await ensureOwnershipColumns(client);
   await ensureMemorySessionColumns(client);

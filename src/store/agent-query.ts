@@ -18,6 +18,13 @@ const MMR_SIMILARITY_WEIGHT = 0.8;
 // freshness re-rank keeps current-truth above near-identical stale siblings.
 const VECTOR_PRIMARY_WEIGHT = 1;
 const BM25_FALLBACK_WEIGHT = 0.35;
+// Standing terms. Sized below the freshness re-rank on both paths: an item's earned
+// standing breaks ties between near-equals but must never outrank being current — and an
+// inferred item is discounted, never buried, because it may still be the only answer.
+const TIER_VERIFIED_BOOST_VECTOR = 0.015;
+const TIER_VERIFIED_BOOST_LEXICAL = 0.004;
+const PROVENANCE_INFERRED_PENALTY_VECTOR = -0.01;
+const PROVENANCE_INFERRED_PENALTY_LEXICAL = -0.003;
 
 function queryTokens(query?: string): string[] {
   return [...new Set((query ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length > 1))];
@@ -224,6 +231,12 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
       const recency = normalizedRecencyScore(result.item, timestamps) * RECENCY_BOOST;
       const confidence = result.item.confidence * CONFIDENCE_BOOST;
       const exactIdentifier = exactIdentifierScore(result.item, options.query);
+      const standing = (result.item.tier === 'verified'
+        ? (usingVector ? TIER_VERIFIED_BOOST_VECTOR : TIER_VERIFIED_BOOST_LEXICAL)
+        : 0)
+        + (result.item.provenance === 'inferred'
+          ? (usingVector ? PROVENANCE_INFERRED_PENALTY_VECTOR : PROVENANCE_INFERRED_PENALTY_LEXICAL)
+          : 0);
       let rank: number;
       let text: number;
       let freshness: number;
@@ -243,7 +256,7 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
         text = Math.min(textMatchScore(result.item, tokens), 20) * 0.01;
         freshness = freshnessScore(result.item);
       }
-      const contributions = { rank, text, category, recency, confidence, freshness, exactIdentifier };
+      const contributions = { rank, text, category, recency, confidence, freshness, exactIdentifier, standing };
       return {
         result,
         score: Object.values(contributions).reduce((sum, value) => sum + value, 0),

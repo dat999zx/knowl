@@ -25,6 +25,10 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
   visibility: text('visibility').notNull().default('repo'),
   freshness: text('freshness').notNull().default('fresh'), // 'fresh', 'stale', 'needs_review'
   confidence: real('confidence').notNull().default(1.0),
+  /** Standing earned by confirmed use: 'asserted' | 'verified'. Not part of lifecycleHash. */
+  tier: text('tier').notNull().default('asserted'),
+  /** 'observed' | 'user_stated' | 'inferred'; NULL on rows written before the column existed. */
+  provenance: text('provenance'),
   conflictKey: text('conflict_key'), conflictScope: text('conflict_scope', { mode: 'json' }), conflictExclusive: integer('conflict_exclusive', { mode: 'boolean' }).notNull().default(false),
   supersededById: text('superseded_by_id'),
   version: integer('version').notNull().default(1),

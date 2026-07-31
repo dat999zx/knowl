@@ -14,6 +14,8 @@ import {
   CommitChange,
   KnowledgeCategory,
   KnowledgeFreshness,
+  KnowledgeTier,
+  KnowledgeProvenance,
   KnowledgeStatus,
   KnowledgeWriteValidationOptions,
 } from '../core/types.js';
@@ -85,6 +87,8 @@ export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSe
     category: row.category as KnowledgeCategory,
     status: row.status as KnowledgeStatus,
     freshness: (row.freshness || DEFAULT_FRESHNESS) as KnowledgeFreshness,
+    tier: (row.tier || 'asserted') as KnowledgeTier,
+    provenance: (row.provenance ?? null) as KnowledgeProvenance | null,
     alternatives: row.alternatives as string[] | null,
     tags: row.tags as string[] | null,
     affectedPaths: row.affectedPaths as string[] | null,
@@ -114,6 +118,7 @@ export async function createKnowledgeItem(
     contentHash?: string | null;
     freshness?: KnowledgeFreshness;
     confidence?: number;
+    provenance?: KnowledgeProvenance | null;
     conflictKey?: string | null;
     conflictScope?: Record<string, unknown> | null;
     conflictExclusive?: boolean;
@@ -167,6 +172,8 @@ export async function createKnowledgeItem(
     }),
     freshness,
     confidence: item.confidence ?? 1.0,
+    tier: 'asserted' as const, // standing is earned by use, never granted at birth
+    provenance: item.provenance ?? null,
     conflictKey: item.conflictKey ? normalizeConflictKey(item.conflictKey) : null, conflictScope: normalizeConflictScope(item.conflictScope), conflictExclusive: item.conflictExclusive ?? false,
     supersededById: null,
     version: 1,
@@ -335,6 +342,11 @@ export async function updateKnowledgeItem(
       ...(updates.affectedPaths !== undefined ? { affectedPaths } : {}),
       ...(shouldRefreshHash ? { contentHash: hashKnowledgeContent(merged) } : {}),
       ...(updates.lifecycleHash === undefined ? { lifecycleHash: hashKnowledgeLifecycle(lifecycle) } : {}),
+      // Verified means verified-verbatim: standing earned by use does not survive the
+      // words changing. An explicit tier in `updates` (an import replaying a peer) wins.
+      ...(updates.tier === undefined && (updates.content !== undefined || updates.title !== undefined)
+        ? { tier: 'asserted' as const }
+        : {}),
       version: nextVersion,
       updatedAt: now,
     };
