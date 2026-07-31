@@ -39,6 +39,18 @@ describe('readStage1', () => {
       disqualified: false,
     });
   });
+
+  it('disqualifies on precision before considering recall, when both gates fail', () => {
+    // The only input where check order is observable: both gates fail. Under the correct
+    // order the verdict is about the junk limit; under a swapped order it would be about
+    // the payload, and disqualified would be false.
+    const reading = readStage1(score({ recallFindable: 0.1, precision: 0.5 }));
+
+    expect(reading.disqualified).toBe(true);
+    expect(reading.proceed).toBe(false);
+    expect(reading.verdict).toMatch(/junk limit/i);
+    expect(reading.verdict).not.toMatch(/payload/i);
+  });
 });
 
 describe('renderReport', () => {
