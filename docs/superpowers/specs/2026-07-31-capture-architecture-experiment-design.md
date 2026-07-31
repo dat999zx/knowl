@@ -110,7 +110,7 @@ a whole session appears in no event; scoring it against an event-driven method m
 metric unwinnable and uninformative. Headline recall is computed over `findable` items.
 `thinking-only` coverage is reported separately as the ceiling hooks cannot cross.
 
-Labels reuse the `targets` / `exclusions` shape from
+Labels reuse the `targets` shape from
 `benchmarks/accuracy/datasets/coding-memory-v1/gold/capture-labels.ndjson`, extended with the
 mark. Matching by shared source ID does not transfer — hook atoms are free text — so
 matching is defined below.
@@ -142,12 +142,18 @@ open and is not silently answered.
 
 Fixed before any measurement, per the discipline `benchmarks/accuracy` already enforces.
 
-**Stage 1 — method 2 alone.**
+**Stage 1 — method 2 alone.** Precision is checked first; recall is only consulted for a
+method that clears the junk limit.
 
-| Method 2 recall over `findable` | Reading | Action |
+| Method 2 | Reading | Action |
 | --- | --- | --- |
-| Below 0.30 | The events do not carry recoverable knowledge | Stop. Do not build the rules. The payload, not the extractor, is the constraint — escalate method 3 and the retention work |
-| 0.30 or above | The events carry real signal | Proceed to stage 2 |
+| Precision below 0.80 | **Disqualified.** The model produces too much noise to be trusted at any recall | Do not adopt model-based capture. Build the rules and hold them to the same junk limit. Recall is not consulted and does not appear in the verdict |
+| Precision ≥ 0.80, recall below 0.30 | The events do not carry recoverable knowledge | Stop. Do not build the rules either. The payload, not the extractor, is the constraint — escalate method 3 and the retention work |
+| Precision ≥ 0.80, recall 0.30 or above | The events carry real signal | Proceed to stage 2 |
+
+The disqualified row was added on 2026-07-31, **before any measurement**, after a review
+found `readStage1` implemented three outcomes while this table described two. Settling it
+after seeing a number is precisely the reinterpretation preregistration exists to prevent.
 
 **Stage 2 — build method 1, then compare.**
 
@@ -213,6 +219,24 @@ of the hook payload, which needs its own threat model.
   for substantial sessions, which flatters every method relative to real-world use where
   most sessions are stubs. The 64 excluded sessions are reported alongside, so the headline
   number is never mistaken for "captures knowledge from an average session".
+- **Precision is capped by how densely the answer key was written.** Matching is one-to-one,
+  so per-session precision cannot exceed `min(|gold|, |predictions|) / |predictions|`. A
+  session whose `targets` array is empty makes every prediction a precision miss by
+  construction. If a method emits more atoms per session than the key lists targets, its
+  precision is bounded below the junk limit however good those atoms are — the limit would
+  then be measuring the labeller's density rather than the method's noise.
+
+  Mitigation, fixed here rather than after the fact: the achievable precision ceiling is
+  computed and published beside the measured precision as
+  `Σ min(findableTotal + thinkingOnlyTotal, predictedTotal) / Σ predictedTotal`. Every term
+  is already in `results.json` under `score.perSession`, so this needs no new code — it is
+  arithmetic over the run's own output, done at step 4 of the run task.
+
+  **A disqualification is only read as disqualification when the ceiling itself clears
+  0.80.** If it does not, the labelling is too sparse to support the judgment, and the answer
+  key is extended before the number is read. An earlier draft would have used an
+  `exclusions` field for this; that field was removed as dead surface, and publishing the
+  ceiling is the honest replacement.
 
 ## Success criteria
 

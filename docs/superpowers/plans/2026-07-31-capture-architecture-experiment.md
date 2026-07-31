@@ -8,6 +8,14 @@
 
 **Tech Stack:** TypeScript (ESM, `.js` import extensions), vitest via `npm run test:bench`, zod for schemas, `ai` + `@ai-sdk/*` for the model call, `@huggingface/transformers` via Knowl's existing local MiniLM embedder.
 
+> **This plan has been executed. Its code blocks are the pre-execution design, not the
+> shipped code.** A whole-branch review afterwards required changes the blocks below do not
+> reflect: `MatchPair` gained `predictedText` and `goldFact`; `MethodScore` gained
+> `failedSessions`; `runModelOnEvents` now returns `{ predictions, failures }` rather than a
+> bare array; `AnswerKey.exclusions` was removed as dead surface; and `src/preflight.ts` was
+> extracted so the CLI's guards could be tested at all. Read `benchmarks/unassisted-capture/`
+> for current truth. This document is retained as the record of what was planned and why.
+
 ## Global Constraints
 
 Copied verbatim from `docs/superpowers/specs/2026-07-31-capture-architecture-experiment-design.md`. Every task's requirements implicitly include this section.
@@ -147,7 +155,6 @@ export interface GoldItem {
 export interface AnswerKey {
   sessionId: string;
   targets: GoldItem[];
-  exclusions: string[];
 }
 
 export interface PredictedAtom {
@@ -284,13 +291,19 @@ const line = (overrides: Record<string, unknown> = {}) =>
   JSON.stringify({
     sessionId: 's1',
     targets: [{ targetId: 't1', canonicalFact: 'The retry loop was removed.', mark: 'findable' }],
-    exclusions: [],
     ...overrides,
   });
 
 describe('parseAnswerKey', () => {
   it('parses one record per line', () => {
-    const keys = parseAnswerKey(`${line()}\n${line({ sessionId: 's2' })}`);
+    // Both sessionId AND targets must be overridden. Overriding only sessionId would reuse
+    // targetId 't1' across records, which the cross-session duplicate rule below rejects --
+    // the two tests would then contradict each other.
+    const second = line({
+      sessionId: 's2',
+      targets: [{ targetId: 't2', canonicalFact: 'The lock was moved into the transaction.', mark: 'findable' }],
+    });
+    const keys = parseAnswerKey(`${line()}\n${second}`);
 
     expect(keys.map((k) => k.sessionId)).toEqual(['s1', 's2']);
     expect(keys[0].targets[0].mark).toBe('findable');
@@ -353,7 +366,6 @@ const GoldItemSchema = z.object({
 const AnswerKeySchema = z.object({
   sessionId: z.string().min(1),
   targets: z.array(GoldItemSchema),
-  exclusions: z.array(z.string()).default([]),
 });
 
 export function parseAnswerKey(ndjson: string): AnswerKey[] {
@@ -782,7 +794,6 @@ const answerKey: AnswerKey[] = [
       { targetId: 't1', canonicalFact: 'the retry loop was removed', mark: 'findable' },
       { targetId: 't2', canonicalFact: 'why it deadlocked', mark: 'thinking-only' },
     ],
-    exclusions: [],
   },
 ];
 
@@ -1469,7 +1480,7 @@ For each of the 32 sessions in `corpus/sessions.json`, read its events (`corpus/
 One NDJSON line per session, every session present even when its `targets` array is empty:
 
 ```json
-{"sessionId":"41f80e20...","targets":[{"targetId":"t-41f8-01","canonicalFact":"The workspace manifest test suite was stabilised by giving it its own KNOWL_HOME.","mark":"findable"},{"targetId":"t-41f8-02","canonicalFact":"The suite was flaky because parallel workers shared one home directory.","mark":"thinking-only"}],"exclusions":[]}
+{"sessionId":"41f80e20...","targets":[{"targetId":"t-41f8-01","canonicalFact":"The workspace manifest test suite was stabilised by giving it its own KNOWL_HOME.","mark":"findable"},{"targetId":"t-41f8-02","canonicalFact":"The suite was flaky because parallel workers shared one home directory.","mark":"thinking-only"}]}
 ```
 
 Mark `findable` only when the events alone support it — an error message, a changed path, a command. Mark `thinking-only` when the item requires knowing why. When genuinely unsure, mark `thinking-only`: that removes it from headline recall and is the conservative choice, because wrongly marking an underivable item `findable` makes every method look worse than it is.
@@ -1531,9 +1542,24 @@ Expected: prints the report and writes `results.json`.
 
 Read `results.json` → `score.bandPairs`. For each, judge by hand whether the pair states the same fact, and record each judgment in `answer-key/README.md`. If any judgment flips a match, note the corrected recall and precision alongside the raw numbers. **Do not move the threshold** — that is what the band exists to avoid.
 
-- [ ] **Step 4: Append the results to the spec**
+- [ ] **Step 4: Compute the precision ceiling, then append the results to the spec**
 
-Add a `## Results` section recording: the frozen threshold and its calibration agreement; recall over `findable`; precision; `thinking-only` coverage; the per-session spread; the band adjudication count; and the verbatim verdict string. State the sample size and the one-developer, one-repository, two-day limitation next to the headline number, not in a footnote.
+First compute the achievable precision ceiling from `results.json`. No new code is needed — every term is already in `score.perSession`:
+
+```bash
+node --input-type=module -e "
+import fs from 'node:fs';
+const { score } = JSON.parse(fs.readFileSync('benchmarks/unassisted-capture/results.json', 'utf8'));
+const rows = score.perSession;
+const ceiling = rows.reduce((t, r) => t + Math.min(r.findableTotal + r.thinkingOnlyTotal, r.predictedTotal), 0)
+  / rows.reduce((t, r) => t + r.predictedTotal, 0);
+console.log('measured precision', score.precision.toFixed(3), '| ceiling', ceiling.toFixed(3));
+"
+```
+
+**If the run was disqualified and the ceiling is itself below 0.80, the disqualification is not readable** — one-to-one matching caps precision at the answer key's density, so the number would be measuring the labelling rather than the method. Extend the answer key and re-run before recording any verdict.
+
+Then add a `## Results` section recording: the frozen threshold, its calibration agreement and pairs hash; recall over `findable`; precision **and the ceiling**; `thinking-only` coverage; the per-session spread; the failed-session count; the band adjudication count; and the verbatim verdict string. State the sample size and the one-developer, one-repository, two-day limitation next to the headline number, not in a footnote.
 
 - [ ] **Step 5: Record the decision**
 
