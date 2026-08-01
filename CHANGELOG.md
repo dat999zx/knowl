@@ -3,6 +3,58 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.10.0 — 2026-07-31
+
+### Changed
+
+- **Automatic capture now reads the two fields that actually carry knowledge.** The previous
+  four rules were written before anyone measured what hook events contain. Measured across 32
+  recorded sessions, git commit subjects carry 52% of the durable knowledge a reviewer would
+  want kept and error text carries 45%; changed file paths alone carry **none**. So a commit
+  subject becomes a `fact` or `architecture` item, and a failure that was followed by edits
+  and did not recur becomes a `fact` naming what broke and what fixed it.
+
+  `docs`, `test`, `chore` and merge commits are skipped — they record process, not knowledge.
+  A failure that recurs later in the session produces nothing, because it was not fixed;
+  claiming otherwise is worse than staying silent.
+
+- **Two rules were deleted rather than re-tuned.** `Repeated workflow: …` and
+  `Session outcome: …` both measured at zero value, and the first was not inert as an earlier
+  baseline claimed — four such items exist in a real store, two written by the very session
+  that measured it. Capture stays model-free: `finalizeMemorySession` still reports
+  `usedAi: false`.
+
+### Added
+
+- **Skills are captured while the session is live, and surfaced back to later ones.** A
+  repeated command carrying something non-obvious — a pipe, a redirect, a filter — now
+  prompts the agent to save it as a runnable `.knowl/skills/` package while it still knows
+  what the command was for. Asking at session end, as the old rule did, is why the stored
+  items could only say "ran 3 times".
+
+  Repetition alone does not qualify: a bare `npm test` never triggers it. The nudge fires
+  once, and stands down entirely once a saved skill already covers that command. Saved skills
+  appear in the session-start card within its existing character budget, and a matching skill
+  is suggested after a command runs. A captured command is never executed.
+
+### Fixed
+
+- **Resolved-failure items no longer retire each other.** Every such item was titled from the
+  error's first line, which on real data is always the shell exit line — so 22 of 31 shared
+  the title `Resolved failure: Exit code 1`, and title-similarity supersession then retired
+  each previous one. Replaying the recorded corpus through the write path: 30 items written
+  and 6 surviving became 31 written and 31 surviving.
+
+- **A synonym lookup could throw and lose a whole session's capture.** `SEARCH_SYNONYMS` was a
+  plain object literal, so two ordinary lowercase tokens resolved to inherited
+  `Object.prototype` members — truthy, not iterable, and fatal inside `finalizeMemorySession`.
+  The table now has a null prototype.
+
+- **The commit parser no longer accepts shell syntax as a subject.** Its capture class matched
+  newlines, so `git commit -m "$(cat <<'EOF'` yielded a wrapper fragment whose type parsed as
+  null — bypassing both the skipped-type and merge filters. The capture is bounded to one line
+  and the `$(cat <<'DELIM')` form is parsed properly rather than dropped.
+
 ## 2.9.0 — 2026-07-31
 
 ### Added
