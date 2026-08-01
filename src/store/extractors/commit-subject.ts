@@ -2,7 +2,8 @@ export interface CommitSubject {
   /** Conventional-commit type (`fix`, `feat`, …) when the subject carries one. */
   type: string | null;
   subject: string;
-  /** First paragraph after the subject, heredoc form only. */
+  /** Everything after the subject line, heredoc form only. Multi-paragraph bodies are
+   *  kept whole; a message with no body yields null rather than an empty string. */
   body: string | null;
 }
 

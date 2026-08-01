@@ -40,4 +40,16 @@ describe('parseCommitSubjects', () => {
 
     expect(found[0].type).toBeNull();
   });
+
+  it('ignores a -m message flag that does not belong to a git commit', () => {
+    // A naive /-m\s+"([^"]+)"/ would capture this. Only anchoring on `git commit`
+    // rejects it, so this is the test that pins the anchor.
+    expect(parseCommitSubjects('npm run release -- -m "fix(x): not a commit at all"')).toEqual([]);
+  });
+
+  it('returns a null body for a heredoc message with only a subject', () => {
+    const command = `git commit -q -F - <<'EOF'\nfix(store): one-line message\nEOF`;
+
+    expect(parseCommitSubjects(command)[0].body).toBeNull();
+  });
 });
