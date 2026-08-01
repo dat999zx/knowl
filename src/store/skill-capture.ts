@@ -1,3 +1,5 @@
+import { getClient } from './database.js';
+
 /** A command must run at least this many times before it is worth suggesting. */
 export const SKILL_CAPTURE_MIN_REPEATS = 3;
 
@@ -29,4 +31,28 @@ export function renderSkillCaptureNudge(command: string, repeatCount: number): s
     'If it is a reusable workflow, save it with knowl_skill_create — give it a name and say what it is for.',
     'Saving records it for later; it is never run for you.',
   ].join('\n');
+}
+
+/**
+ * How many times this exact command has already run in this session, counting the
+ * current one. Case-insensitive on the trimmed text, matching how a human would
+ * judge "the same command".
+ */
+export async function countCommandRepeats(sessionId: string, command: string): Promise<number> {
+  const key = command.trim().toLowerCase();
+  if (!key) return 0;
+  const rows = (await getClient().execute({
+    sql: `SELECT payload FROM memory_session_events WHERE session_id = ? AND type = 'command'`,
+    args: [sessionId],
+  })).rows;
+  let count = 0;
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(String(row.payload));
+      if (typeof payload.command === 'string' && payload.command.trim().toLowerCase() === key) count++;
+    } catch {
+      // A malformed payload is not a match; never let one row abort the count.
+    }
+  }
+  return count;
 }

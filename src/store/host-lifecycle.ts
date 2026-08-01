@@ -17,6 +17,7 @@ import { captureMemorySessionEvent } from './session-capture.js';
 import { finalizeMemorySession } from './session-finalizer.js';
 import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions } from './session-repository.js';
 import { claimCapture, releaseCapture } from './hook-debounce.js';
+import { countCommandRepeats, qualifiesForSkillCapture, renderSkillCaptureNudge } from './skill-capture.js';
 import {
   closeHostSessionBinding,
   closeHostSessionBindings,
@@ -410,10 +411,19 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
           await resetHostSuccessfulToolCount(key);
           hostOutput = profile.midTurnContext(renderChangeCard(changes));
         } else if (profile.midTurnContext('') !== undefined) {
-          // Adaptive continuation reminder: only nudge after a run of tool calls that
-          // ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
-          // that is querying/storing memory never sees a reminder.
-          if (input.knowlTool) {
+          // A change card always wins the single mid-turn slot; below it, a specific
+          // capture suggestion beats the generic continuation reminder.
+          const command = typeof input.payload.command === 'string' ? input.payload.command : '';
+          // The event row for this command is already written above, so the count
+          // includes the current invocation: the third run reports 3.
+          const repeats = command ? await countCommandRepeats(started.session.id, command) : 0;
+
+          if (command && qualifiesForSkillCapture(command, repeats)) {
+            hostOutput = profile.midTurnContext(renderSkillCaptureNudge(command, repeats));
+          } else if (input.knowlTool) {
+            // Adaptive continuation reminder: only nudge after a run of tool calls that
+            // ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
+            // that is querying/storing memory never sees a reminder.
             await resetHostSuccessfulToolCount(key);
           } else {
             const drift = await incrementHostSuccessfulToolCount(key);
