@@ -14,8 +14,8 @@ export const KNOWL_MCP_TOOL_GROUPS = [
   },
   {
     label: 'Verbatim transcripts',
-    tools: ['knowl_transcript_search', 'knowl_transcript_read'],
-    routing: 'The lossless record under the distilled atoms. Use only after knowl_query misses or returns something stale, ambiguous, or lower-confidence than the question needs, and use it instead of guessing about a past decision. Scope with sessionId when a handoff names a parent session, then widen. Read one entry in full only when a snippet cannot settle it. Promote what you used with knowl_store or knowl_update citing the returned locator, so the same lookup is never paid for twice.',
+    tools: ['knowl_session_list', 'knowl_transcript_search', 'knowl_transcript_read'],
+    routing: 'The lossless record under the distilled atoms. knowl_session_list browses past sessions as an inventory (names, opening asks, promoted knowledge) to pick one before reading into it. Use only after knowl_query misses or returns something stale, ambiguous, or lower-confidence than the question needs, and use it instead of guessing about a past decision. Scope with sessionId when a handoff names a parent session, then widen. Read one entry in full only when a snippet cannot settle it. Promote what you used with knowl_store or knowl_update citing the returned locator, so the same lookup is never paid for twice.',
   },
   {
     label: 'Manual work loop',
@@ -102,7 +102,7 @@ function renderCompactKnowlGuidance(modeLine: string): string {
     'Manual fallback: one bounded command uses knowl task run; resumable work uses knowl_task_start once, knowl_task_checkpoint at meaningful milestones/blockers with its taskId, and knowl_task_finish once after verification.',
     'Route:',
     '- retrieval: knowl_query; knowl_recent only without bootstrap or for refresh; knowl_state for broad state; knowl_context for a token-budgeted pack.',
-    '- verbatim: knowl_transcript_search only after a miss or an ambiguous hit, sessionId to scope to a named parent; knowl_transcript_read one entry in full; promote what you use.',
+    '- verbatim: knowl_session_list to browse/find past sessions; knowl_transcript_search only after a miss or an ambiguous hit, sessionId to scope to one session; knowl_transcript_read one entry in full; promote what you use.',
     '- durable memory: knowl_store one atom; knowl_ingest_atoms a batch; knowl_decide a confirmed choice; knowl_update a stale or contradicted item.',
     '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
     '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',

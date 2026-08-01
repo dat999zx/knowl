@@ -16,7 +16,7 @@ import {
 const EXPECTED_TOOLS = [
   'knowl_query',
   'knowl_recent', 'knowl_state', 'knowl_context',
-  'knowl_transcript_search', 'knowl_transcript_read',
+  'knowl_session_list', 'knowl_transcript_search', 'knowl_transcript_read',
   'knowl_task_start', 'knowl_task_checkpoint', 'knowl_task_finish',
   'knowl_store', 'knowl_ingest_atoms', 'knowl_decide', 'knowl_update',
   'knowl_timeline', 'knowl_evidence_list', 'knowl_conflicts', 'knowl_feedback',
@@ -31,7 +31,7 @@ const EXPECTED_CLAUDE_CARD = [
   'Manual fallback: one bounded command uses knowl task run; resumable work uses knowl_task_start once, knowl_task_checkpoint at meaningful milestones/blockers with its taskId, and knowl_task_finish once after verification.',
   'Route:',
   '- retrieval: knowl_query; knowl_recent only without bootstrap or for refresh; knowl_state for broad state; knowl_context for a token-budgeted pack.',
-  '- verbatim: knowl_transcript_search only after a miss or an ambiguous hit, sessionId to scope to a named parent; knowl_transcript_read one entry in full; promote what you use.',
+  '- verbatim: knowl_session_list to browse/find past sessions; knowl_transcript_search only after a miss or an ambiguous hit, sessionId to scope to one session; knowl_transcript_read one entry in full; promote what you use.',
   '- durable memory: knowl_store one atom; knowl_ingest_atoms a batch; knowl_decide a confirmed choice; knowl_update a stale or contradicted item.',
   '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
   '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',
@@ -42,10 +42,10 @@ const EXPECTED_CLAUDE_CARD = [
 const namesIn = (text: string) => [...new Set(text.match(/\bknowl_[a-z_]+\b/g) ?? [])].sort();
 
 describe('canonical Knowl agent guidance', () => {
-  it('defines eight groups and the exact 26-tool inventory', () => {
+  it('defines eight groups and the exact 27-tool inventory', () => {
     expect(KNOWL_MCP_TOOL_GROUPS).toHaveLength(8);
     expect(KNOWL_MCP_TOOL_NAMES).toEqual(EXPECTED_TOOLS);
-    expect(new Set(KNOWL_MCP_TOOL_NAMES).size).toBe(26);
+    expect(new Set(KNOWL_MCP_TOOL_NAMES).size).toBe(27);
     expect(KNOWL_MCP_TOOL_NAMES).not.toContain('knowl_ask');
   });
 
@@ -62,8 +62,8 @@ describe('canonical Knowl agent guidance', () => {
 
   it('keeps both compact renderings bounded and front-loads the required action', () => {
     expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toBe(EXPECTED_CLAUDE_CARD);
-    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_871);
-    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_922);
+    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_917);
+    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_968);
     for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS]) {
       expect(card.length).toBeLessThan(2_000);
       expect(card.slice(0, 512)).toContain('knowl_query');
@@ -84,7 +84,7 @@ describe('canonical Knowl agent guidance', () => {
     const documentedTools = [...readme.matchAll(/^\| \`(knowl_[a-z_]+)\` \|/gm)]
       .map(match => match[1]);
     expect(documentedTools).toEqual([...KNOWL_MCP_TOOL_NAMES]);
-    expect(new Set(documentedTools).size).toBe(26);
+    expect(new Set(documentedTools).size).toBe(27);
     expect(readme).toContain('KNOWL.md');
     expect(readme).toContain('GEMINI.md');
     expect(readme).toContain('agent-reminder claude --json');

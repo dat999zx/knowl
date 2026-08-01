@@ -218,7 +218,14 @@ const SCHEMA_STATEMENTS = [
     bytes_indexed INTEGER NOT NULL DEFAULT 0,
     lines_indexed INTEGER NOT NULL DEFAULT 0,
     mtime_ms INTEGER NOT NULL DEFAULT 0,
-    indexed_at TEXT NOT NULL
+    indexed_at TEXT NOT NULL,
+    -- Captured while the indexer streams the file, at zero extra IO: the
+    -- session's own title entries (a user rename beats a generated title), and
+    -- the first real user ask as a one-line descriptor. External tools name
+    -- sessions by filename or first prompt; the transcript already knows better.
+    display_name TEXT,
+    name_kind INTEGER NOT NULL DEFAULT 0,
+    opening TEXT
   );`,
   `CREATE TABLE IF NOT EXISTS transcript_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -498,6 +505,27 @@ async function ensureMemorySessionColumns(client: Client): Promise<void> {
   if (!columns.includes('promotion_error_code')) await client.execute('ALTER TABLE memory_sessions ADD COLUMN promotion_error_code TEXT;');
 }
 
+async function ensureTranscriptFileColumns(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'transcript_files'))) return;
+  const columns = await tableColumns(client, 'transcript_files');
+  if (!columns.includes('display_name')) {
+    await client.execute('ALTER TABLE transcript_files ADD COLUMN display_name TEXT;');
+  }
+  if (!columns.includes('name_kind')) {
+    await client.execute('ALTER TABLE transcript_files ADD COLUMN name_kind INTEGER NOT NULL DEFAULT 0;');
+  }
+  if (!columns.includes('opening')) {
+    await client.execute('ALTER TABLE transcript_files ADD COLUMN opening TEXT;');
+    // Names and openings are captured while streaming, so rows indexed before
+    // these columns existed would stay nameless forever. The tables are derived
+    // data; resetting the watermarks makes the next pass re-read and fill them.
+    await client.execute("UPDATE transcript_files SET bytes_indexed = 0, lines_indexed = 0, indexed_at = '1970-01-01T00:00:00.000Z';");
+    await client.execute('DELETE FROM transcript_embeddings;');
+    await client.execute('DELETE FROM transcript_messages;');
+    await client.execute("INSERT INTO transcript_fts(transcript_fts) VALUES('delete-all');");
+  }
+}
+
 async function ensureHostSessionBindingColumns(client: Client): Promise<void> {
   if (!(await tableExists(client, 'host_session_bindings'))) return;
   const columns = await tableColumns(client, 'host_session_bindings');
@@ -663,6 +691,7 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await ensureOwnershipColumns(client);
   await ensureMemorySessionColumns(client);
   await ensureHostSessionBindingColumns(client);
+  await ensureTranscriptFileColumns(client);
   await ensureCodeIndexColumns(client);
   await backfillKnowledgeAssertions(client);
   await repairSkillForeignKeys(client);

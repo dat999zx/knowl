@@ -197,7 +197,7 @@ describe('MCP Server Layer', () => {
     const res = await runRpcRequest('tools/list');
     const names = res.result.tools.map((tool: any) => tool.name);
     expect([...names].sort()).toEqual([...KNOWL_MCP_TOOL_NAMES].sort());
-    expect(new Set(names).size).toBe(26);
+    expect(new Set(names).size).toBe(27);
   });
 
   it('advertises lifecycle and mutation gates in tool descriptions', async () => {

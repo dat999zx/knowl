@@ -93,7 +93,8 @@ function isNoise(text: string): boolean {
   const t = text.trimStart();
   if (!t) return true;
   if (t.startsWith('<local-command-caveat>')) return true;
-  if (t.startsWith('<command-name>')) return true;
+  // Slash-command invocations arrive wrapped either way round.
+  if (t.startsWith('<command-name>') || t.startsWith('<command-message>')) return true;
   return /^Caveat: The messages below were generated/.test(t);
 }
 
@@ -167,7 +168,20 @@ async function flush(projectDir: string, pending: PendingMessage[], nextId: { va
   // live session, and a long write transaction starves it into SQLITE_BUSY.
   for (let i = 0; i < statements.length; i += BATCH_STATEMENTS) {
     try {
-      await client.batch(statements.slice(i, i + BATCH_STATEMENTS), 'write');
+      // Observed repeatedly beside a live serve process writing to the same
+      // database: transient BUSY on commit. Retried with backoff because one
+      // retry proved too thin under sustained neighbour writes; a final
+      // failure is treated like any other batch error below.
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await client.batch(statements.slice(i, i + BATCH_STATEMENTS), 'write');
+          break;
+        } catch (error) {
+          const busy = /SQLITE_BUSY|statements in progress/i.test(String((error as Error).message));
+          if (!busy || attempt >= 3) throw error;
+          await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+        }
+      }
     } catch (error) {
       // A primary-key collision means another process allocated the same ids -
       // the file lease serializes work per FILE, but ids come from one MAX(id)
@@ -223,7 +237,7 @@ type FileOutcome = { added: number; complete: boolean; reason?: 'budget' | 'leas
 async function indexFile(projectDir: string, file: SessionFile, nextId: { value: number }, deadline: number): Promise<FileOutcome> {
   const client = getClient();
   const row = (await client.execute({
-    sql: 'SELECT bytes_indexed, lines_indexed, indexed_at, mtime_ms FROM transcript_files WHERE path = ?',
+    sql: 'SELECT bytes_indexed, lines_indexed, indexed_at, mtime_ms, display_name, name_kind, opening FROM transcript_files WHERE path = ?',
     args: [file.path],
   })).rows[0];
 
@@ -237,12 +251,18 @@ async function indexFile(projectDir: string, file: SessionFile, nextId: { value:
   // invisible, which real editing does not do.
   const rewrittenInPlace = row !== undefined
     && startByte === file.size && Number(row.mtime_ms) !== 0 && Number(row.mtime_ms) !== file.mtimeMs;
+  // Carried across incremental passes: a rename entry seen weeks ago must not
+  // be forgotten because later passes only read the appended tail.
+  let name = row?.display_name ? String(row.display_name) : null;
+  let nameKind = row ? Number(row.name_kind) : 0;
+  let opening = row?.opening ? String(row.opening) : null;
 
   // A file that shrank was rewritten rather than appended to, so the offset is
   // meaningless and its rows have to go. Same-size rewrites are caught above.
   if (startByte > file.size || rewrittenInPlace) {
     await purgeBeyond(projectDir, file.sessionId, 0);
-    startByte = 0; lineNo = 0;
+    // The file was rewritten, so metadata read from the old content is void.
+    startByte = 0; lineNo = 0; name = null; nameKind = 0; opening = null;
   }
   if (startByte === file.size) return { added: 0, complete: true };
 
@@ -292,9 +312,18 @@ async function indexFile(projectDir: string, file: SessionFile, nextId: { value:
       if (!line.trim()) continue;
       let entry: any;
       try { entry = JSON.parse(line); } catch { continue; }
+      // The transcript names itself: a user rename (custom-title, mirrored by
+      // agent-name) outranks the generated ai-title, and within a rank the
+      // later entry wins. External tools fall back to filenames or first
+      // prompts; the better source was here all along.
+      if (entry.type === 'custom-title' && typeof entry.customTitle === 'string') { name = entry.customTitle; nameKind = 3; continue; }
+      if (entry.type === 'agent-name' && typeof entry.agentName === 'string' && nameKind <= 2) { name = entry.agentName; nameKind = 2; continue; }
+      if (entry.type === 'ai-title' && typeof entry.aiTitle === 'string' && nameKind <= 1) { name = entry.aiTitle; nameKind = 1; continue; }
       if (entry.type !== 'user' && entry.type !== 'assistant') continue;
       const { text, toolChars } = extractText(entry);
       if (!text || isNoise(text)) continue;
+      // The first real ask, as the session's one-line descriptor.
+      if (opening === null && entry.type === 'user') opening = text.replace(/\s+/g, ' ').slice(0, 240);
       const clipped = text.slice(0, MAX_TEXT_CHARS);
       pending.push({
         sessionId: file.sessionId, line: lineNo, role: entry.type,
@@ -323,11 +352,12 @@ async function indexFile(projectDir: string, file: SessionFile, nextId: { value:
   const doneStamp = new Date().toISOString();
   ownClaims.add(doneStamp);
   await client.execute({
-    sql: `INSERT INTO transcript_files (path, project_dir, session_id, bytes_indexed, lines_indexed, mtime_ms, indexed_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+    sql: `INSERT INTO transcript_files (path, project_dir, session_id, bytes_indexed, lines_indexed, mtime_ms, indexed_at, display_name, name_kind, opening)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(path) DO UPDATE SET bytes_indexed = excluded.bytes_indexed,
-            lines_indexed = excluded.lines_indexed, mtime_ms = excluded.mtime_ms, indexed_at = excluded.indexed_at`,
-    args: [file.path, projectDir, file.sessionId, bytesIndexed, lineNo, complete ? file.mtimeMs : 0, doneStamp],
+            lines_indexed = excluded.lines_indexed, mtime_ms = excluded.mtime_ms, indexed_at = excluded.indexed_at,
+            display_name = excluded.display_name, name_kind = excluded.name_kind, opening = excluded.opening`,
+    args: [file.path, projectDir, file.sessionId, bytesIndexed, lineNo, complete ? file.mtimeMs : 0, doneStamp, name, nameKind, opening],
   });
   return complete ? { added, complete } : { added, complete, reason: 'budget' };
 }

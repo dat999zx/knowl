@@ -321,6 +321,18 @@ export function registerTools(
           },
         },
         {
+          name: 'knowl_session_list',
+          description: "Browse the project's past Claude Code sessions as an inventory: best-known name (a user rename beats a generated title), the opening ask, derived status (active / interrupted by a crash handoff / idle), any declared session card, last activity, and what each session promoted into memory. Use to answer 'which session was about X' or to decide between resuming a session and starting a new one - then knowl_transcript_search with sessionId to read into the chosen session. Filters by keywords over intent; for content questions use knowl_transcript_search.",
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: "Keywords over session names, opening asks, and promoted titles. Omit to list newest first." },
+              limit: { type: 'number', description: 'Maximum sessions returned; defaults to 12.' },
+              projectDir: { type: 'string', description: 'Directory whose sessions to list. Defaults to the current project.' },
+            },
+          },
+        },
+        {
           name: 'knowl_transcript_search',
           description: 'Search the RAW session transcripts - the lossless record of everything actually said, underneath the distilled atoms. Use only after knowl_query misses or returns something stale, ambiguous, or lower-confidence than the question needs, and use it instead of guessing about a past decision. Ranked, not grep: BM25 over an incrementally maintained index, fused with semantic similarity when vector search is enabled. ALWAYS follow a useful hit with knowl_store or knowl_update citing the returned locator, so the same lookup is never paid for twice - an unpromoted recovery is a lookup every future session repeats.',
           inputSchema: {
@@ -971,6 +983,20 @@ export function registerTools(
             text: `SCOPE: ${explain ? '`explain`' : 'vector search'} limits this query to the project namespace, so ${skippedNamespaces.join(' and ')} knowledge was NOT searched. A miss here does not mean the knowledge is absent; re-run without it for full scope.`,
           });
         }
+        return { content: blocks };
+      }
+
+      else if (name === 'knowl_session_list') {
+        const { query, limit, projectDir } = args as any;
+        const { listSessionDirectory } = await import('../store/session-directory.js');
+        const result = await listSessionDirectory({
+          projectDir: projectDir ? String(projectDir) : (projectRoot ?? process.cwd()),
+          query: query ? String(query) : undefined,
+          limit: typeof limit === 'number' ? limit : undefined,
+        });
+        const blocks: CallToolResult['content'] = [{ type: 'text', text: compactMcpJson(result.entries) }];
+        const warming = result.indexComplete ? '' : ' INDEX STILL WARMING - names and openings fill in as it catches up; run again for fuller coverage.';
+        blocks.push({ type: 'text', text: `${result.entries.length} of ${result.total} matching session(s), newest first.${warming} To read into one: knowl_transcript_search with its sessionId.` });
         return { content: blocks };
       }
 

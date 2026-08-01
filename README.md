@@ -963,6 +963,7 @@ Knowl exposes exactly 24 MCP tools:
 | `knowl_recent` | Compact recent context when lifecycle bootstrap is unavailable or a refresh is needed |
 | `knowl_state` | Broad active-memory status or hierarchical project summary |
 | `knowl_context` | Compose an explicitly token-budgeted local context pack |
+| `knowl_session_list` | Browse past sessions as an inventory: names, opening asks, promoted knowledge |
 | `knowl_transcript_search` | Search the verbatim session transcripts when memory misses or is ambiguous |
 | `knowl_transcript_read` | Read one transcript entry in full when a snippet cannot settle it |
 | `knowl_task_start` | Start one manual work loop when verified lifecycle hooks are unavailable |
