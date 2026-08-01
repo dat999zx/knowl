@@ -3,6 +3,39 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.11.0 — 2026-08-01
+
+### Added
+
+- **Agent queries can now return nothing.** Asked something the store has no answer to —
+  `training a labrador puppy` against a memory-system store — retrieval previously returned
+  three confident results anyway, because vector search is nearest-neighbour with no distance
+  cutoff and the only bound was `slice(0, limit)`. A measured floor of 0.30 now decides whether
+  a question is answerable at all. Six off-topic queries that each returned three results return
+  zero; all eight on-topic and all six deliberately-vague queries still answer.
+
+  **The floor judges the query, not each result.** Measured across 20 queries, on-topic scored
+  0.401–0.614 and off-topic 0.170–0.223 — but every one of those figures is a *top-result*
+  score, so that is the only claim the measurement supports. Filtering each result instead cost
+  real answers: against the 500-case retrieval suite it dropped `span export backend` (0.269),
+  `jwt ttl configured value` (0.262) and `which test runner` (0.233), all three on queries whose
+  top result scored 0.37–0.39, taking Recall@10 from 0.9940 to 0.9867. A weak result underneath
+  a strong one is the tail of a real answer, not junk. No lower constant fixes it either —
+  those answers reach down to 0.233 while off-topic queries reach 0.223.
+
+  The shipped rule leaves the ranking untouched once a query clears, and the suite confirms it:
+  **Recall@10 0.9940, MRR 0.9609, nDCG 0.9689 — identical to before, with the same 8 failing
+  cases.**
+
+- **Only results vector search could have returned are judged.** Two candidates arrive looking
+  identical, both scoring about 0.034 with nothing to separate them: one that vector ranked
+  outside its top N (semantically distant), and one with no embedding at all (invisible to
+  vector, not distant — written since the last index, or while the embedding model was not yet
+  cached). The floor now keys on whether an item is embedded under the provider and model being
+  searched, so a just-written item is never suppressed by a verdict reached without it. A store
+  with no embeddings is unaffected: every candidate is unjudgeable and the floor turns itself
+  off.
+
 ## 2.10.0 — 2026-07-31
 
 ### Changed
