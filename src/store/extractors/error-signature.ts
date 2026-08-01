@@ -9,7 +9,6 @@ export function errorSignature(message: string): string {
     .replace(/[A-Za-z]:[\\/][^\s:)]*/g, '')  // Windows absolute paths
     .replace(/(?:\/[\w.@-]+){2,}/g, '')      // POSIX absolute paths
     .replace(/:\d+(?::\d+)?/g, '')           // line:column
-    .replace(/\b\d+\b/g, '')                 // remaining bare numbers
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase()

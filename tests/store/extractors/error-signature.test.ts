@@ -39,4 +39,18 @@ describe('errorSignature', () => {
     expect(errorSignature(`${base}\n${'noise line\n'.repeat(50)}`))
       .toBe(errorSignature(`${base}\ndifferent noise entirely`));
   });
+
+  it('separates two assertion failures that differ only in their values', () => {
+    // The blanket number strip used to collapse these, which made task 3 treat an
+    // unrelated later failure as a recurrence of an earlier one.
+    expect(errorSignature('AssertionError: expected 1 to be 2'))
+      .not.toBe(errorSignature('AssertionError: expected 99 to be 42'));
+  });
+
+  it('strips POSIX absolute paths, not only Windows ones', () => {
+    const first = 'Error: ENOENT\n  at /home/alice/project/src/a.ts';
+    const second = 'Error: ENOENT\n  at /var/lib/other/src/a.ts';
+
+    expect(errorSignature(first)).toBe(errorSignature(second));
+  });
 });
