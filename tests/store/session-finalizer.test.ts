@@ -19,7 +19,7 @@ describe('session finalizer', () => {
     await appendMemorySessionEvent(session.id, 'decision', { text: 'Use local SQLite evidence.' });
     await finishMemorySession(session.id, 'finished', 'Finalized retrieval work.');
     const result = await finalizeMemorySession(projectId, session.id);
-    expect(result).toMatchObject({ status: 'promoted', candidateCount: 2, itemIds: expect.any(Array), usedAi: false });
-    expect(result.itemIds).toHaveLength(2);
+    expect(result).toMatchObject({ status: 'promoted', candidateCount: 1, itemIds: expect.any(Array), usedAi: false });
+    expect(result.itemIds).toHaveLength(1);
   });
 });

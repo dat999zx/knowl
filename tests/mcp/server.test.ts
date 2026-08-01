@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { initDb, closeDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
-import { startMemorySession } from '../../src/store/session-repository.js';
+import { startMemorySession, appendMemorySessionEvent } from '../../src/store/session-repository.js';
 import { createEvidence, linkKnowledgeEvidence } from '../../src/store/evidence-repository.js';
 import { createMcpServer } from '../../src/mcp/server.js';
 import { ProjectConfig } from '../../src/core/types.js';
@@ -550,6 +550,12 @@ describe('MCP Server Layer', () => {
 
   it('should finish and promote sessions through MCP', async () => {
     const session = await startMemorySession({ title: 'MCP promotion' });
+    // A commit subject is now the source that yields a candidate; the session had no
+    // events at all before, and relied on the stop.summary rule that Phase 1 removed.
+    await appendMemorySessionEvent(session.id, 'command', {
+      command: 'git commit -q -m "fix(mcp): promote sessions through the tool path"',
+      exitCode: 0,
+    });
     const res = await runRpcRequest('tools/call', { name: 'knowl_session_finish', arguments: { sessionId: session.id, status: 'finished', summary: 'MCP summary' } });
     expect(res.error).toBeUndefined();
     const payload = JSON.parse(res.result.content[0].text);

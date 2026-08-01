@@ -9,7 +9,12 @@ const SEARCH_STOP_WORDS = new Set([
   'when', 'where', 'which', 'who', 'why', 'with',
 ]);
 
-const SEARCH_SYNONYMS: Record<string, string[]> = {
+// Null-prototype: a plain object literal answers `SEARCH_SYNONYMS['constructor']`
+// and `SEARCH_SYNONYMS['__proto__']` with an inherited Object.prototype member,
+// which is truthy and not iterable — so the expansion loop below threw for any
+// query containing either word. Both survive the tokenizer, and both occur in
+// ordinary error text and commit bodies.
+const SEARCH_SYNONYMS: Record<string, string[]> = Object.assign(Object.create(null) as Record<string, string[]>, {
   auth: ['authentication'],
   authentication: ['auth'],
   backend: ['server'],
@@ -21,7 +26,7 @@ const SEARCH_SYNONYMS: Record<string, string[]> = {
   persistence: ['persist', 'storage', 'database', 'db'],
   server: ['backend'],
   storage: ['persistence', 'persist', 'database', 'db'],
-};
+});
 
 function tokenizeSearchQuery(query: string): string[] {
   const tokens = query

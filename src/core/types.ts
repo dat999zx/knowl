@@ -67,7 +67,7 @@ export interface MemorySessionEvent {
 }
 
 export interface MemoryCandidate extends KnowledgeAtom {
-  candidateType: 'outcome' | 'decision' | 'error' | 'verified-command' | 'task-state';
+  candidateType: 'outcome' | 'decision' | 'error' | 'commit' | 'verified-command' | 'task-state';
   sessionId: string;
   evidence: EvidenceInput[];
 }

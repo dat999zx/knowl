@@ -1,17 +1,45 @@
 import { MemoryCandidate, MemorySessionEvent } from '../core/types.js';
 import { getClient } from './database.js';
 import { rankCandidatesByImportance, MAX_PROMOTED_CANDIDATES } from './candidate-promotion.js';
+import { parseCommitSubjects } from './extractors/commit-subject.js';
+import { findFailureFixPairs } from './extractors/failure-fix.js';
 
-// A command must succeed at least this many times in one session before it is
-// suggested as a reusable skill — one-off successful commands stay noise.
-const PROCEDURAL_SKILL_MIN_REPEATS = 3;
+/** Commit types that record process rather than knowledge. */
+const SKIPPED_COMMIT_TYPES = new Set(['docs', 'test', 'chore']);
+
+const MAX_CONTENT_CHARS = 2_000;
 
 function eventEvidence(sessionId: string, event: MemorySessionEvent) {
   return [{ type: 'agent' as const, locator: `session://${sessionId}/event/${event.id}`, relationship: 'derived_from' as const, observedAt: event.observedAt }];
 }
 
+function parsePayload(raw: unknown): Record<string, unknown> {
+  // One malformed row must not cost the whole session's capture. This runs inside
+  // finalization, where a throw also leaves the host binding unclosed.
+  try {
+    const parsed = JSON.parse(String(raw));
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : {};
+  } catch {
+    return {};
+  }
+}
+
 function eventsForSession(rows: any[]): MemorySessionEvent[] {
-  return rows.map(row => ({ id: String(row.id), sessionId: String(row.session_id), type: row.type, payload: JSON.parse(String(row.payload)), observedAt: String(row.observed_at), expiresAt: String(row.expires_at) }));
+  return rows.map(row => ({ id: String(row.id), sessionId: String(row.session_id), type: row.type, payload: parsePayload(row.payload), observedAt: String(row.observed_at), expiresAt: String(row.expires_at) }));
+}
+
+/** The first line of a real error payload is the shell's exit line, which is the
+ *  same for almost every failure. Titling on it collapses every resolved failure
+ *  in a store onto one subject, and the write path reads one title's tokens being
+ *  a subset of another's as "same subject" — so each new item retires the last,
+ *  unrelated one. The headline therefore skips bare exit lines, and the changed
+ *  path distinguishes two failures that still share a first meaningful line. */
+function failureHeadline(message: string, changedPaths: string[]): string {
+  const meaningful = message.split('\n')
+    .map(line => line.trim())
+    .find(line => line.length > 0 && !/^exit code \d+$/i.test(line));
+  const head = meaningful ?? changedPaths[0] ?? 'unknown failure';
+  return `Resolved failure in ${changedPaths[0] ?? 'session'}: ${head.slice(0, 90)}`;
 }
 
 export async function extractSessionMemoryCandidates(sessionId: string): Promise<MemoryCandidate[]> {
@@ -20,37 +48,57 @@ export async function extractSessionMemoryCandidates(sessionId: string): Promise
   if (!sessionRow) throw new Error(`Memory session not found: ${sessionId}`);
   const events = eventsForSession((await client.execute({ sql: 'SELECT * FROM memory_session_events WHERE session_id = ? ORDER BY observed_at', args: [sessionId] })).rows);
   const candidates: MemoryCandidate[] = [];
+
   for (const event of events.filter(event => event.type === 'decision')) {
-    const text = typeof event.payload.text === 'string' ? event.payload.text.slice(0, 2_000) : '';
+    const text = typeof event.payload.text === 'string' ? event.payload.text.slice(0, MAX_CONTENT_CHARS) : '';
     if (text) candidates.push({ candidateType: 'decision', sessionId, category: 'decision', title: `Session decision: ${text.slice(0, 80)}`, content: text, confidence: 0.9, evidence: eventEvidence(sessionId, event) });
   }
-  // Procedural learning: a command that succeeds repeatedly in a session is a
-  // workflow worth remembering as a skill, not one-off noise. A single run is
-  // still ignored; only genuinely repeated commands become skill candidates.
-  const commandRuns = new Map<string, { command: string; count: number; events: MemorySessionEvent[] }>();
+
+  // Commit subjects: the largest measured source of durable knowledge (52%). They
+  // survive in the payload because the whole command string is captured.
   for (const event of events.filter(event => event.type === 'command')) {
-    const command = typeof event.payload.command === 'string' ? event.payload.command.trim() : '';
-    const succeeded = event.payload.exitCode === 0 || event.payload.exitCode === undefined;
-    if (!command || command.length < 4 || !succeeded) continue;
-    const key = command.toLowerCase();
-    const entry = commandRuns.get(key) ?? { command, count: 0, events: [] };
-    entry.count += 1;
-    entry.events.push(event);
-    commandRuns.set(key, entry);
+    const command = typeof event.payload.command === 'string' ? event.payload.command : '';
+    if (!command) continue;
+    for (const commit of parseCommitSubjects(command)) {
+      if (commit.type && SKIPPED_COMMIT_TYPES.has(commit.type)) continue;
+      if (/^merge\b/i.test(commit.subject)) continue;
+      const content = (commit.body ? `${commit.subject}\n\n${commit.body}` : commit.subject).slice(0, MAX_CONTENT_CHARS);
+      candidates.push({
+        candidateType: 'commit',
+        sessionId,
+        category: commit.type === 'fix' ? 'fact' : 'architecture',
+        title: commit.subject.slice(0, 120),
+        content,
+        confidence: 0.8,
+        evidence: eventEvidence(sessionId, event),
+      });
+    }
   }
-  for (const run of commandRuns.values()) {
-    if (run.count < PROCEDURAL_SKILL_MIN_REPEATS) continue;
+
+  // Failure that was fixed: 45% of measured value, and the only source that records
+  // why something broke rather than what changed.
+  for (const pair of findFailureFixPairs(events)) {
+    // The resolution line is the only evidence that anything was resolved, and the
+    // capture layer already caps the message at MAX_CONTENT_CHARS -- so slicing the
+    // joined string drops it. Reserve its length first, then spend what is left on
+    // the message.
+    const resolution = `Resolved after changing: ${pair.changedPaths.join(', ')}`.slice(0, MAX_CONTENT_CHARS);
+    const prefix = 'Failed with:\n';
+    const budget = MAX_CONTENT_CHARS - resolution.length - prefix.length - 2;
+    const content = budget > 0
+      ? `${prefix}${pair.message.trim().slice(0, budget)}\n\n${resolution}`
+      : resolution;
     candidates.push({
-      candidateType: 'verified-command', sessionId, category: 'skill',
-      title: `Repeated workflow: ${run.command.slice(0, 72)}`,
-      content: `The command \`${run.command}\` ran successfully ${run.count} times this session — a candidate reusable skill.`,
-      confidence: 0.7, evidence: run.events.slice(0, 3).flatMap(event => eventEvidence(sessionId, event)),
+      candidateType: 'error',
+      sessionId,
+      category: 'fact',
+      title: failureHeadline(pair.message, pair.changedPaths).slice(0, 120),
+      content,
+      confidence: 0.75,
+      evidence: [pair.errorEvent, ...pair.fixEvents.slice(0, 2)].flatMap(event => eventEvidence(sessionId, event)),
     });
   }
 
-  const stop = events.find(event => event.type === 'stop');
-  const summary = typeof stop?.payload.summary === 'string' ? stop.payload.summary.slice(0, 2_000) : '';
-  if (summary) candidates.push({ candidateType: 'outcome', sessionId, category: 'state', title: `Session outcome: ${String(sessionRow.title)}`, content: summary, confidence: 0.75, evidence: eventEvidence(sessionId, stop!) });
   const seen = new Set<string>();
   const deduped = candidates.filter(candidate => { const key = `${candidate.title}\n${candidate.content}`.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
   return rankCandidatesByImportance(deduped).slice(0, MAX_PROMOTED_CANDIDATES);
