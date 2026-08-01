@@ -41,3 +41,21 @@ export function selectSurfacedSkills(items: KnowledgeItem[], maxChars: number): 
   }
   return kept;
 }
+
+/** Below this, a name is too generic to match on -- `go`, `cd`, `rm`. */
+const MIN_MATCHABLE_NAME_CHARS = 4;
+
+export function matchSkillForCommand(command: string, skills: SurfacedSkill[]): SurfacedSkill | null {
+  const haystack = command.toLowerCase();
+  return skills.find((skill) =>
+    skill.runnable
+    && skill.name.length >= MIN_MATCHABLE_NAME_CHARS
+    && haystack.includes(skill.name.toLowerCase())) ?? null;
+}
+
+export function renderSkillUseNudge(skill: SurfacedSkill): string {
+  return [
+    `KNOWL: a saved skill covers this — **${skill.name}**: ${skill.purpose}`,
+    'Run it with knowl_skill_run if it fits what you are doing.',
+  ].join('\n');
+}

@@ -18,6 +18,8 @@ import { finalizeMemorySession } from './session-finalizer.js';
 import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions } from './session-repository.js';
 import { claimCapture, releaseCapture } from './hook-debounce.js';
 import { countCommandRepeats, qualifiesForSkillCapture, renderSkillCaptureNudge } from './skill-capture.js';
+import { matchSkillForCommand, renderSkillUseNudge, selectSurfacedSkills, type SurfacedSkill } from './skill-surface.js';
+import { listKnowledgeItems } from './repository.js';
 import {
   closeHostSessionBinding,
   closeHostSessionBindings,
@@ -418,8 +420,19 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
           // includes the current invocation: the third run reports 3.
           const repeats = command ? await countCommandRepeats(started.session.id, command) : 0;
 
-          if (command && qualifiesForSkillCapture(command, repeats)) {
+          const capturing = Boolean(command) && qualifiesForSkillCapture(command, repeats);
+          // Retrieval sits below capture: recording a workflow the agent is actively
+          // repeating is worth more than pointing at one it has already started. Only
+          // looked up when capture has already declined, so the common path reads nothing.
+          let skillMatch: SurfacedSkill | null = null;
+          if (command && !capturing) {
+            skillMatch = matchSkillForCommand(command, selectSurfacedSkills(await listKnowledgeItems(), 4_000));
+          }
+
+          if (capturing) {
             hostOutput = profile.midTurnContext(renderSkillCaptureNudge(command, repeats));
+          } else if (skillMatch) {
+            hostOutput = profile.midTurnContext(renderSkillUseNudge(skillMatch));
           } else if (input.knowlTool) {
             // Adaptive continuation reminder: only nudge after a run of tool calls that
             // ignored Knowl. Using a Knowl tool resets the drift counter, so an agent

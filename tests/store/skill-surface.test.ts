@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { selectSurfacedSkills } from '../../src/store/skill-surface.js';
+import { matchSkillForCommand, renderSkillUseNudge, selectSurfacedSkills } from '../../src/store/skill-surface.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
 
 const item = (over: Partial<KnowledgeItem>): KnowledgeItem => ({
@@ -58,5 +58,40 @@ describe('selectSurfacedSkills', () => {
 
   it('returns an empty array for no input rather than throwing', () => {
     expect(selectSurfacedSkills([], 1_000)).toEqual([]);
+  });
+});
+
+describe('matchSkillForCommand', () => {
+  const skill = { name: 'verify-bench', purpose: 'run the benchmark suite and filter its output', runnable: true };
+
+  it('matches when the skill name appears in the command', () => {
+    expect(matchSkillForCommand('npm run verify-bench --watch', [skill])).toEqual(skill);
+  });
+
+  it('does not match an unrelated command', () => {
+    expect(matchSkillForCommand('npm test', [skill])).toBeNull();
+  });
+
+  it('never suggests a skill that cannot be run', () => {
+    // Pointing an agent at a plain memory row wastes the one mid-turn slot for that
+    // event: knowl_skill_run cannot execute it.
+    expect(matchSkillForCommand('npm run verify-bench', [{ ...skill, runnable: false }])).toBeNull();
+  });
+
+  it('ignores a name too short to be a meaningful match', () => {
+    expect(matchSkillForCommand('go build ./...', [{ name: 'go', purpose: 'x', runnable: true }])).toBeNull();
+  });
+
+  it('returns null for no skills rather than throwing', () => {
+    expect(matchSkillForCommand('anything', [])).toBeNull();
+  });
+});
+
+describe('renderSkillUseNudge', () => {
+  it('names the skill and how to run it', () => {
+    const nudge = renderSkillUseNudge({ name: 'verify-bench', purpose: 'run the suite', runnable: true });
+
+    expect(nudge).toContain('verify-bench');
+    expect(nudge).toContain('knowl_skill_run');
   });
 });

@@ -172,3 +172,37 @@ describe('session start carries skills', () => {
     expect(section).toContain('check publish readiness');
   });
 });
+
+describe('capture and retrieval share one slot', () => {
+  it('prefers the capture nudge over the retrieval nudge when both qualify', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'skill', title: 'typecheck-filtered',
+      content: 'Purpose: run typecheck and filter it.', source: '.knowl/skills/typecheck-filtered/',
+    });
+    await handleHostLifecycleEvent(projectId, {
+      host: 'claude', event: 'session-start', projectRoot: TEST_ROOT,
+      externalSessionId: 's-prec', externalTurnId: 's-prec-turn', payload: {},
+    } as any);
+
+    // A command that both matches the saved skill AND qualifies for capture.
+    const command = 'npm run typecheck-filtered 2>&1 | grep src';
+    let last;
+    for (let index = 0; index < 3; index++) last = await toolEvent('s-prec', command);
+
+    const text = JSON.stringify(last?.hostOutput ?? {});
+    expect(text).toContain('knowl_skill_create');
+    expect(text).not.toContain('knowl_skill_run');
+  });
+
+  it('suggests the saved skill when the command does not qualify for capture', async () => {
+    await handleHostLifecycleEvent(projectId, {
+      host: 'claude', event: 'session-start', projectRoot: TEST_ROOT,
+      externalSessionId: 's-retr', externalTurnId: 's-retr-turn', payload: {},
+    } as any);
+
+    // Bare: no pipe, no redirect, no filter, so capture declines and retrieval speaks.
+    const last = await toolEvent('s-retr', 'npm run typecheck-filtered');
+
+    expect(JSON.stringify(last?.hostOutput ?? {})).toContain('knowl_skill_run');
+  });
+});
