@@ -26,6 +26,22 @@ const TIER_VERIFIED_BOOST_LEXICAL = 0.004;
 const PROVENANCE_INFERRED_PENALTY_VECTOR = -0.01;
 const PROVENANCE_INFERRED_PENALTY_LEXICAL = -0.003;
 
+/**
+ * Below this, a vector-backed result is noise rather than a weak answer.
+ *
+ * Measured 2026-08-01 over 20 queries against a 424-item store: on-topic and near-miss
+ * queries score 0.401-0.614, off-topic queries 0.170-0.223, and nothing falls between.
+ * 0.30 leaves roughly 0.08 above the worst junk and 0.10 below the weakest legitimate
+ * query -- the larger margin deliberately protects real answers, because silencing one is
+ * worse than admitting a weak one.
+ *
+ * Absolute, never a ratio: freshness and provenance penalties are additive and can drive a
+ * score slightly negative, which makes "a fraction of the top score" undefined. A ratio was
+ * measured and is worse than useless here -- off-topic runner-up ratios reach 0.69 while
+ * legitimate ones fall to 0.33.
+ */
+export const MIN_VECTOR_RELEVANCE = 0.30;
+
 function queryTokens(query?: string): string[] {
   return [...new Set((query ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length > 1))];
 }
@@ -127,6 +143,19 @@ export type ScoredCandidate = {
   score: number;
   explanation: ExplainedKnowledgeItem['explanation'];
 };
+
+/**
+ * Whether vector search actually returned anything for this query.
+ *
+ * NOT the same as `options.vector?.enabled && options.vector.embedding`, which says only that
+ * vector was *requested*. On a store with no embeddings -- anyone who enables vector before
+ * running a reindex -- the request succeeds and returns nothing, leaving every candidate on
+ * the BM25 fallback scale of roughly 0.05-0.23. Applying MIN_VECTOR_RELEVANCE there would
+ * drop every result for every query, so the floor keys on this instead.
+ */
+export function vectorContributed(candidates: Pick<Candidate, 'vectorScore'>[]): boolean {
+  return candidates.some(candidate => candidate.vectorScore !== undefined);
+}
 
 /**
  * The reciprocal-rank base score, reconstructed from the ranks rather than carried.
