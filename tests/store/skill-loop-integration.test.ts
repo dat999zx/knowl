@@ -80,3 +80,63 @@ describe('skill capture nudge', () => {
     expect(JSON.stringify(last?.hostOutput ?? {})).not.toMatch(/run it|execute/i);
   });
 });
+
+describe('skills in the session-start card', () => {
+  it('lists a runnable skill with its purpose', async () => {
+    const { formatRecentContextToMarkdown } = await import('../../src/core/format.js');
+    const skill = {
+      id: 's1', category: 'skill', status: 'active', title: 'verify-bench',
+      content: 'File-backed learned skill package at `.knowl/skills/verify-bench/`.\nPurpose: run the benchmark suite and filter its output.',
+      source: '.knowl/skills/verify-bench/', confidence: 1, freshness: 'fresh', version: 1,
+      createdAt: '2026-07-31T00:00:00.000Z', updatedAt: '2026-07-31T00:00:00.000Z',
+    } as any;
+
+    const md = formatRecentContextToMarkdown({ items: [], commits: [], skills: [skill] }, { maxChars: 4_000 });
+
+    expect(md).toContain('verify-bench');
+    expect(md).toContain('run the benchmark suite');
+  });
+
+  it('omits the section entirely when there are no skills', async () => {
+    const { formatRecentContextToMarkdown } = await import('../../src/core/format.js');
+
+    expect(formatRecentContextToMarkdown({ items: [], commits: [] }, { maxChars: 4_000 }))
+      .not.toMatch(/available skills/i);
+  });
+
+  it('stays inside the character cap it was given', async () => {
+    const { formatRecentContextToMarkdown } = await import('../../src/core/format.js');
+    const skills = Array.from({ length: 60 }, (_, index) => ({
+      id: `s${index}`, category: 'skill', status: 'active', title: `skill-${index}`,
+      content: `Purpose: ${'p'.repeat(80)}`, source: `.knowl/skills/skill-${index}/`,
+      confidence: 1, freshness: 'fresh', version: 1,
+      createdAt: '2026-07-31T00:00:00.000Z', updatedAt: '2026-07-31T00:00:00.000Z',
+    })) as any[];
+
+    const md = formatRecentContextToMarkdown({ items: [], commits: [], skills }, { maxChars: 800 });
+
+    expect(md.length).toBeLessThanOrEqual(800);
+  });
+
+  it('never spends the skills budget on more than a quarter of the real context cap', async () => {
+    // bootstrapAgentSession formats with maxChars: Number.MAX_SAFE_INTEGER and slices the
+    // result to DEFAULT_CONTEXT_MAX_CHARS afterwards. A budget derived from that maxChars
+    // would be unbounded, and since skills render first they would push recent knowledge
+    // out of the card entirely -- the exact regression this section must not cause.
+    const { formatRecentContextToMarkdown } = await import('../../src/core/format.js');
+    const { DEFAULT_CONTEXT_MAX_CHARS } = await import('../../src/core/token-budget.js');
+    const skills = Array.from({ length: 200 }, (_, index) => ({
+      id: `s${index}`, category: 'skill', status: 'active', title: `skill-${index}`,
+      content: `Purpose: ${'p'.repeat(80)}`, source: `.knowl/skills/skill-${index}/`,
+      confidence: 1, freshness: 'fresh', version: 1,
+      createdAt: '2026-07-31T00:00:00.000Z', updatedAt: '2026-07-31T00:00:00.000Z',
+    })) as any[];
+
+    const md = formatRecentContextToMarkdown({ items: [], commits: [], skills }, {
+      maxChars: Number.MAX_SAFE_INTEGER,
+    });
+
+    const section = md.slice(md.indexOf('## Available skills'), md.indexOf('## Recent Active Knowledge'));
+    expect(section.length).toBeLessThanOrEqual(DEFAULT_CONTEXT_MAX_CHARS / 2);
+  });
+});

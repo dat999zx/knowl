@@ -1,5 +1,6 @@
 import { KnowledgeCommit, KnowledgeItem } from './types.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, MAX_ITEM_CONTENT_CHARS, truncateText } from './token-budget.js';
+import { selectSurfacedSkills } from '../store/skill-surface.js';
 
 /**
  * Formats a hierarchical knowledge object into clean readable markdown.
@@ -134,6 +135,7 @@ function workspaceSection(workspace: WorkspaceContext): string {
 export function formatRecentContextToMarkdown(context: {
   items: KnowledgeItem[];
   commits: KnowledgeCommit[];
+  skills?: KnowledgeItem[];
 }, options: { maxChars?: number; maxItemChars?: number; includeTags?: boolean; includeCommitDetails?: boolean; workspace?: WorkspaceContext } = {}): string {
   const maxChars = options.maxChars ?? DEFAULT_CONTEXT_MAX_CHARS;
   const maxItemChars = options.maxItemChars ?? MAX_ITEM_CONTENT_CHARS;
@@ -142,6 +144,23 @@ export function formatRecentContextToMarkdown(context: {
   // Absent produces byte-identical output, the same rule formatWorkspaceBlock already holds
   // for an unlinked project.
   if (options.workspace) md += workspaceSection(options.workspace);
+
+  // A quarter of the budget at most, and only what fits. An agent that already knows a
+  // skill exists needs no mid-turn interrupt, which is why this section earns its space.
+  //
+  // Clamped to the real cap rather than trusting `maxChars`: bootstrapAgentSession formats
+  // with Number.MAX_SAFE_INTEGER and slices to DEFAULT_CONTEXT_MAX_CHARS afterwards, so an
+  // unclamped quarter is unbounded and, since skills render first, would push recent
+  // knowledge out of the card entirely.
+  const skillBudget = Math.floor(Math.min(maxChars, DEFAULT_CONTEXT_MAX_CHARS) * 0.25);
+  const skills = selectSurfacedSkills(context.skills ?? [], skillBudget);
+  if (skills.length > 0) {
+    md += '## Available skills\n\n';
+    for (const skill of skills) {
+      md += `- **${skill.name}**${skill.runnable ? '' : ' (not runnable)'} — ${skill.purpose}\n`;
+    }
+    md += '\n';
+  }
 
   md += '## Recent Active Knowledge\n\n';
   if (context.items.length === 0) {
