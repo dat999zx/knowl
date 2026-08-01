@@ -97,6 +97,21 @@ describe('parseCommitSubjects', () => {
     expect(parseCommitSubjects('git log --oneline -1 --format="fix(x): old subject"')).toEqual([]);
   });
 
+  it('ignores a -m message flag that does not belong to a git commit', () => {
+    // The test above does NOT pin the anchor: its input has no -m at all, so an
+    // unanchored /-m\s+"([^"]+)"/ also returns []. This one has -m with no
+    // `git commit` near it, so only anchoring on `git commit` rejects it.
+    expect(parseCommitSubjects('npm run release -- -m "fix(x): not a commit at all"')).toEqual([]);
+  });
+
+  it('returns a null body for a heredoc message with only a subject', () => {
+    const command = `git commit -q -F - <<'EOF'
+fix(store): one-line message
+EOF`;
+
+    expect(parseCommitSubjects(command)[0].body).toBeNull();
+  });
+
   it('reports a null type for a subject with no conventional-commit prefix', () => {
     const found = parseCommitSubjects('git commit -m "Merge branch \\"feat/x\\" into main"');
 
@@ -119,7 +134,8 @@ export interface CommitSubject {
   /** Conventional-commit type (`fix`, `feat`, …) when the subject carries one. */
   type: string | null;
   subject: string;
-  /** First paragraph after the subject, heredoc form only. */
+  /** Everything after the subject line, heredoc form only. Multi-paragraph bodies are
+   *  kept whole; a message with no body yields null rather than an empty string. */
   body: string | null;
 }
 
@@ -159,7 +175,7 @@ export function parseCommitSubjects(command: string): CommitSubject[] {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/store/extractors/commit-subject.test.ts`
-Expected: PASS, 6 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Verify no new type errors**
 
@@ -220,6 +236,18 @@ describe('errorSignature', () => {
     expect(errorSignature('Error:   Broken\n\n  thing')).toBe(errorSignature('error: broken thing'));
   });
 
+  it('separates two assertion failures that differ only in their values', () => {
+    // A blanket bare-number strip would collapse these, which would make Task 3 treat
+    // an unrelated later failure as a recurrence of an earlier one.
+    expect(errorSignature('AssertionError: expected 1 to be 2'))
+      .not.toBe(errorSignature('AssertionError: expected 99 to be 42'));
+  });
+
+  it('strips POSIX absolute paths, not only Windows ones', () => {
+    expect(errorSignature('Error: ENOENT\n  at /home/alice/project/src/a.ts'))
+      .toBe(errorSignature('Error: ENOENT\n  at /var/lib/other/src/a.ts'));
+  });
+
   it('returns an empty signature for an empty message rather than throwing', () => {
     expect(errorSignature('   ')).toBe('');
   });
@@ -256,7 +284,11 @@ export function errorSignature(message: string): string {
     .replace(/[A-Za-z]:[\\/][^\s:)]*/g, '')  // Windows absolute paths
     .replace(/(?:\/[\w.@-]+){2,}/g, '')      // POSIX absolute paths
     .replace(/:\d+(?::\d+)?/g, '')           // line:column
-    .replace(/\b\d+\b/g, '')                 // remaining bare numbers
+    // Deliberately NO blanket \b\d+\b strip. It collapsed 'expected 1 to be 2' and
+    // 'expected 99 to be 42' into one signature, and Task 3 compares signatures for
+    // recurrence — so an unrelated later failure would cancel a valid failure->fix
+    // pair. The targeted strips above remove the run-varying noise, and truncation
+    // to SIGNATURE_CHARS already drops the test-runner chrome that motivated it.
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase()
@@ -267,7 +299,7 @@ export function errorSignature(message: string): string {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/store/extractors/error-signature.test.ts`
-Expected: PASS, 7 tests.
+Expected: PASS, 9 tests.
 
 - [ ] **Step 5: Verify no new type errors**
 
@@ -370,7 +402,22 @@ describe('findFailureFixPairs', () => {
     ]);
 
     expect(pairs).toHaveLength(2);
+    // Asserting pairs[0] is what pins the bounded window. Checking only pairs[1]
+    // leaves the bug invisible: an unbounded window gives pairs[0] BOTH paths.
+    expect(pairs[0].changedPaths).toEqual(['src/a.ts']);
     expect(pairs[1].changedPaths).toEqual(['src/b.ts']);
+  });
+
+  it('rejects an error that recurs after an unrelated error, not just immediately', () => {
+    // The trap in the two-window split: the edit window stops at the unrelated
+    // error, but the recurrence scan must keep going to the end of the session.
+    expect(findFailureFixPairs([
+      event('error', { message: 'TypeError: boom' }),
+      event('checkpoint', { changedPaths: ['src/a.ts'] }),
+      event('error', { message: 'RangeError: unrelated' }),
+      event('checkpoint', { changedPaths: ['src/b.ts'] }),
+      event('error', { message: 'TypeError: boom' }),
+    ]).some((pair) => pair.message.includes('TypeError'))).toBe(false);
   });
 
   it('ignores an error event carrying no message', () => {
@@ -412,21 +459,30 @@ export function findFailureFixPairs(events: MemorySessionEvent[]): FailureFix[] 
     if (!message.trim()) continue;
 
     const signature = errorSignature(message);
+    const later = events.slice(index + 1);
+
+    // Two different windows, and collapsing them into one loop is a bug.
+    //
+    // Recurrence scans the ENTIRE remainder: an error that comes back was never
+    // fixed, even if something unrelated happened in between.
+    const recurred = later.some((event) =>
+      event.type === 'error'
+      && errorSignature(typeof event.payload.message === 'string' ? event.payload.message : '') === signature);
+
+    // Edit collection stops at the NEXT ERROR OF ANY KIND. Checkpoints after a
+    // different error belong to that error. Letting the window run to the end of
+    // the session attributes a later error's fix to this one -- a false "this
+    // fixed that" claim, which is the thing this rule exists to avoid.
+    const windowEnd = later.findIndex((event) => event.type === 'error');
+    const window = windowEnd === -1 ? later : later.slice(0, windowEnd);
+
     const changedPaths: string[] = [];
     const fixEvents: MemorySessionEvent[] = [];
-    let recurred = false;
-
-    for (const later of events.slice(index + 1)) {
-      if (later.type === 'error') {
-        const laterMessage = typeof later.payload.message === 'string' ? later.payload.message : '';
-        // Same failure again: whatever was changed in between did not fix it.
-        if (errorSignature(laterMessage) === signature) { recurred = true; break; }
-        continue;
-      }
-      if (later.type !== 'checkpoint') continue;
-      const paths = Array.isArray(later.payload.changedPaths) ? later.payload.changedPaths : [];
+    for (const event of window) {
+      if (event.type !== 'checkpoint') continue;
+      const paths = Array.isArray(event.payload.changedPaths) ? event.payload.changedPaths : [];
       if (paths.length === 0) continue;
-      fixEvents.push(later);
+      fixEvents.push(event);
       for (const path of paths) {
         if (typeof path === 'string' && !changedPaths.includes(path)) changedPaths.push(path);
       }
@@ -444,7 +500,7 @@ export function findFailureFixPairs(events: MemorySessionEvent[]): FailureFix[] 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/store/extractors/failure-fix.test.ts`
-Expected: PASS, 7 tests.
+Expected: PASS, 8 tests.
 
 - [ ] **Step 5: Verify no new type errors**
 
