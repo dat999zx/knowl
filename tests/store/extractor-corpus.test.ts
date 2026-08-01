@@ -53,11 +53,11 @@ describe('extractor rules against the recorded corpus', () => {
     const sessionsWithPairs = [...bySession.values()].filter((events) => findFailureFixPairs(events).length > 0);
 
     // 16 of 32 sessions contain at least one error; not every error was resolved
-    // in-session, so the floor is deliberately lower than 16.
-    expect(sessionsWithPairs.length).toBeGreaterThanOrEqual(5);
+    // in-session. Floor set at the measured value, like the commit floors above.
+    expect(sessionsWithPairs.length).toBeGreaterThanOrEqual(13);
   });
 
-  it('produces no candidate at all for the stub sessions the corpus excluded', async () => {
+  it('produces at least one candidate for most sessions in the corpus', async () => {
     // Every corpus session cleared >=10 events and >=2 changed paths, so each should
     // yield something from at least one rule. A rule set that fires on none of them
     // would be inert the way the previous one was.

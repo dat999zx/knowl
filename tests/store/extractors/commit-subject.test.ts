@@ -47,6 +47,28 @@ describe('parseCommitSubjects', () => {
     expect(parseCommitSubjects('npm run release -- -m "fix(x): not a commit at all"')).toEqual([]);
   });
 
+  it("reads the $(cat <<'EOF') form and takes the real subject, not the shell wrapper", () => {
+    // How agents routinely write a multi-line commit message. A -m pattern whose
+    // capture class allows newlines swallows the whole wrapper as the "subject".
+    const command = `git add -A && git commit -m "$(cat <<'EOF'\nfeat(store): widen the write path\n\nThe orchestrator now assembles candidates.\nEOF\n)"`;
+
+    const found = parseCommitSubjects(command);
+
+    expect(found).toHaveLength(1);
+    expect(found[0].subject).toBe('feat(store): widen the write path');
+    expect(found[0].type).toBe('feat');
+    expect(found[0].body).toBe('The orchestrator now assembles candidates.');
+  });
+
+  it('never returns a subject that spans a newline or carries shell syntax', () => {
+    const command = `git commit -m "$(cat <<'EOF'\ndocs: tidy the readme\nEOF\n)"`;
+
+    for (const commit of parseCommitSubjects(command)) {
+      expect(commit.subject).not.toContain('\n');
+      expect(commit.subject).not.toContain('$(');
+    }
+  });
+
   it('returns a null body for a heredoc message with only a subject', () => {
     const command = `git commit -q -F - <<'EOF'\nfix(store): one-line message\nEOF`;
 
