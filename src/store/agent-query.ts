@@ -304,12 +304,17 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
       let text: number;
       let freshness: number;
       if (usingVector) {
-        // Vector cosine is the primary signal; BM25-only hits fall back to a bounded
-        // rank score so lexical matches still surface below semantic ones.
-        const fallback = result.vectorScore === undefined && result.bm25Rank
-          ? BM25_FALLBACK_WEIGHT / (RRF_K + result.bm25Rank)
-          : 0;
-        rank = (result.vectorScore ?? 0) * VECTOR_PRIMARY_WEIGHT + fallback;
+        // Vector cosine is the primary signal, and lexical rank rides alongside it as a
+        // bounded term -- at most 0.35/61, under 0.006 -- so it breaks ties between similar
+        // cosines without ever overturning a decisively better one.
+        //
+        // This term used to be gated on `vectorScore === undefined`, which meant an item
+        // vector also returned had its lexical rank discarded entirely. Agreement between the
+        // two engines is the one signal hybrid retrieval exists to exploit, and it was the one
+        // case the fusion ignored: an item ranked #1 lexically and #40 semantically scored on
+        // its weak cosine alone, indistinguishable from an item lexical search never found.
+        const lexical = result.bm25Rank ? BM25_FALLBACK_WEIGHT / (RRF_K + result.bm25Rank) : 0;
+        rank = (result.vectorScore ?? 0) * VECTOR_PRIMARY_WEIGHT + lexical;
         text = Math.min(textMatchScore(result.item, tokens), 20) * 0.001;
         freshness = freshnessRerank(result.item);
       } else {

@@ -173,4 +173,30 @@ describe('scoreCandidates', () => {
     expect(scored[0].explanation.contributions.rank)
       .toBeGreaterThan(scored[1].explanation.contributions.rank);
   });
+
+  it('counts the lexical rank of an item vector also returned', () => {
+    // Hybrid retrieval's whole claim is that agreement between the two engines means
+    // something. `both` is the top lexical hit and `vectorOnly` is not a lexical hit at all,
+    // on cosines close enough that the lexical evidence should decide it.
+    //
+    // The fallback term used to be gated on `vectorScore === undefined`, so any item vector
+    // returned scored on its cosine alone and its lexical rank was discarded -- the one case
+    // where the two engines agree was the one case fusion ignored.
+    // `candidate` defaults bm25Rank to 1, so vector-only candidates must clear it explicitly.
+    const both = { ...candidate('both', '2026-01-01T00:00:00.000Z'), bm25Rank: 1, vectorRank: 2, vectorScore: 0.50 };
+    const vectorOnly = { ...candidate('vectorOnly', '2026-01-01T00:00:00.000Z'), bm25Rank: undefined, vectorRank: 1, vectorScore: 0.502 };
+
+    const scored = scoreCandidates([vectorOnly, both], { limit: 2, usingVector: true });
+    expect(scored[0].item.id).toBe('both');
+  });
+
+  it('still ranks a stronger cosine first when lexical evidence cannot close the gap', () => {
+    // The other half: lexical agreement is a tie-breaker, not a veto. The fallback term tops
+    // out at 0.35/61 -- under 0.006 -- so it must never overturn a decisively better cosine.
+    const weakBoth = { ...candidate('weakBoth', '2026-01-01T00:00:00.000Z'), bm25Rank: 1, vectorRank: 9, vectorScore: 0.30 };
+    const strongVector = { ...candidate('strongVector', '2026-01-01T00:00:00.000Z'), bm25Rank: undefined, vectorRank: 1, vectorScore: 0.60 };
+
+    const scored = scoreCandidates([weakBoth, strongVector], { limit: 2, usingVector: true });
+    expect(scored[0].item.id).toBe('strongVector');
+  });
 });
