@@ -1,0 +1,102 @@
+[
+ {
+  "a": "Session events are hard-deleted 48 hours after they are recorded.",
+  "b": "Hook event rows are erased permanently once their 48 hour lifetime is up.",
+  "same": true
+ },
+ {
+  "a": "The purge only runs when a new session starts, not on a timer.",
+  "b": "Expired rows are removed at session start rather than by any scheduled job.",
+  "same": true
+ },
+ {
+  "a": "typecheck:bench reports errors that already existed in src/ and cannot gate a change.",
+  "b": "The benchmark typecheck is already failing on pre-existing product errors, so it is not a usable pass/fail signal.",
+  "same": true
+ },
+ {
+  "a": "The write-path crash came from Drizzle batching several statements into one transaction.",
+  "b": "Bulk writes segfaulted because the Drizzle transaction wrapper sent multiple statements at once.",
+  "same": true
+ },
+ {
+  "a": "Retrieval ranks by vector similarity first and falls back to BM25.",
+  "b": "Ranking is vector-first, with BM25 supplying a bounded fallback score.",
+  "same": true
+ },
+ {
+  "a": "Cross-repo duplicates must be removed before the result cap is applied.",
+  "b": "Deduplication has to happen ahead of the final limit or eligible items are dropped.",
+  "same": true
+ },
+ {
+  "a": "A UTF-8 BOM on the hook payload makes the JSON parser fail.",
+  "b": "A leading byte-order mark causes the agent hook to reject its input as unparseable.",
+  "same": true
+ },
+ {
+  "a": "CLI tests need npm run build to have been run in a fresh checkout.",
+  "b": "A clean worktree must be built before the CLI test suite will pass.",
+  "same": true
+ },
+ {
+  "a": "The fixture sweep must run only at teardown.",
+  "b": "Sweeping scratch fixtures at setup would delete fixtures that are still in use.",
+  "same": true
+ },
+ {
+  "a": "ByteRover retrieval uses BM25 only, with no embedding step anywhere.",
+  "b": "There is no vector search in ByteRover; ranking is purely lexical.",
+  "same": true
+ },
+ {
+  "a": "Session events are hard-deleted 48 hours after they are recorded.",
+  "b": "The purge only runs when a new session starts, not on a timer.",
+  "same": false
+ },
+ {
+  "a": "Retrieval ranks by vector similarity first and falls back to BM25.",
+  "b": "Cross-repo duplicates must be removed before the result cap is applied.",
+  "same": false
+ },
+ {
+  "a": "The write-path crash came from Drizzle batching several statements into one transaction.",
+  "b": "Workspace resolution must happen once per process rather than once per write.",
+  "same": false
+ },
+ {
+  "a": "A UTF-8 BOM on the hook payload makes the JSON parser fail.",
+  "b": "The MCP tool name arrives double-prefixed and must be stripped before matching.",
+  "same": false
+ },
+ {
+  "a": "CLI tests need npm run build to have been run in a fresh checkout.",
+  "b": "The fixture sweep must run only at teardown.",
+  "same": false
+ },
+ {
+  "a": "Export and import lose item ownership unless a lifecycle fingerprint is carried.",
+  "b": "Search filters must be applied inside the FTS query rather than after the cap.",
+  "same": false
+ },
+ {
+  "a": "ByteRover retrieval uses BM25 only, with no embedding step anywhere.",
+  "b": "ByteRover stores its context tree as markdown files under git version control.",
+  "same": false
+ },
+ {
+  "a": "Repo ownership is stamped only by the join-time backfill, never at write time.",
+  "b": "Joining a workspace consumed repo names that were never released.",
+  "same": false
+ },
+ {
+  "a": "On Windows an absolute path passed to the ESM loader must be a file:// URL.",
+  "b": "cmd.exe splits an unquoted comma-separated CLI flag into separate arguments.",
+  "same": false
+ },
+ {
+  "a": "A local change and a peer change were reported as one item instead of two.",
+  "b": "One foreign change is announced twice, by the hook channel and the MCP channel.",
+  "same": false
+ }
+]

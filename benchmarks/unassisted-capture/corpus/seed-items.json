@@ -1,0 +1,630 @@
+[
+ {
+  "sessionId": "0dbcd506cf744c9e",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T08:15:38.278Z",
+   "2026-07-30T08:28:51.702Z"
+  ],
+  "items": [
+   {
+    "id": "535afd0de5004557",
+    "category": "fact",
+    "title": "Promote has accepted NULL origin_repo since 2.5.0; the real cost of unowned rows is the remove guard",
+    "content": "Verified 2026-07-30 against the tree and tags.\n\n**A \"Nothing to promote.\" on items with `origin_repo IS NULL` is not an ownership problem.** `promoteItems` selects `(origin_repo IS NULL OR origin_repo = ?)` (`src/workspace/promote.ts`), and that clause is present in v2.5.0 through v2.7.1 — confirmed with `git show v2.6.0:src/workspace/promote.ts`. It was added in `984d611`. A manual `UPDATE knowledge_items SET origin_repo = ...` does not change what promote will select.\n\n**What unowned rows actually break:** `countOwnedItems` (`src/workspace/membership.ts`) counts with `origin_repo = ?`, so NULL rows are invisible to it. That count is the guard `workspace remove` uses to refuse orphaning knowledge, so a repo holding only unowned items can be unlinked as though it held nothing.\n\n**How rows end up unowned:** the join-time backfill runs once, and write-time stamping only arrived in 2.6.0 (`2aa7f92`). Items written between joining and 2.6.0 are the gap. `knowl upgrade` now sweeps them via `src/cli/upgrade.ts`.\n\n**The real cause of a silent \"Nothing to promote.\" was the filter**, and both cases now fail loudly: a truncated id (ids are matched exactly), and a `--category a,b,c` that `cmd.exe` split on the commas before Knowl saw it.</content>\n<confidence\">0.98</confidence>\n<affectedPaths>[\"src/workspace/promote.ts\", \"src/workspace/membership.ts\", \"src/cli/upgrade.ts\", \"src/index.ts\"]</affectedPaths>\n<tags>[\"workspace\", \"ownership\", \"promotion\", \"windows\", \"cli\"]</tags>\n</invoke>\n",
+    "created_at": "2026-07-30T08:19:45.854Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "0ed635ce04d94bc8",
+  "externalSessionId": "2d3acba9-3607-49a3-87b6-019bd0c44e32",
+  "hasTranscript": true,
+  "window": [
+   "2026-07-30T08:26:14.114Z",
+   "2026-07-30T08:46:58.280Z"
+  ],
+  "items": [
+   {
+    "id": "7cc4784028fb4841",
+    "category": "architecture",
+    "title": "Machine-wide sweep: upgrade --all, doctor --fix, and the known-repository registry",
+    "content": "Built 2026-07-30. Four new modules under `src/cli/`.\n\n**`doctor-remedy.ts`** — `DoctorRemedy` tagged union (`guidance`, `gitignore`, `session-recover`, `reindex-vectors`, `host-init{host}`). `DoctorCheck` now carries `remedy?` beside the prose `fix`, so automation dispatches on a type instead of regex-matching doctor's printed output. Findings with no safe automatic answer deliberately have no remedy: integrity errors, empty knowledge store, MCP tool-surface checks.\n\n**`doctor-fix.ts`** — `applyDoctorRemedies(root, checks, {reindex})` → `{applied, deferred, failed, unfixable}`. Dedupes by remedy label (a host's instructions and lifecycle checks both fail together), continues past a failure, and returns unfixable findings so a caller cannot mistake them for handled. `reindex-vectors` is deferred unless opted in — its cost scales with store size.\n\n**`repo-registry.ts`** — `~/.knowl/repos.json`, written by `init` and `upgrade`. This is the only way an unlinked repo is discoverable; manifests cover linked repos only. Convenience state: filtered against the filesystem on read, corrupt file replaced not reported, never throws.\n\n**`repo-discovery.ts`** — union of workspace manifests, registry, and an optional `--root` walk (depth 3, records what it finds, `record:false` for dry runs). **Skips dot-named directories**, because this repo's own `.knowl-*` test fixtures are structurally indistinguishable from real repos.\n\n**`upgrade-all.ts`** — `sweepRepos` runs sequentially in-process: snapshot → upgrade → doctor → apply → re-doctor. Re-checking is the point; a remedy that reports success without resolving its finding is what a sweep must not hide. A throwing repo is recorded, `closeDb()` is forced, and the sweep continues.\n\n**Test isolation is load-bearing:** `vitest.config.ts` now sets an absolute `KNOWL_HOME` under `.knowl-test-home`. Without it the spawn-based suites write fixture paths into the developer's real `~/.knowl/repos.json`. Absolute because a spawned CLI runs with its fixture as cwd and `knowlHome()` resolves a relative override against that.</content>\n<confidence\">0.97</confidence>\n<affectedPaths>[\"src/cli/upgrade-all.ts\", \"src/cli/repo-discovery.ts\", \"src/cli/repo-registry.ts\", \"src/cli/doctor-fix.ts\", \"src/cli/doctor-remedy.ts\", \"src/cli/doctor-report.ts\", \"vitest.config.ts\"]</affectedPaths>\n<tags>[\"cli\", \"upgrade\", \"doctor\", \"multi-repo\", \"sweep\"]</tags>\n</invoke>\n",
+    "created_at": "2026-07-30T08:46:39.231Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "1e14536b2a1c43ba",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T06:31:31.169Z",
+   "2026-07-30T06:40:52.090Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "204b135e5f6142e2",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T03:02:44.212Z",
+   "2026-07-30T03:10:02.424Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "232b249687f942e1",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-29T12:27:35.371Z",
+   "2026-07-29T12:35:40.108Z"
+  ],
+  "items": [
+   {
+    "id": "ec4285a2ec6b4a4e",
+    "category": "architecture",
+    "title": "Hook-side write attribution uses recorded MCP commit ranges, with key matching as fallback",
+    "content": "Implemented 2026-07-29. Replaces the guess that hook-side attribution had to make because the hook process and the MCP server share no session identity.\n\nThe MCP server is the only party that knows what a call committed: `captureChangeWatermark` reads the head before dispatch, so the call's own commits are exactly the rows above it. After a write tool, `consumeChangeNotice` records `{project_root, tool_name, from_rowid, to_rowid, created_at}` in the new `mcp_call_commits` table (`src/store/mcp-call-commits.ts`), swept on write with a 5-minute TTL.\n\nOn the hook side, `ownCommitRanges` in `src/store/host-lifecycle.ts` looks up recent ranges for the same project root and tool name, keeps those overlapping the window being reported, and confirms ownership via `rangeBelongsToCaller` -- one of the caller's own `tool_input` ids or titles appearing inside the range. Time and tool name alone would be a guess; the key overlap is what makes it evidence. One match suffices: once the range is established as this call's, everything in it is.\n\n**Confirmed ranges replace key matching, they do not supplement it.** Passing both was the first implementation and it kept the bug: key matching is the half that hides a foreign change sharing a title. `loadForeignChanges` is called with ranges *or* keys, never both.\n\nFixes both original failure modes. A write's indirect effects -- a dedup supersede of a differently-titled item, GC, promotion -- carry none of the caller's keys and used to be reported back to their own author; they sit inside the range. A foreign change that merely shares a title is no longer hidden, because exclusion stopped looking at titles.\n\nFalls back to key matching whenever no range matches: a CLI write, an older MCP server, an unrecorded range, or a host that does not report tool names. `knowlToolName` is normalized off the host prefix (`mcp__knowl__knowl_store` -> `knowl_store`) by splitting on the *last* `__`, because the server segment is itself called knowl and a leftmost `knowl_[a-z_]+` match yields `knowl__knowl_store`. Verified end to end through `readLifecyclePayload`'s allowlist in `tests/cli/host-hook.test.ts`, and behaviourally in `tests/store/commit-range-attribution.test.ts`.",
+    "created_at": "2026-07-29T12:35:22.311Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "239861a6840f44f5",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-31T09:15:03.282Z",
+   "2026-07-31T09:17:13.769Z"
+  ],
+  "items": [
+   {
+    "id": "be385746c24946c0",
+    "category": "fact",
+    "title": "ByteRover's 5-tier query engine is an LLM-cost ladder Knowl does not need; two sub-parts are worth adopting",
+    "content": "Analyzed 2026-07-31 from https://docs.byterover.dev/context-tree/query-engine, compared against Knowl's measured query path.\n\n**Their tiers exist to dodge their own LLM cost.** Tier 0 exact cache (MD5 fingerprint, 60s TTL, ~0ms), tier 1 fuzzy cache (Jaccard >=60% token similarity, ~50ms, invalidated on context-tree change), tier 2 BM25 direct (~100-200ms, returns without LLM when top score >=0.85 with a clear gap), tier 3 LLM pre-fetch (<5s, one call over pre-fetched BM25 hits), tier 4 agentic loop (8-15s, reads files and follows relations).\n\n**Knowl is permanently at their tier 2 and never reaches 3-4.** `knowl_query` calls no LLM; measured p50 26ms / p95 31ms after commit `2cc8cd1`. Caching would save ~26ms while `knowl query` end-to-end is ~1,050ms dominated by Node process startup. **Do not port tiers 0-1** -- they optimize a cost Knowl does not pay and add a staleness bug class. The only genuinely missing capability is tier 4 (multi-hop traversal across related items); Knowl's 96% top-1 MemoryAgentBench result is single-hop. That is a separate feature, not a routing layer.\n\n**Their ranking: `score = (0.6 x BM25 + 0.2 x importance + 0.2 x recency) x tierBoost`.** BM25 normalized score/(1+score). Importance accrues +3 per search hit, +5 per curation update, decays 0.995^days. Recency e^(-days/30). tierBoost by maturity: core x1.15, validated x1.0, draft x0.85. Score-gap filter drops anything below 70% of the top score. Parent score propagates up at 0.55^levels. Notably the formula has **no vector term at all** -- pure lexical, which is a Knowl advantage.\n\n**Two adoptable ideas:**\n1. *Usage-based importance in ranking.* Knowl already records every access (`src/store/access-feedback.ts`, called from `src/store/agent-query.ts:4`), but the sole consumer of `getAccessSummary()` is `src/store/gc.ts`. The signal is collected and spent on garbage collection, never on retrieval ranking. Feeding it into the score is a small change over data already captured.\n2. *Score-gap filter.* Knowl returns `limit` results regardless of separation; a relative cutoff would cut context noise when one answer clearly wins.\n\nTheir maturity boost is a weaker analogue of Knowl's existing freshness rerank (fresh +0.02 / needs_review -0.02 / stale -0.05), which is tied to correctness rather than curation status.",
+    "created_at": "2026-07-31T09:16:50.849Z"
+   },
+   {
+    "id": "edd7b6a345564e65",
+    "category": "constraint",
+    "title": "Git-like versioning is the wrong storage model for Knowl's cloud tier; the real blocker is portability's missing update path",
+    "content": "Assessed 2026-07-31 while comparing against ByteRover's context tree, in response to \"we need git-like storage for the cloud tier.\"\n\n**Why git-like fits them and not us.** ByteRover's store is a filesystem -- `_manifest.json`, `_index.md`, markdown knowledge files -- so branch/commit/merge (`brv vc push/pull`) is the natural model, because git was built for trees of files. Knowl's store is SQLite rows carrying per-item lineage: supersede, freshness, `knowl_conflicts`, `knowl_update`. Git tracks \"what did the tree look like at time T\"; Knowl tracks \"when did this specific fact stop being true and what replaced it.\" For memory the second is the better primitive, and it is strictly finer-grained. Layering branch/merge on top would mean re-implementing conflict resolution at a coarser granularity than what already exists.\n\n**This is consistent with the existing roadmap decision** that the distributed sync data model is deferred as largely YAGNI: a server-backed team tier is authoritative and needs optimistic concurrency, not merge.\n\n**The actual cloud-tier blocker is not versioning.** `src/store/portability.ts` is insert-only seeding: an existing id with a different `content_hash` counts as a conflict, and any conflict aborts the whole import (`applied: false`, nothing written). No update path, no tombstones, no delete propagation. It works exactly once into an empty database. Those three gaps -- update path, tombstones, delete propagation -- are what a cloud tier requires, and no amount of git semantics substitutes for them.\n\n**Strategic note.** ByteRover's real lead is a cloud tier with SOC 2 Type II plus broad multi-editor support -- distribution, not architecture. Meanwhile Knowl's measured gap is on the input side (1 of 88 hook sessions promoted anything, all three extractor rules inert), not retrieval, which sits at 96% top-1 and 26ms.",
+    "created_at": "2026-07-31T09:17:04.480Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "23ba78ec2b4f4c8a",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-29T14:28:29.773Z",
+   "2026-07-29T14:57:55.004Z"
+  ],
+  "items": [
+   {
+    "id": "21f3504656964cdc",
+    "category": "decision",
+    "title": "Workspace v2 (shared database) is re-scoped and deliberately not being built",
+    "content": "Decided 2026-07-29, commit `5d0b054`. Plan: `docs/superpowers/plans/2026-07-26-workspace-v2-shared-database.md`.\n\nAll five questions the v2 plan blocked on are answered from real v1 usage:\n\n- **`linked` mode earns its keep** — it is the shipped product (peer-labelled federated query, semantic cross-repo ranking, promote, per-peer notification). `shared` is the mode that must justify itself, so it becomes an optional second mode rather than a migration target.\n- **No evidence agents condition on the `repo` label.** The label reaches them; behaviour change was never measured. Keep v1's ties-to-local, add no ranking weight.\n- **Applies-to table (Task 4) is cut** — its only purpose was ranking by repo, which the previous point makes unjustified.\n- **Visibility stays promotion-only.** Real friction was the ownership gap blocking promote, now fixed; demotion was never asked for.\n- **Per-atom batch routing stands on reasoning, not measurement** — v1 could not produce data for it.\n\n**Headline correction:** cross-repo change notification was one of v2's two justifying capabilities, argued in the plan as impossible under federation without polling every peer's commit log. 2.6.0 shipped it in `linked` mode with per-peer commit watermarks. In a shared database it becomes a *filtering obligation*, so Task 10's notification row is now a regression guard, not a feature.\n\nWhat is left uniquely to v2: editing another repo's items, and cross-repo conflict detection. Cost is unchanged and large (journalled migration, write fence, atomic cutover, N processes on one SQLite file with optimistic concurrency). Every problem v1 usage actually produced was fixable in `linked` mode and now is.\n\n**Build v2 only when one holds:** an agent is observed needing to correct another repo's knowledge and export/re-import is measurably worse; two linked repos are found holding contradictions federation's read-only path cannot surface; or peer scanning is measured as the bottleneck. Otherwise the higher-value next step is read-only `knowl_conflicts` across peers, which buys cross-repo conflict detection without a shared database.",
+    "created_at": "2026-07-29T14:57:14.781Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "28de81eddadf449e",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T07:24:08.856Z",
+   "2026-07-30T07:45:55.847Z"
+  ],
+  "items": [
+   {
+    "id": "5275f8507793408d",
+    "category": "fact",
+    "title": "2.7.0 shipped a write-path crash: per-write workspace resolution died at ~2000 writes",
+    "content": "Found and fixed 2026-07-30, commit `4a6920f`, released as 2.7.1. **Was present in the published 2.7.0.**\n\n2.7.0 added the cross-repo overlap check to `storeKnowledgeItemDeduped` and resolved the active workspace *inside* it, so every write paid a `loadConfig` file read and JSON parse. The batch writer resolved it once per batch from the start; the single-atom path did not.\n\n**Reproduction:** a loop of 2500 `storeKnowledgeItemDeduped` calls crashed around 2000-2250. Completed on 2.6.0, and completed on 2.7.0 with only that one call removed.\n\n**Fix:** cache the resolved workspace per config root, mirroring `src/store/write-ownership.ts`. In 2.8.0 this became `resolveWriteDefaults`, returning owner and default visibility from one lookup.\n\n**Correction, 2026-07-30.** This was *not* the whole story, and the crash it describes was two overlapping problems. Removing the per-write config read moved the threshold but did not eliminate the crash: a deeper cause was `drizzle-orm@0.45.2`'s multi-statement transaction wrapper, which leaks native state per statement inside a transaction and killed the process at exit after ~1200 writes. That is recorded in `dd9f5b539da04572` and fixed in `c59c570`. Both items are true: the per-write resolution was real waste and a real regression, and it was masking a pre-existing driver bug that reproduces on 2.6.0.",
+    "created_at": "2026-07-30T07:45:03.343Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "2b86c060ca80432f",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-29T10:11:15.985Z",
+   "2026-07-29T10:44:15.739Z"
+  ],
+  "items": [
+   {
+    "id": "0eaa0cff1f874db0",
+    "category": "constraint",
+    "title": "Watermark initialization is tracked by its own column, not by seen_commit_rowid = 0",
+    "content": "Fixed 2026-07-29 (previously: a binding created at zero commit history swallowed that repo's first foreign commit).\n\n`seen_commit_rowid = 0` used to carry two incompatible meanings: \"row predates the watermark column, do not replay all history\" and \"genuinely bound when the commit log was empty, report the next commit normally\". `evaluateLocalChanges` could only honour the first, so a session started in a freshly initialised repo silently ate its first foreign commit.\n\nNow `host_session_bindings.seen_commit_initialized INTEGER NOT NULL DEFAULT 0` holds the first meaning on its own. Additive, so no `KNOWL_SCHEMA_VERSION` bump. `bindHostSession` inserts 1 and sets 1 on conflict; `setHostSeenCommit` sets 1 whenever it advances the watermark, because a row that has been positioned knows where it stands. Rows created by the `ALTER TABLE` default to 0 and still adopt head silently on their first tool event, preserving the original guarantee exactly.\n\n`readHostWatermark` returns `{ seen, initialized }` and is what `evaluateLocalChanges` now reads; `readHostSeenCommit` is unchanged for callers that only want the number. No API produces an uninitialized row any more, so the test for that case writes the column directly.",
+    "created_at": "2026-07-29T10:43:47.788Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "339c502b82af4284",
+  "externalSessionId": "d7b8453d-7d69-45d3-b585-b6b41b2e98e3",
+  "hasTranscript": true,
+  "window": [
+   "2026-07-29T13:08:15.900Z",
+   "2026-07-30T01:20:10.453Z"
+  ],
+  "items": [
+   {
+    "id": "bcbb28a506214494",
+    "category": "state",
+    "title": "Cross-session change-notification verified end-to-end via CLI hook driving 2026-07-29",
+    "content": "Drove the built binary (`node dist/index.js agent-hook claude <event> --json`) in an isolated KNOWL_HOME with two simulated sessions s-A and s-B. All five scenarios passed: bootstrap emits no card; a sibling session receives `KNOWL CHANGED` naming the new item's title on its next PostToolUse; the author is not carded for its own write; the card is delivered exactly once.\n\nImportant scope limit: the write was made with the `knowl decide` CLI command, which creates a knowledge commit but writes NO `mcp_call_commits` row. So the attribution path actually exercised was the **key-matching fallback** in `ownCommitRanges` (`src/store/host-lifecycle.ts`), not the primary recorded-MCP-range path. The range path needs a live MCP server and cannot be exercised through the CLI alone.\n\nA control test confirms the exclusion is real rather than blanket suppression: firing a `mcp__knowl__knowl_store` PostToolUse for s-A with a NON-matching `tool_input.title` does produce a card, while the matching title does not.\n\nTest-harness gotcha: piping a payload with PowerShell `|` adds a UTF-8 BOM and the CLI fails with `Parser cannot parse input: expected a value`. Write the JSON with `UTF8Encoding($false)` and redirect via `cmd /c \"... < file\"`.",
+    "created_at": "2026-07-29T13:09:05.415Z"
+   },
+   {
+    "id": "ee974d52742e4e26",
+    "category": "fact",
+    "title": "Cross-repo change notification verified: peer tag delivered, private peer knowledge not leaked",
+    "content": "Verified 2026-07-29 against `dist/index.js` (2.5.1) with an isolated KNOWL_HOME and two throwaway repos linked into one workspace.\n\nWorking: after a peer repo changes an item whose `visibility` is `workspace`, the next `agent-hook claude PostToolUse` in the local repo returns\n`KNOWL CHANGED: 1 item since you last looked.\\n- [peer-c] decision (supersede): <title>` — the `[repo]` tag is present and correct.\n\nSecurity result (with positive control): changing an unpromoted `visibility='repo'` item in the peer produced EMPTY hook output, and the very next promoted-item change on the same session produced a card. So the silence is real filtering, not a dead pipeline. The private item's title never appeared in any hook output, and `knowl query` in the local repo never returned it. Cards carry only `[repo] category (kind): title` — no content.\n\nOperational notes for reproducing: the hook payload `cwd` must use forward slashes; a Windows path with backslash escapes fails with `Parser cannot parse input: escaped characters`. Promotion itself emits no card; only a later change to an already-promoted item does.</content>\n<parameter name=\"confidence\">1",
+    "created_at": "2026-07-29T13:14:06.151Z"
+   },
+   {
+    "id": "96531ac7461b4c84",
+    "category": "fact",
+    "title": "Workspace link repair: join is gated like add, and an unused repo name is no longer burned",
+    "content": "Fixed 2026-07-29, commit `8f899f8`. Supersedes the reproduction recorded on 2.5.1.\n\n**`workspace join` skipped every check `workspace add` applies.** `join` adopts a manifest copied from another machine, so a second machine could link the same workspace under a different embedding model. Vector search filters on provider and model, so the two sides would simply never see each other's items, with nothing reporting why. It also skipped the nesting check and the Git-tracked-config guard. All three now run through `assertSafeToLink` in `src/workspace/membership.ts`, called before the local manifest is written so a refusal leaves no trace. `join` gained `--force` to match `add`.\n\n**A removed repo name was retired unconditionally.** Retirement protects authorship — the name is the ownership key on every item its repo wrote — but that reasoning needs items. `leaveWorkspace` now returns `{ retired }` and only retires when `countOwnedItems > 0`; an unreadable database counts as owned, since an unusable name is recoverable and a silent ownership transfer is not. The repo whose own database still owns items under a retired name can reclaim it by re-linking (`assertNameAvailable(..., { allowRetired })`); no other repo can, because only the original's database carries that evidence.\n\nThe related unowned-post-link-writes half of the original report was fixed separately in `2aa7f92` — see [[ownership-is-now-stamped-when-knowledge-is-written]].",
+    "created_at": "2026-07-29T13:14:11.127Z"
+   },
+   {
+    "id": "02f82d22b77b4cf4",
+    "category": "state",
+    "title": "MCP commit-range attribution verified end-to-end against a live serve process 2026-07-29",
+    "content": "Verified the PRIMARY attribution path (recorded `mcp_call_commits` ranges), which the earlier CLI-only run could not reach. Method: a Node driver spawned `node dist/index.js serve` with cwd set to an isolated project and spoke newline-delimited JSON-RPC on its stdin, keeping the process alive across calls; hooks were fired as separate `agent-hook claude <event> --json` processes. Isolated KNOWL_HOME.\n\nResults (all PASS, dist built from 891b6df):\n1. A `knowl_store` MCP call writes an `mcp_call_commits` row: `{tool_name: 'knowl_store', from_rowid, to_rowid}` with `project_root` lowercased/canonicalized. from/to are the local commit head before and after dispatch. The primary path does activate in reality.\n2. Title-collision test is decisive. With session watermark at commit 1: commit 2 = MCP's own `knowl_store` \"Zebra collision title\" (fact, range {1,2} recorded), commit 3 = a `knowl decide` CLI write with the IDENTICAL title (no range). A PostToolUse for `mcp__knowl__knowl_store` carrying that same title in tool_input returned `KNOWL CHANGED: 1 item ... - decision: Zebra collision title`. The foreign change is reported and the caller's own same-titled change is excluded.\n3. Control run, same sequence but `DELETE FROM mcp_call_commits` immediately before the hook: output was EMPTY. That is the old key-matching fallback silently hiding the foreign change, and it proves the range is the thing that changed the outcome, not timing or watermarks.\n4. No self-notification regression: a `knowl_store` followed straight away by a matching PostToolUse produced empty output.\n\nNote the CLI has no `store` command; `knowl decide <title> <content>` is the way to make a ranged-less sibling write.",
+    "created_at": "2026-07-29T13:17:58.904Z"
+   },
+   {
+    "id": "fb1a5f1db9bc43b7",
+    "category": "state",
+    "title": "2.6.0 published: cross-repo change notification and host-independent delivery",
+    "content": "Shipped 2026-07-29. `main` at `1146458`, tag `v2.6.0`, npm `@dat999zx/knowl@2.6.0`, GitHub release published (not draft). CI and Publish workflows both green.\n\nContents: per-peer commit watermarks so a linked repo's promote/update/retire reaches agents in consuming repos with a `[repo]` tag; a second delivery channel that rides on `knowl_*` tool results, reaching hosts with no mid-turn hook channel; dual-channel suppression keyed on `midTurnDeliveryVerified` so nothing is announced twice; commit-range write attribution replacing title matching; `seen_commit_initialized` splitting \"never set\" from \"at zero\"; `workspace promote` reachable for items written after linking; and a UTF-8 BOM no longer failing the whole hook.\n\nVerified before release beyond the 655-test suite: three end-to-end runs driving the built binary, including a live `knowl serve` process. The decisive one deleted the recorded `mcp_call_commits` row and re-fired an identical hook — output went empty, proving the change card was attributable to the range and not to timing or watermark drift. A private peer item was confirmed never to leak, with a positive control on the same session.\n\nVersion chosen as minor, not the originally requested 2.5.2: the release adds behaviour and creates one table plus three columns, and the CD workflow extracts release notes by matching the `## X.Y.Z` heading, so tag and changelog heading must agree.\n\nStill unverified: real Claude Code subagents against this code. The verification ran against the built binary while the machine's global install was still 2.5.1.</content>\n<confidence>1</confidence>\n<tags>[\"release\", \"2.6.0\", \"notification\", \"workspace\"]</tags>\n</invoke>\n",
+    "created_at": "2026-07-29T13:32:53.821Z"
+   },
+   {
+    "id": "4ca3f613ac2f4dd3",
+    "category": "fact",
+    "title": "CLI startup is dominated by module resolution, with a ~1.1s floor",
+    "content": "Profiled 2026-07-29 with `node --cpu-prof` on `knowl --version` (2.6.0, Windows).\n\nOf a ~2.1 s startup, **~1.9 s is node's module resolver and native fs calls** — 1,150 ms in node internals plus 774 ms native. No library's own code is significant: `zod` is the largest at 45 ms, everything else under 10 ms. The cost is finding and reading files, not running them.\n\n**Floor.** `drizzle-orm` + `@libsql/client` + `commander` alone cost ~840 ms above a bare `node -e \"0\"` (246 ms). Any command that opens the database pays that, so ~1.1 s is the realistic best case for the current architecture. Deferring more application code cannot go below it.\n\n**Measurement caveat for this machine:** run-to-run variance on identical commands is around a second (2.1 s to 3.2 s observed), which is wider than most optimisations being attempted. Treat sub-500 ms improvements as unverifiable here without a quieter environment; the variance pattern is characteristic of antivirus scanning module reads.\n\n**Done:** the MCP SDK and AI SDK no longer load at module scope (commit `a30a1d3`). Structurally correct — both now split into their own chunks — but not measurable on this machine.\n\n**Not done, and the only routes below ~1.1 s:** use a lighter database client on the hook path, or stop spawning a process per hook event. `agent-hook` runs on every agent tool event at ~2.3 s each, so a 50-tool session spends roughly two minutes on process startup.</content>\n<parameter name=\"affectedPaths\">[\"src/index.ts\", \"src/mcp/server.ts\", \"src/ai/provider.ts\"]</parameter>\n<parameter name=\"tags\">[\"performance\", \"startup\", \"cli\", \"measured\", \"profiled\"]",
+    "created_at": "2026-07-29T14:18:41.858Z"
+   },
+   {
+    "id": "21f3504656964cdc",
+    "category": "decision",
+    "title": "Workspace v2 (shared database) is re-scoped and deliberately not being built",
+    "content": "Decided 2026-07-29, commit `5d0b054`. Plan: `docs/superpowers/plans/2026-07-26-workspace-v2-shared-database.md`.\n\nAll five questions the v2 plan blocked on are answered from real v1 usage:\n\n- **`linked` mode earns its keep** — it is the shipped product (peer-labelled federated query, semantic cross-repo ranking, promote, per-peer notification). `shared` is the mode that must justify itself, so it becomes an optional second mode rather than a migration target.\n- **No evidence agents condition on the `repo` label.** The label reaches them; behaviour change was never measured. Keep v1's ties-to-local, add no ranking weight.\n- **Applies-to table (Task 4) is cut** — its only purpose was ranking by repo, which the previous point makes unjustified.\n- **Visibility stays promotion-only.** Real friction was the ownership gap blocking promote, now fixed; demotion was never asked for.\n- **Per-atom batch routing stands on reasoning, not measurement** — v1 could not produce data for it.\n\n**Headline correction:** cross-repo change notification was one of v2's two justifying capabilities, argued in the plan as impossible under federation without polling every peer's commit log. 2.6.0 shipped it in `linked` mode with per-peer commit watermarks. In a shared database it becomes a *filtering obligation*, so Task 10's notification row is now a regression guard, not a feature.\n\nWhat is left uniquely to v2: editing another repo's items, and cross-repo conflict detection. Cost is unchanged and large (journalled migration, write fence, atomic cutover, N processes on one SQLite file with optimistic concurrency). Every problem v1 usage actually produced was fixable in `linked` mode and now is.\n\n**Build v2 only when one holds:** an agent is observed needing to correct another repo's knowledge and export/re-import is measurably worse; two linked repos are found holding contradictions federation's read-only path cannot surface; or peer scanning is measured as the bottleneck. Otherwise the higher-value next step is read-only `knowl_conflicts` across peers, which buys cross-repo conflict detection without a shared database.",
+    "created_at": "2026-07-29T14:57:14.781Z"
+   },
+   {
+    "id": "0ab7dc07592c4565",
+    "category": "fact",
+    "title": "Three v1 portability defects, all fixed: ownership drop, lifecycle non-convergence, tombstone rewind",
+    "content": "Found 2026-07-29 while grounding the v2 plan, fixed 2026-07-30 in commit `f0d4ff3`. All three were live in v1 and none depended on shared mode.\n\n**1. Import silently dropped ownership.** `ITEM_COLUMNS` listed 21 columns and excluded `origin_repo` and `visibility`, while export emitted both (it serialises whole item objects via `mapRowToKnowledgeItem`'s row spread). A round trip returned items owned by nobody, private. **Fixed:** `ITEM_FIELDS` is now one table of `[column, reader]` pairs, so the column list, placeholder count and SET clause are all derived — the old hardcoded `new Array(21)` could not survive a new column.\n\n**2. Lifecycle changes could not travel.** `content_hash` covers only title/content/reasoning/source/paths, so promote, retire, supersede and stale left an item byte-identical and import classified it `identical` and skipped it. **Fixed:** `hashKnowledgeLifecycle` (status, freshness, supersededById, originRepo, visibility — `confidence` deliberately excluded) in a `lifecycle_hash` column, plus a fourth verdict `metadata-divergent` resolved by the existing policy and applied to lifecycle columns only, writing `content_hash` verbatim so the next round is identical rather than a fresh divergence.\n\n**3. Tombstones could rewind.** `recordTombstone` and import's upsert both overwrote `deleted_at` unconditionally. **Fixed:** both guarded with `WHERE excluded.deleted_at > knowledge_tombstones.deleted_at`. Import now also consults local tombstones before planning an insert, so a stale export cannot resurrect a deliberate delete; blocked items drop their assertions and evidence links with them, since both carry an FK to `knowledge_items` and inserting them without the item rolls back the whole file. Reported as `blockedByTombstone`, not folded into `identical`.\n\n**Two things the fix forced that the plan had not anticipated:**\n- **Promotion must advance `updated_at`.** `resolveDivergence('newer')` orders by it and keeps local on a tie, so a promotion that left the timestamp alone was a change no other machine could ever prefer. `content_hash` still does not move.\n- **Export format bumped to version 2.** Reads 1 and 2; a version-1 file imports with ownership defaulted; an unrecognised version is refused rather than imported with unknown fields dropped.",
+    "created_at": "2026-07-29T15:13:30.583Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "3e574452b3a94c67",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-29T14:18:44.341Z",
+   "2026-07-29T14:27:49.355Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "41f80e20c0a547c7",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T09:12:40.025Z",
+   "2026-07-30T09:40:42.728Z"
+  ],
+  "items": [
+   {
+    "id": "fc4fcb726bf14ccc",
+    "category": "state",
+    "title": "Per-repo role and default visibility implemented on feat/workspace-repo-role",
+    "content": "Built 2026-07-30, 11 commits on branch `feat/workspace-repo-role` (`2de217b`..`d4263bb`), branched from `543ae67`. Not yet merged or released; sits under `## Unreleased` in CHANGELOG.\n\n**Verified end-to-end against `dist/index.js`**, not only by tests: two throwaway repos in one workspace, `notes` with `--default-visibility workspace` and `code` without. A `knowl decide` in each landed `visibility='workspace'` and `visibility='repo'` respectively, with correct `origin_repo`. `workspace status` from the code repo showed the peer's role; `workspace set` with no flags printed all three fields; the real `agent-hook claude SessionStart` emitted the `## Workspace: team` section naming both repos, their roles, the kin marker and each default.\n\n**Full suite: 804 tests / 110 files passing**, up from 778/106 at the branch point.\n\n**New surface:** `workspace add` gains `--role`, `--default-visibility`, `--kin`, `--promote-existing`; new `workspace set` subcommand; new modules `src/workspace/repo-settings.ts` and `src/cli/workspace-visibility-notice.ts`.\n\nTwo implementation facts worth keeping: `resolveWritingRepo` is now a thin wrapper over `resolveWriteDefaults()` in `src/store/write-ownership.ts`, which resolves owner and visibility in one cached pass; and `createKnowledgeItem` now stamps `visibility` into both the insert row and `hashKnowledgeLifecycle` from a single variable.</content>\n<parameter name=\"tags\">[\"workspace\", \"visibility\", \"manifest\", \"feature\", \"unreleased\"]",
+    "created_at": "2026-07-30T09:40:19.951Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "5687dda15273494e",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-29T13:54:08.261Z",
+   "2026-07-29T14:09:56.286Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "66be0607360f4d5c",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T04:22:05.633Z",
+   "2026-07-30T04:51:10.253Z"
+  ],
+  "items": [
+   {
+    "id": "3f145e45e27a49de",
+    "category": "fact",
+    "title": "Scopeless exclusive conflict keys never worked: eq(column, null) renders = NULL",
+    "content": "Found and fixed 2026-07-30 in commit `077fd29`, while building cross-repo conflict detection.\n\n`conflictExclusive: true` with no `conflictScope` matched nothing and guarded nothing — so the simplest way to declare \"only one active answer to this\" was silently inert, and had been since the feature shipped.\n\n**Cause:** Drizzle's `eq(column, value)` with `value === null` renders `conflict_scope = NULL`, and nothing equals NULL in SQL. `normalizeConflictScope` returns `null` for an absent scope, so the predicate could never be satisfied.\n\n**Two sites had it**, and fixing only the first would report the conflict while still allowing the write:\n- `checkKnowledgeConflict` (`src/store/conflicts.ts`) — the detection path\n- the guard inside `createKnowledgeItem` (`src/store/repository.ts:175`) — the enforcement path\n\nBoth now use `isNull(...)` when the normalized scope is null.\n\n**Why it went unnoticed:** every existing test in `tests/store/conflicts.test.ts` supplied a scope (`{ environment: 'production' }`). The null-scope case had no coverage at all. Same shape as the tombstone-rewind bug: one defect, two call sites, and the untested branch is the one that matters.</content>\n<parameter name=\"reasoning\">Surfaced by pointing an existing function at a new store rather than by reading it — reuse exposed a gap that the original call site's tests had never covered.",
+    "created_at": "2026-07-30T04:48:58.681Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "676161f527c54777",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-29T11:53:23.914Z",
+   "2026-07-29T12:04:06.473Z"
+  ],
+  "items": [
+   {
+    "id": "f9ef223f3b2f4fbd",
+    "category": "constraint",
+    "title": "Having a mid-turn envelope is not the same as delivering it to the model",
+    "content": "Established 2026-07-29 after this exact mistake shipped and was caught before release.\n\n`HostProfile` now carries `midTurnDeliveryVerified: boolean`, separate from whether `midTurnContext(text)` returns an envelope. claude and codex: true. cursor, claude-desktop, generic: false.\n\nThe distinction is load-bearing. Cursor's profile returns `{ additional_context: text }` -- its hooks accept and log it, but open upstream reports say it never reaches the model. The MCP fallback channel's suppression check (`anotherChannelIsDelivering` in `src/mcp/change-notice.ts`) first asked whether `midTurnContext('') !== undefined`, which reads as \"is this host already telling the agent\" and is not. That silenced the fallback for Cursor -- the one host with no other way to hear about a change -- while intending to prevent a duplicate that Cursor never received.\n\nRule: anything deciding whether an agent has already been told must test `midTurnDeliveryVerified`, never the presence of an envelope. Flip a host's flag only when an upstream release is confirmed to surface it. Guarded by `tests/cli/hosts/profile-conformance.test.ts`, which requires a host claiming verified delivery to actually have an envelope (the converse is deliberately allowed), and by `tests/mcp/dual-channel-notification.test.ts`.",
+    "created_at": "2026-07-29T12:03:40.556Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "67d22585e83640e1",
+  "externalSessionId": "0eb9b971-ebae-4613-9f7e-d6032c55e9f4",
+  "hasTranscript": true,
+  "window": [
+   "2026-07-31T08:23:38.396Z",
+   "2026-07-31T09:05:59.721Z"
+  ],
+  "items": [
+   {
+    "id": "b8d00a5f032243b5",
+    "category": "fact",
+    "title": "Coding-agent memory is a crowded category; ByteRover and ProjectMem already hold Knowl's stated positions",
+    "content": "Researched 2026-07-31 while deciding what to build next. The \"local-first project memory for coding agents\" position is **not** open. Two direct competitors hold it.\n\n**ByteRover / Cipher** (`campfirein/byterover-cli`, formerly Cipher, byterover.dev). The closest competitor commercially.\n- Local-first by default, optional ByteRover Cloud (team sync, multi-machine, SOC 2 Type II).\n- MCP; supports Cursor, Windsurf, Claude Code, Cline, Gemini CLI, Kiro, VS Code, Roo, Trae, Amp, Warp.\n- Context tree with **git-like version control** — branch/commit/merge, `brv vc push/pull`.\n- Multi-repo via linked worktrees plus read-only `sources` referencing other projects.\n- Team \"shared spaces\", member permissions, usage analytics.\n- Published: **96.1% LoCoMo**, **92.8% LongMemEval-S**. Both conversation benchmarks, not conflict/staleness.\n- Pricing (market rate signal for a Knowl cloud tier): Free 500 retrievals / Pro **$14.90-mo** 2,000 / Team **$149-mo** 25,000 / Enterprise.\n- **Capture is manual.** `brv curate` and a review workflow; no automatic capture documented.\n\n**ProjectMem** (`riponcm/projectmem`, arXiv 2606.12329). Already pinned in `benchmarks/accuracy/systems.lock.json`.\n- Self-describes as **\"Memory-as-Governance\"** — a judgment gate that warns before an agent repeats a failed operation.\n- Fully offline, no telemetry, secret redaction on by default. 14 MCP tools, 19 CLI commands.\n- **Append-only immutable JSONL event log** plus deterministic projection to markdown.\n- Cross-project memory via a machine-wide global library cache keyed on dependencies, with source-project attribution.\n- Claims 50%+ token reduction per session; evidence is a 10-project, 207-event self-study, not a controlled benchmark.\n\n**Also in the space:** ContextForge MCP (semantic search, git sync, team collaboration), `yuga-hashimoto/codebase-memory`, Memory Trail (decision memory + session logs), OpenMemory (Mem0's local-first MCP layer), MemoryLake, Cognee.\n\n**What survives as genuinely Knowl's**, given the above:\n1. **Automatic capture.** ByteRover requires manual curation; Knowl's verified host lifecycle hooks own bootstrap, capture, checkpoint and finalization. Nothing found in this category does capture without being asked.\n2. **Retirement at write time.** ProjectMem's immutability means a corrected fact still appears in the projection — it never retires. Knowl retired 149 of 156 conflict groups at write, and the 96% vs 40% MemoryAgentBench CR ablation measures exactly that failure mode.\n3. **No competitor publishes a contradiction/staleness benchmark.** ByteRover's LoCoMo and LongMemEval-S are conversation recall.\n\nNote also: Zep/Graphiti already does bitemporal fact invalidation (`valid_from`/`valid_to`/`invalid_at`), so supersession alone is not a differentiator against the leaders — only supersession *measured* against a staleness benchmark is.",
+    "created_at": "2026-07-31T08:42:13.847Z"
+   },
+   {
+    "id": "80e89b48dd6b4647",
+    "category": "fact",
+    "title": "Automatic capture is real but thin: three extractor rules over three payload fields",
+    "content": "Verified in source 2026-07-31 while deciding the next quarter's focus. Knowl's hook capture genuinely runs without the model — but what it produces is low-value, and the reason is upstream.\n\n**The promotion path is real and model-free.** `finalizeMemorySession` (`src/store/session-finalizer.ts:11-13`) runs on session end via `host-lifecycle.ts:286`, extracts candidates and promotes up to `MAX_PROMOTED_CANDIDATES = 8`, ranked by `candidateImportance`. It reports `usedAi: false`. No agent involvement at any step.\n\n**But the extractor is three rules** (`src/store/session-candidates.ts`):\n1. `decision` events -> text passthrough (line 25)\n2. a command succeeding `PROCEDURAL_SKILL_MIN_REPEATS = 3`+ times -> skill candidate (line 42)\n3. the `stop` event's `summary` -> a \"Session outcome:\" state item (line 53)\n\n**And the captured payloads are three fields**, because the hook boundary deliberately drops everything else (`src/cli/agents/host-hook.ts`):\n- `commandEvent` (line 137) -> `{ command, exitCode }`\n- `toolEvent` (line 187) -> `{ changedPaths }`, else `{ summary: \"Tool completed\" }`\n- error (line 309) -> `{ message }`\n- No stdout, stderr, diff content, or prompts. Strings truncated at `MAX_STRING`. Secret-bearing payloads are a hard failure, so widening this is a real security decision, not a config change.\n\n**Observable consequence in this repo's own store:** auto-promoted items are the thin ones (\"Session outcome: Review workspace v2 shared database plan\", \"Work Loop: ...\"), while every high-value atom (the Drizzle segfault root-cause, the 2.7.0 write crash, the cross-repo advisory bug, this item) was written by the model calling `knowl_store`. In practice the valuable memory is still model-dependent.\n\n**What is derivable today without widening capture:** a `command` failing, then `checkpoint` events carrying `changedPaths`, then the same `command` succeeding, is a **failure->fix pair** recoverable from ordering plus exit codes alone. Also: co-edited file clusters, and repeated error messages. These need no new payload fields and add no security surface.\n\nConsequence for positioning: \"Knowl captures automatically\" overclaims today. The defensible version is that Knowl is the only tool in the category with the hook plumbing already in place to make it work -- see [[coding-agent-memory-is-a-crowded-category-byterover-and-projectmem-already-hold-knowls-stated-positions]].",
+    "created_at": "2026-07-31T08:56:57.151Z"
+   },
+   {
+    "id": "f6039633e6aa4918",
+    "category": "state",
+    "title": "Unassisted capture baseline measured: 1 of 88 hook sessions promoted, all three extractor rules inert",
+    "content": "Measured 2026-07-31 against the live `.knowl/knowl.db` at commit `78ddb93`, while choosing the next quarter's direction. Spec committed at `b8eefd4`: `docs/superpowers/specs/2026-07-31-unassisted-capture-design.md`.\n\n**Baseline.** 403 memory sessions, 88 with hook events, 1,724 events (1,720 unexpired), window 2026-07-29 to 2026-07-31. Of the 88 hook-driven sessions: **1 promoted, 79 skipped, 8 pending**. Only 13 of 375 knowledge items (3.5%) came from session promotion, and they read like `Work Loop finish` and `Session outcome: Review README depth architecture`.\n\n**All three rules in `src/store/session-candidates.ts` are provably inert on hook sessions:**\n- `decision` event -> decision atom (line 25): **0** decision events exist in the database.\n- command repeated `PROCEDURAL_SKILL_MIN_REPEATS = 3`+ -> skill (line 42): **0** sessions have any command repeated 3 times.\n- `stop.summary` -> outcome (line 53): **1** non-null summary out of 87 `stop` events.\n\nThe promoted items that do exist came from the manual `knowl task run` work loop, not hooks.\n\n**Unused signal that does exist:**\n| Signal | Volume |\n| --- | --- |\n| `checkpoint.changedPaths` | 620 of 939 checkpoints, real repo-relative paths |\n| `error.message` | 50 events, min 25 / mean 867 / max 2,293 chars of real diagnostic text |\n| `command` | 562, and **`exitCode` is 0 on all 562** |\n| `stop.status` | finished 77, recovered 7, failed 3 |\n| **error followed by file changes** | **12 of 88 sessions** — a recoverable failure->fix pair |\n\n**Two design consequences.** Failure detection must key on `error` events, not exit codes, because the exit-code path records only successes. And event retention is roughly two days (`expires_at`), so a benchmark must capture forward rather than mine history.\n\nCorrects the earlier assumption that hook payloads are uniformly thin — see [[automatic-capture-is-real-but-thin-three-extractor-rules-over-three-payload-fields]]. `changedPaths` is populated on most file-tool checkpoints and `error` events carry substantial text; the failure is in the extractor, not the capture boundary.",
+    "created_at": "2026-07-31T09:05:42.255Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "6bbd7cb59d6a4f74",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T09:02:16.775Z",
+   "2026-07-30T09:09:45.249Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "6ce1193b127f4aad",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T01:21:31.565Z",
+   "2026-07-30T02:11:59.065Z"
+  ],
+  "items": [
+   {
+    "id": "96cf7fd65b0847ea",
+    "category": "state",
+    "title": "Work Loop: Review workspace v2 shared database plan",
+    "content": "Status: active\nTask: Review workspace v2 shared database plan\nStarted at: 2026-07-30T01:22:36.662Z\nPre-task query: workspace v2 shared database plan\nRelevant memory hits: 3",
+    "created_at": "2026-07-30T01:22:36.666Z"
+   },
+   {
+    "id": "8739d0290233492b",
+    "category": "state",
+    "title": "Work Loop checkpoint",
+    "content": "Task ID: 96cf7fd65b0847ea\nTask: Review workspace v2 shared database plan\nRecorded at: 2026-07-30T01:32:39.380Z\nSummary: Mapped the plan and verified several blocking mismatches against current source: shared mode is not threaded into initDb, session lifecycle still uses the knowledge handle, routeWrite is placed above direct repository write paths, implicit read surfaces are incompletely scoped, and the per-repo fence is lifted before global activation, creating a lost-write window.\nCompleted: Read and line-mapped the full v2 plan; Verified storage initialization and role callers; Verified migration fence/cutover sequence; Audited direct write and implicit read call sites\nNext action: Reconcile parallel reviewers, verify tombstone/concurrency findings, then store prioritized durable review findings and finish the review.\nArtifacts: docs/superpowers/plans/2026-07-26-workspace-v2-shared-database.md, src/store/database.ts, src/store/session-repository.ts, src/store/knowledge-writer.ts, src/mcp/tools.ts\nVerification: needs-review",
+    "created_at": "2026-07-30T01:32:39.381Z"
+   },
+   {
+    "id": "acba0e79a2fb4771",
+    "category": "state",
+    "title": "Workspace v2 shared-database plan review at 4dbbfdf",
+    "content": "The plan is not buildable as written. Verified blockers: its advertised cross-owner update capability conflicts with absolute origin-only mutation; Task 2 does not pass workspace context to `initDb`; Task 1 leaves session lifecycle and local code-evidence reads on the knowledge handle; routing in `knowledge-writer` is bypassed by direct repository writers; implicit reads/resources and pre-limit FTS/vector paths are incompletely owner-scoped; the migration lifts per-repo fences before global activation; portability omits owner-attributed tombstones and several knowledge-role tables; Tasks 4-14 remain obligation placeholders rather than executable steps.",
+    "created_at": "2026-07-30T01:38:53.926Z"
+   },
+   {
+    "id": "8174602817f647c7",
+    "category": "constraint",
+    "title": "Workspace migration fences must remain effective through global activation",
+    "content": "A per-repo snapshot fence cannot be lifted when that repo reaches `done` if workspace mode flips only after every repo is done. Otherwise a repo can accept local writes after its export, the journal skips re-export on resume, and the final manifest flip makes those writes disappear. Already-running MCP processes also retain the pre-cutover handle. Hold a database-enforced retired/write fence through the global flip, then invalidate/re-resolve handles, or capture and replay a final delta while all writers are fenced.",
+    "created_at": "2026-07-30T01:38:54.424Z"
+   },
+   {
+    "id": "b3bf28dc518046bd",
+    "category": "constraint",
+    "title": "Lifecycle convergence needs an independently advancing arbitration value",
+    "content": "Detecting `metadata-divergent` with `lifecycle_hash` is insufficient if the existing `newer` policy arbitrates on `updated_at` and `version` while promotion changes only visibility/owner/hash. Equal arbitration values keep the local row, so the promoted lifecycle is detected and then discarded. Lifecycle mutations need to advance a monotonic revision/timestamp used by import. For version-1 exports, recompute the lifecycle hash from the lifecycle fields already serialized instead of treating every missing hash as identical.",
+    "created_at": "2026-07-30T01:38:54.569Z"
+   },
+   {
+    "id": "9db7ec33d7c94645",
+    "category": "constraint",
+    "title": "Owner-scoped export and unlink require attributed tombstones",
+    "content": "In a shared database, `knowledge_tombstones(id, deleted_at, reason)` cannot be filtered by `origin_repo` after the base item is gone. An owner-scoped export/unlink must either export every repo's deletions or omit the current repo's delete history, enabling stale copy-back/import to resurrect removed knowledge. Stamp tombstones with immutable origin at deletion, preserve it through migration/export/import, and scope pruning by owner.",
+    "created_at": "2026-07-30T01:38:54.718Z"
+   },
+   {
+    "id": "29ae6f25c3504846",
+    "category": "state",
+    "title": "Work Loop finish",
+    "content": "Task ID: 96cf7fd65b0847ea\nTask: Review workspace v2 shared database plan\nRecorded at: 2026-07-30T01:39:43.323Z\nSummary: Completed a read-only review of the workspace v2 shared-database plan at commit 4dbbfdf, reconciled three independent reviews, verified material findings against current source, and stored the durable blockers. The plan should remain not recommended and should not be called complete/buildable until storage activation, role locality, migration cutover, write/read scoping, portability, CLI entrypoints, and executable task detail are corrected.",
+    "created_at": "2026-07-30T01:39:43.325Z"
+   },
+   {
+    "id": "cbc5a2bcc56e4e00",
+    "category": "state",
+    "title": "Session outcome: Review workspace v2 shared database plan",
+    "content": "Completed a read-only review of the workspace v2 shared-database plan at commit 4dbbfdf, reconciled three independent reviews, verified material findings against current source, and stored the durable blockers. The plan should remain not recommended and should not be called complete/buildable until storage activation, role locality, migration cutover, write/read scoping, portability, CLI entrypoints, and executable task detail are corrected.",
+    "created_at": "2026-07-30T01:39:43.583Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "707d39e9d14c4934",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T08:04:52.184Z",
+   "2026-07-30T08:20:14.784Z"
+  ],
+  "items": [
+   {
+    "id": "535afd0de5004557",
+    "category": "fact",
+    "title": "Promote has accepted NULL origin_repo since 2.5.0; the real cost of unowned rows is the remove guard",
+    "content": "Verified 2026-07-30 against the tree and tags.\n\n**A \"Nothing to promote.\" on items with `origin_repo IS NULL` is not an ownership problem.** `promoteItems` selects `(origin_repo IS NULL OR origin_repo = ?)` (`src/workspace/promote.ts`), and that clause is present in v2.5.0 through v2.7.1 — confirmed with `git show v2.6.0:src/workspace/promote.ts`. It was added in `984d611`. A manual `UPDATE knowledge_items SET origin_repo = ...` does not change what promote will select.\n\n**What unowned rows actually break:** `countOwnedItems` (`src/workspace/membership.ts`) counts with `origin_repo = ?`, so NULL rows are invisible to it. That count is the guard `workspace remove` uses to refuse orphaning knowledge, so a repo holding only unowned items can be unlinked as though it held nothing.\n\n**How rows end up unowned:** the join-time backfill runs once, and write-time stamping only arrived in 2.6.0 (`2aa7f92`). Items written between joining and 2.6.0 are the gap. `knowl upgrade` now sweeps them via `src/cli/upgrade.ts`.\n\n**The real cause of a silent \"Nothing to promote.\" was the filter**, and both cases now fail loudly: a truncated id (ids are matched exactly), and a `--category a,b,c` that `cmd.exe` split on the commas before Knowl saw it.</content>\n<confidence\">0.98</confidence>\n<affectedPaths>[\"src/workspace/promote.ts\", \"src/workspace/membership.ts\", \"src/cli/upgrade.ts\", \"src/index.ts\"]</affectedPaths>\n<tags>[\"workspace\", \"ownership\", \"promotion\", \"windows\", \"cli\"]</tags>\n</invoke>\n",
+    "created_at": "2026-07-30T08:19:45.854Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "95e5bb666f564be7",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-29T13:09:51.512Z",
+   "2026-07-29T13:24:11.756Z"
+  ],
+  "items": [
+   {
+    "id": "ee974d52742e4e26",
+    "category": "fact",
+    "title": "Cross-repo change notification verified: peer tag delivered, private peer knowledge not leaked",
+    "content": "Verified 2026-07-29 against `dist/index.js` (2.5.1) with an isolated KNOWL_HOME and two throwaway repos linked into one workspace.\n\nWorking: after a peer repo changes an item whose `visibility` is `workspace`, the next `agent-hook claude PostToolUse` in the local repo returns\n`KNOWL CHANGED: 1 item since you last looked.\\n- [peer-c] decision (supersede): <title>` — the `[repo]` tag is present and correct.\n\nSecurity result (with positive control): changing an unpromoted `visibility='repo'` item in the peer produced EMPTY hook output, and the very next promoted-item change on the same session produced a card. So the silence is real filtering, not a dead pipeline. The private item's title never appeared in any hook output, and `knowl query` in the local repo never returned it. Cards carry only `[repo] category (kind): title` — no content.\n\nOperational notes for reproducing: the hook payload `cwd` must use forward slashes; a Windows path with backslash escapes fails with `Parser cannot parse input: escaped characters`. Promotion itself emits no card; only a later change to an already-promoted item does.</content>\n<parameter name=\"confidence\">1",
+    "created_at": "2026-07-29T13:14:06.151Z"
+   },
+   {
+    "id": "96531ac7461b4c84",
+    "category": "fact",
+    "title": "Workspace link repair: join is gated like add, and an unused repo name is no longer burned",
+    "content": "Fixed 2026-07-29, commit `8f899f8`. Supersedes the reproduction recorded on 2.5.1.\n\n**`workspace join` skipped every check `workspace add` applies.** `join` adopts a manifest copied from another machine, so a second machine could link the same workspace under a different embedding model. Vector search filters on provider and model, so the two sides would simply never see each other's items, with nothing reporting why. It also skipped the nesting check and the Git-tracked-config guard. All three now run through `assertSafeToLink` in `src/workspace/membership.ts`, called before the local manifest is written so a refusal leaves no trace. `join` gained `--force` to match `add`.\n\n**A removed repo name was retired unconditionally.** Retirement protects authorship — the name is the ownership key on every item its repo wrote — but that reasoning needs items. `leaveWorkspace` now returns `{ retired }` and only retires when `countOwnedItems > 0`; an unreadable database counts as owned, since an unusable name is recoverable and a silent ownership transfer is not. The repo whose own database still owns items under a retired name can reclaim it by re-linking (`assertNameAvailable(..., { allowRetired })`); no other repo can, because only the original's database carries that evidence.\n\nThe related unowned-post-link-writes half of the original report was fixed separately in `2aa7f92` — see [[ownership-is-now-stamped-when-knowledge-is-written]].",
+    "created_at": "2026-07-29T13:14:11.127Z"
+   },
+   {
+    "id": "02f82d22b77b4cf4",
+    "category": "state",
+    "title": "MCP commit-range attribution verified end-to-end against a live serve process 2026-07-29",
+    "content": "Verified the PRIMARY attribution path (recorded `mcp_call_commits` ranges), which the earlier CLI-only run could not reach. Method: a Node driver spawned `node dist/index.js serve` with cwd set to an isolated project and spoke newline-delimited JSON-RPC on its stdin, keeping the process alive across calls; hooks were fired as separate `agent-hook claude <event> --json` processes. Isolated KNOWL_HOME.\n\nResults (all PASS, dist built from 891b6df):\n1. A `knowl_store` MCP call writes an `mcp_call_commits` row: `{tool_name: 'knowl_store', from_rowid, to_rowid}` with `project_root` lowercased/canonicalized. from/to are the local commit head before and after dispatch. The primary path does activate in reality.\n2. Title-collision test is decisive. With session watermark at commit 1: commit 2 = MCP's own `knowl_store` \"Zebra collision title\" (fact, range {1,2} recorded), commit 3 = a `knowl decide` CLI write with the IDENTICAL title (no range). A PostToolUse for `mcp__knowl__knowl_store` carrying that same title in tool_input returned `KNOWL CHANGED: 1 item ... - decision: Zebra collision title`. The foreign change is reported and the caller's own same-titled change is excluded.\n3. Control run, same sequence but `DELETE FROM mcp_call_commits` immediately before the hook: output was EMPTY. That is the old key-matching fallback silently hiding the foreign change, and it proves the range is the thing that changed the outcome, not timing or watermarks.\n4. No self-notification regression: a `knowl_store` followed straight away by a matching PostToolUse produced empty output.\n\nNote the CLI has no `store` command; `knowl decide <title> <content>` is the way to make a ranged-less sibling write.",
+    "created_at": "2026-07-29T13:17:58.904Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "987e4038f8204f99",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T12:11:23.971Z",
+   "2026-07-30T13:01:17.617Z"
+  ],
+  "items": [
+   {
+    "id": "feeca91d98334ea3",
+    "category": "fact",
+    "title": "Dogfooding two linked repos: cross-repo advisory was silent for decisions",
+    "content": "Found 2026-07-30 by linking two real repos and using them through the built CLI — the thing cross-repo reporting had shipped in three releases without. Fixed in `c2a3f9e`.\n\n**The bug.** `recordDecisionDirect` writes through `repository.createKnowledgeItem` rather than through `knowledge-writer`, so it never reached the cross-repo overlap check. It backs **both** `knowl decide` and the `knowl_decide` MCP tool, so the advisory was off for decisions — the category most likely to contradict across repos, and the one `defaultVisibility: workspace` shares automatically. Recording \"Wire format\" in `api` while `web` had already promoted \"Wire format is JSON\" produced no mention at all.\n\n**Two halves, because producing a report is not delivering one.** `crossRepoOverlapForWrite` is now exported from `knowledge-writer` and called by `recordDecisionDirect`; and the CLI renders it via `src/cli/cross-repo-notice.ts`, which it previously would have dropped exactly as it printed only `superseded` and `nearDuplicate`. Same failure shape as the `repo` label that reached `KnowledgeItem` and never reached a response.\n\n**Two gaps observed but not fixed:**\n1. **The CLI cannot store a fact.** Only `knowl decide` writes knowledge; there is no `store` command, so a human can record decisions but not facts, constraints or architecture notes. Those are MCP-only.\n2. **No way to list current cross-repo divergences.** Overlap is reported at write time only. `knowl conflicts` is local and keyed on exclusive conflict keys, so two repos holding contradictory decisions show up nowhere after the fact. This is the read-only cross-repo `conflicts` idea previously recommended as the cheap alternative to a shared database; the machinery (`findCrossRepoOverlap`, peer stores) now exists.\n\n**Also verified working:** roles and kin render in `workspace status`; cross-repo query returns peer items labelled with `repo`; `doctor --fix` and `upgrade --all` both behave correctly across two registered repos.</content>\n<parameter name=\"reasoning\">The matcher requires one title's tokens to be a subset of the other's, so several plausible-looking test titles produce no report legitimately — worth knowing before concluding the feature is broken again.",
+    "created_at": "2026-07-30T12:46:53.136Z"
+   },
+   {
+    "id": "dd9f5b539da04572",
+    "category": "fact",
+    "title": "The write-path segfault was Drizzle's multi-statement transaction wrapper",
+    "content": "Root-caused and fixed 2026-07-30, commit `c59c570`. Pre-existing — reproduces on 2.6.0.\n\n**Symptom.** Any process writing more than roughly 1200 knowledge items segfaulted, *at process exit*, after the work had completed and been reported. `fs.rm` on the store could trigger it earlier. It also killed the vector reindex on large stores, which looked like a second, separate bug and was not.\n\n**Root cause.** `drizzle-orm@0.45.2`'s libSQL `transaction()` leaks native state for every statement past the first inside one transaction. Measured, same rows, same table, same connection:\n\n| shape | total inserts | result |\n| --- | --- | --- |\n| 1 statement × 2400 transactions | 2400 | clean |\n| 2 statements × 1200 transactions | 2400 | **segfault** |\n| 2 statements × 1200 via raw BEGIN/COMMIT | 2400 | clean |\n\nNeither statement count nor transaction count — statements *within* a transaction. Knowl writes an item and its assertion together, so every knowledge write is a two-statement transaction. `0.45.2` is the latest release; there is no upgrade to take.\n\n**Isolated by elimination**, because the crash produces no diagnostic report (it is outside V8's fatal-error path, so `--report-on-fatalerror` yields nothing): raw SQL into the full schema is clean, FTS5 triggers inside a transaction are clean, pure Drizzle transactions are clean, Knowl's own bootstrapped connection with one statement per transaction is clean. Only the second statement inside the wrapper crashes.\n\n**Fix.** `withClientTransaction` in `src/store/database.ts` issues BEGIN/COMMIT/ROLLBACK on the client and hands the callback the ordinary connection — a SQLite transaction belongs to the connection, so statements inside it are in the transaction and callback bodies are unchanged. Applied to `createKnowledgeItem` and `updateKnowledgeItem` only, the two per-write functions. The other five `.transaction(` sites are batch or maintenance work that runs once and are deliberately left alone. Not nestable: both callers skip it entirely when an outer transaction hands them a connection.\n\n**Unblocked:** benchmark instances above ~1200 facts now run, which is what made the 32k and 64k measurements possible.</content>\n<parameter name=\"reasoning\">Found by trying to run a larger benchmark, not by reading code. The elimination trail is recorded because the crash gives no stack trace, so anyone re-encountering it would otherwise start from nothing.",
+    "created_at": "2026-07-30T13:00:30.383Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "9ca3320a5dbe4f98",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-31T09:44:09.552Z",
+   "2026-07-31T09:55:34.768Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "a0a7228c62084ea3",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-29T13:01:49.341Z",
+   "2026-07-29T13:07:47.767Z"
+  ],
+  "items": [
+   {
+    "id": "6f2b1e9e2bb546bf",
+    "category": "state",
+    "title": "Pending session handoff",
+    "content": "{\"kind\":\"provider_outage\",\"urgency\":\"high\",\"host\":\"claude\",\"projectRoot\":\"D:\\\\coding\\\\knowl\",\"externalSessionId\":\"d7b8453d-7d69-45d3-b585-b6b41b2e98e3\",\"memorySessionId\":\"a0a7228c62084ea3\",\"sessionTitle\":\"Agent session\",\"errorCode\":\"server_error\",\"lastCheckpoint\":\"PowerShell completed\",\"failedAt\":\"2026-07-29T13:07:47.778Z\",\"consumed\":false}",
+    "created_at": "2026-07-29T13:07:41.279Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "ac90dae021f04f0d",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T08:47:40.004Z",
+   "2026-07-30T08:54:29.925Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "b2e561dc6eab43a4",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T07:59:48.550Z",
+   "2026-07-30T08:03:42.603Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "c454cf991aab400c",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T03:53:01.958Z",
+   "2026-07-30T04:13:07.393Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "c4d4d003a06a4ef5",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-29T10:52:46.221Z",
+   "2026-07-29T11:50:45.168Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "d34238d796a043a1",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T02:20:32.720Z",
+   "2026-07-30T02:36:27.802Z"
+  ],
+  "items": [
+   {
+    "id": "0221ddf59f834b76",
+    "category": "decision",
+    "title": "Workspace v2 blocks on a contradiction: it promises cross-owner editing and forbids it",
+    "content": "**Do not build workspace v2.** Hardened from \"not yet\" on 2026-07-30 (commit `5cfd94c`) after external review of the plan at `4dbbfdf`.\n\nThe v2 goal claims cross-repo `knowl_update` and editing or superseding items owned by another repo. Task 10 clamps cross-owner resolution to `coexist` and refuses an explicit `supersedes` naming a foreign item — deliberately, because a write in repo A silently retiring repo B's knowledge is the failure a single owner per item exists to prevent.\n\nBoth positions are defensible; holding both is not. And v1 already refuses foreign edits (`assertOwnedItem`, `src/mcp/tools.ts:972`), so **as designed v2 adds no editing capability over v1 at all**. That leaves one unique benefit — detecting that two repos hold contradictory or duplicate knowledge — which read-only `knowl_conflicts` across peers provides without a shared database, migration, or concurrency work.\n\nThree ways out, none of them a task in the plan:\n1. Drop cross-owner editing as a claimed benefit (reduces v2 to conflict detection, at which point the read-only alternative wins outright).\n2. Design an explicit proposal/accept authorization workflow — feature-sized, does not exist, and not obviously cheaper in shared mode than as a federated exchange.\n3. Allow foreign edits outright, accepting that any repo can retire any other's knowledge. Needs an argument nobody has made.\n\nUntil one is chosen the plan cannot be executed: Task 10's tests and the goal contradict each other and there is no way to satisfy both.\n\nSupersedes the earlier \"re-scoped and not being built\" decision, which deferred v2 rather than identifying that its headline benefit was self-cancelling.</content>\n<parameter name=\"reasoning\">Found by external review, then verified against source. The contradiction survived three review rounds, a design spec and two plan revisions because the goal and the ownership task were never read against each other.",
+    "created_at": "2026-07-30T02:35:56.076Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "e52ac7ec86a243ab",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T05:02:20.243Z",
+   "2026-07-30T05:23:18.313Z"
+  ],
+  "items": [
+   {
+    "id": "01b4158cdba24ba0",
+    "category": "fact",
+    "title": "releaseAll now checkpoints WAL before closing, which was behind two long-standing test workarounds",
+    "content": "Fixed 2026-07-30 in commit `37cb26c`.\n\nThe schema sets `PRAGMA journal_mode = WAL` (`src/store/bootstrap.ts:11`), so a writable connection's changes live in a `-wal` sidecar until a checkpoint folds them into the main file. `releaseAll` called `client.close()` with no checkpoint, so **the main database file could still be changing after `releaseAll` resolved**.\n\nTwo symptoms traced to this:\n- `tests/store/connection-pool.test.ts > leaves a peer database byte-identical when only read` compares raw file bytes before and after a read-only open. It failed roughly 1 run in 3 under full-suite load and 0 in 9 standalone — the writer's checkpoint landing between the two `readFile` calls.\n- Several suites carry `.catch(() => {})` on directory removal with a comment about \"Windows can hold libSQL's WAL sidecars for a moment after close\". Same cause.\n\n`releaseAll` now runs `PRAGMA wal_checkpoint(TRUNCATE)` before closing each **read-write** client. Read-only clients are skipped: `query_only = ON` refuses the pragma and they wrote nothing. Failures are swallowed — the client is discarded either way and an un-checkpointable database must not make closing an error.\n\n**Note on evidence:** the flake was never reproduced on demand, so the fix is reasoned from the mechanism rather than demonstrated against a failing run. Full suite green; the pool suite passed 4 consecutive runs. If the byte-comparison test flakes again, this was not the whole cause.</content>\n<parameter name=\"reasoning\">The workarounds had been treated as a Windows quirk to tolerate for long enough that two test files documented them as environmental. They were one unawaited checkpoint.",
+    "created_at": "2026-07-30T05:22:44.989Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "ece54cf4fb49481e",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T09:45:53.933Z",
+   "2026-07-30T09:50:37.489Z"
+  ],
+  "items": []
+ },
+ {
+  "sessionId": "f0b2297951c44dc9",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-29T15:04:42.913Z",
+   "2026-07-29T15:13:49.802Z"
+  ],
+  "items": [
+   {
+    "id": "0ab7dc07592c4565",
+    "category": "fact",
+    "title": "Three v1 portability defects, all fixed: ownership drop, lifecycle non-convergence, tombstone rewind",
+    "content": "Found 2026-07-29 while grounding the v2 plan, fixed 2026-07-30 in commit `f0d4ff3`. All three were live in v1 and none depended on shared mode.\n\n**1. Import silently dropped ownership.** `ITEM_COLUMNS` listed 21 columns and excluded `origin_repo` and `visibility`, while export emitted both (it serialises whole item objects via `mapRowToKnowledgeItem`'s row spread). A round trip returned items owned by nobody, private. **Fixed:** `ITEM_FIELDS` is now one table of `[column, reader]` pairs, so the column list, placeholder count and SET clause are all derived — the old hardcoded `new Array(21)` could not survive a new column.\n\n**2. Lifecycle changes could not travel.** `content_hash` covers only title/content/reasoning/source/paths, so promote, retire, supersede and stale left an item byte-identical and import classified it `identical` and skipped it. **Fixed:** `hashKnowledgeLifecycle` (status, freshness, supersededById, originRepo, visibility — `confidence` deliberately excluded) in a `lifecycle_hash` column, plus a fourth verdict `metadata-divergent` resolved by the existing policy and applied to lifecycle columns only, writing `content_hash` verbatim so the next round is identical rather than a fresh divergence.\n\n**3. Tombstones could rewind.** `recordTombstone` and import's upsert both overwrote `deleted_at` unconditionally. **Fixed:** both guarded with `WHERE excluded.deleted_at > knowledge_tombstones.deleted_at`. Import now also consults local tombstones before planning an insert, so a stale export cannot resurrect a deliberate delete; blocked items drop their assertions and evidence links with them, since both carry an FK to `knowledge_items` and inserting them without the item rolls back the whole file. Reported as `blockedByTombstone`, not folded into `identical`.\n\n**Two things the fix forced that the plan had not anticipated:**\n- **Promotion must advance `updated_at`.** `resolveDivergence('newer')` orders by it and keeps local on a tie, so a promotion that left the timestamp alone was a change no other machine could ever prefer. `content_hash` still does not move.\n- **Export format bumped to version 2.** Reads 1 and 2; a version-1 file imports with ownership defaulted; an unrecognised version is refused rather than imported with unknown fields dropped.",
+    "created_at": "2026-07-29T15:13:30.583Z"
+   }
+  ]
+ },
+ {
+  "sessionId": "fe0ec52be0ce48e4",
+  "externalSessionId": null,
+  "hasTranscript": false,
+  "window": [
+   "2026-07-30T08:58:26.469Z",
+   "2026-07-30T09:02:05.046Z"
+  ],
+  "items": [
+   {
+    "id": "943781e8ca424441",
+    "category": "decision",
+    "title": "Per-repo role and default visibility live in the workspace manifest, not local config",
+    "content": "Decided 2026-07-30, spec at `docs/superpowers/specs/2026-07-30-workspace-repo-role-design.md`, plan at `docs/superpowers/plans/2026-07-30-workspace-repo-role.md`. **Shipped in 2.8.0** (`c112c6c`); see the 2.8.0 release state item.\n\n`WorkspaceRepo` gains three optional fields: `role` (free text, never parsed), `defaultVisibility` (only ever `'workspace'`; absent means `'repo'`), `kin` (group name for repos of shared lineage). Manifest `version` stays 1; absent fields mean today's behavior.\n\nKey implementation constraints, all still binding:\n- Default visibility resolves through the existing per-root cache in `src/store/write-ownership.ts`, via `resolveWriteDefaults()`. A per-write manifest read is the exact 2.7.0 regression fixed in 2.7.1.\n- `createKnowledgeItem` stamps `visibility` into BOTH the insert row and `hashKnowledgeLifecycle` from one variable. A row saying 'workspace' beside a hash computed over 'repo' is a permanent divergence, because `lifecycle_hash` is what change-watermark and import-policy compare.\n- `readManifest` normalization must never throw: `discoverRepos` reads every manifest on the machine to decide what `upgrade --all` visits.\n- Every unparseable value resolves toward private.\n- No `DoctorRemedy` may ever change visibility -- `doctor --fix` is an automated machine-wide write channel and promotion has no reverse. Pinned by a test in `tests/cli/upgrade.test.ts`.\n- No demote. `workspace set --default-visibility repo` stops future writes only.\n- `--promote-existing` calls `promoteItems({ categories: [...KNOWLEDGE_CATEGORIES], apply: true })` AFTER `backfillOriginRepo`, since promote selects on ownership.\n- Manifests do not sync between machines; `set` edits the local copy only. Known v1 limit, deliberately out of scope.\n\nKin widens the cross-repo write advisory (6 candidates instead of 3) but deliberately does NOT loosen `sameSubjectTitle`, and does not touch retrieval or federated query. The 6-vs-3 constant itself is not separately asserted by a test; the kin flag that drives it is.",
+    "created_at": "2026-07-30T09:01:51.411Z"
+   }
+  ]
+ }
+]

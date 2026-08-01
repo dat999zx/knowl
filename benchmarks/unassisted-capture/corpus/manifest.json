@@ -1,0 +1,14 @@
+{
+ "builtAt": "2026-07-31T11:23:56.860Z",
+ "source": ".knowl/knowl.db",
+ "thresholds": {
+  "minEvents": 10,
+  "minChangedPaths": 2
+ },
+ "sessionsInDatabase": 96,
+ "sessionsSelected": 32,
+ "events": 1424,
+ "sessionsWithError": 16,
+ "sessionsWithTranscript": 3,
+ "seedItems": 41
+}

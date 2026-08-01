@@ -1,0 +1,698 @@
+{
+  "score": {
+    "method": "model-events",
+    "recallFindable": 0.8620689655172413,
+    "recallThinkingOnly": 0.6666666666666666,
+    "precision": 0.24324324324324326,
+    "perSession": [
+      {
+        "sessionId": "41f80e20c0a547c7",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 7,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "987e4038f8204f99",
+        "findableTotal": 3,
+        "findableMatched": 3,
+        "thinkingOnlyTotal": 1,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 8,
+        "predictedMatched": 3
+      },
+      {
+        "sessionId": "6ce1193b127f4aad",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 6,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "66be0607360f4d5c",
+        "findableTotal": 2,
+        "findableMatched": 2,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 8,
+        "predictedMatched": 2
+      },
+      {
+        "sessionId": "2b86c060ca80432f",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 3,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "0ed635ce04d94bc8",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 4,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "23ba78ec2b4f4c8a",
+        "findableTotal": 2,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 6,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "707d39e9d14c4934",
+        "findableTotal": 2,
+        "findableMatched": 2,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 4,
+        "predictedMatched": 2
+      },
+      {
+        "sessionId": "67d22585e83640e1",
+        "findableTotal": 1,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 2,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "c454cf991aab400c",
+        "findableTotal": 2,
+        "findableMatched": 2,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 7,
+        "predictedMatched": 2
+      },
+      {
+        "sessionId": "d34238d796a043a1",
+        "findableTotal": 2,
+        "findableMatched": 2,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 7,
+        "predictedMatched": 2
+      },
+      {
+        "sessionId": "339c502b82af4284",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 1,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "5687dda15273494e",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 1,
+        "thinkingOnlyMatched": 1,
+        "predictedTotal": 2,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "e52ac7ec86a243ab",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 4,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "f0b2297951c44dc9",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 7,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "232b249687f942e1",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 4,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "a0a7228c62084ea3",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 0,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "0dbcd506cf744c9e",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 1,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "676161f527c54777",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 4,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "28de81eddadf449e",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 3,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "b2e561dc6eab43a4",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 1,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "95e5bb666f564be7",
+        "findableTotal": 3,
+        "findableMatched": 2,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 3,
+        "predictedMatched": 2
+      },
+      {
+        "sessionId": "c4d4d003a06a4ef5",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 2,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "9ca3320a5dbe4f98",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 1,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "3e574452b3a94c67",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 1,
+        "thinkingOnlyMatched": 1,
+        "predictedTotal": 3,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "ac90dae021f04f0d",
+        "findableTotal": 1,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 0,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "6bbd7cb59d6a4f74",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 1,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "1e14536b2a1c43ba",
+        "findableTotal": 1,
+        "findableMatched": 1,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 4,
+        "predictedMatched": 1
+      },
+      {
+        "sessionId": "fe0ec52be0ce48e4",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 1,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "204b135e5f6142e2",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 6,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "239861a6840f44f5",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 0,
+        "predictedMatched": 0
+      },
+      {
+        "sessionId": "ece54cf4fb49481e",
+        "findableTotal": 0,
+        "findableMatched": 0,
+        "thinkingOnlyTotal": 0,
+        "thinkingOnlyMatched": 0,
+        "predictedTotal": 1,
+        "predictedMatched": 0
+      }
+    ],
+    "bandPairs": [
+      {
+        "sessionId": "41f80e20c0a547c7",
+        "targetId": "t01-1",
+        "predictedIndex": 0,
+        "predictedText": "Workspace manifests store per-repository nature Each linked repository’s workspace manifest records its role, default visibility, and kin repositories.",
+        "goldFact": "Workspace features are verified end to end by initialising throwaway repos under a scratch KNOWL_HOME and driving the built CLI, not only by unit tests.",
+        "similarity": 0.42108375964887595
+      },
+      {
+        "sessionId": "41f80e20c0a547c7",
+        "targetId": "t01-1",
+        "predictedIndex": 2,
+        "predictedText": "Repository nature propagates through workspace membership Recorded repository nature is carried through workspace joins and onto peer repository records, and workspace status reports it for each linked repository.",
+        "goldFact": "Workspace features are verified end to end by initialising throwaway repos under a scratch KNOWL_HOME and driving the built CLI, not only by unit tests.",
+        "similarity": 0.4142905958027325
+      },
+      {
+        "sessionId": "41f80e20c0a547c7",
+        "targetId": "t01-1",
+        "predictedIndex": 4,
+        "predictedText": "Session context identifies linked repositories Agent session-start context includes what each linked repository is, using its recorded workspace nature.",
+        "goldFact": "Workspace features are verified end to end by initialising throwaway repos under a scratch KNOWL_HOME and driving the built CLI, not only by unit tests.",
+        "similarity": 0.37527225978420614
+      },
+      {
+        "sessionId": "41f80e20c0a547c7",
+        "targetId": "t01-1",
+        "predictedIndex": 6,
+        "predictedText": "Existing repository knowledge can be promoted The workspace CLI supports `--promote-existing` to share knowledge already stored by a repository when it joins or is configured in a workspace.",
+        "goldFact": "Workspace features are verified end to end by initialising throwaway repos under a scratch KNOWL_HOME and driving the built CLI, not only by unit tests.",
+        "similarity": 0.47614478689727413
+      },
+      {
+        "sessionId": "987e4038f8204f99",
+        "targetId": "t02-1",
+        "predictedIndex": 1,
+        "predictedText": "Each knowledge write persists an item and an assertion atomically The normal knowledge write path performs two statements in one transaction: an insert/update of the knowledge item and an insert into knowledge_assertions. Preserving this atomic relationship is why the transaction workaround changes the transaction mechanism rather than removing transactions.",
+        "goldFact": "Knowledge-write transactions must go through the libSQL client rather than Drizzle's transaction wrapper; the Drizzle path crashed the process on bulk writes.",
+        "similarity": 0.4600464130712337
+      },
+      {
+        "sessionId": "987e4038f8204f99",
+        "targetId": "t02-2",
+        "predictedIndex": 1,
+        "predictedText": "Each knowledge write persists an item and an assertion atomically The normal knowledge write path performs two statements in one transaction: an insert/update of the knowledge item and an insert into knowledge_assertions. Preserving this atomic relationship is why the transaction workaround changes the transaction mechanism rather than removing transactions.",
+        "goldFact": "The write crash only reproduced above roughly a thousand writes, so small test fixtures never caught it.",
+        "similarity": 0.3375488057963381
+      },
+      {
+        "sessionId": "987e4038f8204f99",
+        "targetId": "t02-4",
+        "predictedIndex": 2,
+        "predictedText": "Direct decisions share cross-repository overlap detection recordDecisionDirect, used by both `knowl decide` and the knowl_decide tool, explicitly calls crossRepoOverlapForWrite because it writes through the repository rather than knowledge-writer. Its result includes advisory crossRepo overlaps; linked-repository decisions are reported but cannot be retired from the current repository.",
+        "goldFact": "The accuracy-benchmark branch was salvaged by merge rather than dropped, on the evidence that its harness was still usable.",
+        "similarity": 0.40021055767357394
+      },
+      {
+        "sessionId": "987e4038f8204f99",
+        "targetId": "t02-2",
+        "predictedIndex": 5,
+        "predictedText": "Large-corpus benchmark exposes ranking rather than recall headroom After fixing the write-path crash, benchmark instances above roughly 1,200 facts became runnable. Recorded 2.8.0 results were: 455 facts—96% top-1, 100% any-rank, 22 ms p50; 2,310 facts—97% top-1, 98% any-rank, 50 ms p50; 4,580 facts—91% top-1, 98% any-rank, 80 ms p50. At the largest size, stable top-5 recall alongside lower top-1 accuracy points to ranking as the main retrieval opportunity.",
+        "goldFact": "The write crash only reproduced above roughly a thousand writes, so small test fixtures never caught it.",
+        "similarity": 0.355706072387145
+      },
+      {
+        "sessionId": "987e4038f8204f99",
+        "targetId": "t02-4",
+        "predictedIndex": 5,
+        "predictedText": "Large-corpus benchmark exposes ranking rather than recall headroom After fixing the write-path crash, benchmark instances above roughly 1,200 facts became runnable. Recorded 2.8.0 results were: 455 facts—96% top-1, 100% any-rank, 22 ms p50; 2,310 facts—97% top-1, 98% any-rank, 50 ms p50; 4,580 facts—91% top-1, 98% any-rank, 80 ms p50. At the largest size, stable top-5 recall alongside lower top-1 accuracy points to ranking as the main retrieval opportunity.",
+        "goldFact": "The accuracy-benchmark branch was salvaged by merge rather than dropped, on the evidence that its harness was still usable.",
+        "similarity": 0.3853795490673994
+      },
+      {
+        "sessionId": "987e4038f8204f99",
+        "targetId": "t02-4",
+        "predictedIndex": 6,
+        "predictedText": "Multi-hop benchmark instances are not a direct retrieval signal The documented multi-hop instances reuse the single-hop corpus but ask compositional questions whose answer-bearing facts do not share terms with the query. A top-k retriever cannot solve those questions by construction, so their results should not be interpreted as ordinary retrieval quality.",
+        "goldFact": "The accuracy-benchmark branch was salvaged by merge rather than dropped, on the evidence that its harness was still usable.",
+        "similarity": 0.3310331791680587
+      },
+      {
+        "sessionId": "6ce1193b127f4aad",
+        "targetId": "t03-1",
+        "predictedIndex": 3,
+        "predictedText": "Ownership fields must round-trip through portability Export/import preserves origin_repo and visibility. Import column names and positional values are defined from one table rather than separate hardcoded column and placeholder lists, preventing schema additions from silently dropping fields.",
+        "goldFact": "Export and import previously lost item lifecycle, ownership and deletions; they are preserved by a lifecycle fingerprint and tombstones.",
+        "similarity": 0.383794117656592
+      },
+      {
+        "sessionId": "6ce1193b127f4aad",
+        "targetId": "t03-1",
+        "predictedIndex": 4,
+        "predictedText": "Tombstone timestamps are monotonic Neither ordinary tombstone recording nor imported tombstone upserts may replace deleted_at with an older value. Both paths are guarded because deleted_at determines whether a local edit or remote deletion wins during synchronization.",
+        "goldFact": "Export and import previously lost item lifecycle, ownership and deletions; they are preserved by a lifecycle fingerprint and tombstones.",
+        "similarity": 0.3638823862641516
+      },
+      {
+        "sessionId": "66be0607360f4d5c",
+        "targetId": "t04-2",
+        "predictedIndex": 0,
+        "predictedText": "Federated queries use one ranking pass across repositories queryFederated owns candidate selection for the local and linked repositories, selects candidates per repository, then scores the combined union once with the normal ranking signals. The previous semantic/positional partition and reciprocal-rank fusion were removed because corpus-relative scores, especially recency normalization, were not comparable across repositories.",
+        "goldFact": "Cross-repo conflicts and duplicates are reported to the caller rather than silently merged.",
+        "similarity": 0.33310178379118827
+      },
+      {
+        "sessionId": "66be0607360f4d5c",
+        "targetId": "t04-1",
+        "predictedIndex": 2,
+        "predictedText": "Federated reads must preserve visibility filtering queryKnowledgeBase must forward visibility constraints through both query paths. Omitting visibility can expose repository-private peer items through federation.",
+        "goldFact": "Federated retrieval selects candidates per repo but scores every repo in one ranker, replacing the earlier per-repo fusion.",
+        "similarity": 0.4033792986888786
+      },
+      {
+        "sessionId": "66be0607360f4d5c",
+        "targetId": "t04-1",
+        "predictedIndex": 3,
+        "predictedText": "Cross-repository write overlap detection is advisory Both single-item and batch knowledge writers report overlaps found in linked repositories but never mutate the foreign items. Foreign items remain owned by their source repository and cannot be retired or updated from the writing repository. Detection is bounded to three candidates per peer, skips unreadable peers, and degrades overlap-check failures to no report rather than failing the write.",
+        "goldFact": "Federated retrieval selects candidates per repo but scores every repo in one ranker, replacing the earlier per-repo fusion.",
+        "similarity": 0.4025855771835333
+      },
+      {
+        "sessionId": "66be0607360f4d5c",
+        "targetId": "t04-1",
+        "predictedIndex": 4,
+        "predictedText": "Batch overlap reports are per atom Batch ingestion resolves the active workspace once for the batch, then attaches crossRepo overlap details to each atom's outcome. This preserves which individual finding overlaps which linked repository while avoiding repeated workspace resolution inside the loop.",
+        "goldFact": "Federated retrieval selects candidates per repo but scores every repo in one ranker, replacing the earlier per-repo fusion.",
+        "similarity": 0.33312726789422187
+      },
+      {
+        "sessionId": "66be0607360f4d5c",
+        "targetId": "t04-2",
+        "predictedIndex": 4,
+        "predictedText": "Batch overlap reports are per atom Batch ingestion resolves the active workspace once for the batch, then attaches crossRepo overlap details to each atom's outcome. This preserves which individual finding overlaps which linked repository while avoiding repeated workspace resolution inside the loop.",
+        "goldFact": "Cross-repo conflicts and duplicates are reported to the caller rather than silently merged.",
+        "similarity": 0.4732956944955143
+      },
+      {
+        "sessionId": "66be0607360f4d5c",
+        "targetId": "t04-2",
+        "predictedIndex": 5,
+        "predictedText": "Scopeless exclusive conflicts require SQL NULL handling Exclusive conflict keys without a conflict scope must use NULL-aware matching rather than equality because `column = NULL` never matches in SQL. This rule applies both to checkKnowledgeConflict and the conflict guard inside createKnowledgeItem.",
+        "goldFact": "Cross-repo conflicts and duplicates are reported to the caller rather than silently merged.",
+        "similarity": 0.4041281719127103
+      },
+      {
+        "sessionId": "66be0607360f4d5c",
+        "targetId": "t04-1",
+        "predictedIndex": 6,
+        "predictedText": "MCP write responses explicitly serialize cross-repo advisories Adding crossRepo data to writer result objects is insufficient because MCP response formatters are allowlists. knowl_store and knowl_ingest_atoms explicitly include cross-repository overlap advisories, with batch output preserving per-atom attribution and without advising callers to retire foreign-owned items.",
+        "goldFact": "Federated retrieval selects candidates per repo but scores every repo in one ranker, replacing the earlier per-repo fusion.",
+        "similarity": 0.3083897524305888
+      },
+      {
+        "sessionId": "66be0607360f4d5c",
+        "targetId": "t04-2",
+        "predictedIndex": 6,
+        "predictedText": "MCP write responses explicitly serialize cross-repo advisories Adding crossRepo data to writer result objects is insufficient because MCP response formatters are allowlists. knowl_store and knowl_ingest_atoms explicitly include cross-repository overlap advisories, with batch output preserving per-atom attribution and without advising callers to retire foreign-owned items.",
+        "goldFact": "Cross-repo conflicts and duplicates are reported to the caller rather than silently merged.",
+        "similarity": 0.39459652879514834
+      },
+      {
+        "sessionId": "2b86c060ca80432f",
+        "targetId": "t05-1",
+        "predictedIndex": 0,
+        "predictedText": "Federated change notifications use per-repository watermarks Change tracking spans local and peer repositories through store-level watermark, lifecycle, session-binding, repository, database, workspace promotion, and MCP notification components. Peer watermark behavior has dedicated coverage in tests/store/peer-change-watermark.test.ts and tests/store/federated-change-notification.test.ts.",
+        "goldFact": "A local change and a peer change occurring together were reported as one item instead of two, because the change card did not merge the two sources.",
+        "similarity": 0.3561239612485817
+      },
+      {
+        "sessionId": "0ed635ce04d94bc8",
+        "targetId": "t06-1",
+        "predictedIndex": 0,
+        "predictedText": "Repository-wide CLI workflow Repository management is split across `src/cli/repo-registry.ts`, `repo-discovery.ts`, `upgrade.ts`, and `upgrade-all.ts`, with public CLI wiring in `src/index.ts`.",
+        "goldFact": "Repo discovery must skip a manifest entry whose checkout does not exist on this machine rather than returning it.",
+        "similarity": 0.33051241892835465
+      },
+      {
+        "sessionId": "23ba78ec2b4f4c8a",
+        "targetId": "t07-1",
+        "predictedIndex": 0,
+        "predictedText": "Workspace linking uses one safety gate Both `workspace add` and `workspace join` run through shared `assertSafeToLink` validation. It checks embedding-model compatibility, workspace nesting, and Git-tracked configuration before writing the local manifest. `workspace join` supports `--force` consistently with `add`.",
+        "goldFact": "Joining a workspace had a safety gap and consumed repo names that were never used; names are now retired rather than burned.",
+        "similarity": 0.49958809126558623
+      },
+      {
+        "sessionId": "23ba78ec2b4f4c8a",
+        "targetId": "t08-1",
+        "predictedIndex": 0,
+        "predictedText": "Workspace linking uses one safety gate Both `workspace add` and `workspace join` run through shared `assertSafeToLink` validation. It checks embedding-model compatibility, workspace nesting, and Git-tracked configuration before writing the local manifest. `workspace join` supports `--force` consistently with `add`.",
+        "goldFact": "The workspace membership test can hang past a two minute timeout, so it needs a bounded run rather than an open-ended one.",
+        "similarity": 0.3920544145635168
+      },
+      {
+        "sessionId": "23ba78ec2b4f4c8a",
+        "targetId": "t07-1",
+        "predictedIndex": 4,
+        "predictedText": "Shared-database workspace v2 is deferred The shipped `linked` mode remains the supported architecture, and the workspace-v2 plan recommends not building shared mode yet. Shared mode's remaining unique benefits are editing another repository's items and cross-repository conflict detection, weighed against journaled migration, write fencing, atomic cutover, and multiple processes sharing one SQLite file.",
+        "goldFact": "Joining a workspace had a safety gap and consumed repo names that were never used; names are now retired rather than burned.",
+        "similarity": 0.4448605086837481
+      },
+      {
+        "sessionId": "23ba78ec2b4f4c8a",
+        "targetId": "t07-1",
+        "predictedIndex": 5,
+        "predictedText": "Workspace v2 ranking scope remains conservative The proposed advisory applies-to table was removed because there is no evidence agents use repository labels for ranking. Ranking retains v1's ties-to-local behavior; promotion-only visibility and per-atom batch routing remain planned.",
+        "goldFact": "Joining a workspace had a safety gap and consumed repo names that were never used; names are now retired rather than burned.",
+        "similarity": 0.4974509256920862
+      },
+      {
+        "sessionId": "23ba78ec2b4f4c8a",
+        "targetId": "t08-1",
+        "predictedIndex": 5,
+        "predictedText": "Workspace v2 ranking scope remains conservative The proposed advisory applies-to table was removed because there is no evidence agents use repository labels for ranking. Ranking retains v1's ties-to-local behavior; promotion-only visibility and per-atom batch routing remain planned.",
+        "goldFact": "The workspace membership test can hang past a two minute timeout, so it needs a bounded run rather than an open-ended one.",
+        "similarity": 0.32554110710862555
+      },
+      {
+        "sessionId": "707d39e9d14c4934",
+        "targetId": "t09-2",
+        "predictedIndex": 0,
+        "predictedText": "Promotion validates filters explicitly Workspace promotion must report unknown IDs via `unknownIds`, count foreign-owned matches via `skippedForeign`, and reject category values outside the supported knowledge categories instead of silently returning no items.",
+        "goldFact": "promote and upgrade returned undefined for unknownIds and claimedItems instead of empty or zero, so callers could not tell refusal from success.",
+        "similarity": 0.4512891973978687
+      },
+      {
+        "sessionId": "707d39e9d14c4934",
+        "targetId": "t09-2",
+        "predictedIndex": 1,
+        "predictedText": "CLI promotion failures identify the bad filter `knowl workspace promote` exits unsuccessfully for invalid ID or category filters, and its error output names the offending value, including malformed category arguments caused by command-line splitting.",
+        "goldFact": "promote and upgrade returned undefined for unknownIds and claimedItems instead of empty or zero, so callers could not tell refusal from success.",
+        "similarity": 0.32639741032531044
+      },
+      {
+        "sessionId": "707d39e9d14c4934",
+        "targetId": "t09-2",
+        "predictedIndex": 2,
+        "predictedText": "Repository upgrade preserves item ownership `upgradeExistingRepository` reports `claimedItems` and does not claim items whose `origin_repo` is null or reassign items already owned by another repository.",
+        "goldFact": "promote and upgrade returned undefined for unknownIds and claimedItems instead of empty or zero, so callers could not tell refusal from success.",
+        "similarity": 0.38233212402406347
+      },
+      {
+        "sessionId": "c454cf991aab400c",
+        "targetId": "t11-1",
+        "predictedIndex": 2,
+        "predictedText": "Retargeted searches must also retarget hydration FTS and vector searches first produce item IDs, then hydrate them through item-query helpers. The same store handle must be passed into hydration; otherwise peer IDs are loaded from the local database, causing false empty results or unrelated local rows when IDs collide.",
+        "goldFact": "Search filters must be applied inside the FTS query rather than after the result cap, or eligible rows are dropped without backfill.",
+        "similarity": 0.4055423114608444
+      },
+      {
+        "sessionId": "c454cf991aab400c",
+        "targetId": "t11-2",
+        "predictedIndex": 2,
+        "predictedText": "Retargeted searches must also retarget hydration FTS and vector searches first produce item IDs, then hydrate them through item-query helpers. The same store handle must be passed into hydration; otherwise peer IDs are loaded from the local database, causing false empty results or unrelated local rows when IDs collide.",
+        "goldFact": "Retrieval reads take a store handle so they can target another repo's database without rebinding global state.",
+        "similarity": 0.4200589924409201
+      },
+      {
+        "sessionId": "c454cf991aab400c",
+        "targetId": "t11-1",
+        "predictedIndex": 3,
+        "predictedText": "Visibility and status filters run before candidate limits FTS and vector retrieval apply status, category, and visibility predicates inside the database query before LIMIT. Post-limit filtering can exhaust the candidate window with archived or repo-private rows and incorrectly report no usable matches. Tag filtering remains in application code because it narrows an already visibility-safe candidate set.",
+        "goldFact": "Search filters must be applied inside the FTS query rather than after the result cap, or eligible rows are dropped without backfill.",
+        "similarity": 0.47051068821149805
+      },
+      {
+        "sessionId": "c454cf991aab400c",
+        "targetId": "t11-2",
+        "predictedIndex": 5,
+        "predictedText": "Peer retrieval cannot record local access telemetry Access telemetry is separated from retrieval because peer handles are query-only and local knowledge_access rows reference local knowledge_items. A peer item therefore cannot be correctly recorded in the querying repository's access table.",
+        "goldFact": "Retrieval reads take a store handle so they can target another repo's database without rebinding global state.",
+        "similarity": 0.3749351136732363
+      },
+      {
+        "sessionId": "d34238d796a043a1",
+        "targetId": "t12-1",
+        "predictedIndex": 4,
+        "predictedText": "Workspace migration must coordinate active writers A per-repository copy followed by a final manifest flip can lose writes made between copying and flipping. Long-lived serve processes also retain database handles across the flip, so migration needs explicit writer quiescence or another concurrency-safe cutover mechanism.",
+        "goldFact": "Workspace v2 blocks on a contradiction: it promises cross-owner editing while its own task refuses foreign edits, so it adds no editing capability over v1.",
+        "similarity": 0.4162383693717995
+      },
+      {
+        "sessionId": "d34238d796a043a1",
+        "targetId": "t12-1",
+        "predictedIndex": 6,
+        "predictedText": "Ownership filtering has broader storage implications Owner-aware workspace work must account for foreign keys spanning proposed database splits, modules that read the code index without owning it, FTS queries that currently apply LIMIT before filtering, and tombstones that lack an owner column. These affect correct search results, splitting, and preservation of deletion history.",
+        "goldFact": "Workspace v2 blocks on a contradiction: it promises cross-owner editing while its own task refuses foreign edits, so it adds no editing capability over v1.",
+        "similarity": 0.43991295736552327
+      },
+      {
+        "sessionId": "5687dda15273494e",
+        "targetId": "t13-1",
+        "predictedIndex": 1,
+        "predictedText": "Database dependencies dominate process startup for DB-backed commands Profiling found Node module resolution and filesystem work—especially loading `drizzle-orm` and `@libsql/client`—sets a substantial startup floor for commands that touch the database. Meaningfully accelerating the per-tool-event `agent-hook` path likely requires a lighter database path or avoiding a new process per event; deferring more application modules alone is insufficient.",
+        "goldFact": "CLI startup cost is dominated by module loading, not by work; the AI SDK imports were moved out of the main bundle to cut it.",
+        "similarity": 0.41976828059953486
+      },
+      {
+        "sessionId": "e52ac7ec86a243ab",
+        "targetId": "t14-1",
+        "predictedIndex": 1,
+        "predictedText": "Historical queries remain on queryKnowledgeBase The `--as-of` path intentionally stays on `queryKnowledgeBase` because the shared ranker does not model point-in-time reconstruction.",
+        "goldFact": "knowl query used a different search path from the MCP query tool and was given the same engine so the two agree.",
+        "similarity": 0.4784376271421895
+      },
+      {
+        "sessionId": "e52ac7ec86a243ab",
+        "targetId": "t14-1",
+        "predictedIndex": 2,
+        "predictedText": "As-of resolution filters normal search candidates Historical resolution now shares `resolveAsOf` and filters the same FTS candidates as ordinary search. It must not discard FTS candidates and fall back to whole-phrase LIKE matching, which misses token-level matches.",
+        "goldFact": "knowl query used a different search path from the MCP query tool and was given the same engine so the two agree.",
+        "similarity": 0.3313286115177237
+      },
+      {
+        "sessionId": "232b249687f942e1",
+        "targetId": "t15-1",
+        "predictedIndex": 0,
+        "predictedText": "Change attribution uses recorded commit ranges Store/MCP change attribution records commit ranges for tool calls and uses them to distinguish a caller’s own writes from foreign changes. Recorded ranges are scoped to the originating tool and checked against the caller’s attribution keys; key matching remains the fallback when no range was recorded.",
+        "goldFact": "The MCP tool name arrives at the hook double-prefixed as knowl__knowl_store, so the prefix must be stripped before it matches a recorded commit range.",
+        "similarity": 0.46054515277183367
+      },
+      {
+        "sessionId": "232b249687f942e1",
+        "targetId": "t15-1",
+        "predictedIndex": 3,
+        "predictedText": "Commit attribution spans store and host lifecycle layers The commit-range attribution path is distributed across `src/store/mcp-call-commits.ts`, `repository.ts`, `bootstrap.ts`, `change-watermark.ts`, `host-lifecycle.ts`, `src/mcp/change-notice.ts`, and `src/cli/agents/host-hook.ts`; changes to attribution behavior commonly require coordinated updates across these modules.",
+        "goldFact": "The MCP tool name arrives at the hook double-prefixed as knowl__knowl_store, so the prefix must be stripped before it matches a recorded commit range.",
+        "similarity": 0.4053188196893652
+      },
+      {
+        "sessionId": "676161f527c54777",
+        "targetId": "t16-1",
+        "predictedIndex": 1,
+        "predictedText": "Change notices are validated through dual notification channels Change-notice behavior in `src/mcp/change-notice.ts` is covered by `tests/mcp/dual-channel-notification.test.ts`, indicating that notices must remain consistent across two delivery channels.",
+        "goldFact": "Repeated pending session handoff writes flood the change card, crowding out the genuine knowledge items it is meant to announce.",
+        "similarity": 0.38308958723340886
+      },
+      {
+        "sessionId": "676161f527c54777",
+        "targetId": "t16-1",
+        "predictedIndex": 2,
+        "predictedText": "Lifecycle change notices summarize large pending change sets When eight pending changes exist, host lifecycle output uses a compact notice headed `KNOWL CHANGED: 8 items since you last looked.`, lists a subset, adds `+3 more`, and directs the host to call `knowl_query`. Tests should assert the summarized notice rather than assume the earliest item is included.",
+        "goldFact": "Repeated pending session handoff writes flood the change card, crowding out the genuine knowledge items it is meant to announce.",
+        "similarity": 0.41115547643121814
+      },
+      {
+        "sessionId": "28de81eddadf449e",
+        "targetId": "t17-1",
+        "predictedIndex": 2,
+        "predictedText": "Two large-store segmentation faults remain unresolved Large benchmark stores still expose two segmentation faults that also reproduce on v2.6.0: one during process exit after work completes, and another during vector reindexing. These can prevent the benchmark from producing its final report and are separate from the v2.7.0 per-write workspace-resolution regression.",
+        "goldFact": "Workspace resolution must happen once per process rather than once per write; per-write resolution was the write-path cost.",
+        "similarity": 0.4395458437162205
+      },
+      {
+        "sessionId": "95e5bb666f564be7",
+        "targetId": "t19-2",
+        "predictedIndex": 2,
+        "predictedText": "Promotion enables cross-repository visibility Items must be promoted to become workspace-visible; cross-repository notification depends on that visibility. Refusing NULL-owned post-join items made the normal promotion path unreachable.",
+        "goldFact": "Repo ownership is stamped only by the join-time backfill and never at write time, so every item written after joining has a null owner and promote refuses it as foreign.",
+        "similarity": 0.4897548741497159
+      },
+      {
+        "sessionId": "3e574452b3a94c67",
+        "targetId": "t21-1",
+        "predictedIndex": 1,
+        "predictedText": "Workspace rows require explicit repository ownership After a project joins a workspace, new knowledge rows must carry `originRepo`; otherwise commands such as `workspace promote` cannot determine whether the repository may modify them. This becomes essential when multiple repositories share one database because ownership governs editing, collection, export, and superseding.",
+        "goldFact": "No write path sets origin_repo, so ownership is absent on everything written outside the join-time backfill.",
+        "similarity": 0.4848640110177735
+      },
+      {
+        "sessionId": "1e14536b2a1c43ba",
+        "targetId": "t23-1",
+        "predictedIndex": 2,
+        "predictedText": "Counter-suffixed fixtures require global cleanup Some suites use counter-suffixed `.knowl-*` directories for true per-test isolation. Unlike fixed-name fixtures, these accumulate across runs if local cleanup fails, so the global start/end sweep is required to keep scratch storage bounded.",
+        "goldFact": "Test suites leave scratch fixture directories behind on Windows because the database sidecar stays locked, so the run sweeps them at start and end.",
+        "similarity": 0.49985014282644297
+      },
+      {
+        "sessionId": "1e14536b2a1c43ba",
+        "targetId": "t23-1",
+        "predictedIndex": 3,
+        "predictedText": "Cleanup verified against full test suite After adding the global sweep, a full Vitest run completed with 741 passing tests and zero remaining `.knowl-*` scratch directories; TypeScript validation also reported no errors.",
+        "goldFact": "Test suites leave scratch fixture directories behind on Windows because the database sidecar stays locked, so the run sweeps them at start and end.",
+        "similarity": 0.4801162888137984
+      }
+    ],
+    "failedSessions": []
+  },
+  "reading": {
+    "proceed": false,
+    "disqualified": true,
+    "verdict": "Disqualified: precision 0.24 is below the 0.8 junk limit. Recall is not considered."
+  },
+  "generator": "codex-cli",
+  "generatorModel": null,
+  "threshold": 0.40116589246838974,
+  "thresholdFrozenAt": "2026-07-31T13:45:04.449Z",
+  "thresholdAgreement": 0.8,
+  "thresholdPairs": 20,
+  "thresholdPairsSha256": "c63a49046bb954d8b9fbd273c8baf06c902e016e6c1e93dc8d188227817bdf39",
+  "predictionsFile": "benchmarks\\unassisted-capture\\predictions.json"
+}
