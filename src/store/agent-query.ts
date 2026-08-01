@@ -1,6 +1,6 @@
 import { ExplainedKnowledgeItem, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { queryKnowledgeBase } from './queries.js';
-import { searchKnowledgeEmbeddings } from './vector.js';
+import { findEmbeddedItemIds, searchKnowledgeEmbeddings } from './vector.js';
 import { recordKnowledgeAccessBestEffort } from './access-feedback.js';
 import { localStore, type StoreHandle } from './store-handle.js';
 
@@ -25,6 +25,22 @@ const TIER_VERIFIED_BOOST_VECTOR = 0.015;
 const TIER_VERIFIED_BOOST_LEXICAL = 0.004;
 const PROVENANCE_INFERRED_PENALTY_VECTOR = -0.01;
 const PROVENANCE_INFERRED_PENALTY_LEXICAL = -0.003;
+
+/**
+ * Below this, a vector-backed result is noise rather than a weak answer.
+ *
+ * Measured 2026-08-01 over 20 queries against a 424-item store: on-topic and near-miss
+ * queries score 0.401-0.614, off-topic queries 0.170-0.223, and nothing falls between.
+ * 0.30 leaves roughly 0.08 above the worst junk and 0.10 below the weakest legitimate
+ * query -- the larger margin deliberately protects real answers, because silencing one is
+ * worse than admitting a weak one.
+ *
+ * Absolute, never a ratio: freshness and provenance penalties are additive and can drive a
+ * score slightly negative, which makes "a fraction of the top score" undefined. A ratio was
+ * measured and is worse than useless here -- off-topic runner-up ratios reach 0.69 while
+ * legitimate ones fall to 0.33.
+ */
+export const MIN_VECTOR_RELEVANCE = 0.30;
 
 function queryTokens(query?: string): string[] {
   return [...new Set((query ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length > 1))];
@@ -119,6 +135,13 @@ export type Candidate = {
   bm25Rank?: number;
   vectorRank?: number;
   vectorScore?: number;
+  /**
+   * Whether vector search could have returned this item -- it has an embedding under the
+   * provider and model being searched. Distinct from `vectorScore !== undefined`, which says
+   * vector actually did return it. Undefined means the caller did not establish eligibility,
+   * and the relevance floor then leaves the candidate alone rather than guessing.
+   */
+  embedded?: boolean;
 };
 
 export type ScoredCandidate = {
@@ -127,6 +150,28 @@ export type ScoredCandidate = {
   score: number;
   explanation: ExplainedKnowledgeItem['explanation'];
 };
+
+/**
+ * Whether the relevance floor may judge this candidate.
+ *
+ * Only an item vector search could have returned. Three cases arrive looking alike, and the
+ * fused score cannot separate them -- an off-topic lexical hit and a legitimate one both land
+ * around 0.034, measured against the live store:
+ *
+ * - **Embedded, vector returned it.** Its cosine is the score being floored. Judge it.
+ * - **Embedded, vector did not return it.** Vector ranked it outside the top N, so it is
+ *   semantically distant and its BM25 rank carries no absolute relevance. Judge it -- this is
+ *   the junk the floor exists to remove.
+ * - **Not embedded.** Written since the last index, or written while the embedding model was
+ *   not cached. Vector never had a chance, so a low score means invisible, not distant. Exempt.
+ *
+ * The last case also covers the outage where nothing at all is embedded: every candidate is
+ * exempt and the floor turns itself off, rather than emptying every result on a store that has
+ * vector enabled but has never been reindexed.
+ */
+function floorApplies(candidate: Pick<Candidate, 'embedded'>): boolean {
+  return candidate.embedded === true;
+}
 
 /**
  * The reciprocal-rank base score, reconstructed from the ranks rather than carried.
@@ -196,8 +241,26 @@ export async function selectCandidates(
         bm25Rank: existing?.bm25Rank,
         vectorRank: index + 1,
         vectorScore: result.score,
+        // Vector returned it, so it is embedded by definition -- no lookup needed.
+        embedded: true,
       });
     });
+
+    // Everything else is a lexical-only hit, and the floor needs to know whether vector
+    // *could* have returned it. Asked only about candidates vector did not return, and only
+    // when vector actually ran, so the common path costs one extra query over at most a few
+    // dozen ids rather than a join on every search.
+    const unknown = [...byId.values()].filter(candidate => candidate.embedded === undefined);
+    if (unknown.length > 0) {
+      const embedded = await findEmbeddedItemIds(
+        unknown.map(candidate => candidate.item.id),
+        { provider: vector.provider, model: vector.model },
+        store,
+      );
+      for (const candidate of unknown) {
+        candidate.embedded = embedded.has(candidate.item.id);
+      }
+    }
   }
 
   return [...byId.values()];
@@ -269,7 +332,29 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
   if (usingVector) {
     // Trust the semantic ranking directly — MMR de-duplication scrambles rankings
     // among legitimately distinct-but-similar atoms and hurts recall.
-    selected = scored.slice(0, limit).map(candidate => ({ ...candidate, diversity: 0 }));
+    //
+    // The floor decides whether the query is answerable at all, then leaves the ranking alone.
+    //
+    // It is deliberately not a per-candidate filter. The threshold was measured as the *top*
+    // score per query -- on-topic 0.401-0.614 against off-topic 0.170-0.223 -- and that is the
+    // only claim the measurement supports. Applied per candidate it also cuts the 3rd and 5th
+    // results of perfectly good queries, which is not junk but the tail of a real answer:
+    // against the 500-case suite it dropped `span export backend` -> obs-otel (0.269),
+    // `which test runner` -> test-vitest (0.233) and `jwt ttl configured value` (0.262), all
+    // three on queries whose top result scored 0.37-0.39. Recall@10 fell 0.994 -> 0.987.
+    // No lower constant fixes that: those answers sit at 0.233 while off-topic queries reach
+    // 0.223, a margin too thin to call a threshold.
+    //
+    // So: if the best candidate vector could judge is below the floor, nothing here answers the
+    // question and the query returns empty. Otherwise every candidate rides the normal ranking.
+    // `scored` is already sorted, so the first judged candidate is the best one.
+    const judged = scored.filter(candidate => floorApplies(candidate.result));
+    const answerable = judged.length === 0 || judged[0].score >= MIN_VECTOR_RELEVANCE;
+    // When unanswerable, candidates the floor cannot judge still stand: on a partly indexed
+    // store a just-written item is invisible to vector, and it must not be suppressed by a
+    // verdict reached without it.
+    const floored = answerable ? scored : scored.filter(candidate => !floorApplies(candidate.result));
+    selected = floored.slice(0, limit).map(candidate => ({ ...candidate, diversity: 0 }));
   } else {
     selected = [];
     const candidateTokens = new Map(scored.map(candidate => [candidate.result.item.id, itemTokens(candidate.result.item)]));
