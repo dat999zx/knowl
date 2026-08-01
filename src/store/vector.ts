@@ -218,6 +218,47 @@ export async function searchKnowledgeEmbeddings(
 }
 
 /**
+ * Which of these items vector search was actually able to consider.
+ *
+ * The relevance floor needs this to tell two identical-looking candidates apart: one that
+ * vector ranked outside its top N (semantically distant -- drop it) and one vector could never
+ * have returned at all because it has no embedding (invisible, not distant -- keep it). Both
+ * arrive as BM25-only candidates scoring around 0.034, so nothing in the fused score
+ * distinguishes them.
+ *
+ * Provider and model are part of eligibility, not a detail: `searchKnowledgeEmbeddings`
+ * filters on both, so a row written by a different embedder is unreachable by the current
+ * search and its item is no more eligible than one with no row at all.
+ */
+export async function findEmbeddedItemIds(
+  itemIds: string[],
+  options: { provider?: string; model?: string } = {},
+  store: StoreHandle = localStore(),
+): Promise<Set<string>> {
+  const found = new Set<string>();
+  if (itemIds.length === 0) return found;
+
+  const where = [`knowledge_item_id IN (${itemIds.map(() => '?').join(', ')})`];
+  const args: unknown[] = [...itemIds];
+  if (options.provider) {
+    where.push('provider = ?');
+    args.push(options.provider);
+  }
+  if (options.model) {
+    where.push('model = ?');
+    args.push(options.model);
+  }
+
+  const rows = await store.client.execute({
+    sql: `SELECT knowledge_item_id FROM knowledge_embeddings WHERE ${where.join(' AND ')}`,
+    args: args as any[],
+  });
+
+  for (const row of rows.rows) found.add(String(row.knowledge_item_id));
+  return found;
+}
+
+/**
  * Stored vectors for specific items, from the currently open database.
  *
  * Cross-repo fusion needs local vectors in the same shape it reads peer ones, so local and

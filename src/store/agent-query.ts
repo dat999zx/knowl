@@ -1,6 +1,6 @@
 import { ExplainedKnowledgeItem, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { queryKnowledgeBase } from './queries.js';
-import { searchKnowledgeEmbeddings } from './vector.js';
+import { findEmbeddedItemIds, searchKnowledgeEmbeddings } from './vector.js';
 import { recordKnowledgeAccessBestEffort } from './access-feedback.js';
 import { localStore, type StoreHandle } from './store-handle.js';
 
@@ -135,6 +135,13 @@ export type Candidate = {
   bm25Rank?: number;
   vectorRank?: number;
   vectorScore?: number;
+  /**
+   * Whether vector search could have returned this item -- it has an embedding under the
+   * provider and model being searched. Distinct from `vectorScore !== undefined`, which says
+   * vector actually did return it. Undefined means the caller did not establish eligibility,
+   * and the relevance floor then leaves the candidate alone rather than guessing.
+   */
+  embedded?: boolean;
 };
 
 export type ScoredCandidate = {
@@ -145,16 +152,25 @@ export type ScoredCandidate = {
 };
 
 /**
- * Whether vector search actually returned anything for this query.
+ * Whether the relevance floor may judge this candidate.
  *
- * NOT the same as `options.vector?.enabled && options.vector.embedding`, which says only that
- * vector was *requested*. On a store with no embeddings -- anyone who enables vector before
- * running a reindex -- the request succeeds and returns nothing, leaving every candidate on
- * the BM25 fallback scale of roughly 0.05-0.23. Applying MIN_VECTOR_RELEVANCE there would
- * drop every result for every query, so the floor keys on this instead.
+ * Only an item vector search could have returned. Three cases arrive looking alike, and the
+ * fused score cannot separate them -- an off-topic lexical hit and a legitimate one both land
+ * around 0.034, measured against the live store:
+ *
+ * - **Embedded, vector returned it.** Its cosine is the score being floored. Judge it.
+ * - **Embedded, vector did not return it.** Vector ranked it outside the top N, so it is
+ *   semantically distant and its BM25 rank carries no absolute relevance. Judge it -- this is
+ *   the junk the floor exists to remove.
+ * - **Not embedded.** Written since the last index, or written while the embedding model was
+ *   not cached. Vector never had a chance, so a low score means invisible, not distant. Exempt.
+ *
+ * The last case also covers the outage where nothing at all is embedded: every candidate is
+ * exempt and the floor turns itself off, rather than emptying every result on a store that has
+ * vector enabled but has never been reindexed.
  */
-export function vectorContributed(candidates: Pick<Candidate, 'vectorScore'>[]): boolean {
-  return candidates.some(candidate => candidate.vectorScore !== undefined);
+function floorApplies(candidate: Pick<Candidate, 'embedded'>): boolean {
+  return candidate.embedded === true;
 }
 
 /**
@@ -225,8 +241,26 @@ export async function selectCandidates(
         bm25Rank: existing?.bm25Rank,
         vectorRank: index + 1,
         vectorScore: result.score,
+        // Vector returned it, so it is embedded by definition -- no lookup needed.
+        embedded: true,
       });
     });
+
+    // Everything else is a lexical-only hit, and the floor needs to know whether vector
+    // *could* have returned it. Asked only about candidates vector did not return, and only
+    // when vector actually ran, so the common path costs one extra query over at most a few
+    // dozen ids rather than a join on every search.
+    const unknown = [...byId.values()].filter(candidate => candidate.embedded === undefined);
+    if (unknown.length > 0) {
+      const embedded = await findEmbeddedItemIds(
+        unknown.map(candidate => candidate.item.id),
+        { provider: vector.provider, model: vector.model },
+        store,
+      );
+      for (const candidate of unknown) {
+        candidate.embedded = embedded.has(candidate.item.id);
+      }
+    }
   }
 
   return [...byId.values()];
@@ -298,7 +332,14 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
   if (usingVector) {
     // Trust the semantic ranking directly — MMR de-duplication scrambles rankings
     // among legitimately distinct-but-similar atoms and hurts recall.
-    selected = scored.slice(0, limit).map(candidate => ({ ...candidate, diversity: 0 }));
+    //
+    // The floor runs before the limit, so a capped query still returns its full quota from
+    // whatever cleared it rather than being short-changed by a dropped result. It judges only
+    // candidates vector could have returned -- see floorApplies for why an unembedded item
+    // must be exempt rather than dropped.
+    const floored = scored.filter(candidate =>
+      !floorApplies(candidate.result) || candidate.score >= MIN_VECTOR_RELEVANCE);
+    selected = floored.slice(0, limit).map(candidate => ({ ...candidate, diversity: 0 }));
   } else {
     selected = [];
     const candidateTokens = new Map(scored.map(candidate => [candidate.result.item.id, itemTokens(candidate.result.item)]));
