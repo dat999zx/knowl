@@ -97,7 +97,8 @@ four stored items say `ran 3 times` — there is nobody left to ask what the com
 
 Move the trigger to `PostToolUse`. On the qualifying repeat, return a nudge through
 `profile.midTurnContext()` — the same channel the change card and continuation reminder
-already use:
+already use, **and which carries at most one message per tool event**. See "The channel is a
+single contended slot" below before implementing either nudge.
 
 > You have run this command N times. If it is a reusable workflow, save it with
 > `knowl_skill_create` and say what it is for.
@@ -117,6 +118,34 @@ filter encodes the fact that the typecheck is already red.
 **Never auto-run.** A captured command becomes an executable artifact built from an unvetted
 shell string; one existing captured item embeds a hardcoded scratch path from a session that
 no longer exists. Capture may suggest and may save; it must never execute.
+
+### 2.2b The channel is a single contended slot, with an existing precedence
+
+Verified in `src/store/host-lifecycle.ts:400-425`. This was not known when 2.2 and 2.4 were
+first written, and it constrains both.
+
+`profile.midTurnContext(text)` carries **one message per tool event** — the code says so
+outright ("At most one card per tool event, never two"). Two senders already claim it, in
+strict order:
+
+1. **The change card**, when `evaluateChangeNotification` reports a peer or local change. It
+   wins outright, resets the drift counter, and suppresses the reminder for that event.
+2. **The continuation reminder**, only after `KNOWL_REMINDER_DRIFT` consecutive successful
+   tool calls that used no Knowl tool. Any Knowl tool call resets the counter.
+
+So a skill message is a **third** claimant, and "fire rarely" is not a design — the
+implementation must state its priority. **Fixed here, before implementation:**
+
+- A skill message **never displaces a change card.** That card carries knowledge the agent
+  does not have; a suggestion is strictly less urgent.
+- A skill message **may displace the continuation reminder**, which is generic. A specific,
+  actionable suggestion is a better use of the same slot.
+- The capture nudge (2.2) and the retrieval nudge (2.4) must not both fire on one event. If
+  both qualify, capture wins — recording a workflow the agent is actively repeating is
+  worth more than pointing at one it has already started.
+
+Counting the session-start card and the v2.9.0 drift warning, an agent faces five channels
+in total. That is the reason route 1 comes first: it needs no slot at all.
 
 ### 2.3 Retrieval, route 1: skills in the session-start card
 
