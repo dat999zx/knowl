@@ -21,6 +21,12 @@ describe('session CLI', () => {
     const event = JSON.parse(execSync(`node "${CLI_PATH}" session event ${started.id} command --exit-code 1 --summary "test command failed" --json`, { cwd: TEST_DIR, encoding: 'utf-8' }));
     expect(event).toMatchObject({ sessionId: started.id, type: 'command', payload: { exitCode: 1, summary: 'test command failed' } });
 
+    // A commit subject is what yields a promotable candidate now. Before the extractor
+    // rebuild this session promoted on `stop.summary` alone; that rule measured at zero
+    // value and was removed, so without an event carrying real knowledge the finish below
+    // correctly reports `skipped` and this test would assert nothing about promotion.
+    execSync(`node "${CLI_PATH}" session event ${started.id} command --exit-code 0 --command "git commit -q -m \\"fix(cli): record a promotable session event\\"" --json`, { cwd: TEST_DIR, encoding: 'utf-8' });
+
     const finished = JSON.parse(execSync(`node "${CLI_PATH}" session finish ${started.id} --status failed --summary "failure recorded" --json`, { cwd: TEST_DIR, encoding: 'utf-8' }));
     expect(finished).toMatchObject({ id: started.id, status: 'failed', promotion: { status: 'promoted', itemIds: expect.any(Array) } });
 
