@@ -26,21 +26,23 @@ const toolEvent = async (sessionId: string, command: string) => {
   } as any);
 };
 
-describe('skill capture nudge', () => {
-  beforeAll(async () => {
-    await fs.rm(TEST_ROOT, { recursive: true, force: true });
-    await fs.mkdir(path.join(TEST_ROOT, '.knowl'), { recursive: true });
-    await initDb(TEST_ROOT);
-    projectId = (await repo.createProject(TEST_ROOT, 'skill-loop')).id;
-  });
-  beforeEach(async () => {
-    const db = getDb() as any;
-    await db.run(sql`DELETE FROM memory_session_events`);
-    await db.run(sql`DELETE FROM memory_sessions`);
-    await db.run(sql`DELETE FROM host_session_bindings`);
-  });
-  afterAll(async () => { await closeDb(); await fs.rm(TEST_ROOT, { recursive: true, force: true }).catch(() => {}); });
+// File scope, not per-describe: the later suites need the same store, and a `-t` filter
+// that skips the first describe would otherwise leave the database uninitialised.
+beforeAll(async () => {
+  await fs.rm(TEST_ROOT, { recursive: true, force: true });
+  await fs.mkdir(path.join(TEST_ROOT, '.knowl'), { recursive: true });
+  await initDb(TEST_ROOT);
+  projectId = (await repo.createProject(TEST_ROOT, 'skill-loop')).id;
+});
+beforeEach(async () => {
+  const db = getDb() as any;
+  await db.run(sql`DELETE FROM memory_session_events`);
+  await db.run(sql`DELETE FROM memory_sessions`);
+  await db.run(sql`DELETE FROM host_session_bindings`);
+});
+afterAll(async () => { await closeDb(); await fs.rm(TEST_ROOT, { recursive: true, force: true }).catch(() => {}); });
 
+describe('skill capture nudge', () => {
   it('nudges once a qualifying command has repeated enough', async () => {
     const command = 'npm run typecheck 2>&1 | grep "src/store"';
     await handleHostLifecycleEvent(projectId, {
@@ -138,5 +140,35 @@ describe('skills in the session-start card', () => {
 
     const section = md.slice(md.indexOf('## Available skills'), md.indexOf('## Recent Active Knowledge'));
     expect(section.length).toBeLessThanOrEqual(DEFAULT_CONTEXT_MAX_CHARS / 2);
+  });
+});
+
+describe('session start carries skills', () => {
+  it('includes a stored skill in the bootstrap context', async () => {
+    await repo.createKnowledgeItem(projectId, {
+      category: 'skill',
+      title: 'verify-release',
+      content: 'File-backed learned skill package at `.knowl/skills/verify-release/`.\nPurpose: check publish readiness before tagging.',
+      source: '.knowl/skills/verify-release/',
+    });
+    // getRecentContext returns the three most recent items of any category, so a skill can
+    // ride into the card on recency alone. These newer facts crowd it out, leaving the
+    // dedicated section as the only way it can still appear -- which is the point of this task.
+    for (const index of [1, 2, 3]) {
+      await repo.createKnowledgeItem(projectId, {
+        category: 'fact', title: `newer fact ${index}`, content: `Something learned later, ${index}.`,
+      });
+    }
+
+    const result = await handleHostLifecycleEvent(projectId, {
+      host: 'claude', event: 'session-start', projectRoot: TEST_ROOT,
+      externalSessionId: 's-skills', externalTurnId: 's-skills-turn', payload: {},
+    } as any);
+
+    const context = result.context ?? '';
+    const section = context.slice(context.indexOf('## Available skills'), context.indexOf('## Recent Active Knowledge'));
+    expect(context).toContain('## Available skills');
+    expect(section).toContain('verify-release');
+    expect(section).toContain('check publish readiness');
   });
 });
