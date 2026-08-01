@@ -110,10 +110,27 @@ so it is not mistaken for erosion of the `usedAi: false` property, which Phase 1
 
 **Trigger, tightened.** Three repeats within one session is too eager — it fired twice during
 the experiment's own session for ordinary test runs. Qualify on repetition **and**
-non-obviousness: the command must contain a pipe, a redirect, a filter, or a
-platform-specific binary (`npm.cmd`, `npx.cmd`). A bare `npm test` never qualifies;
-`npm run typecheck:bench 2>&1 | grep "benchmarks/unassisted-capture"` does, because the
-filter encodes the fact that the typecheck is already red.
+non-obviousness: the command must contain a pipe, a redirect, or a filter. A bare `npm test`
+never qualifies; `npm run typecheck:bench 2>&1 | grep "benchmarks/unassisted-capture"` does,
+because the filter encodes the fact that the typecheck is already red.
+
+**Amended 2026-08-01 by review.** This rule originally also counted a platform-specific
+binary (`npm.cmd`, `npx.cmd`) as non-obvious. That contradicted its own next sentence on the
+only platform this project runs on: under a Windows shell `npm.cmd test` *is* `npm test`, so
+the rule made the bare command it excludes qualify through a suffix the shell added. `.cmd`
+is no longer part of the pattern.
+
+**The nudge fires once**, on the run that reaches the threshold — not on every run at or
+above it, which re-asked the same question indefinitely. Only successful runs count toward
+the threshold: a command that fails three times is being debugged, not repeated as a
+workflow.
+
+**Known limitation of the count: it is per turn, not per session.** The nudge therefore says
+"N times this turn". The count comes from the memory session bound to
+`bindingKey(input, 'turn')`, and `Stop` closes that binding, so repeats reset at every turn
+boundary. A workflow repeated once per turn across five turns is never noticed. Making the
+count session-scoped means rebinding the counter away from the turn session, which is a
+larger change than the loop needs today; it is recorded here rather than fixed.
 
 **Never auto-run.** A captured command becomes an executable artifact built from an unvetted
 shell string; one existing captured item embeds a hardcoded scratch path from a session that
@@ -142,7 +159,15 @@ implementation must state its priority. **Fixed here, before implementation:**
   actionable suggestion is a better use of the same slot.
 - The capture nudge (2.2) and the retrieval nudge (2.4) must not both fire on one event. If
   both qualify, capture wins — recording a workflow the agent is actively repeating is
-  worth more than pointing at one it has already started.
+  worth more than pointing at one it has already started. **Amended 2026-08-01 by review:
+  except when a saved skill already covers the command**, in which case retrieval speaks and
+  capture stays silent. The unconditional rule asked the agent to save a skill that already
+  existed, so complying with the nudge did not silence it and the loop never closed. Capture
+  still outranks retrieval for a genuinely *new* workflow, which is what the rule was for.
+- **A skill message resets the drift counter**, on the same reasoning as the change card: it
+  occupies the single slot for that event, so a branch that neither reset nor incremented
+  the counter would freeze it and suppress the continuation reminder indefinitely rather
+  than for one event.
 
 Counting the session-start card and the v2.9.0 drift warning, an agent faces five channels
 in total. That is the reason route 1 comes first: it needs no slot at all.

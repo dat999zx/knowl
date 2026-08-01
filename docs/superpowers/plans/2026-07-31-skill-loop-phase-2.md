@@ -14,8 +14,10 @@ From `docs/superpowers/specs/2026-07-31-extractor-rebuild-and-skill-loop-design.
 
 - **Skill capture is deliberately model-dependent, and fact capture is not.** Phase 1's `finalizeMemorySession` must keep reporting `usedAi: false`. Nothing in this plan may change that or add a model call to the fact path — the agent is *asked* to save a skill, never transcribed by one.
 - **Never auto-run a captured command.** A captured command is an unvetted shell string; one already-stored item embeds a hardcoded scratch path from a session that no longer exists. Capture may suggest and may save; it must never execute.
-- **The mid-turn channel carries at most one message per tool event** (`src/store/host-lifecycle.ts`, "At most one card per tool event, never two"). Fixed precedence, from the spec: a skill message **never** displaces a change card; it **may** displace the continuation reminder; if capture and retrieval both qualify on one event, **capture wins**.
-- **The qualifying trigger is repetition AND non-obviousness.** Three repeats alone is too eager — it fired twice during the capture experiment for ordinary test runs. The command must also contain a pipe, a redirect, a filter, or a platform-specific binary (`npm.cmd`, `npx.cmd`). A bare `npm test` never qualifies.
+- **The mid-turn channel carries at most one message per tool event** (`src/store/host-lifecycle.ts`, "At most one card per tool event, never two"). Fixed precedence, from the spec: a skill message **never** displaces a change card; it **may** displace the continuation reminder; if capture and retrieval both qualify on one event, **capture wins — unless a saved skill already covers the command**, in which case retrieval speaks and capture stays silent. (Amended 2026-08-01 by review: the unconditional form asked the agent to save a skill that already existed, so the loop never closed.)
+- **The qualifying trigger is repetition AND non-obviousness.** Three repeats alone is too eager — it fired twice during the capture experiment for ordinary test runs. The command must also contain a pipe, a redirect, or a filter. A bare `npm test` never qualifies.
+  - **Amended 2026-08-01 by review:** this originally also listed a platform-specific binary (`npm.cmd`, `npx.cmd`) as non-obvious, which contradicted "a bare `npm test` never qualifies" on the one platform this project runs on. On Windows `npm.cmd test` **is** `npm test`; the suffix is a shell artifact, not encoded knowledge. `.cmd` is out of the pattern.
+- **The nudge fires once, on the run that reaches the threshold.** Not on every run at or above it. Repeat counts come from successful runs only — a command failing three times is being debugged, not repeated as a workflow.
 - **The session-start skills section must fit inside `DEFAULT_CONTEXT_MAX_CHARS`, not extend it.** That budget is already shared with recent context and, since v2.9.0, a drift warning. A skills section that pushes recent context out has made things worse.
 - **No `PreToolUse` hook exists and this plan does not add one.** `PostToolUse` is the only mid-execution channel, so a command cannot be intercepted before it runs. Retrieval is necessarily after the fact.
 - Product tests live in `tests/**/*.test.ts` under `npm test`. Benchmarks are excluded by design.
@@ -83,8 +85,8 @@ describe('qualifiesForSkillCapture', () => {
     expect(qualifiesForSkillCapture('npm test 2>&1 | tail -20', SKILL_CAPTURE_MIN_REPEATS - 1)).toBe(false);
   });
 
-  it('accepts a redirect and a platform-specific binary as non-obvious', () => {
-    expect(qualifiesForSkillCapture('npm.cmd test', 3)).toBe(true);
+  it('accepts a redirect as non-obvious', () => {
+    // Amended 2026-08-01: `npm.cmd test` must NOT qualify. See Global Constraints.
     expect(qualifiesForSkillCapture('node build.js > out.log', 3)).toBe(true);
   });
 
@@ -915,5 +917,6 @@ git commit -m "feat(skills): suggest a saved skill after a matching command, bel
 ## Out of Scope for This Plan
 
 - **Adding `PreToolUse`.** Recorded in the spec as the escape hatch. It fires on every tool call and would put Knowl on the critical path of every agent action.
+  - **Contradiction, found by review 2026-08-01, and its resolution.** That reasoning rejects `PreToolUse` for a cost this plan then pays anyway: Tasks 3 and 6 put two unbounded queries on `PostToolUse`, which fires exactly as often. `countCommandRepeats` read and `JSON.parse`d every command row of the session, and the skill lookup read every row of `knowledge_items` (424 rows, ~8 MB) to find at most one substring match. **Resolved by making the per-tool-call work bounded, not by dropping the hook:** the repeat count is now one indexed scalar `COUNT(*)`, and the skill lookup is `listActiveSkillItems`, scoped by `idx_ki_cat_status`. The out-of-scope decision stands, but its stated reason now applies honestly — being on the critical path is acceptable only for bounded work, and that is the bar any future addition here must clear too.
 - **Retiring the four existing `Repeated workflow:` items and the one `Verified command:` item.** They are no longer written; removing the stored ones is a data change and the spec leaves it as an explicit decision.
 - **Migrating plain skill rows into packages.** The nine hand-written rows are useful as memory even though they are not runnable; `selectSurfacedSkills` marks them `(not runnable)` rather than hiding or converting them.
