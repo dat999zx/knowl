@@ -5,7 +5,8 @@ import { sql } from 'drizzle-orm';
 import { closeDb, getDb, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { startMemorySession } from '../../src/store/session-repository.js';
-import { promoteSessionCandidates } from '../../src/store/candidate-promotion.js';
+import { promoteSessionCandidates, rankCandidatesByImportance } from '../../src/store/candidate-promotion.js';
+import { MemoryCandidate } from '../../src/core/types.js';
 
 const ROOT = path.resolve('./.knowl-candidate-promotion-test');
 describe('candidate promotion', () => {
@@ -25,5 +26,21 @@ describe('candidate promotion', () => {
     expect(await db.all(`SELECT * FROM knowledge_evidence`)).toHaveLength(1);
     expect(await db.all(`SELECT * FROM knowledge_commits`)).toHaveLength(1);
     expect((await db.all(`SELECT promotion_status FROM memory_sessions WHERE id = '${session.id}'`))[0].promotion_status).toBe('promoted');
+  });
+
+  it('ranks a resolved failure above a commit, and both above an outcome', () => {
+    const make = (candidateType: MemoryCandidate['candidateType']): MemoryCandidate => ({
+      candidateType,
+      sessionId: 's1',
+      category: 'fact',
+      title: 't',
+      content: 'c',
+      confidence: 0.8,
+      evidence: [],
+    });
+
+    const ranked = rankCandidatesByImportance([make('outcome'), make('commit'), make('error')]);
+
+    expect(ranked.map((candidate) => candidate.candidateType)).toEqual(['error', 'commit', 'outcome']);
   });
 });

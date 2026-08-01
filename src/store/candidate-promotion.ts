@@ -7,10 +7,14 @@ import { storeKnowledgeAtomsDeduped } from './knowledge-writer.js';
 // with several real decisions is not silently truncated.
 export const MAX_PROMOTED_CANDIDATES = 8;
 
-// Importance blends the candidate's own confidence with a type weight: an explicit
-// decision outranks an outcome summary, which outranks a verified command.
 export function candidateImportance(candidate: MemoryCandidate): number {
+  // Weights follow the measured value of each source: a resolved failure is the
+  // most valuable single thing a session yields, and a commit subject is the most
+  // common. Both outrank the outcome and verified-command types, which measured
+  // at zero.
   const typeWeight = candidate.candidateType === 'decision' ? 1
+    : candidate.candidateType === 'error' ? 0.8
+    : candidate.candidateType === 'commit' ? 0.75
     : candidate.candidateType === 'outcome' ? 0.6
     : candidate.candidateType === 'verified-command' ? 0.5
     : candidate.candidateType === 'task-state' ? 0.45
