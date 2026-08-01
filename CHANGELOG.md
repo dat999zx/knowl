@@ -3,6 +3,33 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.11.1 — 2026-08-01
+
+### Fixed
+
+- **Hybrid retrieval now counts lexical rank for items vector search also returned.** The
+  lexical term was gated on `vectorScore === undefined`, so any item vector returned had its
+  BM25 rank discarded — an item ranked #1 lexically and #40 semantically scored on its weak
+  cosine alone, indistinguishable from one lexical search never found. Agreement between the
+  two engines is the signal hybrid retrieval exists to exploit, and it was the one case the
+  fusion ignored.
+
+- **The lexical weight is sized for fusion rather than fallback**, renamed
+  `BM25_FALLBACK_WEIGHT` → `BM25_LEXICAL_WEIGHT` and raised 0.35 → 3.0. The old value was
+  correct for a term reachable only when vector search came up empty, and deliberately too
+  small to disturb the semantic ranking; as a live fusion term it capped lexical evidence at
+  under 0.006 against a cosine spanning 0–1, enough to break exact ties and nothing else.
+
+  Across the 500-case suite: **Recall@3 0.9887 → 0.9907, Recall@10 0.9940 → 0.9960, MRR
+  0.9609 → 0.9639, nDCG 0.9689 → 0.9715**, with the same 8 failing cases.
+
+  3.0 is measured rather than chosen. Retrieval improves monotonically with this weight, but
+  it trades against the relevance floor, because a larger term lifts every score — at 8.0 an
+  off-topic query clears the floor and starts answering again. At 3.0 the separation still
+  holds on a live store: worst off-topic top score 0.2529 against a 0.30 floor, weakest
+  legitimate 0.4016. Raising it further requires re-running that check, not just the eval —
+  the suite is saturated on Recall@10 and cannot see a floor regression at all.
+
 ## 2.11.0 — 2026-08-01
 
 ### Added
