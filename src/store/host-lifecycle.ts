@@ -18,8 +18,9 @@ import { finalizeMemorySession } from './session-finalizer.js';
 import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions } from './session-repository.js';
 import { claimCapture, releaseCapture } from './hook-debounce.js';
 import { countCommandRepeats, qualifiesForSkillCapture, renderSkillCaptureNudge } from './skill-capture.js';
-import { matchSkillForCommand, renderSkillUseNudge, selectSurfacedSkills, type SurfacedSkill } from './skill-surface.js';
-import { listKnowledgeItems } from './repository.js';
+import { matchSkillForCommand, renderSkillUseNudge, type SurfacedSkill } from './skill-surface.js';
+import { toSurfacedSkills } from '../core/skill-surface.js';
+import { listActiveSkillItems } from './repository.js';
 import {
   closeHostSessionBinding,
   closeHostSessionBindings,
@@ -420,19 +421,33 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
           // includes the current invocation: the third run reports 3.
           const repeats = command ? await countCommandRepeats(started.session.id, command) : 0;
 
-          const capturing = Boolean(command) && qualifiesForSkillCapture(command, repeats);
+          // Looked up on every command event, not only when capture declines -- capture
+          // now depends on the answer. That is affordable because `listActiveSkillItems`
+          // is index-scoped to active skills instead of reading the whole knowledge table.
+          const existing: SurfacedSkill | null = command
+            ? matchSkillForCommand(command, toSurfacedSkills(await listActiveSkillItems()))
+            : null;
+          // Only a successful run advances the repeat count, so a failure arriving after
+          // the nudge fired would report the same total again and fire it twice.
+          const exitCode = input.payload.exitCode;
+          const failed = typeof exitCode === 'number' && exitCode !== 0;
+
           // Retrieval sits below capture: recording a workflow the agent is actively
-          // repeating is worth more than pointing at one it has already started. Only
-          // looked up when capture has already declined, so the common path reads nothing.
-          let skillMatch: SurfacedSkill | null = null;
-          if (command && !capturing) {
-            skillMatch = matchSkillForCommand(command, selectSurfacedSkills(await listKnowledgeItems(), 4_000));
-          }
+          // repeating is worth more than pointing at one it has already started. The one
+          // exception is a workflow already saved -- asking the agent to save a skill that
+          // exists is how this loop failed to close in the first place.
+          const capturing = Boolean(command) && !failed && !existing
+            && qualifiesForSkillCapture(command, repeats);
 
           if (capturing) {
+            // A skill nudge is a "go use memory" signal, exactly as a change card is, so it
+            // resets the drift counter on the same reasoning: it replaces the static
+            // continuation reminder for this event rather than freezing it.
+            await resetHostSuccessfulToolCount(key);
             hostOutput = profile.midTurnContext(renderSkillCaptureNudge(command, repeats));
-          } else if (skillMatch) {
-            hostOutput = profile.midTurnContext(renderSkillUseNudge(skillMatch));
+          } else if (existing) {
+            await resetHostSuccessfulToolCount(key);
+            hostOutput = profile.midTurnContext(renderSkillUseNudge(existing));
           } else if (input.knowlTool) {
             // Adaptive continuation reminder: only nudge after a run of tool calls that
             // ignored Knowl. Using a Knowl tool resets the drift counter, so an agent

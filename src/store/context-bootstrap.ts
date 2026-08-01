@@ -2,7 +2,7 @@ import { formatRecentContextToMarkdown, type WorkspaceContext } from '../core/fo
 import { DEFAULT_CONTEXT_MAX_CHARS } from '../core/token-budget.js';
 import { heartbeatMemorySession, startMemorySession } from './session-repository.js';
 import { getRecentContext } from './recent-context.js';
-import { listKnowledgeItems } from './repository.js';
+import { listActiveSkillItems } from './repository.js';
 
 export type AgentBootstrapInput = {
   projectId: string;
@@ -58,8 +58,7 @@ export async function bootstrapAgentSession(input: AgentBootstrapInput, options:
   const recent = await getRecentContext(input.projectId);
   // Skills are surfaced regardless of recency: getRecentContext returns only the three
   // most recent items of any category, so a skill created last month would never appear.
-  const skills = (await listKnowledgeItems())
-    .filter((item) => item.category === 'skill' && item.status === 'active');
+  const skills = await listActiveSkillItems();
   const fallback = formatRecentContextToMarkdown({ ...recent, skills }, {
     maxChars: Number.MAX_SAFE_INTEGER,
     workspace: await workspaceContext(),

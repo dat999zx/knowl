@@ -442,6 +442,30 @@ export async function listKnowledgeItems(dbConnection?: DbConnection): Promise<K
   }
 }
 
+/**
+ * The active skill items only, resolved by index rather than by scanning the table.
+ *
+ * The mid-turn skill lookup runs on every command tool event. `listKnowledgeItems` reads
+ * every row in the store to find at most one match; `idx_ki_cat_status` already covers
+ * this predicate, so the same answer costs a handful of rows instead of the whole table.
+ */
+export async function listActiveSkillItems(dbConnection?: DbConnection): Promise<KnowledgeItem[]> {
+  const conn = dbConnection || getDb();
+  try {
+    const result = await conn
+      .select()
+      .from(schema.knowledgeItems)
+      .where(and(
+        eq(schema.knowledgeItems.category, 'skill'),
+        eq(schema.knowledgeItems.status, 'active'),
+      ));
+
+    return result.map(mapRowToKnowledgeItem);
+  } catch (error: any) {
+    throw new DatabaseError(`Failed to list skill items: ${error.message}`);
+  }
+}
+
 export async function createKnowledgeCommit(
   projectId: string,
   message: string,

@@ -16,9 +16,26 @@ describe('qualifiesForSkillCapture', () => {
     expect(qualifiesForSkillCapture('npm test 2>&1 | tail -20', SKILL_CAPTURE_MIN_REPEATS - 1)).toBe(false);
   });
 
-  it('accepts a redirect and a platform-specific binary as non-obvious', () => {
-    expect(qualifiesForSkillCapture('npm.cmd test', 3)).toBe(true);
+  it('accepts a redirect as non-obvious', () => {
     expect(qualifiesForSkillCapture('node build.js > out.log', 3)).toBe(true);
+  });
+
+  it('does not treat a .cmd suffix as encoded knowledge', () => {
+    // This project runs on Windows, where `npm.cmd test` is plain `npm test` with the
+    // shell's own suffix attached. Calling it a "platform-specific binary" made the very
+    // command the bare-command rule excludes qualify anyway.
+    expect(qualifiesForSkillCapture('npm.cmd test', 3)).toBe(false);
+    expect(qualifiesForSkillCapture('npx.cmd vitest run', 3)).toBe(false);
+  });
+
+  it('fires on the run that reaches the threshold and not on later ones', () => {
+    // The nudge asks the agent to save the command once. Re-asking on runs 4, 5 and 20
+    // is noise whether or not it complied.
+    const command = 'npm test | tail -20';
+
+    expect(qualifiesForSkillCapture(command, SKILL_CAPTURE_MIN_REPEATS)).toBe(true);
+    expect(qualifiesForSkillCapture(command, SKILL_CAPTURE_MIN_REPEATS + 1)).toBe(false);
+    expect(qualifiesForSkillCapture(command, SKILL_CAPTURE_MIN_REPEATS + 17)).toBe(false);
   });
 
   it('rejects an empty or trivially short command', () => {
@@ -49,7 +66,21 @@ describe('renderSkillCaptureNudge', () => {
   it('never tells the agent to run the command', () => {
     // A captured command is an unvetted shell string; the nudge must suggest saving,
     // never executing.
-    expect(renderSkillCaptureNudge('rm -rf build | tee log', 5)).not.toMatch(/\brun it\b|\bexecute\b/i);
+    const nudge = renderSkillCaptureNudge('rm -rf build | tee log', 5);
+
+    // Assert the nudge is really there first: against an empty string the negative
+    // assertion below would pass while proving nothing.
+    expect(nudge).toContain('knowl_skill_create');
+    expect(nudge).not.toMatch(/\brun it\b|\bexecute\b/i);
+  });
+
+  it('says "this turn", because that is the window the count covers', () => {
+    // Stop closes the turn-scoped memory session binding, so repeats reset at every turn
+    // boundary. "this session" overstated the evidence behind the number.
+    const nudge = renderSkillCaptureNudge('npm test | tail -20', 3);
+
+    expect(nudge).toContain('3 times this turn');
+    expect(nudge).not.toContain('this session');
   });
 
   it('truncates a very long command rather than flooding the slot', () => {

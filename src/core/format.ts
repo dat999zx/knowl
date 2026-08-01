@@ -1,6 +1,6 @@
 import { KnowledgeCommit, KnowledgeItem } from './types.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, MAX_ITEM_CONTENT_CHARS, truncateText } from './token-budget.js';
-import { selectSurfacedSkills } from '../store/skill-surface.js';
+import { renderSkillsSection, selectSurfacedSkills } from './skill-surface.js';
 
 /**
  * Formats a hierarchical knowledge object into clean readable markdown.
@@ -153,14 +153,9 @@ export function formatRecentContextToMarkdown(context: {
   // unclamped quarter is unbounded and, since skills render first, would push recent
   // knowledge out of the card entirely.
   const skillBudget = Math.floor(Math.min(maxChars, DEFAULT_CONTEXT_MAX_CHARS) * 0.25);
-  const skills = selectSurfacedSkills(context.skills ?? [], skillBudget);
-  if (skills.length > 0) {
-    md += '## Available skills\n\n';
-    for (const skill of skills) {
-      md += `- **${skill.name}**${skill.runnable ? '' : ' (not runnable)'} — ${skill.purpose}\n`;
-    }
-    md += '\n';
-  }
+  // Rendered by the same module that priced it, so the section can never exceed the budget
+  // selection thought it was spending.
+  md += renderSkillsSection(selectSurfacedSkills(context.skills ?? [], skillBudget));
 
   md += '## Recent Active Knowledge\n\n';
   if (context.items.length === 0) {
