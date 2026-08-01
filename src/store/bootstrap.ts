@@ -204,6 +204,50 @@ const SCHEMA_STATEMENTS = [
     FROM knowledge_items
     WHERE NOT EXISTS (SELECT 1 FROM knowledge_items_fts LIMIT 1)
       AND EXISTS (SELECT 1 FROM knowledge_items LIMIT 1);`,
+
+  // Transcript index. Session transcripts are the lossless record underneath the
+  // distilled atoms; these tables make them searchable without re-reading
+  // hundreds of megabytes per query. Rows are derived data and safe to drop --
+  // the source of truth is the .jsonl files on disk.
+  `CREATE TABLE IF NOT EXISTS transcript_files (
+    path TEXT PRIMARY KEY,
+    project_dir TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    -- Transcripts are append-only, so a byte offset is a resume point: the next
+    -- pass reads only what was added rather than the whole file again.
+    bytes_indexed INTEGER NOT NULL DEFAULT 0,
+    lines_indexed INTEGER NOT NULL DEFAULT 0,
+    mtime_ms INTEGER NOT NULL DEFAULT 0,
+    indexed_at TEXT NOT NULL
+  );`,
+  `CREATE TABLE IF NOT EXISTS transcript_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_dir TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    line INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    ts TEXT,
+    weight REAL NOT NULL,
+    len INTEGER NOT NULL,
+    text TEXT NOT NULL
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_transcript_messages_project ON transcript_messages(project_dir);`,
+  `CREATE INDEX IF NOT EXISTS idx_transcript_messages_session ON transcript_messages(session_id, line);`,
+  // FTS5 rather than a hand-built inverted index: it ships BM25, and a posting
+  // table written from JavaScript cost ~74 rows per message, which made cold
+  // indexing of a large archive hours of work. External content keeps the text
+  // in transcript_messages instead of storing it twice.
+  `CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts USING fts5(
+    text,
+    content='transcript_messages',
+    content_rowid='id'
+  );`,
+  // Cached per message so a rerank pays the embedding cost once, not per query.
+  `CREATE TABLE IF NOT EXISTS transcript_embeddings (
+    message_id INTEGER PRIMARY KEY,
+    model TEXT NOT NULL,
+    vector TEXT NOT NULL
+  );`,
 ];
 
 function unwrapJson(value: unknown): unknown {

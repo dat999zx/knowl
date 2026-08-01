@@ -321,6 +321,34 @@ export function registerTools(
           },
         },
         {
+          name: 'knowl_transcript_search',
+          description: 'Search the RAW session transcripts - the lossless record of everything actually said, underneath the distilled atoms. Use only after knowl_query misses or returns something stale, ambiguous, or lower-confidence than the question needs, and use it instead of guessing about a past decision. Ranked, not grep: BM25 over an incrementally maintained index, fused with semantic similarity when vector search is enabled. ALWAYS follow a useful hit with knowl_store or knowl_update citing the returned locator, so the same lookup is never paid for twice - an unpromoted recovery is a lookup every future session repeats.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'Content words to recall, not a sentence. Example: "card radius rejected toy".' },
+              limit: { type: 'number', description: 'Maximum hits; defaults to 10. Raise only after a narrow query underdelivers.' },
+              sessionId: { type: 'string', description: 'Restrict to one session, by id or a unique prefix. Use this when a handoff brief names a parent session: ask that transcript first, then re-run without it to widen to the whole archive.' },
+              since: { type: 'string', description: 'ISO timestamp; drop hits older than it.' },
+              projectDir: { type: 'string', description: 'Directory whose transcripts to search. Defaults to the current project.' },
+            },
+            required: ['query'],
+          },
+        },
+        {
+          name: 'knowl_transcript_read',
+          description: 'Read one transcript entry in full, including its tool calls, when a search snippet is not enough to settle the question. Takes the sessionId and line from a knowl_transcript_search locator.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              sessionId: { type: 'string', description: 'Session id, or a unique prefix of it.' },
+              line: { type: 'number', description: '1-indexed line, as returned in the locator.' },
+              projectDir: { type: 'string', description: 'Defaults to the current project.' },
+            },
+            required: ['sessionId', 'line'],
+          },
+        },
+        {
           name: 'knowl_timeline',
           description: 'Inspect immutable assertions for one knowledge item when its history is needed.',
           inputSchema: { type: 'object', properties: { itemId: { type: 'string' } }, required: ['itemId'] },
@@ -944,6 +972,58 @@ export function registerTools(
           });
         }
         return { content: blocks };
+      }
+
+      else if (name === 'knowl_transcript_search') {
+        const { query, limit, since, projectDir, sessionId } = args as any;
+        const { searchTranscripts } = await import('../store/transcript-search.js');
+        const dir = projectDir ? String(projectDir) : (projectRoot ?? process.cwd());
+
+        // Semantic re-ranking is a bonus, not a requirement: vector search is
+        // opt-in, and the lexical ranking is a complete answer without it.
+        let semantic;
+        if (config && projectRoot && isVectorSearchEnabled(config)) {
+          try {
+            const embedder = await createLocalEmbeddingProvider(config, projectRoot);
+            semantic = { model: getVectorSearchConfig(config).model, embed: (texts: string[]) => embedder.embed(texts) };
+          } catch { /* fall back to lexical only */ }
+        }
+
+        const result = await searchTranscripts(String(query), {
+          projectDir: dir,
+          limit: typeof limit === 'number' ? limit : undefined,
+          since: since ? String(since) : undefined,
+          sessionId: sessionId ? String(sessionId) : undefined,
+          semantic,
+        });
+
+        const blocks: CallToolResult['content'] = [{ type: 'text', text: compactMcpJson(result.hits) }];
+        const ranker = semantic ? 'BM25 + semantic (RRF)' : 'BM25';
+        // The ratchet only compounds if it fires on the result, not just in the
+        // tool description: descriptions are read once, results are read every time.
+        // Say plainly when the index is still warming. A partial index gives
+        // real answers, but "no match" means something different against it,
+        // and a caller told nothing would read absence as proof.
+        const warming = result.indexComplete ? '' : ' INDEX STILL WARMING - it resumes on each call; run the search again for fuller coverage.';
+        if (result.hits.length > 0) {
+          blocks.push({ type: 'text', text: `${ranker} over ${result.indexed} indexed message(s) from ${result.sessions} session(s); index refresh ${result.indexMs}ms.${warming} PROMOTE what you used: call knowl_store (or knowl_update if it corrects an existing item) and cite the hit's locator in the content, so this lookup never has to happen again.` });
+        } else {
+          blocks.push({ type: 'text', text: `No matches across ${result.indexed} indexed message(s) from ${result.sessions} session(s).${warming} Retry with different content words - the index covers user and assistant messages plus tool calls and results.` });
+        }
+        return { content: blocks };
+      }
+
+      else if (name === 'knowl_transcript_read') {
+        const { sessionId, line, projectDir } = args as any;
+        const { readTranscriptEntry, MAX_TRANSCRIPT_ENTRY_CHARS } = await import('../store/transcript-search.js');
+        const entry = await readTranscriptEntry(String(sessionId), Number(line), projectDir ? String(projectDir) : (projectRoot ?? process.cwd()));
+        if (!entry) return { content: [{ type: 'text', text: `No transcript entry at ${sessionId}#L${line}.` }] };
+        // NOT MAX_ITEM_CONTENT_CHARS: that is the 600-char budget for a knowledge
+        // atom's fields, and this tool exists precisely because a ~600-char
+        // snippet was not enough. Capping it there would return the snippet again
+        // under a different name. Bounded at the same size the index stores, so a
+        // pasted megabyte still cannot flood the caller's context.
+        return { content: [{ type: 'text', text: truncateText(entry.text, MAX_TRANSCRIPT_ENTRY_CHARS) }] };
       }
 
       else if (name === 'knowl_timeline') {
