@@ -73,6 +73,48 @@ the query returns an empty array. That is the feature, not an edge case.
 0.30 sits with roughly 0.08 of margin above the worst junk and 0.10 below the weakest
 legitimate query.
 
+#### Correction during implementation: the floor judges the query, not each candidate
+
+This section originally read as a per-candidate filter. Implemented that way it cost recall,
+and the 500-case suite caught it: Recall@10 fell 0.994 → 0.987 and three cases regressed.
+
+| Case | Query | Correct answer's score | That query's **top** score |
+| --- | --- | --- | --- |
+| `v-obs-1` | span export backend | 0.269 | 0.389 |
+| `cfg-jwt-ttl-c` | jwt ttl configured value | 0.262 | 0.388 |
+| `v-test-1` | which test runner | 0.233 | 0.373 |
+
+All three are terse queries whose correct answer sits at rank 3–5. A weak result *underneath a
+strong one* is the tail of a real answer, not junk.
+
+No lower constant rescues it: those answers reach down to 0.233 while off-topic queries reach
+0.223 — a 0.01 margin is not a threshold. The measurement above only ever supported a
+**per-query** claim, because every figure in it is a *top-result* score. Applying it per
+candidate asserted something that was never measured.
+
+So the rule is: **if the best candidate vector could judge is below the floor, the query
+returns empty; otherwise the ranking is untouched.** Restored to baseline exactly — Recall@10
+0.9940, MRR 0.9609, nDCG 0.9689, the same 8 failing cases — while all 6 off-topic live queries
+still return zero.
+
+### Only candidates vector could have returned are judged
+
+`vectorScore !== undefined` says vector *did* return an item; it does not say vector *could*
+have. Two candidates arrive looking identical, both scoring about 0.034 on the BM25 fallback
+with nothing in the fused score to separate them:
+
+- **Embedded, not returned by vector** — ranked outside the top N, so semantically distant.
+  Junk. Its BM25 rank carries no absolute relevance; measured off-topic hits like this match on
+  stopwords alone ("best hiking trails in patagonia" → "Vector search is local and enabled by
+  default").
+- **Not embedded** — written since the last index, or while the embedding model was not cached.
+  Invisible to vector, not distant. It must not be judged by a verdict reached without it.
+
+`selectCandidates` resolves this with `findEmbeddedItemIds`, scoped to the provider and model
+being searched because `searchKnowledgeEmbeddings` filters on both. This also subsumes the
+outage guard below: on a store with no embeddings every candidate is unjudgeable and the floor
+turns itself off.
+
 ### The floor applies only when vector genuinely contributed
 
 This is the load-bearing half. On the lexical path the classes overlap completely, so a floor
@@ -84,6 +126,9 @@ for vector. Those differ whenever vector is requested but unavailable — no emb
 embeddings stored, a provider mismatch — and the difference is exactly what the mistaken probe
 above got wrong. Deciding on the request would silently empty every result on a store with no
 embeddings.
+
+(Implemented as embedding *eligibility* instead — see the section above. Eligibility covers
+this case and the semantically-distant one with a single predicate.)
 
 ### Blast radius
 

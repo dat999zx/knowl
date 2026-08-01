@@ -17,19 +17,7 @@ const item = (id: string): KnowledgeItem => ({
 } as KnowledgeItem);
 
 describe('scoreCandidates with the relevance floor', () => {
-  it('drops vector-backed results that fall below the floor', () => {
-    const scored = scoreCandidates(
-      [
-        { item: item('keep'), embedded: true, vectorRank: 1, vectorScore: 0.9 },
-        { item: item('drop'), embedded: true, vectorRank: 2, vectorScore: 0.05 },
-      ],
-      { limit: 10, usingVector: true },
-    );
-
-    expect(scored.map((row) => row.item.id)).toEqual(['keep']);
-  });
-
-  it('returns nothing when every candidate is below the floor', () => {
+  it('returns nothing when the best candidate is below the floor', () => {
     // The point of the feature: a question the store knows nothing about gets no answer.
     const scored = scoreCandidates(
       [
@@ -42,36 +30,39 @@ describe('scoreCandidates with the relevance floor', () => {
     expect(scored).toEqual([]);
   });
 
-  it('drops an embedded candidate that vector ranked outside its top N', () => {
-    // The junk case that motivates the whole feature, and the one that separates this design
-    // from flooring only candidates that carry a vectorScore. `a` is embedded, so vector had
-    // every chance to rank it and did not -- it is semantically distant, and its BM25 rank
-    // says nothing about absolute relevance. Measured against the live store, off-topic
-    // lexical hits like this score 0.034-0.035 and match on stopwords alone.
+  it('keeps the whole ranking once the best candidate clears the floor', () => {
+    // The floor judges the query, not each result. A weak 3rd or 5th hit under an answer that
+    // clearly cleared is the tail of a real answer, not junk -- measured against the 500-case
+    // suite, filtering per candidate dropped `span export backend` -> obs-otel at 0.269 on a
+    // query whose top result scored 0.389, and cost Recall@10 0.994 -> 0.987.
     const scored = scoreCandidates(
       [
-        { item: item('real'), embedded: true, vectorRank: 1, vectorScore: 0.62 },
-        { item: item('a'), embedded: true, bm25Rank: 1 },
+        { item: item('top'), embedded: true, vectorRank: 1, vectorScore: 0.62 },
+        { item: item('tail'), embedded: true, vectorRank: 2, vectorScore: 0.05 },
       ],
       { limit: 10, usingVector: true },
     );
 
-    expect(scored.map((row) => row.item.id)).toEqual(['real']);
+    expect(scored.map((row) => row.item.id)).toEqual(['top', 'tail']);
   });
 
-  it('keeps an unembedded candidate even when vector contributed', () => {
+  it('keeps an unembedded candidate even when the query is judged unanswerable', () => {
     // Written since the last successful index, or written while the embedding model was not
-    // cached. Vector never had a chance to rank it, so a low fused score means "invisible to
-    // vector", not "semantically distant" -- the exact opposite conclusion from the case above.
+    // cached. A verdict reached without ever looking at it must not suppress it.
+    //
+    // The verdict itself reads only embedded candidates. That guard is defensive rather than
+    // observable: an unembedded candidate scores on the BM25 fallback and tops out near 0.086,
+    // so it can never be what lifts a query over 0.30, and judging on the best candidate
+    // overall would reach the same answer for any score either could actually hold.
     const scored = scoreCandidates(
       [
-        { item: item('real'), embedded: true, vectorRank: 1, vectorScore: 0.62 },
+        { item: item('distant'), embedded: true, vectorRank: 1, vectorScore: 0.06 },
         { item: item('unindexed'), embedded: false, bm25Rank: 1 },
       ],
       { limit: 10, usingVector: true },
     );
 
-    expect(scored.map((row) => row.item.id)).toEqual(['real', 'unindexed']);
+    expect(scored.map((row) => row.item.id)).toEqual(['unindexed']);
   });
 
   it('does NOT apply the floor when vector was requested but nothing is embedded', () => {
@@ -101,6 +92,8 @@ describe('scoreCandidates with the relevance floor', () => {
   });
 
   it('leaves the lexical path untouched', () => {
+    // Off-topic and legitimate queries overlap completely without vector, so a floor there
+    // would be arbitrary -- these scores sit around 0.036 and would all be cut.
     const scored = scoreCandidates(
       [{ item: item('a'), embedded: true, bm25Rank: 1 }, { item: item('b'), embedded: true, bm25Rank: 2 }],
       { limit: 10, usingVector: false },
@@ -109,14 +102,13 @@ describe('scoreCandidates with the relevance floor', () => {
     expect(scored).toHaveLength(2);
   });
 
-  it('filters before the limit, so a capped query is not short-changed', () => {
-    // Three clear the floor and one does not; with limit 3 the caller must still get 3.
+  it('still honours the limit on an answerable query', () => {
     const scored = scoreCandidates(
       [
         { item: item('a'), embedded: true, vectorRank: 1, vectorScore: 0.90 },
         { item: item('b'), embedded: true, vectorRank: 2, vectorScore: 0.80 },
-        { item: item('junk'), embedded: true, vectorRank: 3, vectorScore: 0.02 },
-        { item: item('c'), embedded: true, vectorRank: 4, vectorScore: 0.70 },
+        { item: item('c'), embedded: true, vectorRank: 3, vectorScore: 0.70 },
+        { item: item('d'), embedded: true, vectorRank: 4, vectorScore: 0.60 },
       ],
       { limit: 3, usingVector: true },
     );
