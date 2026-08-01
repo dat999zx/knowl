@@ -19,21 +19,26 @@ export function findFailureFixPairs(events: MemorySessionEvent[]): FailureFix[] 
     if (!message.trim()) continue;
 
     const signature = errorSignature(message);
+    const later = events.slice(index + 1);
+
+    // Recurrence: the whole remainder. An error that comes back was never fixed,
+    // even if something unrelated happened in between.
+    const recurred = later.some((event) =>
+      event.type === 'error'
+      && errorSignature(typeof event.payload.message === 'string' ? event.payload.message : '') === signature);
+
+    // Edits: only up to the next error of any kind. Checkpoints after a different
+    // error belong to that error, not this one.
+    const windowEnd = later.findIndex((event) => event.type === 'error');
+    const window = windowEnd === -1 ? later : later.slice(0, windowEnd);
+
     const changedPaths: string[] = [];
     const fixEvents: MemorySessionEvent[] = [];
-    let recurred = false;
-
-    for (const later of events.slice(index + 1)) {
-      if (later.type === 'error') {
-        const laterMessage = typeof later.payload.message === 'string' ? later.payload.message : '';
-        // Same failure again: whatever was changed in between did not fix it.
-        if (errorSignature(laterMessage) === signature) { recurred = true; break; }
-        continue;
-      }
-      if (later.type !== 'checkpoint') continue;
-      const paths = Array.isArray(later.payload.changedPaths) ? later.payload.changedPaths : [];
+    for (const event of window) {
+      if (event.type !== 'checkpoint') continue;
+      const paths = Array.isArray(event.payload.changedPaths) ? event.payload.changedPaths : [];
       if (paths.length === 0) continue;
-      fixEvents.push(later);
+      fixEvents.push(event);
       for (const path of paths) {
         if (typeof path === 'string' && !changedPaths.includes(path)) changedPaths.push(path);
       }

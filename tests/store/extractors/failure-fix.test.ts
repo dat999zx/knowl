@@ -67,7 +67,21 @@ describe('findFailureFixPairs', () => {
     ]);
 
     expect(pairs).toHaveLength(2);
+    // The assertion that pins the bounded window: the first error must NOT absorb
+    // the second error's fix.
+    expect(pairs[0].changedPaths).toEqual(['src/a.ts']);
     expect(pairs[1].changedPaths).toEqual(['src/b.ts']);
+  });
+
+  it('rejects an error that recurs after an unrelated error, not just immediately', () => {
+    // The edit window stops at the unrelated error, but the recurrence scan must not.
+    expect(findFailureFixPairs([
+      event('error', { message: 'TypeError: boom' }),
+      event('checkpoint', { changedPaths: ['src/a.ts'] }),
+      event('error', { message: 'RangeError: unrelated' }),
+      event('checkpoint', { changedPaths: ['src/b.ts'] }),
+      event('error', { message: 'TypeError: boom' }),
+    ]).some((pair) => pair.message.includes('TypeError'))).toBe(false);
   });
 
   it('ignores an error event carrying no message', () => {
