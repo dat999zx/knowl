@@ -88,7 +88,7 @@ export async function recordKnowledgeFeedback(input: Omit<KnowledgeAccessInput, 
 
 export async function listKnowledgeAccess(itemId: string): Promise<KnowledgeAccess[]> {
   const result = await getClient().execute({
-    sql: 'SELECT * FROM knowledge_access WHERE knowledge_item_id = ? ORDER BY retrieved_at ASC, id ASC',
+    sql: 'SELECT * FROM knowledge_access WHERE knowledge_item_id = ? ORDER BY retrieved_at ASC, rowid ASC',
     args: [itemId],
   });
   return result.rows.map(mapAccess);
