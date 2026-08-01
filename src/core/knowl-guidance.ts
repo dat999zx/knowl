@@ -18,6 +18,11 @@ export const KNOWL_MCP_TOOL_GROUPS = [
     routing: 'The lossless record under the distilled atoms. knowl_session_list browses past sessions as an inventory (names, opening asks, promoted knowledge) to pick one before reading into it. Use only after knowl_query misses or returns something stale, ambiguous, or lower-confidence than the question needs, and use it instead of guessing about a past decision. Scope with sessionId when a handoff names a parent session, then widen. Read one entry in full only when a snippet cannot settle it. Promote what you used with knowl_store or knowl_update citing the returned locator, so the same lookup is never paid for twice.',
   },
   {
+    label: 'Session handoff',
+    tools: ['knowl_handoff'],
+    routing: 'Write a baton before deliberately leaving a workstream - goal, what is done, the next action, any blocker, and whether the work was verified. The next session started in this project receives it once at startup and it is then archived, so it is a one-shot pass, not a durable note. One baton per project at a time: writing another replaces it. Durable facts still belong in knowl_store.',
+  },
+  {
     label: 'Manual work loop',
     tools: ['knowl_task_start', 'knowl_task_checkpoint', 'knowl_task_finish'],
     routing: 'Use only without verified lifecycle hooks: start once, checkpoint meaningful milestones or blockers, and finish once after verification.',
@@ -97,16 +102,17 @@ export const KNOWL_HOST_NEUTRAL_MODE_LINE = 'Mode: verified hooks, when active, 
 function renderCompactKnowlGuidance(modeLine: string): string {
   return [
     'KNOWL WORKFLOW - for project work.',
-    'Start: use a relevant active lifecycle hit; else call knowl_query with 2-6 keywords before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
+    'Start: use a relevant active lifecycle hit; else call knowl_query with 2-6 keywords before files or commands. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
     modeLine,
-    'Manual fallback: one bounded command uses knowl task run; resumable work uses knowl_task_start once, knowl_task_checkpoint at meaningful milestones/blockers with its taskId, and knowl_task_finish once after verification.',
+    'Manual fallback: one bounded command uses knowl task run; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones/blockers, knowl_task_finish once after verification.',
     'Route:',
     '- retrieval: knowl_query; knowl_recent only without bootstrap or for refresh; knowl_state for broad state; knowl_context for a token-budgeted pack.',
     '- verbatim: knowl_session_list to browse/find past sessions; knowl_transcript_search only after a miss or an ambiguous hit, sessionId to scope to one session; knowl_transcript_read one entry in full; promote what you use.',
+    '- handoff: knowl_handoff when parking a workstream; the next session in this project receives it once, then it is archived.',
     '- durable memory: knowl_store one atom; knowl_ingest_atoms a batch; knowl_decide a confirmed choice; knowl_update a stale or contradicted item.',
     '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
     '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',
-    '- special: knowl_ingest only for explicit raw-source ingestion, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an explicitly owned manual session; knowl_gc_preview before maintenance; knowl_gc_apply only after preview and explicit approval.',
+    '- special: knowl_ingest only on explicit request, never silent chat; knowl_synthesize only for a stated scope; knowl_session_finish only for an owned manual session; knowl_gc_preview then knowl_gc_apply, only after approval.',
     'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
   ].join('\n');
 }

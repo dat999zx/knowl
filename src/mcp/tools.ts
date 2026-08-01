@@ -321,6 +321,23 @@ export function registerTools(
           },
         },
         {
+          name: 'knowl_handoff',
+          description: "Park the current workstream for the next session in this project. Use when the user is deliberately moving to another session and wants work continued - not for durable facts, which belong in knowl_store. The next session started in this project receives it once at startup, then it is archived. One baton per project: writing another replaces it.",
+          inputSchema: {
+            type: 'object',
+            properties: {
+              goal: { type: 'string', description: 'What this workstream is trying to achieve, in one line.' },
+              nextAction: { type: 'string', description: 'The single next thing the receiving session should do.' },
+              completed: { type: 'array', items: { type: 'string' }, description: 'What is already done, so the next session does not redo it.' },
+              blocker: { type: 'string', description: 'What is in the way, if anything.' },
+              verificationStatus: { type: 'string', description: 'What has and has not been verified - say plainly if something is untested.' },
+              artifactRefs: { type: 'array', items: { type: 'string' }, description: 'Files, branches, PRs, or locators the next session needs.' },
+              sessionId: { type: 'string', description: "This session's id, when known. Identifies the baton's origin." },
+            },
+            required: ['goal', 'nextAction'],
+          },
+        },
+        {
           name: 'knowl_session_list',
           description: "Browse the project's past Claude Code sessions as an inventory: best-known name (a user rename beats a generated title), the opening ask, derived status (active / interrupted by a crash handoff / idle), any declared session card, last activity, and what each session promoted into memory. Use to answer 'which session was about X' or to decide between resuming a session and starting a new one - then knowl_transcript_search with sessionId to read into the chosen session. Filters by keywords over intent; for content questions use knowl_transcript_search.",
           inputSchema: {
@@ -986,6 +1003,26 @@ export function registerTools(
         return { content: blocks };
       }
 
+      else if (name === 'knowl_handoff') {
+        if (!projectId || !projectRoot) return { content: [{ type: 'text', text: 'No initialized Knowl project; cannot park a handoff.' }] };
+        const { goal, nextAction, completed, blocker, verificationStatus, artifactRefs, sessionId } = args as any;
+        const { recordDeliberateHandoff } = await import('../store/session-handoff.js');
+        const result = await recordDeliberateHandoff(projectId, {
+          host: 'claude',
+          projectRoot,
+          externalSessionId: sessionId ? String(sessionId) : 'unknown',
+          taskState: {
+            goal: String(goal),
+            nextAction: String(nextAction),
+            completed: Array.isArray(completed) ? completed.map(String) : undefined,
+            blocker: blocker ? String(blocker) : undefined,
+            verificationStatus: verificationStatus ? String(verificationStatus) : undefined,
+            artifactRefs: Array.isArray(artifactRefs) ? artifactRefs.map(String) : undefined,
+          },
+        });
+        return { content: [{ type: 'text', text: `Handoff parked (${result.itemId}). The next session started in this project receives it once, then it is archived. It is a one-shot pass - anything worth keeping belongs in knowl_store.` }] };
+      }
+
       else if (name === 'knowl_session_list') {
         const { query, limit, projectDir } = args as any;
         const { listSessionDirectory } = await import('../store/session-directory.js');
@@ -1023,18 +1060,31 @@ export function registerTools(
           semantic,
         });
 
-        const blocks: CallToolResult['content'] = [{ type: 'text', text: compactMcpJson(result.hits) }];
         const ranker = semantic ? 'BM25 + semantic (RRF)' : 'BM25';
-        // The ratchet only compounds if it fires on the result, not just in the
-        // tool description: descriptions are read once, results are read every time.
-        // Say plainly when the index is still warming. A partial index gives
-        // real answers, but "no match" means something different against it,
-        // and a caller told nothing would read absence as proof.
-        const warming = result.indexComplete ? '' : ' INDEX STILL WARMING - it resumes on each call; run the search again for fuller coverage.';
+
+        // Zero hits against a partially-indexed archive is not an answer, and prose saying so
+        // was not enough: an empty list plus a footer still reads as absence, which is the one
+        // inference a partial index cannot support. So it fails instead of returning, and the
+        // caller has to re-run rather than conclude. Coverage travels as numbers either way.
+        if (result.inconclusive) {
+          const searched = result.filesScanned - result.filesPending;
+          return {
+            isError: true,
+            content: [{
+              type: 'text',
+              text: `SEARCH INCONCLUSIVE - not a "no matches" result. Only ${searched} of ${result.filesScanned} session file(s) were searchable this pass (${result.filesPending} still indexing after ${result.indexMs}ms), so this query cannot tell "absent from the archive" from "not indexed yet". Run the same search again - indexing resumes on every call and newest sessions are covered first. Do NOT report this as nothing found.`,
+            }],
+          };
+        }
+
+        const blocks: CallToolResult['content'] = [{ type: 'text', text: compactMcpJson(result.hits) }];
+        const coverage = result.indexComplete
+          ? 'index complete'
+          : `PARTIAL INDEX: ${result.filesScanned - result.filesPending}/${result.filesScanned} session file(s) searchable, ${result.filesPending} still indexing - re-run for the rest`;
         if (result.hits.length > 0) {
-          blocks.push({ type: 'text', text: `${ranker} over ${result.indexed} indexed message(s) from ${result.sessions} session(s); index refresh ${result.indexMs}ms.${warming} PROMOTE what you used: call knowl_store (or knowl_update if it corrects an existing item) and cite the hit's locator in the content, so this lookup never has to happen again.` });
+          blocks.push({ type: 'text', text: `${ranker} over ${result.indexed} indexed message(s) from ${result.sessions} session(s); index refresh ${result.indexMs}ms; ${coverage}. PROMOTE what you used: call knowl_store (or knowl_update if it corrects an existing item) and cite the hit's locator in the content, so this lookup never has to happen again.` });
         } else {
-          blocks.push({ type: 'text', text: `No matches across ${result.indexed} indexed message(s) from ${result.sessions} session(s).${warming} Retry with different content words - the index covers user and assistant messages plus tool calls and results.` });
+          blocks.push({ type: 'text', text: `No matches across ${result.indexed} indexed message(s) from ${result.sessions} session(s); ${coverage}. Retry with different content words - the index covers user and assistant messages plus tool calls and results.` });
         }
         return { content: blocks };
       }

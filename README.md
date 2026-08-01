@@ -966,6 +966,7 @@ Knowl exposes exactly 24 MCP tools:
 | `knowl_session_list` | Browse past sessions as an inventory: names, opening asks, promoted knowledge |
 | `knowl_transcript_search` | Search the verbatim session transcripts when memory misses or is ambiguous |
 | `knowl_transcript_read` | Read one transcript entry in full when a snippet cannot settle it |
+| `knowl_handoff` | Park the current workstream; the next session in this project receives it once |
 | `knowl_task_start` | Start one manual work loop when verified lifecycle hooks are unavailable |
 | `knowl_task_checkpoint` | Checkpoint meaningful manual-loop progress or blockers |
 | `knowl_task_finish` | Finish one manual work loop after verification |

@@ -12,12 +12,24 @@ export const PROVIDER_OUTAGE_URGENCY = 'high';
 export const INTERRUPTED_URGENCY = 'high';
 export const GENERIC_FAILURE_URGENCY = 'high';
 
-export type SessionFailureKind =
-  | 'rate_limit'
-  | 'auth'
-  | 'provider_outage'
-  | 'interrupted'
-  | 'failed';
+export const HANDOFF_URGENCY = 'planned';
+
+/**
+ * 'handoff' is the one kind that is not a failure: the user deliberately parked
+ * a workstream. Kept in the same union because it rides the same slot, claim,
+ * and delivery machinery - but the receiving session must be able to tell a
+ * planned baton from a 3am crash, because they deserve opposite openings.
+ */
+export const SESSION_HANDOFF_KINDS = [
+  'handoff',
+  'rate_limit',
+  'auth',
+  'provider_outage',
+  'interrupted',
+  'failed',
+] as const;
+
+export type SessionFailureKind = typeof SESSION_HANDOFF_KINDS[number];
 
 export type HandoffTaskState = {
   goal?: string;
@@ -30,7 +42,7 @@ export type HandoffTaskState = {
 
 export type PendingHandoff = {
   kind: SessionFailureKind;
-  urgency: typeof RATE_LIMIT_URGENCY | typeof AUTH_URGENCY | typeof PROVIDER_OUTAGE_URGENCY | typeof INTERRUPTED_URGENCY | typeof GENERIC_FAILURE_URGENCY;
+  urgency: typeof RATE_LIMIT_URGENCY | typeof AUTH_URGENCY | typeof PROVIDER_OUTAGE_URGENCY | typeof INTERRUPTED_URGENCY | typeof GENERIC_FAILURE_URGENCY | typeof HANDOFF_URGENCY;
   host: string;
   projectRoot: string;
   externalSessionId: string;
@@ -164,7 +176,10 @@ function parseHandoffContent(content: string): PendingHandoff | null {
   try {
     const parsed = JSON.parse(content) as PendingHandoff;
     if (!parsed || typeof parsed !== 'object') return null;
-    if (!['rate_limit', 'auth', 'provider_outage', 'interrupted', 'failed'].includes(parsed.kind)) return null;
+    // Derived from the kind list, never a second copy of it: a hand-maintained
+    // duplicate here silently made a newly added kind unreadable, so every
+    // baton of that kind was written and then never delivered.
+    if (!(SESSION_HANDOFF_KINDS as readonly string[]).includes(parsed.kind)) return null;
     if (!parsed.failedAt || !parsed.host || !parsed.projectRoot || !parsed.externalSessionId) return null;
     return parsed;
   } catch {
@@ -260,15 +275,20 @@ async function findActivePendingHandoff(host: string) {
 }
 
 export function formatPendingHandoffContext(handoff: PendingHandoff): string {
+  // A planned baton and a crash both arrive here, and they deserve opposite
+  // openings: one resumes work, the other recovers from a blocker.
+  const planned = handoff.kind === 'handoff';
   const lines = [
-    '# KNOWL - PENDING SESSION HANDOFF',
+    planned ? '# KNOWL - SESSION HANDOFF' : '# KNOWL - PENDING SESSION HANDOFF',
     '',
-    'Previous host session ended before a clean finish. Continue from this handoff first.',
+    planned
+      ? 'The previous session parked this work for you on purpose. Pick it up from here.'
+      : 'Previous host session ended before a clean finish. Continue from this handoff first.',
     '',
     `- Kind: ${handoff.kind}`,
     `- Urgency: ${handoff.urgency}`,
     `- Host: ${handoff.host}`,
-    `- Failed at: ${handoff.failedAt}`,
+    planned ? `- Parked at: ${handoff.failedAt}` : `- Failed at: ${handoff.failedAt}`,
     `- External session: ${handoff.externalSessionId}`,
   ];
   if (handoff.memorySessionId) lines.push(`- Memory session: ${handoff.memorySessionId}`);
@@ -374,6 +394,68 @@ export async function recordPendingSessionHandoff(
     conflictExclusive: true,
   });
   await repo.createKnowledgeCommit(projectId, `Record pending session handoff (${host}/${kind})`, [
+    { itemId: created.id, action: 'insert', after: created },
+  ]);
+  return { itemId: created.id, handoff };
+}
+
+/**
+ * Park a workstream on purpose. Same slot and same one-shot delivery as a crash
+ * handoff, so nothing new has to be built for the receiving side - only the
+ * kind differs, and with it the tone the next session should open in.
+ *
+ * One baton per project: an existing pending handoff is replaced, which is the
+ * right behaviour for "I am leaving this session now" and the reason this is a
+ * pass rather than a durable note. Anything worth keeping goes in knowl_store.
+ */
+export async function recordDeliberateHandoff(
+  projectId: string,
+  input: {
+    host: string;
+    projectRoot: string;
+    externalSessionId: string;
+    sessionTitle?: string;
+    taskState: HandoffTaskState;
+  },
+): Promise<{ itemId: string; handoff: PendingHandoff }> {
+  const handoff: PendingHandoff = {
+    kind: 'handoff',
+    urgency: HANDOFF_URGENCY,
+    host: input.host,
+    projectRoot: input.projectRoot,
+    externalSessionId: input.externalSessionId,
+    sessionTitle: input.sessionTitle,
+    taskState: input.taskState,
+    failedAt: new Date().toISOString(),
+    consumed: false,
+  };
+
+  const conflictKey = pendingHandoffConflictKey(input.host);
+  const identity = { host: input.host, externalSessionId: input.externalSessionId };
+  const tags = ['pending_handoff', 'handoff', HANDOFF_URGENCY, input.host, `session:${input.externalSessionId}`];
+  const fields = {
+    title: PENDING_HANDOFF_TITLE,
+    content: JSON.stringify(handoff),
+    tags,
+    source: `host://${input.host}/session-handoff`,
+    freshness: 'fresh' as const,
+    confidence: 1,
+    conflictKey,
+    conflictScope: identity,
+    conflictExclusive: true,
+  };
+
+  const existing = await findActivePendingHandoff(input.host);
+  if (existing) {
+    const updated = await repo.updateKnowledgeItem(existing.id, fields);
+    await repo.createKnowledgeCommit(projectId, `Update pending session handoff (${input.host}/handoff)`, [
+      { itemId: updated.id, action: 'update', before: existing.handoff as any, after: updated },
+    ]);
+    return { itemId: updated.id, handoff };
+  }
+
+  const created = await repo.createKnowledgeItem(projectId, { category: 'state', ...fields });
+  await repo.createKnowledgeCommit(projectId, `Record pending session handoff (${input.host}/handoff)`, [
     { itemId: created.id, action: 'insert', after: created },
   ]);
   return { itemId: created.id, handoff };
