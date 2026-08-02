@@ -9,6 +9,63 @@ type TransformersPipeline = (texts: string[], options: { pooling: VectorPooling;
   dims: number[];
 }>;
 
+/**
+ * The most characters of one item that get embedded.
+ *
+ * Attention is quadratic in sequence length, so a single very long item is expensive on
+ * its own however small the batch. ~8k characters is roughly 2k tokens, which is past the
+ * point where more text sharpens a knowledge atom's vector.
+ */
+const MAX_EMBED_CHARS = 8_000;
+
+/** Most items in one forward pass, whatever the arithmetic below allows. */
+const MAX_EMBED_BATCH = 32;
+
+/**
+ * Budget for `items × longest²`, in characters.
+ *
+ * Attention allocates `batch × heads × seq × seq`, so cost is driven by the longest text
+ * in a batch, not the average -- everything shorter is padded up to it. At this budget a
+ * batch peaks around 200 MB.
+ */
+const ATTENTION_BUDGET = 64_000_000;
+
+/**
+ * Group texts into forward passes that cannot exhaust memory.
+ *
+ * Sizing by item count alone is what broke: reindex handed over a 500-row database page
+ * as one batch, and against a model with a large context window -- where nothing gets
+ * truncated -- 498 items of ~969 tokens asked onnxruntime for 22 GB in a single
+ * allocation. The batch has to be sized against the text, not the row count.
+ *
+ * Indices are carried through so results can be written back in the caller's order.
+ */
+export function planEmbeddingBatches(texts: string[]): Array<Array<{ index: number; text: string }>> {
+  const batches: Array<Array<{ index: number; text: string }>> = [];
+  let current: Array<{ index: number; text: string }> = [];
+  let longest = 0;
+
+  for (let index = 0; index < texts.length; index++) {
+    const text = (texts[index] ?? '').slice(0, MAX_EMBED_CHARS);
+    const nextLongest = Math.max(longest, text.length);
+    const wouldExceed = (current.length + 1) * nextLongest * nextLongest > ATTENTION_BUDGET;
+
+    // `current.length > 0` keeps a single over-budget text as its own batch rather than
+    // dropping it: it is already clipped to MAX_EMBED_CHARS, so one is affordable.
+    if (current.length > 0 && (wouldExceed || current.length >= MAX_EMBED_BATCH)) {
+      batches.push(current);
+      current = [];
+      longest = 0;
+    }
+
+    current.push({ index, text });
+    longest = Math.max(longest, text.length);
+  }
+
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
 export interface LocalEmbeddingProviderOptions {
   loadPipeline?: (model: string, dtype: string, cacheDir: string) => Promise<TransformersPipeline>;
   /**
@@ -85,20 +142,22 @@ export async function createLocalEmbeddingProvider(
     pooling: vector.pooling,
     profileFingerprint: fingerprintProfile(resolveVectorProfile(config)),
     embed: async (texts: string[]) => {
-      const output = await localPipeline!(texts, {
-        // Per-model, not a constant: MiniLM is mean-pooled while both Granite R2
-        // models and BGE are CLS-pooled. Using the wrong one produces plausible
-        // vectors that rank badly, with nothing to notice at runtime.
-        pooling: vector.pooling,
-        normalize: true,
-      });
-      const dimensions = output.dims[1];
-      const data = Array.from(output.data);
-
-      return texts.map((_, index) => {
-        const start = index * dimensions;
-        return data.slice(start, start + dimensions);
-      });
+      const vectors: number[][] = [];
+      for (const batch of planEmbeddingBatches(texts)) {
+        const output = await localPipeline!(batch.map(entry => entry.text), {
+          // Per-model, not a constant: MiniLM is mean-pooled while both Granite R2
+          // models and BGE are CLS-pooled. Using the wrong one produces plausible
+          // vectors that rank badly, with nothing to notice at runtime.
+          pooling: vector.pooling,
+          normalize: true,
+        });
+        const dimensions = output.dims[1];
+        const data = Array.from(output.data) as number[];
+        batch.forEach((entry, index) => {
+          vectors[entry.index] = data.slice(index * dimensions, (index + 1) * dimensions);
+        });
+      }
+      return vectors;
     },
   };
 }
