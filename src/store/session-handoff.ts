@@ -306,7 +306,12 @@ export function formatPendingHandoffContext(handoff: PendingHandoff): string {
     if (handoff.taskState.artifactRefs?.length) lines.push(`- Artifacts: ${handoff.taskState.artifactRefs.join(', ')}`);
     if (handoff.taskState.verificationStatus) lines.push(`- Verification: ${handoff.taskState.verificationStatus}`);
   }
-  lines.push('', 'Do not restart from scratch. Resume the interrupted work using this handoff plus recent project memory.');
+  lines.push(
+    '',
+    'This is context, not authorisation. Do not restart from scratch — and do not silently carry on either.',
+    'Tell the user in a few lines where the work stands, what the next action would be, and any blocker that',
+    'needs their decision, then wait for them to say go before editing files or running anything.',
+  );
   return truncateText(lines.join('\n'), DEFAULT_CONTEXT_MAX_CHARS);
 }
 

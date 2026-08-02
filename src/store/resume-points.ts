@@ -224,6 +224,12 @@ export function formatResumeBrief(point: ResumePoint): string {
     );
   }
 
-  lines.push('', 'Pick the work up from here. Do not restate this brief back to the user; just continue.');
+  lines.push(
+    '',
+    'STOP HERE. This brief restores context; it is not authorisation to act. A resume key means the user',
+    'wants the work REMEMBERED, not resumed on their behalf. Give them a short orientation — where the',
+    'work stands, what the next action would be, and any blocker that needs their ruling — then wait.',
+    'Do not edit files, run builds, or start the next action until they say go.',
+  );
   return lines.join('\n');
 }

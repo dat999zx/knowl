@@ -72,6 +72,20 @@ export function hashKnowledgeLifecycle(input: {
     .digest('hex');
 }
 
+/**
+ * A tag counts as provenance only when it is written as a path.
+ *
+ * Tags are topic labels far more often than locations, and `pathMatches` treats a bare
+ * word as a directory prefix — so a single commit under `content/` matched every atom
+ * tagged `content`, including pure strategy notes with no file provenance at all, and
+ * `pr check` flipped all of them to needs_review. Requiring a separator or an extension
+ * keeps `src/store/freshness.ts`-style tags working and stops a topic name from
+ * standing in for a top-level directory.
+ */
+function tagLooksLikePath(tag: string): boolean {
+  return tag.includes('/') || /\.[A-Za-z0-9]+$/.test(tag);
+}
+
 function pathMatches(knownPath: string, changedPath: string): boolean {
   const known = normalizePathForKnowledge(knownPath);
   const changed = normalizePathForKnowledge(changedPath);
@@ -97,6 +111,7 @@ export function knowledgeMentionsChangedPath(item: {
   }
 
   for (const tag of item.tags || []) {
+    if (!tagLooksLikePath(tag)) continue;
     if (normalizedChanged.some(changedPath => pathMatches(tag, changedPath))) {
       return true;
     }

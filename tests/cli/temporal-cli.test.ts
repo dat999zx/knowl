@@ -19,7 +19,12 @@ describe('temporal CLI', () => {
     const client = createClient({ url: `file:${path.join(ROOT, '.knowl', 'knowl.db')}` });
     const row = (await client.execute('SELECT id, created_at FROM knowledge_items WHERE title = ?', ['Temporal storage'])).rows[0];
     itemId = String(row.id); createdAt = String(row.created_at); client.close();
-  }, 15_000);
+    // No local timeout. 15s was a RAISE over vitest's 5s default when it was written; once the
+    // shared config moved to 30s (now 60s) the same number silently became a LOWERING, capping
+    // the one hook here that spawns two `node dist/index.js` processes. It was the last suite
+    // still failing a full run. Inheriting the global keeps it aligned with every other
+    // CLI-spawning suite instead of drifting again the next time that value moves.
+  });
   afterAll(async () => { await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {}); });
 
   it('prints an item timeline and supports an as-of query', () => {
@@ -27,5 +32,5 @@ describe('temporal CLI', () => {
     const asOf = JSON.parse(execSync(`node "${CLI}" query storage --as-of ${createdAt}`, { cwd: ROOT, encoding: 'utf8' }));
     expect(timeline).toEqual([expect.objectContaining({ knowledgeItemId: itemId, content: 'SQLite is active.' })]);
     expect(asOf).toEqual([expect.objectContaining({ id: itemId, content: 'SQLite is active.' })]);
-  }, 15_000);
+  });
 });

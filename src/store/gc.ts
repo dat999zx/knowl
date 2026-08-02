@@ -48,9 +48,45 @@ const HOT_RECENT_DAYS = 21;
 export function isHot(itemId: string, access: Map<string, KnowledgeAccessSummary>, now: Date): boolean {
   const a = access.get(itemId);
   if (!a) return false;
+  // Explicit feedback outranks retrieval volume in both directions. Retrieval alone is weak
+  // evidence of worth: an item that keeps surfacing in results it does not belong in gets
+  // retrieved BECAUSE it is noise, and counting that as heat let the worst rows earn the
+  // strongest protection from collection. A row somebody actually used is hot regardless of
+  // count; a row somebody marked not-useful no longer coasts on being retrieved often.
+  if (a.usefulCount > 0) return true;
+  if (a.notUsefulCount > 0) return false;
   if (a.retrievalCount >= HOT_RETRIEVAL_COUNT) return true;
   return daysSince(a.lastRetrievedAt, now) <= HOT_RECENT_DAYS;
 }
+/**
+ * A one-shot record is delivered to the NEXT session that starts. Once days of sessions have
+ * begun without it being claimed, nothing is ever going to claim it.
+ */
+const SPENT_ONE_SHOT_DAYS = 7;
+
+function isOneShotRecord(item: KnowledgeItem): boolean {
+  return item.category === 'state' && (item.tags ?? []).includes('pending_handoff');
+}
+
+/** When the one-shot became pending. Its own record beats the row's mtime, which any touch moves. */
+function oneShotPendingSince(item: KnowledgeItem): string {
+  try {
+    const parsed = JSON.parse(item.content) as { failedAt?: unknown };
+    if (typeof parsed.failedAt === 'string') return parsed.failedAt;
+  } catch {
+    // Not JSON or not this shape; the row's own timestamp is the honest fallback.
+  }
+  return item.updatedAt;
+}
+
+function oneShotIsConsumed(item: KnowledgeItem): boolean {
+  try {
+    return (JSON.parse(item.content) as { consumed?: unknown }).consumed === true;
+  } catch {
+    return false;
+  }
+}
+
 const PROTECTED_CATEGORIES = new Set<KnowledgeCategory>([
   'decision',
   'constraint',
@@ -119,6 +155,18 @@ function buildCandidates(items: KnowledgeItem[], options: KnowledgeGcOptions, ac
     bestByDuplicateKey.set(key, currentBest ? preferredDuplicate(currentBest, item) : item);
   }
 
+  // Only one one-shot may be pending per identity — that is exactly what its exclusive
+  // conflict key declares. Any older one is therefore already spent. Identity comes from the
+  // conflict key rather than the title because every handoff shares the same title, which is
+  // also why the duplicate rule above never catches them: same title, different JSON body.
+  const newestOneShot = new Map<string, KnowledgeItem>();
+  for (const item of items) {
+    if (item.status !== 'active' || !isOneShotRecord(item)) continue;
+    const identity = item.conflictKey ?? item.title;
+    const incumbent = newestOneShot.get(identity);
+    if (!incumbent || item.updatedAt > incumbent.updatedAt) newestOneShot.set(identity, item);
+  }
+
   for (const item of items) {
     const beforeBytes = Buffer.byteLength(item.content, 'utf8');
 
@@ -141,6 +189,36 @@ function buildCandidates(items: KnowledgeItem[], options: KnowledgeGcOptions, ac
           afterBytes: 0,
         });
         continue;
+      }
+
+      // Checked before the age clock and deliberately outside the hotness guard. A record
+      // that carries its own liveness signal is garbage the moment that signal fires, not
+      // sixty days later — and hotness makes age worse here rather than safer, because a
+      // spent handoff gets retrieved precisely BECAUSE it pollutes unrelated result sets.
+      if (isOneShotRecord(item)) {
+        const identity = item.conflictKey ?? item.title;
+        const newest = newestOneShot.get(identity);
+        const pendingDays = daysSince(oneShotPendingSince(item), now);
+        const spentReason = oneShotIsConsumed(item)
+          ? 'One-shot handoff already consumed'
+          : newest && newest.id !== item.id
+            ? `Superseded by a newer pending handoff for the same identity (${newest.id})`
+            : pendingDays >= SPENT_ONE_SHOT_DAYS
+              ? `One-shot handoff unclaimed for ${pendingDays} days; no session will claim it now`
+              : null;
+        if (spentReason) {
+          candidates.push({
+            itemId: item.id,
+            action: 'archive',
+            title: item.title,
+            category: item.category,
+            status: item.status,
+            reason: spentReason,
+            beforeBytes,
+            afterBytes: beforeBytes,
+          });
+          continue;
+        }
       }
 
       if (

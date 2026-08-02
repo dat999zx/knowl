@@ -124,20 +124,38 @@ export async function getKnowledgeAccessReport(): Promise<{
   };
 }
 
-export type KnowledgeAccessSummary = { retrievalCount: number; lastRetrievedAt: string };
+export type KnowledgeAccessSummary = {
+  retrievalCount: number;
+  lastRetrievedAt: string;
+  /** Times explicitly marked useful. Direct evidence of worth, unlike a retrieval count. */
+  usefulCount: number;
+  /** Times explicitly marked NOT useful — evidence the row is noise in results it wins. */
+  notUsefulCount: number;
+};
 
 // Per-item retrieval frequency and recency — used by GC to protect hot memory
-// from decay and to collect only genuinely cold items.
+// from decay and to collect only genuinely cold items. Retrieval counts still exclude
+// feedback rows (a verdict is not a retrieval), but the verdicts themselves are now
+// summarised alongside, because retrieval volume on its own cannot tell a load-bearing
+// item from one that keeps polluting result sets.
 export async function getAccessSummary(): Promise<Map<string, KnowledgeAccessSummary>> {
   const rows = (await getClient().execute(`
-    SELECT knowledge_item_id, COUNT(*) AS retrieval_count, MAX(retrieved_at) AS last_retrieved_at
-    FROM knowledge_access WHERE surface != 'feedback' GROUP BY knowledge_item_id
+    SELECT knowledge_item_id,
+      SUM(CASE WHEN surface != 'feedback' THEN 1 ELSE 0 END) AS retrieval_count,
+      MAX(CASE WHEN surface != 'feedback' THEN retrieved_at END) AS last_retrieved_at,
+      SUM(CASE WHEN useful = 1 THEN 1 ELSE 0 END) AS useful_count,
+      SUM(CASE WHEN useful = 0 THEN 1 ELSE 0 END) AS not_useful_count
+    FROM knowledge_access GROUP BY knowledge_item_id
   `)).rows;
   const summary = new Map<string, KnowledgeAccessSummary>();
   for (const row of rows) {
     summary.set(String(row.knowledge_item_id), {
       retrievalCount: Number(row.retrieval_count),
-      lastRetrievedAt: String(row.last_retrieved_at),
+      // A row with feedback but no retrievals has no last-retrieved instant; the epoch keeps
+      // it unambiguously cold rather than accidentally recent via an empty string.
+      lastRetrievedAt: row.last_retrieved_at === null ? new Date(0).toISOString() : String(row.last_retrieved_at),
+      usefulCount: Number(row.useful_count),
+      notUsefulCount: Number(row.not_useful_count),
     });
   }
   return summary;

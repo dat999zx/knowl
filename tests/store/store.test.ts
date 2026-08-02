@@ -490,6 +490,37 @@ describe('Storage Layer', () => {
     expect((await repo.getKnowledgeItem(unrelated.id))!.freshness).toBe('fresh');
   });
 
+  it('should not treat a bare topical tag as a directory during drift checks', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const projectId = project!.id;
+
+    const topical = await repo.createKnowledgeItem(projectId, {
+      category: 'decision',
+      title: 'Face of the channel',
+      content: 'A strategy note with no file provenance at all.',
+      sourceCommit: 'base000',
+      tags: ['content', 'brand'],
+    });
+    const pathTagged = await repo.createKnowledgeItem(projectId, {
+      category: 'architecture',
+      title: 'Hook sweep tool',
+      content: 'A note whose tag is written as a real path.',
+      sourceCommit: 'base000',
+      tags: ['content/research/hook-sweep.mjs'],
+    });
+
+    const result = await checkKnowledgeDrift(projectId, {
+      sinceCommit: 'base000',
+      currentCommit: 'head222',
+      changedFiles: ['content/research/hook-sweep.mjs'],
+      apply: true,
+    });
+
+    expect(result.candidates.map(candidate => candidate.itemId)).toEqual([pathTagged.id]);
+    expect((await repo.getKnowledgeItem(topical.id))!.freshness).toBe('fresh');
+    expect((await repo.getKnowledgeItem(pathTagged.id))!.freshness).toBe('needs_review');
+  });
+
   it('should retrieve items hierarchically', async () => {
     const project = await repo.getProjectByRootPath(TEST_ROOT);
     const projectId = project!.id;

@@ -38,6 +38,7 @@ import {
 } from './host-session-bindings.js';
 import { bootstrapAgentSession } from './context-bootstrap.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
+import { ensureTranscriptIndex } from './transcript-index.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
 import { describeAutoDrift, runAutoDriftCheckBestEffort, type AutoDriftResult } from './drift-auto.js';
 
@@ -117,6 +118,29 @@ async function startBoundSession(projectId: string, input: NormalizedHostHook, s
     title: input.title ?? (scope === 'session' ? 'Agent session' : 'Agent turn'),
     includeContext,
   });
+}
+
+/**
+ * Ceiling, not a tax. Indexing is cheap once warm — a file whose size matches the stored
+ * offset is skipped without being opened — so this is only fully spent when there is real
+ * new transcript to absorb.
+ */
+const SESSION_START_INDEX_BUDGET_MS = 2_500;
+
+/**
+ * Bring the transcript index forward at session start rather than on first search.
+ *
+ * Warming lazily put the entire cost on the one call whose answer it corrupts: a search
+ * against a partially-indexed archive cannot distinguish "absent" from "not indexed yet",
+ * and the first search of a session was reliably the one that ran against the least
+ * coverage. Paying here means that search meets a warm index instead.
+ */
+async function warmTranscriptIndex(projectRoot: string): Promise<void> {
+  try {
+    await ensureTranscriptIndex(projectRoot, undefined, SESSION_START_INDEX_BUDGET_MS);
+  } catch {
+    // An optimisation only. A cold index degrades search; a throwing hook breaks the session.
+  }
 }
 
 async function bootstrapWithHandoff(projectId: string, input: NormalizedHostHook, scope: 'session' | 'turn', includeContext: boolean) {
@@ -301,6 +325,10 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     await closeInactiveHostSessionBindings();
     // Detection only: names what moved and the command to review it, mutating nothing.
     const drift = await runAutoDriftCheckBestEffort(projectId, input.projectRoot);
+    // Deliberately here and not inside bootstrapWithHandoff: 'session' scope is also what a
+    // turn-start fallback and a SubagentStart use, and fan-out multiplies whatever a subagent
+    // costs. One warm per real session start is the whole point.
+    await warmTranscriptIndex(input.projectRoot);
     const started = await bootstrapWithHandoff(projectId, input, 'session', true);
     // The warning is charged against the cap first — the same rule the subagent card
     // follows. Prepending it to an already-budgeted block pushed the session past the size

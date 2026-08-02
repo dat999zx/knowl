@@ -10,8 +10,15 @@ export default defineConfig({
     // Several suites are true integration tests that spawn `node dist/index.js`
     // per assertion. Process start-up costs 1-3s on Windows, so vitest's 5s
     // default makes them flake even when the code is correct.
-    testTimeout: 30_000,
-    hookTimeout: 30_000,
+    //
+    // Raised from 30s once it was measured rather than estimated: the dominant cost is not
+    // process spawn but per-test fixture rebuilds that open and close libSQL several times
+    // (tests/store/rank-knowledge.test.ts runs at 27.4s / 29.1s / 28.4s per test IN ISOLATION).
+    // Against a 30s cap those pass alone and fail under parallel load — a red suite that says
+    // nothing about the code. The headroom is the fix for the false signal; the fixture cost
+    // itself is worth attacking separately.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     // Suites delete their own fixtures, but on Windows libSQL holds the -shm sidecar until
     // the owning process lets go, so those removals routinely fail and are swallowed. This
     // sweeps up once, after every worker is done with its files.
@@ -35,13 +42,13 @@ export default defineConfig({
       // there, and `upgrade --all` and `doctor --fix` act on every repo in it -- so a suite
       // that spawns the CLI without this is one bug away from sweeping real projects.
       // Suites needing their own workspace still override this; they just no longer have to.
-      KNOWL_HOME: './.knowl-test-home',
-      // Machine-local Knowl state -- workspace manifests and the known-repository registry --
-      // lives under ~/.knowl by default. Suites that spawn the real CLI would otherwise write
-      // their scratch fixtures into the developer's own home directory, where nothing cleans
-      // them up and a later `knowl upgrade --all` would try to visit them. Absolute because a
-      // spawned CLI runs with its fixture as the working directory, and `knowlHome()` resolves
-      // a relative override against that. `.knowl-` prefixed, so global teardown sweeps it.
+      //
+      // ABSOLUTE, and declared exactly once. This key was previously written twice in this
+      // object -- './.knowl-test-home' then the resolved path -- so the safety above held only
+      // because a later duplicate key silently wins. A relative value is genuinely wrong here:
+      // a spawned CLI runs with its fixture as the working directory and `knowlHome()` resolves
+      // a relative override against THAT, which would put scratch state inside the fixture.
+      // `.knowl-` prefixed, so global teardown sweeps it.
       KNOWL_HOME: path.resolve('./.knowl-test-home'),
     },
   },
