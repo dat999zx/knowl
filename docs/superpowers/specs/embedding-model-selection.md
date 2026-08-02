@@ -50,9 +50,17 @@ Five decisions were settled with the user before this spec was written.
 | `granite-97m-multilingual` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | cls | q8 | 384 | ~98MB | 200+ |
 | `custom` | from `search.vector.model` | from `search.vector.pooling` | from `search.vector.dtype` | probed | varies | varies |
 
+The Granite model card publishes the 52 enhanced-support languages in a collapsible section:
+Albanian, Arabic, Azerbaijani, Bengali, Bulgarian, Catalan, Chinese, Croatian, Czech, Danish,
+Dutch, English, Estonian, Finnish, French, Georgian, German, Greek, Hebrew, Hindi, Hungarian,
+Icelandic, Indonesian, Italian, Japanese, Kazakh, Khmer, Korean, Latvian, Lithuanian, Malay,
+Marathi, Norwegian, Persian, Polish, Portuguese, Romanian, Russian, Serbian, Slovak, Slovenian,
+Spanish, Swahili, Swedish, Tagalog, Telugu, Thai, Turkish, Ukrainian, Urdu, Uzbek and Vietnamese.
+
 All three built-in presets produce 384-dimension vectors and have a `model_quantized.onnx` (q8)
-file, verified against their Hugging Face repositories. No `knowledge_embeddings` schema change is
-needed and the stored vector width does not change between presets.
+file, verified against their Hugging Face repositories. The stored vector width does not change
+between presets, so switching one does not alter the shape of the `vector` column. A separate
+`knowledge_embeddings` change is still required for a different reason — see Profile fingerprint.
 
 Pooling differs per model and is the main correctness hazard. MiniLM is mean-pooled; both
 `bge-small-en-v1.5` and `granite-97m-multilingual-r2` are CLS-pooled. `src/ai/embeddings.ts`
@@ -73,7 +81,27 @@ New module `src/core/vector-profile.ts` exports `resolveVectorProfile(config)` r
 
 Case 3 is what keeps existing installs working. A config holding `Xenova/all-MiniLM-L6-v2`
 resolves to the `minilm-l6-en` bundle with mean pooling, which is exactly the current behaviour.
-No existing repository changes behaviour and none needs a reindex as a result of this change.
+
+### Defaults must not migrate existing repositories
+
+Case 3 only survives if nothing writes a `preset` key into an existing config. It would not.
+`upgradeConfigDefaults` calls `mergeConfigDefaults`, which recursively fills in every key whose
+current value is `undefined`. An existing config has no `preset` key, so adding the preset to
+`DEFAULT_CONFIG` would inject `preset: granite-97m-multilingual` into every repository on
+`knowl upgrade`. Because a named preset outranks the flat `model` key in resolution order, those
+repositories would silently switch models — the exact outcome decision 4 rules out.
+
+The two roles that `DEFAULT_CONFIG` currently serves are therefore split:
+
+- `DEFAULT_CONFIG` stays the merge baseline for upgrades and **does not gain a `preset` key**. Its
+  `model` stays `Xenova/all-MiniLM-L6-v2`, so upgrades remain a no-op for vector config.
+- A new `NEW_PROJECT_CONFIG` is `DEFAULT_CONFIG` plus `preset: granite-97m-multilingual`, and is
+  used only by `knowl init` and by `resetAllConfig`.
+
+Reset is an explicit user action, so resetting to the current recommended default is correct — but
+it changes the resolved profile and therefore triggers the same reindex offer as any other change.
+The `preset` field's `defaultValue` in `CONFIG_FIELDS` is `granite-97m-multilingual` for the same
+reason.
 
 `resolveVectorProfile` becomes the single source consumed by `src/ai/embeddings.ts`,
 `src/store/write-embedding.ts`, the reindex command, and `knowl doctor`. The rejected alternative
@@ -115,17 +143,64 @@ When a custom model name is entered, before the change is added to the save set:
 A failure at any step re-prompts rather than saving. Config never comes to hold a model name that
 has not been shown to work.
 
+**The write must be atomic across keys.** A custom profile is three keys — `preset`, `model` and
+`pooling` — but `setConfigValue` loads the config, sets one path and saves. Writing them in
+sequence means `preset: custom` can land on disk with no verified model beside it, and any command
+running in between resolves a profile that was never checked. `resetConfigValue` has the same
+shape and the same problem.
+
+`setConfigValues(root, entries)` is added: it parses and validates every entry first, backs up
+once, and performs a single write. Nothing is persisted unless all entries are valid. The
+interactive UI already batches its changes until a final confirm, so it moves to this function and
+gains atomicity for free across every field, not just these.
+
+For the non-interactive path, `knowl config set search.vector.preset custom` is rejected on its
+own, because a bare `custom` is not a complete profile. The error names the alternative:
+`knowl config set-model <name>`, a command that runs the same verify-and-download flow and then
+commits all three keys through `setConfigValues`. Interactive, non-interactive and reset paths
+therefore share one code path for producing a valid profile.
+
+### Profile fingerprint
+
+`knowledge_embeddings` stores only `provider` and `model`, and `searchKnowledgeEmbeddings` filters
+on those two. That is not enough to describe when two vectors are comparable. dtype and pooling
+both change the numbers a model produces, so after a dtype-only or pooling-only change the old
+rows still match the filter and are scored against query vectors from the new profile. The result
+is silently wrong rankings rather than an error. This is a pre-existing defect for dtype; making
+models easy to switch turns it from a corner case into a routine one.
+
+A `profile_fingerprint TEXT` column is added to `knowledge_embeddings`, holding a hash of
+`provider|model|dtype|pooling`. `searchKnowledgeEmbeddings` and `findEmbeddedItemIds` filter on it
+instead of on provider and model. Existing rows are backfilled during migration with the
+fingerprint computed from the repository's resolved profile at migration time, which is by
+definition the profile that produced them.
+
+This one change also resolves the partial-rebuild and declined-rebuild cases without any staging
+machinery:
+
+- **Declined reindex.** No stored row carries the new fingerprint, so vector search matches
+  nothing and retrieval falls back to BM25. Degraded and clearly reported, never wrong.
+- **Interrupted reindex.** Only the rows already rewritten carry the new fingerprint. Search sees
+  a smaller corpus, not a mixed one. Re-running the reindex completes it.
+
+`knowl doctor` reports the count of stored rows whose fingerprint does not match the configured
+profile, so a half-finished rebuild is visible rather than inferred from poor results.
+
 ### Reindex
 
 `reindexKnowledgeEmbeddings` in `src/store/vector-index.ts` changes in three ways:
 
-- The `status: 'active'` filter is dropped, so items in every status are re-embedded. Non-active
-  items are reachable through the `status` filter on queries, so leaving them on an old model
-  makes them permanently invisible to vector search.
-- After the rebuild, embedding rows whose `provider` and `model` do not match the resolved profile
-  are deleted. This clears rows belonging to items that no longer exist.
-- The hardcoded `limit: 10_000` becomes batched paging. A store larger than that currently
-  truncates silently.
+- It stops going through `queryKnowledgeBase`, which cannot express what reindex needs. Omitting
+  `status` there does not mean "all statuses" — it applies `status = 'active'` as a default — and
+  it has no cursor or offset, so paging past its limit is impossible. Simply dropping the option
+  would silently keep re-embedding active items only.
+
+  A dedicated store function `iterateKnowledgeItemsForIndexing(projectId, { batchSize })` is added
+  instead. It performs a keyset scan ordered by id, applies no status predicate at all, and yields
+  batches. This also removes the hardcoded `limit: 10_000`, which currently truncates larger stores
+  without saying so.
+- After the rebuild, embedding rows whose fingerprint does not match the resolved profile are
+  deleted. This clears rows belonging to items that no longer exist.
 
 It returns `{ indexed, purged, byStatus }`, where `indexed` and `purged` are totals and `byStatus`
 maps each status to its indexed count, so the CLI can report what happened per status.
@@ -137,16 +212,16 @@ in place rather than accumulating.
 ### Change detection and the reindex offer
 
 After a config save, the resolved profile from before and after the save are compared. If any of
-`provider`, `model`, `dtype` or `pooling` differ, every stored embedding is unusable, because
-`searchKnowledgeEmbeddings` filters on provider and model.
+`provider`, `model`, `dtype` or `pooling` differ, the fingerprint changes and every stored
+embedding stops matching, so vector search falls back to BM25 until a reindex runs.
 
 - Interactive `knowl config` prompts to reindex immediately. Declining prints a warning naming
   the number of affected rows and the command to run.
 - Non-interactive `knowl config set` prints the same warning without prompting.
 
-Comparing the resolved profile rather than the raw keys means a pooling-only edit on a custom
-model also triggers the offer. Pooling is not stored in `knowledge_embeddings`, so a pooling
-change would otherwise leave rows that look valid but were computed differently.
+Comparing the resolved profile rather than the raw keys means a dtype-only or pooling-only edit
+also triggers the offer, and the fingerprint guarantees the store is safe rather than merely
+warned about if the user declines.
 
 ### Workspaces
 
@@ -162,22 +237,38 @@ Making the model easy to change makes that divergence easy to cause, so two chan
 strings — reporting two genuinely different models as compatible, or blocking a legitimate join.
 It is changed to call `resolveVectorProfile` and read the resolved values.
 
-**`EmbeddingIdentity` gains `pooling`.** Two repos on the same model and dtype but different
-pooling produce vectors that are not comparable, and pooling is not stored in
-`knowledge_embeddings`. Manifests written before this change have no pooling recorded; the field
-is ignored when comparing against such a manifest, so existing workspaces keep working rather than
-failing on a field that was never written.
+**`EmbeddingIdentity` becomes the fingerprint inputs**, gaining `pooling` alongside provider,
+model and dtype, so it describes exactly what the stored fingerprint describes.
+
+**Legacy manifests get a one-time migration, not a wildcard.** Manifests written before this
+change have no pooling recorded. Ignoring the field when it is absent would let two repositories
+with genuinely incompatible pooling compare as compatible — reintroducing the bug this section
+exists to prevent. Instead, the first time a workspace with no recorded pooling is resolved, the
+value is derived from the pinned model through the preset table and written back to the manifest.
+Every built-in model has a known pooling method, so this resolves cleanly for them. If the pinned
+model is not in the table, pooling is recorded as `unknown`, and a manifest holding `unknown`
+disables cross-repo vector fusion — federation falls back to BM25 and `knowl doctor` says why —
+until the workspace is repinned. Wrong results are never preferable to degraded ones.
+
+**Repinning needs a command.** `manifest.embedding` is assigned only when `manifest.repos.length
+=== 0`, so today there is no way to move an established workspace to a different model short of
+unlinking every repository. Switching models workspace-wide is now an expected operation, so
+`knowl workspace repin-embedding` is added. It rewrites `manifest.embedding` to the current
+repository's resolved profile, requires confirmation, and lists every linked repository that must
+now run `knowl reindex --vectors`. It does not and cannot reindex peers itself, since they are
+separate stores on possibly separate machines; naming them is the deliverable.
 
 The reindex offer additionally checks workspace membership. When the repo belongs to a workspace
-and the new profile no longer matches the manifest, the warning says so and names the consequence:
-this repo's items and its peers' items become invisible to each other until the profiles are
-aligned.
+and the new profile no longer matches the manifest, the warning says so, names the consequence —
+this repo's items and its peers' items become invisible to each other — and points at
+`repin-embedding` when the intent is to move the whole workspace.
 
 ### Default and discovery
 
-`knowl init` defaults new repositories to `granite-97m-multilingual`. `knowl upgrade` does not
-change the preset of an existing repository, so no user gets an unexpected 98MB download or a
-silent change in retrieval behaviour during an upgrade.
+`knowl init` writes `NEW_PROJECT_CONFIG`, defaulting new repositories to
+`granite-97m-multilingual`. `knowl upgrade` merges against `DEFAULT_CONFIG`, which carries no
+preset, so it cannot change the preset of an existing repository. No user gets an unexpected 98MB
+download or a silent change in retrieval behaviour during an upgrade.
 
 `knowl doctor` gains a non-failing notice, shown when the resolved preset is English-only, that
 names the current model and points at `knowl config`.
@@ -232,14 +323,24 @@ the three presets.
   compatibility path including the model-string match.
 - Pooling reaches the transformers.js pipeline call. This is the regression that would silently
   wreck retrieval quality with no visible error.
-- Reindex covers non-active statuses, purges rows not matching the configured model, and pages
-  past 10,000 items.
+- `mergeConfigDefaults` applied to a config written before this change produces no `preset` key,
+  so `knowl upgrade` cannot migrate an existing repository onto a different model.
+- Reindex covers non-active statuses, purges rows whose fingerprint does not match, and pages past
+  10,000 items. A store containing items in several statuses ends with every one embedded.
+- The fingerprint filter: a dtype-only change and a pooling-only change each make stored rows stop
+  matching, rather than being scored against the new profile's query vectors.
+- An interrupted reindex leaves a smaller searchable corpus, never a mixed one — assert that
+  partially rewritten rows are the only ones returned.
+- `setConfigValues` persists nothing when any entry fails validation.
+- `knowl config set search.vector.preset custom` is rejected on its own.
+- Legacy-manifest pooling migration: a manifest pinned to a built-in model gains the correct
+  pooling; one pinned to an unrecognized model records `unknown` and disables cross-repo vector
+  fusion rather than comparing as compatible.
 - Profile-change detection fires for each of `provider`, `model`, `dtype`, `pooling`, and does not
   fire for unrelated config edits.
 - `embeddingIdentityFromConfig` returns the resolved model for a preset-only config, rather than
   the empty string, and the workspace compatibility check behaves correctly for two configs that
   select the same model through different routes (preset versus explicit `model`).
-- A manifest with no recorded pooling still compares as compatible.
 - Custom model verification rejects a non-existent model and an ONNX-less repo, and prompts for
   pooling when `1_Pooling/config.json` is absent. Network calls are mocked; no test hits the
   network.
@@ -257,11 +358,6 @@ improvement, but the multilingual claim rests on published benchmark scores
 anything measured here. The current default is absent from that comparison because an
 English-only model has no meaningful multilingual retrieval score. The `lang` field exists so this
 gap can be closed later.
-
-**Granite's enhanced-language list is unconfirmed.** IBM documents 200+ supported languages with
-52 receiving enhanced training, but the list of 52 is not published in the model card, the GitHub
-repository, or the launch post. Whether any particular language is in the enhanced tier is
-unknown.
 
 **Published scores are not our data.** The preset ranking comes from MTEB, measured on other
 corpora. The benchmark exists precisely so the choice can be checked against Knowl's own content
