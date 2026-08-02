@@ -3,6 +3,45 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.13.0 — 2026-08-02
+
+### Changed
+
+- **`knowl config` reads like a settings screen instead of a key dump.** Every setting now
+  carries a name and a one-line explanation, so the list shows `Embedding model` and what it
+  does rather than `search.vector.preset: granite-small-en-r2`. The dotted key stays on the
+  row — it is what `knowl config set` takes, and a UI that never shows it gives you no way to
+  find it.
+
+- **The embedding model is a picker built from the preset table.** `VECTOR_PRESETS` already
+  recorded a readable label, a size and a language range for every model; the editor listed bare
+  ids anyway. Choices now read `Granite 97M Multilingual R2 — 200+ languages, 32k context ·
+  98 MB`. Selecting `Custom model…` still asks for a Hugging Face id and verifies it.
+
+- **Every value prompt has a way out.** `ConfigPrompts.inputValue` returns `string | null`, and
+  `null` abandons the edit without queueing anything; selects gained a `← Back` choice and text
+  inputs cancel on a blank entry. Previously, selecting a setting by accident committed you to
+  entering a value for it. Implementations that return a string are unaffected.
+
+### Fixed
+
+- **The editor no longer names a model that is not in use.** `resolveVectorProfile` reads a named
+  preset ahead of `search.vector.model`, and switching preset never rewrites that key — so a repo
+  running Granite still had `Xenova/all-MiniLM-L6-v2` on disk, and the editor displayed it.
+  Preset-owned rows now show the value actually in effect, and `Pooling method` shows the
+  preset's pooling rather than `unset`.
+
+- **`search.vector.model`, `.dtype` and `.pooling` are no longer editable while a preset owns
+  them.** Writing them in that state changed the file and changed no behaviour. They are marked
+  `set by preset`, and selecting one offers to open the preset instead of dead-ending. Choosing
+  the `custom` preset releases them, since it names no model of its own.
+
+- **A secret is no longer reported as modified on a project that never set one.** `getConfigValue`
+  returns the redaction for any secret field before it reads the file, so comparing that read
+  against the default marked every secret as changed — `API key ******** modified` on a config
+  with no `ai` section at all. An unwritten setting now displays the default that is actually in
+  effect rather than `unset`, and is not marked.
+
 ## 2.12.1 — 2026-08-02
 
 ### Fixed
