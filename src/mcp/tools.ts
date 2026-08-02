@@ -338,6 +338,34 @@ export function registerTools(
           },
         },
         {
+          name: 'knowl_park',
+          description: "Park this workstream under a short KEY the user keeps, and hand them the key. Use when the user says they want to come back to THIS work later, or wants to hold several threads at once. Unlike knowl_handoff (one baton per project, auto-delivered to whoever starts next, then archived), a parked point is addressable, survives being picked up, and many can exist side by side. Keep the brief short and pass sessionId - the resuming session reads the transcript for detail rather than trusting a long summary.",
+          inputSchema: {
+            type: 'object',
+            properties: {
+              goal: { type: 'string', description: 'What this workstream is trying to achieve, in one line.' },
+              nextAction: { type: 'string', description: 'The single next thing to do on resuming.' },
+              completed: { type: 'array', items: { type: 'string' }, description: 'What is already done, so it is not redone.' },
+              blocker: { type: 'string', description: 'What is in the way, if anything.' },
+              verificationStatus: { type: 'string', description: 'What has and has not been verified - say plainly if something is untested.' },
+              artifactRefs: { type: 'array', items: { type: 'string' }, description: 'Files, branches, PRs, or locators needed to continue.' },
+              sessionId: { type: 'string', description: "This session's id. The resuming session searches its transcript for anything the brief omits." },
+            },
+            required: ['goal', 'nextAction'],
+          },
+        },
+        {
+          name: 'knowl_resume',
+          description: "Restore a parked workstream from its key. CALL THIS IMMEDIATELY, before anything else, whenever the user's message is (or contains) a short opaque token of about six letters and digits - for example `k7x2qm`, `knowl:k7x2qm`, or `resume k7x2qm`. A bare token like that is not a question; it is a resume key, and the user expects the work to continue without being asked what it refers to. Pass the token exactly as given. With no key, lists the workstreams parked in this project.",
+          inputSchema: {
+            type: 'object',
+            properties: {
+              key: { type: 'string', description: 'The key the user pasted. Any surrounding punctuation or `knowl:` prefix is fine.' },
+              projectDir: { type: 'string', description: 'Project whose parked work to list when no key is given. Defaults to the current project.' },
+            },
+          },
+        },
+        {
           name: 'knowl_session_list',
           description: "Browse the project's past Claude Code sessions as an inventory: best-known name (a user rename beats a generated title), the opening ask, derived status (active / interrupted by a crash handoff / idle), any declared session card, last activity, and what each session promoted into memory. Use to answer 'which session was about X' or to decide between resuming a session and starting a new one - then knowl_transcript_search with sessionId to read into the chosen session. Filters by keywords over intent; for content questions use knowl_transcript_search.",
           inputSchema: {
@@ -1001,6 +1029,64 @@ export function registerTools(
           });
         }
         return { content: blocks };
+      }
+
+      else if (name === 'knowl_park') {
+        const { goal, nextAction, completed, blocker, verificationStatus, artifactRefs, sessionId } = args as any;
+        const { createResumePoint } = await import('../store/resume-points.js');
+        const point = await createResumePoint(projectRoot ?? process.cwd(), {
+          goal: String(goal),
+          nextAction: String(nextAction),
+          completed: Array.isArray(completed) ? completed.map(String) : undefined,
+          blocker: blocker ? String(blocker) : undefined,
+          verificationStatus: verificationStatus ? String(verificationStatus) : undefined,
+          artifactRefs: Array.isArray(artifactRefs) ? artifactRefs.map(String) : undefined,
+          sessionId: sessionId ? String(sessionId) : undefined,
+        });
+        // The key is the entire product of this call, so it is stated on its own
+        // line and told to the user verbatim -- a key paraphrased is a key lost.
+        return {
+          content: [{
+            type: 'text',
+            text: `Parked. Give the user this key exactly, on its own line:
+
+    ${point.key}
+
+Pasting it into any future session resumes this work. It is not consumed by being used.${point.brief.sessionId ? '' : ' No sessionId was recorded, so the resuming session cannot read this conversation for detail - pass one next time.'}`,
+          }],
+        };
+      }
+
+      else if (name === 'knowl_resume') {
+        const { key, projectDir } = args as any;
+        const { readResumePoint, listResumePoints, formatResumeBrief } = await import('../store/resume-points.js');
+
+        if (!key) {
+          const points = await listResumePoints(projectDir ? String(projectDir) : (projectRoot ?? process.cwd()));
+          if (points.length === 0) return { content: [{ type: 'text', text: 'No parked workstreams in this project.' }] };
+          const lines = points.map(p => `  ${p.key}  ${p.brief.goal}${p.resumeCount ? ` (resumed ${p.resumeCount}x)` : ''}`);
+          return { content: [{ type: 'text', text: `Parked workstreams, newest first:
+${lines.join('
+')}` }] };
+        }
+
+        const point = await readResumePoint(String(key));
+        if (!point) {
+          // A wrong key must not read as "no such work" -- it is far more often a
+          // typo, and the recoverable next step is to show what does exist.
+          const points = await listResumePoints(projectRoot ?? process.cwd());
+          const known = points.length ? `
+
+Keys parked in this project:
+${points.map(p => `  ${p.key}  ${p.brief.goal}`).join('
+')}` : '';
+          return {
+            isError: true,
+            content: [{ type: 'text', text: `No parked work under key "${key}". Check the key with the user rather than guessing what they meant.${known}` }],
+          };
+        }
+
+        return { content: [{ type: 'text', text: formatResumeBrief(point) }] };
       }
 
       else if (name === 'knowl_handoff') {

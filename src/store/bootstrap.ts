@@ -250,6 +250,19 @@ const SCHEMA_STATEMENTS = [
     content='transcript_messages',
     content_rowid='id'
   );`,
+  // A named, resumable parking spot for a workstream. Distinct from the one-shot
+  // session handoff: many can exist at once, each addressed by a short key the
+  // user keeps, and resuming does not consume it.
+  `CREATE TABLE IF NOT EXISTS resume_points (
+    key TEXT PRIMARY KEY,
+    project_dir TEXT NOT NULL,
+    brief TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_resumed_at TEXT,
+    resume_count INTEGER NOT NULL DEFAULT 0
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_resume_points_project ON resume_points(project_dir, created_at);`,
+
   // One int8-quantized vector per message, so a query can score the whole
   // archive rather than re-ranking what keyword search already found. Stored as
   // a BLOB: a JSON array of 384 floats is ~8x the bytes and has to be parsed
