@@ -2,9 +2,10 @@ import { sql } from 'drizzle-orm';
 import { KnowledgeWriteValidationOptions } from '../core/types.js';
 import { KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { getDb } from './database.js';
+import { isNormalizedConflictKey, normalizeConflictKey } from './conflicts.js';
 
 export type IntegrityFinding = {
-  code: 'secret' | 'dangling-reference' | 'missing-index-row' | 'invalid-json' | 'invalid-status';
+  code: 'secret' | 'dangling-reference' | 'missing-index-row' | 'invalid-json' | 'invalid-status' | 'unnormalized-conflict-key';
   severity: 'error' | 'warning';
   itemId?: string;
   detail: string;
@@ -31,9 +32,22 @@ export async function auditKnowledgeStore(
 ): Promise<IntegrityReport> {
   const db = getDb() as any;
   const findings: IntegrityFinding[] = [];
-  const rows = await db.all(sql`SELECT id, title, content, reasoning, source, alternatives, tags, affected_paths, status FROM knowledge_items`);
+  const rows = await db.all(sql`SELECT id, title, content, reasoning, source, alternatives, tags, affected_paths, status, conflict_key FROM knowledge_items`);
 
   for (const row of rows) {
+    // Every lookup matches on the normalized form, so a key that is not already in that
+    // form matches nothing — the row is unreachable by the conflict check meant to keep it
+    // unique and by the reader meant to retire it. Cheap to assert, and it is the invariant
+    // that would have caught the update path writing keys raw.
+    if (row.conflict_key !== null && row.conflict_key !== undefined && !isNormalizedConflictKey(String(row.conflict_key))) {
+      findings.push({
+        code: 'unnormalized-conflict-key',
+        severity: 'error',
+        itemId: String(row.id),
+        detail: `Conflict key "${row.conflict_key}" is not in storage shape (expected "${normalizeConflictKey(String(row.conflict_key))}"); the row is invisible to every conflict lookup.`,
+      });
+    }
+
     const alternatives = parseStringArray(row.alternatives);
     const tags = parseStringArray(row.tags);
     const affectedPaths = parseStringArray(row.affected_paths);

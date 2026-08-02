@@ -10,12 +10,17 @@
  * knowledge store and the MCP tool-surface checks deliberately have none: they need a person
  * or a new build, and pretending otherwise would let a sweep report a repo healthy when it
  * is not.
+ *
+ * The one integrity error that DOES get a remedy is an unnormalized conflict key: the repair
+ * is `normalizeConflictKey` applied to a column, which is deterministic, and leaving it means
+ * leaving rows permanently unreachable by every lookup.
  */
 export type DoctorRemedy =
   | { kind: 'guidance' }
   | { kind: 'gitignore' }
   | { kind: 'session-recover' }
   | { kind: 'reindex-vectors' }
+  | { kind: 'conflict-key-normalize' }
   /** Re-run a host's registration. Only ever emitted for a host the repo already uses. */
   | { kind: 'host-init'; host: string };
 

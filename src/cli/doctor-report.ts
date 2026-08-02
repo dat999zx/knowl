@@ -100,6 +100,19 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         // is cleared either by retiring the item or by changing the security setting.
         : 'run `knowl audit` to list the records, then retire an item with `knowl supersede <itemId> <replacementId>` or adjust security settings with `knowl config`',
     });
+
+    // Broken out of the integrity roll-up because, unlike the other integrity errors, this
+    // one has a deterministic repair. Left alone the rows stay unreachable by every conflict
+    // lookup, which reads as "no conflict" and lets the same identity be claimed again.
+    const unnormalizedKeys = integrity.findings.filter(finding => finding.code === 'unnormalized-conflict-key').length;
+    checks.push({
+      status: unnormalizedKeys > 0 ? 'FAIL' : 'OK',
+      message: unnormalizedKeys === 0
+        ? 'Conflict keys are in storage shape'
+        : `${unnormalizedKeys} conflict key(s) are not in storage shape and match no lookup`,
+      fix: unnormalizedKeys === 0 ? undefined : 'run `knowl doctor --fix` to normalize them',
+      remedy: unnormalizedKeys === 0 ? undefined : { kind: 'conflict-key-normalize' },
+    });
     try {
       await (getDb() as any).all(sql`SELECT 1 FROM knowledge_embeddings LIMIT 1`);
       checks.push({ status: 'OK', message: 'Database schema includes knowledge_embeddings' });

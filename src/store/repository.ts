@@ -4,7 +4,7 @@ import { getDb, withClientTransaction } from './database.js';
 import type { DbConnection } from './database.js';
 import * as schema from './schema.js';
 import { recordTombstone } from './tombstones.js';
-import { normalizeConflictKey, normalizeConflictScope } from './conflicts.js';
+import { normalizeConflictFields } from './conflicts.js';
 import {
   Project,
   KnowledgeItem,
@@ -176,7 +176,9 @@ export async function createKnowledgeItem(
     tier: 'asserted' as const, // standing is earned by use, never granted at birth
     tierSince: now, // the climb to verified starts here, not at some inherited history
     provenance: item.provenance ?? null,
-    conflictKey: item.conflictKey ? normalizeConflictKey(item.conflictKey) : null, conflictScope: normalizeConflictScope(item.conflictScope), conflictExclusive: item.conflictExclusive ?? false,
+    conflictKey: null, conflictScope: null, // replaced below; the boundary owns both columns
+    ...normalizeConflictFields({ conflictKey: item.conflictKey ?? null, conflictScope: item.conflictScope ?? null }),
+    conflictExclusive: item.conflictExclusive ?? false,
     supersededById: null,
     version: 1,
     createdAt: now,
@@ -343,8 +345,13 @@ export async function updateKnowledgeItem(
     const tierIsReset = !tierIsSetExplicitly
       && (updates.content !== undefined || updates.title !== undefined);
 
+    // Identity goes through the boundary here too. Spreading `updates` verbatim is exactly
+    // how raw keys used to reach the column, and a raw key is unreachable forever after.
+    const conflictFields = normalizeConflictFields(updates);
+
     const dbUpdates = {
       ...updates,
+      ...conflictFields,
       ...(updates.affectedPaths !== undefined ? { affectedPaths } : {}),
       ...(shouldRefreshHash ? { contentHash: hashKnowledgeContent(merged) } : {}),
       ...(updates.lifecycleHash === undefined ? { lifecycleHash: hashKnowledgeLifecycle(lifecycle) } : {}),
@@ -373,7 +380,7 @@ export async function updateKnowledgeItem(
       await exec.update(schema.knowledgeAssertions).set({ validTo: now, replacedAt: now }).where(eq(schema.knowledgeAssertions.id, openAssertions[0].id));
       await exec.insert(schema.knowledgeAssertions).values({
         id: generateId(), knowledgeItemId: id, content: merged.content, validFrom: now, validTo: null,
-        recordedAt: now, replacedAt: null, confidence: updates.confidence ?? current[0].confidence, sourceEvidenceId: null, conflictKey: updates.conflictKey ?? current[0].conflictKey, conflictScope: updates.conflictScope ?? current[0].conflictScope, conflictExclusive: updates.conflictExclusive ?? current[0].conflictExclusive,
+        recordedAt: now, replacedAt: null, confidence: updates.confidence ?? current[0].confidence, sourceEvidenceId: null, conflictKey: conflictFields.conflictKey ?? current[0].conflictKey, conflictScope: conflictFields.conflictScope ?? current[0].conflictScope, conflictExclusive: updates.conflictExclusive ?? current[0].conflictExclusive,
       });
     }
 
