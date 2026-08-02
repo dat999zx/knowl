@@ -3,6 +3,24 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.12.1 — 2026-08-02
+
+### Fixed
+
+- **Change notifications are no longer swallowed when two tool calls land close together.**
+  A non-shell tool event normalises to `summary: "<Tool> completed"`, and the capture
+  fingerprint was built from that payload alone — so every `Grep` in a session hashed
+  identically, and a second call inside the 1.5 second debounce window was dropped before any
+  processing. No `KNOWL CHANGED` card, no drift counting, exit 0 and no output. Agents call
+  tools far faster than that, so real notifications were being lost.
+
+  Hook events now carry a debounce-only discriminator built from the tool name and its retained
+  input, so calls that differ only in their arguments no longer collide. The `tool_input`
+  allowlist additionally keeps `pattern`, `glob`, `query` and `url` — short strings, bounded like
+  every other retained field and compared in memory only — without which search tools have
+  nothing retained to tell one call from the next. Genuine duplicate deliveries of the same call
+  are still collapsed, which is what the debounce is for.
+
 ## 2.12.0 — 2026-08-02
 
 ### Added
