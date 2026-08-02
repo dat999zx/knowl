@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DEFAULT_CONFIG, NEW_PROJECT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
+import { resolveVectorProfile } from '../../src/core/vector-profile.js';
 import { getConfigValue, resetConfigValue, setConfigValue, setConfigValues } from '../../src/cli/config/service.js';
 import { CONFIG_UI_ADVANCED, CONFIG_UI_BACK, CONFIG_UI_QUIT, ConfigFieldView, ConfigPrompts, presetChoices, runConfigUi } from '../../src/cli/config/ui.js';
 
@@ -454,51 +455,55 @@ describe('config UI presentation', () => {
     expect(views.find(field => field.key === 'security.secretPatterns')?.modified).toBe(false);
   });
 
-  it('offers the owning setting instead of editing a field the preset controls', async () => {
+  it('lets a preset-supplied field be edited, and makes the edit take effect', async () => {
     await writeConfig({
       ...DEFAULT_CONFIG,
       search: { vector: { ...DEFAULT_CONFIG.search!.vector, preset: 'bge-small-en' } },
     } as typeof DEFAULT_CONFIG);
-    let edited: string | undefined;
+    let opened: string | undefined;
     let asked = 0;
     const result = await runConfigUi(ROOT, {
       selectCategory: async () => (asked++ === 0 ? 'Search' : CONFIG_UI_QUIT),
       selectField: async () => 'search.vector.dtype',
-      // Accepting the offer must redirect the edit to the preset, not the dtype.
-      openOwner: async () => true,
-      inputValue: async field => { edited = field.key; return 'minilm-l6-en'; },
+      inputValue: async field => { opened = field.key; return 'fp16'; },
       confirmSave: async () => true,
       continueEditing: async () => false,
     });
 
-    expect(edited).toBe('search.vector.preset');
-    // Picking a model writes the whole profile, so the flat keys cannot be left
-    // describing the model that came before.
-    expect(result.changes.map(change => change.key)).toEqual([
-      'search.vector.preset', 'search.vector.model', 'search.vector.dtype', 'search.vector.pooling',
-    ]);
-    expect(await getConfigValue(ROOT, 'search.vector.preset')).toBe('minilm-l6-en');
-    expect(await getConfigValue(ROOT, 'search.vector.model')).toBe('Xenova/all-MiniLM-L6-v2');
-    expect(await getConfigValue(ROOT, 'search.vector.pooling')).toBe('mean');
+    // The editor opens on the field that was chosen. Nothing is refused, and nothing is
+    // silently redirected somewhere else.
+    expect(opened).toBe('search.vector.dtype');
+    expect(result.saved).toBe(true);
+
+    // A named preset resolves ahead of dtype, so leaving it in place would make the edit
+    // a no-op. The profile moves to custom, keeping the preset's other values.
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect(saved.search.vector).toMatchObject({
+      preset: 'custom',
+      model: 'Xenova/bge-small-en-v1.5',
+      pooling: 'cls',
+      dtype: 'fp16',
+    });
+    expect(resolveVectorProfile(saved).dtype).toBe('fp16');
   });
 
-  it('writes nothing when the owner offer is declined', async () => {
+  it('opens a preset-supplied field on the value in effect, not the stale stored one', async () => {
+    // pooling is absent from the file; bge-small-en supplies cls.
     await writeConfig({
       ...DEFAULT_CONFIG,
       search: { vector: { ...DEFAULT_CONFIG.search!.vector, preset: 'bge-small-en' } },
     } as typeof DEFAULT_CONFIG);
+    let offered: unknown;
     let asked = 0;
-    const result = await runConfigUi(ROOT, {
+    await runConfigUi(ROOT, {
       selectCategory: async () => (asked++ === 0 ? 'Search' : CONFIG_UI_QUIT),
-      selectField: async () => 'search.vector.model',
-      openOwner: async () => false,
-      inputValue: async () => { throw new Error('a preset-owned field must not open an editor'); },
-      confirmSave: async () => true,
+      selectField: async () => 'search.vector.pooling',
+      inputValue: async (_field, current) => { offered = current; return null; },
+      confirmSave: async () => false,
       continueEditing: async () => false,
     });
 
-    expect(result.saved).toBe(false);
-    expect(result.changes).toEqual([]);
+    expect(offered).toBe('cls');
   });
 
   it('cancelling a value prompt queues no change and returns to the setting list', async () => {

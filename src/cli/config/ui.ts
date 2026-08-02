@@ -46,10 +46,13 @@ export interface ConfigFieldView {
   type: ConfigFieldType;
   values?: readonly string[];
   /**
-   * Set when another setting owns this value, naming it. A preset resolves ahead of the
-   * flat keys, so editing an owned field writes to disk and changes nothing.
+   * Set when a named preset currently supplies this value.
+   *
+   * It is not a lock. A preset resolves ahead of the flat keys, so editing this field
+   * on its own would write to disk and change nothing -- the editor answers that by
+   * moving the config to a custom profile on save, not by refusing the edit.
    */
-  ownedBy?: { key: string; label: string };
+  ownedBy?: { key: string; label: string; presetId: string };
   /** True when the value differs from this field's default. */
   modified: boolean;
 }
@@ -79,12 +82,6 @@ export interface ConfigPrompts {
   inputValue(field: ConfigFieldView, current: unknown): Promise<string | null>;
   confirmSave(changes: ConfigChange[]): Promise<boolean>;
   continueEditing(): Promise<boolean>;
-  /**
-   * Asked when a setting owned by another one is selected. Returning true opens the
-   * owner instead; without it the selection returns to the list, since editing the
-   * owned field directly would write a value nothing reads.
-   */
-  openOwner?(field: ConfigFieldView): Promise<boolean>;
   /**
    * Shown when a value fails to parse. Implementing it turns a bad entry into a re-prompt;
    * without it the error propagates, which is the older behaviour and is what the tests
@@ -129,15 +126,17 @@ function sameValue(left: unknown, right: unknown): boolean {
 }
 
 /**
- * A named preset resolves ahead of the flat keys, so while one is set the fields it
- * covers are display-only. `custom` names no model of its own and therefore owns nothing.
+ * Which named preset is currently supplying this field's value, if any.
+ *
+ * `custom` names no model of its own, so under it the flat keys are the real values and
+ * nothing supplies them.
  */
 function ownerOf(field: ConfigField, currentByKey: Map<string, unknown>): ConfigFieldView['ownedBy'] {
   if (!field.derivedFrom) return undefined;
   const ownerValue = currentByKey.get(field.derivedFrom);
   if (typeof ownerValue !== 'string' || ownerValue === 'custom') return undefined;
   if (!(ownerValue in VECTOR_PRESETS)) return undefined;
-  return { key: field.derivedFrom, label: getConfigField(field.derivedFrom).label };
+  return { key: field.derivedFrom, label: getConfigField(field.derivedFrom).label, presetId: ownerValue };
 }
 
 /** Which part of a preset a derived key takes its value from. */
@@ -195,7 +194,10 @@ function fieldView(
     key: field.key,
     label: field.label,
     description: field.description,
-    current,
+    // The value in effect, not the one on disk. It is what the row displays, what a
+    // picker opens on and what a text box pre-fills, so an edit starts from what is
+    // running rather than from a stale key the resolver never reads.
+    current: shown,
     currentText: presetText ?? formatCurrent(shown, field.secret),
     secret: field.secret,
     type: field.type,
@@ -305,7 +307,7 @@ export function createInquirerPrompts(): ConfigPrompts {
             name: rows[index],
             value: field.key,
             description: field.ownedBy
-              ? `${field.description}  ${color.dim(`(chosen by ${field.ownedBy.label})`)}`
+              ? `${field.description}  ${color.dim(`Now from ${field.ownedBy.label}; changing it switches to a custom model.`)}`
               : field.description,
           })),
           // Settings above, ways out below. Without the rule they read as one list and
@@ -332,6 +334,38 @@ export function createInquirerPrompts(): ConfigPrompts {
           default: typeof current === 'string' ? current : undefined,
         });
         return chosen === VALUE_CANCEL ? null : chosen;
+      }
+
+      // The raw model id is free text by nature, but the ids anyone actually wants are
+      // already known. Offering them makes even the advanced field something you pick,
+      // with typing kept for a model that is not on the list.
+      if (field.key === 'search.vector.model') {
+        const known = (Object.keys(VECTOR_PRESETS) as Array<keyof typeof VECTOR_PRESETS>)
+          .map(id => ({
+            name: VECTOR_PRESETS[id].model,
+            value: VECTOR_PRESETS[id].model,
+            description: `${VECTOR_PRESETS[id].label.split(' — ')[0]} ${symbol.dot} ${VECTOR_PRESETS[id].sizeMb} MB`,
+          }));
+        const TYPE_IT = '__knowl_type_model__';
+        const chosen = await prompts.select({
+          theme: THEME,
+          message: field.label,
+          pageSize: 8,
+          choices: [
+            ...known,
+            { name: `Type another model id${symbol.more}`, value: TYPE_IT, description: 'Any Hugging Face model id' },
+            { name: `${symbol.back} Back`, value: VALUE_CANCEL, description: 'Leave this setting unchanged' },
+          ],
+          default: typeof current === 'string' ? current : undefined,
+        });
+        if (chosen === VALUE_CANCEL) return null;
+        if (chosen !== TYPE_IT) return chosen;
+        const typed = await prompts.input({
+          theme: THEME,
+          message: `${field.label} (blank to cancel)`,
+          default: editableDefault(current),
+        });
+        return typed.trim() ? typed : null;
       }
 
       if (field.type === 'boolean') {
@@ -370,11 +404,6 @@ export function createInquirerPrompts(): ConfigPrompts {
       });
       return entered.trim() ? entered : null;
     },
-    openOwner: async field => (await import('@inquirer/prompts')).confirm({
-      theme: THEME,
-      message: `${field.label} is chosen by ${field.ownedBy?.label}, so editing it here would change nothing. Open ${field.ownedBy?.label} instead?`,
-      default: true,
-    }),
     confirmSave: async changes => (await import('@inquirer/prompts')).confirm({
       theme: THEME,
       message: `Save these changes?\n${changes.map(change =>
@@ -464,15 +493,7 @@ export async function runConfigUi(root: string, prompts: ConfigPrompts = createI
 
     // Falls back to building the view rather than trusting the visible list: a caller may
     // name any key in the category, and an advanced one is not in the list it was shown.
-    let view = views.find(candidate => candidate.key === selected) ?? toView(getConfigField(selected));
-    // An owned field is display-only while its owner holds a named preset. Offering the
-    // owner keeps the interaction going somewhere useful instead of dead-ending.
-    if (view.ownedBy) {
-      const owner = view.ownedBy;
-      if (!prompts.openOwner || !(await prompts.openOwner(view))) continue;
-      view = toView(getConfigField(owner.key));
-    }
-
+    const view = views.find(candidate => candidate.key === selected) ?? toView(getConfigField(selected));
     const key = view.key;
     const field = getConfigField(key);
 
@@ -528,6 +549,27 @@ export async function runConfigUi(root: string, prompts: ConfigPrompts = createI
       }
       editing = await prompts.continueEditing();
       continue;
+    }
+
+    // Editing a field a named preset covers takes effect rather than being ignored.
+    //
+    // `resolveVectorProfile` reads a named preset ahead of the flat keys, so writing
+    // `dtype: fp16` under `preset: bge-small-en` changes the file and nothing else. The
+    // answer is not to refuse the edit -- a settings screen exists to change things --
+    // it is to move the config to where the edit counts: the preset becomes `custom`,
+    // its values are written out so nothing is lost, and the edited key wins.
+    if (view.ownedBy && typeof view.ownedBy.presetId === 'string') {
+      const preset = VECTOR_PRESETS[view.ownedBy.presetId as keyof typeof VECTOR_PRESETS];
+      changes.push({ key: 'search.vector.preset', before: view.ownedBy.presetId, after: 'custom', raw: 'custom' });
+      for (const [partKey, value] of [
+        ['search.vector.model', preset.model],
+        ['search.vector.dtype', preset.dtype],
+        ['search.vector.pooling', preset.pooling],
+      ] as const) {
+        // The edited key is queued below and comes last, so it overrides this baseline.
+        if (partKey === key) continue;
+        changes.push({ key: partKey, before: currentByKey.get(partKey), after: value, raw: String(value) });
+      }
     }
 
     changes.push({
