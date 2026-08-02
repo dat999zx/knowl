@@ -88,7 +88,11 @@ export async function recordKnowledgeFeedback(input: Omit<KnowledgeAccessInput, 
 
 export async function listKnowledgeAccess(itemId: string): Promise<KnowledgeAccess[]> {
   const result = await getClient().execute({
-    sql: 'SELECT * FROM knowledge_access WHERE knowledge_item_id = ? ORDER BY retrieved_at ASC, id ASC',
+    // Ties break on rowid, not id. `retrieved_at` is millisecond text, so an access and the
+    // feedback answering it commonly share one, and `id` is random hex -- which made the
+    // order of an append-only log a coin flip. rowid is the insertion counter, so equal
+    // timestamps read back in the order they were written.
+    sql: 'SELECT * FROM knowledge_access WHERE knowledge_item_id = ? ORDER BY retrieved_at ASC, rowid ASC',
     args: [itemId],
   });
   return result.rows.map(mapAccess);

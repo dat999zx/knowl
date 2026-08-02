@@ -77,6 +77,11 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
   preset decides the model, so the command changed nothing while printing success. It now says the
   key is being overridden and names the model actually in use.
 
+- **The access log reads back in the order it was written.** `retrieved_at` is millisecond text, so
+  a retrieval and the feedback answering it routinely share one — and the tiebreak was the random
+  hex `id`, which made the order of an append-only log a coin flip. Equal timestamps now break on
+  the insertion counter.
+
 ## 2.11.1 — 2026-08-01
 
 ### Fixed
