@@ -1063,8 +1063,7 @@ export function registerTools(
               '',
               'Resuming does not consume it; the same key works again later.',
               point.brief.sessionId ? '' : 'No sessionId was recorded, so the resuming session cannot read this conversation for detail — pass one next time.',
-            ].filter(Boolean).join('
-'),
+            ].filter(Boolean).join('\n'),
           }],
         };
       }
@@ -1077,9 +1076,7 @@ export function registerTools(
           const points = await listResumePoints(projectDir ? String(projectDir) : (projectRoot ?? process.cwd()));
           if (points.length === 0) return { content: [{ type: 'text', text: 'No parked workstreams in this project.' }] };
           const lines = points.map(p => `  ${p.key}  ${p.brief.goal}${p.resumeCount ? ` (resumed ${p.resumeCount}x)` : ''}`);
-          return { content: [{ type: 'text', text: `Parked workstreams, newest first:
-${lines.join('
-')}` }] };
+          return { content: [{ type: 'text', text: `Parked workstreams, newest first:\n${lines.join('\n')}` }] };
         }
 
         const point = await readResumePoint(String(key));
@@ -1087,11 +1084,7 @@ ${lines.join('
           // A wrong key must not read as "no such work" -- it is far more often a
           // typo, and the recoverable next step is to show what does exist.
           const points = await listResumePoints(projectRoot ?? process.cwd());
-          const known = points.length ? `
-
-Keys parked in this project:
-${points.map(p => `  ${p.key}  ${p.brief.goal}`).join('
-')}` : '';
+          const known = points.length ? `\n\nKeys parked in this project:\n${points.map(p => `  ${p.key}  ${p.brief.goal}`).join('\n')}` : '';
           return {
             isError: true,
             content: [{ type: 'text', text: `No parked work under key "${key}". Check the key with the user rather than guessing what they meant.${known}` }],
