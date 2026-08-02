@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DEFAULT_CONFIG, NEW_PROJECT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
 import { getConfigValue, resetConfigValue, setConfigValue, setConfigValues } from '../../src/cli/config/service.js';
-import { CONFIG_UI_BACK, CONFIG_UI_QUIT, ConfigFieldView, ConfigPrompts, runConfigUi } from '../../src/cli/config/ui.js';
+import { CONFIG_UI_BACK, CONFIG_UI_QUIT, ConfigFieldView, ConfigPrompts, presetChoices, runConfigUi } from '../../src/cli/config/ui.js';
 
 const ROOT = path.resolve('.knowl-config-service-test');
 
@@ -354,5 +354,200 @@ describe('config UI', () => {
     await runConfigUi(ROOT, prompts);
     expect(JSON.stringify(displayed)).not.toContain('super-secret');
     expect(JSON.stringify(displayed)).toContain('********');
+  });
+});
+
+describe('config UI presentation', () => {
+  /** Enter Search, capture the field list, then quit without editing. */
+  async function viewsForCategory(category: string): Promise<ConfigFieldView[]> {
+    let seen: ConfigFieldView[] = [];
+    let asked = 0;
+    await runConfigUi(ROOT, {
+      selectCategory: async () => (asked++ === 0 ? category : CONFIG_UI_QUIT),
+      selectField: async fields => { seen = fields; return CONFIG_UI_BACK; },
+      inputValue: async () => { throw new Error('should not reach value entry'); },
+      confirmSave: async () => false,
+      continueEditing: async () => false,
+    });
+    return seen;
+  }
+
+  it('names every setting and explains it, while still carrying the dotted key', async () => {
+    await writeConfig();
+    const views = await viewsForCategory('Search');
+
+    const preset = views.find(field => field.key === 'search.vector.preset')!;
+    expect(preset.label).toBe('Embedding model');
+    expect(preset.description).toMatch(/384-dimension/);
+    // The key stays available: it is what `knowl config set` takes.
+    expect(views.every(field => field.key.includes('.'))).toBe(true);
+    expect(views.every(field => field.label.length > 0 && !field.label.includes('.'))).toBe(true);
+  });
+
+  it('renders the preset as its readable name rather than the internal id', async () => {
+    await writeConfig({
+      ...DEFAULT_CONFIG,
+      search: { vector: { ...DEFAULT_CONFIG.search!.vector, preset: 'granite-97m-multilingual' } },
+    } as typeof DEFAULT_CONFIG);
+    const views = await viewsForCategory('Search');
+
+    const preset = views.find(field => field.key === 'search.vector.preset')!;
+    expect(preset.currentText).toContain('Granite 97M Multilingual');
+    expect(preset.currentText).toContain('98 MB');
+    expect(preset.currentText).not.toBe('granite-97m-multilingual');
+  });
+
+  it('marks the fields a named preset owns, and releases them under custom', async () => {
+    await writeConfig({
+      ...DEFAULT_CONFIG,
+      search: { vector: { ...DEFAULT_CONFIG.search!.vector, preset: 'bge-small-en' } },
+    } as typeof DEFAULT_CONFIG);
+    const owned = await viewsForCategory('Search');
+
+    for (const key of ['search.vector.model', 'search.vector.dtype', 'search.vector.pooling']) {
+      expect(owned.find(field => field.key === key)?.ownedBy?.key).toBe('search.vector.preset');
+    }
+    // The preset itself is never owned, or there would be no way in.
+    expect(owned.find(field => field.key === 'search.vector.preset')?.ownedBy).toBeUndefined();
+
+    await fs.rm(ROOT, { recursive: true, force: true });
+    await writeConfig({
+      ...DEFAULT_CONFIG,
+      search: { vector: { ...DEFAULT_CONFIG.search!.vector, preset: 'custom' } },
+    } as typeof DEFAULT_CONFIG);
+    const free = await viewsForCategory('Search');
+
+    // `custom` names no model of its own, so the flat keys are the only thing to edit.
+    expect(free.find(field => field.key === 'search.vector.model')?.ownedBy).toBeUndefined();
+    expect(free.find(field => field.key === 'search.vector.pooling')?.ownedBy).toBeUndefined();
+  });
+
+  it('marks a value that differs from its default, and leaves a default value unmarked', async () => {
+    // Only rejectSecrets is moved off its default; the pattern list is left as shipped.
+    await writeConfig({
+      ...DEFAULT_CONFIG,
+      security: { rejectSecrets: false, secretPatterns: DEFAULT_CONFIG.security.secretPatterns },
+    });
+    const views = await viewsForCategory('Security');
+
+    expect(views.find(field => field.key === 'security.rejectSecrets')?.modified).toBe(true);
+    expect(views.find(field => field.key === 'security.secretPatterns')?.modified).toBe(false);
+  });
+
+  it('offers the owning setting instead of editing a field the preset controls', async () => {
+    await writeConfig({
+      ...DEFAULT_CONFIG,
+      search: { vector: { ...DEFAULT_CONFIG.search!.vector, preset: 'bge-small-en' } },
+    } as typeof DEFAULT_CONFIG);
+    let edited: string | undefined;
+    let asked = 0;
+    const result = await runConfigUi(ROOT, {
+      selectCategory: async () => (asked++ === 0 ? 'Search' : CONFIG_UI_QUIT),
+      selectField: async () => 'search.vector.dtype',
+      // Accepting the offer must redirect the edit to the preset, not the dtype.
+      openOwner: async () => true,
+      inputValue: async field => { edited = field.key; return 'minilm-l6-en'; },
+      confirmSave: async () => true,
+      continueEditing: async () => false,
+    });
+
+    expect(edited).toBe('search.vector.preset');
+    expect(result.changes.map(change => change.key)).toEqual(['search.vector.preset']);
+    expect(await getConfigValue(ROOT, 'search.vector.preset')).toBe('minilm-l6-en');
+  });
+
+  it('writes nothing when the owner offer is declined', async () => {
+    await writeConfig({
+      ...DEFAULT_CONFIG,
+      search: { vector: { ...DEFAULT_CONFIG.search!.vector, preset: 'bge-small-en' } },
+    } as typeof DEFAULT_CONFIG);
+    let asked = 0;
+    const result = await runConfigUi(ROOT, {
+      selectCategory: async () => (asked++ === 0 ? 'Search' : CONFIG_UI_QUIT),
+      selectField: async () => 'search.vector.model',
+      openOwner: async () => false,
+      inputValue: async () => { throw new Error('a preset-owned field must not open an editor'); },
+      confirmSave: async () => true,
+      continueEditing: async () => false,
+    });
+
+    expect(result.saved).toBe(false);
+    expect(result.changes).toEqual([]);
+  });
+
+  it('cancelling a value prompt queues no change and returns to the setting list', async () => {
+    await writeConfig();
+    const before = await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8');
+    let fieldPrompts = 0;
+    let confirmCalled = false;
+    let asked = 0;
+    const result = await runConfigUi(ROOT, {
+      selectCategory: async () => (asked++ === 0 ? 'Search' : CONFIG_UI_QUIT),
+      selectField: async () => { fieldPrompts += 1; return 'search.vector.cacheDir'; },
+      inputValue: async () => null,
+      confirmSave: async () => { confirmCalled = true; return true; },
+      continueEditing: async () => false,
+    });
+
+    expect(result.saved).toBe(false);
+    expect(result.changes).toEqual([]);
+    // Cancelling returns to the list rather than ending the session outright.
+    expect(fieldPrompts).toBe(1);
+    expect(confirmCalled).toBe(false);
+    expect(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8')).toBe(before);
+  });
+
+  it('shows what an owned field is actually running, not the stale stored value', async () => {
+    // The flat keys still hold MiniLM from before the preset was introduced.
+    await writeConfig({
+      ...DEFAULT_CONFIG,
+      search: {
+        vector: {
+          ...DEFAULT_CONFIG.search!.vector,
+          preset: 'granite-small-en-r2',
+          model: 'Xenova/all-MiniLM-L6-v2',
+        },
+      },
+    } as typeof DEFAULT_CONFIG);
+    const views = await viewsForCategory('Search');
+
+    const model = views.find(field => field.key === 'search.vector.model')!;
+    expect(model.currentText).toContain('granite');
+    expect(model.currentText).not.toContain('MiniLM');
+    // Pooling is absent from the file entirely; the preset is what decides it.
+    expect(views.find(field => field.key === 'search.vector.pooling')?.currentText).toBe('cls');
+    // A preset's doing is not someone's edit.
+    expect(model.modified).toBe(false);
+  });
+
+  it('shows the default for an unwritten setting and does not call it modified', async () => {
+    await writeConfig();
+    const views = await viewsForCategory('Memory namespaces');
+
+    const organization = views.find(field => field.key === 'memory.organization.enabled')!;
+    expect(organization.currentText).toBe('off');
+    expect(organization.modified).toBe(false);
+  });
+
+  it('never marks a secret modified, since it always reads back redacted', async () => {
+    await writeConfig();
+    const views = await viewsForCategory('AI provider');
+
+    const apiKey = views.find(field => field.key === 'ai.apiKey')!;
+    expect(apiKey.currentText).toBe('********');
+    expect(apiKey.modified).toBe(false);
+  });
+
+  it('builds preset choices carrying size and language, with a way back', () => {
+    const choices = presetChoices();
+
+    const multilingual = choices.find(choice => choice.value === 'granite-97m-multilingual')!;
+    expect(multilingual.name).toBe('Granite 97M Multilingual R2');
+    expect(multilingual.description).toContain('98 MB');
+    expect(multilingual.description).toContain('200+ languages');
+    // No raw ids on show, and both escape hatches present.
+    expect(choices.every(choice => !choice.name.includes('-'))).toBe(true);
+    expect(choices.some(choice => choice.name === 'Custom model…')).toBe(true);
+    expect(choices[choices.length - 1].name).toBe('← Back');
   });
 });
