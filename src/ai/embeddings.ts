@@ -6,31 +6,48 @@ import { KnowledgeEmbedder } from '../store/vector-index.js';
 /**
  * Chosen by measurement on a real corpus, not by leaderboard rank.
  *
- * Against 346 project atoms with 17 queries phrased the way someone
- * half-remembers a thing, all-MiniLM-L6-v2 returned the correct atom first
- * only 29% of the time (MRR 0.465); bge-small doubles that to 59% (MRR 0.662)
- * for roughly 2x the embedding cost. MTEB rank would have picked
- * all-MiniLM-L12-v2, which measured SLOWER and LESS accurate here, and
- * bge-base, whose q8 export returns degenerate rankings (18% at every k,
- * under both mean and CLS pooling) - so neither leaderboards nor model size
- * predicted this outcome.
+ * Scored against project atoms with 17 queries phrased the way someone
+ * half-remembers a thing. Every row below is from ONE session on ONE corpus
+ * snapshot, because the baseline moves: bge-small scored MRR 0.662 one day and
+ * 0.621 the next on a corpus that had grown by ~16 atoms, which is larger than
+ * some of the gaps being judged.
  *
- * It also raises the input ceiling from 256 word-pieces to 512. The old model
- * silently truncated: transcript messages are stored up to 20,000 characters,
- * so long messages were being ranked on their first paragraph alone.
+ *   granite-embedding-small-english-r2  @1 59%  @3 94%  MRR 0.750  <- chosen
+ *   bge-small-en-v1.5                   @1 53%  @3 65%  MRR 0.621
+ *   granite-embedding-97m-multilingual-r2  @1 47%  @3 76%  MRR 0.643
+ *   all-MiniLM-L6-v2                    @1 29%  @3 53%  MRR 0.465
  *
- * Mean pooling is deliberate. BGE documents CLS pooling, but CLS measured
- * slightly worse here (MRR 0.640 vs 0.662), and the number from this corpus
- * outranks the number from the model card.
+ * Granite's English model finds the right atom in the top three 94% of the
+ * time against bge-small's 65% - five more queries out of seventeen - for
+ * about 1.3x the embedding cost. Its multilingual sibling of triple the size
+ * is NOT better here: it carries 200+ languages of capacity through an
+ * all-English corpus and lands inside the noise floor.
+ *
+ * Neither leaderboards nor parameter count predicted any of this. MTEB rank
+ * would have picked all-MiniLM-L12-v2, which measured slower AND less accurate,
+ * and bge-base's q8 export returns degenerate rankings (18% at every k).
  *
  * Changing this is safe: embeddings are keyed by provider+model and searched
  * with that as a filter, so vectors written by a previous model become
  * ineligible rather than being compared across model spaces.
  */
-const DEFAULT_LOCAL_EMBEDDING_MODEL = 'Xenova/bge-small-en-v1.5';
+const DEFAULT_LOCAL_EMBEDDING_MODEL = 'onnx-community/granite-embedding-small-english-r2-ONNX';
 const DEFAULT_LOCAL_EMBEDDING_DTYPE = 'q8';
 
-type TransformersPipeline = (texts: string[], options: { pooling: 'mean'; normalize: boolean }) => Promise<{
+/**
+ * Pooling is part of the model, not a preference.
+ *
+ * Granite is trained for CLS. Run it with mean - the setting its predecessor
+ * wanted - and the SAME weights on the SAME corpus score MRR 0.337 instead of
+ * 0.750. That is a worse result than the model this replaces, from a model that
+ * beats it, produced by one wrong string. So it travels with the model default
+ * rather than being assumed, and config can override it per model.
+ */
+const DEFAULT_LOCAL_EMBEDDING_POOLING: PoolingMode = 'cls';
+
+export type PoolingMode = 'mean' | 'cls';
+
+type TransformersPipeline = (texts: string[], options: { pooling: PoolingMode; normalize: boolean }) => Promise<{
   data: Float32Array | number[];
   dims: number[];
 }>;
@@ -58,6 +75,22 @@ export function isVectorSearchEnabled(config: ProjectConfig): boolean {
   return config.search?.vector?.enabled === true;
 }
 
+/**
+ * The pooling a model was trained for, unless config says otherwise.
+ *
+ * A config that names a model but not its pooling is the common case, and
+ * silently applying the wrong one costs more accuracy than the model choice
+ * gained. So the mapping is explicit and the default follows the family: BGE
+ * and MiniLM are trained for mean, Granite and E5 for CLS. An unrecognised
+ * model keeps mean, which is what the majority of small sentence encoders on
+ * the hub expect.
+ */
+function poolingFor(model: string | undefined, configured: string | undefined): PoolingMode {
+  if (configured === 'cls' || configured === 'mean') return configured;
+  if (!model) return DEFAULT_LOCAL_EMBEDDING_POOLING;
+  return /granite|e5-|gte-multilingual/i.test(model) ? 'cls' : 'mean';
+}
+
 export function getVectorSearchConfig(config: ProjectConfig) {
   const vector = config.search?.vector;
   return {
@@ -65,6 +98,7 @@ export function getVectorSearchConfig(config: ProjectConfig) {
     provider: vector?.provider || 'local',
     model: vector?.model || DEFAULT_LOCAL_EMBEDDING_MODEL,
     dtype: vector?.dtype || DEFAULT_LOCAL_EMBEDDING_DTYPE,
+    pooling: poolingFor(vector?.model, vector?.pooling),
     cacheDir: vector?.cacheDir,
   };
 }
@@ -107,18 +141,26 @@ export async function createLocalEmbeddingProvider(
   return {
     provider: 'local',
     model: vector.model,
+    // One text per forward pass, whatever the caller hands over.
+    //
+    // Two reasons, both measured. A batch pads every sequence to its longest
+    // member, and real corpora are not uniform: on a real transcript queue
+    // (median 169 chars, max 2,000) batches of 16 ran at 198 ms/doc against
+    // 42 ms/doc one at a time. Batching here was 4.7x SLOWER than not batching.
+    //
+    // And a long-context model makes it fatal rather than slow. Granite R2
+    // builds a global attention mask sized by the longest sequence in the
+    // batch, so passing all 363 knowledge atoms in one call - which
+    // reindexKnowledgeEmbeddings did - asked onnxruntime for a 52 GB buffer and
+    // killed the process. Enforced here rather than at each call site, because
+    // every caller that batches is one model change away from that crash.
     embed: async (texts: string[]) => {
-      const output = await localPipeline!(texts, {
-        pooling: 'mean',
-        normalize: true,
-      });
-      const dimensions = output.dims[1];
-      const data = Array.from(output.data);
-
-      return texts.map((_, index) => {
-        const start = index * dimensions;
-        return data.slice(start, start + dimensions);
-      });
+      const vectors: number[][] = [];
+      for (const text of texts) {
+        const output = await localPipeline!([text], { pooling: vector.pooling, normalize: true });
+        vectors.push(Array.from(output.data).slice(0, output.dims[output.dims.length - 1]));
+      }
+      return vectors;
     },
   };
 }

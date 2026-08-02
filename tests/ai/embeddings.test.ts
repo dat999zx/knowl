@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
-import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
+import { createLocalEmbeddingProvider, getVectorSearchConfig, resetLocalEmbeddingPipeline } from '../../src/ai/embeddings.js';
+
+const withModel = (model?: string, pooling?: 'mean' | 'cls') => ({
+  ...DEFAULT_CONFIG,
+  search: { vector: { ...DEFAULT_CONFIG.search!.vector!, model, pooling } },
+});
 
 describe('local embeddings', () => {
   it('reports the first local model load and caches subsequent providers', async () => {
@@ -23,5 +28,34 @@ describe('local embeddings', () => {
 
     expect(loadPipeline).toHaveBeenCalledTimes(1);
     expect(onFirstLoad).toHaveBeenCalledTimes(1);
+  });
+
+  // Pooling is part of the model, not a preference. Granite run with mean
+  // pooling scored MRR 0.337 on our eval corpus against 0.750 with CLS - the
+  // same weights performing worse than the model it replaces, from one wrong
+  // string, with nothing anywhere reporting a problem.
+  it('defaults pooling to what the model family was trained for', () => {
+    expect(getVectorSearchConfig(withModel('onnx-community/granite-embedding-small-english-r2-ONNX')).pooling).toBe('cls');
+    expect(getVectorSearchConfig(withModel('intfloat/e5-small-v2')).pooling).toBe('cls');
+    expect(getVectorSearchConfig(withModel('Xenova/bge-small-en-v1.5')).pooling).toBe('mean');
+    expect(getVectorSearchConfig(withModel('Xenova/all-MiniLM-L6-v2')).pooling).toBe('mean');
+  });
+
+  it('lets config override the family default, since the mapping cannot know every model', () => {
+    expect(getVectorSearchConfig(withModel('Xenova/bge-small-en-v1.5', 'cls')).pooling).toBe('cls');
+    expect(getVectorSearchConfig(withModel('some/granite-shaped-name', 'mean')).pooling).toBe('mean');
+  });
+
+  it('passes the resolved pooling to the pipeline rather than a hardcoded one', async () => {
+    resetLocalEmbeddingPipeline();
+    const embedCall = vi.fn(async () => ({ data: [1, 0], dims: [1, 2] }));
+    const provider = await createLocalEmbeddingProvider(
+      withModel('onnx-community/granite-embedding-small-english-r2-ONNX'),
+      path.resolve('.knowl-embeddings-test'),
+      { loadPipeline: async () => embedCall as any },
+    );
+    await provider.embed(['anything']);
+
+    expect(embedCall).toHaveBeenCalledWith(['anything'], expect.objectContaining({ pooling: 'cls' }));
   });
 });

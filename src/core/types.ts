@@ -238,6 +238,8 @@ export interface ProjectConfig {
       provider?: 'local';
       model?: string;
       dtype?: 'q4' | 'q8' | 'fp32' | 'fp16';
+      /** Overrides the pooling the model's family is trained for. Wrong pooling costs more accuracy than a wrong model. */
+      pooling?: 'mean' | 'cls';
       cacheDir?: string;
     };
   };

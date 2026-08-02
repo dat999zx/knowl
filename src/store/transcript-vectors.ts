@@ -78,7 +78,10 @@ function asInt8(value: unknown): Int8Array | null {
 /** Clip per message. Matches what the model can read anyway: 512 word-pieces is roughly this. */
 const EMBED_TEXT_CHARS = 2_000;
 
-/** Texts per embed() call. Batches pad to the longest member, so a large batch spends its time on padding. */
+/**
+ * Rows claimed per pass, and the size of one write transaction. NOT the embed
+ * batch size — see below for why those are deliberately different.
+ */
 const EMBED_BATCH = 16;
 
 /** Vectors held in memory at once while scanning. */
@@ -126,6 +129,10 @@ export async function embedTranscripts(
     })).rows;
     if (rows.length === 0) break;
 
+    // Read and written in batches; the embedder handles them one forward pass
+    // at a time, because batching variable-length text costs more than it saves
+    // (see createLocalEmbeddingProvider). Database round trips still batch,
+    // because those genuinely do amortize.
     const vectors = await embedder.embed(rows.map(row => String(row.text).slice(0, EMBED_TEXT_CHARS)));
     const statements = [];
     for (let i = 0; i < rows.length; i++) {
