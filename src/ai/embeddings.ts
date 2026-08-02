@@ -3,7 +3,31 @@ import fsPromises from 'node:fs/promises';
 import { ProjectConfig } from '../core/types.js';
 import { KnowledgeEmbedder } from '../store/vector-index.js';
 
-const DEFAULT_LOCAL_EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
+/**
+ * Chosen by measurement on a real corpus, not by leaderboard rank.
+ *
+ * Against 346 project atoms with 17 queries phrased the way someone
+ * half-remembers a thing, all-MiniLM-L6-v2 returned the correct atom first
+ * only 29% of the time (MRR 0.465); bge-small doubles that to 59% (MRR 0.662)
+ * for roughly 2x the embedding cost. MTEB rank would have picked
+ * all-MiniLM-L12-v2, which measured SLOWER and LESS accurate here, and
+ * bge-base, whose q8 export returns degenerate rankings (18% at every k,
+ * under both mean and CLS pooling) - so neither leaderboards nor model size
+ * predicted this outcome.
+ *
+ * It also raises the input ceiling from 256 word-pieces to 512. The old model
+ * silently truncated: transcript messages are stored up to 20,000 characters,
+ * so long messages were being ranked on their first paragraph alone.
+ *
+ * Mean pooling is deliberate. BGE documents CLS pooling, but CLS measured
+ * slightly worse here (MRR 0.640 vs 0.662), and the number from this corpus
+ * outranks the number from the model card.
+ *
+ * Changing this is safe: embeddings are keyed by provider+model and searched
+ * with that as a filter, so vectors written by a previous model become
+ * ineligible rather than being compared across model spaces.
+ */
+const DEFAULT_LOCAL_EMBEDDING_MODEL = 'Xenova/bge-small-en-v1.5';
 const DEFAULT_LOCAL_EMBEDDING_DTYPE = 'q8';
 
 type TransformersPipeline = (texts: string[], options: { pooling: 'mean'; normalize: boolean }) => Promise<{
