@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
-import { join, basename, delimiter, resolve } from 'node:path';
+import { join, basename, delimiter } from 'node:path';
 import { getClient } from './database.js';
 
 // Incremental index over raw Claude Code session transcripts.
@@ -54,12 +54,17 @@ export function encodeProjectDir(dir: string): string {
  * that had no vectors at all and silently returned lexical results. The
  * duplicates also tripled the storage.
  *
- * Resolve, then upper-case the drive letter, which is the one part path.resolve
- * leaves as the caller typed it.
+ * Purely lexical, and deliberately NOT path.resolve. This value is also what
+ * encodeProjectDir turns into a transcript directory name, so it has to stay the
+ * path Claude Code encoded - and resolve() rewrites a Windows-shaped path on a
+ * POSIX host into cwd + the literal string, because backslashes are not
+ * separators there. That pointed the whole index at a directory that does not
+ * exist. Only the two things that actually vary are canonicalized: the case of
+ * the drive letter, and which slash was typed.
  */
 export function normalizeProjectDir(dir: string): string {
-  const resolved = resolve(dir);
-  return /^[a-z]:/.test(resolved) ? resolved[0].toUpperCase() + resolved.slice(1) : resolved;
+  if (!/^[a-zA-Z]:/.test(dir)) return dir;
+  return dir[0].toUpperCase() + dir.slice(1).replace(/\//g, '\\').replace(/[\\]+$/, '');
 }
 
 /**
