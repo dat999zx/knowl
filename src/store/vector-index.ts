@@ -5,6 +5,7 @@ import { upsertKnowledgeEmbedding } from './vector.js';
 export type KnowledgeEmbedder = {
   provider: string;
   model: string;
+  pooling: 'mean' | 'cls';
   embed(texts: string[]): Promise<number[][]>;
 };
 
