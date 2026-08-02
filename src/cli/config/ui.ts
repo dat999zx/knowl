@@ -1,4 +1,4 @@
-import { CONFIG_FIELDS, ConfigCategory, ConfigField, ConfigFieldType, getConfigField } from './schema.js';
+import { CONFIG_FIELDS, ConfigField, ConfigFieldType, getConfigField } from './schema.js';
 import { getConfigValue, setConfigValues } from './service.js';
 import {
   announceProfileChange, countAffectedEmbeddings, describeProfileChange, formatProfileChangeWarning,
@@ -6,39 +6,28 @@ import {
 } from './profile-change.js';
 import { loadConfig } from '../../core/config.js';
 import { VECTOR_PRESETS, currentPresetId } from '../../core/vector-profile.js';
-import { color, crumb, stripAnsi, symbol } from '../ui/style.js';
 
-/**
- * One theme for every prompt in this command, so the cursor, the highlight and the help
- * line do not differ between the category list, a value picker and a confirmation.
- */
-const THEME = {
-  prefix: { idle: color.cyan('?'), done: color.green(symbol.info) },
-  icon: { cursor: symbol.cursor },
-  style: {
-    message: (text: string) => color.bold(text),
-    description: (text: string) => color.gray(text),
-    // Stripped first: a row already carries colour, and wrapping it would end the
-    // highlight at the row's own first reset, leaving the rest of the line uncoloured.
-    highlight: (text: string) => color.cyan(stripAnsi(text)),
-    help: (text: string) => color.gray(text),
-    answer: (text: string) => color.cyan(text),
-  },
-};
+// One flat list of every setting, edited in place.
+//
+// The earlier build was a tree -- category, then setting, then value, with the keys a
+// preset supplies hidden a level further down and refusing to open at all. Every level
+// was somewhere to get lost and none of them was somewhere to change anything.
+//
+// This is the shape the good CLI flows use: one list, a hint on each row saying what the
+// value is now, and a single uniform way to back out of anything.
 
-/** Returned by `selectCategory` to leave the editor. */
+/** Chosen from the settings list: leave without writing anything. */
 export const CONFIG_UI_QUIT = '__knowl_config_quit__';
-/** Returned by `selectField` to go back to the category list. */
-export const CONFIG_UI_BACK = '__knowl_config_back__';
-/** Returned by `selectField` to open the category's advanced settings. */
-export const CONFIG_UI_ADVANCED = '__knowl_config_advanced__';
+/** Chosen from the settings list: write what is queued. */
+export const CONFIG_UI_SAVE = '__knowl_config_save__';
 
 export interface ConfigFieldView {
   key: string;
-  /** Human name. The dotted `key` is still carried, and still shown beside it. */
+  /** Human name. The dotted key is what `knowl config set` takes and stays out of the list. */
   label: string;
-  /** One line on what the setting does, shown while editing. */
+  /** One line on what the setting does. */
   description: string;
+  /** The value in effect, including anything queued but not yet written. */
   current: unknown;
   /** `current` rendered for display, already redacted when secret. */
   currentText: string;
@@ -46,15 +35,14 @@ export interface ConfigFieldView {
   type: ConfigFieldType;
   values?: readonly string[];
   /**
-   * Set when a named preset currently supplies this value.
-   *
-   * It is not a lock. A preset resolves ahead of the flat keys, so editing this field
-   * on its own would write to disk and change nothing -- the editor answers that by
-   * moving the config to a custom profile on save, not by refusing the edit.
+   * Set when a named preset currently supplies this value. Not a lock: editing the field
+   * moves the profile to a custom one so the edit takes effect.
    */
   ownedBy?: { key: string; label: string; presetId: string };
   /** True when the value differs from this field's default. */
   modified: boolean;
+  /** True when this setting has an edit queued but not yet written. */
+  pending: boolean;
 }
 
 export interface ConfigChange {
@@ -64,47 +52,24 @@ export interface ConfigChange {
 }
 
 export interface ConfigPrompts {
-  selectCategory(categories: string[]): Promise<string>;
-  /**
-   * `options.hasAdvanced` asks for an `Advanced settings…` row returning
-   * `CONFIG_UI_ADVANCED`; `options.advanced` marks the advanced list itself, where the
-   * dotted keys are shown. Both are optional, so an implementation taking only `fields`
-   * keeps working.
-   */
-  selectField(
-    fields: ConfigFieldView[],
-    options?: { hasAdvanced?: boolean; advanced?: boolean; category?: string },
-  ): Promise<string>;
-  /**
-   * `null` abandons the edit and returns to the setting list without queueing anything.
-   * Widening the return type keeps every implementation that returns a plain string.
-   */
-  inputValue(field: ConfigFieldView, current: unknown): Promise<string | null>;
+  /** Returns a setting key, `CONFIG_UI_SAVE`, or `CONFIG_UI_QUIT`. */
+  selectSetting(fields: ConfigFieldView[]): Promise<string>;
+  /** `null` backs out of the edit and returns to the list, queueing nothing. */
+  inputValue(field: ConfigFieldView): Promise<string | null>;
   confirmSave(changes: ConfigChange[]): Promise<boolean>;
-  continueEditing(): Promise<boolean>;
-  /**
-   * Shown when a value fails to parse. Implementing it turns a bad entry into a re-prompt;
-   * without it the error propagates, which is the older behaviour and is what the tests
-   * that supply a fixed value rely on.
-   */
+  /** Turns an unparseable value into a re-prompt; without it the error propagates. */
   reportError?(field: ConfigFieldView, message: string): Promise<void>;
-  /**
-   * Asked when the preset picker lands on `custom`. Returning null cancels back to
-   * the field list, which is why the caller must not have written anything yet.
-   */
+  /** Asked when the model picker lands on `custom`. `null` queues nothing. */
   inputCustomModel?(): Promise<{ model: string; pooling: 'mean' | 'cls' } | null>;
-  /**
-   * Offered after a save that changed the embedding profile. Without it the caller only
-   * prints the warning, which is what a non-interactive test harness wants.
-   */
+  /** Offered after a save that moved the embedding profile. */
   confirmReindex?(change: ProfileChange, affectedRows: number): Promise<boolean>;
 }
 
-function formatCurrent(value: unknown, secret?: boolean) {
+function formatCurrent(value: unknown, secret?: boolean): string {
   if (secret && value) return '********';
   if (Array.isArray(value)) return value.length ? value.join(', ') : 'none';
   if (typeof value === 'object' && value !== null) return JSON.stringify(value);
-  if (value === '' || value === undefined || value === null) return 'unset';
+  if (value === '' || value === undefined || value === null) return 'not set';
   if (value === true) return 'on';
   if (value === false) return 'off';
   return String(value);
@@ -115,9 +80,7 @@ function formatPreset(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   if (value === 'custom') return 'Custom model';
   const preset = VECTOR_PRESETS[value as keyof typeof VECTOR_PRESETS];
-  if (!preset) return null;
-  const sep = ` ${symbol.dot} `;
-  return `${preset.label.split(' — ')[0]}${sep}${preset.sizeMb} MB${sep}${preset.languages}`;
+  return preset ? `${preset.label.split(' — ')[0]} · ${preset.sizeMb} MB` : null;
 }
 
 function sameValue(left: unknown, right: unknown): boolean {
@@ -126,33 +89,30 @@ function sameValue(left: unknown, right: unknown): boolean {
 }
 
 /**
- * Which named preset is currently supplying this field's value, if any.
- *
- * `custom` names no model of its own, so under it the flat keys are the real values and
- * nothing supplies them.
+ * Which named preset supplies this field's value, if any. `custom` names no model of its
+ * own, so under it the flat keys are the real values and nothing supplies them.
  */
-function ownerOf(field: ConfigField, currentByKey: Map<string, unknown>): ConfigFieldView['ownedBy'] {
+function ownerOf(field: ConfigField, valueOf: (key: string) => unknown): ConfigFieldView['ownedBy'] {
   if (!field.derivedFrom) return undefined;
-  const ownerValue = currentByKey.get(field.derivedFrom);
-  if (typeof ownerValue !== 'string' || ownerValue === 'custom') return undefined;
-  if (!(ownerValue in VECTOR_PRESETS)) return undefined;
-  return { key: field.derivedFrom, label: getConfigField(field.derivedFrom).label, presetId: ownerValue };
+  const owner = valueOf(field.derivedFrom);
+  if (typeof owner !== 'string' || owner === 'custom' || !(owner in VECTOR_PRESETS)) return undefined;
+  return { key: field.derivedFrom, label: getConfigField(field.derivedFrom).label, presetId: owner };
 }
 
 /** Which part of a preset a derived key takes its value from. */
-const PRESET_PART: Record<string, keyof (typeof VECTOR_PRESETS)[keyof typeof VECTOR_PRESETS]> = {
+const PRESET_PART = {
   'search.vector.model': 'model',
   'search.vector.dtype': 'dtype',
   'search.vector.pooling': 'pooling',
-};
+} as const;
 
 /**
- * What an owned field is actually running, which is not what its own key holds. A repo
- * that switched preset keeps whatever model string it had before, so showing the stored
- * value would name a model that has not been used since.
+ * What a preset-supplied field is actually running, which is not what its own key holds:
+ * switching preset never rewrites the flat keys, so the stored value can name a model
+ * that has not been used since.
  */
 function effectiveValue(key: string, presetId: unknown, stored: unknown): unknown {
-  const part = PRESET_PART[key];
+  const part = PRESET_PART[key as keyof typeof PRESET_PART];
   if (!part || typeof presetId !== 'string') return stored;
   const preset = VECTOR_PRESETS[presetId as keyof typeof VECTOR_PRESETS];
   return preset ? preset[part] : stored;
@@ -161,10 +121,8 @@ function effectiveValue(key: string, presetId: unknown, stored: unknown): unknow
 const isUnset = (value: unknown) => value === undefined || value === null || value === '';
 
 /**
- * Whether someone moved this setting off what it would do untouched.
- *
- * A secret always reads back as the redaction, set or not, so there is nothing to
- * compare and the mark is withheld rather than guessed.
+ * Whether someone moved this setting off what it would do untouched. A secret always
+ * reads back as the redaction, so there is nothing to compare and the mark is withheld.
  */
 function isModified(field: ConfigField, current: unknown, owned: boolean): boolean {
   if (owned || field.secret) return false;
@@ -173,340 +131,237 @@ function isModified(field: ConfigField, current: unknown, owned: boolean): boole
   return !sameValue(current, field.defaultValue);
 }
 
-function fieldView(
+export function buildView(
   field: ConfigField,
-  rawCurrent: unknown,
-  currentByKey: Map<string, unknown>,
+  valueOf: (key: string) => unknown,
   resolvedPreset: string | null,
+  pending: boolean,
 ): ConfigFieldView {
-  // The preset key is absent in any repo initialised before presets existed, so its own
-  // stored value is not what identifies the model in use. `currentPresetId` falls back to
-  // matching the model string, which is what makes the picker open on the right row.
-  const current = field.key === 'search.vector.preset' ? resolvedPreset ?? rawCurrent : rawCurrent;
-  const ownedBy = ownerOf(field, currentByKey);
-  // What the setting actually does right now: the preset's value when one owns it, the
-  // field default when nothing is written, and only then the stored value.
+  // A repo initialised before presets existed has no `preset` key, so its own stored value
+  // is not what identifies the model in use; `currentPresetId` matches the model string.
+  const raw = valueOf(field.key);
+  const stored = field.key === 'search.vector.preset' ? raw ?? resolvedPreset : raw;
+  const ownedBy = ownerOf(field, valueOf);
   const shown = ownedBy
-    ? effectiveValue(field.key, currentByKey.get(ownedBy.key), current)
-    : isUnset(current) ? field.defaultValue ?? current : current;
-  const presetText = field.key === 'search.vector.preset' ? formatPreset(shown) : null;
+    ? effectiveValue(field.key, valueOf(ownedBy.key), stored)
+    : isUnset(stored) ? field.defaultValue ?? stored : stored;
   return {
     key: field.key,
     label: field.label,
     description: field.description,
-    // The value in effect, not the one on disk. It is what the row displays, what a
-    // picker opens on and what a text box pre-fills, so an edit starts from what is
-    // running rather than from a stale key the resolver never reads.
     current: shown,
-    currentText: presetText ?? formatCurrent(shown, field.secret),
+    currentText: (field.key === 'search.vector.preset' ? formatPreset(shown) : null)
+      ?? formatCurrent(shown, field.secret),
     secret: field.secret,
     type: field.type,
     values: field.values,
     ownedBy,
-    modified: isModified(field, current, Boolean(ownedBy)),
+    modified: isModified(field, stored, Boolean(ownedBy)),
+    pending,
   };
 }
 
-/** Text shown in a free-text box, so the current value can be edited rather than retyped. */
+/**
+ * Model choices, carrying the size and language recorded beside each one and marking
+ * which is running now -- including for a config whose only evidence is its model string.
+ */
+export function presetChoices(current?: string): Array<{ value: string; label: string; hint: string }> {
+  const entries = (Object.keys(VECTOR_PRESETS) as Array<keyof typeof VECTOR_PRESETS>).map(id => {
+    const preset = VECTOR_PRESETS[id];
+    const [label, note] = preset.label.split(' — ');
+    const parts = [id === current ? 'current' : '', note?.replace(/^the /, ''), `${preset.sizeMb} MB`];
+    if (!note?.includes(preset.languages)) parts.push(preset.languages);
+    return { value: id as string, label, hint: parts.filter(Boolean).join(' · ') };
+  });
+  return [...entries, { value: 'custom', label: 'Custom model', hint: 'any Hugging Face model id' }];
+}
+
+/** Model ids behind the presets, for editing the raw key directly. */
+export function modelChoices(): Array<{ value: string; label: string; hint: string }> {
+  return (Object.keys(VECTOR_PRESETS) as Array<keyof typeof VECTOR_PRESETS>).map(id => ({
+    value: VECTOR_PRESETS[id].model,
+    label: VECTOR_PRESETS[id].model,
+    hint: `${VECTOR_PRESETS[id].label.split(' — ')[0]} · ${VECTOR_PRESETS[id].sizeMb} MB`,
+  }));
+}
+
+/** Text pre-filled into a free-text box, so a value is edited rather than retyped. */
 function editableDefault(current: unknown): string {
   if (current === undefined || current === null) return '';
   if (Array.isArray(current)) return current.join(', ');
   return String(current);
 }
 
-/** Sentinel for the `← Back` choice inside a value picker, never a real config value. */
-const VALUE_CANCEL = '__knowl_value_cancel__';
-
-/** Human name for a key in the save diff, falling back to the key for anything unknown. */
-function describeKey(key: string): string {
-  try { return getConfigField(key).label; } catch { return key; }
-}
-
-/**
- * One row per setting: the name and the value in effect. Two columns, because a picker
- * row is read while it moves under the cursor -- the earlier four-column version put the
- * dotted key and a status word beside every value and buried the two settings anyone
- * actually opens this to change. The key belongs in the advanced list, where someone is
- * already looking for what to pass to `knowl config set`.
- */
-export function fieldRows(fields: ConfigFieldView[], showKeys = false): string[] {
-  const nameWidth = Math.max(...fields.map(field => field.label.length));
-  const valueWidth = Math.min(46, Math.max(...fields.map(field => field.currentText.length)));
-  return fields.map(field => {
-    const value = field.currentText.length > valueWidth
-      ? `${field.currentText.slice(0, valueWidth - 1)}${symbol.more}`
-      : field.currentText;
-    // Padded before colouring, never after: an escape sequence has width on the string
-    // and none on the screen, so padEnd on a coloured value misaligns every row under it.
-    const name = field.label.padEnd(nameWidth);
-    if (!showKeys) return `${name}  ${color.cyan(value)}`;
-    return `${name}  ${color.cyan(value.padEnd(valueWidth))}  ${color.gray(field.key)}`;
-  });
-}
-
-/**
- * Preset choices carry the size and language already recorded beside each model, and mark
- * which one is running now -- including for a config written before presets existed, where
- * the running model is only identifiable from its model string.
- */
-export function presetChoices(current?: string): Array<{ name: string; value: string; description: string }> {
-  const entries = (Object.keys(VECTOR_PRESETS) as Array<keyof typeof VECTOR_PRESETS>).map(id => {
-    const preset = VECTOR_PRESETS[id];
-    const [name, note] = preset.label.split(' — ');
-    // Several labels already name the language, so appending it again would read
-    // "200+ languages, 32k context · 98 MB · 200+ languages".
-    // "the historical default" reads as a sentence fragment mid-list; the leading article
-    // goes so every note is the same shape.
-    const parts = [id === current ? 'current' : '', note?.replace(/^the /, ''), `${preset.sizeMb} MB`];
-    if (!note?.includes(preset.languages)) parts.push(preset.languages);
-    return { name, value: id as string, description: parts.filter(Boolean).join(` ${symbol.dot} `) };
-  });
-  return [
-    ...entries,
-    // Symbols, not literals: these two lines rendered as mojibake on a terminal where
-    // every other row had already fallen back to ASCII.
-    { name: `Custom model${symbol.more}`, value: 'custom', description: 'Enter a Hugging Face model id' },
-    { name: `${symbol.back} Back`, value: VALUE_CANCEL, description: 'Leave this setting unchanged' },
-  ];
-}
-
-export function createInquirerPrompts(): ConfigPrompts {
+export function createClackPrompts(): ConfigPrompts {
   return {
-    selectCategory: async categories => (await import('@inquirer/prompts')).select({
-      theme: THEME,
-      message: 'Settings',
-      choices: [
-        ...categories.map(category => ({ name: category, value: category })),
-        { name: 'Quit', value: CONFIG_UI_QUIT },
-      ],
-    }),
-    selectField: async (fields, options) => {
-      const inquirer = await import('@inquirer/prompts');
-      const rows = fieldRows(fields, options?.advanced);
-      const extras: Array<{ name: string; value: string; description: string }> = [];
-      if (options?.hasAdvanced) {
-        extras.push({
-          name: `Advanced settings${symbol.more}`,
-          value: CONFIG_UI_ADVANCED,
-          description: 'Values a preset already sets for you, and the keys to script them with',
-        });
-      }
-      extras.push({
-        name: `${symbol.back} Back`,
-        value: CONFIG_UI_BACK,
-        description: options?.advanced ? 'Return to the main settings' : 'Return to the category list',
-      });
-      return inquirer.select({
-        theme: THEME,
-        // A breadcrumb rather than a bare word: the advanced list is one level in, and
-        // "Advanced" alone does not say advanced *what*.
-        message: crumb(String(options?.category ?? 'Settings'), options?.advanced ? 'Advanced' : ''),
-        pageSize: Math.min(fields.length + extras.length + 2, 16),
-        choices: [
-          ...fields.map((field, index) => ({
-            name: rows[index],
+    selectSetting: async fields => {
+      const clack = await import('@clack/prompts');
+      const pc = (await import('picocolors')).default;
+      const pending = fields.filter(field => field.pending).length;
+      const chosen = await clack.select({
+        message: pending ? `Settings ${pc.dim(`(${pending} unsaved)`)}` : 'Settings',
+        maxItems: 12,
+        options: [
+          ...fields.map(field => ({
             value: field.key,
-            description: field.ownedBy
-              ? `${field.description}  ${color.dim(`Now from ${field.ownedBy.label}; changing it switches to a custom model.`)}`
-              : field.description,
+            label: field.pending ? `${field.label} ${pc.yellow('*')}` : field.label,
+            hint: field.ownedBy ? `${field.currentText} — from ${field.ownedBy.label}` : field.currentText,
           })),
-          // Settings above, ways out below. Without the rule they read as one list and
-          // "Back" looks like something you could configure.
-          new inquirer.Separator(color.gray(' ')),
-          ...extras,
+          {
+            value: CONFIG_UI_SAVE,
+            label: pending ? 'Save and exit' : 'Exit',
+            hint: pending ? `write ${pending} change${pending === 1 ? '' : 's'}` : 'nothing to save',
+          },
+          { value: CONFIG_UI_QUIT, label: 'Discard and exit', hint: 'leave everything as it was' },
         ],
       });
+      // One uniform escape. Ctrl+C anywhere lands here rather than tearing the process
+      // down mid-edit, which is what makes backing out feel like part of the UI.
+      return clack.isCancel(chosen) ? CONFIG_UI_QUIT : String(chosen);
     },
-    inputValue: async (field, current) => {
-      const prompts = await import('@inquirer/prompts');
-      if (field.secret) {
-        const entered = await prompts.password({ message: `${field.label} (blank to cancel)` });
-        return entered.trim() ? entered : null;
-      }
+
+    inputValue: async field => {
+      const clack = await import('@clack/prompts');
+      const unwrap = (value: unknown) => (clack.isCancel(value) ? null : value);
 
       if (field.key === 'search.vector.preset') {
-        console.log(`\n${field.description}\n`);
-        const chosen = await prompts.select({
-      theme: THEME,
+        const chosen = unwrap(await clack.select({
           message: field.label,
-          pageSize: 8,
-          choices: presetChoices(typeof current === 'string' ? current : undefined),
-          default: typeof current === 'string' ? current : undefined,
-        });
-        return chosen === VALUE_CANCEL ? null : chosen;
+          maxItems: 8,
+          options: presetChoices(typeof field.current === 'string' ? field.current : undefined),
+          initialValue: typeof field.current === 'string' ? field.current : undefined,
+        }));
+        return chosen === null ? null : String(chosen);
       }
 
-      // The raw model id is free text by nature, but the ids anyone actually wants are
-      // already known. Offering them makes even the advanced field something you pick,
-      // with typing kept for a model that is not on the list.
       if (field.key === 'search.vector.model') {
-        const known = (Object.keys(VECTOR_PRESETS) as Array<keyof typeof VECTOR_PRESETS>)
-          .map(id => ({
-            name: VECTOR_PRESETS[id].model,
-            value: VECTOR_PRESETS[id].model,
-            description: `${VECTOR_PRESETS[id].label.split(' — ')[0]} ${symbol.dot} ${VECTOR_PRESETS[id].sizeMb} MB`,
-          }));
         const TYPE_IT = '__knowl_type_model__';
-        const chosen = await prompts.select({
-          theme: THEME,
+        const chosen = unwrap(await clack.select({
           message: field.label,
-          pageSize: 8,
-          choices: [
-            ...known,
-            { name: `Type another model id${symbol.more}`, value: TYPE_IT, description: 'Any Hugging Face model id' },
-            { name: `${symbol.back} Back`, value: VALUE_CANCEL, description: 'Leave this setting unchanged' },
-          ],
-          default: typeof current === 'string' ? current : undefined,
-        });
-        if (chosen === VALUE_CANCEL) return null;
-        if (chosen !== TYPE_IT) return chosen;
-        const typed = await prompts.input({
-          theme: THEME,
-          message: `${field.label} (blank to cancel)`,
-          default: editableDefault(current),
-        });
-        return typed.trim() ? typed : null;
+          maxItems: 8,
+          options: [...modelChoices(), { value: TYPE_IT, label: 'Type another model id', hint: 'any Hugging Face id' }],
+          initialValue: typeof field.current === 'string' ? field.current : undefined,
+        }));
+        if (chosen === null) return null;
+        if (chosen !== TYPE_IT) return String(chosen);
+        const typed = unwrap(await clack.text({ message: field.label, initialValue: editableDefault(field.current) }));
+        return typed === null ? null : String(typed);
       }
 
       if (field.type === 'boolean') {
-        const chosen = await prompts.select({
-      theme: THEME,
-          message: field.label,
-          choices: [
-            { name: 'On', value: 'true', description: field.description },
-            { name: 'Off', value: 'false', description: field.description },
-            { name: '← Back', value: VALUE_CANCEL, description: 'Leave this setting unchanged' },
-          ],
-          default: current === true ? 'true' : 'false',
-        });
-        return chosen === VALUE_CANCEL ? null : chosen;
+        const chosen = unwrap(await clack.confirm({ message: field.label, initialValue: field.current === true }));
+        return chosen === null ? null : String(chosen);
       }
 
       if (field.type === 'enum' && field.values?.length) {
-        const chosen = await prompts.select({
-      theme: THEME,
+        const chosen = unwrap(await clack.select({
           message: field.label,
-          choices: [
-            ...field.values.map(value => ({ name: value, value, description: field.description })),
-            { name: '← Back', value: VALUE_CANCEL, description: 'Leave this setting unchanged' },
-          ],
-          default: typeof current === 'string' ? current : undefined,
-        });
-        return chosen === VALUE_CANCEL ? null : chosen;
+          options: field.values.map(value => ({ value, label: value })),
+          initialValue: typeof field.current === 'string' ? field.current : undefined,
+        }));
+        return chosen === null ? null : String(chosen);
       }
 
-      const entered = await prompts.input({
-      theme: THEME,
-        message: field.type === 'list'
-          ? `${field.label} (comma separated, blank to cancel)`
-          : `${field.label} (blank to cancel)`,
-        default: editableDefault(current),
-      });
-      return entered.trim() ? entered : null;
+      if (field.secret) {
+        const entered = unwrap(await clack.password({ message: `${field.label} (blank to clear)` }));
+        return entered === null ? null : String(entered);
+      }
+
+      const entered = unwrap(await clack.text({
+        message: field.type === 'list' ? `${field.label} (comma separated)` : field.label,
+        initialValue: editableDefault(field.current),
+        // Without this an empty box refuses to submit, so a setting could never be cleared.
+        defaultValue: '',
+      }));
+      return entered === null ? null : String(entered);
     },
-    confirmSave: async changes => (await import('@inquirer/prompts')).confirm({
-      theme: THEME,
-      message: `Save these changes?\n${changes.map(change =>
-        `  ${describeKey(change.key)}: ${formatCurrent(change.before)} → ${formatCurrent(change.after)}`).join('\n')}\n`,
-      default: true,
-    }),
-    continueEditing: async () => (await import('@inquirer/prompts')).confirm({ message: 'Edit another setting?', default: false }),
+
+    confirmSave: async changes => {
+      const clack = await import('@clack/prompts');
+      const describe = (key: string) => { try { return getConfigField(key).label; } catch { return key; } };
+      clack.note(
+        changes.map(change =>
+          `${describe(change.key)}: ${formatCurrent(change.before)} → ${formatCurrent(change.after)}`).join('\n'),
+        `${changes.length} change${changes.length === 1 ? '' : 's'}`,
+      );
+      const ok = await clack.confirm({ message: 'Write these to .knowl/config.json?', initialValue: true });
+      return !clack.isCancel(ok) && ok === true;
+    },
+
     reportError: async (field, message) => {
-      console.error(`  ${field.label} — ${message}`);
+      const clack = await import('@clack/prompts');
+      clack.log.error(`${field.label}: ${message}`);
     },
-    confirmReindex: async (_change, affectedRows) => (await import('@inquirer/prompts')).confirm({
-      theme: THEME,
-      message: affectedRows > 0
-        ? `Rebuild ${affectedRows} embedding(s) with the new model now?`
-        : 'Build embeddings with the new model now?',
-      default: true,
-    }),
+
+    confirmReindex: async (_change, affectedRows) => {
+      const clack = await import('@clack/prompts');
+      const ok = await clack.confirm({
+        message: affectedRows > 0
+          ? `Rebuild ${affectedRows} embedding(s) with the new model now?`
+          : 'Build embeddings with the new model now?',
+        initialValue: true,
+      });
+      return !clack.isCancel(ok) && ok === true;
+    },
+
     inputCustomModel: async () => {
-      const prompts = await import('@inquirer/prompts');
+      const clack = await import('@clack/prompts');
       const { verifyCustomModel } = await import('../../ai/model-probe.js');
       for (;;) {
-        const model = await prompts.input({ message: 'Hugging Face model id (blank to cancel)' });
-        if (!model.trim()) return null;
+        const model = await clack.text({ message: 'Hugging Face model id' });
+        if (clack.isCancel(model) || !String(model ?? '').trim()) return null;
 
-        const probe = await verifyCustomModel(model.trim());
-        if (!probe.ok) {
-          console.error(probe.reason);
-          continue;
+        const probe = await verifyCustomModel(String(model).trim());
+        if (!probe.ok) { clack.log.error(probe.reason); continue; }
+
+        // Asked, never defaulted: an ONNX mirror without 1_Pooling/config.json gives us
+        // nothing to infer from, and a wrong guess ranks badly with no error.
+        let pooling = probe.pooling;
+        if (!pooling) {
+          const picked = await clack.select({
+            message: `${String(model)} does not declare its pooling method. Which does it use?`,
+            options: [{ value: 'cls', label: 'cls' }, { value: 'mean', label: 'mean' }],
+          });
+          if (clack.isCancel(picked)) return null;
+          pooling = picked as 'mean' | 'cls';
         }
-
-        // Asked, never defaulted: an ONNX mirror without 1_Pooling/config.json gives
-        // us nothing to infer from, and a wrong guess ranks badly with no error.
-        const pooling = probe.pooling ?? await prompts.select({
-      theme: THEME,
-          message: `${model} does not declare its pooling method. Which does it use?`,
-          choices: [{ name: 'cls', value: 'cls' as const }, { name: 'mean', value: 'mean' as const }],
-        });
-        return { model: model.trim(), pooling };
+        return { model: String(model).trim(), pooling };
       }
     },
   };
 }
 
-export async function runConfigUi(root: string, prompts: ConfigPrompts = createInquirerPrompts()) {
-  const categories = [...new Set(CONFIG_FIELDS.map(field => field.category))];
-  const changes: Array<ConfigChange & { raw: string }> = [];
-  // Read before any edit: the comparison is between whole resolved profiles, so it
-  // cannot be reconstructed from the individual key changes.
+export async function runConfigUi(root: string, prompts: ConfigPrompts = createClackPrompts()) {
+  // Read before any edit: the reindex comparison is between whole resolved profiles, so
+  // it cannot be reconstructed from the individual key changes.
   const configBefore = await loadConfig(root).catch(() => null);
+  const resolvedPreset = configBefore ? currentPresetId(configBefore) : null;
 
-  let editing = true;
-  while (editing) {
-    const category = await prompts.selectCategory(categories);
-    if (category === CONFIG_UI_QUIT) break;
+  const stored = new Map<string, unknown>(
+    await Promise.all(CONFIG_FIELDS.map(async field => [field.key, await getConfigValue(root, field.key)] as const)),
+  );
+  // Queued edits shadow the file, so the list shows an edit the moment it is made rather
+  // than only after a save.
+  const queued = new Map<string, { raw: string; value: unknown }>();
+  const valueOf = (key: string) => (queued.has(key) ? queued.get(key)!.value : stored.get(key));
 
-    const inCategory = CONFIG_FIELDS.filter(field => field.category === category as ConfigCategory);
-    // Ownership is read across the whole category, not per field: whether `model` is
-    // editable depends on what `preset` currently holds.
-    const currentByKey = new Map<string, unknown>(
-      await Promise.all(CONFIG_FIELDS.map(async field => [field.key, await getConfigValue(root, field.key)] as const)),
-    );
-    const resolvedPreset = configBefore ? currentPresetId(configBefore) : null;
-    const toView = (field: ConfigField) => fieldView(field, currentByKey.get(field.key), currentByKey, resolvedPreset);
+  for (;;) {
+    const views = CONFIG_FIELDS.map(field => buildView(field, valueOf, resolvedPreset, queued.has(field.key)));
+    const selected = await prompts.selectSetting(views);
+    if (selected === CONFIG_UI_QUIT) return { saved: false, changes: [] as ConfigChange[], reindexRequested: false };
+    if (selected === CONFIG_UI_SAVE) break;
 
-    // The main list holds only what someone opens this to change; the rest sits one
-    // keypress away rather than crowding the two settings that matter.
-    const hasAdvanced = inCategory.some(field => field.advanced);
-    let advanced = false;
-    let selected: string;
-    let views: ConfigFieldView[];
-    for (;;) {
-      const fields = inCategory.filter(field => Boolean(field.advanced) === advanced);
-      views = fields.map(toView);
-      selected = await prompts.selectField(views, {
-        hasAdvanced: hasAdvanced && !advanced,
-        advanced,
-        category: String(category),
-      });
-      if (selected === CONFIG_UI_ADVANCED) { advanced = true; continue; }
-      // Back from the advanced list returns to the main one, not out of the category.
-      if (selected === CONFIG_UI_BACK && advanced) { advanced = false; continue; }
-      break;
-    }
-    // Back returns to the category list without forcing an edit. Previously entering a
-    // category committed you to changing something in it.
-    if (selected === CONFIG_UI_BACK) continue;
+    const field = getConfigField(selected);
+    const view = views.find(candidate => candidate.key === selected)!;
 
-    // Falls back to building the view rather than trusting the visible list: a caller may
-    // name any key in the category, and an advanced one is not in the list it was shown.
-    const view = views.find(candidate => candidate.key === selected) ?? toView(getConfigField(selected));
-    const key = view.key;
-    const field = getConfigField(key);
-
-    let raw = '';
+    let raw: string | null = null;
     let parsed: unknown;
-    let cancelled = false;
     for (;;) {
-      const entered = await prompts.inputValue(view, view.current);
-      // Null is a deliberate exit from the value prompt, not a value to parse.
-      if (entered === null) { cancelled = true; break; }
-      raw = entered;
+      const entered = await prompts.inputValue(view);
+      if (entered === null) break; // backed out: nothing queued
       try {
-        parsed = field.parse(raw);
+        parsed = field.parse(entered);
+        raw = entered;
         break;
       } catch (error) {
         // Without a reporter there is nothing to show and nothing would change on a
@@ -515,86 +370,66 @@ export async function runConfigUi(root: string, prompts: ConfigPrompts = createI
         await prompts.reportError(view, error instanceof Error ? error.message : String(error));
       }
     }
-    if (cancelled) continue;
+    if (raw === null) continue;
 
-    // `custom` names no model on its own, so the follow-up is asked here and queued
-    // with it. Cancelling queues nothing, which is why it is asked before the push.
-    if (key === 'search.vector.preset' && parsed === 'custom') {
+    // `custom` names no model on its own, so the follow-up is asked before anything is
+    // queued -- cancelling it must not leave `preset: custom` with no model behind it.
+    if (selected === 'search.vector.preset' && parsed === 'custom') {
       if (!prompts.inputCustomModel) {
         throw new Error('Custom models need an interactive prompt. Use `knowl config set-model <name>`.');
       }
       const custom = await prompts.inputCustomModel();
-      if (!custom) continue; // cancelled: nothing queued, nothing written
-      changes.push({ key, before: view.current, after: parsed, raw });
-      changes.push({ key: 'search.vector.model', before: '', after: custom.model, raw: custom.model });
-      changes.push({ key: 'search.vector.pooling', before: '', after: custom.pooling, raw: custom.pooling });
-      editing = await prompts.continueEditing();
+      if (!custom) continue;
+      queued.set('search.vector.preset', { raw: 'custom', value: 'custom' });
+      queued.set('search.vector.model', { raw: custom.model, value: custom.model });
+      queued.set('search.vector.pooling', { raw: custom.pooling, value: custom.pooling });
       continue;
     }
 
-    // Picking a model writes the whole profile, not just the preset name. Writing the
-    // name alone was correct only because `resolveVectorProfile` prefers it -- it left
-    // the flat keys describing whatever model came before, which is how a repo ends up
-    // claiming MiniLM while running Granite. It also repairs a config written before
-    // presets existed, which has no `preset` key for the resolver to prefer.
-    if (key === 'search.vector.preset' && typeof parsed === 'string' && parsed in VECTOR_PRESETS) {
+    // Picking a model writes the whole profile. Writing the preset name alone was correct
+    // only because `resolveVectorProfile` prefers it: the flat keys kept describing the
+    // previous model, and a config with no `preset` key had nothing to prefer.
+    if (selected === 'search.vector.preset' && typeof parsed === 'string' && parsed in VECTOR_PRESETS) {
       const preset = VECTOR_PRESETS[parsed as keyof typeof VECTOR_PRESETS];
-      changes.push({ key, before: view.current, after: parsed, raw });
-      for (const [partKey, value] of [
-        ['search.vector.model', preset.model],
-        ['search.vector.dtype', preset.dtype],
-        ['search.vector.pooling', preset.pooling],
-      ] as const) {
-        changes.push({ key: partKey, before: currentByKey.get(partKey), after: value, raw: value });
-      }
-      editing = await prompts.continueEditing();
+      queued.set('search.vector.preset', { raw, value: parsed });
+      queued.set('search.vector.model', { raw: preset.model, value: preset.model });
+      queued.set('search.vector.dtype', { raw: preset.dtype, value: preset.dtype });
+      queued.set('search.vector.pooling', { raw: preset.pooling, value: preset.pooling });
       continue;
     }
 
-    // Editing a field a named preset covers takes effect rather than being ignored.
-    //
-    // `resolveVectorProfile` reads a named preset ahead of the flat keys, so writing
-    // `dtype: fp16` under `preset: bge-small-en` changes the file and nothing else. The
-    // answer is not to refuse the edit -- a settings screen exists to change things --
-    // it is to move the config to where the edit counts: the preset becomes `custom`,
-    // its values are written out so nothing is lost, and the edited key wins.
-    if (view.ownedBy && typeof view.ownedBy.presetId === 'string') {
+    // Editing a field a named preset supplies takes effect rather than being ignored: the
+    // preset resolves ahead of the flat keys, so the profile moves to custom, keeps the
+    // preset's other values, and the edited key wins.
+    if (view.ownedBy) {
       const preset = VECTOR_PRESETS[view.ownedBy.presetId as keyof typeof VECTOR_PRESETS];
-      changes.push({ key: 'search.vector.preset', before: view.ownedBy.presetId, after: 'custom', raw: 'custom' });
-      for (const [partKey, value] of [
+      queued.set('search.vector.preset', { raw: 'custom', value: 'custom' });
+      for (const [key, value] of [
         ['search.vector.model', preset.model],
         ['search.vector.dtype', preset.dtype],
         ['search.vector.pooling', preset.pooling],
       ] as const) {
-        // The edited key is queued below and comes last, so it overrides this baseline.
-        if (partKey === key) continue;
-        changes.push({ key: partKey, before: currentByKey.get(partKey), after: value, raw: String(value) });
+        if (key !== selected) queued.set(key, { raw: String(value), value });
       }
     }
 
-    changes.push({
-      key,
-      before: field.secret ? '********' : view.current,
-      after: field.secret ? '********' : parsed,
-      raw,
-    });
-
-    editing = await prompts.continueEditing();
+    queued.set(selected, { raw, value: parsed });
   }
 
-  const visibleChanges = changes.map(({ raw: _raw, ...change }) => change);
-  // Quitting without touching anything should just exit, not ask about an empty diff.
-  if (visibleChanges.length === 0) return { saved: false, changes: visibleChanges, reindexRequested: false };
-  if (!(await prompts.confirmSave(visibleChanges))) {
-    return { saved: false, changes: visibleChanges, reindexRequested: false };
-  }
+  const changes: ConfigChange[] = [...queued.entries()].map(([key, entry]) => ({
+    key,
+    before: getConfigField(key).secret ? '********' : stored.get(key),
+    after: getConfigField(key).secret ? '********' : entry.value,
+  }));
+  if (changes.length === 0) return { saved: false, changes, reindexRequested: false };
+  if (!(await prompts.confirmSave(changes))) return { saved: false, changes, reindexRequested: false };
 
-  // One save, not one per change: a custom preset is three keys, and a partial write
+  // One save, not one per change: a custom profile is three keys, and a partial write
   // would leave `preset: custom` on disk with no model beside it.
-  await setConfigValues(root, changes.map(change => ({ key: change.key, raw: change.raw })));
+  await setConfigValues(root, [...queued.entries()].map(([key, entry]) => ({ key, raw: entry.raw })));
 
   const reindexRequested = await offerReindex(root, configBefore, prompts);
-  return { saved: true, changes: visibleChanges, reindexRequested };
+  return { saved: true, changes, reindexRequested };
 }
 
 /**

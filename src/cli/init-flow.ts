@@ -22,14 +22,27 @@ export interface InitFlowOptions {
 
 function defaultPrompts(): InitPrompts {
   return {
-    selectAgents: async choices => (await import('@inquirer/prompts')).checkbox({
-      message: 'Select agents to connect',
-      choices: choices.map(choice => ({ name: choice.name, value: choice.value, checked: choice.checked })),
-    }),
-    confirmGlobal: async (agent, configPath) => (await import('@inquirer/prompts')).confirm({
-      message: `${agent} uses global MCP config at ${configPath}. Continue?`,
-      default: false,
-    }),
+    selectAgents: async choices => {
+      const clack = await import('@clack/prompts');
+      const picked = await clack.multiselect({
+        message: 'Select agents to connect',
+        options: choices.map(choice => ({ value: choice.value, label: choice.name })),
+        initialValues: choices.filter(choice => choice.checked).map(choice => choice.value),
+        required: false,
+      });
+      // Cancelling selects nothing rather than throwing, so `knowl init` can report that
+      // it connected no agents instead of dying with a stack trace. The values come
+      // straight back out of `choices`, so they are agent names by construction.
+      return clack.isCancel(picked) ? [] : (picked as InitAgentChoice['value'][]);
+    },
+    confirmGlobal: async (agent, configPath) => {
+      const clack = await import('@clack/prompts');
+      const ok = await clack.confirm({
+        message: `${agent} uses global MCP config at ${configPath}. Continue?`,
+        initialValue: false,
+      });
+      return !clack.isCancel(ok) && ok === true;
+    },
   };
 }
 

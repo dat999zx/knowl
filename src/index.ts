@@ -553,8 +553,9 @@ workspaceCommand
       for (const peer of active.peers) console.log(`  ${peer.name}  ${peer.root}`);
 
       if (!options.yes) {
-        const { confirm } = await import('@inquirer/prompts');
-        if (!(await confirm({ message: 'Repin the workspace?', default: false }))) {
+        const clack = await import('@clack/prompts');
+        const answer = await clack.confirm({ message: 'Repin the workspace?', initialValue: false });
+        if (clack.isCancel(answer) || !answer) {
           console.log('Unchanged.');
           return;
         }
@@ -1043,17 +1044,17 @@ configCommand.action(async () => {
       throw new Error('Interactive config requires a TTY. Use `knowl config get`, `set`, or `reset`.');
     }
     const root = await findProjectRoot(process.cwd());
-    const { intro, outro } = await import('./cli/ui/style.js');
-    intro('knowl config', root);
+    const clack = await import('@clack/prompts');
+    clack.intro('knowl config');
     const result = await runConfigUi(root);
     // Run here rather than inside the UI: rebuilding needs the embedder and the database,
     // and the UI layer deliberately knows about neither.
     if (result.reindexRequested) await rebuildVectorEmbeddings(root);
     // Every exit is framed, including the one that changed nothing -- a run that just
     // stops leaves you unsure whether it saved.
-    outro(result.saved
-      ? `Saved ${result.changes.length} change${result.changes.length === 1 ? '' : 's'}`
-      : 'No changes');
+    clack.outro(result.saved
+      ? `Saved ${result.changes.length} change${result.changes.length === 1 ? '' : 's'} to .knowl/config.json`
+      : 'No changes written');
   } catch (error: any) {
     console.error(`❌ Configuration error: ${error.message}`);
     process.exitCode = 1;
@@ -1141,7 +1142,11 @@ configCommand
   .action(async (key, options) => {
     try {
       if (!key && !options.yes) {
-        if (!process.stdin.isTTY || !process.stdout.isTTY || !(await (await import('@inquirer/prompts')).confirm({ message: 'Reset all configuration to defaults?', default: false }))) {
+        const clack = await import('@clack/prompts');
+        const answer = process.stdin.isTTY && process.stdout.isTTY
+          ? await clack.confirm({ message: 'Reset all configuration to defaults?', initialValue: false })
+          : false;
+        if (clack.isCancel(answer) || !answer) {
           throw new Error('Reset cancelled. Use `--yes` for non-interactive full reset.');
         }
       }
