@@ -24,9 +24,15 @@ const ROOT_FIELDS = new Set([
 // caller's own work. They are compared in memory and never persisted: only summary,
 // command, and changedPaths reach the stored event payload.
 const KNOWL_WRITE_ARGS = ['title', 'id', 'supersedeId', 'supersedes', 'atoms'];
+// What tells one call of a search tool from the next. Without these, every Grep in a
+// session normalises to the same event -- the payload keeps only `summary: "Grep
+// completed"` -- so two searches inside the debounce window counted as one and the
+// second was dropped unprocessed, taking its change card with it. Short strings, bounded
+// by MAX_RETAINED_STRING like every other retained field, and compared in memory only.
+const TOOL_DISCRIMINATORS = ['pattern', 'glob', 'query', 'url'];
 const NESTED_FIELDS: Record<string, Set<string>> = {
-  tool_input: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', ...KNOWL_WRITE_ARGS]),
-  toolInput: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', ...KNOWL_WRITE_ARGS]),
+  tool_input: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', ...TOOL_DISCRIMINATORS, ...KNOWL_WRITE_ARGS]),
+  toolInput: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', ...TOOL_DISCRIMINATORS, ...KNOWL_WRITE_ARGS]),
   tool_response: new Set(['exit_code', 'exitCode']),
   toolResponse: new Set(['exit_code', 'exitCode']),
   error: new Set(['code', 'type', 'message', 'error']),

@@ -35,6 +35,17 @@ export interface NormalizedHostHook {
    * against what the MCP server recorded under its own tool name.
    */
   knowlToolName?: string;
+  /**
+   * What makes this event distinct from its neighbours, for debounce purposes only.
+   *
+   * Never displayed or stored. The capture fingerprint is otherwise built from the
+   * payload, and a non-shell tool event carries only `summary: "<Tool> completed"` --
+   * so two different Grep calls looked identical and the second inside the debounce
+   * window was dropped silently, taking its change card with it. The debounce still
+   * needs to collapse the same event delivered twice, so this keys on the tool's
+   * arguments rather than on a timestamp or a counter.
+   */
+  captureKey?: string;
   /** Claude subagent id. Present on every subagent event, absent on main-thread events. */
   agentId?: string;
   /** Claude subagent type, e.g. "Explore". Used only to title the binding. */
@@ -173,7 +184,22 @@ function bareKnowlToolName(toolName: string): string | undefined {
   return /^knowl_[a-z_]+$/.test(bare) ? bare : undefined;
 }
 
-function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'knowlTool' | 'knowlToolName' | 'knowlChangeKeys'> {
+/**
+ * What distinguishes this tool call from the previous one, for the debounce only.
+ *
+ * Bounded rather than hashed so a failing debounce stays readable in a claim file, and
+ * truncated because tool inputs carry whole file contents. Serialisation failures fall
+ * back to the tool name, which is no worse than the behaviour before this existed.
+ */
+function toolCaptureKey(toolName: string, input: Record<string, unknown>): string {
+  try {
+    return `${toolName}:${JSON.stringify(input)}`.slice(0, MAX_STRING);
+  } catch {
+    return toolName;
+  }
+}
+
+function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'knowlTool' | 'knowlToolName' | 'knowlChangeKeys' | 'captureKey'> {
   const input = toolInput(raw);
   const toolName = stringValue(raw.tool_name) ?? stringValue(raw.toolName) ?? '';
   const knowlTool = /knowl/i.test(toolName);
@@ -181,11 +207,13 @@ function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: 
     ? { knowlChangeKeys: knowlChangeKeys(input), knowlToolName: bareKnowlToolName(toolName) }
     : {};
   const isShell = hostProfile(host).isShellEvent(eventName, toolName);
+  // Shell events already fingerprint on the command itself, so they were never affected.
   if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, knowlTool, ...changeKeys };
 
+  const captureKey = toolCaptureKey(toolName, input);
   const paths = changedPaths(projectRoot, { ...raw, ...input });
-  if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths }, knowlTool, ...changeKeys };
-  return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) }, knowlTool, ...changeKeys };
+  if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths }, knowlTool, captureKey, ...changeKeys };
+  return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) }, knowlTool, captureKey, ...changeKeys };
 }
 
 function failurePayload(raw: Record<string, unknown>, failed: boolean): Record<string, unknown> {

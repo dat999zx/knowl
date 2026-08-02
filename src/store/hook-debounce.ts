@@ -19,7 +19,9 @@ function stableValue(value: unknown): unknown {
   return out;
 }
 
-export function captureFingerprint(input: Pick<NormalizedHostHook, 'event' | 'type' | 'payload' | 'status'>): string {
+export function captureFingerprint(
+  input: Pick<NormalizedHostHook, 'event' | 'type' | 'payload' | 'status' | 'captureKey'>,
+): string {
   const payload = input.payload ?? {};
   const changedPaths = Array.isArray(payload.changedPaths)
     ? [...payload.changedPaths].filter((value): value is string => typeof value === 'string').sort()
@@ -34,6 +36,10 @@ export function captureFingerprint(input: Pick<NormalizedHostHook, 'event' | 'ty
     changedPaths: changedPaths ?? null,
     exitCode: typeof payload.exitCode === 'number' ? payload.exitCode : null,
     passed: typeof payload.passed === 'boolean' ? payload.passed : null,
+    // Without this every non-shell tool event in a session hashes the same, because its
+    // payload is only `summary: "<Tool> completed"`. Two different reads a few hundred
+    // milliseconds apart then counted as one and the second was discarded unprocessed.
+    captureKey: input.captureKey ?? null,
   };
   return JSON.stringify(stableValue(fingerprint));
 }
