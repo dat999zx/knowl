@@ -881,7 +881,7 @@ export function registerTools(
         let vector;
         if (config && projectRoot && query && isVectorSearchEnabled(config)) {
           const embedder = await createLocalEmbeddingProvider(config, projectRoot);
-          const [embedding] = await embedder.embed([query]);
+          const embedding = await embedSearchQuery(embedder, query);
           const vectorConfig = getVectorSearchConfig(config);
           vector = {
             enabled: true,
@@ -1048,7 +1048,11 @@ export function registerTools(
         if (config && projectRoot && isVectorSearchEnabled(config)) {
           try {
             const embedder = await createLocalEmbeddingProvider(config, projectRoot);
-            semantic = { model: getVectorSearchConfig(config).model, embed: (texts: string[]) => embedder.embed(texts) };
+            semantic = {
+              model: getVectorSearchConfig(config).model,
+              embed: (texts: string[]) => embedder.embed(texts),
+              embedQuery: embedder.embedQuery ? (text: string) => embedder.embedQuery!(text) : undefined,
+            };
           } catch { /* fall back to lexical only */ }
         }
 

@@ -4,34 +4,36 @@ import { ProjectConfig } from '../core/types.js';
 import { KnowledgeEmbedder } from '../store/vector-index.js';
 
 /**
- * Chosen by measurement on a real corpus, not by leaderboard rank.
+ * Chosen by measurement, on the corpus this actually searches.
  *
- * Scored against project atoms with 17 queries phrased the way someone
- * half-remembers a thing. Every row below is from ONE session on ONE corpus
- * snapshot, because the baseline moves: bge-small scored MRR 0.662 one day and
- * 0.621 the next on a corpus that had grown by ~16 atoms, which is larger than
- * some of the gaps being judged.
+ * The candidate list is the part that matters. An earlier pass tested five
+ * models recalled from memory - all 2021-2023 - and reported a confident
+ * winner. Enumerating the registry found 537 plausible ONNX candidates, and the
+ * model below beat that "winner" by 72%. A search engine ranks by accumulated
+ * popularity, which accumulates with age, so it structurally cannot surface a
+ * recent release. Rigor downstream cannot repair a biased candidate list.
  *
- *   granite-embedding-small-english-r2  @1 59%  @3 94%  MRR 0.750  <- chosen
- *   bge-small-en-v1.5                   @1 53%  @3 65%  MRR 0.621
- *   granite-embedding-97m-multilingual-r2  @1 47%  @3 76%  MRR 0.643
- *   all-MiniLM-L6-v2                    @1 29%  @3 53%  MRR 0.465
+ * Measured over the REAL 60k-message transcript archive, 20 known-item queries
+ * phrased in words the target message does not use:
  *
- * Granite's English model finds the right atom in the top three 94% of the
- * time against bge-small's 65% - five more queries out of seventeen - for
- * about 1.3x the embedding cost. Its multilingual sibling of triple the size
- * is NOT better here: it carries 200+ languages of capacity through an
- * all-English corpus and lands inside the noise floor.
+ *   ranker                        @1    @3    @10   MRR
+ *   BM25 alone                    5%    15%   15%   0.092
+ *   semantic alone (this model)   5%    30%   45%   0.230
+ *   BM25 + semantic, RRF fused    5%    35%   65%   0.227   <- what ships
  *
- * Neither leaderboards nor parameter count predicted any of this. MTEB rank
- * would have picked all-MiniLM-L12-v2, which measured slower AND less accurate,
- * and bge-base's q8 export returns degenerate rankings (18% at every k).
+ * recall@10 is the metric that matters here, not @1: the consumer is an agent
+ * that reads every returned snippet, not a human clicking the first link.
+ *
+ * On a curated 363-atom corpus the same models score far higher (0.493 for the
+ * previous pick) - a proxy corpus flatters everything, so decisions get made on
+ * the real one.
  *
  * Changing this is safe: embeddings are keyed by provider+model and searched
  * with that as a filter, so vectors written by a previous model become
- * ineligible rather than being compared across model spaces.
+ * ineligible rather than being compared across model spaces. It is not FREE -
+ * re-embedding 60k messages took ~2.5 hours locally.
  */
-const DEFAULT_LOCAL_EMBEDDING_MODEL = 'onnx-community/granite-embedding-small-english-r2-ONNX';
+const DEFAULT_LOCAL_EMBEDDING_MODEL = 'Snowflake/snowflake-arctic-embed-m-v2.0';
 const DEFAULT_LOCAL_EMBEDDING_DTYPE = 'q8';
 
 /**
@@ -44,6 +46,23 @@ const DEFAULT_LOCAL_EMBEDDING_DTYPE = 'q8';
  * rather than being assumed, and config can override it per model.
  */
 const DEFAULT_LOCAL_EMBEDDING_POOLING: PoolingMode = 'cls';
+
+/**
+ * Retrieval models are trained ASYMMETRICALLY: the query gets an instruction
+ * prefix the document does not. Arctic wants `query: `, E5 wants `query: `,
+ * Nomic wants `search_query: ` against `search_document: `. Omitting it is the
+ * same class of silent mistake as the wrong pooling - the model still returns
+ * vectors, they are just measurably worse, and nothing reports a problem.
+ *
+ * Keyed by model family, overridable in config for a model this does not know.
+ */
+const QUERY_PREFIXES: Array<[RegExp, string]> = [
+  [/arctic-embed-\w*-v2/i, 'query: '],
+  [/arctic-embed/i, 'Represent this sentence for searching relevant passages: '],
+  [/\be5-|multilingual-e5/i, 'query: '],
+  [/nomic-embed|modernbert-embed/i, 'search_query: '],
+  [/bge-\w+-en|mxbai-embed/i, 'Represent this sentence for searching relevant passages: '],
+];
 
 export type PoolingMode = 'mean' | 'cls';
 
@@ -88,7 +107,14 @@ export function isVectorSearchEnabled(config: ProjectConfig): boolean {
 function poolingFor(model: string | undefined, configured: string | undefined): PoolingMode {
   if (configured === 'cls' || configured === 'mean') return configured;
   if (!model) return DEFAULT_LOCAL_EMBEDDING_POOLING;
-  return /granite|e5-|gte-multilingual/i.test(model) ? 'cls' : 'mean';
+  return /granite|e5-|gte-|arctic|mxbai|bge-\w+-en/i.test(model) ? 'cls' : 'mean';
+}
+
+/** The instruction a query carries and a document does not. Empty for symmetric models. */
+function queryPrefixFor(model: string | undefined, configured: string | undefined): string {
+  if (typeof configured === 'string') return configured;
+  if (!model) return '';
+  return QUERY_PREFIXES.find(([pattern]) => pattern.test(model))?.[1] ?? '';
 }
 
 export function getVectorSearchConfig(config: ProjectConfig) {
@@ -99,6 +125,7 @@ export function getVectorSearchConfig(config: ProjectConfig) {
     model: vector?.model || DEFAULT_LOCAL_EMBEDDING_MODEL,
     dtype: vector?.dtype || DEFAULT_LOCAL_EMBEDDING_DTYPE,
     pooling: poolingFor(vector?.model, vector?.pooling),
+    queryPrefix: queryPrefixFor(vector?.model, vector?.queryPrefix),
     cacheDir: vector?.cacheDir,
   };
 }
@@ -161,6 +188,15 @@ export async function createLocalEmbeddingProvider(
         vectors.push(Array.from(output.data).slice(0, output.dims[output.dims.length - 1]));
       }
       return vectors;
+    },
+    /**
+     * A QUERY, not a document. Separate entry point rather than a flag, because
+     * the asymmetry is invisible at the call site otherwise and every caller
+     * that forgets it silently loses accuracy instead of failing.
+     */
+    embedQuery: async (text: string) => {
+      const output = await localPipeline!([vector.queryPrefix + text], { pooling: vector.pooling, normalize: true });
+      return Array.from(output.data).slice(0, output.dims[output.dims.length - 1]);
     },
   };
 }

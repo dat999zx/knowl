@@ -37,8 +37,29 @@ describe('local embeddings', () => {
   it('defaults pooling to what the model family was trained for', () => {
     expect(getVectorSearchConfig(withModel('onnx-community/granite-embedding-small-english-r2-ONNX')).pooling).toBe('cls');
     expect(getVectorSearchConfig(withModel('intfloat/e5-small-v2')).pooling).toBe('cls');
-    expect(getVectorSearchConfig(withModel('Xenova/bge-small-en-v1.5')).pooling).toBe('mean');
+    expect(getVectorSearchConfig(withModel('Snowflake/snowflake-arctic-embed-m-v2.0')).pooling).toBe('cls');
+    // BGE documents CLS, and on our own corpus the two measured a tie (0.428 vs
+    // 0.426), so the model card wins where measurement cannot separate them.
+    expect(getVectorSearchConfig(withModel('Xenova/bge-small-en-v1.5')).pooling).toBe('cls');
     expect(getVectorSearchConfig(withModel('Xenova/all-MiniLM-L6-v2')).pooling).toBe('mean');
+  });
+
+  it('gives a query the instruction prefix its model family expects, and a document none', async () => {
+    // Retrieval models are asymmetric. Sending a bare query to one trained with
+    // `query: ` costs accuracy silently — the same failure shape as wrong pooling.
+    resetLocalEmbeddingPipeline();
+    const calls: string[][] = [];
+    const provider = await createLocalEmbeddingProvider(
+      withModel('Snowflake/snowflake-arctic-embed-m-v2.0'),
+      path.resolve('.knowl-embeddings-test'),
+      { loadPipeline: async () => (async (texts: string[]) => { calls.push(texts); return { data: [1, 0], dims: [1, 2] }; }) as any },
+    );
+
+    await provider.embed(['a stored document']);
+    await provider.embedQuery!('a search');
+
+    expect(calls[0]).toEqual(['a stored document']);
+    expect(calls[1]).toEqual(['query: a search']);
   });
 
   it('lets config override the family default, since the mapping cannot know every model', () => {

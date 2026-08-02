@@ -17,6 +17,8 @@ import { normalizeProjectDir } from './project-dir.js';
 export interface TranscriptEmbedder {
   model: string;
   embed(texts: string[]): Promise<number[][]>;
+  /** Queries carry the model's instruction prefix; documents do not. Optional for symmetric models. */
+  embedQuery?(text: string): Promise<number[]>;
 }
 
 /**
@@ -160,7 +162,11 @@ export async function embedTranscripts(
       }
     }
     embedded += statements.length;
-    remaining -= statements.length;
+    // Never below zero: the archive GROWS during a long backfill, because live
+    // sessions keep writing to it, so a counter captured once at the start will
+    // undershoot and go negative. Clamping keeps the display honest; the exact
+    // figure is re-counted from the database at the end.
+    remaining = Math.max(0, remaining - statements.length);
     onProgress?.(embedded, remaining);
     // Checked after a batch, never before one. A pass that returns having done
     // nothing is indistinguishable from a broken one, and on a slow machine a

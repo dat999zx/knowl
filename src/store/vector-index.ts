@@ -6,7 +6,21 @@ export type KnowledgeEmbedder = {
   provider: string;
   model: string;
   embed(texts: string[]): Promise<number[][]>;
+  /**
+   * Embed a QUERY rather than a document. Retrieval models are trained with an
+   * asymmetric instruction prefix, so the two are not interchangeable. Optional
+   * because a symmetric model does not need it and test stubs should not have to
+   * implement it -- callers fall back to embed().
+   */
+  embedQuery?(text: string): Promise<number[]>;
 };
+
+/** Embed one query, using the model's own instruction prefix when it has one. */
+export async function embedSearchQuery(embedder: KnowledgeEmbedder, query: string): Promise<number[]> {
+  if (embedder.embedQuery) return embedder.embedQuery(query);
+  const [vector] = await embedder.embed([query]);
+  return vector;
+}
 
 export type VectorReindexResult = {
   indexed: number;

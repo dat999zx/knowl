@@ -199,7 +199,7 @@ export async function searchTranscripts(
   let semanticOrder: Scored[] = [];
   if (semantic && vectors.embedded > 0) {
     try {
-      const [queryVector] = await semantic.embed([query]);
+      const queryVector = semantic.embedQuery ? await semantic.embedQuery(query) : (await semantic.embed([query]))[0];
       if (queryVector) {
         semanticOrder = await semanticCandidates(projectDir, queryVector, semantic.model, FUSION_DEPTH, sessionId);
       }

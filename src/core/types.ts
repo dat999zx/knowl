@@ -240,6 +240,8 @@ export interface ProjectConfig {
       dtype?: 'q4' | 'q8' | 'fp32' | 'fp16';
       /** Overrides the pooling the model's family is trained for. Wrong pooling costs more accuracy than a wrong model. */
       pooling?: 'mean' | 'cls';
+      /** Instruction prefix applied to QUERIES only. Defaults to the model family's. */
+      queryPrefix?: string;
       cacheDir?: string;
     };
   };

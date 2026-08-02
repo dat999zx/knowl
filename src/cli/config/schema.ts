@@ -8,6 +8,7 @@ export type ConfigKey =
   | 'search.vector.model'
   | 'search.vector.dtype'
   | 'search.vector.pooling'
+  | 'search.vector.queryPrefix'
   | 'search.vector.cacheDir'
   | 'ai.provider'
   | 'ai.model'
@@ -72,6 +73,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
   // copied from whatever the last model wanted. Set it only for a model the
   // family mapping does not recognise.
   { key: 'search.vector.pooling', category: 'Search', type: 'enum', values: VECTOR_POOLINGS, parse: enumValue(VECTOR_POOLINGS) },
+  { key: 'search.vector.queryPrefix', category: 'Search', type: 'string', parse: String },
   { key: 'search.vector.cacheDir', category: 'Search', type: 'string', parse: String },
   { key: 'security.rejectSecrets', category: 'Security', type: 'boolean', parse: booleanValue, defaultValue: DEFAULT_CONFIG.security.rejectSecrets },
   { key: 'security.secretPatterns', category: 'Security', type: 'list', parse: stringList, defaultValue: DEFAULT_CONFIG.security.secretPatterns },

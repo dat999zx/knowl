@@ -2,6 +2,7 @@ import type { KnowledgeItem } from '../core/types.js';
 import { loadConfig } from '../core/config.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { rankKnowledge, type RankOptions } from '../store/agent-query.js';
+import { embedSearchQuery } from '../store/vector-index.js';
 import { queryKnowledgeBase } from '../store/queries.js';
 import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
@@ -57,7 +58,7 @@ export async function runCliQuery(input: {
   if (input.query && config && isVectorSearchEnabled(config)) {
     try {
       const embedder = await createLocalEmbeddingProvider(config, input.projectRoot);
-      const [embedding] = await embedder.embed([input.query]);
+      const embedding = await embedSearchQuery(embedder, input.query);
       vector = {
         enabled: true,
         provider: embedder.provider,
