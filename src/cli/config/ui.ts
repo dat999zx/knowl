@@ -6,6 +6,25 @@ import {
 } from './profile-change.js';
 import { loadConfig } from '../../core/config.js';
 import { VECTOR_PRESETS, currentPresetId } from '../../core/vector-profile.js';
+import { color, crumb, stripAnsi, symbol } from '../ui/style.js';
+
+/**
+ * One theme for every prompt in this command, so the cursor, the highlight and the help
+ * line do not differ between the category list, a value picker and a confirmation.
+ */
+const THEME = {
+  prefix: { idle: color.cyan('?'), done: color.green(symbol.info) },
+  icon: { cursor: symbol.cursor },
+  style: {
+    message: (text: string) => color.bold(text),
+    description: (text: string) => color.gray(text),
+    // Stripped first: a row already carries colour, and wrapping it would end the
+    // highlight at the row's own first reset, leaving the rest of the line uncoloured.
+    highlight: (text: string) => color.cyan(stripAnsi(text)),
+    help: (text: string) => color.gray(text),
+    answer: (text: string) => color.cyan(text),
+  },
+};
 
 /** Returned by `selectCategory` to leave the editor. */
 export const CONFIG_UI_QUIT = '__knowl_config_quit__';
@@ -49,7 +68,10 @@ export interface ConfigPrompts {
    * dotted keys are shown. Both are optional, so an implementation taking only `fields`
    * keeps working.
    */
-  selectField(fields: ConfigFieldView[], options?: { hasAdvanced?: boolean; advanced?: boolean }): Promise<string>;
+  selectField(
+    fields: ConfigFieldView[],
+    options?: { hasAdvanced?: boolean; advanced?: boolean; category?: string },
+  ): Promise<string>;
   /**
    * `null` abandons the edit and returns to the setting list without queueing anything.
    * Widening the return type keeps every implementation that returns a plain string.
@@ -97,7 +119,8 @@ function formatPreset(value: unknown): string | null {
   if (value === 'custom') return 'Custom model';
   const preset = VECTOR_PRESETS[value as keyof typeof VECTOR_PRESETS];
   if (!preset) return null;
-  return `${preset.label.split(' — ')[0]} · ${preset.sizeMb} MB · ${preset.languages}`;
+  const sep = ` ${symbol.dot} `;
+  return `${preset.label.split(' — ')[0]}${sep}${preset.sizeMb} MB${sep}${preset.languages}`;
 }
 
 function sameValue(left: unknown, right: unknown): boolean {
@@ -209,10 +232,13 @@ export function fieldRows(fields: ConfigFieldView[], showKeys = false): string[]
   const valueWidth = Math.min(46, Math.max(...fields.map(field => field.currentText.length)));
   return fields.map(field => {
     const value = field.currentText.length > valueWidth
-      ? `${field.currentText.slice(0, valueWidth - 1)}…`
+      ? `${field.currentText.slice(0, valueWidth - 1)}${symbol.more}`
       : field.currentText;
-    if (!showKeys) return `${field.label.padEnd(nameWidth)}  ${value}`;
-    return `${field.label.padEnd(nameWidth)}  ${value.padEnd(valueWidth)}  ${field.key}`;
+    // Padded before colouring, never after: an escape sequence has width on the string
+    // and none on the screen, so padEnd on a coloured value misaligns every row under it.
+    const name = field.label.padEnd(nameWidth);
+    if (!showKeys) return `${name}  ${color.cyan(value)}`;
+    return `${name}  ${color.cyan(value.padEnd(valueWidth))}  ${color.gray(field.key)}`;
   });
 }
 
@@ -227,20 +253,25 @@ export function presetChoices(current?: string): Array<{ name: string; value: st
     const [name, note] = preset.label.split(' — ');
     // Several labels already name the language, so appending it again would read
     // "200+ languages, 32k context · 98 MB · 200+ languages".
-    const parts = [id === current ? 'current' : '', note, `${preset.sizeMb} MB`];
+    // "the historical default" reads as a sentence fragment mid-list; the leading article
+    // goes so every note is the same shape.
+    const parts = [id === current ? 'current' : '', note?.replace(/^the /, ''), `${preset.sizeMb} MB`];
     if (!note?.includes(preset.languages)) parts.push(preset.languages);
-    return { name, value: id as string, description: parts.filter(Boolean).join(' · ') };
+    return { name, value: id as string, description: parts.filter(Boolean).join(` ${symbol.dot} `) };
   });
   return [
     ...entries,
-    { name: 'Custom model…', value: 'custom', description: 'Enter a Hugging Face model id' },
-    { name: '← Back', value: VALUE_CANCEL, description: 'Leave this setting unchanged' },
+    // Symbols, not literals: these two lines rendered as mojibake on a terminal where
+    // every other row had already fallen back to ASCII.
+    { name: `Custom model${symbol.more}`, value: 'custom', description: 'Enter a Hugging Face model id' },
+    { name: `${symbol.back} Back`, value: VALUE_CANCEL, description: 'Leave this setting unchanged' },
   ];
 }
 
 export function createInquirerPrompts(): ConfigPrompts {
   return {
     selectCategory: async categories => (await import('@inquirer/prompts')).select({
+      theme: THEME,
       message: 'Settings',
       choices: [
         ...categories.map(category => ({ name: category, value: category })),
@@ -248,28 +279,39 @@ export function createInquirerPrompts(): ConfigPrompts {
       ],
     }),
     selectField: async (fields, options) => {
+      const inquirer = await import('@inquirer/prompts');
       const rows = fieldRows(fields, options?.advanced);
-      const extras = [];
+      const extras: Array<{ name: string; value: string; description: string }> = [];
       if (options?.hasAdvanced) {
         extras.push({
-          name: 'Advanced settings…',
+          name: `Advanced settings${symbol.more}`,
           value: CONFIG_UI_ADVANCED,
-          description: 'Values a preset already sets for you, and their config keys',
+          description: 'Values a preset already sets for you, and the keys to script them with',
         });
       }
-      return (await import('@inquirer/prompts')).select({
-        message: options?.advanced ? 'Advanced' : 'Setting',
-        pageSize: Math.min(fields.length + extras.length + 1, 14),
+      extras.push({
+        name: `${symbol.back} Back`,
+        value: CONFIG_UI_BACK,
+        description: options?.advanced ? 'Return to the main settings' : 'Return to the category list',
+      });
+      return inquirer.select({
+        theme: THEME,
+        // A breadcrumb rather than a bare word: the advanced list is one level in, and
+        // "Advanced" alone does not say advanced *what*.
+        message: crumb(String(options?.category ?? 'Settings'), options?.advanced ? 'Advanced' : ''),
+        pageSize: Math.min(fields.length + extras.length + 2, 16),
         choices: [
           ...fields.map((field, index) => ({
             name: rows[index],
             value: field.key,
             description: field.ownedBy
-              ? `${field.description}  (chosen by ${field.ownedBy.label})`
+              ? `${field.description}  ${color.dim(`(chosen by ${field.ownedBy.label})`)}`
               : field.description,
           })),
+          // Settings above, ways out below. Without the rule they read as one list and
+          // "Back" looks like something you could configure.
+          new inquirer.Separator(color.gray(' ')),
           ...extras,
-          { name: '← Back', value: CONFIG_UI_BACK, description: 'Go back' },
         ],
       });
     },
@@ -283,6 +325,7 @@ export function createInquirerPrompts(): ConfigPrompts {
       if (field.key === 'search.vector.preset') {
         console.log(`\n${field.description}\n`);
         const chosen = await prompts.select({
+      theme: THEME,
           message: field.label,
           pageSize: 8,
           choices: presetChoices(typeof current === 'string' ? current : undefined),
@@ -293,6 +336,7 @@ export function createInquirerPrompts(): ConfigPrompts {
 
       if (field.type === 'boolean') {
         const chosen = await prompts.select({
+      theme: THEME,
           message: field.label,
           choices: [
             { name: 'On', value: 'true', description: field.description },
@@ -306,6 +350,7 @@ export function createInquirerPrompts(): ConfigPrompts {
 
       if (field.type === 'enum' && field.values?.length) {
         const chosen = await prompts.select({
+      theme: THEME,
           message: field.label,
           choices: [
             ...field.values.map(value => ({ name: value, value, description: field.description })),
@@ -317,6 +362,7 @@ export function createInquirerPrompts(): ConfigPrompts {
       }
 
       const entered = await prompts.input({
+      theme: THEME,
         message: field.type === 'list'
           ? `${field.label} (comma separated, blank to cancel)`
           : `${field.label} (blank to cancel)`,
@@ -325,10 +371,12 @@ export function createInquirerPrompts(): ConfigPrompts {
       return entered.trim() ? entered : null;
     },
     openOwner: async field => (await import('@inquirer/prompts')).confirm({
+      theme: THEME,
       message: `${field.label} is chosen by ${field.ownedBy?.label}, so editing it here would change nothing. Open ${field.ownedBy?.label} instead?`,
       default: true,
     }),
     confirmSave: async changes => (await import('@inquirer/prompts')).confirm({
+      theme: THEME,
       message: `Save these changes?\n${changes.map(change =>
         `  ${describeKey(change.key)}: ${formatCurrent(change.before)} → ${formatCurrent(change.after)}`).join('\n')}\n`,
       default: true,
@@ -338,6 +386,7 @@ export function createInquirerPrompts(): ConfigPrompts {
       console.error(`  ${field.label} — ${message}`);
     },
     confirmReindex: async (_change, affectedRows) => (await import('@inquirer/prompts')).confirm({
+      theme: THEME,
       message: affectedRows > 0
         ? `Rebuild ${affectedRows} embedding(s) with the new model now?`
         : 'Build embeddings with the new model now?',
@@ -359,6 +408,7 @@ export function createInquirerPrompts(): ConfigPrompts {
         // Asked, never defaulted: an ONNX mirror without 1_Pooling/config.json gives
         // us nothing to infer from, and a wrong guess ranks badly with no error.
         const pooling = probe.pooling ?? await prompts.select({
+      theme: THEME,
           message: `${model} does not declare its pooling method. Which does it use?`,
           choices: [{ name: 'cls', value: 'cls' as const }, { name: 'mean', value: 'mean' as const }],
         });
@@ -398,7 +448,11 @@ export async function runConfigUi(root: string, prompts: ConfigPrompts = createI
     for (;;) {
       const fields = inCategory.filter(field => Boolean(field.advanced) === advanced);
       views = fields.map(toView);
-      selected = await prompts.selectField(views, { hasAdvanced: hasAdvanced && !advanced, advanced });
+      selected = await prompts.selectField(views, {
+        hasAdvanced: hasAdvanced && !advanced,
+        advanced,
+        category: String(category),
+      });
       if (selected === CONFIG_UI_ADVANCED) { advanced = true; continue; }
       // Back from the advanced list returns to the main one, not out of the category.
       if (selected === CONFIG_UI_BACK && advanced) { advanced = false; continue; }

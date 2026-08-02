@@ -1043,10 +1043,17 @@ configCommand.action(async () => {
       throw new Error('Interactive config requires a TTY. Use `knowl config get`, `set`, or `reset`.');
     }
     const root = await findProjectRoot(process.cwd());
+    const { intro, outro } = await import('./cli/ui/style.js');
+    intro('knowl config', root);
     const result = await runConfigUi(root);
     // Run here rather than inside the UI: rebuilding needs the embedder and the database,
     // and the UI layer deliberately knows about neither.
     if (result.reindexRequested) await rebuildVectorEmbeddings(root);
+    // Every exit is framed, including the one that changed nothing -- a run that just
+    // stops leaves you unsure whether it saved.
+    outro(result.saved
+      ? `Saved ${result.changes.length} change${result.changes.length === 1 ? '' : 's'}`
+      : 'No changes');
   } catch (error: any) {
     console.error(`❌ Configuration error: ${error.message}`);
     process.exitCode = 1;

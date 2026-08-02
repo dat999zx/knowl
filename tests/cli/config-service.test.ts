@@ -632,9 +632,11 @@ describe('config UI presentation', () => {
     expect(multilingual.name).toBe('Granite 97M Multilingual R2');
     expect(multilingual.description).toContain('98 MB');
     expect(multilingual.description).toContain('200+ languages');
-    // No raw ids on show, and both escape hatches present.
+    // No raw ids on show, and both escape hatches present. The two action rows are
+    // matched loosely because their symbols fall back to ASCII on a plain terminal.
     expect(choices.every(choice => !choice.name.includes('-'))).toBe(true);
-    expect(choices.some(choice => choice.name === 'Custom model…')).toBe(true);
-    expect(choices[choices.length - 1].name).toBe('← Back');
+    expect(choices.some(choice => choice.name.startsWith('Custom model'))).toBe(true);
+    expect(choices[choices.length - 1].name).toContain('Back');
+    expect(choices[choices.length - 1].value).toBe('__knowl_value_cancel__');
   });
 });
