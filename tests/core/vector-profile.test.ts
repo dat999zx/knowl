@@ -55,6 +55,14 @@ describe('resolveVectorProfile', () => {
     });
   });
 
+  it('keeps an explicit dtype when the model happens to match a preset', () => {
+    // Matching by model name supplies pooling only. Overriding a dtype the config
+    // states outright would silently move an existing repo to a different profile.
+    const profile = resolveVectorProfile(config({ model: 'Xenova/all-MiniLM-L6-v2', dtype: 'fp32' }));
+    expect(profile.dtype).toBe('fp32');
+    expect(profile.pooling).toBe('mean');
+  });
+
   it('treats an unrecognised model with no preset as custom with mean pooling', () => {
     const profile = resolveVectorProfile(config({ model: 'someone/unknown', dtype: 'q8' }));
     expect(profile.model).toBe('someone/unknown');

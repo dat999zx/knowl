@@ -12,11 +12,14 @@ const withVector = (overrides: Record<string, unknown> = {}): ProjectConfig => (
 } as unknown as ProjectConfig);
 
 describe('embedding identity', () => {
-  it('reads the provider, model and dtype triple from config', () => {
+  it('reads the provider, model, dtype and pooling from config', () => {
     expect(embeddingIdentityFromConfig(withVector())).toEqual({
       provider: 'local',
       model: 'Xenova/all-MiniLM-L6-v2',
       dtype: 'q8',
+      // Not in this config: MiniLM is a known model, so its pooling is derived rather
+      // than guessed. See resolveVectorProfile.
+      pooling: 'mean',
     });
   });
 
@@ -51,6 +54,13 @@ describe('embedding identity', () => {
 
   it('formats a null identity as a readable phrase rather than "null"', () => {
     expect(formatEmbeddingIdentity(null)).toBe('vector search disabled');
-    expect(formatEmbeddingIdentity({ provider: 'local', model: 'm', dtype: 'q8' })).toBe('local/m (q8)');
+    expect(formatEmbeddingIdentity({ provider: 'local', model: 'm', dtype: 'q8', pooling: 'cls' }))
+      .toBe('local/m (q8, cls pooling)');
+  });
+
+  it('treats a different pooling as a different identity, since it changes the vector', () => {
+    const a = embeddingIdentityFromConfig(withVector({ model: 'someone/custom', pooling: 'mean' }));
+    const b = embeddingIdentityFromConfig(withVector({ model: 'someone/custom', pooling: 'cls' }));
+    expect(sameEmbeddingIdentity(a, b)).toBe(false);
   });
 });

@@ -23,6 +23,7 @@ import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory } from './core/types.js';
 import { createManifest, isValidRepoName, readManifest, writeManifest } from './workspace/manifest.js';
 import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js';
 import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
+import { embeddingIdentityFromConfig, formatEmbeddingIdentity } from './store/embedding-identity.js';
 import { promoteItems } from './workspace/promote.js';
 import { existingItemsNotice, visibilityGateNotice } from './cli/workspace-visibility-notice.js';
 import { repoEntry, updateRepoSettings } from './workspace/repo-settings.js';
@@ -531,6 +532,39 @@ workspaceCommand
     } catch (error: any) {
       console.error(`Error updating workspace settings: ${error.message}`);
       process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('repin-embedding')
+  .description("Repoint the workspace at this repository's embedding model")
+  .option('--yes', 'Skip the confirmation prompt')
+  .action(async (options: { yes?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      const identity = embeddingIdentityFromConfig(config);
+      const active = await resolveWorkspace(root, config);
+      if (!active) throw new Error('This repository is not in a workspace.');
+
+      console.log(`Workspace "${active.name}" moves to ${formatEmbeddingIdentity(identity)}.`);
+      console.log('Every linked repository must then run `knowl reindex --vectors`:');
+      for (const peer of active.peers) console.log(`  ${peer.name}  ${peer.root}`);
+
+      if (!options.yes) {
+        const { confirm } = await import('@inquirer/prompts');
+        if (!(await confirm({ message: 'Repin the workspace?', default: false }))) {
+          console.log('Unchanged.');
+          return;
+        }
+      }
+
+      active.manifest.embedding = identity;
+      await writeManifest(workspaceManifestPath(active.name), active.manifest);
+      console.log('Repinned. Peers keep their old vectors until each one reindexes.');
+    } catch (error: any) {
+      console.error(`Error repinning workspace embedding: ${error.message}`);
+      process.exitCode = 1;
     }
   });
 

@@ -109,17 +109,19 @@ export function resolveVectorProfile(config: ProjectConfig): VectorProfile {
   if (isPresetId(preset)) return presetProfile(preset);
 
   const model = typeof vector?.model === 'string' ? vector.model : '';
-
-  if (preset !== 'custom') {
-    const matched = matchPresetByModel(model);
-    if (matched) return presetProfile(matched);
-  }
+  // Only pooling is taken from the matched preset, never dtype or provider. Those the
+  // config states outright, and overriding a repo's explicit `dtype: fp32` because its
+  // model name happens to appear in the table would be exactly the silent switch the
+  // preset table exists to prevent. Pooling is the one thing an old config cannot say.
+  const matched = preset === 'custom' ? null : matchPresetByModel(model);
 
   return {
     provider: typeof vector?.provider === 'string' ? vector.provider : 'local',
     model,
     dtype: typeof vector?.dtype === 'string' ? vector.dtype : 'q8',
-    pooling: vector?.pooling === 'cls' ? 'cls' : 'mean',
+    pooling: vector?.pooling === 'cls' ? 'cls'
+      : vector?.pooling === 'mean' ? 'mean'
+        : matched ? VECTOR_PRESETS[matched].pooling : 'mean',
   };
 }
 

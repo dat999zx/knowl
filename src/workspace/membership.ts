@@ -12,6 +12,10 @@ import { assertNameAvailable, normalizeRepoEntry, readManifest, writeManifest, W
 import { workspaceManifestPath } from './paths.js';
 import type { RepoSettings } from './repo-settings.js';
 
+// Defined where readManifest lives so the migration cannot be bypassed by reading a
+// manifest directly; re-exported here because membership is what acts on the result.
+export { migrateLegacyManifestPooling } from './manifest.js';
+
 export type WorkspaceLink = { workspace: string; repo: string };
 
 function contains(parent: string, child: string): boolean {

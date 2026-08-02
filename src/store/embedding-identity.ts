@@ -1,32 +1,47 @@
 import type { ProjectConfig } from '../core/types.js';
+import { resolveVectorProfile } from '../core/vector-profile.js';
 
 /**
- * The triple that decides whether two sets of stored vectors are comparable.
+ * What decides whether two sets of stored vectors are comparable.
  *
- * `searchKnowledgeEmbeddings` filters on provider and model because cosine similarity
- * between vectors of different dimensions is meaningless, and dtype belongs here for the
- * same reason: quantization changes the vector, so a q8 corpus and an fp32 corpus are not
- * one searchable space even under the same model name.
+ * `searchKnowledgeEmbeddings` filters on the profile fingerprint, which is exactly these
+ * four fields: quantization changes the vector, so a q8 corpus and an fp32 corpus are not
+ * one searchable space even under the same model name, and pooling changes it just as much.
  */
-export type EmbeddingIdentity = { provider: string; model: string; dtype: string };
+export type EmbeddingIdentity = {
+  provider: string;
+  model: string;
+  dtype: string;
+  /** `unknown` comes from a pre-pooling manifest and never compares equal to anything. */
+  pooling: 'mean' | 'cls' | 'unknown';
+};
 
 /** Null means vector search is off, which is a valid state, not an error. */
 export function embeddingIdentityFromConfig(config: ProjectConfig): EmbeddingIdentity | null {
-  const vector = config?.search?.vector;
-  if (!vector?.enabled) return null;
+  if (!config?.search?.vector?.enabled) return null;
+  // Resolved, not raw: a preset-only config has no `model` key, and reading it
+  // directly yielded '' -- which made two different models compare as equal.
+  const profile = resolveVectorProfile(config);
   return {
-    provider: vector.provider ?? 'local',
-    model: vector.model ?? '',
-    dtype: vector.dtype ?? 'q8',
+    provider: profile.provider,
+    model: profile.model,
+    dtype: profile.dtype,
+    pooling: profile.pooling,
   };
 }
 
 export function sameEmbeddingIdentity(a: EmbeddingIdentity | null, b: EmbeddingIdentity | null): boolean {
   if (a === null && b === null) return true;
   if (a === null || b === null) return false;
-  return a.provider === b.provider && a.model === b.model && a.dtype === b.dtype;
+  // `unknown` is not a wildcard. Letting it match anything would allow two repos
+  // with genuinely incompatible pooling to federate and mis-rank each other.
+  if (a.pooling === 'unknown' || b.pooling === 'unknown') return false;
+  return a.provider === b.provider && a.model === b.model
+    && a.dtype === b.dtype && a.pooling === b.pooling;
 }
 
 export function formatEmbeddingIdentity(identity: EmbeddingIdentity | null): string {
-  return identity ? `${identity.provider}/${identity.model} (${identity.dtype})` : 'vector search disabled';
+  return identity
+    ? `${identity.provider}/${identity.model} (${identity.dtype}, ${identity.pooling} pooling)`
+    : 'vector search disabled';
 }

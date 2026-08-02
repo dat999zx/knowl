@@ -72,7 +72,9 @@ describe('origin_repo backfill on join', () => {
   it('records the workspace embedding identity when the first repo joins', async () => {
     await joinWorkspace({ projectRoot: REPO, workspaceName: 'ws', repoName: 'server' });
     const manifest = await readManifest(workspaceManifestPath('ws'));
-    expect(manifest.embedding).toEqual({ provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dtype: 'q8' });
+    expect(manifest.embedding).toEqual({
+      provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dtype: 'q8', pooling: 'mean',
+    });
   });
 
   it('refuses a repo whose embedding identity differs from the workspace', async () => {

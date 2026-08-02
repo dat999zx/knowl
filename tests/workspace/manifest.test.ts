@@ -52,7 +52,9 @@ describe('manifest', () => {
     const loaded = await readManifest(target);
     expect(loaded.name).toBe('duckprep');
     expect(loaded.repos[0].name).toBe('server');
-    expect(loaded.embedding).toEqual({ provider: 'local', model: 'm', dtype: 'q8' });
+    // Read back with pooling filled in: 'm' is not a model we ship, so it is recorded as
+    // unknown rather than guessed, which keeps it from matching anything until a repin.
+    expect(loaded.embedding).toEqual({ provider: 'local', model: 'm', dtype: 'q8', pooling: 'unknown' });
   });
 
   it('records the client version that wrote it, so an older build can refuse', () => {

@@ -10,7 +10,9 @@ import type { ProjectConfig } from '../../src/core/types.js';
 const active = (overrides: Partial<ActiveWorkspace> = {}): ActiveWorkspace => ({
   name: 'duckprep',
   repo: 'server',
-  manifest: createManifest('duckprep', { provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dtype: 'q8' }),
+  manifest: createManifest('duckprep', {
+    provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dtype: 'q8', pooling: 'mean',
+  }),
   peers: [
     { name: 'web', root: path.resolve('/repos/web'), databasePath: path.resolve('/repos/web/.knowl/knowl.db'), present: true },
     { name: 'protocol', root: path.resolve('/repos/protocol'), databasePath: path.resolve('/repos/protocol/.knowl/knowl.db'), present: false },
