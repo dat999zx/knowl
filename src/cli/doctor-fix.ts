@@ -4,6 +4,7 @@ import { installKnowlGitignoreEntry } from '../core/gitignore.js';
 import { closeDb, initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { recoverAbandonedSessions } from '../store/session-repository.js';
+import { repairUnnormalizedConflictKeys } from '../store/conflicts.js';
 import { reindexKnowledgeEmbeddings } from '../store/vector-index.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { runAgentInitFlow } from './init-flow.js';
@@ -38,6 +39,15 @@ async function runRemedy(projectRoot: string, remedy: DoctorRemedy): Promise<voi
       await initDb(projectRoot);
       try {
         await recoverAbandonedSessions();
+      } finally {
+        await closeDb();
+      }
+      return;
+
+    case 'conflict-key-normalize':
+      await initDb(projectRoot);
+      try {
+        await repairUnnormalizedConflictKeys();
       } finally {
         await closeDb();
       }
