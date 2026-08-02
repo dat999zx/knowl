@@ -1,4 +1,5 @@
 import type { ProjectConfig } from '../core/types.js';
+import { VECTOR_PRESETS } from '../core/vector-profile.js';
 
 export type WarmResult =
   | { status: 'ready'; model: string }
@@ -65,8 +66,18 @@ export async function warmEmbeddingModel(
 
 export function formatWarmResult(result: WarmResult): string | null {
   switch (result.status) {
-    case 'ready':
-      return '🧠 Embedding model ready; new knowledge is indexed for semantic search as it is written.';
+    case 'ready': {
+      const preset = Object.values(VECTOR_PRESETS).find(candidate => candidate.model === result.model);
+      const base = '🧠 Embedding model ready; new knowledge is indexed for semantic search as it is written.';
+      // Said once, at init, rather than as a doctor warning: an English-only default
+      // is deliberate, so warning about it on every check would nag about a choice
+      // the project made. But a user storing non-English knowledge needs to know a
+      // better option exists, and this is the only place they are told.
+      if (!preset || preset.languages === 'English') {
+        return `${base}\n   Using an English-only model. For other languages, run \`knowl config\` and pick granite-97m-multilingual.`;
+      }
+      return base;
+    }
     case 'disabled':
       return null;
     case 'skipped':
