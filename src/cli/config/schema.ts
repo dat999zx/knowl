@@ -36,13 +36,21 @@ export interface ConfigField {
   secret?: boolean;
   type: ConfigFieldType;
   /**
-   * Human name shown in the picker. The dotted key stays visible beside it rather than
-   * being replaced: `knowl config set <key>` is the scripting interface, so a UI that
-   * never shows the key gives you no way to discover it.
+   * Human name shown in the picker, and the only name shown in a category's main list.
+   * The dotted key appears under `Advanced settings…`, where someone is already looking
+   * for what to pass to `knowl config set`.
    */
   label: string;
   /** One line on what the setting does, shown while editing it. */
   description: string;
+  /**
+   * Kept out of the category's main list and shown under `Advanced settings…`.
+   *
+   * These are the knobs a preset already sets correctly. Listing them beside the two
+   * settings people actually change buries those two, and every one of them can still
+   * be reached with `knowl config set <key> <value>`.
+   */
+  advanced?: boolean;
   /**
    * The setting that owns this one's value. `resolveVectorProfile` reads a named preset
    * before it ever looks at the flat keys, so while one is set these fields can be
@@ -96,31 +104,31 @@ export const CONFIG_FIELDS: ConfigField[] = [
     description: 'Rank by meaning as well as keywords. Off falls back to keyword search alone.',
   },
   {
-    key: 'search.vector.provider', category: 'Search', type: 'enum', values: VECTOR_PROVIDERS,
+    key: 'search.vector.provider', advanced: true, category: 'Search', type: 'enum', values: VECTOR_PROVIDERS,
     parse: enumValue(VECTOR_PROVIDERS), defaultValue: DEFAULT_CONFIG.search?.vector?.provider,
     label: 'Embedding provider',
     description: 'Where embeddings are computed. Local runs on this machine and sends nothing out.',
   },
   {
-    key: 'search.vector.model', category: 'Search', type: 'string',
+    key: 'search.vector.model', advanced: true, category: 'Search', type: 'string',
     parse: String, defaultValue: DEFAULT_CONFIG.search?.vector?.model,
     label: 'Model name', derivedFrom: 'search.vector.preset',
     description: 'The Hugging Face model id behind the chosen preset.',
   },
   {
-    key: 'search.vector.dtype', category: 'Search', type: 'enum', values: VECTOR_DTYPES,
+    key: 'search.vector.dtype', advanced: true, category: 'Search', type: 'enum', values: VECTOR_DTYPES,
     parse: enumValue(VECTOR_DTYPES), defaultValue: DEFAULT_CONFIG.search?.vector?.dtype,
     label: 'Quantization', derivedFrom: 'search.vector.preset',
     description: 'Weight precision. Lower is smaller and faster; higher is more accurate.',
   },
   {
-    key: 'search.vector.pooling', category: 'Search', type: 'enum', values: VECTOR_POOLINGS,
+    key: 'search.vector.pooling', advanced: true, category: 'Search', type: 'enum', values: VECTOR_POOLINGS,
     parse: enumValue(VECTOR_POOLINGS),
     label: 'Pooling method', derivedFrom: 'search.vector.preset',
     description: 'How token vectors collapse into one. A wrong value ranks badly with no error, which is why presets carry it.',
   },
   {
-    key: 'search.vector.cacheDir', category: 'Search', type: 'string', parse: String,
+    key: 'search.vector.cacheDir', advanced: true, category: 'Search', type: 'string', parse: String,
     label: 'Model cache folder',
     description: 'Where downloaded model files are kept. Blank uses the default location.',
   },
@@ -148,12 +156,12 @@ export const CONFIG_FIELDS: ConfigField[] = [
     description: 'Model name to send to that provider.',
   },
   {
-    key: 'ai.temperature', category: 'AI provider', type: 'number', parse: optionalNumber,
+    key: 'ai.temperature', advanced: true, category: 'AI provider', type: 'number', parse: optionalNumber,
     label: 'Temperature',
     description: 'Sampling randomness, 0 to 2. Lower is more repeatable.',
   },
   {
-    key: 'ai.baseUrl', category: 'AI provider', type: 'string', parse: String,
+    key: 'ai.baseUrl', advanced: true, category: 'AI provider', type: 'string', parse: String,
     label: 'API base URL',
     description: 'Override the provider endpoint, for a proxy or a self-hosted server.',
   },
@@ -169,7 +177,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
     description: 'Share a knowledge namespace across repositories in your organization.',
   },
   {
-    key: 'memory.organization.path', category: 'Memory namespaces', type: 'string', parse: String,
+    key: 'memory.organization.path', advanced: true, category: 'Memory namespaces', type: 'string', parse: String,
     label: 'Organization memory path',
     description: 'Folder holding the organization namespace database.',
   },
@@ -180,7 +188,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
     description: 'Keep personal knowledge that follows you across every project.',
   },
   {
-    key: 'memory.global.path', category: 'Memory namespaces', type: 'string', parse: String,
+    key: 'memory.global.path', advanced: true, category: 'Memory namespaces', type: 'string', parse: String,
     label: 'Personal global memory path',
     description: 'Folder holding your personal namespace database.',
   },

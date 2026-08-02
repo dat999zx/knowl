@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DEFAULT_CONFIG, NEW_PROJECT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
 import { getConfigValue, resetConfigValue, setConfigValue, setConfigValues } from '../../src/cli/config/service.js';
-import { CONFIG_UI_BACK, CONFIG_UI_QUIT, ConfigFieldView, ConfigPrompts, presetChoices, runConfigUi } from '../../src/cli/config/ui.js';
+import { CONFIG_UI_ADVANCED, CONFIG_UI_BACK, CONFIG_UI_QUIT, ConfigFieldView, ConfigPrompts, presetChoices, runConfigUi } from '../../src/cli/config/ui.js';
 
 const ROOT = path.resolve('.knowl-config-service-test');
 
@@ -246,18 +246,25 @@ describe('config UI', () => {
 
   it('exposes type metadata so values can be picked rather than typed', async () => {
     await writeConfig();
-    let seen: ConfigFieldView[] = [];
-    const prompts: ConfigPrompts = {
-      selectCategory: async () => 'Search',
-      selectField: async fields => { seen = fields; return CONFIG_UI_BACK; },
+    let main: ConfigFieldView[] = [];
+    let advanced: ConfigFieldView[] = [];
+    let done = false;
+    await runConfigUi(ROOT, {
+      selectCategory: async () => (done ? CONFIG_UI_QUIT : 'Search'),
+      selectField: async (fields, options) => {
+        // Quantization is an advanced setting, so reaching it means opening that list.
+        if (options?.advanced) { advanced = fields; done = true; return CONFIG_UI_BACK; }
+        main = fields;
+        // Backing out of advanced returns here, so stop asking for it once captured.
+        return done ? CONFIG_UI_BACK : CONFIG_UI_ADVANCED;
+      },
       inputValue: async () => '',
       confirmSave: async () => false,
       continueEditing: async () => false,
-    };
-    await runConfigUi(ROOT, { ...prompts, selectCategory: async () => seen.length ? CONFIG_UI_QUIT : 'Search' });
+    });
 
-    expect(seen.find(field => field.key === 'search.vector.enabled')?.type).toBe('boolean');
-    const dtype = seen.find(field => field.key === 'search.vector.dtype');
+    expect(main.find(field => field.key === 'search.vector.enabled')?.type).toBe('boolean');
+    const dtype = advanced.find(field => field.key === 'search.vector.dtype');
     expect(dtype?.type).toBe('enum');
     expect(dtype?.values).toEqual(['q4', 'q8', 'fp16', 'fp32']);
   });
@@ -358,13 +365,25 @@ describe('config UI', () => {
 });
 
 describe('config UI presentation', () => {
-  /** Enter Search, capture the field list, then quit without editing. */
-  async function viewsForCategory(category: string): Promise<ConfigFieldView[]> {
+  /**
+   * Enter a category, capture either the main or the advanced field list, then quit.
+   * Advanced settings are one level in, so reaching them means answering the main list
+   * with CONFIG_UI_ADVANCED first.
+   */
+  async function viewsForCategory(category: string, advanced = false): Promise<ConfigFieldView[]> {
     let seen: ConfigFieldView[] = [];
     let asked = 0;
     await runConfigUi(ROOT, {
       selectCategory: async () => (asked++ === 0 ? category : CONFIG_UI_QUIT),
-      selectField: async fields => { seen = fields; return CONFIG_UI_BACK; },
+      selectField: async (fields, options) => {
+        // Back out of the advanced list lands on the main one, so this must ask for
+        // advanced only until it has what it came for, or the two bounce forever.
+        if (advanced && !options?.advanced) {
+          return seen.length ? CONFIG_UI_BACK : CONFIG_UI_ADVANCED;
+        }
+        seen = fields;
+        return CONFIG_UI_BACK;
+      },
       inputValue: async () => { throw new Error('should not reach value entry'); },
       confirmSave: async () => false,
       continueEditing: async () => false,
@@ -402,20 +421,21 @@ describe('config UI presentation', () => {
       ...DEFAULT_CONFIG,
       search: { vector: { ...DEFAULT_CONFIG.search!.vector, preset: 'bge-small-en' } },
     } as typeof DEFAULT_CONFIG);
-    const owned = await viewsForCategory('Search');
+    const owned = await viewsForCategory('Search', true);
 
     for (const key of ['search.vector.model', 'search.vector.dtype', 'search.vector.pooling']) {
       expect(owned.find(field => field.key === key)?.ownedBy?.key).toBe('search.vector.preset');
     }
-    // The preset itself is never owned, or there would be no way in.
-    expect(owned.find(field => field.key === 'search.vector.preset')?.ownedBy).toBeUndefined();
+    // The preset itself stays in the main list, and is never owned.
+    const main = await viewsForCategory('Search');
+    expect(main.find(field => field.key === 'search.vector.preset')?.ownedBy).toBeUndefined();
 
     await fs.rm(ROOT, { recursive: true, force: true });
     await writeConfig({
       ...DEFAULT_CONFIG,
       search: { vector: { ...DEFAULT_CONFIG.search!.vector, preset: 'custom' } },
     } as typeof DEFAULT_CONFIG);
-    const free = await viewsForCategory('Search');
+    const free = await viewsForCategory('Search', true);
 
     // `custom` names no model of its own, so the flat keys are the only thing to edit.
     expect(free.find(field => field.key === 'search.vector.model')?.ownedBy).toBeUndefined();
@@ -452,8 +472,14 @@ describe('config UI presentation', () => {
     });
 
     expect(edited).toBe('search.vector.preset');
-    expect(result.changes.map(change => change.key)).toEqual(['search.vector.preset']);
+    // Picking a model writes the whole profile, so the flat keys cannot be left
+    // describing the model that came before.
+    expect(result.changes.map(change => change.key)).toEqual([
+      'search.vector.preset', 'search.vector.model', 'search.vector.dtype', 'search.vector.pooling',
+    ]);
     expect(await getConfigValue(ROOT, 'search.vector.preset')).toBe('minilm-l6-en');
+    expect(await getConfigValue(ROOT, 'search.vector.model')).toBe('Xenova/all-MiniLM-L6-v2');
+    expect(await getConfigValue(ROOT, 'search.vector.pooling')).toBe('mean');
   });
 
   it('writes nothing when the owner offer is declined', async () => {
@@ -509,7 +535,7 @@ describe('config UI presentation', () => {
         },
       },
     } as typeof DEFAULT_CONFIG);
-    const views = await viewsForCategory('Search');
+    const views = await viewsForCategory('Search', true);
 
     const model = views.find(field => field.key === 'search.vector.model')!;
     expect(model.currentText).toContain('granite');
@@ -536,6 +562,67 @@ describe('config UI presentation', () => {
     const apiKey = views.find(field => field.key === 'ai.apiKey')!;
     expect(apiKey.currentText).toBe('********');
     expect(apiKey.modified).toBe(false);
+  });
+
+  /**
+   * The shape a repository initialised before presets existed still has on disk: no
+   * `preset` key at all. Every preset-aware behaviour has to work from the model string
+   * alone here, which is the case the first version of this UI silently did nothing for.
+   */
+  const PRE_PRESET_CONFIG = {
+    version: 1,
+    security: { rejectSecrets: false, secretPatterns: [] },
+    search: { vector: { enabled: true, provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dtype: 'q8' } },
+  } as unknown as typeof DEFAULT_CONFIG;
+
+  it('keeps a category list to the settings people open it to change', async () => {
+    await writeConfig(PRE_PRESET_CONFIG);
+
+    expect((await viewsForCategory('Search')).map(field => field.label))
+      .toEqual(['Embedding model', 'Semantic search']);
+    // The internals are still reachable, one level in.
+    expect((await viewsForCategory('Search', true)).map(field => field.key)).toEqual([
+      'search.vector.provider', 'search.vector.model',
+      'search.vector.dtype', 'search.vector.pooling', 'search.vector.cacheDir',
+    ]);
+  });
+
+  it('identifies the running model from its model string when no preset key exists', async () => {
+    await writeConfig(PRE_PRESET_CONFIG);
+    const views = await viewsForCategory('Search');
+
+    const model = views.find(field => field.key === 'search.vector.preset')!;
+    expect(model.currentText).toContain('MiniLM');
+    // Nothing owns the flat keys here: with no preset, they are the real values.
+    const advanced = await viewsForCategory('Search', true);
+    expect(advanced.find(field => field.key === 'search.vector.model')?.ownedBy).toBeUndefined();
+  });
+
+  it('marks the running model as current in the picker', () => {
+    const choices = presetChoices('minilm-l6-en');
+    expect(choices.find(choice => choice.value === 'minilm-l6-en')?.description).toContain('current');
+    expect(choices.find(choice => choice.value === 'bge-small-en')?.description).not.toContain('current');
+  });
+
+  it('picking a model repairs a config that has no preset key', async () => {
+    await writeConfig(PRE_PRESET_CONFIG);
+    let asked = 0;
+    const result = await runConfigUi(ROOT, {
+      selectCategory: async () => (asked++ === 0 ? 'Search' : CONFIG_UI_QUIT),
+      selectField: async () => 'search.vector.preset',
+      inputValue: async () => 'granite-small-en-r2',
+      confirmSave: async () => true,
+      continueEditing: async () => false,
+    });
+
+    expect(result.saved).toBe(true);
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect(saved.search.vector).toMatchObject({
+      preset: 'granite-small-en-r2',
+      model: 'onnx-community/granite-embedding-small-english-r2-ONNX',
+      dtype: 'q8',
+      pooling: 'cls',
+    });
   });
 
   it('builds preset choices carrying size and language, with a way back', () => {

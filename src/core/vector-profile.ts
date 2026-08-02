@@ -89,6 +89,21 @@ function matchPresetByModel(model: string): Exclude<PresetId, 'custom'> | null {
   return null;
 }
 
+/**
+ * Which preset a config is on, for display and for pre-selecting the picker.
+ *
+ * A repo initialised before presets existed carries no `preset` key at all, so the only
+ * evidence of what it runs is the model string. Falling back to that is what lets the
+ * editor say "MiniLM L6 v2" instead of showing nothing selected.
+ */
+export function currentPresetId(config: ProjectConfig): PresetId | null {
+  const vector = config?.search?.vector as Record<string, unknown> | undefined;
+  if (isPresetId(vector?.preset)) return vector.preset;
+  if (vector?.preset === 'custom') return 'custom';
+  const model = typeof vector?.model === 'string' ? vector.model : '';
+  return model ? matchPresetByModel(model) ?? 'custom' : null;
+}
+
 function presetProfile(id: Exclude<PresetId, 'custom'>): VectorProfile {
   const { label: _label, sizeMb: _sizeMb, languages: _languages, ...profile } = VECTOR_PRESETS[id];
   return profile;

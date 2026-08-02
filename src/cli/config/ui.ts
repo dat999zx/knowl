@@ -5,12 +5,14 @@ import {
   workspacePinNotice, type ProfileChange,
 } from './profile-change.js';
 import { loadConfig } from '../../core/config.js';
-import { VECTOR_PRESETS } from '../../core/vector-profile.js';
+import { VECTOR_PRESETS, currentPresetId } from '../../core/vector-profile.js';
 
 /** Returned by `selectCategory` to leave the editor. */
 export const CONFIG_UI_QUIT = '__knowl_config_quit__';
 /** Returned by `selectField` to go back to the category list. */
 export const CONFIG_UI_BACK = '__knowl_config_back__';
+/** Returned by `selectField` to open the category's advanced settings. */
+export const CONFIG_UI_ADVANCED = '__knowl_config_advanced__';
 
 export interface ConfigFieldView {
   key: string;
@@ -41,7 +43,13 @@ export interface ConfigChange {
 
 export interface ConfigPrompts {
   selectCategory(categories: string[]): Promise<string>;
-  selectField(fields: ConfigFieldView[]): Promise<string>;
+  /**
+   * `options.hasAdvanced` asks for an `Advanced settings…` row returning
+   * `CONFIG_UI_ADVANCED`; `options.advanced` marks the advanced list itself, where the
+   * dotted keys are shown. Both are optional, so an implementation taking only `fields`
+   * keeps working.
+   */
+  selectField(fields: ConfigFieldView[], options?: { hasAdvanced?: boolean; advanced?: boolean }): Promise<string>;
   /**
    * `null` abandons the edit and returns to the setting list without queueing anything.
    * Widening the return type keeps every implementation that returns a plain string.
@@ -143,7 +151,16 @@ function isModified(field: ConfigField, current: unknown, owned: boolean): boole
   return !sameValue(current, field.defaultValue);
 }
 
-function fieldView(field: ConfigField, current: unknown, currentByKey: Map<string, unknown>): ConfigFieldView {
+function fieldView(
+  field: ConfigField,
+  rawCurrent: unknown,
+  currentByKey: Map<string, unknown>,
+  resolvedPreset: string | null,
+): ConfigFieldView {
+  // The preset key is absent in any repo initialised before presets existed, so its own
+  // stored value is not what identifies the model in use. `currentPresetId` falls back to
+  // matching the model string, which is what makes the picker open on the right row.
+  const current = field.key === 'search.vector.preset' ? resolvedPreset ?? rawCurrent : rawCurrent;
   const ownedBy = ownerOf(field, currentByKey);
   // What the setting actually does right now: the preset's value when one owns it, the
   // field default when nothing is written, and only then the stored value.
@@ -180,37 +197,37 @@ function describeKey(key: string): string {
   try { return getConfigField(key).label; } catch { return key; }
 }
 
-/** Right-hand note on a setting row: what is different, or what owns it. */
-function statusNote(field: ConfigFieldView): string {
-  if (field.ownedBy) return 'set by preset';
-  return field.modified ? 'modified' : '';
-}
-
 /**
- * One row per setting: name, current value, and the dotted key. The key is kept because
- * it is what `knowl config set` takes, and a UI that only shows prose gives you no way
- * to find it.
+ * One row per setting: the name and the value in effect. Two columns, because a picker
+ * row is read while it moves under the cursor -- the earlier four-column version put the
+ * dotted key and a status word beside every value and buried the two settings anyone
+ * actually opens this to change. The key belongs in the advanced list, where someone is
+ * already looking for what to pass to `knowl config set`.
  */
-export function fieldRows(fields: ConfigFieldView[]): string[] {
+export function fieldRows(fields: ConfigFieldView[], showKeys = false): string[] {
   const nameWidth = Math.max(...fields.map(field => field.label.length));
-  const valueWidth = Math.min(44, Math.max(...fields.map(field => field.currentText.length)));
+  const valueWidth = Math.min(46, Math.max(...fields.map(field => field.currentText.length)));
   return fields.map(field => {
     const value = field.currentText.length > valueWidth
       ? `${field.currentText.slice(0, valueWidth - 1)}…`
       : field.currentText;
-    const note = statusNote(field);
-    return `${field.label.padEnd(nameWidth)}  ${value.padEnd(valueWidth)}  ${note.padEnd(13)} ${field.key}`;
+    if (!showKeys) return `${field.label.padEnd(nameWidth)}  ${value}`;
+    return `${field.label.padEnd(nameWidth)}  ${value.padEnd(valueWidth)}  ${field.key}`;
   });
 }
 
-/** Preset choices carry the size and language already recorded beside each model. */
-export function presetChoices(): Array<{ name: string; value: string; description: string }> {
+/**
+ * Preset choices carry the size and language already recorded beside each model, and mark
+ * which one is running now -- including for a config written before presets existed, where
+ * the running model is only identifiable from its model string.
+ */
+export function presetChoices(current?: string): Array<{ name: string; value: string; description: string }> {
   const entries = (Object.keys(VECTOR_PRESETS) as Array<keyof typeof VECTOR_PRESETS>).map(id => {
     const preset = VECTOR_PRESETS[id];
     const [name, note] = preset.label.split(' — ');
     // Several labels already name the language, so appending it again would read
     // "200+ languages, 32k context · 98 MB · 200+ languages".
-    const parts = [note, `${preset.sizeMb} MB`];
+    const parts = [id === current ? 'current' : '', note, `${preset.sizeMb} MB`];
     if (!note?.includes(preset.languages)) parts.push(preset.languages);
     return { name, value: id as string, description: parts.filter(Boolean).join(' · ') };
   });
@@ -230,11 +247,19 @@ export function createInquirerPrompts(): ConfigPrompts {
         { name: 'Quit', value: CONFIG_UI_QUIT },
       ],
     }),
-    selectField: async fields => {
-      const rows = fieldRows(fields);
+    selectField: async (fields, options) => {
+      const rows = fieldRows(fields, options?.advanced);
+      const extras = [];
+      if (options?.hasAdvanced) {
+        extras.push({
+          name: 'Advanced settings…',
+          value: CONFIG_UI_ADVANCED,
+          description: 'Values a preset already sets for you, and their config keys',
+        });
+      }
       return (await import('@inquirer/prompts')).select({
-        message: 'Setting',
-        pageSize: Math.min(fields.length + 1, 14),
+        message: options?.advanced ? 'Advanced' : 'Setting',
+        pageSize: Math.min(fields.length + extras.length + 1, 14),
         choices: [
           ...fields.map((field, index) => ({
             name: rows[index],
@@ -243,7 +268,8 @@ export function createInquirerPrompts(): ConfigPrompts {
               ? `${field.description}  (chosen by ${field.ownedBy.label})`
               : field.description,
           })),
-          { name: '← Back', value: CONFIG_UI_BACK, description: 'Return to the category list' },
+          ...extras,
+          { name: '← Back', value: CONFIG_UI_BACK, description: 'Go back' },
         ],
       });
     },
@@ -259,7 +285,7 @@ export function createInquirerPrompts(): ConfigPrompts {
         const chosen = await prompts.select({
           message: field.label,
           pageSize: 8,
-          choices: presetChoices(),
+          choices: presetChoices(typeof current === 'string' ? current : undefined),
           default: typeof current === 'string' ? current : undefined,
         });
         return chosen === VALUE_CANCEL ? null : chosen;
@@ -354,25 +380,43 @@ export async function runConfigUi(root: string, prompts: ConfigPrompts = createI
     const category = await prompts.selectCategory(categories);
     if (category === CONFIG_UI_QUIT) break;
 
-    const fields = CONFIG_FIELDS.filter(field => field.category === category as ConfigCategory);
+    const inCategory = CONFIG_FIELDS.filter(field => field.category === category as ConfigCategory);
     // Ownership is read across the whole category, not per field: whether `model` is
     // editable depends on what `preset` currently holds.
     const currentByKey = new Map<string, unknown>(
       await Promise.all(CONFIG_FIELDS.map(async field => [field.key, await getConfigValue(root, field.key)] as const)),
     );
-    const views = fields.map(field => fieldView(field, currentByKey.get(field.key), currentByKey));
-    const selected = await prompts.selectField(views);
+    const resolvedPreset = configBefore ? currentPresetId(configBefore) : null;
+    const toView = (field: ConfigField) => fieldView(field, currentByKey.get(field.key), currentByKey, resolvedPreset);
+
+    // The main list holds only what someone opens this to change; the rest sits one
+    // keypress away rather than crowding the two settings that matter.
+    const hasAdvanced = inCategory.some(field => field.advanced);
+    let advanced = false;
+    let selected: string;
+    let views: ConfigFieldView[];
+    for (;;) {
+      const fields = inCategory.filter(field => Boolean(field.advanced) === advanced);
+      views = fields.map(toView);
+      selected = await prompts.selectField(views, { hasAdvanced: hasAdvanced && !advanced, advanced });
+      if (selected === CONFIG_UI_ADVANCED) { advanced = true; continue; }
+      // Back from the advanced list returns to the main one, not out of the category.
+      if (selected === CONFIG_UI_BACK && advanced) { advanced = false; continue; }
+      break;
+    }
     // Back returns to the category list without forcing an edit. Previously entering a
     // category committed you to changing something in it.
     if (selected === CONFIG_UI_BACK) continue;
 
-    let view = views.find(candidate => candidate.key === selected)!;
+    // Falls back to building the view rather than trusting the visible list: a caller may
+    // name any key in the category, and an advanced one is not in the list it was shown.
+    let view = views.find(candidate => candidate.key === selected) ?? toView(getConfigField(selected));
     // An owned field is display-only while its owner holds a named preset. Offering the
     // owner keeps the interaction going somewhere useful instead of dead-ending.
     if (view.ownedBy) {
       const owner = view.ownedBy;
       if (!prompts.openOwner || !(await prompts.openOwner(view))) continue;
-      view = fieldView(getConfigField(owner.key), currentByKey.get(owner.key), currentByKey);
+      view = toView(getConfigField(owner.key));
     }
 
     const key = view.key;
@@ -409,6 +453,25 @@ export async function runConfigUi(root: string, prompts: ConfigPrompts = createI
       changes.push({ key, before: view.current, after: parsed, raw });
       changes.push({ key: 'search.vector.model', before: '', after: custom.model, raw: custom.model });
       changes.push({ key: 'search.vector.pooling', before: '', after: custom.pooling, raw: custom.pooling });
+      editing = await prompts.continueEditing();
+      continue;
+    }
+
+    // Picking a model writes the whole profile, not just the preset name. Writing the
+    // name alone was correct only because `resolveVectorProfile` prefers it -- it left
+    // the flat keys describing whatever model came before, which is how a repo ends up
+    // claiming MiniLM while running Granite. It also repairs a config written before
+    // presets existed, which has no `preset` key for the resolver to prefer.
+    if (key === 'search.vector.preset' && typeof parsed === 'string' && parsed in VECTOR_PRESETS) {
+      const preset = VECTOR_PRESETS[parsed as keyof typeof VECTOR_PRESETS];
+      changes.push({ key, before: view.current, after: parsed, raw });
+      for (const [partKey, value] of [
+        ['search.vector.model', preset.model],
+        ['search.vector.dtype', preset.dtype],
+        ['search.vector.pooling', preset.pooling],
+      ] as const) {
+        changes.push({ key: partKey, before: currentByKey.get(partKey), after: value, raw: value });
+      }
       editing = await prompts.continueEditing();
       continue;
     }
