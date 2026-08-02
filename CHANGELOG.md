@@ -3,6 +3,41 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.15.0 — 2026-08-02
+
+### Changed
+
+- **`knowl config` is one flat list of every setting.** No categories, no `Advanced`
+  section, no level to descend into. Each row's hint is the value in effect, so the list
+  is the display. Selecting any row opens an editor: the model fields, enums and booleans
+  are pickers; everything else is a text box.
+
+  It was a tree before — category, then setting, then value, with the keys a preset
+  supplies hidden a level below that and refusing to open at all. Three levels to descend,
+  with the thing you came for at the bottom and greyed out.
+
+- **Edits show up in the list as you make them**, marked as unsaved, and are written
+  together when you choose Save. `Discard and exit` leaves the file untouched. The
+  `Edit another setting?` question after every single change is gone — returning to the
+  list is the loop.
+
+- **Interactive prompts moved from `@inquirer/prompts` to `@clack/prompts`**, with
+  `picocolors`. Colour, box drawing, unicode fallback, session framing and cancel
+  semantics now come from the library rather than from `src/cli/ui/style.ts`, which was
+  reimplementing all of it by hand and has been deleted. `Ctrl+C` in any prompt returns to
+  the list instead of tearing the process down mid-edit.
+
+  This follows [rohitg00/agentmemory](https://github.com/rohitg00/agentmemory), whose CLI
+  has no settings tree at all: a flat sequence of pickers, every option a
+  `{ value, label, hint }`, and one cancel path out of anything.
+
+### Removed
+
+- `ConfigPrompts.selectCategory` and `ConfigPrompts.continueEditing`, replaced by
+  `selectSetting`, which returns a setting key or one of `CONFIG_UI_SAVE` /
+  `CONFIG_UI_QUIT`. `CONFIG_UI_BACK`, `createInquirerPrompts` and `fieldRows` are gone
+  with the tree that needed them.
+
 ## 2.14.1 — 2026-08-02
 
 ### Fixed
