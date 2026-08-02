@@ -30,18 +30,16 @@ export default defineConfig({
       // Write-time vector indexing would load the embedding model on every write.
       // Tests that care about it opt back in explicitly.
       KNOWL_DISABLE_WRITE_EMBEDDING: '1',
-      // Machine-wide state gets a scratch home, so nothing a test does can reach the
-      // developer's own ~/.knowl. `knowl upgrade` records every repo it visits in a registry
-      // there, and `upgrade --all` and `doctor --fix` act on every repo in it -- so a suite
-      // that spawns the CLI without this is one bug away from sweeping real projects.
-      // Suites needing their own workspace still override this; they just no longer have to.
-      KNOWL_HOME: './.knowl-test-home',
       // Machine-local Knowl state -- workspace manifests and the known-repository registry --
       // lives under ~/.knowl by default. Suites that spawn the real CLI would otherwise write
       // their scratch fixtures into the developer's own home directory, where nothing cleans
-      // them up and a later `knowl upgrade --all` would try to visit them. Absolute because a
-      // spawned CLI runs with its fixture as the working directory, and `knowlHome()` resolves
-      // a relative override against that. `.knowl-` prefixed, so global teardown sweeps it.
+      // them up and a later `knowl upgrade --all` would try to visit them. `knowl upgrade`
+      // records every repo it visits in that registry, and `upgrade --all` and `doctor --fix`
+      // act on every repo in it, so a suite spawning the CLI without this is one bug away from
+      // sweeping real projects. Absolute because a spawned CLI runs with its fixture as the
+      // working directory and `knowlHome()` resolves a relative override against that -- a
+      // relative value here would scatter a scratch home under every fixture instead of one
+      // shared, swept location. `.knowl-` prefixed, so global teardown sweeps it.
       KNOWL_HOME: path.resolve('./.knowl-test-home'),
     },
   },
