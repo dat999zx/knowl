@@ -3,6 +3,80 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.12.0 — 2026-08-02
+
+### Added
+
+- **The embedding model is now a choice, not a constant.** `search.vector.preset` selects one of
+  four vetted local models, or `custom` for your own. A preset bundles model, dtype and pooling
+  together rather than leaving them as three keys you must keep consistent — pooling is not
+  discoverable at runtime, and the wrong value produces plausible-looking vectors that rank badly
+  with no error at all.
+
+  | Preset | Model | Size (q8) | Context | Languages |
+  | --- | --- | --- | --- | --- |
+  | `granite-small-en-r2` *(default)* | `onnx-community/granite-embedding-small-english-r2-ONNX` | ~52MB | 8k | English |
+  | `granite-97m-multilingual` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | ~98MB | 32k | 200+ |
+  | `bge-small-en` | `Xenova/bge-small-en-v1.5` | ~34MB | 512 | English |
+  | `minilm-l6-en` | `Xenova/all-MiniLM-L6-v2` | ~23MB | 512 | English |
+
+  All four emit 384-dimension vectors, so switching never changes the stored vector width. New
+  repositories default to `granite-small-en-r2`. **Existing repositories are not migrated**:
+  `knowl upgrade` cannot introduce a preset, and a configuration written before presets existed
+  keeps its model and its original mean pooling. No forced download, no silent model change, no
+  reindex required.
+
+  The default is English-only. Repositories storing non-English knowledge should select
+  `granite-97m-multilingual`, which covers 200+ languages with enhanced training on 52 of them.
+
+- **`knowl config set-model <model>`** selects a model of your own. It confirms the repository
+  exists and ships `onnx/model_quantized.onnx`, reads its pooling method from
+  `1_Pooling/config.json`, and asks which to use when the repository does not declare one —
+  never guessing, because a wrong guess fails silently. The three resulting keys are written as
+  one unit, so a half-configured profile can never reach disk.
+
+- **`knowl workspace repin-embedding`** moves an established workspace to a different embedding
+  model and names every peer that must then reindex. Previously the pinned identity could only be
+  set while a workspace was empty, so changing it meant unlinking every repository.
+
+- **A semantic retrieval benchmark** at `docs/evals/semantic-suite.json`, with `npm run
+  bench:embeddings` comparing every preset. `knowl eval retrieval` now reports metrics per
+  difficulty tier as well as overall.
+
+### Changed
+
+- **`knowl reindex --vectors` re-embeds items in every status**, not only active ones. Items that
+  are superseded, deprecated or archived are still reachable through a status filter, so leaving
+  them on a previous model made them permanently invisible to vector search. It also drops rows
+  belonging to a previous model, and pages through the store instead of stopping at 10,000 items.
+
+- **Changing the embedding model now offers to rebuild.** Interactive `knowl config` prompts;
+  `knowl config set` prints the same warning with the affected row count, and says when the change
+  also breaks a workspace pin.
+
+### Fixed
+
+- **Pooling is per-model rather than hardcoded to mean.** Every model was pooled as though it were
+  MiniLM. Three of the four presets — including the new default — are CLS-pooled, so this would
+  have silently degraded retrieval for anyone selecting one. Nothing errors when pooling is wrong;
+  the vectors simply stop meaning what they should.
+
+- **Embeddings record the profile that produced them.** Rows previously stored only provider and
+  model, and search filtered on those two — but dtype and pooling also change the numbers a model
+  emits, so changing either left old rows matching the filter and being scored against
+  incompatible query vectors. Rows now carry a fingerprint over all four, added by an automatic
+  migration that backfills each repository's current profile. A profile change now degrades vector
+  search to keyword-only rather than mis-ranking, and an interrupted rebuild leaves a smaller
+  searchable set rather than a mixed one.
+
+- **The fingerprint filter can no longer be skipped by omission.** It was an optional parameter,
+  and leaving it out dropped the predicate and scored every stored vector regardless of origin.
+  Making it required revealed five call sites already doing exactly that.
+
+- **Setting `search.vector.model` while a preset is active no longer reports a silent no-op.** The
+  preset decides the model, so the command changed nothing while printing success. It now says the
+  key is being overridden and names the model actually in use.
+
 ## 2.11.1 — 2026-08-01
 
 ### Fixed
