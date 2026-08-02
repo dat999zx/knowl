@@ -1,7 +1,8 @@
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { getClient } from './database.js';
-import { ensureTranscriptIndex, normalizeProjectDir, sessionFiles, tokenize, transcriptIndexStats } from './transcript-index.js';
+import { ensureTranscriptIndex, sessionFiles, tokenize, transcriptIndexStats } from './transcript-index.js';
+import { normalizeProjectDir } from './project-dir.js';
 import { embedTranscripts, semanticCandidates, transcriptVectorStats, type TranscriptEmbedder } from './transcript-vectors.js';
 
 export { encodeProjectDir, transcriptStores } from './transcript-index.js';

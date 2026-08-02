@@ -1,6 +1,7 @@
 import { Client } from '@libsql/client';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
 import { assertSchemaSupported, stampSchemaVersion } from './schema-version.js';
+import { normalizeProjectDir } from './project-dir.js';
 
 const BASE_STATEMENTS = [
   // Must come first: journal_mode = WAL (and everything after it) takes locks, and a
@@ -553,7 +554,6 @@ async function ensureTranscriptEmbeddingFormat(client: Client): Promise<void> {
  */
 async function ensureNormalizedProjectDirs(client: Client): Promise<void> {
   if (!(await tableExists(client, 'transcript_messages'))) return;
-  const { normalizeProjectDir } = await import('./transcript-index.js');
 
   const dirs = (await client.execute('SELECT DISTINCT project_dir FROM transcript_messages')).rows
     .map(row => String(row.project_dir))

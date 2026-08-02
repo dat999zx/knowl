@@ -1,5 +1,5 @@
 import { getClient } from './database.js';
-import { normalizeProjectDir } from './transcript-index.js';
+import { normalizeProjectDir } from './project-dir.js';
 
 // Semantic retrieval over the WHOLE transcript archive, not just what keyword
 // search already found.

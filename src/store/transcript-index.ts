@@ -4,6 +4,9 @@ import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
 import { join, basename, delimiter } from 'node:path';
 import { getClient } from './database.js';
+import { normalizeProjectDir } from './project-dir.js';
+
+export { normalizeProjectDir } from './project-dir.js';
 
 // Incremental index over raw Claude Code session transcripts.
 //
@@ -39,33 +42,6 @@ export function encodeProjectDir(dir: string): string {
   return dir.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
-/**
- * One directory, one key.
- *
- * project_dir is an opaque string in every one of these queries, so each
- * spelling of the same path becomes a separate archive. On Windows that is not
- * hypothetical: `D:\Code\x`, `d:\Code\x` and `d:/Code/x` all reach the same
- * folder and all arrived here, depending on whether the caller was the CLI
- * (path.resolve), the MCP server (its configured root) or a script.
- *
- * Measured on a real database before this existed: 59,358 messages indexed
- * three times over under three spellings, and every embedding attached to just
- * one of them - so semantic search from the MCP server scored against a set
- * that had no vectors at all and silently returned lexical results. The
- * duplicates also tripled the storage.
- *
- * Purely lexical, and deliberately NOT path.resolve. This value is also what
- * encodeProjectDir turns into a transcript directory name, so it has to stay the
- * path Claude Code encoded - and resolve() rewrites a Windows-shaped path on a
- * POSIX host into cwd + the literal string, because backslashes are not
- * separators there. That pointed the whole index at a directory that does not
- * exist. Only the two things that actually vary are canonicalized: the case of
- * the drive letter, and which slash was typed.
- */
-export function normalizeProjectDir(dir: string): string {
-  if (!/^[a-zA-Z]:/.test(dir)) return dir;
-  return dir[0].toUpperCase() + dir.slice(1).replace(/\//g, '\\').replace(/[\\]+$/, '');
-}
 
 /**
  * Every config root that may hold transcripts. CLAUDE_CONFIG_DIR wins when set;
