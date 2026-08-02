@@ -262,6 +262,47 @@ describe('config UI', () => {
     expect(dtype?.values).toEqual(['q4', 'q8', 'fp16', 'fp32']);
   });
 
+  it('writes model and pooling alongside a custom preset, in one save', async () => {
+    await writeConfig();
+    const prompts: ConfigPrompts = {
+      selectCategory: async () => 'Search',
+      selectField: async () => 'search.vector.preset',
+      inputValue: async () => 'custom',
+      inputCustomModel: async () => ({ model: 'someone/theirs-ONNX', pooling: 'cls' }),
+      confirmSave: async () => true,
+      continueEditing: async () => false,
+    };
+
+    const result = await runConfigUi(ROOT, prompts);
+
+    expect(result.saved).toBe(true);
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect(saved.search.vector).toMatchObject({
+      preset: 'custom', model: 'someone/theirs-ONNX', pooling: 'cls',
+    });
+  });
+
+  it('writes nothing when the custom model prompt is cancelled', async () => {
+    await writeConfig();
+    const before = await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8');
+    let asked = 0;
+    const prompts: ConfigPrompts = {
+      selectCategory: async () => (asked === 0 ? 'Search' : CONFIG_UI_QUIT),
+      selectField: async () => 'search.vector.preset',
+      inputValue: async () => 'custom',
+      inputCustomModel: async () => { asked += 1; return null; },
+      confirmSave: async () => true,
+      continueEditing: async () => false,
+    };
+
+    const result = await runConfigUi(ROOT, prompts);
+
+    expect(asked).toBe(1);
+    expect(result.saved).toBe(false);
+    expect(result.changes).toEqual([]);
+    expect(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8')).toBe(before);
+  });
+
   it('redacts secret values in the confirmation diff', async () => {
     await writeConfig({ ...DEFAULT_CONFIG, ai: { provider: 'openai', model: 'gpt-4o-mini' } });
     let displayed: unknown;

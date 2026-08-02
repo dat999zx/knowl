@@ -1,5 +1,5 @@
 import { CONFIG_FIELDS, ConfigCategory, ConfigField, ConfigFieldType, getConfigField } from './schema.js';
-import { getConfigValue, setConfigValue } from './service.js';
+import { getConfigValue, setConfigValues } from './service.js';
 
 /** Returned by `selectCategory` to leave the editor. */
 export const CONFIG_UI_QUIT = '__knowl_config_quit__';
@@ -33,6 +33,11 @@ export interface ConfigPrompts {
    * that supply a fixed value rely on.
    */
   reportError?(field: ConfigFieldView, message: string): Promise<void>;
+  /**
+   * Asked when the preset picker lands on `custom`. Returning null cancels back to
+   * the field list, which is why the caller must not have written anything yet.
+   */
+  inputCustomModel?(): Promise<{ model: string; pooling: 'mean' | 'cls' } | null>;
 }
 
 function formatCurrent(value: unknown, secret?: boolean) {
@@ -106,6 +111,28 @@ export function createInquirerPrompts(): ConfigPrompts {
     reportError: async (field, message) => {
       console.error(`Invalid value for ${field.key}: ${message}`);
     },
+    inputCustomModel: async () => {
+      const prompts = await import('@inquirer/prompts');
+      const { verifyCustomModel } = await import('../../ai/model-probe.js');
+      for (;;) {
+        const model = await prompts.input({ message: 'Hugging Face model id (blank to cancel)' });
+        if (!model.trim()) return null;
+
+        const probe = await verifyCustomModel(model.trim());
+        if (!probe.ok) {
+          console.error(probe.reason);
+          continue;
+        }
+
+        // Asked, never defaulted: an ONNX mirror without 1_Pooling/config.json gives
+        // us nothing to infer from, and a wrong guess ranks badly with no error.
+        const pooling = probe.pooling ?? await prompts.select({
+          message: `${model} does not declare its pooling method. Which does it use?`,
+          choices: [{ name: 'cls', value: 'cls' as const }, { name: 'mean', value: 'mean' as const }],
+        });
+        return { model: model.trim(), pooling };
+      }
+    },
   };
 }
 
@@ -143,6 +170,21 @@ export async function runConfigUi(root: string, prompts: ConfigPrompts = createI
       }
     }
 
+    // `custom` names no model on its own, so the follow-up is asked here and queued
+    // with it. Cancelling queues nothing, which is why it is asked before the push.
+    if (key === 'search.vector.preset' && parsed === 'custom') {
+      if (!prompts.inputCustomModel) {
+        throw new Error('Custom models need an interactive prompt. Use `knowl config set-model <name>`.');
+      }
+      const custom = await prompts.inputCustomModel();
+      if (!custom) continue; // cancelled: nothing queued, nothing written
+      changes.push({ key, before: view.current, after: parsed, raw });
+      changes.push({ key: 'search.vector.model', before: '', after: custom.model, raw: custom.model });
+      changes.push({ key: 'search.vector.pooling', before: '', after: custom.pooling, raw: custom.pooling });
+      editing = await prompts.continueEditing();
+      continue;
+    }
+
     changes.push({
       key,
       before: field.secret ? '********' : view.current,
@@ -158,6 +200,8 @@ export async function runConfigUi(root: string, prompts: ConfigPrompts = createI
   if (visibleChanges.length === 0) return { saved: false, changes: visibleChanges };
   if (!(await prompts.confirmSave(visibleChanges))) return { saved: false, changes: visibleChanges };
 
-  for (const change of changes) await setConfigValue(root, change.key, change.raw);
+  // One save, not one per change: a custom preset is three keys, and a partial write
+  // would leave `preset: custom` on disk with no model beside it.
+  await setConfigValues(root, changes.map(change => ({ key: change.key, raw: change.raw })));
   return { saved: true, changes: visibleChanges };
 }

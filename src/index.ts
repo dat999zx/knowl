@@ -37,8 +37,9 @@ import { discoverRepos } from './cli/repo-discovery.js';
 import { applyDoctorRemedies } from './cli/doctor-fix.js';
 import { formatSweepReport, sweepRepos } from './cli/upgrade-all.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
-import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue } from './cli/config/service.js';
+import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './cli/config/service.js';
 import { runConfigUi } from './cli/config/ui.js';
+import { verifyCustomModel } from './ai/model-probe.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from './store/import-policy.js';
 import { formatAgentInitSummary, runAgentInitFlow } from './cli/init-flow.js';
 import { formatWarmResult, warmEmbeddingModel } from './cli/warm-embeddings.js';
@@ -994,8 +995,46 @@ configCommand
   .argument('<value>')
   .action(async (key, value) => {
     try {
+      // Refused before the write, not after: `preset custom` alone names no model, and
+      // anything running before the follow-up keys arrive would resolve that as a profile.
+      if (key === 'search.vector.preset' && value === 'custom') {
+        throw new Error('Use `knowl config set-model <name>` for a custom model; `preset custom` alone leaves no model to use.');
+      }
       const typedValue = await setConfigValue(await findProjectRoot(process.cwd()), key, value);
       console.log(`Set ${key} = ${JSON.stringify(typedValue)}`);
+    } catch (error: any) {
+      console.error(`❌ Configuration error: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+configCommand
+  .command('set-model')
+  .argument('<model>')
+  .description('Verify, download and select a custom embedding model')
+  .option('--pooling <mode>', 'cls or mean; required when the model does not declare it')
+  .action(async (model: string, options: { pooling?: string }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const probe = await verifyCustomModel(model);
+      if (!probe.ok) throw new Error(probe.reason);
+
+      const pooling = probe.pooling ?? options.pooling;
+      if (!pooling) {
+        throw new Error(
+          `${model} does not declare its pooling method. Re-run with --pooling cls or --pooling mean. ` +
+          'Guessing would produce vectors that rank badly with no visible error.',
+        );
+      }
+      if (pooling !== 'cls' && pooling !== 'mean') throw new Error('--pooling must be cls or mean.');
+
+      await setConfigValues(root, [
+        { key: 'search.vector.preset', raw: 'custom' },
+        { key: 'search.vector.model', raw: model },
+        { key: 'search.vector.pooling', raw: pooling },
+      ]);
+      console.log(`Selected ${model} (${pooling} pooling).`);
+      console.log('Run `knowl reindex --vectors` to rebuild embeddings with it.');
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
