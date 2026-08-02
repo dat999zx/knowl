@@ -1259,6 +1259,16 @@ program
         console.log(`Forbidden hits: ${result.metrics.forbiddenHitCount}`);
         console.log(`Latency p50/p95: ${result.metrics.p50LatencyMs}/${result.metrics.p95LatencyMs}ms`);
         console.log(`Context chars avg: ${result.metrics.averageContextChars.toFixed(0)}`);
+        if (Object.keys(result.byTier).length > 0) {
+          console.log('By tier:');
+          for (const [tier, metrics] of Object.entries(result.byTier)) {
+            console.log(
+              `  ${tier.padEnd(9)} n=${String(metrics.cases).padStart(4)} ` +
+              `R@3 ${metrics.recallAt3.toFixed(4)} R@10 ${metrics.recallAt10.toFixed(4)} ` +
+              `MRR ${metrics.mrr.toFixed(4)} nDCG ${metrics.ndcg.toFixed(4)}`,
+            );
+          }
+        }
         console.log(`Failed cases: ${result.failedCaseIds.join(', ') || 'none'}`);
       }
       await closeDb();
