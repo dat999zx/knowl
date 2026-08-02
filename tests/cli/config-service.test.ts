@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { DEFAULT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
+import { DEFAULT_CONFIG, NEW_PROJECT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
 import { getConfigValue, resetConfigValue, setConfigValue } from '../../src/cli/config/service.js';
 import { CONFIG_UI_BACK, CONFIG_UI_QUIT, ConfigFieldView, ConfigPrompts, runConfigUi } from '../../src/cli/config/ui.js';
 
@@ -43,6 +43,32 @@ describe('config defaults', () => {
     const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
     expect(saved.search.vector.enabled).toBe(false);
     expect(saved.search.vector.provider).toBe('local');
+  });
+});
+
+describe('preset defaults', () => {
+  it('keeps preset out of the upgrade merge baseline', () => {
+    expect((DEFAULT_CONFIG.search?.vector as Record<string, unknown>).preset).toBeUndefined();
+  });
+
+  it('defaults new projects to the English Granite preset', () => {
+    expect((NEW_PROJECT_CONFIG.search?.vector as Record<string, unknown>).preset)
+      .toBe('granite-small-en-r2');
+  });
+
+  it('does not add a preset to an existing repository on upgrade', async () => {
+    await fs.mkdir(path.join(ROOT, '.knowl'), { recursive: true });
+    await fs.writeFile(path.join(ROOT, '.knowl', 'config.json'), JSON.stringify({
+      version: 1,
+      security: { rejectSecrets: true, secretPatterns: [] },
+      search: { vector: { enabled: true, provider: 'local', model: 'Xenova/all-MiniLM-L6-v2', dtype: 'q8' } },
+    }));
+
+    await upgradeConfigDefaults(ROOT);
+
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect(saved.search.vector.preset).toBeUndefined();
+    expect(saved.search.vector.model).toBe('Xenova/all-MiniLM-L6-v2');
   });
 });
 

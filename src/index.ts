@@ -7,7 +7,7 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { PACKAGE_NAME, PACKAGE_VERSION } from './version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from './core/version-check.js';
-import { DEFAULT_CONFIG, findProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
+import { NEW_PROJECT_CONFIG, findProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
 import {
   installKnowlProjectGuidance,
   KnowlProjectGuidanceInstallResult,
@@ -255,8 +255,10 @@ program
       await fs.mkdir(knowlDir, { recursive: true });
       await fs.mkdir(path.join(knowlDir, 'skills'), { recursive: true });
 
-      // Create default config.json
-      const defaultConfig = DEFAULT_CONFIG;
+      // Create default config.json. NEW_PROJECT_CONFIG, not DEFAULT_CONFIG: only a
+      // brand-new repository gets a `preset`, because DEFAULT_CONFIG is also the
+      // merge baseline that `knowl upgrade` applies to every existing one.
+      const defaultConfig = NEW_PROJECT_CONFIG;
 
       await fs.writeFile(
         path.join(knowlDir, 'config.json'),

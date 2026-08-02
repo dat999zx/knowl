@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { DEFAULT_CONFIG, saveConfig } from '../../core/config.js';
+import { NEW_PROJECT_CONFIG, saveConfig } from '../../core/config.js';
 import { ProjectConfig } from '../../core/types.js';
 import { getConfigField } from './schema.js';
 
@@ -78,5 +78,5 @@ export async function resetConfigValue(root: string, key: string): Promise<void>
 
 export async function resetAllConfig(root: string): Promise<void> {
   await backupConfig(root);
-  await saveRawConfig(root, structuredClone(DEFAULT_CONFIG) as ConfigRecord);
+  await saveRawConfig(root, structuredClone(NEW_PROJECT_CONFIG) as ConfigRecord);
 }

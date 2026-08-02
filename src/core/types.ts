@@ -236,8 +236,12 @@ export interface ProjectConfig {
     vector?: {
       enabled?: boolean;
       provider?: 'local';
+      /** Named profile bundling model, dtype and pooling. See resolveVectorProfile. */
+      preset?: string;
       model?: string;
       dtype?: 'q4' | 'q8' | 'fp32' | 'fp16';
+      /** Only read when the preset is `custom` or absent; a preset carries its own. */
+      pooling?: 'mean' | 'cls';
       cacheDir?: string;
     };
   };
