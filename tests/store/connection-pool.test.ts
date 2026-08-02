@@ -3,7 +3,10 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const mockState = vi.hoisted(() => ({
+  /** Fails one bootstrap the way SQLite reports contention, so the retry path is exercised. */
   failNextBootstrap: false,
+  /** Fails every bootstrap with this error, for failures no retry should paper over. */
+  failBootstrapWith: null as Error | null,
   createdClients: [] as any[],
 }));
 
@@ -28,6 +31,7 @@ vi.mock('../../src/store/bootstrap.js', async (importOriginal) => {
   return {
     ...actual,
     bootstrapSchema: async (client: any) => {
+      if (mockState.failBootstrapWith) throw mockState.failBootstrapWith;
       if (mockState.failNextBootstrap) {
         mockState.failNextBootstrap = false;
         throw new Error('SQLITE_BUSY: simulated bootstrap failure');
@@ -134,15 +138,37 @@ describe('connection pool', () => {
   it('closes the client instead of leaking it when bootstrap fails', async () => {
     await releaseAll();
     mockState.createdClients.length = 0;
-    mockState.failNextBootstrap = true;
+    mockState.failBootstrapWith = new Error('simulated permanent bootstrap failure');
     const target = path.join(ROOT, 'bootstrap-fail.db');
 
-    await expect(acquireClient(target)).rejects.toThrow('simulated bootstrap failure');
+    await expect(acquireClient(target)).rejects.toThrow('simulated permanent bootstrap failure');
 
     // A leaked, un-closed client keeps whatever lock its partial bootstrap took,
     // wedging every later acquire on this path for the rest of the process.
     expect(mockState.createdClients).toHaveLength(1);
     expect(mockState.createdClients[0].close).toHaveBeenCalledTimes(1);
     expect(poolSize()).toBe(0);
+    // This one fails EVERY bootstrap, so leaving it armed would break whatever runs next.
+    mockState.failBootstrapWith = null;
+  });
+
+  it('retries a locked open instead of failing the command, and leaks nothing on the way', async () => {
+    // Opening runs bootstrap, which writes. Against a database a live session is
+    // also writing to, that lock is lost routinely -- and it used to end the whole
+    // command. The first attempt here fails the way SQLite reports contention; the
+    // second succeeds, which is what a transient lock deserves.
+    await releaseAll();
+    mockState.createdClients.length = 0;
+    mockState.failNextBootstrap = true;
+    const target = path.join(ROOT, 'bootstrap-busy.db');
+
+    const client = await acquireClient(target);
+    expect(client).toBeDefined();
+    expect(poolSize()).toBe(1);
+
+    // Two clients were built, and the one whose bootstrap failed was closed rather
+    // than abandoned holding a lock.
+    expect(mockState.createdClients).toHaveLength(2);
+    expect(mockState.createdClients[0].close).toHaveBeenCalledTimes(1);
   });
 });
