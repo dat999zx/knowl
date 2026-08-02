@@ -1060,7 +1060,11 @@ program
         ),
       });
       const result = await reindexKnowledgeEmbeddings(project.id, embedder);
-      console.log(`Indexed ${result.indexed} vector embedding(s).`);
+      const perStatus = Object.entries(result.byStatus)
+        .map(([status, count]) => `${count} ${status}`)
+        .join(', ');
+      console.log(`Indexed ${result.indexed} vector embedding(s)${perStatus ? ` (${perStatus})` : ''}.`);
+      if (result.purged > 0) console.log(`Purged ${result.purged} embedding(s) from a previous model.`);
       await closeDb();
     } catch (error: any) {
       console.error(`Error reindexing: ${error.message}`);

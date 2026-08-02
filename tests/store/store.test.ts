@@ -903,6 +903,8 @@ describe('Storage Layer', () => {
     const result = await reindexKnowledgeEmbeddings(projectId, {
       provider: 'test',
       model: 'fake-embedder',
+      pooling: 'mean',
+      profileFingerprint: 'test-fingerprint',
       embed: async (texts) => texts.map(() => [0.25, 0.75]),
     });
 

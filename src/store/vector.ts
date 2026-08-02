@@ -256,8 +256,15 @@ export async function findEmbeddedItemIds(
   return found;
 }
 
-/** Drops rows left behind by a previous profile, including those for deleted items. */
+/**
+ * Drops rows left behind by a previous profile, including those for deleted items.
+ *
+ * With no fingerprint to keep, nothing is provably stale, so this does nothing rather
+ * than treating every row as unmatched -- the same predicate would otherwise delete
+ * the entire table.
+ */
 export async function purgeEmbeddingsNotMatching(projectId: string, fingerprint: string): Promise<number> {
+  if (!fingerprint) return 0;
   const result = await getClient().execute({
     sql: `DELETE FROM knowledge_embeddings
           WHERE profile_fingerprint IS NULL OR profile_fingerprint != ?`,
