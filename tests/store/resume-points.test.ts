@@ -9,6 +9,7 @@ import {
   listResumePoints,
   normalizeKey,
   readResumePoint,
+  resumeInstruction,
 } from '../../src/store/resume-points.js';
 
 const TEST_ROOT = path.resolve('./.knowl-resume-points-test');
@@ -34,11 +35,46 @@ describe('resume points', () => {
     expect(point.key).not.toMatch(/[01loi]/);
   });
 
+  it('never mints a key that could read as a word, so it cannot be mistaken for an instruction', async () => {
+    // A key the user picked would be something like "fix-login-bug", and a fresh
+    // session would just start fixing a login bug. An opaque token has no
+    // competing reading — but randomness alone can still spell "budget", so a
+    // digit is guaranteed. Checked across many keys, not one lucky one.
+    const keys = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      const point = await createResumePoint(PROJECT, { goal: `bulk ${i}`, nextAction: 'x' });
+      expect(point.key).toMatch(/[2-9]/);
+      keys.add(point.key);
+    }
+    // And the digit is not pinned to one position, which would make every key
+    // look alike and leak the special-casing.
+    const digitPositions = new Set([...keys].map(k => k.search(/[2-9]/)));
+    expect(digitPositions.size).toBeGreaterThan(1);
+    // Minted, not sequential: 200 draws should not collide.
+    expect(keys.size).toBe(200);
+  });
+
   it('accepts the key however the user pastes it', () => {
     expect(normalizeKey('  K7X2QM ')).toBe('k7x2qm');
     expect(normalizeKey('knowl:k7x2qm')).toBe('k7x2qm');
     expect(normalizeKey('knowl/resume/k7x2qm')).toBe('k7x2qm');
     expect(normalizeKey('k7x2-qm.')).toBe('k7x2qm');
+  });
+
+  it('hands back a paste-ready instruction, not only a token', async () => {
+    // A bare key relies on the receiving model investigating an opaque string.
+    // That is usually enough, and "usually" is the wrong bar for the one message
+    // whose entire job is to not be misread.
+    const point = await createResumePoint(PROJECT, { goal: 'the work', nextAction: 'go' });
+    const line = resumeInstruction(point.key);
+
+    expect(line).toContain(point.key);
+    expect(line).toMatch(/knowl_resume/);
+    expect(line).toMatch(/^Continue/);
+    // And pasting the whole sentence must still resolve to the key.
+    const pastedWords = line.split(/\s+/);
+    const token = pastedWords.find(word => normalizeKey(word) === point.key);
+    expect(token).toBeDefined();
   });
 
   it('resumes more than once, because work gets picked up and parked again', async () => {

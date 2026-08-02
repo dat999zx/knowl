@@ -1043,16 +1043,28 @@ export function registerTools(
           artifactRefs: Array.isArray(artifactRefs) ? artifactRefs.map(String) : undefined,
           sessionId: sessionId ? String(sessionId) : undefined,
         });
-        // The key is the entire product of this call, so it is stated on its own
-        // line and told to the user verbatim -- a key paraphrased is a key lost.
+        // What the user gets back is a ready-to-paste INSTRUCTION, not just the
+        // key. A bare token relies on the receiving model being curious enough to
+        // look it up; a sentence naming the tool leaves nothing to disposition,
+        // and still works in a session where knowl's tool descriptions were never
+        // read. The key alone remains valid for anyone who prefers to type six
+        // characters.
+        const resumeLine = `Continue the parked workstream with key ${point.key} — use the knowl memory MCP (knowl_resume).`;
         return {
           content: [{
             type: 'text',
-            text: `Parked. Give the user this key exactly, on its own line:
-
-    ${point.key}
-
-Pasting it into any future session resumes this work. It is not consumed by being used.${point.brief.sessionId ? '' : ' No sessionId was recorded, so the resuming session cannot read this conversation for detail - pass one next time.'}`,
+            text: [
+              'Parked. Give the user BOTH of these verbatim — do not paraphrase, a key reworded is a key lost:',
+              '',
+              '  To resume, paste this into a new session:',
+              `    ${resumeLine}`,
+              '',
+              `  Key on its own, if they prefer: ${point.key}`,
+              '',
+              'Resuming does not consume it; the same key works again later.',
+              point.brief.sessionId ? '' : 'No sessionId was recorded, so the resuming session cannot read this conversation for detail — pass one next time.',
+            ].filter(Boolean).join('
+'),
           }],
         };
       }

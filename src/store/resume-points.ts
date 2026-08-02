@@ -35,17 +35,40 @@ export interface ResumePoint {
 }
 
 /**
- * Keys are typed by a human, so the alphabet omits everything that gets
- * misread: no 0/O, no 1/I/L. Six characters from a 30-symbol alphabet is ~729
- * million combinations, which is far past any plausible number of parked
- * workstreams while staying short enough to retype from a screenshot.
+ * The key is MINTED, never chosen, and always contains a digit.
+ *
+ * Both properties exist to stop a key from reading as an instruction. A key the
+ * user picks would be something like `fix-login-bug`, and a fresh session
+ * receiving that has no reason to treat it as a lookup - it would simply start
+ * fixing a login bug. An opaque token has no competing interpretation, so the
+ * only sensible move left to the model is to go and find out what it refers to.
+ *
+ * Randomness alone does not guarantee that: six draws from a letters-and-digits
+ * alphabet can legitimately spell `budget` or `answer`, which lands straight
+ * back in the failure the design is avoiding. Forcing at least one digit makes
+ * a word structurally impossible, at a trivial cost in entropy.
+ *
+ * The alphabet also omits every character people transcribe wrongly from a
+ * screen: no 0/O, no 1/I/L. 23 letters and 8 digits over six characters is ~887
+ * million combinations - far past any plausible number of parked workstreams,
+ * and still short enough to retype from a screenshot.
  */
-const ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
+const LETTERS = 'abcdefghjkmnpqrstuvwxyz';
+const DIGITS = '23456789';
+const KEY_LENGTH = 6;
 
 function mintKey(): string {
-  let key = '';
-  for (let i = 0; i < 6; i++) key += ALPHABET[Math.floor(Math.random() * ALPHABET.length)];
-  return key;
+  const pick = (set: string) => set[Math.floor(Math.random() * set.length)];
+  const chars = [pick(DIGITS)];
+  while (chars.length < KEY_LENGTH) chars.push(pick(LETTERS + DIGITS));
+
+  // The guaranteed digit must not always sit first, or every key looks alike and
+  // the position leaks that it was special-cased.
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
 }
 
 /**
@@ -61,6 +84,19 @@ export function normalizeKey(raw: string): string {
     if (key.startsWith(label) && key.length > label.length) key = key.slice(label.length);
   }
   return key;
+}
+
+/**
+ * The line a user pastes into a fresh session.
+ *
+ * A bare key depends on the receiving model choosing to investigate an opaque
+ * token. That is usually enough - the token has no other sensible reading - but
+ * "usually" is the wrong standard for the one message whose whole job is to not
+ * be misread. Naming the action and the tool removes the guess entirely, and
+ * still works in a session that never read knowl's tool descriptions.
+ */
+export function resumeInstruction(key: string): string {
+  return `Continue the parked workstream with key ${key} — use the knowl memory MCP (knowl_resume).`;
 }
 
 export async function createResumePoint(projectDir: string, brief: ResumeBrief): Promise<ResumePoint> {
