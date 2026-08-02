@@ -3,6 +3,36 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.15.1 — 2026-08-02
+
+### Fixed
+
+- **Rebuilding embeddings no longer asks for 22 GB in one allocation.** A reindex handed
+  `embed()` a whole 500-row database page as a single forward pass. Attention allocates
+  `batch × heads × seq × seq`, so 498 items of roughly 969 tokens produced:
+
+  ```
+  Failed to allocate memory for requested buffer of size 22444923904
+  Inputs given to model: input_ids dims [498, 969]
+  ```
+
+  MiniLM hid this — its 512-token window truncated everything, so the sequence stayed
+  short whatever the batch size. Granite R2's 8k window truncates nothing, so **switching
+  model turned a working rebuild into an impossible allocation**. Worse, the config had
+  already been written by then, leaving vector search degraded with the documented
+  recovery (`knowl reindex --vectors`) hitting the same wall.
+
+  Forward passes are now sized against the text rather than the row count, budgeting on
+  `items × longest²` because the longest text in a batch is what every other is padded up
+  to. A single item is clipped at 8,000 characters so one giant cannot exhaust the budget
+  alone, and a batch never exceeds 32 items. On the store that produced the crash, 498
+  items become 39 batches peaking around 191 MB.
+
+  The split lives in `embed()`, so reindex, write-time indexing and query all get it.
+
+**If you hit this**: upgrade, then run `knowl reindex --vectors`. Your configuration was
+already saved; only the rebuild failed.
+
 ## 2.15.0 — 2026-08-02
 
 ### Changed
