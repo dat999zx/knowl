@@ -1,7 +1,7 @@
 import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { getClient } from './database.js';
-import { ensureTranscriptIndex, sessionFiles, tokenize, transcriptIndexStats } from './transcript-index.js';
+import { ensureTranscriptIndex, normalizeProjectDir, sessionFiles, tokenize, transcriptIndexStats } from './transcript-index.js';
 import { embedTranscripts, semanticCandidates, transcriptVectorStats, type TranscriptEmbedder } from './transcript-vectors.js';
 
 export { encodeProjectDir, transcriptStores } from './transcript-index.js';
@@ -155,7 +155,8 @@ export async function searchTranscripts(
    */
   inconclusive: boolean;
 }> {
-  const { projectDir = process.cwd(), limit = 10, since, snippetChars = 600, stores, semantic, sessionId, indexBudgetMs, embedBudgetMs = DEFAULT_EMBED_BUDGET_MS } = options;
+  const { projectDir: rawProjectDir = process.cwd(), limit = 10, since, snippetChars = 600, stores, semantic, sessionId, indexBudgetMs, embedBudgetMs = DEFAULT_EMBED_BUDGET_MS } = options;
+  const projectDir = normalizeProjectDir(rawProjectDir);
   const terms = [...new Set(tokenize(query))];
 
   const index = await ensureTranscriptIndex(projectDir, stores, indexBudgetMs);

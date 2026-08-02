@@ -379,6 +379,38 @@ describe('transcript search', () => {
     expect(third.embedded).toBe(0);
   });
 
+  // The bug this guards shipped and was invisible: project_dir is an opaque
+  // string key, so on Windows `D:\x`, `d:\x` and `d:/x` became three separate
+  // archives. A real database held the same 59,358 messages three times over
+  // with every embedding attached to one spelling, so searches issued with a
+  // different one scored against a set that had no vectors and quietly returned
+  // lexical results. Every test passed throughout, because tests use one string.
+  it('treats every spelling of a path as the same archive', async () => {
+    const { transcriptVectorStats, embedTranscripts } = await import('../../src/store/transcript-vectors.js');
+    const embedder = { model: 'spelling-model', embed: async (texts: string[]) => texts.map(() => [1, 0]) };
+
+    // Index and embed under the canonical spelling.
+    await ensureTranscriptIndex(PROJECT_DIR, STORES);
+    await embedTranscripts(PROJECT_DIR, embedder, { budgetMs: 30_000 });
+    const canonical = await transcriptVectorStats(PROJECT_DIR, embedder.model);
+    expect(canonical.total).toBeGreaterThan(0);
+
+    // Now ask as a different caller would spell it. Same folder, so the same
+    // archive: not an empty one, and not a second copy waiting to be indexed.
+    for (const spelling of ['d:\\Code\\FakeProject', 'd:/Code/FakeProject', 'D:/Code/FakeProject']) {
+      const stats = await transcriptVectorStats(spelling, embedder.model);
+      expect(stats).toEqual(canonical);
+
+      const fresh = await ensureTranscriptIndex(spelling, STORES);
+      expect(fresh.messagesAdded).toBe(0);
+    }
+
+    const { hits } = await searchTranscripts('boxed card variant rejected', {
+      projectDir: 'd:/Code/FakeProject', stores: STORES, embedBudgetMs: 0,
+    });
+    expect(hits.length).toBeGreaterThan(0);
+  });
+
   it('quantized vectors rank the same way the float vectors did', async () => {
     const { quantize } = await import('../../src/store/transcript-vectors.js');
     // Unit-norm vectors at 8 dims, the shape the scale constant assumes.

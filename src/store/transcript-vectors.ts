@@ -1,4 +1,5 @@
 import { getClient } from './database.js';
+import { normalizeProjectDir } from './transcript-index.js';
 
 // Semantic retrieval over the WHOLE transcript archive, not just what keyword
 // search already found.
@@ -96,10 +97,11 @@ const SCAN_PAGE = 5_000;
  * pass leaves no state to repair.
  */
 export async function embedTranscripts(
-  projectDir: string,
+  rawProjectDir: string,
   embedder: TranscriptEmbedder,
   options: { budgetMs?: number; onProgress?: (done: number, remaining: number) => void } = {},
 ): Promise<{ embedded: number; remaining: number; ms: number; complete: boolean }> {
+  const projectDir = normalizeProjectDir(rawProjectDir);
   const { budgetMs = 60_000, onProgress } = options;
   const client = getClient();
   const started = Date.now();
@@ -172,6 +174,7 @@ export async function embedTranscripts(
 }
 
 async function countPending(projectDir: string, model: string): Promise<number> {
+  // Callers inside this module already normalized; kept as a plain parameter.
   const row = (await getClient().execute({
     sql: `SELECT COUNT(*) AS n FROM transcript_messages m
           LEFT JOIN transcript_embeddings e ON e.message_id = m.id AND e.model = ?
@@ -181,7 +184,8 @@ async function countPending(projectDir: string, model: string): Promise<number> 
   return Number(row.n);
 }
 
-export async function transcriptVectorStats(projectDir: string, model: string): Promise<{ embedded: number; total: number }> {
+export async function transcriptVectorStats(rawProjectDir: string, model: string): Promise<{ embedded: number; total: number }> {
+  const projectDir = normalizeProjectDir(rawProjectDir);
   const client = getClient();
   const row = (await client.execute({
     sql: `SELECT COUNT(*) AS total,
@@ -204,12 +208,13 @@ export async function transcriptVectorStats(projectDir: string, model: string): 
  * that has to load inside whatever SQLite build the host happens to have.
  */
 export async function semanticCandidates(
-  projectDir: string,
+  rawProjectDir: string,
   queryVector: number[],
   model: string,
   depth: number,
   sessionId?: string,
 ): Promise<Array<{ messageId: number; score: number }>> {
+  const projectDir = normalizeProjectDir(rawProjectDir);
   const client = getClient();
   const query = new Int8Array(quantize(queryVector).buffer);
   const scored: Array<{ messageId: number; score: number }> = [];

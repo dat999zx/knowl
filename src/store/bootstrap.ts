@@ -540,6 +540,64 @@ async function ensureTranscriptEmbeddingFormat(client: Client): Promise<void> {
   await client.execute("DELETE FROM transcript_embeddings WHERE typeof(vector) = 'text';");
 }
 
+/**
+ * Collapse the spellings of one directory into the single key it should always
+ * have had. Databases written before project_dir was normalized hold the same
+ * archive several times over - one copy per way a caller happened to spell the
+ * path - and the embeddings attach to only one of them, so searches issued with
+ * a different spelling silently score against a set that has no vectors.
+ *
+ * Where a normalized copy already exists the variants are duplicates and go.
+ * Where none does, the rows are simply relabelled, so nothing has to be
+ * re-indexed for a difference that was only ever cosmetic.
+ */
+async function ensureNormalizedProjectDirs(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'transcript_messages'))) return;
+  const { normalizeProjectDir } = await import('./transcript-index.js');
+
+  const dirs = (await client.execute('SELECT DISTINCT project_dir FROM transcript_messages')).rows
+    .map(row => String(row.project_dir))
+    .filter(dir => dir !== normalizeProjectDir(dir));
+
+  for (const variant of dirs) {
+    const canonical = normalizeProjectDir(variant);
+    const existing = Number((await client.execute({
+      sql: 'SELECT COUNT(*) AS n FROM transcript_messages WHERE project_dir = ?',
+      args: [canonical],
+    })).rows[0].n);
+
+    if (existing > 0) {
+      await client.execute({
+        sql: `INSERT INTO transcript_fts(transcript_fts, rowid, text)
+              SELECT 'delete', id, text FROM transcript_messages WHERE project_dir = ?`,
+        args: [variant],
+      });
+      await client.execute({
+        sql: 'DELETE FROM transcript_embeddings WHERE message_id IN (SELECT id FROM transcript_messages WHERE project_dir = ?)',
+        args: [variant],
+      });
+      await client.execute({ sql: 'DELETE FROM transcript_messages WHERE project_dir = ?', args: [variant] });
+    } else {
+      await client.execute({ sql: 'UPDATE transcript_messages SET project_dir = ? WHERE project_dir = ?', args: [canonical, variant] });
+    }
+  }
+
+  if (await tableExists(client, 'transcript_files')) {
+    const fileDirs = (await client.execute('SELECT DISTINCT project_dir FROM transcript_files')).rows
+      .map(row => String(row.project_dir))
+      .filter(dir => dir !== normalizeProjectDir(dir));
+    for (const variant of fileDirs) {
+      // One row per path, so relabelling cannot collide. A path whose messages
+      // were just deleted as duplicates keeps its watermark, because the
+      // surviving copy of those messages is already indexed.
+      await client.execute({
+        sql: 'UPDATE OR REPLACE transcript_files SET project_dir = ? WHERE project_dir = ?',
+        args: [normalizeProjectDir(variant), variant],
+      });
+    }
+  }
+}
+
 async function ensureHostSessionBindingColumns(client: Client): Promise<void> {
   if (!(await tableExists(client, 'host_session_bindings'))) return;
   const columns = await tableColumns(client, 'host_session_bindings');
@@ -707,6 +765,7 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await ensureHostSessionBindingColumns(client);
   await ensureTranscriptFileColumns(client);
   await ensureTranscriptEmbeddingFormat(client);
+  await ensureNormalizedProjectDirs(client);
   await ensureCodeIndexColumns(client);
   await backfillKnowledgeAssertions(client);
   await repairSkillForeignKeys(client);

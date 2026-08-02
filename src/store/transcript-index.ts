@@ -2,7 +2,7 @@ import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
-import { join, basename, delimiter } from 'node:path';
+import { join, basename, delimiter, resolve } from 'node:path';
 import { getClient } from './database.js';
 
 // Incremental index over raw Claude Code session transcripts.
@@ -37,6 +37,29 @@ export function tokenize(text: string): string[] {
 /** Claude Code encodes the project path by replacing every non-alphanumeric character with '-'. */
 export function encodeProjectDir(dir: string): string {
   return dir.replace(/[^a-zA-Z0-9]/g, '-');
+}
+
+/**
+ * One directory, one key.
+ *
+ * project_dir is an opaque string in every one of these queries, so each
+ * spelling of the same path becomes a separate archive. On Windows that is not
+ * hypothetical: `D:\Code\x`, `d:\Code\x` and `d:/Code/x` all reach the same
+ * folder and all arrived here, depending on whether the caller was the CLI
+ * (path.resolve), the MCP server (its configured root) or a script.
+ *
+ * Measured on a real database before this existed: 59,358 messages indexed
+ * three times over under three spellings, and every embedding attached to just
+ * one of them - so semantic search from the MCP server scored against a set
+ * that had no vectors at all and silently returned lexical results. The
+ * duplicates also tripled the storage.
+ *
+ * Resolve, then upper-case the drive letter, which is the one part path.resolve
+ * leaves as the caller typed it.
+ */
+export function normalizeProjectDir(dir: string): string {
+  const resolved = resolve(dir);
+  return /^[a-z]:/.test(resolved) ? resolved[0].toUpperCase() + resolved.slice(1) : resolved;
 }
 
 /**
@@ -381,7 +404,8 @@ export interface IndexResult {
  * Bring the index up to date. Cheap when nothing changed: a file whose size
  * matches the stored offset is skipped without being opened.
  */
-export async function ensureTranscriptIndex(projectDir: string, stores?: string[], budgetMs = DEFAULT_INDEX_BUDGET_MS): Promise<IndexResult> {
+export async function ensureTranscriptIndex(rawProjectDir: string, stores?: string[], budgetMs = DEFAULT_INDEX_BUDGET_MS): Promise<IndexResult> {
+  const projectDir = normalizeProjectDir(rawProjectDir);
   const started = Date.now();
   const deadline = started + budgetMs;
   const files = await sessionFiles(projectDir, stores);
@@ -415,7 +439,8 @@ export async function ensureTranscriptIndex(projectDir: string, stores?: string[
   };
 }
 
-export async function transcriptIndexStats(projectDir: string): Promise<{ messages: number; avgLen: number; sessions: number }> {
+export async function transcriptIndexStats(rawProjectDir: string): Promise<{ messages: number; avgLen: number; sessions: number }> {
+  const projectDir = normalizeProjectDir(rawProjectDir);
   const client = getClient();
   const row = (await client.execute({
     sql: 'SELECT COUNT(*) AS n, COALESCE(AVG(len), 1) AS avg_len, COUNT(DISTINCT session_id) AS sessions FROM transcript_messages WHERE project_dir = ?',
