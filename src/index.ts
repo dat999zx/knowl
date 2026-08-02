@@ -41,7 +41,7 @@ import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embedd
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './cli/config/service.js';
 import { runConfigUi } from './cli/config/ui.js';
 import { verifyCustomModel } from './ai/model-probe.js';
-import { announceProfileChange } from './cli/config/profile-change.js';
+import { announceProfileChange, shadowedByPresetNotice } from './cli/config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from './store/import-policy.js';
 import { formatAgentInitSummary, runAgentInitFlow } from './cli/init-flow.js';
 import { formatWarmResult, warmEmbeddingModel } from './cli/warm-embeddings.js';
@@ -1081,7 +1081,11 @@ configCommand
       const before = await loadConfig(root);
       const typedValue = await setConfigValue(root, key, value);
       console.log(`Set ${key} = ${JSON.stringify(typedValue)}`);
-      await announceProfileChange(root, before, await loadConfig(root));
+      const after = await loadConfig(root);
+      // Said here because announceProfileChange cannot say it: a shadowed key leaves the
+      // resolved profile untouched, so the change reads as "no change" rather than "ignored".
+      for (const line of shadowedByPresetNotice(after, key)) console.log(line);
+      await announceProfileChange(root, before, after);
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;

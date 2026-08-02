@@ -1,6 +1,15 @@
 import { existsSync } from 'node:fs';
 import type { ProjectConfig } from '../../core/types.js';
-import { fingerprintProfile, resolveVectorProfile, type VectorProfile } from '../../core/vector-profile.js';
+import {
+  VECTOR_PRESETS, fingerprintProfile, resolveVectorProfile, type VectorProfile,
+} from '../../core/vector-profile.js';
+
+/** The keys a named preset decides, and therefore overrides. */
+const PRESET_SHADOWED_KEYS = new Set([
+  'search.vector.model',
+  'search.vector.dtype',
+  'search.vector.pooling',
+]);
 
 export type ProfileChange = {
   changed: boolean;
@@ -90,6 +99,32 @@ export async function announceProfileChange(
   log(formatProfileChangeWarning(change, await countAffectedEmbeddings(root)));
   for (const line of await workspacePinNotice(root, after)) log(line);
   return change;
+}
+
+/**
+ * Say so when an edit lands on a key the active preset overrides.
+ *
+ * Setting `search.vector.model` was the only way to change models before presets existed,
+ * and every repository `knowl init` creates now carries one -- so that command reports
+ * success and changes nothing. `describeProfileChange` cannot cover this: it is silent
+ * precisely because the resolved profile did not move, which is the problem.
+ */
+export function shadowedByPresetNotice(config: ProjectConfig, key: string): string[] {
+  if (!PRESET_SHADOWED_KEYS.has(key)) return [];
+
+  const preset = (config?.search?.vector as Record<string, unknown> | undefined)?.preset;
+  // `custom` reads exactly these keys, and a config with no preset falls through to them
+  // as well. Neither shadows anything, so neither earns a warning.
+  if (typeof preset !== 'string' || !(preset in VECTOR_PRESETS)) return [];
+
+  const profile = resolveVectorProfile(config);
+  return [
+    '',
+    `Note: ${key} has no effect while search.vector.preset is "${preset}".`,
+    'The preset decides model, dtype and pooling together, so this repository still embeds with '
+    + `${profile.model} (${profile.dtype}, ${profile.pooling} pooling).`,
+    'To use a model of your own, run `knowl config set-model <name>`.',
+  ];
 }
 
 export function formatProfileChangeWarning(change: ProfileChange, affectedRows: number): string {
