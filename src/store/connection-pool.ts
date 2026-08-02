@@ -23,7 +23,10 @@ const clients = new Map<string, Client>();
 const keyFor = (dbPath: string, readOnly: boolean) =>
   `${readOnly ? 'ro' : 'rw'}:${path.resolve(dbPath)}`;
 
-export async function acquireClient(dbPath: string, options: { readOnly?: boolean } = {}): Promise<Client> {
+export async function acquireClient(
+  dbPath: string,
+  options: { readOnly?: boolean; profileFingerprint?: string | null } = {},
+): Promise<Client> {
   const readOnly = options.readOnly === true;
   const key = keyFor(dbPath, readOnly);
   const existing = clients.get(key);
@@ -42,7 +45,10 @@ export async function acquireClient(dbPath: string, options: { readOnly?: boolea
       await client.execute('PRAGMA query_only = ON;');
       await assertSchemaSupported(client, dbPath);
     } else {
-      await bootstrapSchema(client);
+      // The fingerprint comes from the caller, not from here: this layer knows a
+      // database path, and the config that names the embedding profile belongs to a
+      // project root a namespace database need not sit under.
+      await bootstrapSchema(client, { profileFingerprint: options.profileFingerprint });
     }
   } catch (error) {
     // An un-closed client on a failed open keeps whatever lock its partial bootstrap

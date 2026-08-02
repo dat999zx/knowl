@@ -76,6 +76,7 @@ export async function indexKnowledgeItemsBestEffort(projectId: string, items: Kn
         knowledgeItemId: items[index].id,
         provider: embedder.provider,
         model: embedder.model,
+        profileFingerprint: embedder.profileFingerprint,
         dimensions: vector.length,
         vector,
       });

@@ -60,8 +60,7 @@ export async function runCliQuery(input: {
       const [embedding] = await embedder.embed([input.query]);
       vector = {
         enabled: true,
-        provider: embedder.provider,
-        model: config.search?.vector?.model,
+        profileFingerprint: embedder.profileFingerprint,
         embedding,
       };
     } catch {

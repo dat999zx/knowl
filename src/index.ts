@@ -1125,7 +1125,7 @@ program
       const evaluation = await evaluateRetrieval(cases, async (testCase) => {
         const startedAt = Date.now();
         const vectorOption = embedder
-          ? { enabled: true, provider: embedder.provider, model: embedder.model, embedding: (await embedder.embed([testCase.query]))[0] }
+          ? { enabled: true, profileFingerprint: embedder.profileFingerprint, embedding: (await embedder.embed([testCase.query]))[0] }
           : undefined;
         const items = await queryKnowledgeForAgent(project.id, {
           query: testCase.query,

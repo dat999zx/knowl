@@ -6,6 +6,8 @@ export type KnowledgeEmbedder = {
   provider: string;
   model: string;
   pooling: 'mean' | 'cls';
+  /** Stamped on every row this embedder writes, and the filter its queries search under. */
+  profileFingerprint: string;
   embed(texts: string[]): Promise<number[][]>;
 };
 
@@ -42,6 +44,7 @@ export async function reindexKnowledgeEmbeddings(
       knowledgeItemId: items[i].id,
       provider: embedder.provider,
       model: embedder.model,
+      profileFingerprint: embedder.profileFingerprint,
       dimensions: vector.length,
       vector,
     });

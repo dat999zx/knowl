@@ -2,7 +2,7 @@ import path from 'node:path';
 import fsPromises from 'node:fs/promises';
 import { ProjectConfig } from '../core/types.js';
 import { KnowledgeEmbedder } from '../store/vector-index.js';
-import { resolveVectorProfile, type VectorPooling } from '../core/vector-profile.js';
+import { fingerprintProfile, resolveVectorProfile, type VectorPooling } from '../core/vector-profile.js';
 
 type TransformersPipeline = (texts: string[], options: { pooling: VectorPooling; normalize: boolean }) => Promise<{
   data: Float32Array | number[];
@@ -83,6 +83,7 @@ export async function createLocalEmbeddingProvider(
     provider: 'local',
     model: vector.model,
     pooling: vector.pooling,
+    profileFingerprint: fingerprintProfile(resolveVectorProfile(config)),
     embed: async (texts: string[]) => {
       const output = await localPipeline!(texts, {
         // Per-model, not a constant: MiniLM is mean-pooled while both Granite R2

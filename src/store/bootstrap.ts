@@ -145,6 +145,7 @@ const SCHEMA_STATEMENTS = [
     knowledge_item_id TEXT PRIMARY KEY REFERENCES knowledge_items(id) ON DELETE CASCADE,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
+    profile_fingerprint TEXT,
     dimensions INTEGER NOT NULL,
     vector TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -478,6 +479,30 @@ async function ensureHostSessionBindingColumns(client: Client): Promise<void> {
   }
 }
 
+/**
+ * Backfills with the repository's current profile fingerprint, which is by
+ * definition the profile that produced the existing rows -- nothing else could
+ * have written them.
+ *
+ * A null fingerprint means the caller could not read config. The column is still
+ * added, because the alternative is a schema that varies by whether config parsed;
+ * existing rows stay NULL and the next reindex replaces them.
+ */
+async function ensureEmbeddingProfileColumns(client: Client, fingerprint: string | null): Promise<void> {
+  if (!(await tableExists(client, 'knowledge_embeddings'))) return;
+  const columns = await tableColumns(client, 'knowledge_embeddings');
+  if (!columns.includes('profile_fingerprint')) {
+    await client.execute('ALTER TABLE knowledge_embeddings ADD COLUMN profile_fingerprint TEXT;');
+    if (fingerprint) {
+      await client.execute({
+        sql: 'UPDATE knowledge_embeddings SET profile_fingerprint = ? WHERE profile_fingerprint IS NULL',
+        args: [fingerprint],
+      });
+    }
+  }
+  await client.execute('CREATE INDEX IF NOT EXISTS idx_ke_profile ON knowledge_embeddings(profile_fingerprint);');
+}
+
 async function ensureCodeIndexColumns(client: Client): Promise<void> {
   if (!(await tableExists(client, 'code_symbols'))) return;
   const columns = await tableColumns(client, 'code_symbols');
@@ -606,7 +631,10 @@ async function migrateLegacyProjectSchema(client: Client): Promise<void> {
  * Directly bootstraps the schema using SQL commands.
  * This keeps the binary self-contained and free from file migration dependencies.
  */
-export async function bootstrapSchema(client: Client): Promise<void> {
+export async function bootstrapSchema(
+  client: Client,
+  options: { profileFingerprint?: string | null } = {},
+): Promise<void> {
   await executeAll(client, BASE_STATEMENTS);
   // Before any migration touches the file. Running migrateLegacyProjectSchema against a
   // database written by a newer Knowl is the case this exists to prevent.
@@ -620,6 +648,7 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await ensureMemorySessionColumns(client);
   await ensureHostSessionBindingColumns(client);
   await ensureCodeIndexColumns(client);
+  await ensureEmbeddingProfileColumns(client, options.profileFingerprint ?? null);
   await backfillKnowledgeAssertions(client);
   await repairSkillForeignKeys(client);
   await stampSchemaVersion(client);

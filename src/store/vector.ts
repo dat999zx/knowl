@@ -11,6 +11,8 @@ export type KnowledgeEmbeddingInput = {
   knowledgeItemId: string;
   provider: string;
   model: string;
+  /** Identifies the exact profile that produced this vector. See fingerprintProfile. */
+  profileFingerprint: string;
   dimensions: number;
   vector: number[];
 };
@@ -103,16 +105,18 @@ export async function upsertKnowledgeEmbedding(input: KnowledgeEmbeddingInput): 
   const now = new Date().toISOString();
   try {
     await getClient().execute({
-      sql: `INSERT INTO knowledge_embeddings (knowledge_item_id, provider, model, dimensions, vector, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+      sql: `INSERT INTO knowledge_embeddings (knowledge_item_id, provider, model, profile_fingerprint, dimensions, vector, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(knowledge_item_id) DO UPDATE SET
               provider = excluded.provider, model = excluded.model,
+              profile_fingerprint = excluded.profile_fingerprint,
               dimensions = excluded.dimensions, vector = excluded.vector,
               updated_at = excluded.updated_at`,
       args: [
         input.knowledgeItemId,
         input.provider,
         input.model,
+        input.profileFingerprint ?? null,
         input.dimensions,
         encodeVector(input.vector),
         now,
@@ -130,8 +134,7 @@ export async function searchKnowledgeEmbeddings(
     category?: KnowledgeCategory;
     status?: KnowledgeStatus;
     tags?: string[];
-    provider?: string;
-    model?: string;
+    profileFingerprint?: string;
     limit?: number;
     /** Restricts to shared items; required for a peer store. See searchKnowledgeItems. */
     visibility?: 'repo' | 'workspace';
@@ -157,13 +160,12 @@ export async function searchKnowledgeEmbeddings(
       where.push('i.visibility = ?');
       args.push(options.visibility);
     }
-    if (options.provider) {
-      where.push('e.provider = ?');
-      args.push(options.provider);
-    }
-    if (options.model) {
-      where.push('e.model = ?');
-      args.push(options.model);
+    // Provider and model are not sufficient: dtype and pooling change the numbers a
+    // model emits, so a row written under a different one is not comparable even
+    // though its provider and model match.
+    if (options.profileFingerprint) {
+      where.push('e.profile_fingerprint = ?');
+      args.push(options.profileFingerprint);
     }
 
     const rows = await store.client.execute({
@@ -226,13 +228,13 @@ export async function searchKnowledgeEmbeddings(
  * arrive as BM25-only candidates scoring around 0.034, so nothing in the fused score
  * distinguishes them.
  *
- * Provider and model are part of eligibility, not a detail: `searchKnowledgeEmbeddings`
- * filters on both, so a row written by a different embedder is unreachable by the current
- * search and its item is no more eligible than one with no row at all.
+ * The profile fingerprint decides eligibility, not a detail: `searchKnowledgeEmbeddings`
+ * filters on it, so a row written under a different model, dtype or pooling is unreachable
+ * by the current search and its item is no more eligible than one with no row at all.
  */
 export async function findEmbeddedItemIds(
   itemIds: string[],
-  options: { provider?: string; model?: string } = {},
+  options: { profileFingerprint?: string } = {},
   store: StoreHandle = localStore(),
 ): Promise<Set<string>> {
   const found = new Set<string>();
@@ -240,13 +242,9 @@ export async function findEmbeddedItemIds(
 
   const where = [`knowledge_item_id IN (${itemIds.map(() => '?').join(', ')})`];
   const args: unknown[] = [...itemIds];
-  if (options.provider) {
-    where.push('provider = ?');
-    args.push(options.provider);
-  }
-  if (options.model) {
-    where.push('model = ?');
-    args.push(options.model);
+  if (options.profileFingerprint) {
+    where.push('profile_fingerprint = ?');
+    args.push(options.profileFingerprint);
   }
 
   const rows = await store.client.execute({
@@ -256,6 +254,16 @@ export async function findEmbeddedItemIds(
 
   for (const row of rows.rows) found.add(String(row.knowledge_item_id));
   return found;
+}
+
+/** Drops rows left behind by a previous profile, including those for deleted items. */
+export async function purgeEmbeddingsNotMatching(projectId: string, fingerprint: string): Promise<number> {
+  const result = await getClient().execute({
+    sql: `DELETE FROM knowledge_embeddings
+          WHERE profile_fingerprint IS NULL OR profile_fingerprint != ?`,
+    args: [fingerprint],
+  });
+  return Number(result.rowsAffected ?? 0);
 }
 
 /**
