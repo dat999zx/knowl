@@ -6,7 +6,6 @@ import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { createKnowledgeItem } from '../../src/store/repository.js';
 import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
-import { getEmbeddingsForItems } from '../../src/store/vector.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
 import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
 import { evaluateRetrieval, type RetrievalEvaluationCase } from '../../src/store/retrieval-evaluation.js';
@@ -108,14 +107,16 @@ describe('cross-repo retrieval', () => {
       try {
         const active = (await resolveWorkspace(root))!;
         // Federation selects from every repo including this one, so no local pre-query.
-        let vector: { enabled: boolean; provider?: string; model?: string; embedding?: number[] } | undefined;
+        let vector: { enabled: boolean; profileFingerprint: string; embedding?: number[] } | undefined;
         if (semantic) {
           const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, root);
           const [embedding] = await embedder.embed([testCase.query]);
+          // The fingerprint, not provider/model: those stopped being the eligibility filter
+          // when dtype and pooling joined the identity, so the old pair left no fingerprint
+          // and the search matched every stored vector regardless of what produced it.
           vector = {
             enabled: true,
-            provider: embedder.provider,
-            model: DEFAULT_CONFIG.search?.vector?.model,
+            profileFingerprint: embedder.profileFingerprint,
             embedding,
           };
         }

@@ -55,6 +55,27 @@ describe('access feedback', () => {
     expect(rows[1]).toEqual(expect.objectContaining({ useful: true, used: true, causedCorrection: false }));
   });
 
+  it('keeps append order when two events share a timestamp', async () => {
+    // The real tie, forced. `retrieved_at` is millisecond ISO text, so an access and the
+    // feedback that follows it routinely land in the same millisecond on a fast machine --
+    // and the tiebreak used to be the random hex `id`, making the order a coin flip. It
+    // passed locally for months and failed in CI on the release tag.
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Tied events', content: 'Both written in one millisecond.',
+    });
+    await recordKnowledgeAccess({ itemId: item.id, query: 'tied', surface: 'mcp', rank: 1 });
+    await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true, causedCorrection: false });
+
+    const db = getDb() as any;
+    await db.run(sql`UPDATE knowledge_access SET retrieved_at = '2026-08-02T00:00:00.000Z'
+                     WHERE knowledge_item_id = ${item.id}`);
+
+    const rows = await listKnowledgeAccess(item.id);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].surface).toBe('mcp');
+    expect(rows[1].surface).toBe('feedback');
+  });
+
   it('reports high-value, stale-frequent, and corrected knowledge', async () => {
     const valuable = await repo.createKnowledgeItem(projectId, {
       category: 'fact', title: 'Valuable', content: 'Frequently useful.',

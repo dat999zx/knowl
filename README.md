@@ -198,6 +198,50 @@ knowl reindex --vectors
 knowl config set search.vector.enabled false
 ```
 
+#### Choosing an embedding model
+
+`search.vector.preset` selects the local embedding model. A preset bundles model, dtype and
+pooling together, because pooling is not discoverable at runtime and the wrong value produces
+plausible-looking vectors that rank badly with no error.
+
+| Preset | Model | Size (q8) | Context | Languages |
+| --- | --- | --- | --- | --- |
+| `granite-small-en-r2` *(default)* | `onnx-community/granite-embedding-small-english-r2-ONNX` | ~52MB | 8k | English |
+| `granite-97m-multilingual` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | ~98MB | 32k | 200+ |
+| `bge-small-en` | `Xenova/bge-small-en-v1.5` | ~34MB | 512 | English |
+| `minilm-l6-en` | `Xenova/all-MiniLM-L6-v2` | ~23MB | 512 | English |
+| `custom` | whatever you name | varies | varies | varies |
+
+Every preset emits 384-dimension vectors, so switching never changes the stored vector width.
+
+```bash
+knowl config                                          # interactive picker
+knowl config set search.vector.preset granite-97m-multilingual
+knowl config set-model onnx-community/your-model-ONNX  # verifies, then downloads
+```
+
+The default is **English-only**. If you store knowledge in other languages, pick
+`granite-97m-multilingual`.
+
+`knowl config set-model` is the path for a model of your own: it checks the repository exists and
+ships `onnx/model_quantized.onnx`, reads its pooling method from `1_Pooling/config.json`, and asks
+you which to use when the repository does not say. Setting `search.vector.model` directly has no
+effect while a named preset is active — the preset decides it — and Knowl says so rather than
+reporting a silent no-op.
+
+Changing the model makes every stored embedding stop matching, so vector search falls back to
+keyword-only results until `knowl reindex --vectors` runs. Knowl offers that rebuild as soon as the
+change is saved. Nothing is ever mis-scored in the meantime: each row records a fingerprint of the
+model, dtype and pooling that produced it, and only rows matching the active profile are searched.
+That also means an interrupted rebuild leaves a smaller searchable set rather than a mixed one.
+
+Existing repositories are never migrated. `knowl upgrade` cannot change your preset, and a
+configuration written before presets existed keeps its model and its original pooling.
+
+In a workspace, every repository must share one embedding profile, since cross-repo ranking
+compares vectors directly. `knowl workspace repin-embedding` moves the whole workspace to the
+current repository's model and lists the peers that must then reindex.
+
 `knowl init` tries to warm the model cache but does not make initialization depend on a download.
 Offline BM25 retrieval remains available. A normal write embeds the item only when the model is
 already cached: write-time embedding never downloads a model and never fails the write.
@@ -414,6 +458,7 @@ The shipped workspace commands are:
 | `knowl workspace status [--verbose]` | Show this repository's membership and peer health |
 | `knowl workspace remove <repo-name> [--export-first]` | Unlink the current repository, retiring its name if it still owns atoms |
 | `knowl workspace promote (--category <list> \| --id <id...>) [--apply]` | Preview or publish selected locally owned atoms |
+| `knowl workspace repin-embedding [--yes]` | Move the workspace to this repository's embedding model and list the peers that must reindex |
 
 ### Federation and ownership
 
@@ -936,7 +981,8 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 | `knowl import <path> [--dry-run] [--on-divergence newer\|skip\|theirs\|fail]` | Import JSONL with an explicit divergence policy |
 | `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Create or restore a verified SQLite snapshot |
 | `knowl config` / `get <key>` / `set <key> <value>` / `reset [key]` | Edit configuration interactively or from scripts |
-| `knowl reindex --vectors` | Prepare the local model and backfill existing vector embeddings |
+| `knowl config set-model <model>` | Verify, download and select a custom embedding model |
+| `knowl reindex --vectors` | Prepare the local model, re-embed every item, and drop rows from a previous model |
 | `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access] [--tombstone-days N]` | Preview or apply duplicate, archive, compression, and tombstone maintenance |
 | `knowl pr check --since <commit> [--dry-run]` | Find drift candidates and, unless dry-run, mark them for review |
 | `knowl view [--port <port>]` | Start the local GET-only viewer |

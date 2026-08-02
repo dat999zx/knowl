@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { EmbeddingIdentity } from '../store/embedding-identity.js';
+import { VECTOR_PRESETS } from '../core/vector-profile.js';
 import { PACKAGE_VERSION } from '../version.js';
 
 export type WorkspaceMode = 'linked' | 'shared';
@@ -99,9 +100,30 @@ export function createManifest(name: string, embedding: EmbeddingIdentity | null
   };
 }
 
+/**
+ * Fill in pooling for a manifest written before the field existed.
+ *
+ * Derived from the pinned model where that model is one we ship, since its
+ * pooling is known. Otherwise recorded as `unknown`, which disables cross-repo
+ * vector fusion until someone repins -- degraded beats silently wrong.
+ */
+export function migrateLegacyManifestPooling(manifest: WorkspaceManifest): WorkspaceManifest {
+  const embedding = manifest.embedding as (EmbeddingIdentity & { pooling?: string }) | null;
+  if (!embedding || embedding.pooling) return manifest;
+
+  const known = Object.values(VECTOR_PRESETS).find(preset => preset.model === embedding.model);
+  return {
+    ...manifest,
+    embedding: { ...embedding, pooling: known ? known.pooling : 'unknown' },
+  };
+}
+
 export async function readManifest(manifestPath: string): Promise<WorkspaceManifest> {
   const raw = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as Partial<WorkspaceManifest>;
-  return {
+  // Migrated on the way in rather than on write: a manifest written before pooling
+  // existed is read by every command, and an identity missing the field would compare
+  // equal to a repo that merely shares its model name.
+  return migrateLegacyManifestPooling({
     version: 1,
     name: String(raw.name ?? ''),
     minKnowlVersion: String(raw.minKnowlVersion ?? PACKAGE_VERSION),
@@ -109,7 +131,7 @@ export async function readManifest(manifestPath: string): Promise<WorkspaceManif
     embedding: raw.embedding ?? null,
     repos: (Array.isArray(raw.repos) ? raw.repos : []).map(normalizeRepoEntry),
     retiredNames: raw.retiredNames ?? [],
-  };
+  });
 }
 
 export async function writeManifest(manifestPath: string, manifest: WorkspaceManifest): Promise<void> {

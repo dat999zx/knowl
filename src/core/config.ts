@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ProjectConfig } from './types.js';
 import { ConfigError, ProjectNotFoundError } from './errors.js';
+import { DEFAULT_PRESET_ID } from './vector-profile.js';
 
 export const DEFAULT_CONFIG: ProjectConfig = {
   version: 1,
@@ -29,6 +30,25 @@ export const DEFAULT_CONFIG: ProjectConfig = {
     enabled: true,
   },
 };
+
+/**
+ * What `knowl init` writes, and what `knowl config reset` restores.
+ *
+ * Deliberately separate from DEFAULT_CONFIG. That one is the merge baseline for
+ * `upgradeConfigDefaults`, which fills in every key an existing config lacks --
+ * so a `preset` placed there would be injected into every repository on upgrade
+ * and silently move it to a different embedding model.
+ */
+export const NEW_PROJECT_CONFIG: ProjectConfig = {
+  ...DEFAULT_CONFIG,
+  search: {
+    ...DEFAULT_CONFIG.search,
+    vector: {
+      ...DEFAULT_CONFIG.search?.vector,
+      preset: DEFAULT_PRESET_ID,
+    },
+  },
+} as ProjectConfig;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

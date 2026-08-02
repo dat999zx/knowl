@@ -1,15 +1,20 @@
 import { KnowledgeItem } from '../core/types.js';
-import { queryKnowledgeBase } from './queries.js';
-import { upsertKnowledgeEmbedding } from './vector.js';
+import { iterateKnowledgeItemsForIndexing } from './index-scan.js';
+import { purgeEmbeddingsNotMatching, upsertKnowledgeEmbedding } from './vector.js';
 
 export type KnowledgeEmbedder = {
   provider: string;
   model: string;
+  pooling: 'mean' | 'cls';
+  /** Stamped on every row this embedder writes, and the filter its queries search under. */
+  profileFingerprint: string;
   embed(texts: string[]): Promise<number[][]>;
 };
 
 export type VectorReindexResult = {
   indexed: number;
+  purged: number;
+  byStatus: Record<string, number>;
 };
 
 export function buildKnowledgeEmbeddingText(item: KnowledgeItem): string {
@@ -18,35 +23,43 @@ export function buildKnowledgeEmbeddingText(item: KnowledgeItem): string {
   return `${item.title}\n${item.content}${reasoning}${tags}`;
 }
 
+/**
+ * Rebuild every stored vector under the embedder's current profile.
+ *
+ * Every status, not just active: a superseded or archived item is still returned by
+ * time-travel and archive queries, and leaving it unembedded made it reachable by
+ * keyword alone while its active neighbours ranked semantically.
+ */
 export async function reindexKnowledgeEmbeddings(
   projectId: string,
-  embedder: KnowledgeEmbedder
+  embedder: KnowledgeEmbedder,
 ): Promise<VectorReindexResult> {
-  const items = await queryKnowledgeBase(projectId, {
-    status: 'active',
-    limit: 10_000,
-  });
+  let indexed = 0;
+  const byStatus: Record<string, number> = {};
 
-  if (items.length === 0) {
-    return { indexed: 0 };
+  for await (const batch of iterateKnowledgeItemsForIndexing(projectId)) {
+    const vectors = await embedder.embed(batch.map(buildKnowledgeEmbeddingText));
+
+    for (let i = 0; i < batch.length; i++) {
+      const vector = vectors[i];
+      if (!vector || vector.length === 0) continue;
+      await upsertKnowledgeEmbedding({
+        projectId,
+        knowledgeItemId: batch[i].id,
+        provider: embedder.provider,
+        model: embedder.model,
+        profileFingerprint: embedder.profileFingerprint,
+        dimensions: vector.length,
+        vector,
+      });
+      indexed++;
+      const status = batch[i].status ?? 'active';
+      byStatus[status] = (byStatus[status] ?? 0) + 1;
+    }
   }
 
-  const vectors = await embedder.embed(items.map(buildKnowledgeEmbeddingText));
+  // Runs last so an interrupted rebuild never deletes rows it has not replaced.
+  const purged = await purgeEmbeddingsNotMatching(projectId, embedder.profileFingerprint);
 
-  for (let i = 0; i < items.length; i++) {
-    const vector = vectors[i];
-    if (!vector || vector.length === 0) continue;
-    await upsertKnowledgeEmbedding({
-      projectId,
-      knowledgeItemId: items[i].id,
-      provider: embedder.provider,
-      model: embedder.model,
-      dimensions: vector.length,
-      vector,
-    });
-  }
-
-  return {
-    indexed: vectors.filter(vector => vector && vector.length > 0).length,
-  };
+  return { indexed, purged, byStatus };
 }

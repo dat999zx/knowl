@@ -2,11 +2,9 @@ import path from 'node:path';
 import fsPromises from 'node:fs/promises';
 import { ProjectConfig } from '../core/types.js';
 import { KnowledgeEmbedder } from '../store/vector-index.js';
+import { fingerprintProfile, resolveVectorProfile, type VectorPooling } from '../core/vector-profile.js';
 
-const DEFAULT_LOCAL_EMBEDDING_MODEL = 'Xenova/all-MiniLM-L6-v2';
-const DEFAULT_LOCAL_EMBEDDING_DTYPE = 'q8';
-
-type TransformersPipeline = (texts: string[], options: { pooling: 'mean'; normalize: boolean }) => Promise<{
+type TransformersPipeline = (texts: string[], options: { pooling: VectorPooling; normalize: boolean }) => Promise<{
   data: Float32Array | number[];
   dims: number[];
 }>;
@@ -35,13 +33,14 @@ export function isVectorSearchEnabled(config: ProjectConfig): boolean {
 }
 
 export function getVectorSearchConfig(config: ProjectConfig) {
-  const vector = config.search?.vector;
+  const profile = resolveVectorProfile(config);
   return {
-    enabled: vector?.enabled === true,
-    provider: vector?.provider || 'local',
-    model: vector?.model || DEFAULT_LOCAL_EMBEDDING_MODEL,
-    dtype: vector?.dtype || DEFAULT_LOCAL_EMBEDDING_DTYPE,
-    cacheDir: vector?.cacheDir,
+    enabled: config.search?.vector?.enabled === true,
+    provider: profile.provider,
+    model: profile.model,
+    dtype: profile.dtype,
+    pooling: profile.pooling,
+    cacheDir: config.search?.vector?.cacheDir,
   };
 }
 
@@ -59,7 +58,7 @@ export async function createLocalEmbeddingProvider(
   }
 
   const cacheDir = vector.cacheDir || path.join(projectRoot, '.knowl', 'models');
-  const pipelineKey = `${vector.model}:${vector.dtype}:${cacheDir}`;
+  const pipelineKey = `${vector.model}:${vector.dtype}:${vector.pooling}:${cacheDir}`;
 
   if (!localPipeline || localPipelineKey !== pipelineKey) {
     // Whether the weights are already on disk, so a caller can say "loading" rather than
@@ -83,9 +82,14 @@ export async function createLocalEmbeddingProvider(
   return {
     provider: 'local',
     model: vector.model,
+    pooling: vector.pooling,
+    profileFingerprint: fingerprintProfile(resolveVectorProfile(config)),
     embed: async (texts: string[]) => {
       const output = await localPipeline!(texts, {
-        pooling: 'mean',
+        // Per-model, not a constant: MiniLM is mean-pooled while both Granite R2
+        // models and BGE are CLS-pooled. Using the wrong one produces plausible
+        // vectors that rank badly, with nothing to notice at runtime.
+        pooling: vector.pooling,
         normalize: true,
       });
       const dimensions = output.dims[1];

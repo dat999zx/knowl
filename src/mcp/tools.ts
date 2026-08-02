@@ -16,7 +16,7 @@ import { MAX_ITEM_CONTENT_CHARS, truncateText } from '../core/token-budget.js';
 import { getRecentContext } from '../store/recent-context.js';
 import { storeKnowledgeItemDeduped, storeKnowledgeAtomsDeduped } from '../store/knowledge-writer.js';
 import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
-import { isVectorSearchEnabled, createLocalEmbeddingProvider, getVectorSearchConfig } from '../ai/embeddings.js';
+import { isVectorSearchEnabled, createLocalEmbeddingProvider } from '../ai/embeddings.js';
 import { queryKnowledgeForAgent, queryKnowledgeForAgentExplained } from '../store/agent-query.js';
 import { previewKnowledgeGc, applyKnowledgeGc } from '../store/gc.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop } from '../store/work-loop.js';
@@ -882,11 +882,9 @@ export function registerTools(
         if (config && projectRoot && query && isVectorSearchEnabled(config)) {
           const embedder = await createLocalEmbeddingProvider(config, projectRoot);
           const [embedding] = await embedder.embed([query]);
-          const vectorConfig = getVectorSearchConfig(config);
           vector = {
             enabled: true,
-            provider: embedder.provider,
-            model: vectorConfig.model,
+            profileFingerprint: embedder.profileFingerprint,
             embedding,
           };
         }

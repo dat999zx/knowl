@@ -7,7 +7,7 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { PACKAGE_NAME, PACKAGE_VERSION } from './version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from './core/version-check.js';
-import { DEFAULT_CONFIG, findProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
+import { NEW_PROJECT_CONFIG, findProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from './core/config.js';
 import {
   installKnowlProjectGuidance,
   KnowlProjectGuidanceInstallResult,
@@ -23,6 +23,7 @@ import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory } from './core/types.js';
 import { createManifest, isValidRepoName, readManifest, writeManifest } from './workspace/manifest.js';
 import { listKnownWorkspaces, workspaceManifestPath } from './workspace/paths.js';
 import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from './workspace/membership.js';
+import { embeddingIdentityFromConfig, formatEmbeddingIdentity } from './store/embedding-identity.js';
 import { promoteItems } from './workspace/promote.js';
 import { existingItemsNotice, visibilityGateNotice } from './cli/workspace-visibility-notice.js';
 import { repoEntry, updateRepoSettings } from './workspace/repo-settings.js';
@@ -37,8 +38,10 @@ import { discoverRepos } from './cli/repo-discovery.js';
 import { applyDoctorRemedies } from './cli/doctor-fix.js';
 import { formatSweepReport, sweepRepos } from './cli/upgrade-all.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
-import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue } from './cli/config/service.js';
+import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './cli/config/service.js';
 import { runConfigUi } from './cli/config/ui.js';
+import { verifyCustomModel } from './ai/model-probe.js';
+import { announceProfileChange, shadowedByPresetNotice } from './cli/config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from './store/import-policy.js';
 import { formatAgentInitSummary, runAgentInitFlow } from './cli/init-flow.js';
 import { formatWarmResult, warmEmbeddingModel } from './cli/warm-embeddings.js';
@@ -255,8 +258,10 @@ program
       await fs.mkdir(knowlDir, { recursive: true });
       await fs.mkdir(path.join(knowlDir, 'skills'), { recursive: true });
 
-      // Create default config.json
-      const defaultConfig = DEFAULT_CONFIG;
+      // Create default config.json. NEW_PROJECT_CONFIG, not DEFAULT_CONFIG: only a
+      // brand-new repository gets a `preset`, because DEFAULT_CONFIG is also the
+      // merge baseline that `knowl upgrade` applies to every existing one.
+      const defaultConfig = NEW_PROJECT_CONFIG;
 
       await fs.writeFile(
         path.join(knowlDir, 'config.json'),
@@ -528,6 +533,39 @@ workspaceCommand
     } catch (error: any) {
       console.error(`Error updating workspace settings: ${error.message}`);
       process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('repin-embedding')
+  .description("Repoint the workspace at this repository's embedding model")
+  .option('--yes', 'Skip the confirmation prompt')
+  .action(async (options: { yes?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      const identity = embeddingIdentityFromConfig(config);
+      const active = await resolveWorkspace(root, config);
+      if (!active) throw new Error('This repository is not in a workspace.');
+
+      console.log(`Workspace "${active.name}" moves to ${formatEmbeddingIdentity(identity)}.`);
+      console.log('Every linked repository must then run `knowl reindex --vectors`:');
+      for (const peer of active.peers) console.log(`  ${peer.name}  ${peer.root}`);
+
+      if (!options.yes) {
+        const { confirm } = await import('@inquirer/prompts');
+        if (!(await confirm({ message: 'Repin the workspace?', default: false }))) {
+          console.log('Unchanged.');
+          return;
+        }
+      }
+
+      active.manifest.embedding = identity;
+      await writeManifest(workspaceManifestPath(active.name), active.manifest);
+      console.log('Repinned. Peers keep their old vectors until each one reindexes.');
+    } catch (error: any) {
+      console.error(`Error repinning workspace embedding: ${error.message}`);
+      process.exitCode = 1;
     }
   });
 
@@ -952,6 +990,44 @@ program
     }
   });
 
+/**
+ * Rebuild every stored vector under the repository's current profile.
+ *
+ * Shared by `knowl reindex --vectors` and the offer made after a config change, so the
+ * two cannot report different things about the same operation.
+ */
+async function rebuildVectorEmbeddings(root: string): Promise<void> {
+  const config = await loadConfig(root);
+  if (!isVectorSearchEnabled(config)) {
+    throw new Error('Vector search is not enabled. Set search.vector.enabled true before running vector reindex.');
+  }
+
+  await initDb(root);
+  try {
+    const project = await repo.getProjectByRootPath(root);
+    if (!project) throw new Error('Project not found in database.');
+
+    const embedder = await createLocalEmbeddingProvider(config, root, {
+      // Only claim a download when one is actually going to happen. This announced
+      // "Downloading" on every run, cached or not, because the callback fires whenever
+      // the pipeline is not in memory -- which is always in a fresh CLI process.
+      onFirstLoad: ({ model, cached }) => console.log(
+        cached
+          ? `Loading local embedding model ${model}...`
+          : `Downloading local embedding model ${model} (first run)...`,
+      ),
+    });
+    const result = await reindexKnowledgeEmbeddings(project.id, embedder);
+    const perStatus = Object.entries(result.byStatus)
+      .map(([status, count]) => `${count} ${status}`)
+      .join(', ');
+    console.log(`Indexed ${result.indexed} vector embedding(s)${perStatus ? ` (${perStatus})` : ''}.`);
+    if (result.purged > 0) console.log(`Purged ${result.purged} embedding(s) from a previous model.`);
+  } finally {
+    await closeDb();
+  }
+}
+
 // --- 7. CONFIG COMMAND ---
 const configCommand = program
   .command('config')
@@ -966,7 +1042,18 @@ configCommand.action(async () => {
     if (!process.stdin.isTTY || !process.stdout.isTTY) {
       throw new Error('Interactive config requires a TTY. Use `knowl config get`, `set`, or `reset`.');
     }
-    await runConfigUi(await findProjectRoot(process.cwd()));
+    const root = await findProjectRoot(process.cwd());
+    const { intro, outro } = await import('./cli/ui/style.js');
+    intro('knowl config', root);
+    const result = await runConfigUi(root);
+    // Run here rather than inside the UI: rebuilding needs the embedder and the database,
+    // and the UI layer deliberately knows about neither.
+    if (result.reindexRequested) await rebuildVectorEmbeddings(root);
+    // Every exit is framed, including the one that changed nothing -- a run that just
+    // stops leaves you unsure whether it saved.
+    outro(result.saved
+      ? `Saved ${result.changes.length} change${result.changes.length === 1 ? '' : 's'}`
+      : 'No changes');
   } catch (error: any) {
     console.error(`❌ Configuration error: ${error.message}`);
     process.exitCode = 1;
@@ -992,8 +1079,55 @@ configCommand
   .argument('<value>')
   .action(async (key, value) => {
     try {
-      const typedValue = await setConfigValue(await findProjectRoot(process.cwd()), key, value);
+      // Refused before the write, not after: `preset custom` alone names no model, and
+      // anything running before the follow-up keys arrive would resolve that as a profile.
+      if (key === 'search.vector.preset' && value === 'custom') {
+        throw new Error('Use `knowl config set-model <name>` for a custom model; `preset custom` alone leaves no model to use.');
+      }
+      const root = await findProjectRoot(process.cwd());
+      const before = await loadConfig(root);
+      const typedValue = await setConfigValue(root, key, value);
       console.log(`Set ${key} = ${JSON.stringify(typedValue)}`);
+      const after = await loadConfig(root);
+      // Said here because announceProfileChange cannot say it: a shadowed key leaves the
+      // resolved profile untouched, so the change reads as "no change" rather than "ignored".
+      for (const line of shadowedByPresetNotice(after, key)) console.log(line);
+      await announceProfileChange(root, before, after);
+    } catch (error: any) {
+      console.error(`❌ Configuration error: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+configCommand
+  .command('set-model')
+  .argument('<model>')
+  .description('Verify, download and select a custom embedding model')
+  .option('--pooling <mode>', 'cls or mean; required when the model does not declare it')
+  .action(async (model: string, options: { pooling?: string }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const probe = await verifyCustomModel(model);
+      if (!probe.ok) throw new Error(probe.reason);
+
+      const pooling = probe.pooling ?? options.pooling;
+      if (!pooling) {
+        throw new Error(
+          `${model} does not declare its pooling method. Re-run with --pooling cls or --pooling mean. ` +
+          'Guessing would produce vectors that rank badly with no visible error.',
+        );
+      }
+      if (pooling !== 'cls' && pooling !== 'mean') throw new Error('--pooling must be cls or mean.');
+
+      const before = await loadConfig(root);
+      await setConfigValues(root, [
+        { key: 'search.vector.preset', raw: 'custom' },
+        { key: 'search.vector.model', raw: model },
+        { key: 'search.vector.pooling', raw: pooling },
+      ]);
+      console.log(`Selected ${model} (${pooling} pooling).`);
+      console.log('Run `knowl reindex --vectors` to rebuild embeddings with it.');
+      await announceProfileChange(root, before, await loadConfig(root));
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
@@ -1012,9 +1146,13 @@ configCommand
         }
       }
       const root = await findProjectRoot(process.cwd());
+      const before = await loadConfig(root);
       if (key) await resetConfigValue(root, key);
       else await resetAllConfig(root);
       console.log(key ? `Reset ${key}` : 'Reset all configuration to defaults');
+      // A full reset moves an old repo onto the default preset, which is a model change
+      // like any other -- and the one most likely to surprise, since nothing named a model.
+      await announceProfileChange(root, before, await loadConfig(root));
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
@@ -1037,29 +1175,7 @@ program
         throw new Error('Nothing to reindex. Pass --vectors to rebuild vector embeddings.');
       }
 
-      const root = await findProjectRoot(process.cwd());
-      const config = await loadConfig(root);
-      if (!isVectorSearchEnabled(config)) {
-        throw new Error('Vector search is not enabled. Set search.vector.enabled true before running vector reindex.');
-      }
-
-      await initDb(root);
-      const project = await repo.getProjectByRootPath(root);
-      if (!project) throw new Error('Project not found in database.');
-
-      const embedder = await createLocalEmbeddingProvider(config, root, {
-        // Only claim a download when one is actually going to happen. This announced
-        // "Downloading" on every run, cached or not, because the callback fires whenever
-        // the pipeline is not in memory -- which is always in a fresh CLI process.
-        onFirstLoad: ({ model, cached }) => console.log(
-          cached
-            ? `Loading local embedding model ${model}...`
-            : `Downloading local embedding model ${model} (first run)...`,
-        ),
-      });
-      const result = await reindexKnowledgeEmbeddings(project.id, embedder);
-      console.log(`Indexed ${result.indexed} vector embedding(s).`);
-      await closeDb();
+      await rebuildVectorEmbeddings(await findProjectRoot(process.cwd()));
     } catch (error: any) {
       console.error(`Error reindexing: ${error.message}`);
       process.exit(1);
@@ -1123,7 +1239,7 @@ program
       const evaluation = await evaluateRetrieval(cases, async (testCase) => {
         const startedAt = Date.now();
         const vectorOption = embedder
-          ? { enabled: true, provider: embedder.provider, model: embedder.model, embedding: (await embedder.embed([testCase.query]))[0] }
+          ? { enabled: true, profileFingerprint: embedder.profileFingerprint, embedding: (await embedder.embed([testCase.query]))[0] }
           : undefined;
         const items = await queryKnowledgeForAgent(project.id, {
           query: testCase.query,
@@ -1154,6 +1270,16 @@ program
         console.log(`Forbidden hits: ${result.metrics.forbiddenHitCount}`);
         console.log(`Latency p50/p95: ${result.metrics.p50LatencyMs}/${result.metrics.p95LatencyMs}ms`);
         console.log(`Context chars avg: ${result.metrics.averageContextChars.toFixed(0)}`);
+        if (Object.keys(result.byTier).length > 0) {
+          console.log('By tier:');
+          for (const [tier, metrics] of Object.entries(result.byTier)) {
+            console.log(
+              `  ${tier.padEnd(9)} n=${String(metrics.cases).padStart(4)} ` +
+              `R@3 ${metrics.recallAt3.toFixed(4)} R@10 ${metrics.recallAt10.toFixed(4)} ` +
+              `MRR ${metrics.mrr.toFixed(4)} nDCG ${metrics.ndcg.toFixed(4)}`,
+            );
+          }
+        }
         console.log(`Failed cases: ${result.failedCaseIds.join(', ') || 'none'}`);
       }
       await closeDb();

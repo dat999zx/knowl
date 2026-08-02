@@ -11,6 +11,8 @@ export type KnowledgeEmbeddingInput = {
   knowledgeItemId: string;
   provider: string;
   model: string;
+  /** Identifies the exact profile that produced this vector. See fingerprintProfile. */
+  profileFingerprint: string;
   dimensions: number;
   vector: number[];
 };
@@ -103,16 +105,18 @@ export async function upsertKnowledgeEmbedding(input: KnowledgeEmbeddingInput): 
   const now = new Date().toISOString();
   try {
     await getClient().execute({
-      sql: `INSERT INTO knowledge_embeddings (knowledge_item_id, provider, model, dimensions, vector, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+      sql: `INSERT INTO knowledge_embeddings (knowledge_item_id, provider, model, profile_fingerprint, dimensions, vector, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(knowledge_item_id) DO UPDATE SET
               provider = excluded.provider, model = excluded.model,
+              profile_fingerprint = excluded.profile_fingerprint,
               dimensions = excluded.dimensions, vector = excluded.vector,
               updated_at = excluded.updated_at`,
       args: [
         input.knowledgeItemId,
         input.provider,
         input.model,
+        input.profileFingerprint ?? null,
         input.dimensions,
         encodeVector(input.vector),
         now,
@@ -130,8 +134,12 @@ export async function searchKnowledgeEmbeddings(
     category?: KnowledgeCategory;
     status?: KnowledgeStatus;
     tags?: string[];
-    provider?: string;
-    model?: string;
+    /**
+     * Required, not optional: omitting it would drop the predicate and score every stored
+     * vector regardless of the model, dtype or pooling that produced it -- the exact
+     * mis-ranking the fingerprint exists to prevent, and silent when it happens.
+     */
+    profileFingerprint: string;
     limit?: number;
     /** Restricts to shared items; required for a peer store. See searchKnowledgeItems. */
     visibility?: 'repo' | 'workspace';
@@ -157,14 +165,12 @@ export async function searchKnowledgeEmbeddings(
       where.push('i.visibility = ?');
       args.push(options.visibility);
     }
-    if (options.provider) {
-      where.push('e.provider = ?');
-      args.push(options.provider);
-    }
-    if (options.model) {
-      where.push('e.model = ?');
-      args.push(options.model);
-    }
+    // Provider and model are not sufficient: dtype and pooling change the numbers a
+    // model emits, so a row written under a different one is not comparable even
+    // though its provider and model match. Applied unconditionally -- an empty
+    // fingerprint matches the rows that have none rather than matching everything.
+    where.push('e.profile_fingerprint = ?');
+    args.push(options.profileFingerprint);
 
     const rows = await store.client.execute({
       sql: `SELECT e.knowledge_item_id AS id, e.vector AS vector
@@ -226,28 +232,26 @@ export async function searchKnowledgeEmbeddings(
  * arrive as BM25-only candidates scoring around 0.034, so nothing in the fused score
  * distinguishes them.
  *
- * Provider and model are part of eligibility, not a detail: `searchKnowledgeEmbeddings`
- * filters on both, so a row written by a different embedder is unreachable by the current
- * search and its item is no more eligible than one with no row at all.
+ * The profile fingerprint decides eligibility, not a detail: `searchKnowledgeEmbeddings`
+ * filters on it, so a row written under a different model, dtype or pooling is unreachable
+ * by the current search and its item is no more eligible than one with no row at all.
  */
 export async function findEmbeddedItemIds(
   itemIds: string[],
-  options: { provider?: string; model?: string } = {},
+  /** Required for the same reason as in `searchKnowledgeEmbeddings`: eligibility means
+   *  reachable by *this* profile, and a looser answer feeds the relevance floor items
+   *  vector search could never return. */
+  options: { profileFingerprint: string },
   store: StoreHandle = localStore(),
 ): Promise<Set<string>> {
   const found = new Set<string>();
   if (itemIds.length === 0) return found;
 
-  const where = [`knowledge_item_id IN (${itemIds.map(() => '?').join(', ')})`];
-  const args: unknown[] = [...itemIds];
-  if (options.provider) {
-    where.push('provider = ?');
-    args.push(options.provider);
-  }
-  if (options.model) {
-    where.push('model = ?');
-    args.push(options.model);
-  }
+  const where = [
+    `knowledge_item_id IN (${itemIds.map(() => '?').join(', ')})`,
+    'profile_fingerprint = ?',
+  ];
+  const args: unknown[] = [...itemIds, options.profileFingerprint];
 
   const rows = await store.client.execute({
     sql: `SELECT knowledge_item_id FROM knowledge_embeddings WHERE ${where.join(' AND ')}`,
@@ -258,32 +262,34 @@ export async function findEmbeddedItemIds(
   return found;
 }
 
-/**
- * Stored vectors for specific items, from the currently open database.
- *
- * Cross-repo fusion needs local vectors in the same shape it reads peer ones, so local and
- * foreign candidates can be scored by the same cosine rather than compared by position.
- * Items written before embeddings were enabled simply have no row, and the caller falls
- * back to positional scoring for those.
- */
-export async function getEmbeddingsForItems(
-  itemIds: string[],
-  store: StoreHandle = localStore(),
-): Promise<Map<string, number[]>> {
-  const found = new Map<string, number[]>();
-  if (itemIds.length === 0) return found;
-
-  const rows = await store.client.execute({
-    sql: `SELECT knowledge_item_id, vector FROM knowledge_embeddings
-          WHERE knowledge_item_id IN (${itemIds.map(() => '?').join(', ')})`,
-    args: itemIds,
-  });
-
-  for (const row of rows.rows) {
-    // Handles both the packed float32 BLOB and the legacy JSON text; a malformed vector is
-    // treated as absent rather than failing the query.
-    const vector = decodeVector(row.vector);
-    if (vector && vector.length > 0) found.set(String(row.knowledge_item_id), vector);
-  }
-  return found;
+/** How many embedding rows exist, regardless of profile. Used to size the switch warning. */
+export async function countStoredEmbeddings(): Promise<number> {
+  const rows = await getClient().execute('SELECT COUNT(*) AS total FROM knowledge_embeddings');
+  return Number((rows.rows[0] as any)?.total ?? 0);
 }
+
+/**
+ * Drops rows left behind by a previous profile, including those for deleted items.
+ *
+ * With no fingerprint to keep, nothing is provably stale, so this does nothing rather
+ * than treating every row as unmatched -- the same predicate would otherwise delete
+ * the entire table.
+ *
+ * Database-wide, and `projectId` is deliberately not a predicate -- it cannot be one.
+ * `knowledge_items` has no `project_id`; that column exists only in the legacy schema
+ * `migrateLegacyProjectSchema` strips. And `getProjectByRootPath` returns the constant
+ * `LOCAL_PROJECT_ID` for every root, so one database holds exactly one project and a
+ * "neighbouring project" here has no meaning. Scoping the DELETE through
+ * `knowledge_items.project_id` fails at runtime with `no such column`. Should a shared
+ * store ever hold several repos' items, the discriminator is `origin_repo`.
+ */
+export async function purgeEmbeddingsNotMatching(projectId: string, fingerprint: string): Promise<number> {
+  if (!fingerprint) return 0;
+  const result = await getClient().execute({
+    sql: `DELETE FROM knowledge_embeddings
+          WHERE profile_fingerprint IS NULL OR profile_fingerprint != ?`,
+    args: [fingerprint],
+  });
+  return Number(result.rowsAffected ?? 0);
+}
+

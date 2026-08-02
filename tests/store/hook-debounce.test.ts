@@ -27,6 +27,35 @@ afterEach(() => {
   fs.rmSync(ROOT, { recursive: true, force: true });
 });
 
+describe('distinguishing distinct tool calls', () => {
+  // Non-shell tool events all collapse to `summary: "<Tool> completed"`, so two different
+  // Grep calls used to fingerprint identically and the second inside the 1.5s window was
+  // dropped silently -- no change card, no drift counting. Agents call tools far faster
+  // than that, so this lost real KNOWL CHANGED notifications in ordinary use.
+  const toolCall = (captureKey: string) => hook({
+    type: 'checkpoint',
+    payload: { summary: 'Grep completed' },
+    captureKey,
+  });
+
+  it('fingerprints two different calls to the same tool differently', () => {
+    expect(captureFingerprint(toolCall('Grep:{"pattern":"x"}')))
+      .not.toBe(captureFingerprint(toolCall('Grep:{"pattern":"y"}')));
+  });
+
+  it('claims both when two distinct calls arrive inside the debounce window', () => {
+    const now = Date.now();
+    expect(claimCapture(toolCall('Grep:{"pattern":"x"}'), now)).toBe(true);
+    expect(claimCapture(toolCall('Grep:{"pattern":"y"}'), now + 10)).toBe(true);
+  });
+
+  it('still collapses a genuine duplicate of the same call', () => {
+    const now = Date.now();
+    expect(claimCapture(toolCall('Grep:{"pattern":"x"}'), now)).toBe(true);
+    expect(claimCapture(toolCall('Grep:{"pattern":"x"}'), now + 10)).toBe(false);
+  });
+});
+
 describe('hook debounce claims', () => {
   it('fingerprints ignore changedPath order and keep failures ineligible', () => {
     const left = captureFingerprint(hook({

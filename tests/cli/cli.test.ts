@@ -665,7 +665,9 @@ describe('CLI Integration', () => {
     // item(s) embedded", or why coverage was not checked). This suite runs with
     // KNOWL_DISABLE_WRITE_EMBEDDING=1, so it gets the not-checked variant; the coverage
     // states themselves are asserted in tests/cli/vector-coverage.test.ts.
-    expect(output).toContain('[OK] Vector search enabled with local/Xenova/all-MiniLM-L6-v2');
+    // The model named here is whatever a fresh `init` selects, which is the default
+    // preset -- not DEFAULT_CONFIG's model, which exists only as the upgrade baseline.
+    expect(output).toContain('[OK] Vector search enabled with local/onnx-community/granite-embedding-small-english-r2-ONNX');
     expect(output).toContain('Result: READY');
 
     await fs.rm(doctorDir, { recursive: true, force: true });

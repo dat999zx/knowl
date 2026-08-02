@@ -7,6 +7,9 @@ import { decodeVector, searchKnowledgeEmbeddings, upsertKnowledgeEmbedding } fro
 
 const TEST_ROOT = path.resolve('./.knowl-test-batch-fetch');
 
+/** Written and searched with the same value, which is what makes a row reachable at all. */
+const FINGERPRINT = 'test-fingerprint';
+
 async function seed(projectId: string, title: string, vector: number[], status?: 'active' | 'rejected') {
   const item = await repo.createKnowledgeItem(projectId, { category: 'fact', title, content: `${title} body` });
   if (status) await repo.updateKnowledgeItem(item.id, { status } as any);
@@ -14,6 +17,7 @@ async function seed(projectId: string, title: string, vector: number[], status?:
     knowledgeItemId: item.id,
     provider: 'test',
     model: 'test-model',
+    profileFingerprint: FINGERPRINT,
     dimensions: vector.length,
     vector,
   });
@@ -76,8 +80,7 @@ describe('vector search after scoring is decoupled from fetching', () => {
 
     const results = await searchKnowledgeEmbeddings(projectId, {
       vector: [1, 0, 0],
-      provider: 'test',
-      model: 'test-model',
+      profileFingerprint: FINGERPRINT,
       limit: 2,
     });
 
@@ -93,8 +96,7 @@ describe('vector search after scoring is decoupled from fetching', () => {
 
     const results = await searchKnowledgeEmbeddings(projectId, {
       vector: [1, 0, 0],
-      provider: 'test',
-      model: 'test-model',
+      profileFingerprint: FINGERPRINT,
       limit: 5,
     });
 
@@ -113,15 +115,14 @@ describe('vector search after scoring is decoupled from fetching', () => {
       content: 'stored as json text',
     });
     await getClient().execute({
-      sql: `INSERT INTO knowledge_embeddings (knowledge_item_id, provider, model, dimensions, vector, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)`,
-      args: [legacy.id, 'test', 'test-model', 3, JSON.stringify([0, 1, 0]), new Date().toISOString()],
+      sql: `INSERT INTO knowledge_embeddings (knowledge_item_id, provider, model, profile_fingerprint, dimensions, vector, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: [legacy.id, 'test', 'test-model', FINGERPRINT, 3, JSON.stringify([0, 1, 0]), new Date().toISOString()],
     });
 
     const results = await searchKnowledgeEmbeddings(projectId, {
       vector: [0, 1, 0],
-      provider: 'test',
-      model: 'test-model',
+      profileFingerprint: FINGERPRINT,
       limit: 3,
     });
 
@@ -144,8 +145,7 @@ describe('vector search after scoring is decoupled from fetching', () => {
 
     const results = await searchKnowledgeEmbeddings(projectId, {
       vector: [0, 0, 1],
-      provider: 'test',
-      model: 'test-model',
+      profileFingerprint: FINGERPRINT,
       limit: 1,
     });
 

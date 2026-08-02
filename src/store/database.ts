@@ -29,6 +29,25 @@ export type InitDbOptions = {
 };
 
 /**
+ * The embedding profile this project is configured for, or null when config is unreadable.
+ *
+ * Only the one-time `profile_fingerprint` backfill uses it, so an unreadable config must
+ * not fail the open: a database that will not bootstrap because config.json has a typo is
+ * a far worse outcome than embedding rows left NULL until the next reindex.
+ */
+async function currentProfileFingerprint(configRoot: string): Promise<string | null> {
+  try {
+    const [{ loadConfig }, { fingerprintProfile, resolveVectorProfile }] = await Promise.all([
+      import('../core/config.js'),
+      import('../core/vector-profile.js'),
+    ]);
+    return fingerprintProfile(resolveVectorProfile(await loadConfig(configRoot)));
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Initializes the database connection and runs schema bootstrap.
  */
 export async function initDb(projectRoot: string): Promise<LibSQLDatabase<typeof schema>> {
@@ -42,7 +61,9 @@ export async function initDbPath(dbPath: string, options: InitDbOptions = {}): P
   try {
     // Pooled: the same path is not reopened, and bootstrap runs once per file rather than
     // on every namespace swap.
-    const client = await acquireClient(dbPath);
+    const client = await acquireClient(dbPath, {
+      profileFingerprint: await currentProfileFingerprint(configRoot),
+    });
     clientInstance = client;
 
     dbInstance = drizzle(client, { schema });

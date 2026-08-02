@@ -145,8 +145,15 @@ export type RankOptions = {
   visibility?: 'repo' | 'workspace';
   vector?: {
     enabled?: boolean;
-    provider?: string;
-    model?: string;
+    /**
+     * The profile the query embedding was produced under. Rows written under any other
+     * one are excluded, because a different model, dtype or pooling puts them in a
+     * different space -- see fingerprintProfile.
+     *
+     * Required whenever `vector` is supplied at all: an absent fingerprint used to drop the
+     * predicate and score every stored vector, whatever produced it.
+     */
+    profileFingerprint: string;
     embedding?: number[];
   };
 };
@@ -251,8 +258,7 @@ export async function selectCandidates(
       status: options.status,
       tags: options.tags,
       visibility: options.visibility,
-      provider: vector.provider,
-      model: vector.model,
+      profileFingerprint: vector.profileFingerprint,
       limit: candidateLimit,
     }, store);
 
@@ -276,7 +282,7 @@ export async function selectCandidates(
     if (unknown.length > 0) {
       const embedded = await findEmbeddedItemIds(
         unknown.map(candidate => candidate.item.id),
-        { provider: vector.provider, model: vector.model },
+        { profileFingerprint: vector.profileFingerprint },
         store,
       );
       for (const candidate of unknown) {

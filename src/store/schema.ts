@@ -146,6 +146,8 @@ export const knowledgeEmbeddings = sqliteTable('knowledge_embeddings', {
   knowledgeItemId: text('knowledge_item_id').primaryKey().references(() => knowledgeItems.id, { onDelete: 'cascade' }),
   provider: text('provider').notNull(),
   model: text('model').notNull(),
+  /** Nullable: rows written before the column existed are backfilled at bootstrap. */
+  profileFingerprint: text('profile_fingerprint'),
   dimensions: integer('dimensions').notNull(),
   vector: text('vector', { mode: 'json' }).notNull(),
   updatedAt: text('updated_at').notNull(),

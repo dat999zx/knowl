@@ -66,4 +66,21 @@ describe('formatWarmResult', () => {
     const message = formatWarmResult({ status: 'skipped', reason: 'KNOWL_SKIP_MODEL_DOWNLOAD=1' })!;
     expect(message).toContain('knowl reindex --vectors');
   });
+
+  it('points English-only defaults at the multilingual option', () => {
+    const message = formatWarmResult({
+      status: 'ready',
+      model: 'onnx-community/granite-embedding-small-english-r2-ONNX',
+    })!;
+    expect(message).toContain('English');
+    expect(message).toContain('knowl config');
+  });
+
+  it('says nothing about language when the model is already multilingual', () => {
+    const message = formatWarmResult({
+      status: 'ready',
+      model: 'onnx-community/granite-embedding-97m-multilingual-r2-ONNX',
+    })!;
+    expect(message).not.toContain('knowl config');
+  });
 });

@@ -1,0 +1,1648 @@
+{
+  "version": 1,
+  "description": "Semantic retrieval suite. Tiered basic/moderate/extreme, weighted toward ordinary paraphrase because real stored atoms are ordinary. Extreme cases have zero content-word overlap with their target and carry a lexical decoy. Built to discriminate between embedding models, which the lexical retrieval-suite.json cannot.",
+  "fixtures": [
+    {
+      "id": "soft-delete",
+      "category": "architecture",
+      "title": "Rows are flagged, never dropped",
+      "content": "Records carry a deleted_at timestamp. Nothing leaves the table, so an accidental delete is undone by clearing the flag.",
+      "tags": [
+        "persistence",
+        "deletion"
+      ]
+    },
+    {
+      "id": "hard-purge",
+      "category": "decision",
+      "title": "Nightly purge drops expired audit rows",
+      "content": "Audit rows older than 400 days are removed by the nightly job. That erasure is permanent and intentionally so.",
+      "tags": [
+        "audit",
+        "retention"
+      ]
+    },
+    {
+      "id": "db-postgres",
+      "category": "decision",
+      "title": "PostgreSQL as the primary datastore",
+      "content": "PostgreSQL 16 is the primary transactional datastore. It is the system of record and the one store that must never lose a write.",
+      "tags": [
+        "database",
+        "persistence"
+      ]
+    },
+    {
+      "id": "cache-redis",
+      "category": "decision",
+      "title": "Redis caches read-heavy endpoints",
+      "content": "Redis holds a five minute cache for product listing responses. Losing it costs latency and nothing else.",
+      "tags": [
+        "cache",
+        "performance"
+      ]
+    },
+    {
+      "id": "auth-jwt",
+      "category": "architecture",
+      "title": "Access tokens are short-lived JWTs",
+      "content": "Clients receive a JWT valid for fifteen minutes, signed with RS256. The public key is served from a JWKS endpoint.",
+      "tags": [
+        "auth",
+        "tokens"
+      ]
+    },
+    {
+      "id": "auth-refresh",
+      "category": "architecture",
+      "title": "Refresh tokens rotate on every use",
+      "content": "Each refresh returns a new refresh token and invalidates the old one. A replayed token revokes the whole family.",
+      "tags": [
+        "auth",
+        "tokens"
+      ]
+    },
+    {
+      "id": "rate-limit-api",
+      "category": "constraint",
+      "title": "Public API allows 100 requests a minute",
+      "content": "Every API key gets 100 requests per minute in a sliding window. Going over returns 429 with a Retry-After header.",
+      "tags": [
+        "api",
+        "limits"
+      ]
+    },
+    {
+      "id": "rate-limit-login",
+      "category": "constraint",
+      "title": "Sign-in locks after five failed attempts",
+      "content": "Five failed sign-in attempts from one address lock that account for fifteen minutes. The counter resets on success.",
+      "tags": [
+        "auth",
+        "limits"
+      ]
+    },
+    {
+      "id": "deploy-blue-green",
+      "category": "decision",
+      "title": "Blue-green deploys with instant switchover",
+      "content": "Two identical production stacks run side by side. Traffic swaps at the load balancer, and going back is another swap.",
+      "tags": [
+        "deploy",
+        "release"
+      ]
+    },
+    {
+      "id": "deploy-canary",
+      "category": "decision",
+      "title": "Canary release to five percent first",
+      "content": "New builds take five percent of traffic for thirty minutes. Error rate above baseline halts the rollout automatically.",
+      "tags": [
+        "deploy",
+        "release"
+      ]
+    },
+    {
+      "id": "feature-flags",
+      "category": "architecture",
+      "title": "Feature flags gate unfinished work",
+      "content": "Flags are evaluated per request and default to off. Merged but unfinished code ships dark behind a flag.",
+      "tags": [
+        "flags",
+        "release"
+      ]
+    },
+    {
+      "id": "config-env",
+      "category": "constraint",
+      "title": "Configuration comes from environment variables",
+      "content": "All runtime settings are read from environment variables at boot. Nothing reads a config file in production.",
+      "tags": [
+        "config",
+        "deploy"
+      ]
+    },
+    {
+      "id": "migrations-forward",
+      "category": "constraint",
+      "title": "Migrations run forward only",
+      "content": "Schema changes are applied forward. A bad migration is answered by writing another migration, never by editing history.",
+      "tags": [
+        "database",
+        "schema"
+      ]
+    },
+    {
+      "id": "migrations-expand",
+      "category": "architecture",
+      "title": "Expand and contract for column changes",
+      "content": "A rename adds the new column, backfills it, switches reads over, then drops the old column in a later release.",
+      "tags": [
+        "database",
+        "schema"
+      ]
+    },
+    {
+      "id": "logs-structured",
+      "category": "decision",
+      "title": "Logs are structured JSON lines",
+      "content": "Every log line is a JSON object carrying a request id. Free-text logging was removed so queries can filter by field.",
+      "tags": [
+        "logging",
+        "observability"
+      ]
+    },
+    {
+      "id": "metrics-prometheus",
+      "category": "decision",
+      "title": "Prometheus scrapes service metrics",
+      "content": "Each service exposes /metrics for Prometheus. Counters and histograms only; gauges are avoided on request paths.",
+      "tags": [
+        "metrics",
+        "observability"
+      ]
+    },
+    {
+      "id": "tracing-otel",
+      "category": "architecture",
+      "title": "OpenTelemetry traces cross service calls",
+      "content": "Trace context propagates through headers on every internal call, so one request id links the whole path.",
+      "tags": [
+        "tracing",
+        "observability"
+      ]
+    },
+    {
+      "id": "alerting-pager",
+      "category": "decision",
+      "title": "Only customer-facing failures page a human",
+      "content": "Alerts that wake someone are limited to user-visible breakage. Everything else opens a ticket in the morning queue.",
+      "tags": [
+        "alerting",
+        "oncall"
+      ]
+    },
+    {
+      "id": "retention-audit",
+      "category": "constraint",
+      "title": "Audit events kept for seven years",
+      "content": "Compliance requires audit events be retained seven years. The retention clock starts at write time and cold storage takes them after ninety days.",
+      "tags": [
+        "audit",
+        "compliance"
+      ]
+    },
+    {
+      "id": "retention-backup",
+      "category": "constraint",
+      "title": "Backups kept thirty days, restored weekly",
+      "content": "Nightly backups are retained thirty days. A restore is rehearsed weekly so recovery is a practised path rather than a first attempt.",
+      "tags": [
+        "backup",
+        "recovery"
+      ]
+    },
+    {
+      "id": "queue-retry",
+      "category": "architecture",
+      "title": "Jobs retry with exponential backoff",
+      "content": "A failed job retries six times with exponential backoff and jitter, spreading load instead of hammering the same target.",
+      "tags": [
+        "queue",
+        "jobs"
+      ]
+    },
+    {
+      "id": "queue-dlq",
+      "category": "architecture",
+      "title": "Exhausted jobs land in a dead letter queue",
+      "content": "After the final attempt the job moves to a dead letter queue for inspection. Nothing is discarded silently.",
+      "tags": [
+        "queue",
+        "jobs"
+      ]
+    },
+    {
+      "id": "tests-unit",
+      "category": "decision",
+      "title": "Unit tests run on every commit",
+      "content": "The unit suite runs on every commit and must finish under two minutes. Anything slower belongs in the nightly suite.",
+      "tags": [
+        "testing",
+        "ci"
+      ]
+    },
+    {
+      "id": "tests-e2e",
+      "category": "decision",
+      "title": "End-to-end tests run before release",
+      "content": "The browser suite runs against a staging environment before each release, not on every commit.",
+      "tags": [
+        "testing",
+        "release"
+      ]
+    },
+    {
+      "id": "ci-pipeline",
+      "category": "architecture",
+      "title": "One pipeline builds, tests and publishes",
+      "content": "A single pipeline definition builds the image, runs the suites and publishes artifacts. Branches take the same path as main.",
+      "tags": [
+        "ci",
+        "build"
+      ]
+    },
+    {
+      "id": "release-tags",
+      "category": "constraint",
+      "title": "Releases are signed semver tags",
+      "content": "Every release is a signed tag following semantic versioning. Nothing ships from an untagged commit.",
+      "tags": [
+        "release",
+        "versioning"
+      ]
+    },
+    {
+      "id": "secrets-vault",
+      "category": "decision",
+      "title": "Secrets live in the managed vault",
+      "content": "Credentials are fetched from the vault at boot. No secret is committed, and none appears in an environment dump.",
+      "tags": [
+        "secrets",
+        "security"
+      ]
+    },
+    {
+      "id": "secrets-rotation",
+      "category": "constraint",
+      "title": "Database credentials rotate every ninety days",
+      "content": "The vault issues a short-lived database credential that rotates every ninety days without a redeploy.",
+      "tags": [
+        "secrets",
+        "database"
+      ]
+    },
+    {
+      "id": "cdn-assets",
+      "category": "architecture",
+      "title": "Static assets are served from the CDN",
+      "content": "Hashed asset filenames are published to a CDN bucket and cached for a year. The origin never serves a static file.",
+      "tags": [
+        "cdn",
+        "performance"
+      ]
+    },
+    {
+      "id": "image-resize",
+      "category": "architecture",
+      "title": "Images are resized on upload, not on read",
+      "content": "Three sizes are generated when an image is first stored. The read path never resizes, so its cost stays predictable.",
+      "tags": [
+        "images",
+        "performance"
+      ]
+    },
+    {
+      "id": "search-index",
+      "category": "architecture",
+      "title": "Search runs on an inverted index",
+      "content": "Documents are indexed on write into an inverted index. Queries never scan the primary tables.",
+      "tags": [
+        "search",
+        "indexing"
+      ]
+    },
+    {
+      "id": "search-synonyms",
+      "category": "decision",
+      "title": "Synonym list is curated by hand",
+      "content": "A hand-curated synonym list maps product vocabulary to what customers actually type. It is reviewed each quarter.",
+      "tags": [
+        "search",
+        "vocabulary"
+      ]
+    },
+    {
+      "id": "email-transactional",
+      "category": "architecture",
+      "title": "Transactional email sends immediately",
+      "content": "Receipts and password resets are queued and delivered within seconds. They skip the batching used elsewhere.",
+      "tags": [
+        "email",
+        "notifications"
+      ]
+    },
+    {
+      "id": "email-digest",
+      "category": "decision",
+      "title": "Activity digests batch into one daily email",
+      "content": "Activity notifications collect into a single daily digest, so a busy account never receives a hundred messages.",
+      "tags": [
+        "email",
+        "notifications"
+      ]
+    },
+    {
+      "id": "webhooks-signing",
+      "category": "constraint",
+      "title": "Outgoing webhooks carry an HMAC signature",
+      "content": "Each webhook body is signed with a shared secret. Receivers must verify the signature before trusting the payload.",
+      "tags": [
+        "webhooks",
+        "security"
+      ]
+    },
+    {
+      "id": "webhooks-retries",
+      "category": "architecture",
+      "title": "Webhook delivery retries for a day",
+      "content": "A failing endpoint is retried with backoff for twenty-four hours, then disabled and reported to its owner.",
+      "tags": [
+        "webhooks",
+        "reliability"
+      ]
+    },
+    {
+      "id": "pagination-cursor",
+      "category": "decision",
+      "title": "List endpoints paginate by cursor",
+      "content": "Cursor pagination keeps results steady while rows are inserted. Offset paging was dropped for exactly that reason.",
+      "tags": [
+        "api",
+        "pagination"
+      ]
+    },
+    {
+      "id": "pagination-limits",
+      "category": "constraint",
+      "title": "Page size is capped at 100 entries",
+      "content": "A request may ask for at most 100 entries per page. Larger values are clamped rather than rejected.",
+      "tags": [
+        "api",
+        "pagination"
+      ]
+    },
+    {
+      "id": "idempotency-keys",
+      "category": "architecture",
+      "title": "Writes accept an idempotency key",
+      "content": "A repeated request carrying the same idempotency key returns the original response instead of acting twice.",
+      "tags": [
+        "api",
+        "reliability"
+      ]
+    },
+    {
+      "id": "dedupe-hash",
+      "category": "architecture",
+      "title": "Duplicate uploads are detected by content hash",
+      "content": "An upload whose content hash already exists links to the stored object rather than writing a second copy.",
+      "tags": [
+        "storage",
+        "dedupe"
+      ]
+    },
+    {
+      "id": "timezone-utc",
+      "category": "constraint",
+      "title": "Timestamps are stored in UTC",
+      "content": "Every stored timestamp is UTC. Conversion to a local zone happens in the presentation layer only.",
+      "tags": [
+        "time",
+        "data"
+      ]
+    },
+    {
+      "id": "locale-format",
+      "category": "decision",
+      "title": "Dates render in the viewer locale",
+      "content": "Dates and numbers are formatted with the viewer locale at render time, never baked into a stored string.",
+      "tags": [
+        "locale",
+        "ui"
+      ]
+    },
+    {
+      "id": "uploads-s3",
+      "category": "architecture",
+      "title": "Uploads go straight to object storage",
+      "content": "Clients upload directly to object storage with a presigned URL. The application never proxies file bytes.",
+      "tags": [
+        "storage",
+        "uploads"
+      ]
+    },
+    {
+      "id": "uploads-limits",
+      "category": "constraint",
+      "title": "Uploads are capped at 25 megabytes",
+      "content": "A single upload may not exceed 25 megabytes. Larger files are refused before any bytes are stored.",
+      "tags": [
+        "storage",
+        "limits"
+      ]
+    },
+    {
+      "id": "session-timeout",
+      "category": "constraint",
+      "title": "Idle sessions end after thirty minutes",
+      "content": "A session with no activity for thirty minutes is ended. Continued use keeps extending it.",
+      "tags": [
+        "auth",
+        "sessions"
+      ]
+    },
+    {
+      "id": "password-policy",
+      "category": "constraint",
+      "title": "Password policy is length only, twelve characters",
+      "content": "A password must be at least twelve characters. Composition rules were dropped because they produced predictable patterns that brute force tools guess first.",
+      "tags": [
+        "auth",
+        "security"
+      ]
+    },
+    {
+      "id": "api-versioning",
+      "category": "decision",
+      "title": "API version travels in the URL path",
+      "content": "The major version sits in the URL path. A breaking change means a new version, never a change to an existing one.",
+      "tags": [
+        "api",
+        "versioning"
+      ]
+    },
+    {
+      "id": "deprecation-window",
+      "category": "constraint",
+      "title": "Deprecated endpoints live six more months",
+      "content": "A deprecated endpoint keeps working six months after announcement, carrying a Sunset header naming the date.",
+      "tags": [
+        "api",
+        "deprecation"
+      ]
+    },
+    {
+      "id": "billing-proration",
+      "category": "decision",
+      "title": "Plan changes are prorated to the day",
+      "content": "Upgrading mid-cycle bills the difference for the remaining days. A downgrade takes effect at renewal instead.",
+      "tags": [
+        "billing",
+        "plans"
+      ]
+    },
+    {
+      "id": "invoices-pdf",
+      "category": "architecture",
+      "title": "Invoices are rendered once and stored",
+      "content": "An invoice PDF is generated when the charge settles and stored immutably. Re-rendering on demand is never done.",
+      "tags": [
+        "billing",
+        "invoices"
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "id": "soft-delete-b1",
+      "tier": "basic",
+      "query": "deleted_at flag behaviour",
+      "expectedItemIds": [
+        "soft-delete"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "hard-purge-b1",
+      "tier": "basic",
+      "query": "nightly audit purge job",
+      "expectedItemIds": [
+        "hard-purge"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "db-postgres-b1",
+      "tier": "basic",
+      "query": "primary transactional datastore",
+      "expectedItemIds": [
+        "db-postgres"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cache-redis-b1",
+      "tier": "basic",
+      "query": "redis cache window",
+      "expectedItemIds": [
+        "cache-redis"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "auth-jwt-b2",
+      "tier": "basic",
+      "query": "jwks public key endpoint",
+      "expectedItemIds": [
+        "auth-jwt"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "auth-refresh-b2",
+      "tier": "basic",
+      "query": "replayed token family",
+      "expectedItemIds": [
+        "auth-refresh"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "rate-limit-api-b1",
+      "tier": "basic",
+      "query": "requests per minute limit",
+      "expectedItemIds": [
+        "rate-limit-api"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "rate-limit-login-b1",
+      "tier": "basic",
+      "query": "failed sign-in attempts lock",
+      "expectedItemIds": [
+        "rate-limit-login"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "deploy-blue-green-b1",
+      "tier": "basic",
+      "query": "blue green switchover",
+      "expectedItemIds": [
+        "deploy-blue-green"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "deploy-canary-b1",
+      "tier": "basic",
+      "query": "canary traffic percent",
+      "expectedItemIds": [
+        "deploy-canary"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "feature-flags-b1",
+      "tier": "basic",
+      "query": "feature flag default",
+      "expectedItemIds": [
+        "feature-flags"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "config-env-b1",
+      "tier": "basic",
+      "query": "environment variables configuration",
+      "expectedItemIds": [
+        "config-env"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "migrations-forward-b1",
+      "tier": "basic",
+      "query": "forward only migrations",
+      "expectedItemIds": [
+        "migrations-forward"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "migrations-expand-b1",
+      "tier": "basic",
+      "query": "expand contract column rename",
+      "expectedItemIds": [
+        "migrations-expand"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "logs-structured-b1",
+      "tier": "basic",
+      "query": "structured json logging",
+      "expectedItemIds": [
+        "logs-structured"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "metrics-prometheus-b1",
+      "tier": "basic",
+      "query": "prometheus metrics scraping",
+      "expectedItemIds": [
+        "metrics-prometheus"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "tracing-otel-b1",
+      "tier": "basic",
+      "query": "opentelemetry trace context",
+      "expectedItemIds": [
+        "tracing-otel"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "alerting-pager-b1",
+      "tier": "basic",
+      "query": "alerts that wake someone",
+      "expectedItemIds": [
+        "alerting-pager"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "retention-audit-b1",
+      "tier": "basic",
+      "query": "audit retention period",
+      "expectedItemIds": [
+        "retention-audit"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "retention-backup-b1",
+      "tier": "basic",
+      "query": "backups retained thirty days",
+      "expectedItemIds": [
+        "retention-backup"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "queue-retry-b1",
+      "tier": "basic",
+      "query": "exponential backoff retries",
+      "expectedItemIds": [
+        "queue-retry"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "queue-dlq-b1",
+      "tier": "basic",
+      "query": "dead letter queue",
+      "expectedItemIds": [
+        "queue-dlq"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "tests-unit-b1",
+      "tier": "basic",
+      "query": "unit suite time budget",
+      "expectedItemIds": [
+        "tests-unit"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "tests-e2e-b1",
+      "tier": "basic",
+      "query": "browser tests before release",
+      "expectedItemIds": [
+        "tests-e2e"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "ci-pipeline-b1",
+      "tier": "basic",
+      "query": "single pipeline definition",
+      "expectedItemIds": [
+        "ci-pipeline"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "release-tags-b1",
+      "tier": "basic",
+      "query": "signed release tags",
+      "expectedItemIds": [
+        "release-tags"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "release-tags-b2",
+      "tier": "basic",
+      "query": "semantic versioning rule",
+      "expectedItemIds": [
+        "release-tags"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "secrets-vault-b1",
+      "tier": "basic",
+      "query": "where secrets live",
+      "expectedItemIds": [
+        "secrets-vault"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "secrets-vault-b2",
+      "tier": "basic",
+      "query": "credentials fetched at boot",
+      "expectedItemIds": [
+        "secrets-vault"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "secrets-rotation-b1",
+      "tier": "basic",
+      "query": "database credentials rotate",
+      "expectedItemIds": [
+        "secrets-rotation"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "secrets-rotation-b2",
+      "tier": "basic",
+      "query": "ninety day rotation",
+      "expectedItemIds": [
+        "secrets-rotation"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cdn-assets-b1",
+      "tier": "basic",
+      "query": "static asset serving",
+      "expectedItemIds": [
+        "cdn-assets"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cdn-assets-b2",
+      "tier": "basic",
+      "query": "hashed asset filenames",
+      "expectedItemIds": [
+        "cdn-assets"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "image-resize-b1",
+      "tier": "basic",
+      "query": "image sizes generated",
+      "expectedItemIds": [
+        "image-resize"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "image-resize-b2",
+      "tier": "basic",
+      "query": "resizing on read path",
+      "expectedItemIds": [
+        "image-resize"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "search-index-b1",
+      "tier": "basic",
+      "query": "inverted index search",
+      "expectedItemIds": [
+        "search-index"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "search-index-b2",
+      "tier": "basic",
+      "query": "documents indexed on write",
+      "expectedItemIds": [
+        "search-index"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "search-synonyms-b1",
+      "tier": "basic",
+      "query": "synonym list curation",
+      "expectedItemIds": [
+        "search-synonyms"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "email-transactional-b1",
+      "tier": "basic",
+      "query": "password reset email",
+      "expectedItemIds": [
+        "email-transactional"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "email-digest-b1",
+      "tier": "basic",
+      "query": "daily activity digest",
+      "expectedItemIds": [
+        "email-digest"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "email-digest-b2",
+      "tier": "basic",
+      "query": "batching activity notifications",
+      "expectedItemIds": [
+        "email-digest"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "webhooks-signing-b1",
+      "tier": "basic",
+      "query": "webhook hmac signature",
+      "expectedItemIds": [
+        "webhooks-signing"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "webhooks-signing-b2",
+      "tier": "basic",
+      "query": "verify the payload signature",
+      "expectedItemIds": [
+        "webhooks-signing"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "webhooks-retries-b1",
+      "tier": "basic",
+      "query": "webhook delivery retried",
+      "expectedItemIds": [
+        "webhooks-retries"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "pagination-cursor-b1",
+      "tier": "basic",
+      "query": "cursor pagination reason",
+      "expectedItemIds": [
+        "pagination-cursor"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "pagination-cursor-b2",
+      "tier": "basic",
+      "query": "why offset paging dropped",
+      "expectedItemIds": [
+        "pagination-cursor"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "pagination-limits-b1",
+      "tier": "basic",
+      "query": "entries per page cap",
+      "expectedItemIds": [
+        "pagination-limits"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "idempotency-keys-b1",
+      "tier": "basic",
+      "query": "idempotency key handling",
+      "expectedItemIds": [
+        "idempotency-keys"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "idempotency-keys-b2",
+      "tier": "basic",
+      "query": "repeated request same key",
+      "expectedItemIds": [
+        "idempotency-keys"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "dedupe-hash-b1",
+      "tier": "basic",
+      "query": "duplicate upload content hash",
+      "expectedItemIds": [
+        "dedupe-hash"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "timezone-utc-b1",
+      "tier": "basic",
+      "query": "utc timestamp storage",
+      "expectedItemIds": [
+        "timezone-utc"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "timezone-utc-b2",
+      "tier": "basic",
+      "query": "local zone conversion",
+      "expectedItemIds": [
+        "timezone-utc"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "locale-format-b1",
+      "tier": "basic",
+      "query": "viewer locale formatting",
+      "expectedItemIds": [
+        "locale-format"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "uploads-s3-b1",
+      "tier": "basic",
+      "query": "presigned url upload",
+      "expectedItemIds": [
+        "uploads-s3"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "uploads-s3-b2",
+      "tier": "basic",
+      "query": "object storage directly",
+      "expectedItemIds": [
+        "uploads-s3"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "uploads-limits-b1",
+      "tier": "basic",
+      "query": "megabytes upload cap",
+      "expectedItemIds": [
+        "uploads-limits"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "session-timeout-b1",
+      "tier": "basic",
+      "query": "idle session minutes",
+      "expectedItemIds": [
+        "session-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "password-policy-b1",
+      "tier": "basic",
+      "query": "password length policy",
+      "expectedItemIds": [
+        "password-policy"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "password-policy-b2",
+      "tier": "basic",
+      "query": "composition rules dropped",
+      "expectedItemIds": [
+        "password-policy"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "api-versioning-b1",
+      "tier": "basic",
+      "query": "api version url path",
+      "expectedItemIds": [
+        "api-versioning"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "api-versioning-b2",
+      "tier": "basic",
+      "query": "handling a breaking change",
+      "expectedItemIds": [
+        "api-versioning"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "deprecation-window-b1",
+      "tier": "basic",
+      "query": "deprecated endpoint sunset",
+      "expectedItemIds": [
+        "deprecation-window"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "deprecation-window-b2",
+      "tier": "basic",
+      "query": "six months after announcement",
+      "expectedItemIds": [
+        "deprecation-window"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "billing-proration-b1",
+      "tier": "basic",
+      "query": "prorated plan change",
+      "expectedItemIds": [
+        "billing-proration"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "billing-proration-b2",
+      "tier": "basic",
+      "query": "when downgrade takes effect",
+      "expectedItemIds": [
+        "billing-proration"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "invoices-pdf-b1",
+      "tier": "basic",
+      "query": "invoice pdf rendering",
+      "expectedItemIds": [
+        "invoices-pdf"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "invoices-pdf-b2",
+      "tier": "basic",
+      "query": "stored immutably once settled",
+      "expectedItemIds": [
+        "invoices-pdf"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "tests-unit-b2",
+      "tier": "basic",
+      "query": "what runs every commit",
+      "expectedItemIds": [
+        "tests-unit"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "ci-pipeline-b2",
+      "tier": "basic",
+      "query": "who publishes artifacts",
+      "expectedItemIds": [
+        "ci-pipeline"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "tracing-otel-b2",
+      "tier": "basic",
+      "query": "headers propagate across services",
+      "expectedItemIds": [
+        "tracing-otel"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "search-synonyms-b2",
+      "tier": "basic",
+      "query": "customer vocabulary mapping",
+      "expectedItemIds": [
+        "search-synonyms"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "email-transactional-b2",
+      "tier": "basic",
+      "query": "receipts delivered within seconds",
+      "expectedItemIds": [
+        "email-transactional"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "soft-delete-m1",
+      "tier": "moderate",
+      "query": "undoing a mistaken removal",
+      "expectedItemIds": [
+        "soft-delete"
+      ],
+      "mustNotReturn": [
+        "hard-purge"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "hard-purge-m1",
+      "tier": "moderate",
+      "query": "data gone for good",
+      "expectedItemIds": [
+        "hard-purge"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "db-postgres-m1",
+      "tier": "moderate",
+      "query": "system of record",
+      "expectedItemIds": [
+        "db-postgres"
+      ],
+      "mustNotReturn": [
+        "cache-redis"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "cache-redis-m1",
+      "tier": "moderate",
+      "query": "in memory speed layer",
+      "expectedItemIds": [
+        "cache-redis"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "auth-jwt-m1",
+      "tier": "moderate",
+      "query": "how long a session credential lasts",
+      "expectedItemIds": [
+        "auth-jwt"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "auth-refresh-m1",
+      "tier": "moderate",
+      "query": "reused session detection",
+      "expectedItemIds": [
+        "auth-refresh"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "rate-limit-api-m1",
+      "tier": "moderate",
+      "query": "throttling third party callers",
+      "expectedItemIds": [
+        "rate-limit-api"
+      ],
+      "mustNotReturn": [
+        "rate-limit-login"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "rate-limit-login-m1",
+      "tier": "moderate",
+      "query": "too many wrong passwords",
+      "expectedItemIds": [
+        "rate-limit-login"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "deploy-canary-m1",
+      "tier": "moderate",
+      "query": "gradual exposure of new builds",
+      "expectedItemIds": [
+        "deploy-canary"
+      ],
+      "mustNotReturn": [
+        "deploy-blue-green"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "feature-flags-m1",
+      "tier": "moderate",
+      "query": "turning behaviour on selectively",
+      "expectedItemIds": [
+        "feature-flags"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "migrations-forward-m1",
+      "tier": "moderate",
+      "query": "no downgrade scripts",
+      "expectedItemIds": [
+        "migrations-forward"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "logs-structured-m1",
+      "tier": "moderate",
+      "query": "machine readable diagnostics",
+      "expectedItemIds": [
+        "logs-structured"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "alerting-pager-m1",
+      "tier": "moderate",
+      "query": "what interrupts oncall staff",
+      "expectedItemIds": [
+        "alerting-pager"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "retention-backup-m1",
+      "tier": "moderate",
+      "query": "disaster recovery drill cadence",
+      "expectedItemIds": [
+        "retention-backup"
+      ],
+      "mustNotReturn": [
+        "retention-audit"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "queue-retry-m1",
+      "tier": "moderate",
+      "query": "spacing out repeated attempts",
+      "expectedItemIds": [
+        "queue-retry"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "tests-e2e-m1",
+      "tier": "moderate",
+      "query": "staging verification before shipping",
+      "expectedItemIds": [
+        "tests-e2e"
+      ],
+      "mustNotReturn": [
+        "tests-unit"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "secrets-vault-m1",
+      "tier": "moderate",
+      "query": "keeping passwords out of git",
+      "expectedItemIds": [
+        "secrets-vault"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cdn-assets-m1",
+      "tier": "moderate",
+      "query": "edge delivery of javascript",
+      "expectedItemIds": [
+        "cdn-assets"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "image-resize-m1",
+      "tier": "moderate",
+      "query": "thumbnail generation timing",
+      "expectedItemIds": [
+        "image-resize"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "search-synonyms-m1",
+      "tier": "moderate",
+      "query": "alternative wording mapping",
+      "expectedItemIds": [
+        "search-synonyms"
+      ],
+      "mustNotReturn": [
+        "search-index"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "webhooks-signing-m1",
+      "tier": "moderate",
+      "query": "proving a callback is genuine",
+      "expectedItemIds": [
+        "webhooks-signing"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "pagination-cursor-m1",
+      "tier": "moderate",
+      "query": "stable ordering while writing",
+      "expectedItemIds": [
+        "pagination-cursor"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "dedupe-hash-m1",
+      "tier": "moderate",
+      "query": "avoiding a second copy",
+      "expectedItemIds": [
+        "dedupe-hash"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "locale-format-m1",
+      "tier": "moderate",
+      "query": "regional number display",
+      "expectedItemIds": [
+        "locale-format"
+      ],
+      "mustNotReturn": [
+        "timezone-utc"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "session-timeout-m1",
+      "tier": "moderate",
+      "query": "automatic sign out inactivity",
+      "expectedItemIds": [
+        "session-timeout"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "deprecation-window-m1",
+      "tier": "moderate",
+      "query": "how long old routes survive",
+      "expectedItemIds": [
+        "deprecation-window"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "billing-proration-m1",
+      "tier": "moderate",
+      "query": "partial period charging",
+      "expectedItemIds": [
+        "billing-proration"
+      ],
+      "mustNotReturn": [
+        "invoices-pdf"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "soft-delete-x1",
+      "tier": "extreme",
+      "query": "erasure we could reverse",
+      "expectedItemIds": [
+        "soft-delete"
+      ],
+      "mustNotReturn": [
+        "hard-purge"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "cache-redis-x1",
+      "tier": "extreme",
+      "query": "which store is disposable",
+      "expectedItemIds": [
+        "cache-redis"
+      ],
+      "mustNotReturn": [
+        "db-postgres"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "auth-refresh-x1",
+      "tier": "extreme",
+      "query": "stolen credential replay defence",
+      "expectedItemIds": [
+        "auth-refresh"
+      ],
+      "mustNotReturn": [
+        "secrets-rotation"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "rate-limit-login-x1",
+      "tier": "extreme",
+      "query": "brute force guessing protection",
+      "expectedItemIds": [
+        "rate-limit-login"
+      ],
+      "mustNotReturn": [
+        "password-policy"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "deploy-blue-green-x1",
+      "tier": "extreme",
+      "query": "reverting a rollout instantly",
+      "expectedItemIds": [
+        "deploy-blue-green"
+      ],
+      "mustNotReturn": [
+        "deploy-canary"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "queue-dlq-x1",
+      "tier": "extreme",
+      "query": "messages nobody could process",
+      "expectedItemIds": [
+        "queue-dlq"
+      ],
+      "mustNotReturn": [
+        "email-digest"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "idempotency-keys-x1",
+      "tier": "extreme",
+      "query": "double charge prevention",
+      "expectedItemIds": [
+        "idempotency-keys"
+      ],
+      "mustNotReturn": [
+        "invoices-pdf"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "pagination-cursor-x1",
+      "tier": "extreme",
+      "query": "browsing without skipped entries",
+      "expectedItemIds": [
+        "pagination-cursor"
+      ],
+      "mustNotReturn": [
+        "pagination-limits"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "uploads-s3-x1",
+      "tier": "extreme",
+      "query": "client to bucket transfer",
+      "expectedItemIds": [
+        "uploads-s3"
+      ],
+      "mustNotReturn": [
+        "cdn-assets"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "migrations-expand-x1",
+      "tier": "extreme",
+      "query": "renaming a field safely",
+      "expectedItemIds": [
+        "migrations-expand"
+      ],
+      "mustNotReturn": [
+        "logs-structured"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "alerting-pager-x1",
+      "tier": "extreme",
+      "query": "night time escalation policy",
+      "expectedItemIds": [
+        "alerting-pager"
+      ],
+      "mustNotReturn": [
+        "password-policy"
+      ],
+      "limit": 10
+    }
+  ]
+}
