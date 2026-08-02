@@ -29,8 +29,37 @@ export async function acquireClient(dbPath: string, options: { readOnly?: boolea
   const existing = clients.get(key);
   if (existing) return existing;
 
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const client = await openClient(dbPath, readOnly);
+      clients.set(key, client);
+      return client;
+    } catch (error) {
+      // Opening runs bootstrap, which migrates and creates tables - real writes,
+      // against a database other live sessions are also writing to. A lock lost
+      // here is transient and the whole command dies on it, so it is retried
+      // rather than surfaced. Not folded into busy_timeout: some statements
+      // (schema changes among them) return BUSY without ever consulting the
+      // busy handler, so waiting longer inside SQLite would not have helped.
+      const busy = /SQLITE_BUSY|database is locked|statements in progress/i.test(String((error as Error).message));
+      if (!busy || attempt >= 4) throw error;
+      await new Promise(resolve => setTimeout(resolve, 250 * 2 ** attempt));
+    }
+  }
+}
+
+async function openClient(dbPath: string, readOnly: boolean): Promise<Client> {
   const client = createClient({ url: `file:${path.resolve(dbPath)}` });
   try {
+    // Wait for a lock instead of failing on it. Knowl runs one process per
+    // connected session plus whatever the user starts from a terminal, so
+    // concurrent writers to one database are the normal case, not an edge one -
+    // and SQLite's default busy handler gives up instantly. Without this, a
+    // long job beside a live session dies on "database is locked" the first
+    // time the two overlap, which is how a transcript backfill lost its whole
+    // pass. Individual hot paths retry on BUSY as well; this makes every OTHER
+    // statement survive too, including the ones nobody thought to wrap.
+    await client.execute('PRAGMA busy_timeout = 10000;');
     // A read-only open skips bootstrap, and the version guard lives inside bootstrap --
     // so without this it would skip the guard too, which is exactly backwards for the
     // case the guard matters most: reading a database someone else's Knowl wrote.
@@ -52,7 +81,6 @@ export async function acquireClient(dbPath: string, options: { readOnly?: boolea
     await client.close();
     throw error;
   }
-  clients.set(key, client);
   return client;
 }
 

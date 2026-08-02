@@ -277,4 +277,126 @@ describe('transcript search', () => {
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0].role).toBe('user');
   });
+
+  it('reports coverage as a count, not just as a flag', async () => {
+    // The starved pass needs real work to leave undone. A file whose size matches the stored
+    // offset is skipped without being opened and without consulting the deadline, so a zero
+    // budget against an already-warm archive legitimately COMPLETES — correct behaviour, and
+    // the reason this has to add unindexed material rather than just starve the clock.
+    await fs.writeFile(path.join(sessionDir, 'session-coverage.jsonl'),
+      assistantLine('fresh unindexed material for the coverage assertion', '2026-01-09T00:00:00Z'));
+
+    const starved = await ensureTranscriptIndex(PROJECT_DIR, STORES, 0);
+    expect(starved.complete).toBe(false);
+    // The number is the point: "incomplete" alone cannot tell a caller how much was missed.
+    expect(starved.filesPending).toBeGreaterThan(0);
+    expect(starved.filesPending).toBeLessThanOrEqual(starved.filesScanned);
+
+    const full = await ensureTranscriptIndex(PROJECT_DIR, STORES);
+    expect(full.complete).toBe(true);
+    expect(full.filesPending).toBe(0);
+  });
+
+  it('calls a fruitless search against a partial archive inconclusive, not empty', async () => {
+    // The distinction the old code could not draw. Zero hits against an archive that was only
+    // partly searched does not mean absent, and returning an empty list said it did.
+    // Same reason as above: the starved pass must have genuinely unindexed material to leave.
+    await fs.writeFile(path.join(sessionDir, 'session-inconclusive.jsonl'),
+      assistantLine('further unindexed material so the starved pass stays incomplete', '2026-01-10T00:00:00Z'));
+
+    const partial = await searchTranscripts('nonexistentnonsenseterm', {
+      projectDir: PROJECT_DIR, stores: STORES, indexBudgetMs: 0,
+    });
+    expect(partial.hits).toHaveLength(0);
+    expect(partial.indexComplete).toBe(false);
+    expect(partial.inconclusive).toBe(true);
+
+    // Hits are a real answer even on partial coverage: the caller has something concrete,
+    // and filesPending tells them more may exist.
+    const found = await searchTranscripts('boxed card variant rejected', {
+      projectDir: PROJECT_DIR, stores: STORES, indexBudgetMs: 0,
+    });
+    expect(found.hits.length).toBeGreaterThan(0);
+    expect(found.inconclusive).toBe(false);
+
+    // And on a complete index, absence IS trustworthy — it must not refuse here.
+    const complete = await searchTranscripts('nonexistentnonsenseterm', { projectDir: PROJECT_DIR, stores: STORES });
+    expect(complete.hits).toHaveLength(0);
+    expect(complete.indexComplete).toBe(true);
+    expect(complete.inconclusive).toBe(false);
+  });
+
+  // The reason index-time embeddings exist. Re-ranking a lexical shortlist can
+  // only reorder what BM25 found, so a message that shares NO word with the
+  // query was unreachable however good the embedder was. This is that message.
+  it('finds a message with no lexical overlap with the query at all', async () => {
+    await fs.appendFile(path.join(sessionDir, 'session-one.jsonl'),
+      assistantLine('the mallard prefers still water', '2026-01-11T00:00:00Z'));
+    await ensureTranscriptIndex(PROJECT_DIR, STORES);
+
+    // A stub embedder that only agrees on one thing: this query and that
+    // message mean the same. Nothing lexical connects them.
+    const semantic = {
+      model: 'duck-model',
+      embed: async (texts: string[]) => texts.map(text =>
+        /mallard|waterfowl/.test(text) ? [1, 0] : [0, 1]),
+    };
+
+    const lexicalOnly = await searchTranscripts('waterfowl', { projectDir: PROJECT_DIR, stores: STORES });
+    expect(lexicalOnly.hits).toHaveLength(0);
+
+    const fused = await searchTranscripts('waterfowl', { projectDir: PROJECT_DIR, stores: STORES, semantic });
+    expect(fused.hits.map(hit => hit.snippet).join(' ')).toContain('mallard');
+    expect(fused.vectorsEmbedded).toBeGreaterThan(0);
+  });
+
+  it('embeds within a budget and resumes, rather than blocking on a large archive', async () => {
+    const { embedTranscripts, transcriptVectorStats } = await import('../../src/store/transcript-vectors.js');
+    const embedder = { model: 'budget-model', embed: async (texts: string[]) => texts.map(() => [1, 0]) };
+
+    // More messages than one batch can hold, or a zero budget would finish the
+    // archive outright and prove nothing about stopping partway.
+    let bulk = '';
+    for (let i = 0; i < 40; i++) bulk += assistantLine(`bulk message number ${i}`, '2026-01-12T00:00:00Z');
+    await fs.appendFile(path.join(sessionDir, 'session-one.jsonl'), bulk);
+    await ensureTranscriptIndex(PROJECT_DIR, STORES);
+
+    // A zero budget still embeds one batch: the deadline is checked per batch,
+    // so the guarantee is bounded work, not zero work.
+    const first = await embedTranscripts(PROJECT_DIR, embedder, { budgetMs: 0 });
+    expect(first.embedded).toBeGreaterThan(0);
+    expect(first.complete).toBe(false);
+    expect(first.remaining).toBeGreaterThan(0);
+
+    const second = await embedTranscripts(PROJECT_DIR, embedder, { budgetMs: 30_000 });
+    expect(second.complete).toBe(true);
+    const stats = await transcriptVectorStats(PROJECT_DIR, embedder.model);
+    expect(stats.embedded).toBe(stats.total);
+
+    // Re-running finds nothing to do: coverage is the resume state, so an
+    // interrupted pass leaves no bookkeeping to repair.
+    const third = await embedTranscripts(PROJECT_DIR, embedder, { budgetMs: 30_000 });
+    expect(third.embedded).toBe(0);
+  });
+
+  it('quantized vectors rank the same way the float vectors did', async () => {
+    const { quantize } = await import('../../src/store/transcript-vectors.js');
+    // Unit-norm vectors at 8 dims, the shape the scale constant assumes.
+    const norm = (v: number[]) => { const n = Math.hypot(...v); return v.map(x => x / n); };
+    const query = norm([0.9, 0.4, 0.1, 0, 0, 0, 0, 0]);
+    const near = norm([0.85, 0.45, 0.15, 0, 0, 0, 0, 0]);
+    const far = norm([0, 0, 0, 0.3, 0.9, 0.2, 0, 0]);
+
+    const dot = (a: number[], b: number[]) => a.reduce((s, v, i) => s + v * b[i], 0);
+    const qi = new Int8Array(quantize(query).buffer);
+    const ints = (v: number[]) => {
+      const d = new Int8Array(quantize(v).buffer);
+      let sum = 0;
+      for (let i = 0; i < qi.length; i++) sum += qi[i] * d[i];
+      return sum;
+    };
+
+    expect(dot(query, near)).toBeGreaterThan(dot(query, far));
+    expect(ints(near)).toBeGreaterThan(ints(far));
+  });
 });

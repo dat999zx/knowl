@@ -249,11 +249,14 @@ const SCHEMA_STATEMENTS = [
     content='transcript_messages',
     content_rowid='id'
   );`,
-  // Cached per message so a rerank pays the embedding cost once, not per query.
+  // One int8-quantized vector per message, so a query can score the whole
+  // archive rather than re-ranking what keyword search already found. Stored as
+  // a BLOB: a JSON array of 384 floats is ~8x the bytes and has to be parsed
+  // before it can be compared.
   `CREATE TABLE IF NOT EXISTS transcript_embeddings (
     message_id INTEGER PRIMARY KEY,
     model TEXT NOT NULL,
-    vector TEXT NOT NULL
+    vector BLOB NOT NULL
   );`,
 ];
 
@@ -526,6 +529,17 @@ async function ensureTranscriptFileColumns(client: Client): Promise<void> {
   }
 }
 
+/**
+ * Earlier builds cached vectors as JSON text in this column. They are a derived
+ * cache of at most a few hundred re-ranked candidates, so they are dropped
+ * rather than converted - the next embedding pass rewrites them quantized, and
+ * leaving them would mean carrying a reader for a format nothing writes.
+ */
+async function ensureTranscriptEmbeddingFormat(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'transcript_embeddings'))) return;
+  await client.execute("DELETE FROM transcript_embeddings WHERE typeof(vector) = 'text';");
+}
+
 async function ensureHostSessionBindingColumns(client: Client): Promise<void> {
   if (!(await tableExists(client, 'host_session_bindings'))) return;
   const columns = await tableColumns(client, 'host_session_bindings');
@@ -692,6 +706,7 @@ export async function bootstrapSchema(client: Client): Promise<void> {
   await ensureMemorySessionColumns(client);
   await ensureHostSessionBindingColumns(client);
   await ensureTranscriptFileColumns(client);
+  await ensureTranscriptEmbeddingFormat(client);
   await ensureCodeIndexColumns(client);
   await backfillKnowledgeAssertions(client);
   await repairSkillForeignKeys(client);

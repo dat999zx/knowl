@@ -369,6 +369,12 @@ export interface IndexResult {
   ms: number;
   /** False when the budget ran out with work left. The next call resumes. */
   complete: boolean;
+  /**
+   * Session files not brought fully up to date this pass; 0 when complete. Coverage has to
+   * travel as a NUMBER, not as an adjective in a footer: a caller deciding whether "no
+   * matches" means absence needs to know how much of the archive was actually searched.
+   */
+  filesPending: number;
 }
 
 /**
@@ -385,6 +391,7 @@ export async function ensureTranscriptIndex(projectDir: string, stores?: string[
   let complete = true;
   // Newest first, so a cold index makes the most recent history searchable
   // first - that is what a question is most likely to be about.
+  let filesSettled = 0;
   for (const file of files) {
     if (Date.now() > deadline) { complete = false; break; }
     const result = await indexFile(projectDir, file, nextId, deadline);
@@ -394,9 +401,18 @@ export async function ensureTranscriptIndex(projectDir: string, stores?: string[
       // Budget exhaustion ends the pass; a lease held by another process only
       // ends THAT file - the rest of the archive is still ours to index.
       if (result.reason === 'budget') break;
+      continue;
     }
+    filesSettled++;
   }
-  return { filesScanned: files.length, filesUpdated, messagesAdded, ms: Date.now() - started, complete };
+  return {
+    filesScanned: files.length,
+    filesUpdated,
+    messagesAdded,
+    ms: Date.now() - started,
+    complete,
+    filesPending: files.length - filesSettled,
+  };
 }
 
 export async function transcriptIndexStats(projectDir: string): Promise<{ messages: number; avgLen: number; sessions: number }> {

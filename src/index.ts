@@ -36,7 +36,7 @@ import { recordKnownRepo } from './cli/repo-registry.js';
 import { discoverRepos } from './cli/repo-discovery.js';
 import { applyDoctorRemedies } from './cli/doctor-fix.js';
 import { formatSweepReport, sweepRepos } from './cli/upgrade-all.js';
-import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embeddings.js';
+import { createLocalEmbeddingProvider, getVectorSearchConfig, isVectorSearchEnabled } from './ai/embeddings.js';
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue } from './cli/config/service.js';
 import { runConfigUi } from './cli/config/ui.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from './store/import-policy.js';
@@ -1031,10 +1031,12 @@ program
   .command('reindex')
   .description('Rebuild derived search indexes')
   .option('--vectors', 'Rebuild optional vector embeddings')
+  .option('--transcripts', 'Embed session transcripts so semantic search covers the whole archive')
+  .option('--budget <minutes>', 'Stop after this long; rerun to continue where it stopped', '30')
   .action(async (options) => {
     try {
-      if (!options.vectors) {
-        throw new Error('Nothing to reindex. Pass --vectors to rebuild vector embeddings.');
+      if (!options.vectors && !options.transcripts) {
+        throw new Error('Nothing to reindex. Pass --vectors to rebuild vector embeddings, or --transcripts to embed session transcripts.');
       }
 
       const root = await findProjectRoot(process.cwd());
@@ -1057,8 +1059,79 @@ program
             : `Downloading local embedding model ${model} (first run)...`,
         ),
       });
-      const result = await reindexKnowledgeEmbeddings(project.id, embedder);
-      console.log(`Indexed ${result.indexed} vector embedding(s).`);
+      if (options.vectors) {
+        const result = await reindexKnowledgeEmbeddings(project.id, embedder);
+        console.log(`Indexed ${result.indexed} vector embedding(s).`);
+      }
+
+      if (options.transcripts) {
+        const { ensureTranscriptIndex } = await import('./store/transcript-index.js');
+        const { embedTranscripts, transcriptVectorStats } = await import('./store/transcript-vectors.js');
+        const model = getVectorSearchConfig(config).model;
+
+        // Only indexed messages can be embedded, and the search-time index pass
+        // is capped at seconds. Give it real time here, or a first run embeds
+        // the handful of messages that happened to be indexed already.
+        console.log('Indexing transcripts...');
+        try {
+          const index = await ensureTranscriptIndex(root, undefined, 10 * 60_000);
+          console.log(`  ${index.messagesAdded} new message(s) across ${index.filesScanned} session file(s)${index.complete ? '' : ` - ${index.filesPending} file(s) still pending`}.`);
+        } catch (error: any) {
+          // Live sessions write to this database while this runs, so a ten-minute
+          // indexing pass can lose a lock race. Everything already indexed is still
+          // embeddable, and both passes resume, so the run continues on what it has
+          // rather than discarding an hour of embedding over a contended write.
+          console.log(`  Indexing stopped early (${error.message}). Continuing with what is already indexed; rerun to pick up the rest.`);
+        }
+
+        const before = await transcriptVectorStats(root, model);
+        console.log(`Embedding ${before.total - before.embedded} of ${before.total} message(s) with ${model}...`);
+        // Progress matters here in a way it does not elsewhere: this is a job
+        // measured in tens of minutes, and a silent terminal is indistinguishable
+        // from a hung one.
+        let lastReport = Date.now();
+        const deadline = Date.now() + Math.max(1, Number(options.budget) || 30) * 60_000;
+        // A run measured in tens of minutes shares this database with live
+        // sessions, so it has to survive a lost lock race rather than end on
+        // one. Embedding is resumable - the work left is "messages with no
+        // vector" - so resuming is just calling it again.
+        for (let stall = 0; Date.now() < deadline; ) {
+          try {
+            const pass = await embedTranscripts(root, embedder, {
+              budgetMs: deadline - Date.now(),
+              onProgress: (embedded, remaining) => {
+                if (Date.now() - lastReport < 5_000) return;
+                lastReport = Date.now();
+                console.log(`  ${embedded} embedded this pass, ${remaining} to go`);
+              },
+            });
+            if (pass.complete) break;
+            // Out of budget rather than out of work.
+            if (Date.now() >= deadline) break;
+          } catch (error: any) {
+            // Reconnect, do not just wait. SQLITE_BUSY_SNAPSHOT means THIS
+            // connection is pinned to a read snapshot older than the current WAL
+            // head, so its writes can never commit again - measured directly: a
+            // fresh process wrote this same database in 71ms while the long-lived
+            // backfill had been failing on it for fourteen minutes straight.
+            // Backing off waits for a condition that only a reconnect clears.
+            // Cheap here: the embedding model lives in this process, not in the
+            // connection, so reopening costs a file handle and nothing else.
+            const wait = Math.min(30_000, 2_000 * 2 ** stall++);
+            if (Date.now() + wait >= deadline) { console.log(`  Still failing (${error.message}) and out of budget.`); break; }
+            console.log(`  Database conflict (${error.message}); reconnecting and resuming in ${wait / 1000}s.`);
+            await new Promise(resolve => setTimeout(resolve, wait));
+            try { await closeDb(); } catch { /* already gone; reopening is what matters */ }
+            await initDb(root);
+          }
+        }
+
+        const done = await transcriptVectorStats(root, model);
+        console.log(done.embedded >= done.total
+          ? `Embedded ${done.embedded} of ${done.total} message(s). Semantic search now covers the whole archive.`
+          : `Embedded ${done.embedded} of ${done.total} message(s); ${done.total - done.embedded} left. Run the same command again to continue.`);
+      }
+
       await closeDb();
     } catch (error: any) {
       console.error(`Error reindexing: ${error.message}`);

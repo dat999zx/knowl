@@ -2,6 +2,7 @@ import { createReadStream } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { getClient } from './database.js';
 import { ensureTranscriptIndex, sessionFiles, tokenize, transcriptIndexStats } from './transcript-index.js';
+import { embedTranscripts, semanticCandidates, transcriptVectorStats, type TranscriptEmbedder } from './transcript-vectors.js';
 
 export { encodeProjectDir, transcriptStores } from './transcript-index.js';
 
@@ -28,11 +29,7 @@ export interface TranscriptHit {
   locator: string;
 }
 
-/** Supplied by the caller so this module never depends on how embeddings are configured. */
-export interface SemanticReranker {
-  model: string;
-  embed(texts: string[]): Promise<number[][]>;
-}
+export type { TranscriptEmbedder } from './transcript-vectors.js';
 
 export interface TranscriptSearchOptions {
   projectDir?: string;
@@ -46,10 +43,17 @@ export interface TranscriptSearchOptions {
    * to the whole archive.
    */
   sessionId?: string;
+  /**
+   * Cap on the indexing pass this search triggers. Lower it when the caller is on a tighter
+   * deadline than the answer is worth — the result reports the coverage it actually got.
+   */
+  indexBudgetMs?: number;
   /** Override the config roots to scan. Injected by tests so they never mutate HOME. */
   stores?: string[];
-  /** When present, the top BM25 candidates are re-ranked and the two orders fused. */
-  semantic?: SemanticReranker;
+  /** When present, the archive is also ranked by vector similarity and the two orders fused. */
+  semantic?: TranscriptEmbedder;
+  /** Cap on the embedding top-up this search triggers. 0 disables it, leaving coverage to grow only via the CLI. */
+  embedBudgetMs?: number;
 }
 
 // Reciprocal Rank Fusion. 60 is the value from the original paper and is
@@ -57,10 +61,22 @@ export interface TranscriptSearchOptions {
 // result on its own, which is the point of fusing them.
 const RRF_K = 60;
 
-// How many BM25 candidates get embedded for the semantic pass. Embedding is the
-// expensive half, so recall is bounded by what BM25 surfaces first - a real
-// limitation, and the reason the lexical side is tuned to be good alone.
-const RERANK_DEPTH = 50;
+/**
+ * Candidates taken from EACH ranker before fusion. The two lists are built
+ * independently over the whole archive, so a message only the semantic side
+ * knows about can win outright. That is the point: this used to re-rank BM25's
+ * top 50, which meant semantic search could reorder the keyword results but
+ * never reach past them - and the query it exists to serve is the one whose
+ * remembered words are not the words that were used.
+ */
+const FUSION_DEPTH = 50;
+
+/**
+ * Time one search may spend embedding messages that have none yet. Small on
+ * purpose: this is a top-up so an archive warms as it is used, not the way to
+ * embed a large one. `knowl reindex --transcripts` does that in one pass.
+ */
+const DEFAULT_EMBED_BUDGET_MS = 1_500;
 
 /**
  * Cap for a full-entry read. Matches the index's own per-message clip, so the
@@ -103,45 +119,6 @@ async function lexicalRank(projectDir: string, terms: string[], depth: number, s
     .slice(0, depth);
 }
 
-function cosine(left: number[], right: number[]): number {
-  let dot = 0, l = 0, r = 0;
-  for (let i = 0; i < left.length; i++) { dot += left[i] * right[i]; l += left[i] * left[i]; r += right[i] * right[i]; }
-  return l === 0 || r === 0 ? 0 : dot / (Math.sqrt(l) * Math.sqrt(r));
-}
-
-/** Vectors for the candidates, embedding only those not already cached. */
-async function candidateVectors(
-  candidates: Array<{ messageId: number; text: string }>,
-  semantic: SemanticReranker,
-): Promise<Map<number, number[]>> {
-  const client = getClient();
-  const vectors = new Map<number, number[]>();
-  if (candidates.length === 0) return vectors;
-
-  const rows = (await client.execute({
-    sql: `SELECT message_id, vector FROM transcript_embeddings WHERE model = ? AND message_id IN (${candidates.map(() => '?').join(',')})`,
-    args: [semantic.model, ...candidates.map(c => c.messageId)],
-  })).rows;
-  for (const row of rows) {
-    try { vectors.set(Number(row.message_id), JSON.parse(String(row.vector))); } catch { /* re-embed below */ }
-  }
-
-  const missing = candidates.filter(c => !vectors.has(c.messageId));
-  if (missing.length > 0) {
-    const embedded = await semantic.embed(missing.map(c => c.text.slice(0, 2_000)));
-    for (let i = 0; i < missing.length; i++) {
-      const vector = embedded[i];
-      if (!vector) continue;
-      vectors.set(missing[i].messageId, vector);
-      await client.execute({
-        sql: 'INSERT OR REPLACE INTO transcript_embeddings (message_id, model, vector) VALUES (?, ?, ?)',
-        args: [missing[i].messageId, semantic.model, JSON.stringify(vector)],
-      });
-    }
-  }
-  return vectors;
-}
-
 function snippetAround(text: string, terms: Set<string>, chars: number): string {
   const lower = text.toLowerCase();
   let best = 0, bestCount = -1;
@@ -159,51 +136,104 @@ function snippetAround(text: string, terms: Set<string>, chars: number): string 
 export async function searchTranscripts(
   query: string,
   options: TranscriptSearchOptions = {},
-): Promise<{ hits: TranscriptHit[]; indexed: number; sessions: number; indexMs: number; indexComplete: boolean }> {
-  const { projectDir = process.cwd(), limit = 10, since, snippetChars = 600, stores, semantic, sessionId } = options;
+): Promise<{
+  hits: TranscriptHit[];
+  indexed: number;
+  sessions: number;
+  indexMs: number;
+  indexComplete: boolean;
+  /** Session files not yet searchable this pass; 0 when the index is complete. */
+  filesPending: number;
+  filesScanned: number;
+  /** Messages carrying a vector for the active model; 0 when the search was lexical only. */
+  vectorsEmbedded: number;
+  /**
+   * True when this result cannot distinguish "not in the archive" from "not indexed yet":
+   * nothing was found AND part of the archive was never searched. Callers must surface it as
+   * an inconclusive search rather than as an answer — an empty list reads as absence, and
+   * that inference is exactly what a partial index cannot support.
+   */
+  inconclusive: boolean;
+}> {
+  const { projectDir = process.cwd(), limit = 10, since, snippetChars = 600, stores, semantic, sessionId, indexBudgetMs, embedBudgetMs = DEFAULT_EMBED_BUDGET_MS } = options;
   const terms = [...new Set(tokenize(query))];
 
-  const index = await ensureTranscriptIndex(projectDir, stores);
+  const index = await ensureTranscriptIndex(projectDir, stores, indexBudgetMs);
   const stats = await transcriptIndexStats(projectDir);
-  const base = { indexed: stats.messages, sessions: stats.sessions, indexMs: index.ms, indexComplete: index.complete };
-  if (terms.length === 0) return { hits: [], ...base };
 
-  const lexical = await lexicalRank(projectDir, terms, semantic ? RERANK_DEPTH : limit * 3, sessionId);
-  if (lexical.length === 0) return { hits: [], ...base };
-
-  const client = getClient();
-  const rows = (await client.execute({
-    sql: `SELECT id, session_id, line, role, ts, text FROM transcript_messages
-          WHERE id IN (${lexical.map(() => '?').join(',')})${since ? ' AND (ts IS NULL OR ts >= ?)' : ''}`,
-    args: since ? [...lexical.map(l => l.messageId), since] : lexical.map(l => l.messageId),
-  })).rows;
-  const byId = new Map(rows.map(row => [Number(row.id), row]));
-
-  let ordered = lexical.filter(entry => byId.has(entry.messageId));
-
-  if (semantic && ordered.length > 1) {
-    const candidates = ordered.map(entry => ({ messageId: entry.messageId, text: String(byId.get(entry.messageId)!.text) }));
+  // Warm a slice of the archive, then report how much of it the semantic side
+  // could actually see. Partial coverage is normal and fine - the lexical side
+  // covers everything - but it must travel as a number, because "semantic
+  // search found nothing" means something different at 2% than at 100%.
+  let vectors = { embedded: 0, total: stats.messages };
+  if (semantic) {
     try {
-      const byMessage = await candidateVectors(candidates, semantic);
+      if (embedBudgetMs > 0) await embedTranscripts(projectDir, semantic, { budgetMs: embedBudgetMs });
+      vectors = await transcriptVectorStats(projectDir, semantic.model);
+    } catch { /* embeddings are optional; lexical search is unaffected */ }
+  }
+
+  const base = {
+    indexed: stats.messages,
+    sessions: stats.sessions,
+    indexMs: index.ms,
+    indexComplete: index.complete,
+    filesPending: index.filesPending,
+    filesScanned: index.filesScanned,
+    vectorsEmbedded: vectors.embedded,
+  };
+  // Nothing found against a partially-searched archive is not a finding. With hits in hand a
+  // caller has something real and `filesPending` tells them more may exist; with none, the
+  // only honest answer is that the search did not conclude.
+  const finish = (hits: TranscriptHit[]) => ({ hits, ...base, inconclusive: hits.length === 0 && !base.indexComplete });
+
+  // An unusable query is the caller's problem, not the index's: never blame coverage for it.
+  if (terms.length === 0) return { hits: [], ...base, inconclusive: false };
+
+  const lexical = await lexicalRank(projectDir, terms, semantic ? FUSION_DEPTH : limit * 3, sessionId);
+
+  // Built over the whole archive rather than over `lexical`, so it can bring
+  // back messages the keyword pass never saw.
+  let semanticOrder: Scored[] = [];
+  if (semantic && vectors.embedded > 0) {
+    try {
       const [queryVector] = await semantic.embed([query]);
-      if (queryVector && byMessage.size > 0) {
-        const semanticOrder = [...byMessage.entries()]
-          .map(([messageId, vector]) => ({ messageId, score: cosine(queryVector, vector) }))
-          .sort((a, b) => b.score - a.score);
-        // Reciprocal Rank Fusion: combine POSITIONS, not scores. BM25 magnitudes
-        // and cosine similarities are not on a comparable scale, and normalising
-        // them invents a relationship that isn't there.
-        const fused = new Map<number, number>();
-        ordered.forEach((entry, rank) => fused.set(entry.messageId, (fused.get(entry.messageId) ?? 0) + 1 / (RRF_K + rank + 1)));
-        semanticOrder.forEach((entry, rank) => fused.set(entry.messageId, (fused.get(entry.messageId) ?? 0) + 1 / (RRF_K + rank + 1)));
-        ordered = [...fused.entries()]
-          .map(([messageId, score]) => ({ messageId, score }))
-          .sort((a, b) => b.score - a.score);
+      if (queryVector) {
+        semanticOrder = await semanticCandidates(projectDir, queryVector, semantic.model, FUSION_DEPTH, sessionId);
       }
     } catch {
       // Embeddings are optional and can fail (model not downloaded, provider off).
       // Lexical order is a complete answer on its own, so degrade rather than error.
     }
+  }
+
+  if (lexical.length === 0 && semanticOrder.length === 0) return finish([]);
+
+  const client = getClient();
+  const ids = [...new Set([...lexical.map(entry => entry.messageId), ...semanticOrder.map(entry => entry.messageId)])];
+  const rows = (await client.execute({
+    sql: `SELECT id, session_id, line, role, ts, text FROM transcript_messages
+          WHERE id IN (${ids.map(() => '?').join(',')})${since ? ' AND (ts IS NULL OR ts >= ?)' : ''}`,
+    args: since ? [...ids, since] : ids,
+  })).rows;
+  const byId = new Map(rows.map(row => [Number(row.id), row]));
+
+  let ordered = lexical.filter(entry => byId.has(entry.messageId));
+
+  if (semanticOrder.length > 0) {
+    // Reciprocal Rank Fusion: combine POSITIONS, not scores. BM25 magnitudes
+    // and quantized dot products are not on a comparable scale, and normalising
+    // them invents a relationship that isn't there.
+    const fused = new Map<number, number>();
+    const add = (entry: Scored, rank: number) => {
+      if (!byId.has(entry.messageId)) return;
+      fused.set(entry.messageId, (fused.get(entry.messageId) ?? 0) + 1 / (RRF_K + rank + 1));
+    };
+    ordered.forEach(add);
+    semanticOrder.forEach(add);
+    ordered = [...fused.entries()]
+      .map(([messageId, score]) => ({ messageId, score }))
+      .sort((a, b) => b.score - a.score);
   }
 
   const termSet = new Set(terms);
@@ -220,7 +250,7 @@ export async function searchTranscripts(
     };
   });
 
-  return { hits, ...base };
+  return finish(hits);
 }
 
 /** Read one entry in full, straight from the file, for when a snippet cannot settle the question. */

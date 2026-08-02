@@ -1060,7 +1060,14 @@ export function registerTools(
           semantic,
         });
 
-        const ranker = semantic ? 'BM25 + semantic (RRF)' : 'BM25';
+        // Semantic coverage is reported as a fraction for the same reason index coverage is:
+        // "BM25 + semantic" over 2% of the archive is a different claim from the same words
+        // over all of it, and only one of them justifies trusting a near-miss result.
+        const ranker = !semantic
+          ? 'BM25'
+          : result.vectorsEmbedded >= result.indexed
+            ? 'BM25 + semantic over the full archive (RRF)'
+            : `BM25 over everything + semantic over ${result.vectorsEmbedded}/${result.indexed} embedded message(s) (RRF); run \`knowl reindex --transcripts\` to embed the rest`;
 
         // Zero hits against a partially-indexed archive is not an answer, and prose saying so
         // was not enough: an empty list plus a footer still reads as absence, which is the one
