@@ -140,6 +140,7 @@ describe('reads can target another database', () => {
     // whatever encodeVector produces, which has already changed representation once.
     await upsertKnowledgeEmbedding({
       knowledgeItemId: peerId, provider: 'local', model: 'test/model',
+      profileFingerprint: 'test-fingerprint',
       dimensions: 3, vector: [0.1, 0.9, 0.2],
     });
     await closeDb();
@@ -148,7 +149,7 @@ describe('reads can target another database', () => {
     try {
       const peer = await openPeerStore(peerDb());
       const results = await searchKnowledgeEmbeddings('local', {
-        vector: [0.1, 0.9, 0.2], provider: 'local', model: 'test/model', limit: 5,
+        vector: [0.1, 0.9, 0.2], profileFingerprint: 'test-fingerprint', limit: 5,
       }, peer);
       expect(results.map(result => result.item.title)).toEqual(['Peer uses cassandra']);
     } finally {

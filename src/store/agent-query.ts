@@ -149,8 +149,11 @@ export type RankOptions = {
      * The profile the query embedding was produced under. Rows written under any other
      * one are excluded, because a different model, dtype or pooling puts them in a
      * different space -- see fingerprintProfile.
+     *
+     * Required whenever `vector` is supplied at all: an absent fingerprint used to drop the
+     * predicate and score every stored vector, whatever produced it.
      */
-    profileFingerprint?: string;
+    profileFingerprint: string;
     embedding?: number[];
   };
 };

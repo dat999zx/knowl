@@ -6,7 +6,6 @@ import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { createKnowledgeItem } from '../../src/store/repository.js';
 import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
-import { getEmbeddingsForItems } from '../../src/store/vector.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
 import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
 import { queryFederated } from '../../src/workspace/federated-query.js';
@@ -54,10 +53,12 @@ async function seed(root: string, name: string, title: string, content: string, 
 async function vectorConfig(query: string) {
   const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, WEB);
   const [embedding] = await embedder.embed([query]);
+  // The fingerprint, not provider/model: those stopped being the eligibility filter when
+  // dtype and pooling joined the identity. Passing the old pair left the query with no
+  // fingerprint at all, which used to drop the predicate and score every stored vector.
   return {
     enabled: true,
-    provider: embedder.provider,
-    model: DEFAULT_CONFIG.search?.vector?.model,
+    profileFingerprint: embedder.profileFingerprint,
     embedding,
   };
 }

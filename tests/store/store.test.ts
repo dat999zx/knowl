@@ -822,6 +822,7 @@ describe('Storage Layer', () => {
       knowledgeItemId: authItem.id,
       provider: 'test',
       model: 'unit-vector',
+      profileFingerprint: 'test-fingerprint',
       dimensions: 3,
       vector: [1, 0, 0],
     });
@@ -830,12 +831,14 @@ describe('Storage Layer', () => {
       knowledgeItemId: storageItem.id,
       provider: 'test',
       model: 'unit-vector',
+      profileFingerprint: 'test-fingerprint',
       dimensions: 3,
       vector: [0, 1, 0],
     });
 
     const results = await searchKnowledgeEmbeddings(projectId, {
       vector: [0.9, 0.1, 0],
+      profileFingerprint: 'test-fingerprint',
       status: 'active',
       limit: 1,
     });
@@ -869,6 +872,7 @@ describe('Storage Layer', () => {
       knowledgeItemId: semanticItem.id,
       provider: 'test',
       model: 'unit-vector',
+      profileFingerprint: 'test-fingerprint',
       dimensions: 3,
       vector: [0, 1, 0],
     });
@@ -879,8 +883,7 @@ describe('Storage Layer', () => {
       limit: 3,
       vector: {
         enabled: true,
-        provider: 'test',
-        model: 'unit-vector',
+        profileFingerprint: 'test-fingerprint',
         embedding: [0, 0.95, 0.05],
       },
     });
@@ -912,8 +915,7 @@ describe('Storage Layer', () => {
 
     const matches = await searchKnowledgeEmbeddings(projectId, {
       vector: [0.25, 0.75],
-      provider: 'test',
-      model: 'fake-embedder',
+      profileFingerprint: 'test-fingerprint',
       limit: 100,
     });
 
