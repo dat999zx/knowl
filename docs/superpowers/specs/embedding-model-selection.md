@@ -2,10 +2,15 @@
 
 ## Problem
 
-The default embedding model, `Xenova/all-MiniLM-L6-v2`, is English-only. Non-English text is
-split into meaningless sub-word pieces, so semantically equivalent text in other languages lands
-far apart in vector space. Synonym and paraphrase matching is also weak. Users cannot change the
-model without hand-editing config, and there is no guidance about which model to change it to.
+The default embedding model, `Xenova/all-MiniLM-L6-v2`, is weak in two ways. It is English-only,
+so non-English text is split into meaningless sub-word pieces and semantically equivalent text in
+other languages lands far apart in vector space. It is also poor at synonyms and paraphrase within
+English. Users cannot change the model without hand-editing config, and there is no guidance about
+which model to change it to.
+
+This change fixes the synonym weakness by default and makes the multilingual fix a one-line
+selection rather than research plus hand-editing. It does not make multilingual retrieval work out
+of the box; see Risks.
 
 A second, separate problem blocks any attempt to verify an improvement: the checked-in retrieval
 suite cannot measure embedding quality. Measured 2026-08-02 across its 500 cases, 83.2% have at
@@ -34,8 +39,9 @@ Five decisions were settled with the user before this spec was written.
 2. **Custom model flow** — verify and download at selection time. A model name that does not
    resolve, or has no ONNX weights, is rejected before the config is saved.
 3. **Switch flow** — offer a reindex immediately after a save that changes the model.
-4. **Default** — new repositories default to the multilingual preset. Existing repositories are
-   left alone and told once by `knowl doctor`.
+4. **Default** — new repositories default to `granite-small-en-r2`, and multilingual support is
+   opt-in. Existing repositories are left on whatever they already use. This was settled after the
+   English-only consequence was raised and reaffirmed.
 5. **Reindex scope** — re-embed every status, and purge embedding rows that do not match the
    configured model.
 
@@ -43,14 +49,29 @@ Five decisions were settled with the user before this spec was written.
 
 ### Presets
 
-| Preset id | Model | Pooling | dtype | Dims | Size | Languages |
-| --- | --- | --- | --- | --- | --- | --- |
-| `minilm-l6-en` | `Xenova/all-MiniLM-L6-v2` | mean | q8 | 384 | ~23MB | English |
-| `bge-small-en` | `Xenova/bge-small-en-v1.5` | cls | q8 | 384 | ~34MB | English |
-| `granite-97m-multilingual` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | cls | q8 | 384 | ~98MB | 200+ |
-| `custom` | from `search.vector.model` | from `search.vector.pooling` | from `search.vector.dtype` | probed | varies | varies |
+Listed in the order the picker shows them. `granite-small-en-r2` is the default for new
+repositories.
 
-The Granite model card publishes the 52 enhanced-support languages in a collapsible section:
+| Preset id | Model | Pooling | dtype | Dims | Context | Size | Languages |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `granite-small-en-r2` (default) | `onnx-community/granite-embedding-small-english-r2-ONNX` | cls | q8 | 384 | 8192 | ~52MB | English |
+| `granite-97m-multilingual` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | cls | q8 | 384 | 32768 | ~98MB | 200+ |
+| `bge-small-en` | `Xenova/bge-small-en-v1.5` | cls | q8 | 384 | 512 | ~34MB | English |
+| `minilm-l6-en` | `Xenova/all-MiniLM-L6-v2` | mean | q8 | 384 | 512 | ~23MB | English |
+| `custom` | from `search.vector.model` | from `search.vector.pooling` | from `search.vector.dtype` | probed | varies | varies | varies |
+
+Retrieval scores, as published: `granite-small-en-r2` scores 50.9 on BEIR and 53.9 on MTEB-v2
+retrieval; `granite-97m-multilingual` scores 50.1 on English retrieval and 60.3 on MTEB
+multilingual retrieval. The English default is therefore marginally stronger at English than the
+multilingual model, at roughly half the download.
+
+`minilm-l6-en` is retained as a selectable preset rather than dropped. It is what every existing
+repository runs, so removing it would make the current model unnameable in the picker and leave
+users unable to return to it after switching away.
+
+Multilingual coverage is opt-in by decision: the default is English-only, and a user who stores
+non-English knowledge selects `granite-97m-multilingual`. The Granite model card publishes its 52
+enhanced-support languages in a collapsible section:
 Albanian, Arabic, Azerbaijani, Bengali, Bulgarian, Catalan, Chinese, Croatian, Czech, Danish,
 Dutch, English, Estonian, Finnish, French, Georgian, German, Greek, Hebrew, Hindi, Hungarian,
 Icelandic, Indonesian, Italian, Japanese, Kazakh, Khmer, Korean, Latvian, Lithuanian, Malay,
@@ -62,8 +83,10 @@ file, verified against their Hugging Face repositories. The stored vector width 
 between presets, so switching one does not alter the shape of the `vector` column. A separate
 `knowledge_embeddings` change is still required for a different reason — see Profile fingerprint.
 
-Pooling differs per model and is the main correctness hazard. MiniLM is mean-pooled; both
-`bge-small-en-v1.5` and `granite-97m-multilingual-r2` are CLS-pooled. `src/ai/embeddings.ts`
+Pooling differs per model and is the main correctness hazard. MiniLM is the only mean-pooled
+preset; `bge-small-en-v1.5` and both Granite R2 models are CLS-pooled — including the new default,
+so the very first repository created after this ships would be wrong without the fix.
+`src/ai/embeddings.ts`
 currently hardcodes `pooling: 'mean'`. Wrong pooling does not raise an error — it silently
 produces bad vectors — which is why pooling is bundled with the model rather than left as an
 independently-settable key.
@@ -87,7 +110,7 @@ resolves to the `minilm-l6-en` bundle with mean pooling, which is exactly the cu
 Case 3 only survives if nothing writes a `preset` key into an existing config. It would not.
 `upgradeConfigDefaults` calls `mergeConfigDefaults`, which recursively fills in every key whose
 current value is `undefined`. An existing config has no `preset` key, so adding the preset to
-`DEFAULT_CONFIG` would inject `preset: granite-97m-multilingual` into every repository on
+`DEFAULT_CONFIG` would inject `preset: granite-small-en-r2` into every repository on
 `knowl upgrade`. Because a named preset outranks the flat `model` key in resolution order, those
 repositories would silently switch models — the exact outcome decision 4 rules out.
 
@@ -95,12 +118,12 @@ The two roles that `DEFAULT_CONFIG` currently serves are therefore split:
 
 - `DEFAULT_CONFIG` stays the merge baseline for upgrades and **does not gain a `preset` key**. Its
   `model` stays `Xenova/all-MiniLM-L6-v2`, so upgrades remain a no-op for vector config.
-- A new `NEW_PROJECT_CONFIG` is `DEFAULT_CONFIG` plus `preset: granite-97m-multilingual`, and is
+- A new `NEW_PROJECT_CONFIG` is `DEFAULT_CONFIG` plus `preset: granite-small-en-r2`, and is
   used only by `knowl init` and by `resetAllConfig`.
 
 Reset is an explicit user action, so resetting to the current recommended default is correct — but
 it changes the resolved profile and therefore triggers the same reindex offer as any other change.
-The `preset` field's `defaultValue` in `CONFIG_FIELDS` is `granite-97m-multilingual` for the same
+The `preset` field's `defaultValue` in `CONFIG_FIELDS` is `granite-small-en-r2` for the same
 reason.
 
 `resolveVectorProfile` becomes the single source consumed by `src/ai/embeddings.ts`,
@@ -265,13 +288,16 @@ this repo's items and its peers' items become invisible to each other — and po
 
 ### Default and discovery
 
-`knowl init` writes `NEW_PROJECT_CONFIG`, defaulting new repositories to
-`granite-97m-multilingual`. `knowl upgrade` merges against `DEFAULT_CONFIG`, which carries no
-preset, so it cannot change the preset of an existing repository. No user gets an unexpected 98MB
-download or a silent change in retrieval behaviour during an upgrade.
+`knowl init` writes `NEW_PROJECT_CONFIG`, defaulting new repositories to `granite-small-en-r2`.
+`knowl upgrade` merges against `DEFAULT_CONFIG`, which carries no preset, so it cannot change the
+preset of an existing repository. No user gets an unexpected download or a silent change in
+retrieval behaviour during an upgrade.
 
-`knowl doctor` gains a non-failing notice, shown when the resolved preset is English-only, that
-names the current model and points at `knowl config`.
+Discovery happens at init, not through a doctor warning. An English-only default is now
+deliberate, so a check that flagged English-only presets would fire on every fresh install and
+warn users about a choice the project made for them. Instead `knowl init` prints one line naming
+the active model and noting that `knowl config` offers a multilingual option. `knowl doctor`
+continues to report the active model factually, as it does today, with no warning attached.
 
 `warmEmbeddingModel` already downloads the configured model during init and needs no change
 beyond reading the resolved profile.
@@ -314,8 +340,11 @@ Recall@10, MRR, nDCG and embedding latency, broken out per tier plus overall.
 The basic tier is the deciding column, since it predicts day-to-day quality. The extreme tier is
 a stress signal; a model that wins there while losing on basic is the wrong choice.
 
-This script is run on demand and not in CI, because it downloads roughly 155MB of weights across
-the three presets.
+This script is run on demand and not in CI, because it downloads roughly 207MB of weights across
+the four presets.
+
+Because the default preset is English-only and the suite is English-only, the benchmark measures
+the default directly rather than a model most users will not run.
 
 ## Testing
 
@@ -351,17 +380,24 @@ because CI has no model cache.
 
 ## Risks
 
-**The multilingual improvement is not verified by our own measurement.** The benchmark was scoped
-to English semantic cases by explicit decision. It will demonstrate the synonym and paraphrase
-improvement, but the multilingual claim rests on published benchmark scores
-(MTEB Multilingual retrieval: granite-97m 60.3 against multilingual-e5-small 50.9) rather than on
-anything measured here. The current default is absent from that comparison because an
-English-only model has no meaningful multilingual retrieval score. The `lang` field exists so this
-gap can be closed later.
+**Non-English knowledge retrieves poorly unless the user changes a setting.** The English-only
+default was chosen deliberately, after the consequence was raised. It means the original complaint
+that started this work — that the embedding model only handles English — remains true of the
+out-of-box experience. What changes is that a fix now exists and takes one selection, where before
+it required hand-editing config and knowing which model to name. The init line naming the
+multilingual option is the only thing standing between a non-English user and a silent quality
+problem, so its wording matters more than its placement suggests.
 
-**Published scores are not our data.** The preset ranking comes from MTEB, measured on other
-corpora. The benchmark exists precisely so the choice can be checked against Knowl's own content
-rather than taken on faith.
+**The multilingual preset is not verified by our own measurement.** The benchmark is English-only
+by decision, so `granite-97m-multilingual` is selected on published scores (MTEB multilingual
+retrieval 60.3, against 50.9 for multilingual-e5-small) rather than on anything measured here. The
+`lang` field exists so this gap can be closed later. The English default is not affected, since
+the benchmark measures it directly.
 
-**Download size grows.** The default model cache goes from roughly 23MB to 98MB for new
+**Published scores are not our data.** The preset ranking comes from MTEB and BEIR, measured on
+other corpora. The benchmark exists precisely so the choice can be checked against Knowl's own
+content rather than taken on faith. If it shows the default losing to `bge-small-en` or even to
+`minilm-l6-en` on Knowl-shaped content, the default should change.
+
+**Download size grows.** The default model cache goes from roughly 23MB to 52MB for new
 repositories. It lives in the gitignored `.knowl/models` directory and is never committed.
