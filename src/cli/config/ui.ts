@@ -1,5 +1,10 @@
 import { CONFIG_FIELDS, ConfigCategory, ConfigField, ConfigFieldType, getConfigField } from './schema.js';
 import { getConfigValue, setConfigValues } from './service.js';
+import {
+  announceProfileChange, countAffectedEmbeddings, describeProfileChange, formatProfileChangeWarning,
+  workspacePinNotice, type ProfileChange,
+} from './profile-change.js';
+import { loadConfig } from '../../core/config.js';
 
 /** Returned by `selectCategory` to leave the editor. */
 export const CONFIG_UI_QUIT = '__knowl_config_quit__';
@@ -38,6 +43,11 @@ export interface ConfigPrompts {
    * the field list, which is why the caller must not have written anything yet.
    */
   inputCustomModel?(): Promise<{ model: string; pooling: 'mean' | 'cls' } | null>;
+  /**
+   * Offered after a save that changed the embedding profile. Without it the caller only
+   * prints the warning, which is what a non-interactive test harness wants.
+   */
+  confirmReindex?(change: ProfileChange, affectedRows: number): Promise<boolean>;
 }
 
 function formatCurrent(value: unknown, secret?: boolean) {
@@ -111,6 +121,12 @@ export function createInquirerPrompts(): ConfigPrompts {
     reportError: async (field, message) => {
       console.error(`Invalid value for ${field.key}: ${message}`);
     },
+    confirmReindex: async (_change, affectedRows) => (await import('@inquirer/prompts')).confirm({
+      message: affectedRows > 0
+        ? `Rebuild ${affectedRows} embedding(s) with the new model now?`
+        : 'Build embeddings with the new model now?',
+      default: true,
+    }),
     inputCustomModel: async () => {
       const prompts = await import('@inquirer/prompts');
       const { verifyCustomModel } = await import('../../ai/model-probe.js');
@@ -139,6 +155,9 @@ export function createInquirerPrompts(): ConfigPrompts {
 export async function runConfigUi(root: string, prompts: ConfigPrompts = createInquirerPrompts()) {
   const categories = [...new Set(CONFIG_FIELDS.map(field => field.category))];
   const changes: Array<ConfigChange & { raw: string }> = [];
+  // Read before any edit: the comparison is between whole resolved profiles, so it
+  // cannot be reconstructed from the individual key changes.
+  const configBefore = await loadConfig(root).catch(() => null);
 
   let editing = true;
   while (editing) {
@@ -197,11 +216,46 @@ export async function runConfigUi(root: string, prompts: ConfigPrompts = createI
 
   const visibleChanges = changes.map(({ raw: _raw, ...change }) => change);
   // Quitting without touching anything should just exit, not ask about an empty diff.
-  if (visibleChanges.length === 0) return { saved: false, changes: visibleChanges };
-  if (!(await prompts.confirmSave(visibleChanges))) return { saved: false, changes: visibleChanges };
+  if (visibleChanges.length === 0) return { saved: false, changes: visibleChanges, reindexRequested: false };
+  if (!(await prompts.confirmSave(visibleChanges))) {
+    return { saved: false, changes: visibleChanges, reindexRequested: false };
+  }
 
   // One save, not one per change: a custom preset is three keys, and a partial write
   // would leave `preset: custom` on disk with no model beside it.
   await setConfigValues(root, changes.map(change => ({ key: change.key, raw: change.raw })));
-  return { saved: true, changes: visibleChanges };
+
+  const reindexRequested = await offerReindex(root, configBefore, prompts);
+  return { saved: true, changes: visibleChanges, reindexRequested };
+}
+
+/**
+ * Ask about rebuilding when the save moved the embedding profile.
+ *
+ * Returns false rather than printing nothing when there is no prompt to ask with: the
+ * warning still goes out, so a scripted caller learns what changed even though it
+ * cannot answer.
+ */
+async function offerReindex(
+  root: string,
+  configBefore: Awaited<ReturnType<typeof loadConfig>> | null,
+  prompts: ConfigPrompts,
+): Promise<boolean> {
+  if (!configBefore) return false;
+  const configAfter = await loadConfig(root).catch(() => null);
+  if (!configAfter) return false;
+
+  const change = describeProfileChange(configBefore, configAfter);
+  if (!change.changed) return false;
+
+  if (!prompts.confirmReindex) {
+    await announceProfileChange(root, configBefore, configAfter);
+    return false;
+  }
+
+  const affected = await countAffectedEmbeddings(root);
+  console.log('');
+  console.log(formatProfileChangeWarning(change, affected));
+  for (const line of await workspacePinNotice(root, configAfter)) console.log(line);
+  return prompts.confirmReindex(change, affected);
 }

@@ -256,6 +256,12 @@ export async function findEmbeddedItemIds(
   return found;
 }
 
+/** How many embedding rows exist, regardless of profile. Used to size the switch warning. */
+export async function countStoredEmbeddings(): Promise<number> {
+  const rows = await getClient().execute('SELECT COUNT(*) AS total FROM knowledge_embeddings');
+  return Number((rows.rows[0] as any)?.total ?? 0);
+}
+
 /**
  * Drops rows left behind by a previous profile, including those for deleted items.
  *

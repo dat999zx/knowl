@@ -303,6 +303,44 @@ describe('config UI', () => {
     expect(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8')).toBe(before);
   });
 
+  it('offers a reindex when the save moved the embedding profile', async () => {
+    await writeConfig();
+    let offered: { affected: number } | null = null;
+    const prompts: ConfigPrompts = {
+      selectCategory: async () => 'Search',
+      selectField: async () => 'search.vector.preset',
+      inputValue: async () => 'bge-small-en',
+      confirmSave: async () => true,
+      continueEditing: async () => false,
+      confirmReindex: async (_change, affectedRows) => { offered = { affected: affectedRows }; return true; },
+    };
+
+    const result = await runConfigUi(ROOT, prompts);
+
+    expect(result.saved).toBe(true);
+    expect(offered).not.toBeNull();
+    expect(result.reindexRequested).toBe(true);
+  });
+
+  it('does not offer a reindex for an edit that leaves the profile alone', async () => {
+    await writeConfig();
+    let offered = false;
+    const prompts: ConfigPrompts = {
+      selectCategory: async () => 'Search',
+      selectField: async () => 'search.vector.cacheDir',
+      inputValue: async () => 'D:/models',
+      confirmSave: async () => true,
+      continueEditing: async () => false,
+      confirmReindex: async () => { offered = true; return true; },
+    };
+
+    const result = await runConfigUi(ROOT, prompts);
+
+    expect(result.saved).toBe(true);
+    expect(offered).toBe(false);
+    expect(result.reindexRequested).toBe(false);
+  });
+
   it('redacts secret values in the confirmation diff', async () => {
     await writeConfig({ ...DEFAULT_CONFIG, ai: { provider: 'openai', model: 'gpt-4o-mini' } });
     let displayed: unknown;

@@ -41,6 +41,7 @@ import { createLocalEmbeddingProvider, isVectorSearchEnabled } from './ai/embedd
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './cli/config/service.js';
 import { runConfigUi } from './cli/config/ui.js';
 import { verifyCustomModel } from './ai/model-probe.js';
+import { announceProfileChange } from './cli/config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from './store/import-policy.js';
 import { formatAgentInitSummary, runAgentInitFlow } from './cli/init-flow.js';
 import { formatWarmResult, warmEmbeddingModel } from './cli/warm-embeddings.js';
@@ -989,6 +990,44 @@ program
     }
   });
 
+/**
+ * Rebuild every stored vector under the repository's current profile.
+ *
+ * Shared by `knowl reindex --vectors` and the offer made after a config change, so the
+ * two cannot report different things about the same operation.
+ */
+async function rebuildVectorEmbeddings(root: string): Promise<void> {
+  const config = await loadConfig(root);
+  if (!isVectorSearchEnabled(config)) {
+    throw new Error('Vector search is not enabled. Set search.vector.enabled true before running vector reindex.');
+  }
+
+  await initDb(root);
+  try {
+    const project = await repo.getProjectByRootPath(root);
+    if (!project) throw new Error('Project not found in database.');
+
+    const embedder = await createLocalEmbeddingProvider(config, root, {
+      // Only claim a download when one is actually going to happen. This announced
+      // "Downloading" on every run, cached or not, because the callback fires whenever
+      // the pipeline is not in memory -- which is always in a fresh CLI process.
+      onFirstLoad: ({ model, cached }) => console.log(
+        cached
+          ? `Loading local embedding model ${model}...`
+          : `Downloading local embedding model ${model} (first run)...`,
+      ),
+    });
+    const result = await reindexKnowledgeEmbeddings(project.id, embedder);
+    const perStatus = Object.entries(result.byStatus)
+      .map(([status, count]) => `${count} ${status}`)
+      .join(', ');
+    console.log(`Indexed ${result.indexed} vector embedding(s)${perStatus ? ` (${perStatus})` : ''}.`);
+    if (result.purged > 0) console.log(`Purged ${result.purged} embedding(s) from a previous model.`);
+  } finally {
+    await closeDb();
+  }
+}
+
 // --- 7. CONFIG COMMAND ---
 const configCommand = program
   .command('config')
@@ -1003,7 +1042,11 @@ configCommand.action(async () => {
     if (!process.stdin.isTTY || !process.stdout.isTTY) {
       throw new Error('Interactive config requires a TTY. Use `knowl config get`, `set`, or `reset`.');
     }
-    await runConfigUi(await findProjectRoot(process.cwd()));
+    const root = await findProjectRoot(process.cwd());
+    const result = await runConfigUi(root);
+    // Run here rather than inside the UI: rebuilding needs the embedder and the database,
+    // and the UI layer deliberately knows about neither.
+    if (result.reindexRequested) await rebuildVectorEmbeddings(root);
   } catch (error: any) {
     console.error(`❌ Configuration error: ${error.message}`);
     process.exitCode = 1;
@@ -1034,8 +1077,11 @@ configCommand
       if (key === 'search.vector.preset' && value === 'custom') {
         throw new Error('Use `knowl config set-model <name>` for a custom model; `preset custom` alone leaves no model to use.');
       }
-      const typedValue = await setConfigValue(await findProjectRoot(process.cwd()), key, value);
+      const root = await findProjectRoot(process.cwd());
+      const before = await loadConfig(root);
+      const typedValue = await setConfigValue(root, key, value);
       console.log(`Set ${key} = ${JSON.stringify(typedValue)}`);
+      await announceProfileChange(root, before, await loadConfig(root));
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
@@ -1062,6 +1108,7 @@ configCommand
       }
       if (pooling !== 'cls' && pooling !== 'mean') throw new Error('--pooling must be cls or mean.');
 
+      const before = await loadConfig(root);
       await setConfigValues(root, [
         { key: 'search.vector.preset', raw: 'custom' },
         { key: 'search.vector.model', raw: model },
@@ -1069,6 +1116,7 @@ configCommand
       ]);
       console.log(`Selected ${model} (${pooling} pooling).`);
       console.log('Run `knowl reindex --vectors` to rebuild embeddings with it.');
+      await announceProfileChange(root, before, await loadConfig(root));
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
@@ -1087,9 +1135,13 @@ configCommand
         }
       }
       const root = await findProjectRoot(process.cwd());
+      const before = await loadConfig(root);
       if (key) await resetConfigValue(root, key);
       else await resetAllConfig(root);
       console.log(key ? `Reset ${key}` : 'Reset all configuration to defaults');
+      // A full reset moves an old repo onto the default preset, which is a model change
+      // like any other -- and the one most likely to surprise, since nothing named a model.
+      await announceProfileChange(root, before, await loadConfig(root));
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
@@ -1112,33 +1164,7 @@ program
         throw new Error('Nothing to reindex. Pass --vectors to rebuild vector embeddings.');
       }
 
-      const root = await findProjectRoot(process.cwd());
-      const config = await loadConfig(root);
-      if (!isVectorSearchEnabled(config)) {
-        throw new Error('Vector search is not enabled. Set search.vector.enabled true before running vector reindex.');
-      }
-
-      await initDb(root);
-      const project = await repo.getProjectByRootPath(root);
-      if (!project) throw new Error('Project not found in database.');
-
-      const embedder = await createLocalEmbeddingProvider(config, root, {
-        // Only claim a download when one is actually going to happen. This announced
-        // "Downloading" on every run, cached or not, because the callback fires whenever
-        // the pipeline is not in memory -- which is always in a fresh CLI process.
-        onFirstLoad: ({ model, cached }) => console.log(
-          cached
-            ? `Loading local embedding model ${model}...`
-            : `Downloading local embedding model ${model} (first run)...`,
-        ),
-      });
-      const result = await reindexKnowledgeEmbeddings(project.id, embedder);
-      const perStatus = Object.entries(result.byStatus)
-        .map(([status, count]) => `${count} ${status}`)
-        .join(', ');
-      console.log(`Indexed ${result.indexed} vector embedding(s)${perStatus ? ` (${perStatus})` : ''}.`);
-      if (result.purged > 0) console.log(`Purged ${result.purged} embedding(s) from a previous model.`);
-      await closeDb();
+      await rebuildVectorEmbeddings(await findProjectRoot(process.cwd()));
     } catch (error: any) {
       console.error(`Error reindexing: ${error.message}`);
       process.exit(1);
