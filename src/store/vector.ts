@@ -268,6 +268,14 @@ export async function countStoredEmbeddings(): Promise<number> {
  * With no fingerprint to keep, nothing is provably stale, so this does nothing rather
  * than treating every row as unmatched -- the same predicate would otherwise delete
  * the entire table.
+ *
+ * Database-wide, and `projectId` is deliberately not a predicate -- it cannot be one.
+ * `knowledge_items` has no `project_id`; that column exists only in the legacy schema
+ * `migrateLegacyProjectSchema` strips. And `getProjectByRootPath` returns the constant
+ * `LOCAL_PROJECT_ID` for every root, so one database holds exactly one project and a
+ * "neighbouring project" here has no meaning. Scoping the DELETE through
+ * `knowledge_items.project_id` fails at runtime with `no such column`. Should a shared
+ * store ever hold several repos' items, the discriminator is `origin_repo`.
  */
 export async function purgeEmbeddingsNotMatching(projectId: string, fingerprint: string): Promise<number> {
   if (!fingerprint) return 0;

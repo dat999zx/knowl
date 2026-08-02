@@ -91,12 +91,15 @@ describe('reindex scope', () => {
     await initDb(testRoot);
     const project = await repo.createProject(testRoot, 'reindex fixture');
     projectId = project.id;
-  });
+    // Past the global 30s hook timeout: the paging test leaves a database holding 10,050
+    // items and as many embeddings, and tearing that down on a loaded Windows box has
+    // exceeded 30s. A slow disk is not a regression, so it must not read as one.
+  }, 120_000);
 
   afterEach(async () => {
     await closeDb();
     await fs.rm(testRoot, { recursive: true, force: true }).catch(() => {});
-  });
+  }, 120_000);
 
   it('re-embeds items in every status, not only active', async () => {
     await seedItemsWithStatuses(['active', 'superseded', 'archived']);
@@ -107,11 +110,13 @@ describe('reindex scope', () => {
     expect(result.byStatus).toEqual({ active: 1, superseded: 1, archived: 1 });
   });
 
+  // 10,050 and not a smaller number with a smaller batch size: the ceiling being guarded
+  // was a literal `limit: 10_000`, and only a corpus larger than that catches its return.
   it('pages past the old 10,000 ceiling', async () => {
     await seedManyItems(10_050);
     const result = await reindexKnowledgeEmbeddings(projectId, stubEmbedder());
     expect(result.indexed).toBe(10_050);
-  });
+  }, 120_000);
 
   it('purges rows left over from a previous profile', async () => {
     await seedItemsWithStatuses(['active']);
