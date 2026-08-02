@@ -23,6 +23,11 @@ export const KNOWL_MCP_TOOL_GROUPS = [
     routing: 'Write a baton before deliberately leaving a workstream - goal, what is done, the next action, any blocker, and whether the work was verified. The next session started in this project receives it once at startup and it is then archived, so it is a one-shot pass, not a durable note. One baton per project at a time: writing another replaces it. Durable facts still belong in knowl_store.',
   },
   {
+    label: 'Parked workstreams',
+    tools: ['knowl_park', 'knowl_resume'],
+    routing: 'Park work the user means to come back to, or a session ending mid-workstream: knowl_park mints a short key and returns a paste-ready instruction line to hand them verbatim, since a key reworded is a key lost. knowl_resume takes that key in any later session and returns the brief. Unlike the handoff baton, which the next session in this project consumes once, a key is held by the user, is not spent by resuming, and works any number of sessions later. Call knowl_resume as soon as a user supplies a key; with no key it lists what is parked here.',
+  },
+  {
     label: 'Manual work loop',
     tools: ['knowl_task_start', 'knowl_task_checkpoint', 'knowl_task_finish'],
     routing: 'Use only without verified lifecycle hooks: start once, checkpoint meaningful milestones or blockers, and finish once after verification.',
