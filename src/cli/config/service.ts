@@ -67,6 +67,29 @@ export async function setConfigValue(root: string, key: string, raw: string): Pr
   return value;
 }
 
+/**
+ * Write several keys as one unit.
+ *
+ * A custom embedding profile is three keys, and writing them one at a time can
+ * leave `preset: custom` on disk with no verified model beside it -- a state any
+ * command running in between would resolve and act on. Every entry is parsed
+ * before anything is written, so an invalid one changes nothing.
+ */
+export async function setConfigValues(
+  root: string,
+  entries: Array<{ key: string; raw: string }>,
+): Promise<void> {
+  const parsed = entries.map(entry => ({
+    key: entry.key,
+    value: getConfigField(entry.key).parse(entry.raw),
+  }));
+
+  const config = await loadRawConfig(root);
+  for (const entry of parsed) setAtPath(config, entry.key, entry.value);
+  await backupConfig(root);
+  await saveRawConfig(root, config);
+}
+
 export async function resetConfigValue(root: string, key: string): Promise<void> {
   const field = getConfigField(key);
   const config = await loadRawConfig(root);

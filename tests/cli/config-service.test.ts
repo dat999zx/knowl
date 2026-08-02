@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DEFAULT_CONFIG, NEW_PROJECT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
-import { getConfigValue, resetConfigValue, setConfigValue } from '../../src/cli/config/service.js';
+import { getConfigValue, resetConfigValue, setConfigValue, setConfigValues } from '../../src/cli/config/service.js';
 import { CONFIG_UI_BACK, CONFIG_UI_QUIT, ConfigFieldView, ConfigPrompts, runConfigUi } from '../../src/cli/config/ui.js';
 
 const ROOT = path.resolve('.knowl-config-service-test');
@@ -115,6 +115,33 @@ describe('config service', () => {
     const raw = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
     expect(raw.ai.apiKey).toBe('${OPENAI_API_KEY}');
     expect(await getConfigValue(ROOT, 'ai.apiKey')).toBe('********');
+  });
+});
+
+describe('setConfigValues', () => {
+  it('writes every entry in one save', async () => {
+    await writeConfig();
+    await setConfigValues(ROOT, [
+      { key: 'search.vector.preset', raw: 'custom' },
+      { key: 'search.vector.model', raw: 'someone/theirs-ONNX' },
+      { key: 'search.vector.pooling', raw: 'cls' },
+    ]);
+
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect(saved.search.vector).toMatchObject({
+      preset: 'custom', model: 'someone/theirs-ONNX', pooling: 'cls',
+    });
+  });
+
+  it('persists nothing when any entry is invalid', async () => {
+    await writeConfig();
+    await expect(setConfigValues(ROOT, [
+      { key: 'search.vector.preset', raw: 'custom' },
+      { key: 'search.vector.pooling', raw: 'banana' },
+    ])).rejects.toThrow(/Expected one of/);
+
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect(saved.search.vector.preset).toBeUndefined();
   });
 });
 

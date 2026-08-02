@@ -1,12 +1,15 @@
 import { DEFAULT_CONFIG } from '../../core/config.js';
+import { DEFAULT_PRESET_ID, PRESET_IDS } from '../../core/vector-profile.js';
 
 export type ConfigKey =
   | 'security.rejectSecrets'
   | 'security.secretPatterns'
   | 'search.vector.enabled'
+  | 'search.vector.preset'
   | 'search.vector.provider'
   | 'search.vector.model'
   | 'search.vector.dtype'
+  | 'search.vector.pooling'
   | 'search.vector.cacheDir'
   | 'ai.provider'
   | 'ai.model'
@@ -59,13 +62,18 @@ const stringList = (raw: string) => raw.split(',').map(value => value.trim()).fi
 
 const VECTOR_PROVIDERS = ['local'] as const;
 const VECTOR_DTYPES = ['q4', 'q8', 'fp16', 'fp32'] as const;
+const VECTOR_POOLINGS = ['mean', 'cls'] as const;
 const AI_PROVIDERS = ['openai', 'anthropic', 'ollama', 'custom'] as const;
 
 export const CONFIG_FIELDS: ConfigField[] = [
+  // The preset leads the Search list: it is the one setting most people should touch,
+  // and it decides model, dtype and pooling together.
+  { key: 'search.vector.preset', category: 'Search', type: 'enum', values: PRESET_IDS, parse: enumValue(PRESET_IDS), defaultValue: DEFAULT_PRESET_ID },
   { key: 'search.vector.enabled', category: 'Search', type: 'boolean', parse: booleanValue, defaultValue: DEFAULT_CONFIG.search?.vector?.enabled },
   { key: 'search.vector.provider', category: 'Search', type: 'enum', values: VECTOR_PROVIDERS, parse: enumValue(VECTOR_PROVIDERS), defaultValue: DEFAULT_CONFIG.search?.vector?.provider },
   { key: 'search.vector.model', category: 'Search', type: 'string', parse: String, defaultValue: DEFAULT_CONFIG.search?.vector?.model },
   { key: 'search.vector.dtype', category: 'Search', type: 'enum', values: VECTOR_DTYPES, parse: enumValue(VECTOR_DTYPES), defaultValue: DEFAULT_CONFIG.search?.vector?.dtype },
+  { key: 'search.vector.pooling', category: 'Search', type: 'enum', values: VECTOR_POOLINGS, parse: enumValue(VECTOR_POOLINGS) },
   { key: 'search.vector.cacheDir', category: 'Search', type: 'string', parse: String },
   { key: 'security.rejectSecrets', category: 'Security', type: 'boolean', parse: booleanValue, defaultValue: DEFAULT_CONFIG.security.rejectSecrets },
   { key: 'security.secretPatterns', category: 'Security', type: 'list', parse: stringList, defaultValue: DEFAULT_CONFIG.security.secretPatterns },
