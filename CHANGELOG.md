@@ -3,6 +3,27 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.14.1 — 2026-08-02
+
+### Fixed
+
+- **Nothing in `knowl config` is read-only.** Every setting is selectable and every
+  selection opens an editor. 2.14.0 refused to edit the three keys a named preset supplies
+  and offered to open the preset instead — backwards for a screen whose entire purpose is
+  changing things.
+
+  The reason behind the refusal was real: `resolveVectorProfile` reads a named preset
+  ahead of the flat keys, so writing `dtype` under `preset: bge-small-en` changed the file
+  and nothing else. That is now answered by making the edit count rather than blocking it.
+  Editing a preset-supplied field moves the profile to `custom` and writes the preset's
+  other values out, so nothing is lost and the edited key wins.
+
+- **A preset-supplied field opens on the value in effect**, not on whatever its own key
+  happens to hold, so an edit starts from what is actually running.
+
+- **`Model name` is a list.** It was the last free-text box on a value with known good
+  answers; it now offers the four preset model ids and keeps typing for anything else.
+
 ## 2.14.0 — 2026-08-02
 
 ### Added
