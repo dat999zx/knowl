@@ -3,6 +3,57 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.14.0 — 2026-08-02
+
+### Added
+
+- **A visual system for the interactive commands**, in `src/cli/ui/style.ts`. Colour helpers
+  that check the terminal on every call, box-drawing symbols with ASCII fallbacks, and
+  `intro`/`outro` framing so `knowl config` opens and closes rather than just stopping.
+
+  Colour marks one thing per row — the value, or the key you would script with — and is
+  dropped entirely when `NO_COLOR` is set, when `TERM=dumb`, or when stdout is not a
+  terminal, so a piped or logged run stays readable. `FORCE_COLOR` overrides.
+
+  Symbols fall back to ASCII where box drawing is not safe. A legacy Windows console
+  renders a missing glyph as a question mark, and it is still what a double-clicked
+  `cmd.exe` opens.
+
+### Changed
+
+- **A category shows the settings you came to change, and nothing else.** Search is two
+  rows — the embedding model and whether semantic search is on. `provider`, `model`,
+  `dtype`, `pooling` and `cacheDir` moved behind `Advanced settings…`, which is also the
+  only place the dotted config keys appear now: someone reading that list is already
+  looking for what to pass to `knowl config set`.
+
+  The previous list put a name, a value, a status word and a dotted key on every row, read
+  while it moves under a cursor. It buried the two settings anyone opens Search for under
+  five they never touch.
+
+- **Prompts share one theme**, so the cursor, the highlight and the help line no longer
+  differ between the category list, a value picker and a confirmation. Lists carry a
+  breadcrumb heading (`Search › Advanced`) and a rule between the settings and the ways
+  out — without it they read as one list and `Back` looked configurable.
+
+### Fixed
+
+- **The model picker now works on a repository that predates presets.** Ownership was read
+  from `search.vector.preset`, and a config initialised before that key existed has none —
+  so nothing was marked as preset-owned, `Model name` stayed a free-text box, and the
+  picker opened with nothing selected. This was the whole point of 2.13.0 and it applied
+  to none of the configs that needed it. `currentPresetId` falls back to matching the
+  model string, so such a config reads `MiniLM L6 v2` and the picker opens on it.
+
+- **Picking a model writes the whole profile**, not just the preset name. Writing the name
+  alone was correct only because `resolveVectorProfile` prefers it; the flat keys were
+  left describing whatever model came before, and a config with no `preset` key had
+  nothing for the resolver to prefer. Choosing a model now repairs both.
+
+- **A highlighted row keeps its colour to the end of the line.** The prompt library
+  highlights by wrapping the text it was given, so a row that already carried colour ended
+  the highlight at its own first reset. Escape sequences are stripped before wrapping.
+
 ## 2.13.0 — 2026-08-02
 
 ### Changed
