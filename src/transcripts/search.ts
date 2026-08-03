@@ -1,4 +1,7 @@
 import type { Client } from '@libsql/client';
+import type { KnowledgeEmbedder } from '../store/vector-index.js';
+import { dotQuantized } from './quantize.js';
+import { readMessagesAt } from './read.js';
 
 export type TranscriptHit = {
   messageId: number;
@@ -104,4 +107,168 @@ export async function lexicalRank(
     })
     .sort((left, right) => right.score - left.score)
     .slice(0, limit);
+}
+
+/**
+ * RRF's rank constant. 60 is the value from the original paper and what the knowledge-side
+ * fusion uses; keeping them equal means one number to reason about, not two.
+ */
+export const RRF_K = 60;
+
+/**
+ * Reciprocal Rank Fusion.
+ *
+ * Combines *positions* rather than scores. BM25 magnitudes and cosine similarities are not on a
+ * comparable scale, so any weighted sum of the raw numbers is arbitrary.
+ */
+export function fuseRankings<T extends TranscriptHit>(
+  rankings: T[][],
+  limit: number,
+  /**
+   * Identity across rankings. Defaults to the message id, which is unique within one database
+   * but NOT across repos -- federation must pass a repo-qualified key or two repos' message 5
+   * would merge into one hit.
+   */
+  keyOf: (hit: T) => string = hit => String(hit.messageId),
+): T[] {
+  const scores = new Map<string, number>();
+  const byKey = new Map<string, T>();
+
+  for (const ranking of rankings) {
+    ranking.forEach((hit, index) => {
+      const key = keyOf(hit);
+      scores.set(key, (scores.get(key) ?? 0) + 1 / (RRF_K + index + 1));
+      if (!byKey.has(key)) byKey.set(key, hit);
+    });
+  }
+
+  return [...scores.entries()]
+    .sort((left, right) => right[1] - left[1] || compareTieKeys(left[0], right[0]))
+    .slice(0, limit)
+    .map(([key, score]) => ({ ...byKey.get(key)!, score }));
+}
+
+/**
+ * Deterministic tiebreak for equal RRF scores.
+ *
+ * Ties are not rare here, they are the normal case in federation: a hit appears in exactly one
+ * repo's ranking, so every repo's rank-1 scores exactly 1/(60+1). `Array.prototype.sort` is
+ * stable, so without this the merged order is insertion order -- and with `limit: 1` the repo
+ * that happened to be visited first always wins. That is iteration order dressed as relevance.
+ *
+ * Hashing the key gives an arbitrary but *stable* order that does not correlate with which repo
+ * was searched first, so reversing the peer list cannot change the answer.
+ */
+function compareTieKeys(left: string, right: string): number {
+  const hash = (value: string) => {
+    let h = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+      h ^= value.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  };
+  const difference = hash(left) - hash(right);
+  // Fall back to the key itself so two colliding hashes still order deterministically.
+  return difference !== 0 ? difference : (left < right ? -1 : left > right ? 1 : 0);
+}
+
+/**
+ * Cosine ranking over every stored vector.
+ *
+ * A full scan, not an ANN index: a few thousand int8 vectors is single-digit milliseconds, and
+ * an index would cost rebuilds, a recall knob, and a native extension `@libsql/client` cannot
+ * load. Crucially this covers the *whole* corpus -- re-ranking a lexical shortlist could never
+ * surface a message whose words differ from the query, which is the query this exists for.
+ */
+export async function semanticRank(
+  client: Client,
+  queryVector: number[],
+  fingerprint: string,
+  limit: number,
+  sessionId?: string,
+): Promise<TranscriptHit[]> {
+  const args: unknown[] = [fingerprint];
+  let scope = '';
+  if (sessionId) {
+    scope = ' AND (m.session_id = ? OR m.session_id LIKE ?)';
+    args.push(sessionId, `${sessionId}%`);
+  }
+
+  const rows = (await client.execute({
+    sql: `SELECT m.id, m.path, m.session_id, m.parent_session_id, m.line, m.role, v.scale, v.vec
+          FROM transcript_vectors v
+          JOIN transcript_messages m ON m.id = v.message_id
+          WHERE v.fingerprint = ?${scope}`,
+    args: args as never[],
+  })).rows;
+
+  return rows
+    .map(row => ({
+      messageId: Number(row.id),
+      path: String(row.path),
+      sessionId: String(row.session_id),
+      parentSessionId: row.parent_session_id === null ? null : String(row.parent_session_id),
+      line: Number(row.line),
+      role: String(row.role) as 'user' | 'assistant',
+      score: dotQuantized(queryVector, new Uint8Array(row.vec as ArrayBuffer), Number(row.scale)),
+    }))
+    .sort((left, right) => right.score - left.score)
+    .slice(0, limit);
+}
+
+export type SearchInput = {
+  client: Client;
+  query: string;
+  limit: number;
+  projectRoot: string;
+  sessionId?: string;
+  embedder?: KnowledgeEmbedder;
+};
+
+export async function searchTranscripts(
+  input: SearchInput,
+): Promise<{ hits: TranscriptHit[]; coverage: { embedded: number; indexed: number } }> {
+  const { client, query, limit, sessionId } = input;
+
+  const rankings: TranscriptHit[][] = [await lexicalRank(client, query, limit * 2, sessionId)];
+
+  let fingerprint: string | null = null;
+  if (input.embedder) {
+    try {
+      const [vector] = await input.embedder.embed([query]);
+      if (vector?.length) {
+        fingerprint = input.embedder.profileFingerprint;
+        rankings.push(await semanticRank(client, vector, fingerprint, limit * 2, sessionId));
+      }
+    } catch {
+      // A missing model or a failed load degrades to lexical. Returning nothing because the
+      // optional half broke would be worse than returning the half that works.
+    }
+  }
+
+  const fused = fuseRankings(rankings, limit);
+
+  // Bodies are read only for what is actually returned -- ranking never touches disk. Grouped
+  // by file: five hits in one session is one pass, not five whole-file reads.
+  const byFile = new Map<string, TranscriptHit[]>();
+  for (const hit of fused) {
+    const group = byFile.get(hit.path);
+    if (group) group.push(hit);
+    else byFile.set(hit.path, [hit]);
+  }
+  for (const [filePath, group] of byFile) {
+    const bodies = await readMessagesAt(filePath, group.map(hit => hit.line));
+    for (const hit of group) hit.text = bodies.get(hit.line)?.text;
+  }
+
+  const indexed = Number((await client.execute('SELECT COUNT(*) AS n FROM transcript_messages')).rows[0].n);
+  const embedded = fingerprint
+    ? Number((await client.execute({
+        sql: 'SELECT COUNT(*) AS n FROM transcript_vectors WHERE fingerprint = ?',
+        args: [fingerprint],
+      })).rows[0].n)
+    : 0;
+
+  return { hits: fused, coverage: { embedded, indexed } };
 }
