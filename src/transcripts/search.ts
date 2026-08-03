@@ -30,16 +30,41 @@ export const ROLE_WEIGHTS: Record<'user' | 'assistant', number> = {
 /**
  * Turn a human query into an FTS5 MATCH expression.
  *
- * Every token is stripped to word characters and quoted. Unquoted user input is FTS5 *syntax*:
- * a stray `"` or `*` is a query error, and `NOT` is an operator.
+ * Unquoted user input is FTS5 *syntax*: a stray `"` or `*` is a query error and `NOT` is an
+ * operator, so every token has to be quoted. The mistake was what came first -- stripping the
+ * token to word characters and gluing the pieces together. `index-pass.ts` became the single
+ * token `indexpassts`, which the unicode61 tokenizer can never have produced, so it matched
+ * nothing. Measured against the live index, every one of these returned zero: `index-pass.ts`,
+ * `src/transcripts`, `duckprep.xyz`, `tailwind-v4`, `GPT-5.6` -- which is to say, filenames,
+ * paths, domains and versions, the most natural things to search a transcript for.
+ *
+ * Quoting alone fixes it, because a quoted string is handed to the TOKENIZER rather than the
+ * parser and its tokens become a phrase: `"index-pass.ts"` is the phrase [index, pass, ts],
+ * which is exactly what the index holds (FTS5 §3.2). No schema change and no reindex -- and
+ * a phrase beats splitting into OR'd terms, because it keeps the adjacency.
+ *
+ * Adding `.-/` to `tokenchars` would be the mirror-image bug: the path becomes one atomic
+ * token and searching `index` stops finding it. The trigram tokenizer drops every token under
+ * three characters, so `ts` and `db` would return nothing at all.
  */
 export function toMatchQuery(query: string): string | null {
-  const tokens = query
+  const phrases = query
     .split(/\s+/)
-    .map(token => token.replace(/[^\p{L}\p{N}_]/gu, ''))
-    .filter(token => token.length > 0);
-  if (tokens.length === 0) return null;
-  return tokens.map(token => `"${token}"`).join(' OR ');
+    // Dropped rather than stripped: a token with no letter, digit or underscore has nothing
+    // the tokenizer could index, so quoting it would produce a phrase of zero tokens.
+    .filter(token => /[\p{L}\p{N}_]/u.test(token))
+    .flatMap(token => {
+      // Doubling `"` is the only escape the FTS5 string grammar defines (§3.1).
+      const phrase = `"${token.replace(/"/g, '""')}"`;
+      // A safety net for the spelling difference, not the punctuation: someone searching
+      // `re-index` should still find a message that wrote `reindex`. Only added when the
+      // token's interior actually contains a separator, so ordinary prose is untouched.
+      const core = token.replace(/^[^\p{L}\p{N}_]+|[^\p{L}\p{N}_]+$/gu, '');
+      const glued = core.replace(/[^\p{L}\p{N}_]/gu, '');
+      return glued === core ? [phrase] : [phrase, `"${glued}"`];
+    });
+  if (phrases.length === 0) return null;
+  return phrases.join(' OR ');
 }
 
 /**
