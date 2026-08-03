@@ -75,6 +75,8 @@ import { synthesizeKnowledge } from './store/synthesis.js';
 import { startViewer } from './viewer/server.js';
 import { createAgentReminderOutput } from './cli/agents/reminder.js';
 import { hostProfile } from './cli/agents/hosts/index.js';
+import { rebuildTranscriptIndex } from './transcripts/backfill.js';
+import { closeTranscriptDbs } from './transcripts/database.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -1174,13 +1176,26 @@ program
   .command('reindex')
   .description('Rebuild derived search indexes')
   .option('--vectors', 'Rebuild optional vector embeddings')
+  .option('--transcripts', 'Build or update the optional session transcript index')
+  .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', parseFloat)
   .action(async (options) => {
     try {
-      if (!options.vectors) {
-        throw new Error('Nothing to reindex. Pass --vectors to rebuild vector embeddings.');
+      if (!options.vectors && !options.transcripts) {
+        throw new Error('Nothing to reindex. Pass --vectors or --transcripts.');
       }
 
-      await rebuildVectorEmbeddings(await findProjectRoot(process.cwd()));
+      const root = await findProjectRoot(process.cwd());
+      if (options.vectors) await rebuildVectorEmbeddings(root);
+
+      if (options.transcripts) {
+        const result = await rebuildTranscriptIndex(root, { budgetMinutes: options.budget });
+        console.log(`Indexed ${result.indexed} transcript message(s).`);
+        if (result.embedded > 0) console.log(`Embedded ${result.embedded} message(s).`);
+        if (result.removed > 0) console.log(`Removed ${result.removed} deleted transcript(s).`);
+        if (result.skippedEmbedding) console.log(result.skippedEmbedding);
+        if (!result.complete) console.log('Stopped early. Run the same command again to resume.');
+        await closeTranscriptDbs();
+      }
     } catch (error: any) {
       console.error(`Error reindexing: ${error.message}`);
       process.exit(1);
