@@ -18,8 +18,8 @@ second copy of the archive.
 ## Scope
 
 Search a repository's own Claude Code session transcripts — including subagent
-transcripts and sessions run from its worktrees — and optionally those of linked
-workspace repos that have opted in.
+transcripts and sessions run from its worktrees, wherever those live — and
+optionally those of linked workspace repos that have opted in.
 
 Out of scope: indexing tool output, ANN vector indexes, cross-project search
 without explicit sharing, session browsing (a separate feature).
@@ -52,7 +52,20 @@ never learn these tools exist.
 design does not.)
 
 There is no partial state: enabled with an incomplete index reports its coverage
-(see §6), and disabling deletes the database file.
+(see §6).
+
+**Disabling deletes `.knowl/transcripts.db`.** Not "stops using it" — deletes it.
+An index left on disk after the feature is off is a copy of the archive's term
+and vector data that nothing will ever refresh, and the user who turned the
+feature off is precisely the one who did not agree to keep it. `knowl config`
+performs the deletion on the true→false transition and says how many messages
+were dropped.
+
+**Semantic ranking follows `search.vector.enabled`.** The model, dtype and
+pooling all come from `search.vector.preset`; embedding transcripts while the
+config says vector search is off would mean one flag denying what another is
+doing. With vectors off, transcript search is keyword-only and every result says
+so. Vector search is on by default, so this is invisible to most repos.
 
 ### 2. Separate database: `.knowl/transcripts.db`
 
@@ -68,8 +81,18 @@ Transcripts do not share `knowl.db`. This single choice buys four things:
 
 ### 3. Index prose only
 
-Index user messages and assistant text. Skip tool results and pasted file bodies
+Index user messages and assistant text. Skip `tool_use` and `tool_result` blocks
 entirely.
+
+**What this does not promise.** An earlier draft said "and pasted file bodies."
+It cannot. Measured across 8 sessions of this repo's archive: user messages carry
+2,005 `tool_result` blocks (dropped by type) against 126 `text` blocks, and of
+75 string-content user messages exactly **one** exceeds 4,000 characters — a
+context-continuation summary, not a paste. A file pasted into the prompt arrives
+as ordinary text, structurally identical to typing. There is no marker to key on,
+and a length threshold would be a knob that catches almost nothing while
+silently discarding long questions. The exclusion is by block type, and the
+claim is now scoped to what the block type actually guarantees.
 
 Tool output is the bulk of transcript bytes and close to none of the value. A
 search for `embedding crash` should hit the discussion, not forty log lines that
@@ -113,6 +136,28 @@ They are worth indexing: 455 prose messages, 12% of the corpus, and
 disproportionately investigation detail. The parent link is free — it is the
 directory name — so a hit can report `subagent of <parent session>`.
 
+### 3b. Worktree roots come from git, not from a path convention
+
+An earlier draft matched directories named `<encoded-root>-worktrees-*`,
+inferring a convention from the one worktree that happened to be in this repo's
+archive. That is wrong. Git worktrees live wherever they were created, and this
+repo's live worktree is on a **different drive**:
+
+```
+D:/coding/knowl                                     [main]
+C:/Users/Admin/AppData/Local/Temp/claude/knowl-pr7  [pr-7]
+```
+
+which encodes to `C--Users-Admin-AppData-Local-Temp-claude-knowl-pr7` — sharing
+no prefix with the main root at all.
+
+Roots come from `git worktree list --porcelain`, and each root is encoded
+independently. The consequence is that a **deleted** worktree's transcripts stop
+being discoverable, which is correct: its rows are then cleaned up by the same
+dead-file path as any other vanished transcript (§Failure modes). Git failing or
+the repo not being a checkout degrades to the main root alone, never to an
+error — this runs on every enabled session.
+
 ### 4. Pointers, not text
 
 A row is `(session_id, line_number, role, char_count)`. The message body is never
@@ -150,9 +195,27 @@ Three triggers, one code path:
 2. The existing per-turn lifecycle hook — keeps the current session current.
 3. A ~1s top-up inside a search call, newest first — safety net.
 
+**Every trigger does both halves — index *and* embed.** A trigger that only
+wrote lexical rows would leave new messages permanently unvectored until someone
+remembered to run a manual reindex, and the coverage figure would decay silently
+from 100% as the archive grew. Whole-corpus semantic ranking is the design's
+central claim (§6); a catch-up path that quietly erodes it is worse than no
+catch-up path.
+
 Per-*message* indexing was rejected: it means a write every few seconds for no
 freshness gain, and write frequency is precisely what caused PR #11's lock
 failures.
+
+**The watermark advances inside the same transaction as the rows it describes.**
+Committing message rows and then updating `bytes_indexed` separately is not
+crash-safe: a crash between the two leaves committed rows behind a stale
+watermark, and the next pass replays those lines straight into the
+`UNIQUE(path, line)` index and dies. "Resumable" has to mean the two facts move
+together or not at all.
+
+**Parsing streams; nothing loads a whole transcript to index it.** The largest
+sessions here are multiple megabytes, and both the 1.5s hook budget and the
+`--budget` flag are unenforceable if a single file allocation can blow past them.
 
 Every trigger is interruptible and resumable, because the resume state is a byte
 offset already on disk.
@@ -208,15 +271,41 @@ Chosen over a promote-style flow because promoting a whole session is blunt, and
 because promotion copies content into shared storage where revocation cannot
 fully undo it. Read-only fan-out revokes with one flag and leaves no copies.
 
+**Federation contract.** Two things do not follow from "search each repo and
+concatenate":
+
+- **Ranking.** RRF scores are computed *within* one repo's candidate set and are
+  not comparable across repos — sorting the merged list by them makes ties fall
+  in repo iteration order, which is a bias dressed as a ranking. Each repo's hits
+  are re-fused by a second RRF over the per-repo *positions*, so a repo's rank-1
+  competes with another repo's rank-1 on equal terms regardless of corpus size.
+- **Coverage.** Each repo reports its own `embedded/indexed`. The result carries
+  them per repo, not summed: a peer at 12% coverage and a local index at 100%
+  average to a number that describes neither.
+
+### 9. Locators are self-contained
+
+A hit's locator is `transcript://<repo>/<session>#L<line>`, and
+`knowl_transcript_read` takes that whole string.
+
+Session id plus line is not enough to read anything. The reader needs a
+filesystem path, which requires knowing which repo owns the session — and in a
+workspace two repos can hold sessions with the same id. Passing the locator back
+verbatim keeps the caller from reassembling identity out of parts, which is where
+a cross-repo read would silently open the wrong file.
+
+`repo` is omitted for local hits and the local repo is assumed on read, so the
+single-repo case stays short.
+
 ## MCP surface
 
 Registered only when `enabled: true`.
 
 - `knowl_transcript_search(query, sessionId?, repos?, limit?)` → ranked hits, each
-  a `transcript://<session>#L<line>` locator with the message read back from disk.
-  `sessionId` accepts a full id or a unique prefix.
-- `knowl_transcript_read(sessionId, line, context?)` → that message plus
-  surrounding turns.
+  a `transcript://<repo>/<session>#L<line>` locator with the message read back
+  from disk. `sessionId` accepts a full id or a unique prefix.
+- `knowl_transcript_read(locator, context?)` → that message plus surrounding
+  turns.
 
 ## Failure modes
 
@@ -226,25 +315,55 @@ Registered only when `enabled: true`.
 | File shrank or was rewritten | Treated as new; rebuilt from byte 0 |
 | File edited in place at identical size | **Undetected.** Append-only is an assumption, not enforced. Disclosed, not special-cased |
 | Embedding model changed | Existing `embedding-identity` machinery invalidates and rebuilds |
-| Worktree path resolution guesses wrong | Over-includes sessions; never loses or misattributes data |
-| Concurrent backfill and live session | Separate DB file; plus `busy_timeout` at the connection and reconnect on `SQLITE_BUSY_SNAPSHOT`, both required in practice by PR #11 |
+| Worktree deleted | Its transcripts stop being discovered; rows cleaned up by the dead-file path |
+| `git worktree list` fails or repo is not a checkout | Degrades to the main root alone; never an error |
+| Crash mid-pass | Watermark and rows committed together, so the next pass resumes at a consistent point (§5) |
 | Embedder unavailable | Lexical-only ranking; coverage signal reflects it |
+
+**Concurrency.** Two writers are normal here, not exceptional: a `--budget`
+backfill can run while a live session's per-turn hook fires. Three things are
+required, and PR #11 needed all three against a real 41k-message job:
+
+1. **`busy_timeout` at the connection**, not per statement — SQLite's default
+   busy handler gives up instantly, and statements nobody thought to wrap are
+   then unprotected.
+2. **Reconnect on `SQLITE_BUSY_SNAPSHOT`.** It is *permanent* for a connection
+   pinned to a stale read snapshot, so backing off waits for a condition only a
+   reconnect clears. Measured in PR #11: a fresh process wrote the same database
+   in 71 ms while a long-lived job had been failing on it for fourteen minutes.
+3. **Watermark reads and row writes in one transaction.** Otherwise two writers
+   read the same `bytes_indexed`, parse the same lines, and collide on
+   `UNIQUE(path, line)` — the same failure as the crash case, reached by a
+   different route.
 
 ## Testing
 
 - `enabled: false` creates no file and registers no tools — the core promise of
-  an opt-in feature.
-- Prose-only filtering: tool results and pasted bodies absent from the index.
+  an opt-in feature. Asserted at the **MCP server level** against a real
+  `tools/list` and a real `tools/call`, not only against the guidance text.
+- Disabling an enabled repo deletes `transcripts.db`.
+- Prose-only filtering: `tool_use` and `tool_result` blocks absent from the index.
 - Subagent enumeration: transcripts nested one level deep are indexed, and each
   reports its parent session. A fixture with nested files must not come back with
   only the top-level count.
+- Worktree discovery covers a root **outside** the main repo directory, since
+  that is the case a path-prefix convention silently drops (§3b).
 - Ranking order, and user-weighting over assistant.
 - **Word-mismatch retrieval** — a query sharing no term with its target. This
   test fails against a shortlist-re-ranking design and is the reason for §6.
 - Incremental append; rewrite-triggered rebuild.
+- **Crash simulation:** interrupt after one committed batch, then run a full
+  pass. It must resume, not raise `UNIQUE constraint failed`.
+- **Two concurrent writers** against one database complete without a lost
+  update or a uniqueness collision.
 - Budget interruption: resume with no double-indexing.
+- A catch-up trigger embeds as well as indexes — coverage stays at 100% after
+  new messages arrive, with no manual reindex.
 - Dead-file cleanup drops rows and reports.
-- Workspace fan-out honors `share: false` and `repos:` filtering.
+- Workspace fan-out honors `share: false` and `repos:` filtering, reports
+  per-repo coverage, and does not rank by repo order when scores tie.
+- A locator round-trips: a hit from `knowl_transcript_search` is accepted
+  verbatim by `knowl_transcript_read`, including a federated one.
 - Embedder throwing degrades to lexical.
 - Guidance contract: tool count and card size measured with the feature on and
   off.
