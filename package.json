@@ -1,6 +1,6 @@
 {
   "name": "@dat999zx/knowl",
-  "version": "2.15.2",
+  "version": "2.16.0",
   "description": "A Knowledge Operating System for AI Agents",
   "main": "dist/index.js",
   "type": "module",

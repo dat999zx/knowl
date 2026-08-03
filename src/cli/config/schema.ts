@@ -11,6 +11,8 @@ export type ConfigKey =
   | 'search.vector.dtype'
   | 'search.vector.pooling'
   | 'search.vector.cacheDir'
+  | 'search.transcripts.enabled'
+  | 'search.transcripts.share'
   | 'ai.provider'
   | 'ai.model'
   | 'ai.temperature'
@@ -122,6 +124,18 @@ export const CONFIG_FIELDS: ConfigField[] = [
     key: 'search.vector.cacheDir', category: 'Search', type: 'string', parse: String,
     label: 'Model cache folder',
     description: 'Where downloaded model files are kept. Blank uses the default location.',
+  },
+  {
+    key: 'search.transcripts.enabled', category: 'Search', type: 'boolean',
+    parse: booleanValue, defaultValue: false,
+    label: 'Transcript search',
+    description: 'Search this repo\'s past Claude Code sessions. Builds a separate index the first time you run `knowl reindex --transcripts`.',
+  },
+  {
+    key: 'search.transcripts.share', category: 'Search', type: 'boolean',
+    parse: booleanValue, defaultValue: false,
+    label: 'Share transcripts with workspace',
+    description: 'Let linked workspace repos search this repo\'s transcripts, read-only. Has no effect unless transcript search is on.',
   },
   {
     key: 'security.rejectSecrets', category: 'Security', type: 'boolean',

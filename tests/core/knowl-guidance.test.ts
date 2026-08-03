@@ -21,36 +21,64 @@ const EXPECTED_TOOLS = [
   'knowl_timeline', 'knowl_evidence_list', 'knowl_conflicts', 'knowl_feedback',
   'knowl_skill_list', 'knowl_skill_read', 'knowl_skill_run', 'knowl_skill_create',
   'knowl_ingest', 'knowl_synthesize', 'knowl_session_finish', 'knowl_gc_preview', 'knowl_gc_apply',
+  'knowl_handoff',
+  'knowl_park', 'knowl_resume',
 ] as const;
 
 const EXPECTED_CLAUDE_CARD = [
   'KNOWL WORKFLOW - for project work.',
   'Start: use a relevant active lifecycle hit; else call knowl_query with 2-6 keywords before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
   'Mode: Claude hooks own lifecycle. Never call knowl_task_start, knowl_task_checkpoint, knowl_task_finish, or knowl_session_finish while active.',
-  'Manual fallback: one bounded command uses knowl task run; resumable work uses knowl_task_start once, knowl_task_checkpoint at meaningful milestones/blockers with its taskId, and knowl_task_finish once after verification.',
-  'Route:',
-  '- retrieval: knowl_query; knowl_recent only without bootstrap or for refresh; knowl_state for broad state; knowl_context for a token-budgeted pack.',
-  '- durable memory: knowl_store one atom; knowl_ingest_atoms a batch; knowl_decide a confirmed choice; knowl_update a stale or contradicted item.',
-  '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
-  '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',
-  '- special: knowl_ingest only for explicit raw-source ingestion, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an explicitly owned manual session; knowl_gc_preview before maintenance; knowl_gc_apply only after preview and explicit approval.',
-  'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
+  'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
+  'Route by what you need; the tool list names them:',
+  '- retrieval: knowl_query first. Recent context only without bootstrap or for a refresh, broad state for status, a packed context only when a token budget is given.',
+  '- durable memory: store one verified atom, batch several, record a confirmed decision, or correct a stale one. Correct rather than duplicate.',
+  '- audit: inspect history, evidence or conflicts when needed; record feedback only after actual use or correction.',
+  '- skills: read a matching skill before running a trusted entrypoint; create one only on explicit request.',
+  '- special: raw-source ingest only on an explicit request, never silent chat; synthesis only for an explicit scope; preview garbage collection first and apply only after approval.',
+  '- leaving work: one baton the next session here consumes once, or a key the user keeps and hands back any time later, from anywhere.',
+  'During work, store or update verified durable findings; never raw transcripts, secrets, or routine command noise.',
 ].join('\n');
 
 const namesIn = (text: string) => [...new Set(text.match(/\bknowl_[a-z_]+\b/g) ?? [])].sort();
 
+/**
+ * The only tool names the compact card is required to carry.
+ *
+ * `knowl_query` because "call this first, before files" is sequencing *across* tools, which no
+ * single tool's description can state. The lifecycle four because "never call these while hooks
+ * are active" is a prohibition, and a tool's own description is the last place a caller looks
+ * for one.
+ *
+ * Everything else is deliberately absent -- see the note on `renderCompactKnowlGuidance`.
+ */
+const CARD_MUST_NAME = [
+  'knowl_query',
+  'knowl_task_start', 'knowl_task_checkpoint', 'knowl_task_finish', 'knowl_session_finish',
+] as const;
+
+/** Every routing group the compact card has to cover, and a phrase that proves it does. */
+const CARD_MUST_ROUTE: Array<[string, RegExp]> = [
+  ['retrieval', /retrieval:/],
+  ['durable memory', /durable memory:/],
+  ['audit', /audit:/],
+  ['skills', /skills:/],
+  ['special', /special:/],
+  ['leaving work', /leaving work:/],
+];
+
 describe('canonical Knowl agent guidance', () => {
-  it('defines seven groups and the exact 24-tool inventory', () => {
-    expect(KNOWL_MCP_TOOL_GROUPS).toHaveLength(7);
+  it('defines nine groups and the exact 27-tool inventory', () => {
+    expect(KNOWL_MCP_TOOL_GROUPS).toHaveLength(9);
     expect(KNOWL_MCP_TOOL_NAMES).toEqual(EXPECTED_TOOLS);
-    expect(new Set(KNOWL_MCP_TOOL_NAMES).size).toBe(24);
+    expect(new Set(KNOWL_MCP_TOOL_NAMES).size).toBe(27);
     expect(KNOWL_MCP_TOOL_NAMES).not.toContain('knowl_ask');
   });
 
-  it('renders every tool into the full and compact guidance', () => {
+  it('renders every tool into the full guidance, which is where the inventory belongs', () => {
+    // The full guidance is written once per repo as a file, not paid per session, so it can
+    // afford to name everything -- and it is the right place for someone to look one up.
     expect(namesIn(renderFullKnowlGuidance())).toEqual([...EXPECTED_TOOLS].sort());
-    expect(namesIn(KNOWL_CLAUDE_OPERATIONAL_CARD)).toEqual([...EXPECTED_TOOLS].sort());
-    expect(namesIn(KNOWL_MCP_SERVER_INSTRUCTIONS)).toEqual([...EXPECTED_TOOLS].sort());
     expect(renderManagedKnowlGuidanceSection()).toContain('<!-- KNOWL_PROJECT_MEMORY -->');
     expect(renderFullKnowlGuidance()).not.toContain('KNOWL_PROJECT_MEMORY');
     expect(renderFullKnowlGuidance()).toContain('Casual conversation, a single memory lookup, and trivial non-resumable work do not create a manual task loop.');
@@ -58,10 +86,47 @@ describe('canonical Knowl agent guidance', () => {
     expect(renderFullKnowlGuidance()).toContain('never a hook session');
   });
 
+  it('carries policy in the compact card, not an inventory', () => {
+    // The card used to name all 27 tools, which made it grow with the inventory until it sat
+    // six characters under the ceiling. Measured against that: the same MCP handshake already
+    // delivers tools/list -- 22,394 characters including every name and 6,195 of descriptions.
+    // Names are not what an agent lacks; sequencing and prohibitions are.
+    for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS]) {
+      // Only the names that carry policy a description cannot.
+      for (const required of CARD_MUST_NAME) expect(card).toContain(required);
+
+      // No name may appear that is not a real tool -- a card naming something the server does
+      // not expose sends the agent looking for a tool that is not there.
+      for (const named of namesIn(card)) expect(EXPECTED_TOOLS).toContain(named);
+
+      // Every capability still has to be routable, or a group silently drops out of guidance
+      // the moment someone shortens a line to buy room.
+      for (const [group, pattern] of CARD_MUST_ROUTE) {
+        expect(card, `card lost routing for "${group}"`).toMatch(pattern);
+      }
+    }
+  });
+
+  it('does not grow when a tool is added, only when a capability is', () => {
+    // The property that replaced the every-name assertion. 22 of 27 tools are unnamed here by
+    // design, so a 28th within an existing group costs the card nothing.
+    const named = namesIn(KNOWL_MCP_SERVER_INSTRUCTIONS);
+    expect(named.length).toBeLessThan(EXPECTED_TOOLS.length);
+    expect(named.sort()).toEqual([...CARD_MUST_NAME].sort());
+  });
+
   it('keeps both compact renderings bounded and front-loads the required action', () => {
     expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toBe(EXPECTED_CLAUDE_CARD);
-    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_695);
-    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_746);
+    // The binding limit is the transcript-enabled card in tests/transcripts/mcp-gating.test.ts,
+    // which carries one more line. Check that budget first.
+    //
+    // These lengths are pinned so a change to the card is deliberate, not so they must never
+    // move. What must not move is the *shape*: the card no longer scales with the tool count
+    // (see 'does not grow when a tool is added'), so a new tool inside an existing group should
+    // leave both numbers untouched. If adding a tool changes them, something re-introduced the
+    // inventory the card stopped carrying.
+    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_718);
+    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_769);
     for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS]) {
       expect(card.length).toBeLessThan(2_000);
       expect(card.slice(0, 512)).toContain('knowl_query');
@@ -82,7 +147,7 @@ describe('canonical Knowl agent guidance', () => {
     const documentedTools = [...readme.matchAll(/^\| \`(knowl_[a-z_]+)\` \|/gm)]
       .map(match => match[1]);
     expect(documentedTools).toEqual([...KNOWL_MCP_TOOL_NAMES]);
-    expect(new Set(documentedTools).size).toBe(24);
+    expect(new Set(documentedTools).size).toBe(27);
     expect(readme).toContain('KNOWL.md');
     expect(readme).toContain('GEMINI.md');
     expect(readme).toContain('agent-reminder claude --json');

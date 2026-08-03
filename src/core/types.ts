@@ -244,6 +244,16 @@ export interface ProjectConfig {
       pooling?: 'mean' | 'cls';
       cacheDir?: string;
     };
+    /**
+     * Searchable session transcripts. Off by default: enabling it creates a second
+     * database and registers two more MCP tools, which costs guidance-card space in
+     * every session of every user -- including those who never search a transcript.
+     */
+    transcripts?: {
+      enabled?: boolean;
+      /** Let linked workspace repos open this index read-only. Requires `enabled`. */
+      share?: boolean;
+    };
   };
   memory?: {
     organization?: { enabled?: boolean; path?: string };

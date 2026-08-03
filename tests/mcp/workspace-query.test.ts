@@ -16,6 +16,14 @@ const HOME = path.resolve('./.knowl-mcpws-home');
 const A = path.resolve('./.knowl-mcpws-a');
 const B = path.resolve('./.knowl-mcpws-b');
 const SOLO = path.resolve('./.knowl-mcpws-solo');
+// These tests query through the MCP path, which embeds the query whenever vector search is
+// enabled -- and DEFAULT_CONFIG enables it. The pipeline is cached per cacheDir, which
+// defaults to `<projectRoot>/.knowl/models`, so leaving it unset makes every fixture root
+// materialise its own copy of the model into a directory beforeEach then deletes. That cost
+// (~10s per root, unbounded when it has to fetch) is what pushed this file past the 30s
+// testTimeout under parallel workers. Sharing the repo's own cache, as write-embedding.test
+// does, means the model loads once and every test after it runs in milliseconds.
+const MODEL_CACHE = path.resolve('./.knowl/models');
 
 class InMemoryTransport {
   onclose?: () => void;
@@ -49,7 +57,10 @@ async function callTool(root: string, config: ProjectConfig, name: string, args:
 
 async function seed(root: string, name: string, items: Array<{ title: string; content: string; visibility: string }>) {
   await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
-  await saveConfig(root, { ...DEFAULT_CONFIG });
+  await saveConfig(root, {
+    ...DEFAULT_CONFIG,
+    search: { ...DEFAULT_CONFIG.search, vector: { ...DEFAULT_CONFIG.search?.vector, cacheDir: MODEL_CACHE } },
+  });
   await initDb(root);
   const projectId = (await repo.createProject(root, name)).id;
   for (const item of items) {

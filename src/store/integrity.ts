@@ -2,12 +2,17 @@ import { sql } from 'drizzle-orm';
 import { KnowledgeWriteValidationOptions } from '../core/types.js';
 import { KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { getDb } from './database.js';
+import { isNormalizedConflictKey, normalizeConflictKey } from './conflicts.js';
+import { supersedeKnowledgeItem } from './repository.js';
 
 export type IntegrityFinding = {
-  code: 'secret' | 'dangling-reference' | 'missing-index-row' | 'invalid-json' | 'invalid-status';
+  code: 'secret' | 'dangling-reference' | 'missing-index-row' | 'invalid-json' | 'invalid-status'
+    | 'raw-conflict-key' | 'duplicate-conflict-identity';
   severity: 'error' | 'warning';
   itemId?: string;
   detail: string;
+  /** Present only on a repairing audit, so a report-only run stays exactly as it was. */
+  repaired?: boolean;
 };
 
 export type IntegrityReport = { findings: IntegrityFinding[] };
@@ -26,8 +31,80 @@ function parseStringArray(value: unknown): string[] | null | undefined {
   }
 }
 
+/**
+ * Conflict identities stored raw, and the duplicates that repairing them exposes.
+ *
+ * A key written through the update path used to bypass normalization, so one logical identity
+ * could sit raw in one row and normalized in another and never collide. Normalizing is what
+ * makes the collision visible -- which is why the repair has to settle it in the same pass,
+ * or it hands back a database with two active rows claiming one exclusive identity.
+ */
+async function auditConflictIdentities(db: any, repair: boolean): Promise<IntegrityFinding[]> {
+  const findings: IntegrityFinding[] = [];
+
+  const stored = await db.all(sql`SELECT id, conflict_key FROM knowledge_items WHERE conflict_key IS NOT NULL`);
+  for (const row of stored) {
+    const key = String(row.conflict_key);
+    if (isNormalizedConflictKey(key)) continue;
+    const normalized = normalizeConflictKey(key);
+    if (repair) {
+      await db.run(sql`UPDATE knowledge_items SET conflict_key = ${normalized} WHERE id = ${row.id}`);
+      // The assertion history is what conflict auditing and knowl_timeline read back, so
+      // leaving it raw would keep the divergence alive in the record of what was claimed.
+      await db.run(sql`UPDATE knowledge_assertions SET conflict_key = ${normalized} WHERE knowledge_item_id = ${row.id} AND conflict_key = ${key}`);
+    }
+    findings.push({
+      code: 'raw-conflict-key',
+      severity: 'warning',
+      itemId: String(row.id),
+      detail: repair
+        ? `Conflict key "${key}" was stored raw and has been normalized to "${normalized}".`
+        : `Conflict key "${key}" is stored raw, so it cannot collide with the same identity stored normally.`,
+      repaired: repair,
+    });
+  }
+
+  const active = await db.all(sql`
+    SELECT id, conflict_key, conflict_scope, updated_at FROM knowledge_items
+    WHERE status = 'active' AND conflict_exclusive = 1 AND conflict_key IS NOT NULL
+  `);
+  const groups = new Map<string, Array<{ id: string; updatedAt: string }>>();
+  for (const row of active) {
+    const identity = `${row.conflict_key} / ${row.conflict_scope ?? 'no scope'}`;
+    const bucket = groups.get(identity) ?? [];
+    bucket.push({ id: String(row.id), updatedAt: String(row.updated_at ?? '') });
+    groups.set(identity, bucket);
+  }
+  for (const [identity, bucket] of groups) {
+    if (bucket.length < 2) continue;
+    // The newest row wins and the rest are superseded into it -- the direction every other
+    // replacement in this store runs. Ties break on id so a repair is deterministic.
+    const [winner, ...losers] = [...bucket]
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
+    for (const loser of losers) {
+      if (repair) await supersedeKnowledgeItem(loser.id, winner.id);
+      findings.push({
+        code: 'duplicate-conflict-identity',
+        // A warning, not an error, because `restoreSnapshot` refuses any snapshot whose audit
+        // reports an error. These duplicates exist precisely because of the bug fixed here, so
+        // treating them as fatal would make a user's existing backups unrestorable over data
+        // this same audit can repair in place.
+        severity: 'warning',
+        itemId: loser.id,
+        detail: repair
+          ? `Superseded by ${winner.id}; both claimed the exclusive identity ${identity}.`
+          : `Shares the exclusive identity ${identity} with ${winner.id}.`,
+        repaired: repair,
+      });
+    }
+  }
+
+  return findings;
+}
+
 export async function auditKnowledgeStore(
   validationOptions?: KnowledgeWriteValidationOptions,
+  options: { repair?: boolean } = {},
 ): Promise<IntegrityReport> {
   const db = getDb() as any;
   const findings: IntegrityFinding[] = [];
@@ -81,6 +158,8 @@ export async function auditKnowledgeStore(
   for (const row of dangling) {
     findings.push({ code: 'dangling-reference', severity: 'error', itemId: String(row.knowledge_item_id), detail: 'A dependent knowledge record references a missing item.' });
   }
+
+  findings.push(...await auditConflictIdentities(db, options.repair === true));
 
   return { findings };
 }

@@ -29,8 +29,13 @@ import { recordKnowledgeFeedback } from '../store/access-feedback.js';
 import { flagCorrectionSiblingsBestEffort } from '../store/blast-radius.js';
 import { applyFeedbackToTierBestEffort } from '../store/tier.js';
 import { finishMemorySession } from '../store/session-repository.js';
+import { formatPendingHandoffContext, recordDeliberateHandoff } from '../store/session-handoff.js';
+import { createResumePoint, formatResumeBrief, listResumePoints, readResumePoint } from '../store/resume-points.js';
+import { resumeInstruction } from '../store/resume-keys.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
+import { isTranscriptSearchEnabled } from '../transcripts/config.js';
+import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
 
 
 // The write engine never discards content, so a write can leave memory in one of two
@@ -78,8 +83,7 @@ export function registerTools(
 ): void {
   // 1. List tools
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-      tools: [
+    const tools: Array<Record<string, unknown>> = [
         {
           name: 'knowl_ingest',
           description: 'Process explicitly supplied raw source text through the configured Knowl AI pipeline. Use only for an explicit ingestion request; never silently ingest the current conversation or prompt.',
@@ -609,8 +613,113 @@ export function registerTools(
             required: ['name'],
           },
         },
-      ],
-    };
+        {
+          name: 'knowl_handoff',
+          description: 'Park the current workstream so the next session in this project picks it up. Delivered once, then archived - this is a pass, not a durable note. Store anything worth keeping with knowl_store.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              goal: { type: 'string', description: 'What this workstream is trying to achieve.' },
+              completed: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'What is already done.' },
+              nextAction: { type: 'string', description: 'The single next thing to do.' },
+              blocker: { type: 'string', description: 'What is in the way, if anything.' },
+              artifactRefs: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'Files or paths the next session should look at.' },
+              verificationStatus: { type: 'string', enum: ['verified', 'unverified'], description: 'Whether the work so far was checked.' },
+              // Advertised because the dispatcher reads it. An MCP client has no session of its
+              // own to report, so this is what a host that knows its session id can pass; the
+              // baton is delivered by project and host either way.
+              sessionId: { type: 'string', description: 'The host session parking this work, if known.' },
+            },
+            required: ['goal', 'nextAction'],
+          },
+        },
+        {
+          name: 'knowl_park',
+          description: 'Park a workstream the user means to return to. Mints a short key and returns a line to hand them verbatim. Unlike knowl_handoff, this is not consumed by resuming and works from any directory, any number of sessions later.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              goal: { type: 'string', maxLength: 2000, description: 'What this workstream is trying to achieve.' },
+              completed: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'What is already done.' },
+              nextAction: { type: 'string', maxLength: 2000, description: 'The next step as it stands now.' },
+              blocker: { type: 'string', maxLength: 2000, description: 'What is in the way, if anything.' },
+              artifactRefs: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'Files the returning session should look at.' },
+              verificationStatus: { type: 'string', enum: ['verified', 'unverified'], description: 'Whether the work so far was checked.' },
+              sessionId: { type: 'string', maxLength: 200, description: 'The session parking this work, if known, so the brief can point at its transcript.' },
+            },
+            required: ['goal'],
+          },
+        },
+        {
+          name: 'knowl_resume',
+          description: 'Resume a parked workstream from its key. Call this as soon as a user supplies something that looks like a resume key. With no key, lists what is parked in this project.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              key: { type: 'string', maxLength: 200, description: 'The key the user pasted, in whatever form they pasted it.' },
+            },
+          },
+        },
+    ];
+
+    // Registered only when the repo turned transcript search on. Two extra tools cost
+    // guidance-card space in every session of every user, including those who never search one.
+    const listConfig = getConfig();
+    if (listConfig && isTranscriptSearchEnabled(listConfig)) {
+      tools.push(
+        {
+          name: 'knowl_transcript_search',
+          description: 'Search this repo\'s past Claude Code session transcripts. Use after knowl_query misses. Returns pointers into the session files; store anything worth keeping with knowl_store.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string', minLength: 1, maxLength: 500,
+                description: 'What to look for, in your own words. Semantic search covers the whole archive, so the exact wording need not match.',
+              },
+              sessionId: { type: 'string', description: 'Restrict to one session. Accepts a full id or an unambiguous prefix.' },
+              repos: {
+                type: 'array', items: { type: 'string' }, maxItems: 20,
+                description: 'Restrict to these repos by name. Omit to search this repo plus every linked workspace repo that shares its transcripts.',
+              },
+              limit: { type: 'integer', minimum: 1, maximum: 25, description: 'Maximum hits; defaults to 5.' },
+            },
+            required: ['query'],
+          },
+        },
+        {
+          name: 'knowl_transcript_read',
+          description: 'Read one transcript message and the turns around it. Pass a locator from knowl_transcript_search exactly as it was returned.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              locator: {
+                type: 'string', minLength: 1, maxLength: 500,
+                description: 'A transcript://<repo>/<session>#L<line> locator from a search hit, verbatim.',
+              },
+              context: { type: 'integer', minimum: 0, maximum: 10, description: 'Prose turns to include on each side; defaults to 2.' },
+            },
+            required: ['locator'],
+          },
+        },
+        {
+          name: 'knowl_session_list',
+          description: "Browse this project's past Claude Code sessions as an inventory: best-known name (a user rename beats a generated title), the opening ask, status, any declared session card, last activity, and what each session promoted into memory. Use to answer 'which session was about X' or to choose between resuming and starting fresh - then knowl_transcript_search with that sessionId to read into it. Filters over intent only; for content questions use knowl_transcript_search.",
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string', maxLength: 500,
+                description: 'Keywords over session names, opening asks and declared cards. Omit to list newest first.',
+              },
+              limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Maximum sessions; defaults to 30.' },
+            },
+          },
+        },
+      );
+    }
+
+    return { tools };
   });
 
   // 2. Call tool
@@ -1124,6 +1233,124 @@ export function registerTools(
         const result = await runSkillPackage(projectRoot!, skillName, entrypoint || 'default', runtimeArgs || []);
         await recordSkillRun(projectId!, skillName, result.exitCode === 0);
         return { content: [{ type: 'text', text: compactMcpJson({ ...result, stdout: truncateText(result.stdout, MAX_ITEM_CONTENT_CHARS), stderr: truncateText(result.stderr, MAX_ITEM_CONTENT_CHARS), attempts: result.attempts.map(attempt => ({ entrypoint: attempt.entrypoint, exitCode: attempt.exitCode })) }) }] };
+      }
+
+      else if (name === 'knowl_handoff') {
+        const { goal, completed, nextAction, blocker, artifactRefs, verificationStatus, sessionId } = args as any;
+        const { handoff } = await recordDeliberateHandoff(projectId!, {
+          // The MCP layer is host-neutral and has no way to learn which host is calling, so a
+          // baton parked here is filed under the host whose hooks deliver it on session start.
+          host: 'claude',
+          projectRoot: projectRoot!,
+          externalSessionId: sessionId ? String(sessionId) : 'unknown',
+          taskState: {
+            goal: String(goal ?? ''),
+            nextAction: String(nextAction ?? ''),
+            completed: Array.isArray(completed) ? completed.map(String).slice(0, 20) : undefined,
+            blocker: blocker ? String(blocker) : undefined,
+            artifactRefs: Array.isArray(artifactRefs) ? artifactRefs.map(String).slice(0, 20) : undefined,
+            verificationStatus: verificationStatus === 'verified' ? 'verified' : 'unverified',
+          },
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: `Parked. The next session in this project will receive this once.\n\n${formatPendingHandoffContext(handoff)}`,
+          }],
+        };
+      }
+
+      else if (name === 'knowl_park') {
+        const { goal, completed, nextAction, blocker, artifactRefs, verificationStatus, sessionId } = args as any;
+        const point = await createResumePoint(projectRoot!, {
+          goal: String(goal ?? ''),
+          completed: Array.isArray(completed) ? completed.map(String).slice(0, 20) : undefined,
+          nextAction: nextAction ? String(nextAction) : undefined,
+          blocker: blocker ? String(blocker) : undefined,
+          artifactRefs: Array.isArray(artifactRefs) ? artifactRefs.map(String).slice(0, 20) : undefined,
+          verificationStatus: verificationStatus === 'verified' ? 'verified' : 'unverified',
+          sessionId: sessionId ? String(sessionId) : undefined,
+        });
+
+        // The instruction line, not the bare key: told only "your key is k3t9m4", people write
+        // down something the next session will not recognise as a resume request.
+        return {
+          content: [{ type: 'text', text: `Parked.\n\n${resumeInstruction(point.key)}` }],
+        };
+      }
+
+      else if (name === 'knowl_resume') {
+        const { key } = args as any;
+
+        if (key) {
+          // Looked up globally, with no project filter. A key is held by the user, and pasting
+          // one while sitting in a different repo is the normal case rather than a mistake.
+          const point = await readResumePoint(String(key));
+          if (!point) {
+            return {
+              content: [{
+                type: 'text',
+                text: 'No parked workstream for that key. Call knowl_resume with no key to list what is parked in this project.',
+              }],
+            };
+          }
+          return { content: [{ type: 'text', text: formatResumeBrief(point) }] };
+        }
+
+        const points = await listResumePoints(projectRoot!);
+        if (points.length === 0) {
+          return { content: [{ type: 'text', text: 'Nothing is parked in this project.' }] };
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: [
+              'Parked in this project:',
+              ...points.map(point => `- ${point.key}: ${point.goal} (${point.createdAt})`),
+              '',
+              'Resume one with knowl_resume and its key.',
+            ].join('\n'),
+          }],
+        };
+      }
+
+      // Both handlers re-check the gate themselves and answer with DISABLED_MESSAGE rather than
+      // throwing. A client that cached an older tool list can still call these, so the gate has
+      // to hold at dispatch and not only at listing.
+      else if (name === 'knowl_transcript_search') {
+        const { query, sessionId, repos, limit } = args as any;
+        const text = await handleTranscriptSearch({
+          config,
+          projectRoot,
+          query: String(query ?? ''),
+          sessionId: sessionId ? String(sessionId) : undefined,
+          repos: Array.isArray(repos) ? repos.map(String) : undefined,
+          limit: typeof limit === 'number' ? limit : undefined,
+        });
+        return { content: [{ type: 'text', text }] };
+      }
+
+      else if (name === 'knowl_session_list') {
+        const { query, limit } = args as any;
+        const text = await handleSessionList({
+          config,
+          projectRoot,
+          projectId,
+          query: query ? String(query) : undefined,
+          limit: typeof limit === 'number' ? limit : undefined,
+        });
+        return { content: [{ type: 'text', text }] };
+      }
+
+      else if (name === 'knowl_transcript_read') {
+        const { locator, context } = args as any;
+        const text = await handleTranscriptRead({
+          config,
+          projectRoot,
+          locator: String(locator ?? ''),
+          context: typeof context === 'number' ? context : undefined,
+        });
+        return { content: [{ type: 'text', text }] };
       }
 
       throw new Error(`Unknown tool: ${name}`);

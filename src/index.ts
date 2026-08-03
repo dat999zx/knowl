@@ -28,6 +28,8 @@ import { promoteItems } from './workspace/promote.js';
 import { existingItemsNotice, visibilityGateNotice } from './cli/workspace-visibility-notice.js';
 import { repoEntry, updateRepoSettings } from './workspace/repo-settings.js';
 import { runCliQuery } from './cli/query-command.js';
+import { runCliResume } from './cli/resume-command.js';
+import { closeResumeDb } from './store/resume-store.js';
 import { formatCrossRepoNotice } from './cli/cross-repo-notice.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
 import { resolveWorkspace } from './workspace/resolve.js';
@@ -75,6 +77,10 @@ import { synthesizeKnowledge } from './store/synthesis.js';
 import { startViewer } from './viewer/server.js';
 import { createAgentReminderOutput } from './cli/agents/reminder.js';
 import { hostProfile } from './cli/agents/hosts/index.js';
+import { rebuildTranscriptIndex } from './transcripts/backfill.js';
+import { catchUpTranscripts } from './transcripts/catch-up.js';
+import { closeTranscriptDbs } from './transcripts/database.js';
+import { applyTranscriptConfigTransition, describeTranscriptTeardown } from './transcripts/teardown.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -370,6 +376,30 @@ program
       await closeDb();
     } catch (error: any) {
       console.error(`❌ Error fetching project state: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('resume')
+  .argument('[key]', 'The key you were given when the work was parked')
+  .description('Resume a parked workstream, or list what is parked here')
+  .action(async (key?: string) => {
+    try {
+      // Resuming by key must work from anywhere, including a directory that is not a Knowl
+      // project at all -- parked work lives in the Knowl home, not in any repo. Only the
+      // "what did I leave here" listing needs a project, so only it resolves one.
+      const root = key ? undefined : await findProjectRoot(process.cwd()).catch(() => undefined);
+      const result = await runCliResume({ projectRoot: root, key });
+      if (result.kind === 'unknown-key') {
+        console.error(result.text);
+        process.exitCode = 1;
+      } else {
+        console.log(result.text);
+      }
+      await closeResumeDb();
+    } catch (error: any) {
+      console.error(`Error resuming: ${error.message}`);
       process.exit(1);
     }
   });
@@ -1094,6 +1124,10 @@ configCommand
       // resolved profile untouched, so the change reads as "no change" rather than "ignored".
       for (const line of shadowedByPresetNotice(after, key)) console.log(line);
       await announceProfileChange(root, before, after);
+      // Turning transcript search off deletes its index. Wired to every mutation path, not just
+      // the interactive editor, or this command would silently keep it.
+      const teardown = describeTranscriptTeardown(await applyTranscriptConfigTransition(root, before, after));
+      if (teardown) console.log(teardown);
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
@@ -1157,7 +1191,12 @@ configCommand
       console.log(key ? `Reset ${key}` : 'Reset all configuration to defaults');
       // A full reset moves an old repo onto the default preset, which is a model change
       // like any other -- and the one most likely to surprise, since nothing named a model.
-      await announceProfileChange(root, before, await loadConfig(root));
+      const afterReset = await loadConfig(root);
+      await announceProfileChange(root, before, afterReset);
+      // A whole-config reset turns transcript search off implicitly rather than by naming the
+      // key, which is exactly the case a key-name check would miss.
+      const teardown = describeTranscriptTeardown(await applyTranscriptConfigTransition(root, before, afterReset));
+      if (teardown) console.log(teardown);
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
@@ -1174,13 +1213,26 @@ program
   .command('reindex')
   .description('Rebuild derived search indexes')
   .option('--vectors', 'Rebuild optional vector embeddings')
+  .option('--transcripts', 'Build or update the optional session transcript index')
+  .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', parseFloat)
   .action(async (options) => {
     try {
-      if (!options.vectors) {
-        throw new Error('Nothing to reindex. Pass --vectors to rebuild vector embeddings.');
+      if (!options.vectors && !options.transcripts) {
+        throw new Error('Nothing to reindex. Pass --vectors or --transcripts.');
       }
 
-      await rebuildVectorEmbeddings(await findProjectRoot(process.cwd()));
+      const root = await findProjectRoot(process.cwd());
+      if (options.vectors) await rebuildVectorEmbeddings(root);
+
+      if (options.transcripts) {
+        const result = await rebuildTranscriptIndex(root, { budgetMinutes: options.budget });
+        console.log(`Indexed ${result.indexed} transcript message(s).`);
+        if (result.embedded > 0) console.log(`Embedded ${result.embedded} message(s).`);
+        if (result.removed > 0) console.log(`Removed ${result.removed} deleted transcript(s).`);
+        if (result.skippedEmbedding) console.log(result.skippedEmbedding);
+        if (!result.complete) console.log('Stopped early. Run the same command again to resume.');
+        await closeTranscriptDbs();
+      }
     } catch (error: any) {
       console.error(`Error reindexing: ${error.message}`);
       process.exit(1);
@@ -1565,6 +1617,12 @@ program
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not found in database.');
       const result = await handleHostLifecycleEvent(project.id, normalized);
+
+      // Best-effort and gated: returns null when transcript search is off, and never throws.
+      if (normalized.event === 'turn-stop' || normalized.event === 'session-stop') {
+        await catchUpTranscripts(root);
+      }
+
       if (result.hostOutput) console.log(JSON.stringify(result.hostOutput));
       else if (!hostProfile(normalized.host).nativeOutput) console.log(JSON.stringify(result));
       await closeDb();

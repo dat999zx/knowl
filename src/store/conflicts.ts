@@ -7,6 +7,11 @@ export function normalizeConflictKey(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '');
 }
 
+/** Whether a stored key is already in normal form. Deterministic, so it is safe to repair. */
+export function isNormalizedConflictKey(value: string): boolean {
+  return normalizeConflictKey(value) === value;
+}
+
 export function normalizeConflictScope(scope?: Record<string, unknown> | null): Record<string, unknown> | null {
   if (!scope || Object.keys(scope).length === 0) return null;
   return Object.fromEntries(Object.keys(scope).sort().map(key => [key, scope[key]]));
