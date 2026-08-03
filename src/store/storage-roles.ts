@@ -17,12 +17,18 @@ import type { ProjectConfig } from '../core/types.js';
  * them can point elsewhere, the others follow silently, and a query and a snapshot reading
  * different files is not a failure anything reports.
  */
-export type StorageRole = 'local' | 'session' | 'knowledge';
+export type StorageRole = 'local' | 'session' | 'knowledge' | 'transcripts';
 
 export type ResolvedStorage = {
   local: string;
   session: string;
   knowledge: string;
+  /**
+   * Searchable session transcripts. Deliberately its own file: a backfill of tens of
+   * thousands of rows must not contend for a write lock with the live session writing
+   * knowledge, and "feature off" should mean a file that does not exist.
+   */
+  transcripts: string;
 };
 
 export function resolveStorage(root: string, _config?: ProjectConfig): ResolvedStorage {
@@ -31,5 +37,6 @@ export function resolveStorage(root: string, _config?: ProjectConfig): ResolvedS
     local: path.join(knowlDir, 'knowl.db'),
     session: path.join(knowlDir, 'session.db'),
     knowledge: path.join(knowlDir, 'knowl.db'),
+    transcripts: path.join(knowlDir, 'transcripts.db'),
   };
 }
