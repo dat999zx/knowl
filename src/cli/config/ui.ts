@@ -6,6 +6,7 @@ import {
 } from './profile-change.js';
 import { loadConfig } from '../../core/config.js';
 import { VECTOR_PRESETS, currentPresetId } from '../../core/vector-profile.js';
+import { applyTranscriptConfigTransition, describeTranscriptTeardown } from '../../transcripts/teardown.js';
 
 // One flat list of every setting, edited in place.
 //
@@ -429,6 +430,18 @@ export async function runConfigUi(root: string, prompts: ConfigPrompts = createC
   await setConfigValues(root, [...queued.entries()].map(([key, entry]) => ({ key, raw: entry.raw })));
 
   const reindexRequested = await offerReindex(root, configBefore, prompts);
+
+  // Symmetric with offerReindex, and for the same reason: the save has already landed, so this
+  // reacts to what the config now says rather than to which key the user happened to edit.
+  // Turning transcript search off deletes its index -- an index nothing will refresh, belonging
+  // to the one user who explicitly declined to keep it.
+  if (configBefore) {
+    const teardown = describeTranscriptTeardown(
+      await applyTranscriptConfigTransition(root, configBefore, await loadConfig(root).catch(() => configBefore)),
+    );
+    if (teardown) console.log(teardown);
+  }
+
   return { saved: true, changes, reindexRequested };
 }
 

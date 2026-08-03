@@ -76,7 +76,9 @@ import { startViewer } from './viewer/server.js';
 import { createAgentReminderOutput } from './cli/agents/reminder.js';
 import { hostProfile } from './cli/agents/hosts/index.js';
 import { rebuildTranscriptIndex } from './transcripts/backfill.js';
+import { catchUpTranscripts } from './transcripts/catch-up.js';
 import { closeTranscriptDbs } from './transcripts/database.js';
+import { applyTranscriptConfigTransition, describeTranscriptTeardown } from './transcripts/teardown.js';
 
 // Load environment variables (.env file)
 dotenv.config();
@@ -1096,6 +1098,10 @@ configCommand
       // resolved profile untouched, so the change reads as "no change" rather than "ignored".
       for (const line of shadowedByPresetNotice(after, key)) console.log(line);
       await announceProfileChange(root, before, after);
+      // Turning transcript search off deletes its index. Wired to every mutation path, not just
+      // the interactive editor, or this command would silently keep it.
+      const teardown = describeTranscriptTeardown(await applyTranscriptConfigTransition(root, before, after));
+      if (teardown) console.log(teardown);
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
@@ -1159,7 +1165,12 @@ configCommand
       console.log(key ? `Reset ${key}` : 'Reset all configuration to defaults');
       // A full reset moves an old repo onto the default preset, which is a model change
       // like any other -- and the one most likely to surprise, since nothing named a model.
-      await announceProfileChange(root, before, await loadConfig(root));
+      const afterReset = await loadConfig(root);
+      await announceProfileChange(root, before, afterReset);
+      // A whole-config reset turns transcript search off implicitly rather than by naming the
+      // key, which is exactly the case a key-name check would miss.
+      const teardown = describeTranscriptTeardown(await applyTranscriptConfigTransition(root, before, afterReset));
+      if (teardown) console.log(teardown);
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
@@ -1580,6 +1591,12 @@ program
       const project = await repo.getProjectByRootPath(root);
       if (!project) throw new Error('Project not found in database.');
       const result = await handleHostLifecycleEvent(project.id, normalized);
+
+      // Best-effort and gated: returns null when transcript search is off, and never throws.
+      if (normalized.event === 'turn-stop' || normalized.event === 'session-stop') {
+        await catchUpTranscripts(root);
+      }
+
       if (result.hostOutput) console.log(JSON.stringify(result.hostOutput));
       else if (!hostProfile(normalized.host).nativeOutput) console.log(JSON.stringify(result));
       await closeDb();
