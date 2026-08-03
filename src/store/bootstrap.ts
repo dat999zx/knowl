@@ -115,6 +115,15 @@ const SCHEMA_STATEMENTS = [
     PRIMARY KEY (host, project_root, external_session_id, external_turn_id)
   );`,
 
+  // The brief is one JSON column rather than a column per field: it is written whole, read
+  // whole, and never queried by field. A schema change per new brief field would buy nothing.
+  `CREATE TABLE IF NOT EXISTS resume_points (
+    key TEXT PRIMARY KEY,
+    project_dir TEXT NOT NULL,
+    brief TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );`,
+
   `CREATE TABLE IF NOT EXISTS mcp_call_commits (
     id TEXT PRIMARY KEY, project_root TEXT NOT NULL, tool_name TEXT NOT NULL,
     from_rowid INTEGER NOT NULL, to_rowid INTEGER NOT NULL, created_at TEXT NOT NULL
@@ -184,6 +193,7 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_mcp_call_commits_lookup ON mcp_call_commits(project_root, tool_name, created_at);`,
   `CREATE INDEX IF NOT EXISTS idx_host_session_bindings_memory ON host_session_bindings(memory_session_id);`,
   `CREATE INDEX IF NOT EXISTS idx_host_session_bindings_session ON host_session_bindings(host, project_root, external_session_id, active);`,
+  `CREATE INDEX IF NOT EXISTS idx_resume_points_project ON resume_points(project_dir, created_at);`,
 
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
