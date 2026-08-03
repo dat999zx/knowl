@@ -910,14 +910,14 @@ describe('MCP Server Layer', () => {
         markdown: '# Run App\n\nUse this to start the app.\n',
         files: [
           {
-            path: 'run.cmd',
-            content: '@echo off\r\necho mcp-skill-ok\r\n',
+            path: 'run.js',
+            content: "console.log('mcp-skill-ok');\n",
           },
         ],
         entrypoints: {
           default: {
             type: 'script',
-            path: 'run.cmd',
+            path: 'run.js',
             autoRun: true,
           },
         },

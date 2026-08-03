@@ -30,9 +30,9 @@ describe('CLI learned skills', () => {
       '--markdown',
       '# Run App\n\nUse this to start the app.\n',
       '--file',
-      'run.cmd=@echo off\r\necho cli-skill-ok\r\n',
+      "run.js=console.log('cli-skill-ok');\n",
       '--script',
-      'run.cmd',
+      'run.js',
     ], {
       cwd: TEST_DIR,
       encoding: 'utf-8',
