@@ -12,12 +12,27 @@ export const PROVIDER_OUTAGE_URGENCY = 'high';
 export const INTERRUPTED_URGENCY = 'high';
 export const GENERIC_FAILURE_URGENCY = 'high';
 
-export type SessionFailureKind =
-  | 'rate_limit'
-  | 'auth'
-  | 'provider_outage'
-  | 'interrupted'
-  | 'failed';
+/**
+ * Every kind a pending handoff can carry.
+ *
+ * `handoff` is the one that is not a failure: the user parked a workstream deliberately. It
+ * rides the same slot, claim and delivery machinery as a crash, because none of that differs --
+ * only the opening the receiving session should read.
+ *
+ * A single `const` the type, the writer and the parser all derive from. They used to be two
+ * hand-maintained copies, and the parser's copy was the shorter one: a kind added to the type
+ * was written successfully and then dropped on every read, with nothing to notice at write time.
+ */
+export const SESSION_HANDOFF_KINDS = [
+  'handoff',
+  'rate_limit',
+  'auth',
+  'provider_outage',
+  'interrupted',
+  'failed',
+] as const;
+
+export type SessionFailureKind = typeof SESSION_HANDOFF_KINDS[number];
 
 export type HandoffTaskState = {
   goal?: string;
@@ -164,7 +179,9 @@ function parseHandoffContent(content: string): PendingHandoff | null {
   try {
     const parsed = JSON.parse(content) as PendingHandoff;
     if (!parsed || typeof parsed !== 'object') return null;
-    if (!['rate_limit', 'auth', 'provider_outage', 'interrupted', 'failed'].includes(parsed.kind)) return null;
+    // Derived, never a second copy: a hand-maintained duplicate here is what made a newly
+    // added kind unreadable.
+    if (!(SESSION_HANDOFF_KINDS as readonly string[]).includes(parsed.kind)) return null;
     if (!parsed.failedAt || !parsed.host || !parsed.projectRoot || !parsed.externalSessionId) return null;
     return parsed;
   } catch {
