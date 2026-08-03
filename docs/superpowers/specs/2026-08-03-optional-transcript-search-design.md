@@ -40,10 +40,16 @@ without explicit sharing, session browsing (a separate feature).
 
 Surfaced as a toggle in `knowl config` beside the vector settings.
 
-The gate is not decoration. The MCP guidance card was measured at 1,917 / 2,000
-characters in PR #8 — nearly full. Registering these tools unconditionally taxes
-every session of every user, including those who never search a transcript.
-Off by default means zero card space and zero tokens for them.
+The gate is not decoration. The MCP guidance card is a token cost paid by every
+session of every user. Measured on `main`: `KNOWL_MCP_SERVER_INSTRUCTIONS` is
+**1,746 characters** and `KNOWL_CLAUDE_OPERATIONAL_CARD` **1,695**, against a
+2,000 ceiling. One added Route line brings the server card to **1,885** — inside
+the ceiling, but spending more than half the remaining headroom on a feature most
+repos will not enable. Off by default means those users keep their 1,746 and
+never learn these tools exist.
+
+(PR #8 reported 1,917 / 2,000. That is PR #8's branch, which adds a tool this
+design does not.)
 
 There is no partial state: enabled with an incomplete index reports its coverage
 (see §6), and disabling deletes the database file.
