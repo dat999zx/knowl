@@ -2137,5 +2137,20 @@ program
     }
   });
 
+// --- 17. STARTUP DIAGNOSTICS ---
+program
+  .command('diagnose-startup')
+  .description('Report why `knowl serve` startups were slow: per-phase timings, SQLite contention, stalls and host kills')
+  .option('--since <hours>', 'How far back to look', '48')
+  .action(async (options) => {
+    const { formatStartupReport } = await import('./cli/startup-report.js');
+    const hours = Number(options.since);
+    if (!Number.isFinite(hours) || hours <= 0) {
+      console.error('--since must be a positive number of hours');
+      process.exit(1);
+    }
+    console.log(formatStartupReport(hours));
+  });
+
 // Parse commands
 program.parse(process.argv);
