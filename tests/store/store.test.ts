@@ -45,11 +45,13 @@ describe('Storage Layer', () => {
   });
 
   
-  it('sets sqlite busy_timeout on every connection', async () => {
+  it('sets sqlite busy_timeout on every connection, and does not undercut the pool', async () => {
     const client = getClient();
     const result = await client.execute('PRAGMA busy_timeout;');
     const value = Number((result.rows[0] as any).busy_timeout ?? (result.rows[0] as any)[0] ?? Object.values(result.rows[0] as any)[0]);
-    expect(value).toBe(5000);
+    // The pool sets 10000 before bootstrap runs. Bootstrap's own base statements used to set
+    // 5000, silently halving it for the life of the connection; the two must agree.
+    expect(value).toBe(10000);
   });
 
   it('should use local project identity without persisted project metadata', async () => {

@@ -1,12 +1,37 @@
 import { Client } from '@libsql/client';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
-import { assertSchemaSupported, stampSchemaVersion } from './schema-version.js';
+import { assertSchemaSupported, KNOWL_SCHEMA_VERSION, readSchemaVersion, stampSchemaVersion } from './schema-version.js';
 
+/**
+ * Is this database already at the version this build ships?
+ *
+ * `PRAGMA user_version` is a 4-byte read at a fixed offset in the file header, so this is
+ * O(1) regardless of database size, and in WAL it never blocks on a writer. A database
+ * *newer* than this build is not handled here -- `assertSchemaSupported` refuses it before
+ * this is reached, because "newer than me" must be a refusal rather than a shrug.
+ */
+async function isSchemaCurrent(client: Client): Promise<boolean> {
+  return (await readSchemaVersion(client)) === KNOWL_SCHEMA_VERSION;
+}
+
+/**
+ * Per-CONNECTION setup, and deliberately outside the version gate below.
+ *
+ * `busy_timeout` and `foreign_keys` are connection state, not file state: they are not
+ * persisted, so every connection has to set them however current the schema is. Re-issuing
+ * `journal_mode = WAL` on a file already in WAL is free -- measured lock-free against a held
+ * write lock -- and WAL *is* persisted, so this is the one statement here that usually does
+ * nothing. It stays because libsql does not default to WAL, and the version gate's cheap
+ * lock-free read depends on being in WAL.
+ */
 const BASE_STATEMENTS = [
   // Must come first: journal_mode = WAL (and everything after it) takes locks, and a
   // connection's default busy_timeout is 0. Applied last, a concurrent writer at that
   // instant fails this whole bootstrap with SQLITE_BUSY instead of waiting for it.
-  'PRAGMA busy_timeout = 5000;',
+  //
+  // Matches the pool's own timeout rather than undercutting it: at 5000 this silently halved
+  // the 10000 `acquireClient` had set moments earlier, for the life of the connection.
+  'PRAGMA busy_timeout = 10000;',
   'PRAGMA foreign_keys = ON;',
   'PRAGMA journal_mode = WAL;',
 ];
@@ -631,25 +656,88 @@ async function migrateLegacyProjectSchema(client: Client): Promise<void> {
  * Directly bootstraps the schema using SQL commands.
  * This keeps the binary self-contained and free from file migration dependencies.
  */
+/**
+ * Bring the schema up to date, at most once across every process on the machine.
+ *
+ * **The steady-state open path is read-only.** That is the whole design. Knowl runs one
+ * process per connected session plus whatever is started from a terminal, and every one of
+ * them used to run this in full: a legacy migration, ~40 `CREATE TABLE IF NOT EXISTS`, ten
+ * `PRAGMA table_info` + conditional `ALTER TABLE` passes, and two data repairs. Measured,
+ * most of that is genuinely free -- SQLite compiles a no-op `CREATE TABLE IF NOT EXISTS` to
+ * a *read* transaction, so it takes no lock at all. Two things were not free: the assertion
+ * backfill, whose `INSERT..SELECT` takes a write lock before it knows it will insert nothing,
+ * and (already fixed) an unconditional version stamp.
+ *
+ * But cost was never the real defect. **The ten column passes are check-then-act across
+ * processes.** Two processes that both observe a column missing both issue the `ALTER`, and
+ * the loser dies on `duplicate column name` -- a `SQLITE_ERROR`, invisible to `busy_timeout`
+ * and unreachable by any BUSY retry. Reproduced against this code at 1 in 96 cold-start
+ * opens with twelve processes racing. It fires exactly when a column is genuinely absent:
+ * the first opens after an upgrade adds one, which is precisely when many sessions restart
+ * at once.
+ *
+ * So: read the version first (an O(1) header read, lock-free in WAL) and do nothing at all
+ * when it is current. Only a database that actually needs work takes a lock, and it is
+ * `BEGIN IMMEDIATE` -- never `DEFERRED`, which upgrades a read transaction to a write one
+ * and is answered with `SQLITE_BUSY_SNAPSHOT` that no busy handler is allowed to wait out.
+ * The version is re-read *under* the lock, so processes that queued behind the winner see
+ * the finished work and leave. Measured over eight racing processes: IMMEDIATE elects one
+ * migrator and the other seven skip cleanly; DEFERRED killed seven of eight; no election at
+ * all applied the migration eight times.
+ *
+ * Everything, stamp included, commits as one transaction, so a process killed mid-migration
+ * leaves the database exactly as it found it.
+ */
 export async function bootstrapSchema(
   client: Client,
   options: { profileFingerprint?: string | null } = {},
 ): Promise<void> {
+  // Connection state, not file state -- every connection needs these however current the
+  // schema is, so they sit outside the gate. All three are free when nothing changes.
   await executeAll(client, BASE_STATEMENTS);
+
   // Before any migration touches the file. Running migrateLegacyProjectSchema against a
   // database written by a newer Knowl is the case this exists to prevent.
   await assertSchemaSupported(client, '(open database)');
-  await migrateLegacyProjectSchema(client);
-  await executeAll(client, SCHEMA_STATEMENTS);
-  await ensureFreshnessColumns(client);
-  await ensureQualityColumns(client);
-  await ensureConflictColumns(client);
-  await ensureOwnershipColumns(client);
-  await ensureMemorySessionColumns(client);
-  await ensureHostSessionBindingColumns(client);
-  await ensureCodeIndexColumns(client);
-  await ensureEmbeddingProfileColumns(client, options.profileFingerprint ?? null);
-  await backfillKnowledgeAssertions(client);
-  await repairSkillForeignKeys(client);
-  await stampSchemaVersion(client);
+
+  if (await isSchemaCurrent(client)) return;
+
+  // Exactly one migrator. IMMEDIATE takes the write lock up front rather than upgrading into
+  // it, which is what makes the losers wait politely instead of failing.
+  await client.execute('BEGIN IMMEDIATE');
+  try {
+    // The winner may have finished while this process waited for the lock. Re-reading here
+    // is what turns a queue of migrators into a queue of no-ops.
+    if (await isSchemaCurrent(client)) {
+      await client.execute('COMMIT');
+      return;
+    }
+
+    // `PRAGMA foreign_keys` is silently IGNORED inside a transaction -- verified, it still
+    // reads 1 after being set to 0 -- so the table rebuilds below cannot use it here.
+    // `defer_foreign_keys` is the in-transaction equivalent: enforcement is postponed to
+    // COMMIT, which also means an inconsistent rebuild fails loudly instead of persisting.
+    await client.execute('PRAGMA defer_foreign_keys = ON;');
+
+    await migrateLegacyProjectSchema(client);
+    await executeAll(client, SCHEMA_STATEMENTS);
+    await ensureFreshnessColumns(client);
+    await ensureQualityColumns(client);
+    await ensureConflictColumns(client);
+    await ensureOwnershipColumns(client);
+    await ensureMemorySessionColumns(client);
+    await ensureHostSessionBindingColumns(client);
+    await ensureCodeIndexColumns(client);
+    await ensureEmbeddingProfileColumns(client, options.profileFingerprint ?? null);
+    await backfillKnowledgeAssertions(client);
+    await repairSkillForeignKeys(client);
+    await stampSchemaVersion(client);
+
+    await client.execute('COMMIT');
+  } catch (error) {
+    // Best-effort: if the transaction is already gone the rollback throws, and surfacing
+    // that instead of the real failure would hide why the migration died.
+    await client.execute('ROLLBACK').catch(() => {});
+    throw error;
+  }
 }

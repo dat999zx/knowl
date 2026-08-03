@@ -38,14 +38,20 @@ export async function acquireClient(
       clients.set(key, client);
       return client;
     } catch (error) {
-      // Opening runs bootstrap, which migrates and creates tables -- real writes, against a
-      // database other live sessions are also writing to. A lock lost here is transient and
-      // the whole command dies on it, so it is retried rather than surfaced. Not folded into
-      // busy_timeout: some statements (schema changes among them) return BUSY without ever
-      // consulting the busy handler, so waiting longer inside SQLite would not have helped.
+      // Opening can migrate, which writes, against a database other live sessions are also
+      // writing to. A lock lost here is transient and the whole command would die on it, so
+      // it is retried rather than surfaced.
       //
-      // This waiting is only safe because the MCP handshake no longer sits behind it. On the
-      // connect path it would be a bound of ~50s against the host's 30s deadline; behind the
+      // This does NOT exist because DDL bypasses the busy handler -- measured, it does not:
+      // a real CREATE TABLE waited out a rival's write transaction and then succeeded. What
+      // genuinely bypasses the handler is a transaction UPGRADE, a reader turning into a
+      // writer, which SQLite answers with SQLITE_BUSY_SNAPSHOT rather than waiting, to avoid
+      // deadlock. `bootstrapSchema` avoids that by taking BEGIN IMMEDIATE up front; this
+      // loop covers what remains -- WAL still reports BUSY at open during recovery and when
+      // the last connection is cleaning up.
+      //
+      // The waiting is only safe because the MCP handshake no longer sits behind it: on the
+      // connect path it is a bound of ~50s against the host's 30s deadline, and behind the
       // handshake it is a slow first tool call under an hours-long timeout instead.
       const busy = /SQLITE_BUSY|database is locked|statements in progress/i.test(String((error as Error).message));
       if (!busy || attempt >= 4) throw error;
