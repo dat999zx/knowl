@@ -3,6 +3,7 @@ import fsPromises from 'node:fs/promises';
 import { ProjectConfig } from '../core/types.js';
 import { KnowledgeEmbedder } from '../store/vector-index.js';
 import { fingerprintProfile, resolveVectorProfile, type VectorPooling } from '../core/vector-profile.js';
+import { noteModelLoad } from '../core/startup-trace.js';
 
 type TransformersPipeline = (texts: string[], options: { pooling: VectorPooling; normalize: boolean }) => Promise<{
   data: Float32Array | number[];
@@ -124,6 +125,10 @@ export async function createLocalEmbeddingProvider(
       .then(() => true)
       .catch(() => false);
     options.onFirstLoad?.({ model: vector.model, cacheDir, cached });
+    // How long building the pipeline actually costs, recorded rather than assumed. The model
+    // was blamed for stalls it cannot cause -- serve never loads one during startup -- and the
+    // only way that claim gets settled is a number per process, per model, cold and warm.
+    const loadStartedAt = Date.now();
     if (options.loadPipeline) {
       localPipeline = await options.loadPipeline(vector.model, vector.dtype, cacheDir);
     } else {
@@ -133,6 +138,7 @@ export async function createLocalEmbeddingProvider(
         dtype: vector.dtype as any,
       }) as TransformersPipeline;
     }
+    noteModelLoad(vector.model, cached, Date.now() - loadStartedAt);
     localPipelineKey = pipelineKey;
   }
 
