@@ -10,7 +10,11 @@ import { formatInitError } from './init-error.js';
 export function registerResources(
   server: Server,
   getProjectId: () => string | null,
-  getInitError: () => string | null
+  getInitError: () => string | null,
+  // Same reason as `registerTools`: the handshake now completes before the database is open,
+  // so a read arriving early would see neither a project id nor an init error and proceed
+  // against null. Listing resources is a static literal and needs no such wait.
+  whenReady: () => Promise<void> = async () => {}
 ): void {
   // 1. List resources
   server.setRequestHandler(ListResourcesRequestSchema, async () => {
@@ -35,6 +39,7 @@ export function registerResources(
   // 2. Read resource
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
+    await whenReady();
     const initError = getInitError();
     const projectId = getProjectId();
 
