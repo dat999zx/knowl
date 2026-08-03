@@ -52,7 +52,7 @@ There is no partial state: enabled with an incomplete index reports its coverage
 
 Transcripts do not share `knowl.db`. This single choice buys four things:
 
-- **No write contention with atoms.** A 5k-row backfill cannot block the live
+- **No write contention with atoms.** A 3,700-row backfill cannot block the live
   session writing knowledge. PR #11 hit `SQLITE_BUSY` and a permanent
   `SQLITE_BUSY_SNAPSHOT` stall doing exactly this in one file.
 - **`knowl.db` stays small** and remains practical to back up.
@@ -176,7 +176,7 @@ collapses at this dimensionality and needs float32 rescoring to recover, which
 defeats the purpose). Scale is `6 / sqrt(dims)`, clipping at ~6 sigma and
 adapting to any model's dimensionality.
 
-Brute force, no ANN index: single-digit milliseconds over 5k vectors, and an ANN
+Brute force, no ANN index: single-digit milliseconds over a few thousand vectors, and an ANN
 index would need a native extension `@libsql/client` cannot load.
 
 If the embedder is missing or throws, search degrades to lexical rather than
