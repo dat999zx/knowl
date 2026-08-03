@@ -8,8 +8,8 @@ import { registerTools } from './tools.js';
 import { registerResources } from './resources.js';
 import { PACKAGE_VERSION } from '../version.js';
 import {
-  KNOWL_MCP_SERVER_INSTRUCTIONS,
   KNOWL_MCP_TOOL_NAMES,
+  mcpServerInstructions,
 } from '../core/knowl-guidance.js';
 
 export { KNOWL_MCP_TOOL_NAMES };
@@ -33,7 +33,7 @@ export function createMcpServer(
         tools: {},
         resources: {},
       },
-      instructions: KNOWL_MCP_SERVER_INSTRUCTIONS,
+      instructions: mcpServerInstructions(config),
     }
   );
 

@@ -1,3 +1,6 @@
+import type { ProjectConfig } from './types.js';
+import { isTranscriptSearchEnabled } from '../transcripts/config.js';
+
 export const KNOWL_GUIDANCE_START_MARKER = '<!-- KNOWL_PROJECT_MEMORY -->';
 export const KNOWL_GUIDANCE_END_MARKER = '<!-- /KNOWL_PROJECT_MEMORY -->';
 
@@ -89,7 +92,17 @@ export function renderManagedKnowlGuidanceSection(): string {
 export const KNOWL_CLAUDE_MODE_LINE = 'Mode: Claude hooks own lifecycle. Never call knowl_task_start, knowl_task_checkpoint, knowl_task_finish, or knowl_session_finish while active.';
 export const KNOWL_HOST_NEUTRAL_MODE_LINE = 'Mode: verified hooks, when active, own lifecycle. Never call knowl_task_start, knowl_task_checkpoint, knowl_task_finish, or knowl_session_finish while active; otherwise use the manual fallback.';
 
-function renderCompactKnowlGuidance(modeLine: string): string {
+/**
+ * One extra Route line, only when transcript search is on.
+ *
+ * The card is a token cost paid by every session of every user. Measured: 1,746 chars for the
+ * server card today, against a 2,000 ceiling. Everyone who leaves the feature off keeps their
+ * 1,746 and never learns these tools exist.
+ */
+const TRANSCRIPT_ROUTE_LINE =
+  '- transcripts: knowl_transcript_search after a knowl_query miss; knowl_transcript_read opens a hit. Promote what you use with knowl_store.';
+
+function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: boolean } = {}): string {
   return [
     'KNOWL WORKFLOW - for project work.',
     'Start: use a relevant active lifecycle hit; else call knowl_query with 2-6 keywords before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
@@ -101,12 +114,24 @@ function renderCompactKnowlGuidance(modeLine: string): string {
     '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
     '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',
     '- special: knowl_ingest only for explicit raw-source ingestion, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an explicitly owned manual session; knowl_gc_preview before maintenance; knowl_gc_apply only after preview and explicit approval.',
+    ...(options.transcripts ? [TRANSCRIPT_ROUTE_LINE] : []),
     'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
   ].join('\n');
 }
 
 export const KNOWL_CLAUDE_OPERATIONAL_CARD = renderCompactKnowlGuidance(KNOWL_CLAUDE_MODE_LINE);
 export const KNOWL_MCP_SERVER_INSTRUCTIONS = renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE);
+
+/**
+ * The server handshake card for a given project.
+ *
+ * Returns the shared constant when the feature is off, so the common case allocates nothing and
+ * stays byte-identical to what every existing test asserts.
+ */
+export function mcpServerInstructions(config: ProjectConfig | null): string {
+  if (!config || !isTranscriptSearchEnabled(config)) return KNOWL_MCP_SERVER_INSTRUCTIONS;
+  return renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE, { transcripts: true });
+}
 export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with 2-6 keywords before repository files or commands. Store or update verified durable findings. Claude hooks own lifecycle; do not start the manual task loop.';
 
 // Short per-prompt reminder (UserPromptSubmit). The full tool routing lives in

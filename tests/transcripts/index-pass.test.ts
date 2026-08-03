@@ -101,6 +101,22 @@ describe('runIndexPass', () => {
     expect(await countMessages()).toBe(0);
   });
 
+  // An unreachable archive -- network home directory, unset HOME, a machine where Claude Code
+  // has not run -- looks exactly like "every transcript was deleted" from the file list alone.
+  // Acting on that destroys the whole index, including a backfill that took hours.
+  it('does not wipe the index when the archive directory is unreadable', async () => {
+    await fs.writeFile(sessionFile('a'), line('user', 'worth keeping'));
+    await pass();
+    expect(await countMessages()).toBe(1);
+
+    const result = await runIndexPass({
+      projectRoot: PROJECT_ROOT, dbPath, projectsDir: path.join(dir, 'not-a-directory'),
+    });
+
+    expect(result.removed).toBe(0);
+    expect(await countMessages()).toBe(1);
+  });
+
   it('mirrors every message into the FTS index under its own rowid', async () => {
     await fs.writeFile(sessionFile('a'), line('user', 'embedding crash investigation'));
     await pass();

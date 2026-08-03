@@ -31,6 +31,8 @@ import { applyFeedbackToTierBestEffort } from '../store/tier.js';
 import { finishMemorySession } from '../store/session-repository.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
+import { isTranscriptSearchEnabled } from '../transcripts/config.js';
+import { handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
 
 
 // The write engine never discards content, so a write can leave memory in one of two
@@ -78,8 +80,7 @@ export function registerTools(
 ): void {
   // 1. List tools
   server.setRequestHandler(ListToolsRequestSchema, async () => {
-    return {
-      tools: [
+    const tools: Array<Record<string, unknown>> = [
         {
           name: 'knowl_ingest',
           description: 'Process explicitly supplied raw source text through the configured Knowl AI pipeline. Use only for an explicit ingestion request; never silently ingest the current conversation or prompt.',
@@ -609,8 +610,52 @@ export function registerTools(
             required: ['name'],
           },
         },
-      ],
-    };
+    ];
+
+    // Registered only when the repo turned transcript search on. Two extra tools cost
+    // guidance-card space in every session of every user, including those who never search one.
+    const listConfig = getConfig();
+    if (listConfig && isTranscriptSearchEnabled(listConfig)) {
+      tools.push(
+        {
+          name: 'knowl_transcript_search',
+          description: 'Search this repo\'s past Claude Code session transcripts. Use after knowl_query misses. Returns pointers into the session files; store anything worth keeping with knowl_store.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string', minLength: 1, maxLength: 500,
+                description: 'What to look for, in your own words. Semantic search covers the whole archive, so the exact wording need not match.',
+              },
+              sessionId: { type: 'string', description: 'Restrict to one session. Accepts a full id or an unambiguous prefix.' },
+              repos: {
+                type: 'array', items: { type: 'string' }, maxItems: 20,
+                description: 'Restrict to these repos by name. Omit to search this repo plus every linked workspace repo that shares its transcripts.',
+              },
+              limit: { type: 'integer', minimum: 1, maximum: 25, description: 'Maximum hits; defaults to 5.' },
+            },
+            required: ['query'],
+          },
+        },
+        {
+          name: 'knowl_transcript_read',
+          description: 'Read one transcript message and the turns around it. Pass a locator from knowl_transcript_search exactly as it was returned.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              locator: {
+                type: 'string', minLength: 1, maxLength: 500,
+                description: 'A transcript://<repo>/<session>#L<line> locator from a search hit, verbatim.',
+              },
+              context: { type: 'integer', minimum: 0, maximum: 10, description: 'Prose turns to include on each side; defaults to 2.' },
+            },
+            required: ['locator'],
+          },
+        },
+      );
+    }
+
+    return { tools };
   });
 
   // 2. Call tool
@@ -1124,6 +1169,33 @@ export function registerTools(
         const result = await runSkillPackage(projectRoot!, skillName, entrypoint || 'default', runtimeArgs || []);
         await recordSkillRun(projectId!, skillName, result.exitCode === 0);
         return { content: [{ type: 'text', text: compactMcpJson({ ...result, stdout: truncateText(result.stdout, MAX_ITEM_CONTENT_CHARS), stderr: truncateText(result.stderr, MAX_ITEM_CONTENT_CHARS), attempts: result.attempts.map(attempt => ({ entrypoint: attempt.entrypoint, exitCode: attempt.exitCode })) }) }] };
+      }
+
+      // Both handlers re-check the gate themselves and answer with DISABLED_MESSAGE rather than
+      // throwing. A client that cached an older tool list can still call these, so the gate has
+      // to hold at dispatch and not only at listing.
+      else if (name === 'knowl_transcript_search') {
+        const { query, sessionId, repos, limit } = args as any;
+        const text = await handleTranscriptSearch({
+          config,
+          projectRoot,
+          query: String(query ?? ''),
+          sessionId: sessionId ? String(sessionId) : undefined,
+          repos: Array.isArray(repos) ? repos.map(String) : undefined,
+          limit: typeof limit === 'number' ? limit : undefined,
+        });
+        return { content: [{ type: 'text', text }] };
+      }
+
+      else if (name === 'knowl_transcript_read') {
+        const { locator, context } = args as any;
+        const text = await handleTranscriptRead({
+          config,
+          projectRoot,
+          locator: String(locator ?? ''),
+          context: typeof context === 'number' ? context : undefined,
+        });
+        return { content: [{ type: 'text', text }] };
       }
 
       throw new Error(`Unknown tool: ${name}`);

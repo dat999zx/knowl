@@ -2,7 +2,12 @@ import fs from 'node:fs/promises';
 import type { Client } from '@libsql/client';
 import { openTranscriptDb, withWriteRetry } from './database.js';
 import { streamProseFrom, type ProseChunk } from './parse.js';
-import { discoverTranscriptFiles, type TranscriptFile } from './paths.js';
+import { defaultProjectsDir, discoverTranscriptFiles, type TranscriptFile } from './paths.js';
+
+/** Whether the transcript archive can be listed at all, as opposed to being empty. */
+async function readableDir(target: string): Promise<boolean> {
+  return fs.readdir(target).then(() => true, () => false);
+}
 
 export type IndexPassResult = {
   indexed: number;
@@ -239,15 +244,26 @@ export async function runIndexPass(input: {
 
   // Deleted transcripts first: their pointers are dead, and a search that returns them wastes a
   // file read to discover it. Cheap when nothing vanished, which is the usual case.
-  const known = await withWriteRetry(input.dbPath, async client =>
-    (await client.execute('SELECT path FROM transcript_files')).rows.map(row => String(row.path)));
+  //
+  // Gated on the archive being readable at all. "Discovery returned nothing" has two very
+  // different causes: the user deleted their transcripts, or the archive is not reachable right
+  // now -- a network home directory, an unset HOME, a machine where Claude Code has not run yet.
+  // The second is indistinguishable from the first by file list alone, and treating it as
+  // deletion destroys the entire index, including a backfill that may have taken hours. Keeping
+  // stale rows costs one wasted file read per dead pointer, and the next pass that can see the
+  // archive reclaims them.
+  const archiveReadable = await readableDir(input.projectsDir ?? defaultProjectsDir());
+  if (archiveReadable) {
+    const known = await withWriteRetry(input.dbPath, async client =>
+      (await client.execute('SELECT path FROM transcript_files')).rows.map(row => String(row.path)));
 
-  for (const knownPath of known) {
-    if (onDisk.has(knownPath)) continue;
-    await dropFileRows(input.dbPath, knownPath);
-    await withWriteRetry(input.dbPath, client =>
-      client.execute({ sql: 'DELETE FROM transcript_files WHERE path = ?', args: [knownPath] }));
-    result.removed++;
+    for (const knownPath of known) {
+      if (onDisk.has(knownPath)) continue;
+      await dropFileRows(input.dbPath, knownPath);
+      await withWriteRetry(input.dbPath, client =>
+        client.execute({ sql: 'DELETE FROM transcript_files WHERE path = ?', args: [knownPath] }));
+      result.removed++;
+    }
   }
 
   for (const file of files) {
