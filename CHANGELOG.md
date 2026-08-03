@@ -3,6 +3,82 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.16.0 — 2026-08-03
+
+### Added
+
+- **Searchable session transcripts, off by default.** Atoms are distilled and therefore lossy;
+  the raw `.jsonl` transcripts are the complete record underneath. Enable
+  `search.transcripts.enabled`, run `knowl reindex --transcripts`, and a memory miss becomes a
+  slower lookup instead of amnesia. Off means nothing exists: no database file, no registered
+  tools, no guidance-card tokens.
+
+  Only prose is indexed — user messages and assistant text, never `tool_use` or `tool_result`
+  blocks. Measured on this repository: prose is **2.7% of 80.9 MB** across 75 transcripts, which
+  is what makes the rest affordable. Rows are pointers, `(session, line, role)`, with bodies left
+  in the `.jsonl`, so the index is **under 3 MB**.
+
+  Ranking fuses BM25 with whole-corpus semantic search, so a message sharing no word with the
+  query can still win. Re-ranking a keyword shortlist structurally cannot do that — the target is
+  never in the shortlist. int8 vectors were chosen by measurement, not preference: float32 scored
+  MRR 0.662 at 106 MB, int8 **0.668 at 27 MB**, binary 0.310 (one sign bit per dimension cannot
+  hold the ranking at 384 dims).
+
+  Its own database, `.knowl/transcripts.db`, so a backfill cannot contend with the live session
+  writing knowledge, and disabling the feature deletes the file rather than orphaning it.
+
+- **`knowl_session_list`** — a browsable inventory of past sessions: best-known name, opening ask,
+  derived status, and what each session promoted into memory. The name comes from the transcript's
+  own title entries, where a user's rename beats a generated title. No session cap, and unnamed
+  sessions are included and described by their opening ask.
+
+- **`knowl_handoff`** — park a workstream so the next session in this project picks it up. `main`
+  already had a crash handoff; this adds the kind that means "I stopped on purpose", which opens
+  as planned work instead of telling the next session to go looking for damage that does not exist.
+
+- **`knowl_park` / `knowl_resume` and `knowl resume [key]`** — many parked workstreams, each under
+  a short key the user keeps and hands back from any directory, any time later. Distinct from the
+  handoff baton, which is one per project, pushed automatically, and spent on use. Keys are
+  letter-digit alternating so they cannot spell a word: a key pasted back into a prompt must read
+  as a key, not as an instruction.
+
+### Changed
+
+- **The compact guidance card carries policy, not a tool inventory.** It had reached 1,994 of its
+  2,000 characters because a test required all 27 tool names to appear, so it grew with every tool
+  added and the last feature was paid for by compressing four unrelated lines.
+
+  The same MCP handshake already delivers `tools/list` — 22,394 characters including every name
+  and 6,195 of descriptions. The card was spending its scarcest resource restating a payload
+  eleven times its size. Route lines now describe behaviour; five names remain, and only those
+  `tools/list` cannot carry: `knowl_query`, because "call this first, before files" is sequencing
+  across tools, and the four lifecycle tools, because a prohibition is not something a caller
+  looks for in the tool's own description.
+
+  Card is now 1,874 / 2,000 and a twenty-eighth tool costs it nothing. The full guidance table
+  still names everything — it is a file written once per repository, not a per-session cost.
+
+### Fixed
+
+- **A rebuild left a stale watermark that suppressed its own re-inserts.** Dropping a rewritten
+  file's rows without resetting its watermark meant the batch writer skipped every line the
+  rebuild re-read: the pass reported `rebuilt: 1, indexed: 0` and left the file unsearchable.
+
+- **`sessionId` widened a search instead of narrowing it.** `%` and `_` reached SQL unescaped in
+  two places, so `sessionId: "%"` returned hits from every indexed session — the opposite of what
+  the caller asked for. Both sites now share one escaping helper.
+
+- **A read-only database open created the file.** `file:<path>` creates, and `PRAGMA query_only`
+  applies only afterwards, so opening a workspace peer that had no index wrote an empty
+  `transcripts.db` into that repository's `.knowl/`. `?mode=ro` is not available —
+  `@libsql/client` rejects it — so the open now refuses a missing file outright.
+
+- **Disabling the feature did not revoke an already-running MCP server.** `createMcpServer`
+  captures configuration once, so a live session kept serving searches after the feature was
+  turned off, and a read recreated the index that disabling had just deleted. The handlers now
+  re-read configuration per call and fail closed if either the captured or the on-disk value says
+  disabled.
+
 ## 2.15.2 — 2026-08-03
 
 ### Fixed

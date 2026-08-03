@@ -348,6 +348,74 @@ Hooks run as separate, short-lived `knowl agent-hook` processes. They normalize 
 never start, stop, or supervise the long-lived stdio `knowl serve` process. Bounded lifecycle
 capture does not retain raw prompts, transcripts, stdout, stderr, or environment variables.
 
+### Leaving work for later
+
+Two different shapes, deliberately not merged:
+
+| | `knowl_handoff` | `knowl_park` / `knowl_resume` |
+| --- | --- | --- |
+| How many | One per project | Many at once |
+| Who holds it | The project | The user, as a short key |
+| Delivery | Pushed to the next session here | Pulled on demand, by key |
+| Spent on use | Yes, one-shot | No, resume repeatedly |
+| Reach | Next session in this repository | Any session, any directory, any time later |
+
+"I am stopping for the night, whoever picks this up should know where I left it" is a handoff.
+"Park this branch of work, I will come back to it in a fortnight" is a resume point. A parked
+baton reads as planned work rather than as a crash, because a session told it "ended before a
+clean finish" goes looking for damage that does not exist.
+
+Both are passes, not durable notes. Anything worth keeping goes to `knowl_store`.
+
+### Searchable session transcripts (optional, off by default)
+
+Atoms are distilled and therefore lossy: whatever the writer did not judge salient is gone. The
+raw Claude Code `.jsonl` transcripts are the complete record underneath. Indexing them turns a
+memory miss into a slower lookup instead of amnesia.
+
+Off by default, and off means nothing exists — no database file, no registered tools, no tokens
+spent in the guidance card.
+
+```jsonc
+// .knowl/config.json
+"search": {
+  "transcripts": {
+    "enabled": false,   // nothing is created, no MCP tools are registered
+    "share": false      // let linked workspace repos read this index
+  }
+}
+```
+
+```bash
+knowl config                                  # toggle it interactively
+knowl reindex --transcripts --budget 5        # build the index, resumable
+```
+
+What it indexes and what it costs, measured on this repository's own archive: prose is **2.7% of
+80.9 MB** across 75 transcripts. Only user messages and assistant prose are indexed; `tool_use`
+and `tool_result` blocks are skipped entirely. Rows are pointers — `(session, line, role)` — and
+message bodies stay in the `.jsonl`, so the whole index is **under 3 MB**.
+
+Ranking fuses BM25 with whole-corpus semantic search over int8 vectors, so a message that shares
+no word with your query can still win. Semantic ranking follows `search.vector.enabled`; with
+vectors off, transcript search is keyword-only and every result says so.
+
+Three tools appear only when the feature is enabled, which is why they are absent from the
+canonical tool table below:
+
+- **`knowl_session_list`** — browse past sessions: best-known name, opening ask, status, and what
+  each one promoted into memory.
+- **`knowl_transcript_search`** — search prose across sessions; returns
+  `transcript://<repo>/<session>#L<line>` locators.
+- **`knowl_transcript_read`** — open one locator with the surrounding turns.
+
+Disabling the feature **deletes** `.knowl/transcripts.db`. An index nothing will refresh is not
+something to leave on the disk of the person who just turned it off.
+
+Workspace peers may opt in with `share: true`, which lets linked repositories open the index
+read-only. Sharing is re-checked on every read, so revoking it revokes previously issued
+locators too.
+
 ### Host and subagent behavior
 
 | Host | MCP | Automatic lifecycle | Subagent lifecycle | Current session behavior or limit |
@@ -983,6 +1051,8 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 | `knowl config` / `get <key>` / `set <key> <value>` / `reset [key]` | Edit configuration interactively or from scripts |
 | `knowl config set-model <model>` | Verify, download and select a custom embedding model |
 | `knowl reindex --vectors` | Prepare the local model, re-embed every item, and drop rows from a previous model |
+| `knowl reindex --transcripts [--budget <minutes>]` | Build or update the optional session transcript index; resumable, so a budget is a stopping point rather than a rollback |
+| `knowl resume [key]` | Resume a parked workstream from its key, or list what is parked here |
 | `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access] [--tombstone-days N]` | Preview or apply duplicate, archive, compression, and tombstone maintenance |
 | `knowl pr check --since <commit> [--dry-run]` | Find drift candidates and, unless dry-run, mark them for review |
 | `knowl view [--port <port>]` | Start the local GET-only viewer |
