@@ -158,6 +158,10 @@ function matchesMessage(values: string[], needles: string[]): boolean {
 }
 
 function urgencyFor(kind: SessionFailureKind) {
+  // Unreachable from failure detection, which never returns 'handoff' -- but this is a
+  // hand-maintained kind map, and an unhandled member falling through to 'high' would tell
+  // the next reader a parked baton is burning. The same trap the kind list itself had.
+  if (kind === 'handoff') return HANDOFF_URGENCY;
   if (kind === 'rate_limit') return RATE_LIMIT_URGENCY;
   if (kind === 'auth') return AUTH_URGENCY;
   if (kind === 'provider_outage') return PROVIDER_OUTAGE_URGENCY;
