@@ -129,3 +129,39 @@ describe('lexicalRank', () => {
     }
   });
 });
+
+describe('sessionId scoping treats wildcards literally', () => {
+  // `sessionId` arrives from an MCP argument. Before escaping, `%` turned "restrict to this
+  // session" into "match every session" -- silently widening the thing the caller narrowed.
+  it('does not let % match every session', async () => {
+    await seed('alpha', line('user', 'shared subject matter'));
+    await seed('beta', line('user', 'shared subject matter'));
+    const client = await indexed();
+
+    expect(await lexicalRank(client, 'shared subject', 10, '%')).toEqual([]);
+  });
+
+  it('does not let _ stand in for a character', async () => {
+    await seed('alpha', line('user', 'shared subject matter'));
+    const client = await indexed();
+
+    expect(await lexicalRank(client, 'shared subject', 10, '_lpha')).toEqual([]);
+  });
+
+  it('still scopes by a genuine prefix', async () => {
+    await seed('alpha', line('user', 'shared subject matter'));
+    await seed('beta', line('user', 'shared subject matter'));
+    const client = await indexed();
+
+    const hits = await lexicalRank(client, 'shared subject', 10, 'alp');
+    expect(hits.map(hit => hit.sessionId)).toEqual(['alpha']);
+  });
+
+  it('matches a session whose id genuinely contains an underscore', async () => {
+    await seed('a_b', line('user', 'shared subject matter'));
+    const client = await indexed();
+
+    const hits = await lexicalRank(client, 'shared subject', 10, 'a_b');
+    expect(hits.map(hit => hit.sessionId)).toEqual(['a_b']);
+  });
+});

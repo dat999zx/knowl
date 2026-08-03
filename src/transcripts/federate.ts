@@ -4,16 +4,12 @@ import { loadConfig } from '../core/config.js';
 import { resolveStorage } from '../store/storage-roles.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
 import { isTranscriptSharingEnabled } from './config.js';
-import { openTranscriptDb } from './database.js';
+import { openTranscriptDb, TranscriptIndexMissingError } from './database.js';
 import { fuseRankings, searchTranscripts, type TranscriptHit } from './search.js';
 
 export type FederatedTranscriptHit = TranscriptHit & { repo: string };
 export type TranscriptSkipReason = 'absent' | 'not-shared' | 'unreadable';
 export type RepoCoverage = { repo: string; embedded: number; indexed: number };
-
-async function exists(target: string): Promise<boolean> {
-  return fs.access(target).then(() => true).catch(() => false);
-}
 
 /**
  * Search this repo's transcripts and, where a peer has opted in, its linked repos'.
@@ -60,8 +56,11 @@ export async function searchTranscriptsFederated(input: {
   /** One ordered list per repo, kept separate so RRF can fuse positions rather than scores. */
   const rankings: FederatedTranscriptHit[][] = [];
 
-  const search = async (repo: string, dbPath: string, readOnly: boolean) => {
-    const client = await openTranscriptDb(dbPath, { readOnly });
+  // Read-only for every repo including this one. Searching writes nothing, and a writable open
+  // creates the file -- which would resurrect an index the user deleted by turning the feature
+  // off, from a code path that only reads.
+  const search = async (repo: string, dbPath: string) => {
+    const client = await openTranscriptDb(dbPath, { readOnly: true });
     const result = await searchTranscripts({
       client,
       query: input.query,
@@ -76,8 +75,16 @@ export async function searchTranscriptsFederated(input: {
 
   if (!wanted || wanted.has(localName)) {
     const localDb = resolveStorage(input.projectRoot).transcripts;
-    if (await exists(localDb)) await search(localName, localDb, false);
-    else skipped.push({ repo: localName, reason: 'absent' });
+    try {
+      await search(localName, localDb);
+    } catch (error) {
+      // Missing is a legitimate state -- the feature was enabled but never indexed, or the
+      // index was just deleted. Anything else is a real failure worth distinguishing.
+      skipped.push({
+        repo: localName,
+        reason: error instanceof TranscriptIndexMissingError ? 'absent' : 'unreadable',
+      });
+    }
   }
 
   for (const peer of input.workspace?.peers ?? []) {
@@ -93,7 +100,11 @@ export async function searchTranscriptsFederated(input: {
     // Not `peer.databasePath` -- that is the peer's *knowledge* database. Transcripts live in
     // their own file, which is what makes "feature off" mean a file that does not exist.
     const peerDb = resolveStorage(peer.root).transcripts;
-    if (!(await exists(peerDb))) {
+
+    // Checked before reading the peer's config so a repo that simply has no index reports
+    // `absent` rather than `unreadable` -- loadConfig would fail first and mislabel it. The
+    // catch below still covers the gap between this check and the open.
+    if (!(await fs.access(peerDb).then(() => true, () => false))) {
       skipped.push({ repo: peer.name, reason: 'absent' });
       continue;
     }
@@ -105,9 +116,12 @@ export async function searchTranscriptsFederated(input: {
         skipped.push({ repo: peer.name, reason: 'not-shared' });
         continue;
       }
-      await search(peer.name, peerDb, true);
-    } catch {
-      skipped.push({ repo: peer.name, reason: 'unreadable' });
+      await search(peer.name, peerDb);
+    } catch (error) {
+      skipped.push({
+        repo: peer.name,
+        reason: error instanceof TranscriptIndexMissingError ? 'absent' : 'unreadable',
+      });
     }
   }
 

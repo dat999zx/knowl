@@ -187,3 +187,62 @@ describe('session prefix resolution', () => {
     })).toContain('content here');
   });
 });
+
+describe('disabling revokes an already-running server', () => {
+  // createMcpServer captures `config` once and registerTools closes over that snapshot, so a
+  // long-lived server would otherwise answer from startup state forever -- serving searches
+  // after the feature was turned off, and recreating the index a local read just deleted.
+  // The handlers therefore re-read config from disk. `config()` below is the stale snapshot.
+  it('refuses a search when the on-disk config says disabled', async () => {
+    const local = await makeRepo('local', line('a durable finding about caching'), false);
+    await fs.writeFile(
+      path.join(local.root, '.knowl', 'config.json'),
+      JSON.stringify({
+        version: 1,
+        security: { rejectSecrets: true, secretPatterns: [] },
+        search: { transcripts: { enabled: false }, vector: { enabled: false } },
+      }),
+    );
+
+    const output = await handleTranscriptSearch({
+      config: config(), projectRoot: local.root, query: 'caching',
+    });
+
+    expect(output).toMatch(/not enabled/i);
+    expect(output).not.toContain('a durable finding');
+  });
+
+  it('refuses a read when the on-disk config says disabled', async () => {
+    const local = await makeRepo('local', line('a durable finding about caching'), false);
+    await fs.writeFile(
+      path.join(local.root, '.knowl', 'config.json'),
+      JSON.stringify({
+        version: 1,
+        security: { rejectSecrets: true, secretPatterns: [] },
+        search: { transcripts: { enabled: false }, vector: { enabled: false } },
+      }),
+    );
+
+    expect(await handleTranscriptRead({
+      config: config(), projectRoot: local.root, locator: 'transcript://session-a#L1',
+    })).toMatch(/not enabled/i);
+  });
+
+  it('a read does not recreate an index that was deleted', async () => {
+    const local = await makeRepo('local', line('a durable finding about caching'), false);
+    const dbPath = path.join(local.root, '.knowl', 'transcripts.db');
+
+    await closeTranscriptDbs();
+    await fs.rm(dbPath, { force: true }).catch(() => {});
+    // Windows keeps the file locked for the life of the process once opened; skip rather than
+    // assert something the platform will not allow.
+    if (await fs.access(dbPath).then(() => true, () => false)) return;
+
+    const output = await handleTranscriptRead({
+      config: config(), projectRoot: local.root, locator: 'transcript://session-a#L1',
+    });
+
+    expect(output).toMatch(/no transcript index/i);
+    await expect(fs.access(dbPath)).rejects.toThrow();
+  });
+});

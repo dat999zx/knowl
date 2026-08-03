@@ -1,3 +1,4 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createClient, type Client } from '@libsql/client';
 
@@ -64,12 +65,26 @@ const clients = new Map<string, Client>();
 
 const keyFor = (dbPath: string, readOnly: boolean) => `${readOnly ? 'ro' : 'rw'}:${path.resolve(dbPath)}`;
 
+/** Thrown instead of silently creating a database that a read-only caller expected to exist. */
+export class TranscriptIndexMissingError extends Error {
+  constructor(readonly dbPath: string) {
+    super(`No transcript index at ${dbPath}.`);
+    this.name = 'TranscriptIndexMissingError';
+  }
+}
+
 /**
  * Open (and on a writable open, create) a transcripts database.
  *
  * A read-only open never bootstraps: it is used to search a linked workspace repo's index, and
  * reading a peer must not create or migrate anything it owns. `query_only` makes SQLite itself
  * enforce that rather than leaving it to convention.
+ *
+ * The existence check is load-bearing, not defensive. `file:<path>` **creates** the file, and
+ * `query_only` is only applied after the connection is open -- so a read-only open of a peer
+ * that has no index used to write an empty `transcripts.db` into that repo's `.knowl/`, which
+ * is exactly the thing "we only ever read a peer" is supposed to rule out. `?mode=ro` is not
+ * an option: `@libsql/client` rejects it with `URL_PARAM_NOT_SUPPORTED`.
  */
 export async function openTranscriptDb(
   dbPath: string,
@@ -80,7 +95,12 @@ export async function openTranscriptDb(
   const existing = clients.get(key);
   if (existing) return existing;
 
-  const client = createClient({ url: `file:${path.resolve(dbPath)}` });
+  const resolved = path.resolve(dbPath);
+  if (readOnly && !(await fs.access(resolved).then(() => true, () => false))) {
+    throw new TranscriptIndexMissingError(resolved);
+  }
+
+  const client = createClient({ url: `file:${resolved}` });
   try {
     if (readOnly) {
       await client.execute('PRAGMA busy_timeout = 10000;');

@@ -66,9 +66,42 @@ describe('transcript database', () => {
   });
 
   it('does not bootstrap a database it opens read-only', async () => {
-    const missing = path.join(dir, 'absent.db');
-    const peer = await openTranscriptDb(missing, { readOnly: true });
+    // An existing file, so the assertion is about bootstrap and not about creation. The
+    // missing-file case is covered below, where the correct behaviour is to refuse rather
+    // than to open an empty database -- this test previously asserted the latter, which was
+    // the bug: it left an empty transcripts.db in a peer repo that had none.
+    const bare = path.join(dir, 'bare.db');
+    await fs.writeFile(bare, '');
+
+    const peer = await openTranscriptDb(bare, { readOnly: true });
     const names = (await peer.execute("SELECT name FROM sqlite_master WHERE type='table'")).rows;
     expect(names).toHaveLength(0);
+  });
+});
+
+describe('a read-only open never creates the database', () => {
+  // `file:<path>` creates the file and `query_only` is applied only after the connection is
+  // open, so a "read-only" open of a peer with no index used to write an empty transcripts.db
+  // into that repo's .knowl/ -- the exact thing "we only ever read a peer" rules out.
+  // `?mode=ro` is not available: @libsql/client rejects it with URL_PARAM_NOT_SUPPORTED.
+  it('throws instead of creating a missing file', async () => {
+    const missing = path.join(dir, 'absent.db');
+
+    await expect(openTranscriptDb(missing, { readOnly: true })).rejects.toThrow(/no transcript index/i);
+    await expect(fs.access(missing)).rejects.toThrow();
+  });
+
+  it('opens an existing database read-only as before', async () => {
+    await openTranscriptDb(dbPath);
+    await closeTranscriptDbs();
+
+    const client = await openTranscriptDb(dbPath, { readOnly: true });
+    await expect(client.execute('SELECT 1')).resolves.toBeDefined();
+  });
+
+  it('still creates the database on a writable open', async () => {
+    const fresh = path.join(dir, 'fresh.db');
+    await openTranscriptDb(fresh);
+    await expect(fs.access(fresh)).resolves.toBeUndefined();
   });
 });

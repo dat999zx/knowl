@@ -5,10 +5,11 @@ import { resolveStorage } from '../store/storage-roles.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { catchUpTranscripts } from './catch-up.js';
 import { isTranscriptSearchEnabled, isTranscriptSharingEnabled } from './config.js';
-import { openTranscriptDb } from './database.js';
+import { openTranscriptDb, TranscriptIndexMissingError } from './database.js';
 import { searchTranscriptsFederated } from './federate.js';
 import { formatLocator, parseLocator } from './locator.js';
 import { readWithContext } from './read.js';
+import { escapeLikePrefix } from './search.js';
 
 export const DISABLED_MESSAGE =
   'Transcript search is not enabled for this repository. Enable search.transcripts.enabled with `knowl config`, then run `knowl reindex --transcripts`.';
@@ -40,6 +41,48 @@ function truncate(text: string, max: number): string {
 /** The search-time top-up budget. Small enough that a search still feels immediate. */
 const SEARCH_TOPUP_MS = 1_000;
 
+/**
+ * The config as it is on disk *now*, not as it was when the server started.
+ *
+ * `createMcpServer` captures `config` once and `registerTools` closes over that snapshot, so a
+ * long-lived server answers from startup state forever. For most tools that is a staleness
+ * annoyance; for this one it defeats the feature's central promise. Someone who runs
+ * `knowl config set search.transcripts.enabled false` -- which also deletes the index -- would
+ * still be served by an already-running session, and a local read would recreate the database
+ * they just deleted.
+ *
+ * Re-reading costs one small file read per call, against a tool that then opens a database and
+ * searches it. Falls back to the captured config so an unreadable config file degrades to the
+ * old behaviour instead of breaking the tool.
+ */
+async function currentConfig(
+  projectRoot: string,
+  fallback: ProjectConfig,
+): Promise<ProjectConfig> {
+  return loadConfig(projectRoot).catch(() => fallback);
+}
+
+/**
+ * The live config, or null if the feature is off according to *either* source.
+ *
+ * Fail-closed on both deliberately. The captured config must still be able to disable -- that is
+ * the server's own view, and a caller that constructed one with the feature off means it. And
+ * the on-disk config must be able to disable, or turning the feature off would not take effect
+ * until every running server restarted. Requiring both to agree is the only reading where "off"
+ * always means off.
+ *
+ * The returned config is the fresh one, so everything downstream (vector settings, sharing)
+ * reads current values rather than startup values.
+ */
+async function enabledConfig(
+  projectRoot: string,
+  captured: ProjectConfig,
+): Promise<ProjectConfig | null> {
+  if (!isTranscriptSearchEnabled(captured)) return null;
+  const live = await currentConfig(projectRoot, captured);
+  return isTranscriptSearchEnabled(live) ? live : null;
+}
+
 /** The embedder, or null when vectors are off or the model is unavailable. Never throws. */
 async function optionalEmbedder(config: ProjectConfig, projectRoot: string) {
   if (!isVectorSearchEnabled(config)) return null;
@@ -58,8 +101,13 @@ export async function handleTranscriptSearch(input: {
   repos?: string[];
   limit?: number;
 }): Promise<string> {
-  const { config, projectRoot } = input;
-  if (!config || !projectRoot || !isTranscriptSearchEnabled(config)) return DISABLED_MESSAGE;
+  const { projectRoot } = input;
+  if (!input.config || !projectRoot) return DISABLED_MESSAGE;
+
+  // Re-read rather than trusting the startup snapshot alone: disabling the feature must take
+  // effect for an already-running server, not only for the next one.
+  const config = await enabledConfig(projectRoot, input.config);
+  if (!config) return DISABLED_MESSAGE;
 
   const query = String(input.query ?? '').slice(0, MAX_QUERY_CHARS).trim();
   if (!query) return 'Empty query. Give knowl_transcript_search a few words to look for.';
@@ -124,8 +172,11 @@ export async function handleTranscriptRead(input: {
   locator: string;
   context?: number;
 }): Promise<string> {
-  const { config, projectRoot } = input;
-  if (!config || !projectRoot || !isTranscriptSearchEnabled(config)) return DISABLED_MESSAGE;
+  const { projectRoot } = input;
+  if (!input.config || !projectRoot) return DISABLED_MESSAGE;
+
+  const config = await enabledConfig(projectRoot, input.config);
+  if (!config) return DISABLED_MESSAGE;
 
   const parsed = parseLocator(input.locator);
   if (!parsed) {
@@ -157,11 +208,26 @@ export async function handleTranscriptRead(input: {
     root = peer.root;
   }
 
-  const client = await openTranscriptDb(resolveStorage(root).transcripts, { readOnly: isPeer });
+  // Opened read-only for a peer, and -- for the local repo too -- only if the index already
+  // exists. A writable open creates the file, so reading after `knowl config set
+  // search.transcripts.enabled false` deleted it would recreate the database the user just
+  // removed, from a tool that is supposed to only read.
+  const dbPath = resolveStorage(root).transcripts;
+  let client;
+  try {
+    client = await openTranscriptDb(dbPath, { readOnly: true });
+  } catch (error) {
+    if (error instanceof TranscriptIndexMissingError) {
+      return isPeer
+        ? `Repo "${parsed.repo}" has no transcript index.`
+        : 'No transcript index yet. Run `knowl reindex --transcripts` to build one.';
+    }
+    throw error;
+  }
 
   // `%` and `_` are LIKE wildcards, and a session id is agent-supplied. Escaping them keeps a
   // prefix a prefix rather than a pattern that matches something else entirely.
-  const escaped = parsed.sessionId.replace(/[\\%_]/g, character => `\\${character}`);
+  const escaped = escapeLikePrefix(parsed.sessionId);
   const matches = (await client.execute({
     sql: `SELECT DISTINCT session_id, path FROM transcript_messages
           WHERE session_id = ? OR session_id LIKE ? ESCAPE '\\'

@@ -43,6 +43,26 @@ export function toMatchQuery(query: string): string | null {
 }
 
 /**
+ * Escape a session id for use as a LIKE *prefix* rather than a pattern.
+ *
+ * `%` and `_` are wildcards, and `sessionId` arrives from an MCP argument -- so an unescaped
+ * `%` turned "restrict to this session" into "match every session", silently widening the very
+ * thing the caller asked to narrow. Measured before the fix: `sessionId: '%'` returned hits
+ * from every indexed session.
+ */
+export function escapeLikePrefix(sessionId: string): string {
+  return sessionId.replace(/[\\%_]/g, character => `\\${character}`);
+}
+
+/**
+ * Cap on paths a prefix may expand to.
+ *
+ * Bounded because the expansion becomes one `IN (?, ?, ...)` list: an over-broad prefix would
+ * otherwise build a parameter list the size of the archive.
+ */
+const MAX_SESSION_PATHS = 50;
+
+/**
  * Resolve a session id or unique prefix to the paths it covers.
  *
  * A prefix that matches nothing yields an empty list, which correctly produces no hits rather
@@ -50,8 +70,10 @@ export function toMatchQuery(query: string): string | null {
  */
 async function pathsForSession(client: Client, sessionId: string): Promise<string[]> {
   const rows = (await client.execute({
-    sql: 'SELECT DISTINCT path FROM transcript_messages WHERE session_id = ? OR session_id LIKE ?',
-    args: [sessionId, `${sessionId}%`],
+    sql: `SELECT DISTINCT path FROM transcript_messages
+          WHERE session_id = ? OR session_id LIKE ? ESCAPE '\\'
+          LIMIT ?`,
+    args: [sessionId, `${escapeLikePrefix(sessionId)}%`, MAX_SESSION_PATHS],
   })).rows;
   return rows.map(row => String(row.path));
 }
@@ -191,8 +213,10 @@ export async function semanticRank(
   const args: unknown[] = [fingerprint];
   let scope = '';
   if (sessionId) {
-    scope = ' AND (m.session_id = ? OR m.session_id LIKE ?)';
-    args.push(sessionId, `${sessionId}%`);
+    // Same escaping as the lexical side. Leaving it out here would mean a `%` narrowed the
+    // keyword half and not the semantic half, so the two rankings would disagree about scope.
+    scope = " AND (m.session_id = ? OR m.session_id LIKE ? ESCAPE '\\')";
+    args.push(sessionId, `${escapeLikePrefix(sessionId)}%`);
   }
 
   const rows = (await client.execute({
