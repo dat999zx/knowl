@@ -57,9 +57,13 @@ There is no partial state: enabled with an incomplete index reports its coverage
 **Disabling deletes `.knowl/transcripts.db`.** Not "stops using it" — deletes it.
 An index left on disk after the feature is off is a copy of the archive's term
 and vector data that nothing will ever refresh, and the user who turned the
-feature off is precisely the one who did not agree to keep it. `knowl config`
-performs the deletion on the true→false transition and says how many messages
-were dropped.
+feature off is precisely the one who did not agree to keep it.
+
+The deletion hangs off the true→false *transition*, and every mutation path must
+route through it: the interactive editor, `knowl config set`, and
+`knowl config reset` — the last of which turns the feature off without ever
+naming the key, so a key-name check would miss it. An unreadable or corrupt
+index is deleted too; that is the case where a user most wants it gone.
 
 **Semantic ranking follows `search.vector.enabled`.** The model, dtype and
 pooling all come from `search.vector.preset`; embedding transcripts while the
@@ -279,6 +283,13 @@ concatenate":
   in repo iteration order, which is a bias dressed as a ranking. Each repo's hits
   are re-fused by a second RRF over the per-repo *positions*, so a repo's rank-1
   competes with another repo's rank-1 on equal terms regardless of corpus size.
+  **Equal scores then need a tiebreak, and it must not be insertion order.** A
+  hit appears in exactly one repo's ranking, so every repo's rank-1 scores
+  identically; `Array.prototype.sort` is stable, so the merged order would be
+  the order repos were visited, and `limit: 1` would always return the local
+  repo. Ties break on a hash of the hit's repo-qualified identity: arbitrary,
+  but stable and uncorrelated with search order, so reversing the peer list
+  cannot change the answer.
 - **Coverage.** Each repo reports its own `embedded/indexed`. The result carries
   them per repo, not summed: a peer at 12% coverage and a local index at 100%
   average to a number that describes neither.
@@ -294,8 +305,11 @@ workspace two repos can hold sessions with the same id. Passing the locator back
 verbatim keeps the caller from reassembling identity out of parts, which is where
 a cross-repo read would silently open the wrong file.
 
-`repo` is omitted for local hits and the local repo is assumed on read, so the
-single-repo case stays short.
+`repo` is **omitted for local hits**, and a locator naming the local repo is
+still resolved locally on read. Both halves are required: emitting
+`transcript://local/abc#L1` while the reader resolves every named repo against
+the workspace peer list produces "Unknown repo" for every local search result —
+a hit that cannot be read.
 
 ## MCP surface
 
@@ -311,7 +325,7 @@ Registered only when `enabled: true`.
 
 | Condition | Behavior |
 |---|---|
-| Source `.jsonl` deleted | Detected on read; that session's rows dropped and reported once |
+| Source `.jsonl` deleted | Reported on read as unavailable; rows dropped by the next index pass, **not** during the read (see below) |
 | File shrank or was rewritten | Treated as new; rebuilt from byte 0 |
 | File edited in place at identical size | **Undetected.** Append-only is an assumption, not enforced. Disclosed, not special-cased |
 | Embedding model changed | Existing `embedding-identity` machinery invalidates and rebuilds |
@@ -319,6 +333,27 @@ Registered only when `enabled: true`.
 | `git worktree list` fails or repo is not a checkout | Degrades to the main root alone; never an error |
 | Crash mid-pass | Watermark and rows committed together, so the next pass resumes at a consistent point (§5) |
 | Embedder unavailable | Lexical-only ranking; coverage signal reflects it |
+
+**A read never writes.** An earlier draft of this table said a dead pointer's
+rows are dropped *during the read*. They are not, for two reasons. A peer's
+database is opened with `PRAGMA query_only = ON` (§8), so the write is not merely
+undesirable there but impossible. And a search that mutates the index makes a
+read-only operation contend for the write lock with whatever else is running,
+which is the failure mode §2 exists to avoid. Dead pointers are reported when
+encountered and reclaimed by the next index pass, which already walks every file
+and already handles deletions.
+
+**Locators are re-authorized on every read.** A locator is a durable string: it
+can be cached from an earlier turn, pasted into a later one, or fabricated
+outright. `share` is therefore checked when the locator is *used*, not only when
+the hit was produced. Checking only at search time would mean revoking `share`
+stops new searches while previously issued locators keep working — which is not
+revocation.
+
+**Agent input is bounded.** `limit`, `context`, query length and total response
+size all have caps enforced in the handler, not only declared in the tool schema:
+an MCP argument is whatever the model emitted, and JSON Schema constraints are
+advisory in this SDK.
 
 **Concurrency.** Two writers are normal here, not exceptional: a `--budget`
 backfill can run while a live session's per-turn hook fires. Three things are

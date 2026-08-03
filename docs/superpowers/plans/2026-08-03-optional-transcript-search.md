@@ -1219,7 +1219,8 @@ Create `tests/transcripts/concurrency.test.ts`:
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createClient } from '@libsql/client';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeTranscriptDbs, openTranscriptDb, withWriteRetry } from '../../src/transcripts/database.js';
 
 let dir: string;
@@ -1301,25 +1302,61 @@ describe('withWriteRetry', () => {
 });
 
 describe('two concurrent writers', () => {
+  // `openTranscriptDb` caches by path, so two "writers" that both go through it share ONE
+  // connection and contend for nothing. A real test has to bypass the cache -- otherwise it
+  // passes against a database layer with no concurrency handling whatsoever.
   it('both complete without a lost update or a uniqueness collision', async () => {
-    await openTranscriptDb(dbPath);
+    await openTranscriptDb(dbPath); // bootstrap the schema once
+    await closeTranscriptDbs();
 
-    const writer = (base: number) => withWriteRetry(dbPath, async client => {
-      for (let i = 0; i < 50; i++) {
-        await client.execute('BEGIN IMMEDIATE');
-        await client.execute({
-          sql: 'INSERT INTO transcript_fts(rowid, body) VALUES (?, ?)',
-          args: [base + i, `row ${base + i}`],
-        });
-        await client.execute('COMMIT');
+    const independent = () => {
+      const client = createClient({ url: `file:${dbPath}` });
+      return client;
+    };
+
+    const writer = async (base: number) => {
+      const client = independent();
+      try {
+        await client.execute('PRAGMA busy_timeout = 10000;');
+        for (let i = 0; i < 50; i++) {
+          await client.execute('BEGIN IMMEDIATE');
+          await client.execute({
+            sql: 'INSERT INTO transcript_fts(rowid, body) VALUES (?, ?)',
+            args: [base + i, `row ${base + i}`],
+          });
+          await client.execute('COMMIT');
+        }
+      } finally {
+        client.close();
       }
-    });
+    };
 
     await Promise.all([writer(1_000), writer(2_000)]);
 
     const client = await openTranscriptDb(dbPath);
     const n = (await client.execute("SELECT rowid FROM transcript_fts WHERE transcript_fts MATCH 'row'")).rows.length;
     expect(n).toBe(100);
+  });
+
+  it('a reconnect inside withWriteRetry does not leave an earlier handle in use', async () => {
+    // The bug this guards: a caller that captured a client before the retry kept using it after
+    // withWriteRetry closed and replaced it. Nothing may hold a handle across the boundary.
+    const first = await openTranscriptDb(dbPath);
+
+    let attempts = 0;
+    await withWriteRetry(dbPath, async () => {
+      attempts++;
+      if (attempts === 1) {
+        const error = new Error('SQLITE_BUSY_SNAPSHOT');
+        (error as { code?: string }).code = 'SQLITE_BUSY_SNAPSHOT';
+        throw error;
+      }
+    });
+
+    const second = await openTranscriptDb(dbPath);
+    expect(second).not.toBe(first);
+    // And the replacement is usable, which a closed handle would not be.
+    await expect(second.execute('SELECT 1')).resolves.toBeDefined();
   });
 });
 ```
@@ -1403,7 +1440,9 @@ export async function withWriteRetry<T>(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/transcripts/concurrency.test.ts`
-Expected: PASS, 6 tests
+Expected: PASS, 7 tests
+
+The two-writers test opens raw `createClient` connections on purpose. Routed through `openTranscriptDb` they would share one cached client, contend for nothing, and pass against a database layer with no concurrency handling at all.
 
 - [ ] **Step 5: Commit**
 
@@ -1681,11 +1720,11 @@ const WRITE_BATCH = 200;
 
 type FileState = { bytesIndexed: number; linesIndexed: number; sizeAtIndex: number };
 
-async function readFileState(client: Client, filePath: string): Promise<FileState | null> {
-  const rows = (await client.execute({
+async function readFileState(dbPath: string, filePath: string): Promise<FileState | null> {
+  const rows = await withWriteRetry(dbPath, async client => (await client.execute({
     sql: 'SELECT bytes_indexed, lines_indexed, size_at_index FROM transcript_files WHERE path = ?',
     args: [filePath],
-  })).rows;
+  })).rows);
   if (rows.length === 0) return null;
   return {
     bytesIndexed: Number(rows[0].bytes_indexed),
@@ -1700,28 +1739,31 @@ async function readFileState(client: Client, filePath: string): Promise<FileStat
  * The FTS delete is driven off the message ids rather than a join, because a contentless FTS5
  * table cannot be queried by anything but rowid and MATCH.
  */
-async function dropFileRows(client: Client, filePath: string): Promise<void> {
-  const ids = (await client.execute({
+async function dropFileRows(dbPath: string, filePath: string): Promise<void> {
+  const ids = await withWriteRetry(dbPath, async client => (await client.execute({
     sql: 'SELECT id FROM transcript_messages WHERE path = ?',
     args: [filePath],
-  })).rows.map(row => Number(row.id));
+  })).rows.map(row => Number(row.id)));
 
   for (let start = 0; start < ids.length; start += WRITE_BATCH) {
     const slice = ids.slice(start, start + WRITE_BATCH);
-    await client.execute('BEGIN');
-    try {
-      for (const id of slice) {
-        await client.execute({ sql: 'DELETE FROM transcript_fts WHERE rowid = ?', args: [id] });
-        await client.execute({ sql: 'DELETE FROM transcript_vectors WHERE message_id = ?', args: [id] });
+    await withWriteRetry(dbPath, async client => {
+      await client.execute('BEGIN IMMEDIATE');
+      try {
+        for (const id of slice) {
+          await client.execute({ sql: 'DELETE FROM transcript_fts WHERE rowid = ?', args: [id] });
+          await client.execute({ sql: 'DELETE FROM transcript_vectors WHERE message_id = ?', args: [id] });
+        }
+        await client.execute('COMMIT');
+      } catch (error) {
+        await client.execute('ROLLBACK').catch(() => {});
+        throw error;
       }
-      await client.execute('COMMIT');
-    } catch (error) {
-      await client.execute('ROLLBACK').catch(() => {});
-      throw error;
-    }
+    });
   }
 
-  await client.execute({ sql: 'DELETE FROM transcript_messages WHERE path = ?', args: [filePath] });
+  await withWriteRetry(dbPath, client =>
+    client.execute({ sql: 'DELETE FROM transcript_messages WHERE path = ?', args: [filePath] }));
 }
 
 /**
@@ -1806,7 +1848,6 @@ async function commitBatchOn(
 }
 
 async function indexOneFile(
-  client: Client,
   dbPath: string,
   file: TranscriptFile,
   size: number,
@@ -1816,7 +1857,7 @@ async function indexOneFile(
   // A file that shrank was rewritten, not appended to. Its old line numbers no longer point
   // anywhere, so the only safe move is to rebuild it.
   const rewritten = state !== null && size < state.bytesIndexed;
-  if (rewritten) await dropFileRows(client, file.path);
+  if (rewritten) await dropFileRows(dbPath, file.path);
 
   const from = rewritten || !state
     ? { bytes: 0, lines: 0 }
@@ -1835,19 +1876,20 @@ async function indexOneFile(
       }
       // Trailing non-prose lines advanced the stream without yielding, so the final watermark
       // can be past the last committed batch. Recording it stops the next pass re-reading them.
-      await client.execute({
+      // Guarded against going backwards: a concurrent writer may already be further ahead.
+      await withWriteRetry(dbPath, client => client.execute({
         sql: `INSERT INTO transcript_files (path, session_id, parent_session_id, bytes_indexed, lines_indexed, size_at_index, updated_at)
               VALUES (?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(path) DO UPDATE SET
-                bytes_indexed = excluded.bytes_indexed,
-                lines_indexed = excluded.lines_indexed,
+                bytes_indexed = MAX(transcript_files.bytes_indexed, excluded.bytes_indexed),
+                lines_indexed = MAX(transcript_files.lines_indexed, excluded.lines_indexed),
                 size_at_index = excluded.size_at_index,
                 updated_at = excluded.updated_at`,
         args: [
           file.path, file.sessionId, file.parentSessionId,
           next.value.bytesConsumed, next.value.linesConsumed, size, new Date().toISOString(),
         ],
-      });
+      }));
       return { indexed, rebuilt: rewritten, complete: true };
     }
 
@@ -1877,7 +1919,10 @@ export async function runIndexPass(input: {
   /** `Date.now()` value after which the pass stops between files. */
   deadline?: number;
 }): Promise<IndexPassResult> {
-  const client = await openTranscriptDb(input.dbPath);
+  // Deliberately no long-lived `client` local. `withWriteRetry` closes and reopens the cached
+  // connection when it hits SQLITE_BUSY_SNAPSHOT, so any handle captured up here would be a
+  // closed one for the rest of the pass. Every operation re-acquires through the helper.
+  await openTranscriptDb(input.dbPath);
   const files = await discoverTranscriptFiles(input.projectRoot, { projectsDir: input.projectsDir });
   const onDisk = new Set(files.map(file => file.path));
 
@@ -1885,11 +1930,14 @@ export async function runIndexPass(input: {
 
   // Deleted transcripts first: their pointers are dead, and a search that returns them wastes a
   // file read to discover it. Cheap when nothing vanished, which is the usual case.
-  const known = (await client.execute('SELECT path FROM transcript_files')).rows.map(row => String(row.path));
+  const known = await withWriteRetry(input.dbPath, async client =>
+    (await client.execute('SELECT path FROM transcript_files')).rows.map(row => String(row.path)));
+
   for (const knownPath of known) {
     if (onDisk.has(knownPath)) continue;
-    await dropFileRows(client, knownPath);
-    await client.execute({ sql: 'DELETE FROM transcript_files WHERE path = ?', args: [knownPath] });
+    await dropFileRows(input.dbPath, knownPath);
+    await withWriteRetry(input.dbPath, client =>
+      client.execute({ sql: 'DELETE FROM transcript_files WHERE path = ?', args: [knownPath] }));
     result.removed++;
   }
 
@@ -1906,10 +1954,10 @@ export async function runIndexPass(input: {
       continue; // Vanished between discovery and now; the next pass cleans it up.
     }
 
-    const state = await readFileState(client, file.path);
+    const state = await readFileState(input.dbPath, file.path);
     if (state && size === state.sizeAtIndex && size === state.bytesIndexed) continue;
 
-    const { indexed, rebuilt, complete } = await indexOneFile(client, input.dbPath, file, size, state, input.deadline);
+    const { indexed, rebuilt, complete } = await indexOneFile(input.dbPath, file, size, state, input.deadline);
     result.indexed += indexed;
     result.filesTouched++;
     if (rebuilt) result.rebuilt++;
@@ -1956,7 +2004,9 @@ The counterpart to storing pointers. A hit is `(path, line)`; this turns it into
   - `type TranscriptExcerpt = { line: number; role: 'user' | 'assistant'; text: string; timestamp: string | null }`
   - `readMessagesAt(filePath: string, lines: number[]): Promise<Map<number, TranscriptExcerpt>>`
   - `readMessageAt(filePath: string, line: number): Promise<TranscriptExcerpt | null>`
-  - `readWithContext(filePath: string, line: number, context: number): Promise<TranscriptExcerpt[]>`
+  - `readWithContext(filePath: string, line: number, context: number): Promise<TranscriptExcerpt[]>` — `context` counts **prose turns**, not physical lines
+
+**`context` means turns.** A line window filtered for prose afterwards is not the same thing: in a real transcript nearly every prose message is separated from the next by tool-result lines, so `context: 2` would routinely return the target alone. The caller asked for surrounding conversation.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2041,6 +2091,38 @@ describe('readWithContext', () => {
     expect(excerpts.map(e => e.text)).toEqual(['two', 'three', 'four']);
   });
 
+  // The regression test for the semantics blocker: a line window filtered afterwards returns
+  // the target alone here, because every prose turn is separated by tool-result lines -- which
+  // is what a real transcript looks like.
+  it('counts turns, not physical lines, when tool output sits between them', async () => {
+    const noisy = path.join(dir, 'noisy.jsonl');
+    const toolLine = JSON.stringify({
+      type: 'user',
+      message: { content: [{ type: 'tool_result', content: 'x'.repeat(200) }] },
+    });
+    await fs.writeFile(noisy, [
+      line('user', 'first'), toolLine, toolLine,
+      line('assistant', 'second'), toolLine, toolLine,
+      line('user', 'third'), toolLine, toolLine,
+      line('assistant', 'fourth'),
+    ].join('\n') + '\n');
+
+    // "second" is on physical line 4; one turn either side is "first" and "third".
+    const excerpts = await readWithContext(noisy, 4, 1);
+    expect(excerpts.map(e => e.text)).toEqual(['first', 'second', 'third']);
+  });
+
+  it('returns nothing when the requested line holds no prose', async () => {
+    const noisy = path.join(dir, 'noprose.jsonl');
+    await fs.writeFile(noisy, [
+      line('user', 'first'),
+      JSON.stringify({ type: 'system', message: { content: 'boot' } }),
+      line('user', 'second'),
+    ].join('\n') + '\n');
+
+    expect(await readWithContext(noisy, 2, 2)).toEqual([]);
+  });
+
   it('clamps at the start of the file', async () => {
     const excerpts = await readWithContext(file, 1, 2);
     expect(excerpts.map(e => e.text)).toEqual(['one', 'two', 'three']);
@@ -2122,22 +2204,61 @@ export async function readMessageAt(filePath: string, line: number): Promise<Tra
   return (await readMessagesAt(filePath, [line])).get(line) ?? null;
 }
 
+/**
+ * The target message plus `context` prose turns on each side.
+ *
+ * Counts *turns*, not physical lines. Taking a line window and filtering it afterwards is what
+ * an earlier draft did, and in a real transcript almost every prose message is separated from
+ * the next by tool-result lines -- so `context: 2` routinely returned the target alone. The
+ * caller asked for surrounding conversation, not for a slice of the file.
+ *
+ * One streaming pass: prose before the target is kept in a ring of at most `context` entries,
+ * and the walk stops once `context` messages after it have been collected.
+ */
 export async function readWithContext(
   filePath: string,
   line: number,
   context: number,
 ): Promise<TranscriptExcerpt[]> {
-  const from = Math.max(1, line - context);
-  const lines = Array.from({ length: line + context - from + 1 }, (_, i) => from + i);
-  const found = await readMessagesAt(filePath, lines);
-  return lines.map(n => found.get(n)).filter((e): e is TranscriptExcerpt => e !== undefined);
+  const before: TranscriptExcerpt[] = [];
+  const after: TranscriptExcerpt[] = [];
+  let target: TranscriptExcerpt | null = null;
+
+  try {
+    for await (const chunk of streamProseFrom(filePath, 0, 0)) {
+      const { line: at, role, text, timestamp } = chunk.message;
+      const excerpt: TranscriptExcerpt = { line: at, role, text, timestamp };
+
+      if (at < line) {
+        if (context > 0) {
+          before.push(excerpt);
+          if (before.length > context) before.shift();
+        }
+        continue;
+      }
+
+      if (at === line) { target = excerpt; continue; }
+
+      // Past the target. Only reached once it has been seen, or when the requested line holds
+      // no prose -- in which case there is nothing to anchor on and the walk should stop.
+      if (!target) break;
+      after.push(excerpt);
+      if (after.length >= context) break;
+    }
+  } catch {
+    return [];
+  }
+
+  return target ? [...before, target, ...after] : [];
 }
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/transcripts/read.test.ts`
-Expected: PASS, 12 tests
+Expected: PASS, 15 tests
+
+The turn-counting test is the one that pins the semantics. A line-window implementation returns `['second']` alone and fails it.
 
 - [ ] **Step 5: Commit**
 
@@ -2602,7 +2723,7 @@ The reason the feature exists. The critical test is the word-mismatch case — a
   - `fuseRankings(rankings: TranscriptHit[][], limit: number): TranscriptHit[]`
   - `semanticRank(client: Client, queryVector: number[], fingerprint: string, limit: number, sessionId?: string): Promise<TranscriptHit[]>`
   - `searchTranscripts(input: SearchInput): Promise<{ hits: TranscriptHit[]; coverage: { embedded: number; indexed: number } }>`
-  - `embedPendingMessages(input: { client: Client; embedder: KnowledgeEmbedder; deadline?: number }): Promise<{ embedded: number; complete: boolean }>`
+  - `embedPendingMessages(input: { dbPath: string; embedder: KnowledgeEmbedder; deadline?: number }): Promise<{ embedded: number; complete: boolean }>`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2677,7 +2798,7 @@ async function seed(session: string, lines: string) {
 async function buildIndex(embedder?: KnowledgeEmbedder) {
   await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
   const client = await openTranscriptDb(dbPath);
-  if (embedder) await embedPendingMessages({ client, embedder });
+  if (embedder) await embedPendingMessages({ dbPath, embedder });
   return client;
 }
 
@@ -2779,7 +2900,7 @@ describe('embedPendingMessages', () => {
     await seed('a', line('user', 'memory note'));
     const client = await buildIndex(stubEmbedder());
 
-    const second = await embedPendingMessages({ client, embedder: stubEmbedder() });
+    const second = await embedPendingMessages({ dbPath, embedder: stubEmbedder() });
 
     expect(second.embedded).toBe(0);
     expect(second.complete).toBe(true);
@@ -2790,7 +2911,7 @@ describe('embedPendingMessages', () => {
     const client = await buildIndex(stubEmbedder());
 
     const other: KnowledgeEmbedder = { ...stubEmbedder(), profileFingerprint: 'stub:different' };
-    await embedPendingMessages({ client, embedder: other });
+    await embedPendingMessages({ dbPath, embedder: other });
 
     const rows = (await client.execute('SELECT DISTINCT fingerprint FROM transcript_vectors')).rows;
     expect(rows.map(r => String(r.fingerprint))).toEqual(['stub:different']);
@@ -2801,7 +2922,7 @@ describe('embedPendingMessages', () => {
     await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
     const client = await openTranscriptDb(dbPath);
 
-    const result = await embedPendingMessages({ client, embedder: stubEmbedder(), deadline: Date.now() - 1 });
+    const result = await embedPendingMessages({ dbPath, embedder: stubEmbedder(), deadline: Date.now() - 1 });
 
     expect(result.complete).toBe(false);
     expect(result.embedded).toBe(0);
@@ -2816,7 +2937,7 @@ describe('embedPendingMessages', () => {
     const client = await openTranscriptDb(dbPath);
 
     const spy = vi.spyOn(fsSync, 'createReadStream');
-    await embedPendingMessages({ client, embedder: stubEmbedder() });
+    await embedPendingMessages({ dbPath, embedder: stubEmbedder() });
 
     // Two files, so two passes -- not 240.
     expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
@@ -2828,7 +2949,7 @@ describe('embedPendingMessages', () => {
     await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
     const client = await openTranscriptDb(dbPath);
 
-    const result = await embedPendingMessages({ client, embedder: stubEmbedder() });
+    const result = await embedPendingMessages({ dbPath, embedder: stubEmbedder() });
 
     expect(result.embedded).toBe(100);
     expect(result.complete).toBe(true);
@@ -2850,6 +2971,7 @@ Create `src/transcripts/embed-pass.ts`:
 ```typescript
 import type { Client } from '@libsql/client';
 import type { KnowledgeEmbedder } from '../store/vector-index.js';
+import { withWriteRetry } from './database.js';
 import { quantizeVector } from './quantize.js';
 import { readMessagesAt } from './read.js';
 
@@ -2869,19 +2991,25 @@ const EMBED_BATCH = 32;
  * Files are taken newest-message-first so the session you are in is covered before the tail.
  */
 export async function embedPendingMessages(input: {
-  client: Client;
+  /**
+   * The database path, not a client. `withWriteRetry` reopens the cached connection on
+   * SQLITE_BUSY_SNAPSHOT, so a handle captured for the length of a backfill would be a closed
+   * one after the first recovery.
+   */
+  dbPath: string;
   embedder: KnowledgeEmbedder;
   /** `Date.now()` value after which the pass stops between batches. */
   deadline?: number;
 }): Promise<{ embedded: number; complete: boolean }> {
-  const { client, embedder } = input;
+  const { dbPath, embedder } = input;
+  const read = <T>(run: (client: Client) => Promise<T>) => withWriteRetry(dbPath, run);
 
   // Vectors from a superseded model are a full dead duplicate of the archive, not a few stale
   // rows -- there is one vector per message, not per re-ranked candidate.
-  await client.execute({
+  await read(client => client.execute({
     sql: 'DELETE FROM transcript_vectors WHERE fingerprint <> ?',
     args: [embedder.profileFingerprint],
-  });
+  }));
 
   let embedded = 0;
 
@@ -2892,25 +3020,25 @@ export async function embedPendingMessages(input: {
 
     // The file holding the newest unembedded message, and every pending message in it. One
     // file per round keeps the read to a single pass while still making progress newest-first.
-    const nextFile = (await client.execute(`
+    const nextFile = await read(async client => (await client.execute(`
       SELECT m.path
       FROM transcript_messages m
       LEFT JOIN transcript_vectors v ON v.message_id = m.id
       WHERE v.message_id IS NULL
       ORDER BY m.id DESC
       LIMIT 1
-    `)).rows[0];
+    `)).rows[0]);
 
     if (!nextFile) return { embedded, complete: true };
 
-    const pending = (await client.execute({
+    const pending = await read(async client => (await client.execute({
       sql: `SELECT m.id, m.line
             FROM transcript_messages m
             LEFT JOIN transcript_vectors v ON v.message_id = m.id
             WHERE v.message_id IS NULL AND m.path = ?
             ORDER BY m.line ASC`,
       args: [String(nextFile.path)],
-    })).rows;
+    })).rows);
 
     const filePath = String(nextFile.path);
     const bodies = await readMessagesAt(filePath, pending.map(row => Number(row.line)));
@@ -2932,7 +3060,7 @@ export async function embedPendingMessages(input: {
 
     for (let start = 0; start < targets.length; start += EMBED_BATCH) {
       const slice = targets.slice(start, start + EMBED_BATCH);
-      embedded += await embedBatch(client, embedder, slice);
+      embedded += await embedBatch(dbPath, embedder, slice);
       if (input.deadline !== undefined && Date.now() >= input.deadline) {
         return { embedded, complete: false };
       }
@@ -2941,13 +3069,24 @@ export async function embedPendingMessages(input: {
 }
 
 async function embedBatch(
-  client: Client,
+  dbPath: string,
   embedder: KnowledgeEmbedder,
   targets: Array<{ id: number; text: string }>,
 ): Promise<number> {
-  let embedded = 0;
-
+  // Embedding happens outside the retry: it is the expensive part and it touches no database,
+  // so a contended write must not pay for a second forward pass.
   const vectors = await embedder.embed(targets.map(target => target.text));
+
+  return withWriteRetry(dbPath, async client => embedVectorBatch(client, embedder, targets, vectors));
+}
+
+async function embedVectorBatch(
+  client: Client,
+  embedder: KnowledgeEmbedder,
+  targets: Array<{ id: number; text: string }>,
+  vectors: number[][],
+): Promise<number> {
+  let embedded = 0;
 
   await client.execute('BEGIN IMMEDIATE');
   try {
@@ -3018,9 +3157,34 @@ export function fuseRankings<T extends TranscriptHit>(
   }
 
   return [...scores.entries()]
-    .sort((left, right) => right[1] - left[1])
+    .sort((left, right) => right[1] - left[1] || compareTieKeys(left[0], right[0]))
     .slice(0, limit)
     .map(([key, score]) => ({ ...byKey.get(key)!, score }));
+}
+
+/**
+ * Deterministic tiebreak for equal RRF scores.
+ *
+ * Ties are not rare here, they are the normal case in federation: a hit appears in exactly one
+ * repo's ranking, so every repo's rank-1 scores exactly 1/(60+1). `Array.prototype.sort` is
+ * stable, so without this the merged order is insertion order -- and with `limit: 1` the repo
+ * that happened to be visited first always wins. That is iteration order dressed as relevance.
+ *
+ * Hashing the key gives an arbitrary but *stable* order that does not correlate with which repo
+ * was searched first, so reversing the peer list cannot change the answer.
+ */
+function compareTieKeys(left: string, right: string): number {
+  const hash = (value: string) => {
+    let h = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+      h ^= value.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return h >>> 0;
+  };
+  const difference = hash(left) - hash(right);
+  // Fall back to the key itself so two colliding hashes still order deterministically.
+  return difference !== 0 ? difference : (left < right ? -1 : left > right ? 1 : 0);
 }
 
 /**
@@ -3316,8 +3480,7 @@ export async function rebuildTranscriptIndex(
   let skippedEmbedding: string | null = null;
   try {
     const embedder = await createLocalEmbeddingProvider(config, projectRoot);
-    const client = await openTranscriptDb(dbPath);
-    const result = await embedPendingMessages({ client, embedder, deadline });
+    const result = await embedPendingMessages({ dbPath, embedder, deadline });
     embedded = result.embedded;
     complete = complete && result.complete;
   } catch (error) {
@@ -3573,6 +3736,52 @@ describe('searchTranscriptsFederated', () => {
     expect(result.hits).toHaveLength(2);
     expect(result.hits[0].score).toBeCloseTo(result.hits[1].score, 10);
   });
+
+  // Equal scores are the normal case in federation, so the cutoff is where bias actually shows.
+  // Asserting score equality alone passes even when local always wins.
+  it('does not let the local repo win the cutoff purely by being searched first', async () => {
+    const local = await makeRepo('local', 'symmetric content about caching', true);
+    const peerA = await makeRepo('peer-a', 'symmetric content about caching', true);
+    const peerB = await makeRepo('peer-b', 'symmetric content about caching', true);
+
+    const winners = new Set<string>();
+    for (const peers of [[peerA, peerB], [peerB, peerA]]) {
+      const result = await searchTranscriptsFederated({
+        projectRoot: local.root, workspace: workspaceOf(peers),
+        query: 'symmetric caching', limit: 1,
+      });
+      expect(result.hits).toHaveLength(1);
+      winners.add(result.hits[0].repo);
+    }
+
+    // Reversing the peer order must not change the winner -- the tiebreak is on the hit's
+    // identity, not on which repo was visited first.
+    expect(winners.size).toBe(1);
+  });
+
+  it('returns the same order whatever order the peers are listed in', async () => {
+    const local = await makeRepo('local', 'symmetric content about caching', true);
+    const peerA = await makeRepo('peer-a', 'symmetric content about caching', true);
+    const peerB = await makeRepo('peer-b', 'symmetric content about caching', true);
+
+    const order = async (peers: Array<{ name: string; root: string }>) =>
+      (await searchTranscriptsFederated({
+        projectRoot: local.root, workspace: workspaceOf(peers), query: 'symmetric caching', limit: 10,
+      })).hits.map(hit => hit.repo);
+
+    expect(await order([peerA, peerB])).toEqual(await order([peerB, peerA]));
+  });
+
+  it('names the local repo so a caller can omit it from a locator', async () => {
+    const local = await makeRepo('local', 'local finding about caching', true);
+
+    const result = await searchTranscriptsFederated({
+      projectRoot: local.root, workspace: null, query: 'caching', limit: 10,
+    });
+
+    expect(result.localRepo).toBe('local');
+    expect(result.hits[0].repo).toBe(result.localRepo);
+  });
 });
 ```
 
@@ -3635,6 +3844,12 @@ export async function searchTranscriptsFederated(input: {
   hits: FederatedTranscriptHit[];
   skipped: Array<{ repo: string; reason: TranscriptSkipReason }>;
   coverage: RepoCoverage[];
+  /**
+   * Which repo name means "here". Returned rather than assumed: the caller must omit it when
+   * formatting a locator, or a local hit becomes `transcript://local/...` and the reader --
+   * which resolves a named repo against the workspace peer list -- answers "Unknown repo".
+   */
+  localRepo: string;
 }> {
   const localName = input.localRepoName ?? input.workspace?.repo ?? 'local';
   const wanted = input.repos?.length ? new Set(input.repos) : null;
@@ -3695,7 +3910,7 @@ export async function searchTranscriptsFederated(input: {
   // default key would silently merge two repos' message 5 into one hit.
   const hits = fuseRankings(rankings, input.limit, hit => `${hit.repo}:${hit.messageId}`);
 
-  return { hits, skipped, coverage };
+  return { hits, skipped, coverage, localRepo: localName };
 }
 ```
 
@@ -3703,7 +3918,7 @@ If `PeerRepo` in `src/workspace/resolve.ts` names its filesystem field something
 
 - [ ] **Step 4: Verify the handler consumes the contract**
 
-Nothing consumes this yet. Task 12 builds `handleTranscriptSearch` against exactly this shape: it destructures `{ hits, skipped, coverage }` and emits one `Coverage [repo]: n/m` line per repo plus one `Skipped [repo]: reason` line. Keep the return type stable or that task will not compile.
+Nothing consumes this yet. Task 13 builds `handleTranscriptSearch` against exactly this shape: it destructures `{ hits, skipped, coverage }` and emits one `Coverage [repo]: n/m` line per repo plus one `Skipped [repo]: reason` line. Keep the return type stable or that task will not compile.
 
 Run: `npx tsc --noEmit`
 Expected: no errors. A mismatch here means the two tasks disagree about the contract.
@@ -3729,505 +3944,7 @@ git commit -m "feat(transcripts): opt-in read-only workspace fan-out"
 ```
 
 ---
-### Task 12: MCP tools, registered only when enabled
-
-**Files:**
-- Create: `src/transcripts/locator.ts`
-- Create: `src/transcripts/mcp-handlers.ts`
-- Modify: `src/mcp/tools.ts` (the `ListToolsRequestSchema` handler and the call dispatcher)
-- Modify: `src/core/knowl-guidance.ts:92-109`
-- Modify: `src/mcp/server.ts:36`
-- Test: `tests/transcripts/locator.test.ts`, `tests/transcripts/mcp-gating.test.ts`
-
-**Interfaces:**
-- Consumes: `isTranscriptSearchEnabled` (Task 1), `searchTranscriptsFederated` (Task 11), `readWithContext` (Task 6)
-- Produces:
-  - `formatLocator(hit: { repo?: string; sessionId: string; line: number }): string`
-  - `parseLocator(raw: string): { repo: string | null; sessionId: string; line: number } | null`
-  - `handleTranscriptSearch(input): Promise<string>` and `handleTranscriptRead(input): Promise<string>` in `mcp-handlers.ts`
-  - MCP tools `knowl_transcript_search` and `knowl_transcript_read`
-  - `mcpServerInstructions(config: ProjectConfig | null): string` in `knowl-guidance.ts`
-
-**Why a locator and not `(sessionId, line)`:** the reader needs a filesystem path, which requires knowing which repo owns the session — and in a workspace two repos can hold sessions with the same id. Handing the caller a single opaque string it passes straight back removes the chance to reassemble identity wrongly and open the wrong file.
-
-**No pseudocode in this task.** An earlier draft left the dispatcher as a comment. Every branch below is written out, and the gating tests drive a real `tools/list` and a real `tools/call` through the server rather than inspecting guidance strings.
-
-**Read this before writing any code — the obvious approach does not work:**
-
-- There is no `buildGuidanceCard`. `renderCompactKnowlGuidance(modeLine)` is **private** ([src/core/knowl-guidance.ts:92](../../../src/core/knowl-guidance.ts#L92)), and the cards are **module-level constants** evaluated at import: `KNOWL_CLAUDE_OPERATIONAL_CARD` and `KNOWL_MCP_SERVER_INSTRUCTIONS` (lines 108–109). A constant cannot depend on config.
-- The compact card's Route section is **hand-written prose, not generated** from `KNOWL_MCP_TOOL_GROUPS`. Adding a group there changes `renderFullKnowlGuidance()` (the KNOWL.md table) and `KNOWL_MCP_TOOL_NAMES` — but not the compact card. So the two need separate handling, and `KNOWL_MCP_TOOL_GROUPS` must stay unchanged or the tool-name list grows unconditionally.
-- `tests/core/knowl-guidance.test.ts:63-64` asserts **exact lengths**. Keeping the existing constants as the disabled-state values means those assertions keep passing untouched, which is the correct outcome: off by default must change nothing.
-
-**Measured on this branch** (`npx vitest` against the real module):
-
-| | chars |
-|---|---|
-| `KNOWL_CLAUDE_OPERATIONAL_CARD` | 1,695 |
-| `KNOWL_MCP_SERVER_INSTRUCTIONS` | 1,746 |
-| `KNOWL_MCP_TOOL_NAMES` | 24 tools |
-| + the transcript Route bullet below | **1,885 / 2,000** |
-
-115 characters of headroom with the feature on. The spec cites 1,917 from PR #8 — that is PR #8's branch, which adds a tool this design does not.
-
-- [ ] **Step 1: Write the failing test**
-
-Create `tests/transcripts/mcp-gating.test.ts`:
-
-```typescript
-import { describe, expect, it } from 'vitest';
-import {
-  KNOWL_MCP_SERVER_INSTRUCTIONS,
-  KNOWL_MCP_TOOL_GROUPS,
-  KNOWL_MCP_TOOL_NAMES,
-  mcpServerInstructions,
-} from '../../src/core/knowl-guidance.js';
-import type { ProjectConfig } from '../../src/core/types.js';
-
-const config = (enabled: boolean): ProjectConfig => ({
-  version: 1,
-  security: { rejectSecrets: true, secretPatterns: [] },
-  search: { transcripts: { enabled } },
-});
-
-describe('transcript tool gating', () => {
-  it('keeps both tools out of the unconditional inventory', () => {
-    const names = KNOWL_MCP_TOOL_GROUPS.flatMap(group => group.tools);
-    expect(names).not.toContain('knowl_transcript_search');
-    expect(names).not.toContain('knowl_transcript_read');
-    expect(KNOWL_MCP_TOOL_NAMES).toHaveLength(24);
-  });
-
-  it('returns the untouched constant when disabled', () => {
-    expect(mcpServerInstructions(config(false))).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
-  });
-
-  it('returns the untouched constant when there is no config at all', () => {
-    expect(mcpServerInstructions(null)).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
-  });
-
-  it('names both tools when enabled', () => {
-    const card = mcpServerInstructions(config(true));
-    expect(card).toContain('knowl_transcript_search');
-    expect(card).toContain('knowl_transcript_read');
-  });
-
-  it('adds exactly one line when enabled', () => {
-    const off = mcpServerInstructions(config(false)).split('\n').length;
-    const on = mcpServerInstructions(config(true)).split('\n').length;
-    expect(on).toBe(off + 1);
-  });
-
-  it('stays inside the 2000-character ceiling with the feature on', () => {
-    expect(mcpServerInstructions(config(true)).length).toBeLessThanOrEqual(2000);
-  });
-});
-
-// The guidance assertions above are necessary but not sufficient: they check what the agent is
-// *told*, not what the server actually exposes. These drive the real protocol.
-describe('MCP surface', () => {
-  const TEST_ROOT = path.resolve('./.knowl-transcript-mcp-test');
-
-  async function toolNames(cfg: ProjectConfig): Promise<string[]> {
-    const response = await rpc(cfg, 'tools/list', {});
-    return response.result.tools.map((tool: { name: string }) => tool.name);
-  }
-
-  it('does not list either tool when disabled', async () => {
-    const names = await toolNames(config(false));
-    expect(names).not.toContain('knowl_transcript_search');
-    expect(names).not.toContain('knowl_transcript_read');
-  });
-
-  it('lists both tools when enabled', async () => {
-    const names = await toolNames(config(true));
-    expect(names).toContain('knowl_transcript_search');
-    expect(names).toContain('knowl_transcript_read');
-  });
-
-  it('refuses a call to a disabled tool instead of crashing', async () => {
-    // A client that cached an older tool list can still call it. The gate must hold at
-    // dispatch, not only at listing.
-    const response = await rpc(config(false), 'tools/call', {
-      name: 'knowl_transcript_search',
-      arguments: { query: 'anything' },
-    });
-
-    const text = JSON.stringify(response.result ?? response.error);
-    expect(text).toMatch(/not enabled/i);
-    expect(text).not.toMatch(/undefined|cannot read|ENOENT/i);
-  });
-
-  it('rejects a malformed locator with a usable message', async () => {
-    const response = await rpc(config(true), 'tools/call', {
-      name: 'knowl_transcript_read',
-      arguments: { locator: 'not-a-locator' },
-    });
-
-    expect(JSON.stringify(response.result ?? response.error)).toMatch(/locator/i);
-  });
-});
-```
-
-Add the harness this file needs — copy `InMemoryTransport` and the request helper from `tests/mcp/server.test.ts:37-135` rather than inventing a second pattern:
-
-```typescript
-async function rpc(cfg: ProjectConfig, method: string, params: unknown) {
-  const server = createMcpServer(projectId, TEST_ROOT, cfg);
-  const transport = new InMemoryTransport();
-  await server.connect(transport as never);
-  // ...initialize handshake, then send `method`, exactly as tests/mcp/server.test.ts does...
-  await server.close();
-  return response;
-}
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `npx vitest run tests/transcripts/mcp-gating.test.ts`
-Expected: FAIL — `mcpServerInstructions` is not exported from `knowl-guidance.js`.
-
-- [ ] **Step 3: Make the compact card conditional without touching the constants**
-
-In `src/core/knowl-guidance.ts`, change the private renderer to take an options bag, and add the new export. Leave `KNOWL_MCP_TOOL_GROUPS`, `KNOWL_CLAUDE_OPERATIONAL_CARD` and `KNOWL_MCP_SERVER_INSTRUCTIONS` exactly as they are — they are the disabled-state values, and the existing exact-length assertions must keep passing untouched.
-
-```typescript
-/**
- * One extra Route line, only when transcript search is on.
- *
- * The card is a token cost paid by every session of every user. Measured: 1,746 chars for the
- * server card today, 1,885 with this line, against a 2,000 ceiling. Everyone who leaves the
- * feature off keeps their 1,746 and never learns these tools exist.
- */
-const TRANSCRIPT_ROUTE_LINE =
-  '- transcripts: knowl_transcript_search after a knowl_query miss; knowl_transcript_read opens a hit. Promote what you use with knowl_store.';
-
-function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: boolean } = {}): string {
-  return [
-    // ...every existing line, unchanged, through the '- special: ...' bullet...
-    ...(options.transcripts ? [TRANSCRIPT_ROUTE_LINE] : []),
-    'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
-  ].join('\n');
-}
-
-export const KNOWL_CLAUDE_OPERATIONAL_CARD = renderCompactKnowlGuidance(KNOWL_CLAUDE_MODE_LINE);
-export const KNOWL_MCP_SERVER_INSTRUCTIONS = renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE);
-
-/**
- * The server handshake card for a given project.
- *
- * Returns the shared constant when the feature is off, so the common case allocates nothing and
- * stays byte-identical to what every existing test asserts.
- */
-export function mcpServerInstructions(config: ProjectConfig | null): string {
-  if (!config || !isTranscriptSearchEnabled(config)) return KNOWL_MCP_SERVER_INSTRUCTIONS;
-  return renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE, { transcripts: true });
-}
-```
-
-Add the two imports this needs at the top of the file:
-
-```typescript
-import type { ProjectConfig } from './types.js';
-import { isTranscriptSearchEnabled } from '../transcripts/config.js';
-```
-
-Then in `src/mcp/server.ts`, replace the constant at line 36 with the call — `config` is already a parameter of `createMcpServer`:
-
-```typescript
-      instructions: mcpServerInstructions(config),
-```
-
-and update its import on line 11 from `KNOWL_MCP_SERVER_INSTRUCTIONS` to `mcpServerInstructions`.
-
-Leave `renderFullKnowlGuidance()` alone. It renders the KNOWL.md table from `KNOWL_MCP_TOOL_GROUPS`, that file is committed per-repo, and documenting two tools a reader may not have enabled is worse than omitting them.
-
-- [ ] **Step 4: Register the tools conditionally**
-
-In `src/mcp/tools.ts`, inside the `ListToolsRequestSchema` handler, build the array and append conditionally before returning:
-
-```typescript
-    const tools = [ /* ...every existing tool literal, unchanged... */ ];
-
-    const config = getConfig();
-    if (config && isTranscriptSearchEnabled(config)) {
-      tools.push(
-        {
-          name: 'knowl_transcript_search',
-          description: 'Search this repo\'s past Claude Code session transcripts. Use after knowl_query misses. Returns pointers into the session files; store anything worth keeping with knowl_store.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: 'What to look for, in your own words. Semantic search covers the whole archive, so the exact wording need not match.' },
-              sessionId: { type: 'string', description: 'Restrict to one session. Accepts a full id or a unique prefix.' },
-              repos: { type: 'array', items: { type: 'string' }, description: 'Restrict to these linked workspace repos. Omit to search this repo only.' },
-              limit: { type: 'number', description: 'Maximum hits; defaults to 5.' },
-            },
-            required: ['query'],
-          },
-        },
-        {
-          name: 'knowl_transcript_read',
-          description: 'Read one transcript message and the turns around it. Pass a locator from knowl_transcript_search exactly as it was returned.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              locator: { type: 'string', description: 'A transcript://<repo>/<session>#L<line> locator from a search hit, verbatim.' },
-              context: { type: 'number', description: 'Turns to include on each side; defaults to 2.' },
-            },
-            required: ['locator'],
-          },
-        },
-      );
-    }
-
-    return { tools };
-```
-
-- [ ] **Step 4a: Write the locator module**
-
-Create `src/transcripts/locator.ts`:
-
-```typescript
-/**
- * `transcript://<repo>/<session>#L<line>`, with `<repo>/` omitted for a local hit.
- *
- * A locator is handed to the agent and handed straight back. Session id plus line is not enough
- * to open a file -- the reader needs a path, which needs the owning repo, and in a workspace two
- * repos can hold sessions with the same id.
- */
-export function formatLocator(hit: { repo?: string | null; sessionId: string; line: number }): string {
-  const repo = hit.repo ? `${encodeURIComponent(hit.repo)}/` : '';
-  return `transcript://${repo}${hit.sessionId}#L${hit.line}`;
-}
-
-const LOCATOR = /^transcript:\/\/(?:([^/]+)\/)?([^/#]+)#L(\d+)$/;
-
-/** Null rather than a throw: a malformed locator is caller error, answered with a message. */
-export function parseLocator(raw: string): { repo: string | null; sessionId: string; line: number } | null {
-  const match = LOCATOR.exec(raw.trim());
-  if (!match) return null;
-  const line = Number(match[3]);
-  if (!Number.isInteger(line) || line < 1) return null;
-  return {
-    repo: match[1] ? decodeURIComponent(match[1]) : null,
-    sessionId: match[2],
-    line,
-  };
-}
-```
-
-Create `tests/transcripts/locator.test.ts`:
-
-```typescript
-import { describe, expect, it } from 'vitest';
-import { formatLocator, parseLocator } from '../../src/transcripts/locator.js';
-
-describe('locator', () => {
-  it('omits the repo for a local hit', () => {
-    expect(formatLocator({ sessionId: 'abc', line: 42 })).toBe('transcript://abc#L42');
-  });
-
-  it('includes the repo for a federated hit', () => {
-    expect(formatLocator({ repo: 'knowl-cloud', sessionId: 'abc', line: 42 }))
-      .toBe('transcript://knowl-cloud/abc#L42');
-  });
-
-  it('round-trips both shapes', () => {
-    for (const hit of [{ sessionId: 'abc', line: 7 }, { repo: 'peer', sessionId: 'abc', line: 7 }]) {
-      const parsed = parseLocator(formatLocator(hit));
-      expect(parsed?.sessionId).toBe('abc');
-      expect(parsed?.line).toBe(7);
-      expect(parsed?.repo).toBe(hit.repo ?? null);
-    }
-  });
-
-  it('survives a repo name containing a slash', () => {
-    const parsed = parseLocator(formatLocator({ repo: 'group/repo', sessionId: 'abc', line: 1 }));
-    expect(parsed?.repo).toBe('group/repo');
-  });
-
-  it('returns null for anything malformed', () => {
-    for (const bad of ['', 'not-a-locator', 'transcript://abc', 'transcript://abc#L0', 'transcript://abc#Lx']) {
-      expect(parseLocator(bad)).toBeNull();
-    }
-  });
-});
-```
-
-- [ ] **Step 4b: Write the handlers**
-
-Create `src/transcripts/mcp-handlers.ts`. These are plain functions returning strings, so they are testable without a server:
-
-```typescript
-import path from 'node:path';
-import type { ProjectConfig } from '../core/types.js';
-import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
-import { resolveStorage } from '../store/storage-roles.js';
-import { resolveWorkspace } from '../workspace/resolve.js';
-import { isTranscriptSearchEnabled } from './config.js';
-import { openTranscriptDb } from './database.js';
-import { searchTranscriptsFederated } from './federate.js';
-import { formatLocator, parseLocator } from './locator.js';
-import { readWithContext } from './read.js';
-import { discoverTranscriptFiles } from './paths.js';
-
-export const DISABLED_MESSAGE =
-  'Transcript search is not enabled for this repository. Enable search.transcripts.enabled with `knowl config`, then run `knowl reindex --transcripts`.';
-
-/** The embedder, or null when vectors are off or the model is unavailable. Never throws. */
-async function optionalEmbedder(config: ProjectConfig, projectRoot: string) {
-  if (!isVectorSearchEnabled(config)) return null;
-  try {
-    return await createLocalEmbeddingProvider(config, projectRoot);
-  } catch {
-    return null;
-  }
-}
-
-export async function handleTranscriptSearch(input: {
-  config: ProjectConfig | null;
-  projectRoot: string | null;
-  query: string;
-  sessionId?: string;
-  repos?: string[];
-  limit?: number;
-}): Promise<string> {
-  const { config, projectRoot } = input;
-  if (!config || !projectRoot || !isTranscriptSearchEnabled(config)) return DISABLED_MESSAGE;
-
-  const limit = input.limit ?? 5;
-  const embedder = await optionalEmbedder(config, projectRoot);
-  const workspace = await resolveWorkspace(projectRoot, config).catch(() => null);
-
-  const { hits, skipped, coverage } = await searchTranscriptsFederated({
-    projectRoot, workspace, query: input.query, limit,
-    sessionId: input.sessionId, repos: input.repos,
-    embedder: embedder ?? undefined,
-  });
-
-  const lines: string[] = [];
-  if (hits.length === 0) {
-    lines.push(`No transcript matches for "${input.query}".`);
-  } else {
-    for (const hit of hits) {
-      const parent = hit.parentSessionId ? ` (subagent of ${hit.parentSessionId})` : '';
-      lines.push(`${formatLocator(hit)}  [${hit.role}]${parent}`);
-      lines.push(hit.text ?? '(message body unavailable -- the transcript file was removed)');
-      lines.push('');
-    }
-  }
-
-  // Required, not decorative. "BM25 + semantic" over 8% of an archive is a different claim
-  // from the same words over all of it, and only one justifies trusting a near-miss.
-  for (const entry of coverage) {
-    const semantic = entry.embedded === 0 && !embedder
-      ? ' (semantic off: search.vector.enabled is false)'
-      : '';
-    lines.push(`Coverage [${entry.repo}]: ${entry.embedded}/${entry.indexed} messages embedded${semantic}.`);
-  }
-  for (const entry of skipped) {
-    lines.push(`Skipped [${entry.repo}]: ${entry.reason}.`);
-  }
-
-  lines.push('If you used any of this, store it with knowl_store so the next session does not have to dig for it again.');
-  return lines.join('\n');
-}
-
-export async function handleTranscriptRead(input: {
-  config: ProjectConfig | null;
-  projectRoot: string | null;
-  locator: string;
-  context?: number;
-}): Promise<string> {
-  const { config, projectRoot } = input;
-  if (!config || !projectRoot || !isTranscriptSearchEnabled(config)) return DISABLED_MESSAGE;
-
-  const parsed = parseLocator(input.locator);
-  if (!parsed) {
-    return `Malformed locator "${input.locator}". Expected transcript://<repo>/<session>#L<line>, exactly as knowl_transcript_search returned it.`;
-  }
-
-  // Resolve the owning repo's root before resolving the session's file. A locator from another
-  // repo must not be looked up against this one's transcripts.
-  let root = projectRoot;
-  if (parsed.repo) {
-    const workspace = await resolveWorkspace(projectRoot, config).catch(() => null);
-    const peer = workspace?.peers.find(candidate => candidate.name === parsed.repo);
-    if (!peer) return `Unknown repo "${parsed.repo}" in locator. It is not a linked workspace repo.`;
-    root = (peer as { path?: string; root?: string }).path ?? (peer as { root?: string }).root ?? projectRoot;
-  }
-
-  const client = await openTranscriptDb(resolveStorage(root).transcripts, { readOnly: root !== projectRoot });
-  const row = (await client.execute({
-    sql: 'SELECT path FROM transcript_messages WHERE session_id = ? OR session_id LIKE ? LIMIT 1',
-    args: [parsed.sessionId, `${parsed.sessionId}%`],
-  })).rows[0];
-
-  if (!row) return `No indexed session matches "${parsed.sessionId}".`;
-
-  const excerpts = await readWithContext(String(row.path), parsed.line, input.context ?? 2);
-  if (excerpts.length === 0) {
-    return `Nothing readable at ${input.locator}. The transcript file may have been deleted; it will be dropped from the index on the next pass.`;
-  }
-
-  return excerpts
-    .map(excerpt => `${excerpt.line === parsed.line ? '>' : ' '} [${excerpt.role}] ${excerpt.text}`)
-    .join('\n\n');
-}
-```
-
-- [ ] **Step 4c: Dispatch to them**
-
-In `src/mcp/tools.ts`, add both branches to the call dispatcher. Each re-checks the gate, because a client that cached an older tool list can still call:
-
-```typescript
-    if (name === 'knowl_transcript_search') {
-      const text = await handleTranscriptSearch({
-        config: getConfig(),
-        projectRoot: getProjectRoot(),
-        query: String(args.query ?? ''),
-        sessionId: args.sessionId ? String(args.sessionId) : undefined,
-        repos: Array.isArray(args.repos) ? args.repos.map(String) : undefined,
-        limit: typeof args.limit === 'number' ? args.limit : undefined,
-      });
-      return { content: [{ type: 'text', text }] };
-    }
-
-    if (name === 'knowl_transcript_read') {
-      const text = await handleTranscriptRead({
-        config: getConfig(),
-        projectRoot: getProjectRoot(),
-        locator: String(args.locator ?? ''),
-        context: typeof args.context === 'number' ? args.context : undefined,
-      });
-      return { content: [{ type: 'text', text }] };
-    }
-```
-
-Match the surrounding handlers' exact return shape — read two neighbours before writing these, and use whatever result helper they use rather than the literal above if one exists.
-
-- [ ] **Step 5: Run tests to verify they pass**
-
-Run: `npx vitest run tests/transcripts/locator.test.ts tests/transcripts/mcp-gating.test.ts`
-Expected: PASS, 5 + 10 tests
-
-The four `MCP surface` tests are the ones that matter here — they exercise a real `tools/list` and `tools/call`, which is where "off by default" either holds or does not.
-
-Run: `npx vitest run tests/core/knowl-guidance.test.ts tests/mcp/server.test.ts`
-Expected: PASS **with no edits to either file**. `tests/core/knowl-guidance.test.ts:63-64` asserts the cards are exactly 1,695 and 1,746 characters, and `tests/mcp/server.test.ts:141` asserts the handshake returns `KNOWL_MCP_SERVER_INSTRUCTIONS` verbatim. Those are the off-by-default guarantee stated as tests. If either fails, the change leaked into the disabled path — fix the code, do not update the assertion.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/transcripts/locator.ts src/transcripts/mcp-handlers.ts src/mcp/tools.ts \
-        src/mcp/server.ts src/core/knowl-guidance.ts \
-        tests/transcripts/locator.test.ts tests/transcripts/mcp-gating.test.ts
-git commit -m "feat(transcripts): expose the two MCP tools behind the enabled gate"
-```
-
----
-
-### Task 13: Lifecycle: catch-up on every turn, teardown on disable
+### Task 12: Lifecycle: catch-up on every turn, teardown on disable
 
 **The catch-up must embed, not only index.** A trigger that writes lexical rows and stops leaves every new message permanently unvectored until somebody remembers to run a manual reindex, so coverage decays silently from 100% as the archive grows. Whole-corpus semantic ranking is the design's central claim; a catch-up path that quietly erodes it is worse than none.
 
@@ -4399,6 +4116,12 @@ export async function catchUpTranscripts(
     projectsDir?: string;
     /** Injected by tests; production resolves it from config. */
     embedder?: KnowledgeEmbedder;
+    /**
+     * Whether to release connections afterwards. True for the hook, which is a short-lived
+     * process; false for the search-time top-up, whose caller is about to query the very
+     * connections this would close.
+     */
+    closeWhenDone?: boolean;
   } = {},
 ): Promise<{ indexed: number; embedded: number } | null> {
   try {
@@ -4416,8 +4139,7 @@ export async function catchUpTranscripts(
     if (isVectorSearchEnabled(config)) {
       try {
         const embedder = options.embedder ?? await createLocalEmbeddingProvider(config, projectRoot);
-        const client = await openTranscriptDb(dbPath);
-        embedded = (await embedPendingMessages({ client, embedder, deadline })).embedded;
+        embedded = (await embedPendingMessages({ dbPath, embedder, deadline })).embedded;
       } catch {
         // No model on disk yet, or it failed to load. The lexical index still landed; the next
         // turn or an explicit reindex fills the vectors in.
@@ -4428,7 +4150,7 @@ export async function catchUpTranscripts(
   } catch {
     return null;
   } finally {
-    await closeTranscriptDbs().catch(() => {});
+    if (options.closeWhenDone !== false) await closeTranscriptDbs().catch(() => {});
   }
 }
 ```
@@ -4491,13 +4213,22 @@ export async function removeTranscriptIndex(
 ): Promise<{ removed: boolean; messages: number }> {
   const dbPath = resolveStorage(projectRoot).transcripts;
 
-  let messages = 0;
+  // Existence decides whether there is anything to remove. Counting is only for the report --
+  // folding the two together meant a corrupt or unreadable database threw during the count and
+  // was then left on disk forever, which is the one case where deletion matters most.
   try {
     await fs.access(dbPath);
+  } catch {
+    return { removed: false, messages: 0 };
+  }
+
+  let messages = 0;
+  try {
     const client = await openTranscriptDb(dbPath);
     messages = Number((await client.execute('SELECT COUNT(*) AS n FROM transcript_messages')).rows[0].n);
   } catch {
-    return { removed: false, messages: 0 };
+    // Unreadable. Delete it anyway and report an unknown count.
+    messages = -1;
   }
 
   // Close first: Windows refuses to unlink a file this process still holds open, and the WAL
@@ -4510,6 +4241,43 @@ export async function removeTranscriptIndex(
 
   return { removed: true, messages };
 }
+
+/**
+ * Apply whatever a config change implies for the transcript index.
+ *
+ * Every mutation path routes through here -- the interactive editor, `knowl config set`, and
+ * `knowl config reset`. Wiring only the editor would mean `knowl config set
+ * search.transcripts.enabled false` leaves the index on disk, which is the same bug in a
+ * different command.
+ */
+export async function applyTranscriptConfigTransition(
+  projectRoot: string,
+  before: ProjectConfig,
+  after: ProjectConfig,
+): Promise<{ removed: boolean; messages: number }> {
+  const wasOn = isTranscriptSearchEnabled(before);
+  const isOn = isTranscriptSearchEnabled(after);
+  if (!wasOn || isOn) return { removed: false, messages: 0 };
+  return removeTranscriptIndex(projectRoot);
+}
+
+/** One line for the CLI to print, or null when nothing happened. */
+export function describeTranscriptTeardown(result: { removed: boolean; messages: number }): string | null {
+  if (!result.removed) return null;
+  return result.messages < 0
+    ? 'Removed the transcript index (it was unreadable).'
+    : `Removed the transcript index (${result.messages} messages).`;
+}
+```
+
+Imports for this file:
+
+```typescript
+import fs from 'node:fs/promises';
+import type { ProjectConfig } from '../core/types.js';
+import { resolveStorage } from '../store/storage-roles.js';
+import { isTranscriptSearchEnabled } from './config.js';
+import { closeTranscriptDb, openTranscriptDb } from './database.js';
 ```
 
 Create `tests/transcripts/teardown.test.ts`:
@@ -4520,7 +4288,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/database.js';
-import { removeTranscriptIndex } from '../../src/transcripts/teardown.js';
+import {
+  applyTranscriptConfigTransition,
+  removeTranscriptIndex,
+} from '../../src/transcripts/teardown.js';
+import type { ProjectConfig } from '../../src/core/types.js';
 
 let dir: string;
 let dbPath: string;
@@ -4563,10 +4335,57 @@ describe('removeTranscriptIndex', () => {
   it('is a no-op when there is no index', async () => {
     expect(await removeTranscriptIndex(dir)).toEqual({ removed: false, messages: 0 });
   });
+
+  it('deletes a corrupt database instead of leaving it behind', async () => {
+    // The case that matters most: an unreadable index is exactly what a user wants gone, and
+    // counting-before-deciding used to abandon it on disk.
+    await fs.writeFile(dbPath, 'this is not a sqlite file');
+
+    const result = await removeTranscriptIndex(dir);
+
+    expect(result.removed).toBe(true);
+    expect(result.messages).toBe(-1);
+    await expect(fs.access(dbPath)).rejects.toThrow();
+  });
+});
+
+describe('applyTranscriptConfigTransition', () => {
+  const configWith = (enabled: boolean): ProjectConfig => ({
+    version: 1,
+    security: { rejectSecrets: true, secretPatterns: [] },
+    search: { transcripts: { enabled } },
+  });
+
+  it('removes the index on the true -> false transition', async () => {
+    await openTranscriptDb(dbPath);
+    const result = await applyTranscriptConfigTransition(dir, configWith(true), configWith(false));
+
+    expect(result.removed).toBe(true);
+    await expect(fs.access(dbPath)).rejects.toThrow();
+  });
+
+  it('leaves the index alone when it stays enabled', async () => {
+    await openTranscriptDb(dbPath);
+    const result = await applyTranscriptConfigTransition(dir, configWith(true), configWith(true));
+
+    expect(result.removed).toBe(false);
+    await expect(fs.access(dbPath)).resolves.toBeUndefined();
+  });
+
+  it('does nothing when it was already off', async () => {
+    const result = await applyTranscriptConfigTransition(dir, configWith(false), configWith(false));
+    expect(result).toEqual({ removed: false, messages: 0 });
+  });
 });
 ```
 
-Then wire it into `src/cli/config/ui.ts`. That file already detects changes and offers a reindex on profile changes (`offerReindex`, around line 442); add the symmetric case — when a saved change sets `search.transcripts.enabled` from `true` to `false`, call `removeTranscriptIndex(root)` and print `Removed the transcript index (N messages).` Read `offerReindex` and the `ConfigChange` shape before writing this, and follow whatever it does rather than adding a parallel mechanism.
+Then wire `applyTranscriptConfigTransition` into **all three** mutation paths. Wiring only the interactive editor leaves `knowl config set search.transcripts.enabled false` silently keeping the index — the same bug in a different command.
+
+1. **`src/cli/config/ui.ts`** — after a successful save. The file already reads the config before editing (see the comment at line 335 about reading before any edit) and calls `offerReindex(root, configBefore, prompts)` around line 431; add the symmetric call beside it.
+2. **`knowl config set`** ([src/index.ts:1077](../../../src/index.ts#L1077)) — load the config before the write, then compare after.
+3. **`knowl config reset`** ([src/index.ts:1138](../../../src/index.ts#L1138)) — same, and note that a whole-config reset turns the feature off implicitly rather than by naming the key, which is exactly the case a key-name check would miss.
+
+In each, print `describeTranscriptTeardown(result)` when it returns non-null. Read `offerReindex` and the `ConfigChange` shape before writing this, and follow whatever they do rather than adding a parallel mechanism.
 
 - [ ] **Step 6: Run tests to verify they pass**
 
@@ -4587,9 +4406,811 @@ git commit -m "feat(transcripts): embed on catch-up, and delete the index when d
 ---
 
 
+### Task 13: MCP tools, registered only when enabled
+
+**Files:**
+- Create: `src/transcripts/locator.ts`
+- Create: `src/transcripts/mcp-handlers.ts`
+- Modify: `src/mcp/tools.ts` (the `ListToolsRequestSchema` handler and the call dispatcher)
+- Modify: `src/core/knowl-guidance.ts:92-109`
+- Modify: `src/mcp/server.ts:36`
+- Test: `tests/transcripts/locator.test.ts`, `tests/transcripts/mcp-gating.test.ts`
+
+**Interfaces:**
+- Consumes: `isTranscriptSearchEnabled` (Task 1), `searchTranscriptsFederated` (Task 11), `catchUpTranscripts` (Task 12), `readWithContext` (Task 6)
+- Produces:
+  - `formatLocator(hit: { repo?: string; sessionId: string; line: number }): string`
+  - `parseLocator(raw: string): { repo: string | null; sessionId: string; line: number } | null`
+  - `handleTranscriptSearch(input): Promise<string>` and `handleTranscriptRead(input): Promise<string>` in `mcp-handlers.ts`
+  - MCP tools `knowl_transcript_search` and `knowl_transcript_read`
+  - `mcpServerInstructions(config: ProjectConfig | null): string` in `knowl-guidance.ts`
+
+**Why a locator and not `(sessionId, line)`:** the reader needs a filesystem path, which requires knowing which repo owns the session — and in a workspace two repos can hold sessions with the same id. Handing the caller a single opaque string it passes straight back removes the chance to reassemble identity wrongly and open the wrong file.
+
+**No pseudocode in this task.** An earlier draft left the dispatcher as a comment. Every branch below is written out, and the gating tests drive a real `tools/list` and a real `tools/call` through the server rather than inspecting guidance strings.
+
+**Read this before writing any code — the obvious approach does not work:**
+
+- There is no `buildGuidanceCard`. `renderCompactKnowlGuidance(modeLine)` is **private** ([src/core/knowl-guidance.ts:92](../../../src/core/knowl-guidance.ts#L92)), and the cards are **module-level constants** evaluated at import: `KNOWL_CLAUDE_OPERATIONAL_CARD` and `KNOWL_MCP_SERVER_INSTRUCTIONS` (lines 108–109). A constant cannot depend on config.
+- The compact card's Route section is **hand-written prose, not generated** from `KNOWL_MCP_TOOL_GROUPS`. Adding a group there changes `renderFullKnowlGuidance()` (the KNOWL.md table) and `KNOWL_MCP_TOOL_NAMES` — but not the compact card. So the two need separate handling, and `KNOWL_MCP_TOOL_GROUPS` must stay unchanged or the tool-name list grows unconditionally.
+- `tests/core/knowl-guidance.test.ts:63-64` asserts **exact lengths**. Keeping the existing constants as the disabled-state values means those assertions keep passing untouched, which is the correct outcome: off by default must change nothing.
+
+**Measured on this branch** (`npx vitest` against the real module):
+
+| | chars |
+|---|---|
+| `KNOWL_CLAUDE_OPERATIONAL_CARD` | 1,695 |
+| `KNOWL_MCP_SERVER_INSTRUCTIONS` | 1,746 |
+| `KNOWL_MCP_TOOL_NAMES` | 24 tools |
+| + the transcript Route bullet below | **1,885 / 2,000** |
+
+115 characters of headroom with the feature on. The spec cites 1,917 from PR #8 — that is PR #8's branch, which adds a tool this design does not.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/transcripts/mcp-gating.test.ts`:
+
+```typescript
+import { describe, expect, it } from 'vitest';
+import {
+  KNOWL_MCP_SERVER_INSTRUCTIONS,
+  KNOWL_MCP_TOOL_GROUPS,
+  KNOWL_MCP_TOOL_NAMES,
+  mcpServerInstructions,
+} from '../../src/core/knowl-guidance.js';
+import type { ProjectConfig } from '../../src/core/types.js';
+
+const config = (enabled: boolean): ProjectConfig => ({
+  version: 1,
+  security: { rejectSecrets: true, secretPatterns: [] },
+  search: { transcripts: { enabled } },
+});
+
+describe('transcript tool gating', () => {
+  it('keeps both tools out of the unconditional inventory', () => {
+    const names = KNOWL_MCP_TOOL_GROUPS.flatMap(group => group.tools);
+    expect(names).not.toContain('knowl_transcript_search');
+    expect(names).not.toContain('knowl_transcript_read');
+    expect(KNOWL_MCP_TOOL_NAMES).toHaveLength(24);
+  });
+
+  it('returns the untouched constant when disabled', () => {
+    expect(mcpServerInstructions(config(false))).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
+  });
+
+  it('returns the untouched constant when there is no config at all', () => {
+    expect(mcpServerInstructions(null)).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
+  });
+
+  it('names both tools when enabled', () => {
+    const card = mcpServerInstructions(config(true));
+    expect(card).toContain('knowl_transcript_search');
+    expect(card).toContain('knowl_transcript_read');
+  });
+
+  it('adds exactly one line when enabled', () => {
+    const off = mcpServerInstructions(config(false)).split('\n').length;
+    const on = mcpServerInstructions(config(true)).split('\n').length;
+    expect(on).toBe(off + 1);
+  });
+
+  it('stays inside the 2000-character ceiling with the feature on', () => {
+    expect(mcpServerInstructions(config(true)).length).toBeLessThanOrEqual(2000);
+  });
+});
+
+// The guidance assertions above are necessary but not sufficient: they check what the agent is
+// *told*, not what the server actually exposes. These drive the real protocol.
+describe('MCP surface', () => {
+  const TEST_ROOT = path.resolve('./.knowl-transcript-mcp-test');
+
+  async function toolNames(cfg: ProjectConfig): Promise<string[]> {
+    const response = await rpc(cfg, 'tools/list', {});
+    return response.result.tools.map((tool: { name: string }) => tool.name);
+  }
+
+  it('does not list either tool when disabled', async () => {
+    const names = await toolNames(config(false));
+    expect(names).not.toContain('knowl_transcript_search');
+    expect(names).not.toContain('knowl_transcript_read');
+  });
+
+  it('lists both tools when enabled', async () => {
+    const names = await toolNames(config(true));
+    expect(names).toContain('knowl_transcript_search');
+    expect(names).toContain('knowl_transcript_read');
+  });
+
+  it('refuses a call to a disabled tool instead of crashing', async () => {
+    // A client that cached an older tool list can still call it. The gate must hold at
+    // dispatch, not only at listing.
+    const response = await rpc(config(false), 'tools/call', {
+      name: 'knowl_transcript_search',
+      arguments: { query: 'anything' },
+    });
+
+    const text = JSON.stringify(response.result ?? response.error);
+    expect(text).toMatch(/not enabled/i);
+    expect(text).not.toMatch(/undefined|cannot read|ENOENT/i);
+  });
+
+  it('rejects a malformed locator with a usable message', async () => {
+    const response = await rpc(config(true), 'tools/call', {
+      name: 'knowl_transcript_read',
+      arguments: { locator: 'not-a-locator' },
+    });
+
+    expect(JSON.stringify(response.result ?? response.error)).toMatch(/locator/i);
+  });
+});
+```
+
+Create `tests/transcripts/mcp-handlers.test.ts` for the behaviour the protocol tests cannot reach. These use a real indexed repo on disk:
+
+```typescript
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { closeTranscriptDbs } from '../../src/transcripts/database.js';
+import { handleTranscriptRead, handleTranscriptSearch, clampInteger } from '../../src/transcripts/mcp-handlers.js';
+import { runIndexPass } from '../../src/transcripts/index-pass.js';
+import type { ProjectConfig } from '../../src/core/types.js';
+
+let dir: string;
+
+const config = (over: Partial<{ enabled: boolean; share: boolean }> = {}): ProjectConfig => ({
+  version: 1,
+  security: { rejectSecrets: true, secretPatterns: [] },
+  search: { transcripts: { enabled: true, ...over }, vector: { enabled: false } },
+});
+
+const line = (text: string) => JSON.stringify({ type: 'user', message: { content: text } }) + '\n';
+
+async function makeRepo(name: string, body: string, share: boolean) {
+  const root = path.join(dir, name);
+  const projectsDir = path.join(dir, `${name}-projects`);
+  const encoded = path.resolve(root).replace(/[^A-Za-z0-9]/g, '-');
+  await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
+  await fs.mkdir(path.join(projectsDir, encoded), { recursive: true });
+  await fs.writeFile(path.join(projectsDir, encoded, 'session-abc.jsonl'), body);
+  await fs.writeFile(
+    path.join(root, '.knowl', 'config.json'),
+    JSON.stringify({ ...config({ share }), search: { transcripts: { enabled: true, share }, vector: { enabled: false } } }),
+  );
+  await runIndexPass({ projectRoot: root, dbPath: path.join(root, '.knowl', 'transcripts.db'), projectsDir });
+  return { name, root };
+}
+
+beforeEach(async () => { dir = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-handlers-')); });
+afterEach(async () => {
+  await closeTranscriptDbs();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+describe('clampInteger', () => {
+  it('falls back for non-numbers, NaN and Infinity', () => {
+    for (const bad of [undefined, null, 'five', NaN, Infinity, -Infinity]) {
+      expect(clampInteger(bad, 5, 1, 25)).toBe(5);
+    }
+  });
+
+  it('clamps rather than rejecting, and truncates fractions', () => {
+    expect(clampInteger(1e9, 5, 1, 25)).toBe(25);
+    expect(clampInteger(-7, 2, 0, 10)).toBe(0);
+    expect(clampInteger(3.9, 2, 0, 10)).toBe(3);
+  });
+});
+
+describe('search to read round trip', () => {
+  // The blocker this guards: a local hit rendered as transcript://local/... and the reader
+  // rejected it as an unknown repo, so no local search result could be read at all.
+  it('produces a local locator that read accepts', async () => {
+    const local = await makeRepo('local', line('a durable finding about caching'), false);
+
+    const output = await handleTranscriptSearch({
+      config: config(), projectRoot: local.root, query: 'caching',
+    });
+
+    const locator = /transcript:\/\/\S+/.exec(output)?.[0];
+    expect(locator).toBeDefined();
+    expect(locator).not.toMatch(/transcript:\/\/local\//);
+
+    const read = await handleTranscriptRead({
+      config: config(), projectRoot: local.root, locator: locator!,
+    });
+
+    expect(read).toContain('a durable finding about caching');
+    expect(read).not.toMatch(/unknown repo/i);
+  });
+
+  it('reports coverage and the promotion nudge', async () => {
+    const local = await makeRepo('local', line('a durable finding about caching'), false);
+    const output = await handleTranscriptSearch({
+      config: config(), projectRoot: local.root, query: 'caching',
+    });
+
+    expect(output).toMatch(/Coverage \[.+\]: \d+\/\d+/);
+    expect(output).toMatch(/knowl_store/);
+  });
+
+  it('refuses an empty query instead of scanning everything', async () => {
+    const local = await makeRepo('local', line('anything'), false);
+    expect(await handleTranscriptSearch({
+      config: config(), projectRoot: local.root, query: '   ',
+    })).toMatch(/empty query/i);
+  });
+});
+
+describe('read authorization', () => {
+  it('refuses a peer locator once that peer stops sharing', async () => {
+    // A locator is a durable string: cached from an earlier turn, pasted, or fabricated.
+    // Checking sharing only at search time would mean revocation does not revoke.
+    const local = await makeRepo('local', line('local content'), false);
+    const peer = await makeRepo('peer', line('peer content about caching'), false); // share: false
+
+    const output = await handleTranscriptRead({
+      config: config(),
+      projectRoot: local.root,
+      locator: 'transcript://peer/session-abc#L1',
+    });
+
+    expect(output).toMatch(/not sharing/i);
+    expect(output).not.toContain('peer content');
+  });
+
+  it('refuses a locator naming a repo that is not linked at all', async () => {
+    const local = await makeRepo('local', line('local content'), false);
+
+    expect(await handleTranscriptRead({
+      config: config(), projectRoot: local.root, locator: 'transcript://stranger/session-abc#L1',
+    })).toMatch(/unknown repo/i);
+  });
+});
+
+describe('session prefix resolution', () => {
+  it('treats LIKE wildcards as literal characters', async () => {
+    const local = await makeRepo('local', line('content here'), false);
+
+    // `%` must not match everything; there is no session whose id contains it.
+    expect(await handleTranscriptRead({
+      config: config(), projectRoot: local.root, locator: 'transcript://%25#L1',
+    })).toMatch(/no indexed session/i);
+  });
+});
+```
+
+Add the harness this file needs. `InMemoryTransport` is copied from `tests/mcp/server.test.ts:37-53` rather than inventing a second pattern; the rest is the same handshake that file performs, written out because a plan may not leave steps as prose:
+
+```typescript
+import path from 'node:path';
+import fs from 'node:fs/promises';
+import { createMcpServer } from '../../src/mcp/server.js';
+import * as repo from '../../src/store/repository.js';
+import { closeDb, initDb } from '../../src/store/database.js';
+
+class InMemoryTransport {
+  onclose?: () => void;
+  onerror?: (error: Error) => void;
+  onmessage?: (message: any) => void;
+  onSend?: (message: any) => void;
+  async start(): Promise<void> {}
+  async send(message: any): Promise<void> { this.onSend?.(message); }
+  async close(): Promise<void> { this.onclose?.(); }
+}
+
+const TEST_ROOT = path.resolve('./.knowl-transcript-mcp-test');
+let projectId: string;
+
+beforeAll(async () => {
+  await fs.rm(TEST_ROOT, { recursive: true, force: true });
+  await fs.mkdir(path.join(TEST_ROOT, '.knowl'), { recursive: true });
+  await initDb(TEST_ROOT);
+  projectId = (await repo.createProject(TEST_ROOT, 'Transcript MCP Test')).id;
+});
+
+afterAll(async () => {
+  await closeDb();
+  await fs.rm(TEST_ROOT, { recursive: true, force: true });
+});
+
+/** One JSON-RPC round trip against a server built with the given config. */
+async function rpc(cfg: ProjectConfig, method: string, params: unknown): Promise<any> {
+  const server = createMcpServer(projectId, TEST_ROOT, cfg);
+  const transport = new InMemoryTransport();
+  await server.connect(transport as never);
+
+  const waitFor = (id: string) => new Promise<any>(resolve => {
+    transport.onSend = message => { if (message.id === id) resolve(message); };
+  });
+
+  const initialized = waitFor('init-id');
+  transport.onmessage!({
+    jsonrpc: '2.0', id: 'init-id', method: 'initialize',
+    params: {
+      protocolVersion: '2024-11-05',
+      capabilities: {},
+      clientInfo: { name: 'transcript-test', version: '1.0' },
+    },
+  });
+  await initialized;
+  transport.onmessage!({ jsonrpc: '2.0', method: 'notifications/initialized' });
+
+  const answered = waitFor('req-id');
+  transport.onmessage!({ jsonrpc: '2.0', id: 'req-id', method, params });
+  const response = await answered;
+
+  await server.close();
+  return response;
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/transcripts/mcp-gating.test.ts`
+Expected: FAIL — `mcpServerInstructions` is not exported from `knowl-guidance.js`.
+
+- [ ] **Step 3: Make the compact card conditional without touching the constants**
+
+In `src/core/knowl-guidance.ts`, change the private renderer to take an options bag, and add the new export. Leave `KNOWL_MCP_TOOL_GROUPS`, `KNOWL_CLAUDE_OPERATIONAL_CARD` and `KNOWL_MCP_SERVER_INSTRUCTIONS` exactly as they are — they are the disabled-state values, and the existing exact-length assertions must keep passing untouched.
+
+```typescript
+/**
+ * One extra Route line, only when transcript search is on.
+ *
+ * The card is a token cost paid by every session of every user. Measured: 1,746 chars for the
+ * server card today, 1,885 with this line, against a 2,000 ceiling. Everyone who leaves the
+ * feature off keeps their 1,746 and never learns these tools exist.
+ */
+const TRANSCRIPT_ROUTE_LINE =
+  '- transcripts: knowl_transcript_search after a knowl_query miss; knowl_transcript_read opens a hit. Promote what you use with knowl_store.';
+
+function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: boolean } = {}): string {
+  return [
+    // ...every existing line, unchanged, through the '- special: ...' bullet...
+    ...(options.transcripts ? [TRANSCRIPT_ROUTE_LINE] : []),
+    'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
+  ].join('\n');
+}
+
+export const KNOWL_CLAUDE_OPERATIONAL_CARD = renderCompactKnowlGuidance(KNOWL_CLAUDE_MODE_LINE);
+export const KNOWL_MCP_SERVER_INSTRUCTIONS = renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE);
+
+/**
+ * The server handshake card for a given project.
+ *
+ * Returns the shared constant when the feature is off, so the common case allocates nothing and
+ * stays byte-identical to what every existing test asserts.
+ */
+export function mcpServerInstructions(config: ProjectConfig | null): string {
+  if (!config || !isTranscriptSearchEnabled(config)) return KNOWL_MCP_SERVER_INSTRUCTIONS;
+  return renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE, { transcripts: true });
+}
+```
+
+Add the two imports this needs at the top of the file:
+
+```typescript
+import type { ProjectConfig } from './types.js';
+import { isTranscriptSearchEnabled } from '../transcripts/config.js';
+```
+
+Then in `src/mcp/server.ts`, replace the constant at line 36 with the call — `config` is already a parameter of `createMcpServer`:
+
+```typescript
+      instructions: mcpServerInstructions(config),
+```
+
+and update its import on line 11 from `KNOWL_MCP_SERVER_INSTRUCTIONS` to `mcpServerInstructions`.
+
+Leave `renderFullKnowlGuidance()` alone. It renders the KNOWL.md table from `KNOWL_MCP_TOOL_GROUPS`, that file is committed per-repo, and documenting two tools a reader may not have enabled is worse than omitting them.
+
+- [ ] **Step 4: Register the tools conditionally**
+
+In `src/mcp/tools.ts`, inside the `ListToolsRequestSchema` handler, build the array and append conditionally before returning:
+
+```typescript
+    const tools = [ /* ...every existing tool literal, unchanged... */ ];
+
+    const config = getConfig();
+    if (config && isTranscriptSearchEnabled(config)) {
+      tools.push(
+        {
+          name: 'knowl_transcript_search',
+          description: 'Search this repo\'s past Claude Code session transcripts. Use after knowl_query misses. Returns pointers into the session files; store anything worth keeping with knowl_store.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string', minLength: 1, maxLength: 500,
+                description: 'What to look for, in your own words. Semantic search covers the whole archive, so the exact wording need not match.',
+              },
+              sessionId: { type: 'string', description: 'Restrict to one session. Accepts a full id or an unambiguous prefix.' },
+              repos: {
+                type: 'array', items: { type: 'string' }, maxItems: 20,
+                description: 'Restrict to these repos by name. Omit to search this repo plus every linked workspace repo that shares its transcripts.',
+              },
+              limit: { type: 'integer', minimum: 1, maximum: 25, description: 'Maximum hits; defaults to 5.' },
+            },
+            required: ['query'],
+          },
+        },
+        {
+          name: 'knowl_transcript_read',
+          description: 'Read one transcript message and the turns around it. Pass a locator from knowl_transcript_search exactly as it was returned.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              locator: {
+                type: 'string', minLength: 1, maxLength: 500,
+                description: 'A transcript://<repo>/<session>#L<line> locator from a search hit, verbatim.',
+              },
+              context: { type: 'integer', minimum: 0, maximum: 10, description: 'Prose turns to include on each side; defaults to 2.' },
+            },
+            required: ['locator'],
+          },
+        },
+      );
+    }
+
+    return { tools };
+```
+
+- [ ] **Step 4a: Write the locator module**
+
+Create `src/transcripts/locator.ts`:
+
+```typescript
+/**
+ * `transcript://<repo>/<session>#L<line>`, with `<repo>/` omitted for a local hit.
+ *
+ * A locator is handed to the agent and handed straight back. Session id plus line is not enough
+ * to open a file -- the reader needs a path, which needs the owning repo, and in a workspace two
+ * repos can hold sessions with the same id.
+ */
+export function formatLocator(hit: { repo?: string | null; sessionId: string; line: number }): string {
+  const repo = hit.repo ? `${encodeURIComponent(hit.repo)}/` : '';
+  return `transcript://${repo}${hit.sessionId}#L${hit.line}`;
+}
+
+const LOCATOR = /^transcript:\/\/(?:([^/]+)\/)?([^/#]+)#L(\d+)$/;
+
+/** Null rather than a throw: a malformed locator is caller error, answered with a message. */
+export function parseLocator(raw: string): { repo: string | null; sessionId: string; line: number } | null {
+  if (typeof raw !== 'string') return null;
+  const match = LOCATOR.exec(raw.trim());
+  if (!match) return null;
+
+  const line = Number(match[3]);
+  // The regex already restricts this to digits, so the guard is about magnitude: a locator of
+  // `#L99999999999999999999` parses to a float and would index nothing sensible.
+  if (!Number.isSafeInteger(line) || line < 1) return null;
+
+  let repo: string | null = null;
+  if (match[1]) {
+    try {
+      repo = decodeURIComponent(match[1]);
+    } catch {
+      // `decodeURIComponent('%')` throws URIError on a lone or truncated escape. The contract
+      // here is null-rather-than-throw, so a bad escape is just a malformed locator.
+      return null;
+    }
+  }
+
+  return { repo, sessionId: match[2], line };
+}
+```
+
+Create `tests/transcripts/locator.test.ts`:
+
+```typescript
+import { describe, expect, it } from 'vitest';
+import { formatLocator, parseLocator } from '../../src/transcripts/locator.js';
+
+describe('locator', () => {
+  it('omits the repo for a local hit', () => {
+    expect(formatLocator({ sessionId: 'abc', line: 42 })).toBe('transcript://abc#L42');
+  });
+
+  it('includes the repo for a federated hit', () => {
+    expect(formatLocator({ repo: 'knowl-cloud', sessionId: 'abc', line: 42 }))
+      .toBe('transcript://knowl-cloud/abc#L42');
+  });
+
+  it('round-trips both shapes', () => {
+    for (const hit of [{ sessionId: 'abc', line: 7 }, { repo: 'peer', sessionId: 'abc', line: 7 }]) {
+      const parsed = parseLocator(formatLocator(hit));
+      expect(parsed?.sessionId).toBe('abc');
+      expect(parsed?.line).toBe(7);
+      expect(parsed?.repo).toBe(hit.repo ?? null);
+    }
+  });
+
+  it('survives a repo name containing a slash', () => {
+    const parsed = parseLocator(formatLocator({ repo: 'group/repo', sessionId: 'abc', line: 1 }));
+    expect(parsed?.repo).toBe('group/repo');
+  });
+
+  it('returns null for anything malformed', () => {
+    for (const bad of ['', 'not-a-locator', 'transcript://abc', 'transcript://abc#L0', 'transcript://abc#Lx']) {
+      expect(parseLocator(bad)).toBeNull();
+    }
+  });
+
+  it('returns null rather than throwing on a bad percent-escape', () => {
+    // decodeURIComponent('%') throws URIError. The contract here is null-not-throw.
+    for (const bad of ['transcript://%/abc#L1', 'transcript://%zz/abc#L1', 'transcript://a%/abc#L1']) {
+      expect(() => parseLocator(bad)).not.toThrow();
+      expect(parseLocator(bad)).toBeNull();
+    }
+  });
+
+  it('rejects a line number too large to be an exact integer', () => {
+    expect(parseLocator('transcript://abc#L99999999999999999999')).toBeNull();
+  });
+});
+```
+
+- [ ] **Step 4b: Write the handlers**
+
+Create `src/transcripts/mcp-handlers.ts`. These are plain functions returning strings, so they are testable without a server:
+
+```typescript
+import type { ProjectConfig } from '../core/types.js';
+import { loadConfig } from '../core/config.js';
+import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
+import { resolveStorage } from '../store/storage-roles.js';
+import { resolveWorkspace } from '../workspace/resolve.js';
+import { catchUpTranscripts } from './catch-up.js';
+import { isTranscriptSearchEnabled, isTranscriptSharingEnabled } from './config.js';
+import { openTranscriptDb } from './database.js';
+import { searchTranscriptsFederated } from './federate.js';
+import { formatLocator, parseLocator } from './locator.js';
+import { readWithContext } from './read.js';
+
+export const DISABLED_MESSAGE =
+  'Transcript search is not enabled for this repository. Enable search.transcripts.enabled with `knowl config`, then run `knowl reindex --transcripts`.';
+
+/**
+ * Bounds on agent-supplied input.
+ *
+ * An MCP argument is whatever the model emitted; nothing upstream validates it. Unbounded
+ * `limit` scans and returns arbitrarily much, unbounded `context` allocates a line range of any
+ * size, and a negative `context` silently produces an empty read rather than an error.
+ */
+export const MAX_LIMIT = 25;
+export const MAX_CONTEXT = 10;
+export const MAX_QUERY_CHARS = 500;
+/** Cap on the rendered reply, so one search cannot flood the agent's context window. */
+export const MAX_RESPONSE_CHARS = 12_000;
+
+/** Coerce to a finite integer inside [min, max], falling back for NaN/Infinity/undefined. */
+export function clampInteger(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}\n\n[truncated at ${max} characters -- narrow the query or lower limit]`;
+}
+
+/** The search-time top-up budget. Small enough that a search still feels immediate. */
+const SEARCH_TOPUP_MS = 1_000;
+
+/** The embedder, or null when vectors are off or the model is unavailable. Never throws. */
+async function optionalEmbedder(config: ProjectConfig, projectRoot: string) {
+  if (!isVectorSearchEnabled(config)) return null;
+  try {
+    return await createLocalEmbeddingProvider(config, projectRoot);
+  } catch {
+    return null;
+  }
+}
+
+export async function handleTranscriptSearch(input: {
+  config: ProjectConfig | null;
+  projectRoot: string | null;
+  query: string;
+  sessionId?: string;
+  repos?: string[];
+  limit?: number;
+}): Promise<string> {
+  const { config, projectRoot } = input;
+  if (!config || !projectRoot || !isTranscriptSearchEnabled(config)) return DISABLED_MESSAGE;
+
+  const query = String(input.query ?? '').slice(0, MAX_QUERY_CHARS).trim();
+  if (!query) return 'Empty query. Give knowl_transcript_search a few words to look for.';
+
+  const limit = clampInteger(input.limit, 5, 1, MAX_LIMIT);
+
+  // The third indexing trigger from the design: a short top-up so a search reflects the turn
+  // that just happened. Best-effort and bounded -- a stale index is a worse answer, but a slow
+  // search is a worse tool. `closeWhenDone: false` keeps the connections this search is about
+  // to use.
+  await catchUpTranscripts(projectRoot, { budgetMs: SEARCH_TOPUP_MS, closeWhenDone: false })
+    .catch(() => null);
+
+  const embedder = await optionalEmbedder(config, projectRoot);
+  const workspace = await resolveWorkspace(projectRoot, config).catch(() => null);
+
+  const { hits, skipped, coverage, localRepo } = await searchTranscriptsFederated({
+    projectRoot, workspace, query, limit,
+    sessionId: input.sessionId, repos: input.repos,
+    embedder: embedder ?? undefined,
+  });
+
+  const lines: string[] = [];
+  if (hits.length === 0) {
+    lines.push(`No transcript matches for "${query}".`);
+  } else {
+    for (const hit of hits) {
+      const parent = hit.parentSessionId ? ` (subagent of ${hit.parentSessionId})` : '';
+      // The local repo is omitted from the locator. Including it would produce
+      // `transcript://local/...`, which the reader resolves against the workspace peer list
+      // and rejects as an unknown repo -- a search result that cannot be read.
+      const locator = formatLocator({
+        repo: hit.repo === localRepo ? null : hit.repo,
+        sessionId: hit.sessionId,
+        line: hit.line,
+      });
+      lines.push(`${locator}  [${hit.role}]${parent}`);
+      lines.push(hit.text ?? '(message body unavailable -- the transcript file was removed)');
+      lines.push('');
+    }
+  }
+
+  // Required, not decorative. "BM25 + semantic" over 8% of an archive is a different claim
+  // from the same words over all of it, and only one justifies trusting a near-miss.
+  for (const entry of coverage) {
+    const semantic = entry.embedded === 0 && !embedder
+      ? ' (semantic off: search.vector.enabled is false)'
+      : '';
+    lines.push(`Coverage [${entry.repo}]: ${entry.embedded}/${entry.indexed} messages embedded${semantic}.`);
+  }
+  for (const entry of skipped) {
+    lines.push(`Skipped [${entry.repo}]: ${entry.reason}.`);
+  }
+
+  lines.push('If you used any of this, store it with knowl_store so the next session does not have to dig for it again.');
+  return truncate(lines.join('\n'), MAX_RESPONSE_CHARS);
+}
+
+export async function handleTranscriptRead(input: {
+  config: ProjectConfig | null;
+  projectRoot: string | null;
+  locator: string;
+  context?: number;
+}): Promise<string> {
+  const { config, projectRoot } = input;
+  if (!config || !projectRoot || !isTranscriptSearchEnabled(config)) return DISABLED_MESSAGE;
+
+  const parsed = parseLocator(input.locator);
+  if (!parsed) {
+    return `Malformed locator "${input.locator}". Expected transcript://<repo>/<session>#L<line>, exactly as knowl_transcript_search returned it.`;
+  }
+
+  const context = clampInteger(input.context, 2, 0, MAX_CONTEXT);
+  const workspace = await resolveWorkspace(projectRoot, config).catch(() => null);
+  const localRepo = workspace?.repo ?? 'local';
+
+  // Resolve the owning repo's root before resolving the session's file. A locator from another
+  // repo must not be looked up against this one's transcripts.
+  let root = projectRoot;
+  const isPeer = parsed.repo !== null && parsed.repo !== localRepo;
+
+  if (isPeer) {
+    const peer = workspace?.peers.find(candidate => candidate.name === parsed.repo);
+    if (!peer) return `Unknown repo "${parsed.repo}" in locator. It is not a linked workspace repo.`;
+
+    const peerRoot = (peer as { path?: string; root?: string }).path ?? (peer as { root?: string }).root;
+    if (!peerRoot) return `Cannot locate repo "${parsed.repo}" on disk.`;
+
+    // Re-check sharing here, not only at search time. A locator is a durable string: it can be
+    // cached from an earlier turn, pasted, or fabricated. Trusting "it is a linked repo" would
+    // mean revoking `share` stops new searches while old locators keep working, which is not
+    // revocation at all.
+    const peerConfig = await loadConfig(peerRoot).catch(() => null);
+    if (!peerConfig || !isTranscriptSharingEnabled(peerConfig)) {
+      return `Repo "${parsed.repo}" is not sharing its transcripts. Nothing to read.`;
+    }
+    root = peerRoot;
+  }
+
+  const client = await openTranscriptDb(resolveStorage(root).transcripts, { readOnly: isPeer });
+
+  // `%` and `_` are LIKE wildcards, and a session id is agent-supplied. Escaping them keeps a
+  // prefix a prefix rather than a pattern that matches something else entirely.
+  const escaped = parsed.sessionId.replace(/[\\%_]/g, character => `\\${character}`);
+  const matches = (await client.execute({
+    sql: `SELECT DISTINCT session_id, path FROM transcript_messages
+          WHERE session_id = ? OR session_id LIKE ? ESCAPE '\\'
+          LIMIT 5`,
+    args: [parsed.sessionId, `${escaped}%`],
+  })).rows;
+
+  if (matches.length === 0) return `No indexed session matches "${parsed.sessionId}".`;
+
+  // An exact id always wins; otherwise an ambiguous prefix must say so rather than silently
+  // picking whichever row the database returned first.
+  const exact = matches.find(row => String(row.session_id) === parsed.sessionId);
+  if (!exact && matches.length > 1) {
+    const names = matches.map(row => String(row.session_id)).join(', ');
+    return `Session prefix "${parsed.sessionId}" is ambiguous: ${names}. Use a longer prefix.`;
+  }
+  const row = exact ?? matches[0];
+
+  const excerpts = await readWithContext(String(row.path), parsed.line, context);
+  if (excerpts.length === 0) {
+    return `Nothing readable at ${input.locator}. The transcript file has probably been deleted; its rows are dropped on the next index pass.`;
+  }
+
+  return truncate(
+    excerpts
+      .map(excerpt => `${excerpt.line === parsed.line ? '>' : ' '} [${excerpt.role}] ${excerpt.text}`)
+      .join('\n\n'),
+    MAX_RESPONSE_CHARS,
+  );
+}
+```
+
+- [ ] **Step 4c: Dispatch to them**
+
+In `src/mcp/tools.ts`, add both branches to the call dispatcher. Each re-checks the gate, because a client that cached an older tool list can still call:
+
+```typescript
+    if (name === 'knowl_transcript_search') {
+      const text = await handleTranscriptSearch({
+        config: getConfig(),
+        projectRoot: getProjectRoot(),
+        query: String(args.query ?? ''),
+        sessionId: args.sessionId ? String(args.sessionId) : undefined,
+        repos: Array.isArray(args.repos) ? args.repos.map(String) : undefined,
+        limit: typeof args.limit === 'number' ? args.limit : undefined,
+      });
+      return { content: [{ type: 'text', text }] };
+    }
+
+    if (name === 'knowl_transcript_read') {
+      const text = await handleTranscriptRead({
+        config: getConfig(),
+        projectRoot: getProjectRoot(),
+        locator: String(args.locator ?? ''),
+        context: typeof args.context === 'number' ? args.context : undefined,
+      });
+      return { content: [{ type: 'text', text }] };
+    }
+```
+
+Match the surrounding handlers' exact return shape — read two neighbours before writing these, and use whatever result helper they use rather than the literal above if one exists.
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `npx vitest run tests/transcripts/locator.test.ts tests/transcripts/mcp-gating.test.ts tests/transcripts/mcp-handlers.test.ts`
+Expected: PASS, 7 + 10 + 9 tests
+
+Three groups matter most. The `MCP surface` tests exercise a real `tools/list` and `tools/call`, which is where "off by default" either holds or does not. The round-trip test catches a search result that cannot be read. And the authorization tests catch a locator outliving the sharing flag that authorized it.
+
+Note that JSON Schema `minimum`/`maximum` in the tool definitions is advisory — the MCP SDK does not necessarily enforce it, which is why `clampInteger` exists and is tested separately.
+
+Run: `npx vitest run tests/core/knowl-guidance.test.ts tests/mcp/server.test.ts`
+Expected: PASS **with no edits to either file**. `tests/core/knowl-guidance.test.ts:63-64` asserts the cards are exactly 1,695 and 1,746 characters, and `tests/mcp/server.test.ts:141` asserts the handshake returns `KNOWL_MCP_SERVER_INSTRUCTIONS` verbatim. Those are the off-by-default guarantee stated as tests. If either fails, the change leaked into the disabled path — fix the code, do not update the assertion.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/transcripts/locator.ts src/transcripts/mcp-handlers.ts src/mcp/tools.ts \
+        src/mcp/server.ts src/core/knowl-guidance.ts \
+        tests/transcripts/locator.test.ts tests/transcripts/mcp-gating.test.ts \
+        tests/transcripts/mcp-handlers.test.ts
+git commit -m "feat(transcripts): expose the two MCP tools behind the enabled gate"
+```
+
+---
+
 ## Self-review notes
 
-**Spec coverage.** §1 config gate → Task 1; disable-deletes-database → Task 13. §2 separate database → Task 4; concurrency → Task 4b. §3 prose only → Task 3, enforced by `extractProse`. §3a subagents → Task 2. §3b git worktree roots → Task 2. §4 pointers → Task 4 schema (no body column) plus Task 6 read-back. §5 byte-offset resume and atomic watermark → Task 5; triggers in Tasks 10 and 13, both halves. §6 BM25 + whole-corpus semantic + RRF → Tasks 7–9. §7 coverage and promotion nudge → Tasks 9 and 12. §8 workspace sharing and federation contract → Task 11. §9 locators → Task 12.
+**Spec coverage.** §1 config gate → Task 1; disable-deletes-database → Task 12. §2 separate database → Task 4; concurrency → Task 4b. §3 prose only → Task 3, enforced by `extractProse`. §3a subagents → Task 2. §3b git worktree roots → Task 2. §4 pointers → Task 4 schema (no body column) plus Task 6 read-back. §5 byte-offset resume and atomic watermark → Task 5; all three triggers — backfill (Task 10), hook (Task 12), search top-up (Task 13) — index and embed. §6 BM25 + whole-corpus semantic + RRF → Tasks 7–9. §7 coverage and promotion nudge → Tasks 9 and 13. §8 workspace sharing and federation contract → Task 11. §9 locators → Task 13.
 
 **Deferred deliberately.** The spec's `knowl config` toggle ships in Task 1 as schema entries; if the editor needs a `ConfigCategory` addition beyond `Search`, do it there rather than in a later task.
 
@@ -4604,13 +5225,32 @@ git commit -m "feat(transcripts): embed on catch-up, and delete the index when d
 | Crash safety | Rows committed, watermark written after → a crash replays lines into `UNIQUE(path, line)` | One transaction per batch, watermark included (Task 5) |
 | I/O | Whole-file read per message; ~11 GB per backfill, budgets unenforceable | Streaming parser + `readMessagesAt` batched by file (Tasks 3, 6, 9) |
 | Worktrees | Matched `<encoded-root>-worktrees-*`, a convention inferred from one directory | `git worktree list` (Task 2) — this repo's worktree is on another drive |
-| Disable | Never deleted the database | `removeTranscriptIndex` on the true→false transition (Task 13) |
-| Catch-up | Indexed but never embedded, so coverage decayed silently | Both halves under one deadline (Task 13) |
+| Disable | Never deleted the database | `removeTranscriptIndex` on every config mutation path (Task 12) |
+| Catch-up | Indexed but never embedded, so coverage decayed silently | Both halves under one deadline (Task 12) |
 | Concurrency | `busy_timeout` only; two writers could race the watermark | `withWriteRetry` with `BUSY_SNAPSHOT` reconnect + in-transaction watermark re-read (Tasks 4b, 5) |
-| MCP read | `(sessionId, line)` — insufficient to resolve a file, ambiguous across repos | `transcript://<repo>/<session>#L<line>` locators (Task 12) |
-| Dispatcher | Left as pseudocode, violating this plan's own No Placeholders rule | Written out; gating tested through real `tools/list` and `tools/call` (Task 12) |
+| MCP read | `(sessionId, line)` — insufficient to resolve a file, ambiguous across repos | `transcript://<repo>/<session>#L<line>` locators (Task 13) |
+| Dispatcher | Left as pseudocode, violating this plan's own No Placeholders rule | Written out; gating tested through real `tools/list` and `tools/call` (Task 13) |
 | Federation | Dropped coverage; sorted incomparable cross-repo RRF scores | Per-repo coverage; second RRF over positions with repo-qualified keys (Task 11) |
 
 Also settled: "excludes pasted file bodies" was unenforceable and is now narrowed to exclusion by block type (spec §3), and semantic transcript ranking follows `search.vector.enabled` by decision rather than by accident (Task 10).
+
+**Round 3 — external review (Codex).** Ten more, all confirmed:
+
+| | Was | Now |
+|---|---|---|
+| Local locators | Federation tagged local hits too, so search emitted `transcript://local/...` and read answered "Unknown repo" — no local hit was readable | `localRepo` returned and omitted when formatting; read also resolves the local name locally (Tasks 11, 13) |
+| Revocation | Read checked only that a repo was *linked*, so a cached locator outlived `share: false` | `share` re-checked on every read (Task 13) |
+| Search top-up | Spec required it; nothing called it | `catchUpTranscripts` with a 1s budget and `closeWhenDone: false` (Task 13) |
+| Retry scope | Deletion, final watermark and embedding bypassed retry; `runIndexPass` held a client that reconnection closed | Everything routes through `withWriteRetry`; no handle spans the boundary (Tasks 5, 9) |
+| Concurrency test | Both "writers" shared one cached client, so it contended for nothing | Raw `createClient` connections, plus a reconnect-invalidation test (Task 4b) |
+| Teardown | Wired only into the interactive editor; a corrupt database was never deleted | `applyTranscriptConfigTransition` across editor, `config set`, `config reset`; existence decides, counting only reports (Task 12) |
+| Cutoff bias | Every rank-1 ties, stable sort kept insertion order, so `limit: 1` always returned local | Hash tiebreak on repo-qualified identity; tested at `limit: 1` with reversed peer order (Task 9) |
+| Input bounds | `limit` and `context` unbounded and unclamped | `clampInteger` plus query-length and response-size caps; schema bounds treated as advisory (Task 13) |
+| Locator safety | `decodeURIComponent` could throw despite a null-not-throw contract; `LIKE` prefix unescaped and `LIMIT 1` picked arbitrarily | Escapes caught; `%`/`_` escaped with `ESCAPE`; ambiguous prefixes named rather than guessed (Tasks 13) |
+| Context semantics | Counted physical lines, so tool output between turns made `context: 2` return the target alone | Counts prose turns in one streaming pass (Task 6) |
+
+**Pushed back on one item.** The review noted the plan reports dead pointers rather than dropping their rows during a read, as the spec's failure table said. The spec was wrong, not the plan: a peer's database is opened `query_only`, so the write is impossible there, and a search that mutates the index takes a write lock for a read operation — the contention §2 exists to avoid. The spec now says dead pointers are reported on read and reclaimed by the next index pass.
+
+Task order changed twice for real forward dependencies: federation ahead of MCP (round 2), then lifecycle ahead of MCP (round 3, since the search top-up calls `catchUpTranscripts`).
 
 **Verified on this machine, not assumed:** SQLite 3.45.1 with working `contentless_delete=1` and `snippet()` returning null on a contentless table; card sizes 1,695 / 1,746 chars and 24 tools; 3,717 prose messages in 2.2 MB across 75 transcript files, 52 of them nested subagent files; prose is 2.7% of the archive by bytes; the live worktree at `C:/Users/Admin/AppData/Local/Temp/claude/knowl-pr7`; and across 8 sessions, 2,005 `tool_result` blocks against 126 `text` blocks with exactly one string user message over 4,000 characters.
