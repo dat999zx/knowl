@@ -41,7 +41,7 @@ vi.mock('../../src/store/bootstrap.js', async (importOriginal) => {
   };
 });
 
-import { acquireClient, poolSize, releaseAll } from '../../src/store/connection-pool.js';
+import { acquireClient, PeerDatabaseMissingError, poolSize, releaseAll } from '../../src/store/connection-pool.js';
 
 const ROOT = path.resolve('./.knowl-pool-test');
 const DB = path.join(ROOT, 'a.db');
@@ -79,9 +79,26 @@ describe('connection pool', () => {
   it('does not bootstrap a read-only open', async () => {
     await releaseAll();
     const fresh = path.join(ROOT, 'read-only.db');
+    // A zero-byte file is an empty SQLite database. It is created here rather than by the
+    // acquire under test: this test used to point a read-only open at a path that did not
+    // exist and assert the schema was missing afterwards -- which quietly asserted that
+    // reading a peer *creates* a database in it, the defect the next test now refuses.
+    await fs.writeFile(fresh, '');
     const client = await acquireClient(fresh, { readOnly: true });
     const result = await client.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_items'");
     expect(result.rows.length).toBe(0);
+  });
+
+  it('refuses a read-only open of a database that does not exist, instead of creating it', async () => {
+    // `file:<path>` creates, and `query_only` is applied only after the connection is open.
+    // Every read-only acquire in the codebase is a read of a *linked repo's* database, so
+    // creating on open means writing a file into someone else's repo to read it.
+    await releaseAll();
+    const missing = path.join(ROOT, 'never-written.db');
+
+    await expect(acquireClient(missing, { readOnly: true })).rejects.toThrow(PeerDatabaseMissingError);
+    expect(await fs.access(missing).then(() => true, () => false)).toBe(false);
+    expect(poolSize()).toBe(0);
   });
 
   it('refuses a write attempted on a read-only client, at the engine level', async () => {

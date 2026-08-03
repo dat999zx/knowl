@@ -1,6 +1,7 @@
 import type { ExplainedKnowledgeItem, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { scoreCandidates, selectCandidates, type Candidate, type RankOptions } from '../store/agent-query.js';
 import { openPeerStore } from '../store/store-handle.js';
+import { PeerDatabaseMissingError } from '../store/connection-pool.js';
 import { SchemaTooNewError } from '../store/schema-version.js';
 import type { ActiveWorkspace } from './resolve.js';
 
@@ -17,6 +18,19 @@ export type FederatedResult = {
 const DEFAULT_PER_REPO_CAP = 10;
 
 type RepoCandidate = Candidate & { repo: string };
+
+/**
+ * A checked-out peer with no database is `absent`, not `unreadable`.
+ *
+ * It is the same state `resolveWorkspace` already calls absent one level up -- nothing of that
+ * repo's knowledge is here -- and it is the ordinary condition of a member repo that has been
+ * cloned but not yet used. Calling it unreadable would report a fault where there is none.
+ */
+function skipReasonFor(error: unknown): SkipReason {
+  if (error instanceof PeerDatabaseMissingError) return 'absent';
+  if (error instanceof SchemaTooNewError) return 'schema-too-new';
+  return 'unreadable';
+}
 
 /**
  * Search this repo and every linked one, as a single ranking.
@@ -86,7 +100,7 @@ export async function queryFederated(input: {
       }, store);
       for (const candidate of found) candidates.push({ ...candidate, repo: peer.name });
     } catch (error) {
-      skipped.push({ repo: peer.name, reason: error instanceof SchemaTooNewError ? 'schema-too-new' : 'unreadable' });
+      skipped.push({ repo: peer.name, reason: skipReasonFor(error) });
     }
   }
 

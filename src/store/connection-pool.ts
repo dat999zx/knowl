@@ -1,7 +1,23 @@
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createClient, Client } from '@libsql/client';
 import { bootstrapSchema } from './bootstrap.js';
 import { assertSchemaSupported } from './schema-version.js';
+
+/**
+ * Thrown instead of silently creating a database a read-only caller expected to already exist.
+ *
+ * A read-only acquire is how this process reads a *linked repo's* database, and the only
+ * databases it ever opens by that mode belong to someone else. Distinguished from every other
+ * open failure because "this repo has no knowledge database" is an answer -- a repo with no
+ * database holds no items -- while "this database would not open" is a gap.
+ */
+export class PeerDatabaseMissingError extends Error {
+  constructor(readonly dbPath: string) {
+    super(`No knowledge database at ${dbPath}.`);
+    this.name = 'PeerDatabaseMissingError';
+  }
+}
 
 /**
  * Clients keyed by resolved path and open mode.
@@ -31,6 +47,19 @@ export async function acquireClient(
   const key = keyFor(dbPath, readOnly);
   const existing = clients.get(key);
   if (existing) return existing;
+
+  // Load-bearing, not defensive, and deliberately outside the retry loop -- a file that is
+  // not there will not appear by waiting. `file:<path>` **creates**, and `query_only` is only
+  // applied once the connection is already open, so a read-only open of a peer that has no
+  // database used to write an empty `knowl.db` into that repo's `.knowl/` -- the exact thing
+  // "we only ever read a peer" is supposed to rule out, reached from federated query, the
+  // ownership guard, the cross-repo overlap check and peer change detection. `?mode=ro` is
+  // not an option: `@libsql/client` rejects it with `URL_PARAM_NOT_SUPPORTED`. The
+  // transcripts module already fixed exactly this; this is the same guard on the knowledge
+  // database.
+  if (readOnly && !(await fs.access(path.resolve(dbPath)).then(() => true, () => false))) {
+    throw new PeerDatabaseMissingError(path.resolve(dbPath));
+  }
 
   for (let attempt = 0; ; attempt++) {
     try {
