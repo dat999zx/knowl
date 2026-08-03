@@ -27,14 +27,14 @@ export type VectorSearchResult = {
  * parallel implementation. Comparable across repos only because a workspace pins one
  * embedding identity -- see `sameEmbeddingIdentity`.
  */
-export function cosineSimilarity(left: number[], right: number[]): number {
+export function cosineSimilarity(left: NumericVector, right: NumericVector): number {
   if (left.length !== right.length || left.length === 0) return 0;
   const leftMagnitude = magnitude(left);
   if (leftMagnitude === 0) return 0;
   return cosineWithKnownMagnitude(left, leftMagnitude, right);
 }
 
-function magnitude(vector: number[]): number {
+function magnitude(vector: NumericVector): number {
   let total = 0;
   for (let i = 0; i < vector.length; i++) total += vector[i] * vector[i];
   return Math.sqrt(total);
@@ -48,7 +48,7 @@ function magnitude(vector: number[]): number {
  * vectors: the local embedder normalises, but a future provider might not, and silently
  * returning a plain dot product would then mis-rank rather than fail loudly.
  */
-function cosineWithKnownMagnitude(left: number[], leftMagnitude: number, right: number[]): number {
+function cosineWithKnownMagnitude(left: NumericVector, leftMagnitude: number, right: NumericVector): number {
   if (left.length !== right.length || left.length === 0) return 0;
 
   let dot = 0;
@@ -79,7 +79,9 @@ function encodeVector(vector: number[]): Uint8Array {
   return new Uint8Array(floats.buffer, floats.byteOffset, floats.byteLength);
 }
 
-export function decodeVector(value: unknown): number[] | null {
+export type NumericVector = number[] | Float32Array;
+
+export function decodeVector(value: unknown): NumericVector | null {
   if (Array.isArray(value)) return value as number[];
   if (typeof value === 'string') {
     try {
@@ -89,10 +91,15 @@ export function decodeVector(value: unknown): number[] | null {
       return null;
     }
   }
-  if (value instanceof ArrayBuffer) return Array.from(new Float32Array(value));
+  // A VIEW, not a copy. `Array.from` here allocated a 768-element boxed-float64 JS array for
+  // every row in the scan, and measurement put that single call at roughly 700ms of a
+  // ~1,100ms search over 10,000 vectors -- while the cosine arithmetic it feeds was 32ms.
+  // The scan was never the expensive part; converting the rows for it was. A Float32Array
+  // indexes identically for the arithmetic below, so nothing downstream changes.
+  if (value instanceof ArrayBuffer) return new Float32Array(value);
   if (ArrayBuffer.isView(value)) {
     const view = value as ArrayBufferView;
-    return Array.from(new Float32Array(view.buffer, view.byteOffset, view.byteLength / 4));
+    return new Float32Array(view.buffer, view.byteOffset, view.byteLength / 4);
   }
   return null;
 }

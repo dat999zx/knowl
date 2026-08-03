@@ -44,8 +44,22 @@ describe('toMatchQuery', () => {
     expect(toMatchQuery('embedding crash')).toBe('"embedding" OR "crash"');
   });
 
-  it('strips characters FTS5 would treat as operators', () => {
-    expect(toMatchQuery('OOM: why "now"?')).toBe('"OOM" OR "why" OR "now"');
+  it('escapes characters FTS5 would treat as operators instead of deleting them', () => {
+    // Doubling the quote is the escape the FTS5 grammar defines; stripping it was what
+    // destroyed the token before the tokenizer ever saw it.
+    expect(toMatchQuery('OOM: why "now"?')).toBe('"OOM:" OR "why" OR """now""?"');
+  });
+
+  it('keeps a dotted or hyphenated token whole so the tokenizer can split it', () => {
+    // The whole point: `"index-pass.ts"` is handed to the tokenizer, which produces the
+    // phrase [index, pass, ts] -- what the index actually holds. The glued spelling rides
+    // along so a search for `re-index` still finds a message that wrote `reindex`.
+    expect(toMatchQuery('index-pass.ts')).toBe('"index-pass.ts" OR "indexpassts"');
+    expect(toMatchQuery('src/transcripts')).toBe('"src/transcripts" OR "srctranscripts"');
+  });
+
+  it('leaves ordinary prose exactly as it was', () => {
+    expect(toMatchQuery('the watermark logic')).toBe('"the" OR "watermark" OR "logic"');
   });
 
   it('returns null when nothing searchable remains', () => {
