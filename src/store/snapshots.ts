@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { Client } from '@libsql/client';
 import { auditKnowledgeStore } from './integrity.js';
 import { getClient } from './database.js';
 import { resolveStorage } from './storage-roles.js';
@@ -48,6 +49,81 @@ export async function createSnapshot(projectRoot: string): Promise<Snapshot> {
   return { path: snapshotPath, manifestPath, manifest };
 }
 
+/**
+ * Every table a restore has to rewrite, derived rather than listed.
+ *
+ * The previous list was hand-written and named five tables. `DELETE FROM knowledge_items`
+ * cascades into eight, so `knowledge_assertions`, `knowledge_evidence`, `knowledge_access`
+ * and `drift_state` were emptied and never refilled. The assertion loss is not cosmetic:
+ * `updateKnowledgeItemWithCommit` refuses any content edit on an item with no open assertion,
+ * so a restored store looked intact and then rejected every write to it -- and the audit that
+ * runs immediately afterwards did not check assertions, so it reported success. A recovery
+ * path that quietly destroys history is worse than no recovery path, because it is used
+ * exactly when the previous state is already gone.
+ *
+ * So the set is computed from the schema: `knowledge_items` plus everything declaring a
+ * foreign key into it, plus the standalone tables the restore owns. A table added later
+ * joins this automatically instead of waiting to be noticed.
+ */
+async function tablesReferencingItems(client: Client): Promise<string[]> {
+  const tables = await client.execute(
+    `SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
+  );
+  const dependents: string[] = [];
+  for (const row of tables.rows) {
+    const name = String(row.name);
+    if (name === 'knowledge_items') continue;
+    const fks = await client.execute(`PRAGMA foreign_key_list(${name})`);
+    if (fks.rows.some(fk => String(fk.table) === 'knowledge_items')) dependents.push(name);
+  }
+  return dependents;
+}
+
+/**
+ * Columns shared by the live table and the snapshot's, named explicitly.
+ *
+ * `INSERT INTO t SELECT * FROM snapshot.t` requires the two to agree on column count and
+ * order. A snapshot taken before an additive migration does not, so the star form fails --
+ * or worse, silently lands values in the wrong columns when the counts happen to match.
+ * Restoring only the intersection means an older snapshot loads with its newer columns left
+ * at their defaults, which is what "restore what this snapshot actually holds" should mean.
+ */
+async function sharedColumns(client: Client, table: string): Promise<string[]> {
+  const live = await client.execute(`PRAGMA table_info(${table})`);
+  const snap = await client.execute(`PRAGMA snapshot_restore.table_info(${table})`);
+  const snapNames = new Set(snap.rows.map(row => String(row.name)));
+  return live.rows.map(row => String(row.name)).filter(name => snapNames.has(name));
+}
+
+async function restoreStatements(client: Client): Promise<string[]> {
+  const present = new Set(
+    (await client.execute(
+      `SELECT name FROM snapshot_restore.sqlite_schema WHERE type = 'table'`,
+    )).rows.map(row => String(row.name)),
+  );
+
+  const dependents = (await tablesReferencingItems(client)).filter(table => present.has(table));
+  // `knowledge_commits` has no foreign key into items but is part of the same history, and
+  // restoring items without their commits leaves the audit trail describing a store that no
+  // longer exists.
+  const standalone = ['knowledge_commits'].filter(table => present.has(table));
+
+  const statements: string[] = [];
+  // Children first, then the parent: relying on the cascade to clear dependents is what hid
+  // the original defect, and an explicit delete says which tables this function owns.
+  for (const table of [...dependents, ...standalone]) statements.push(`DELETE FROM ${table}`);
+  statements.push('DELETE FROM knowledge_items');
+
+  // Parent first on the way back in, so foreign keys resolve as rows land.
+  for (const table of ['knowledge_items', ...standalone, ...dependents]) {
+    const columns = await sharedColumns(client, table);
+    if (!columns.length) continue;
+    const list = columns.join(', ');
+    statements.push(`INSERT INTO ${table} (${list}) SELECT ${list} FROM snapshot_restore.${table}`);
+  }
+  return statements;
+}
+
 export async function restoreSnapshot(
   projectRoot: string,
   snapshotPath: string,
@@ -73,18 +149,7 @@ export async function restoreSnapshot(
   await client.execute(`ATTACH DATABASE '${quoteSqlPath(source)}' AS snapshot_restore`);
   try {
     await client.execute('BEGIN');
-    for (const statement of [
-      'DELETE FROM knowledge_embeddings',
-      'DELETE FROM skill_steps',
-      'DELETE FROM skill_metadata',
-      'DELETE FROM knowledge_items',
-      'DELETE FROM knowledge_commits',
-      'INSERT INTO knowledge_items SELECT * FROM snapshot_restore.knowledge_items',
-      'INSERT INTO knowledge_commits SELECT * FROM snapshot_restore.knowledge_commits',
-      'INSERT INTO skill_steps SELECT * FROM snapshot_restore.skill_steps',
-      'INSERT INTO skill_metadata SELECT * FROM snapshot_restore.skill_metadata',
-      'INSERT INTO knowledge_embeddings SELECT * FROM snapshot_restore.knowledge_embeddings',
-    ]) {
+    for (const statement of await restoreStatements(client)) {
       await client.execute(statement);
     }
     await client.execute('COMMIT');

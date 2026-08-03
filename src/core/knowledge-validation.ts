@@ -32,12 +32,39 @@ function reject(code: string, message: string): never {
   throw new KnowledgeValidationError(code, message);
 }
 
+/**
+ * Every field a secret can arrive in, not just the prose ones.
+ *
+ * `tags`, `alternatives` and skill `steps` are all writable from the MCP surface, and all
+ * three used to be unscanned: the same `ghp_…` token refused in `content` stored cleanly in
+ * `tags`. The scan set has to be the set of fields a caller can fill, or the check is a
+ * suggestion. `auditKnowledgeStore` reads this same function, so the store-wide audit
+ * inherited the blind spot and reported clean.
+ */
 function stringFields(input: KnowledgeWriteInput): Array<[string, string]> {
+  const arrayField = (label: string, values: unknown): Array<[string, string]> =>
+    Array.isArray(values)
+      ? values.flatMap((value, index): Array<[string, string]> =>
+        typeof value === 'string' ? [[`${label}[${index}]`, value]] : [])
+      : [];
+
+  const anyInput = input as unknown as Record<string, unknown>;
+  // A skill step is an object; its instruction is the part a caller writes prose into.
+  const steps = Array.isArray(anyInput.steps)
+    ? anyInput.steps.flatMap((step, index): Array<[string, string]> => {
+      const instruction = (step as Record<string, unknown> | null)?.instruction;
+      return typeof instruction === 'string' ? [[`steps[${index}].instruction`, instruction]] : [];
+    })
+    : [];
+
   return [
     ['title', input.title],
     ['content', input.content],
     ['reasoning', input.reasoning],
     ['source', input.source],
+    ...arrayField('tags', anyInput.tags),
+    ...arrayField('alternatives', anyInput.alternatives),
+    ...steps,
   ].filter((field): field is [string, string] => typeof field[1] === 'string');
 }
 

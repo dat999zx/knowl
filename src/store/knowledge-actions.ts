@@ -185,5 +185,17 @@ export async function updateKnowledgeItemWithCommit(
     await flagCorrectionSiblingsBestEffort(projectId, id, `"${beforeItem.title}" (${updates.status})`);
   }
 
+  // Re-embed when the embedded text changed. Every insert path already does this; update did
+  // not, and the FTS row is refreshed by trigger, so the two indexes silently disagreed: the
+  // stored vector still described the OLD wording. Semantic score outweighs the lexical term
+  // by more than an order of magnitude, so a corrected item stayed retrievable for the claim
+  // it no longer makes and was effectively invisible for the one it now makes -- until
+  // somebody happened to run `knowl reindex --vectors`. Correcting a fact in place is the
+  // workflow the guidance asks for over storing a duplicate, which is exactly why it has to
+  // leave retrieval consistent.
+  if (updates.title !== undefined || updates.content !== undefined || updates.reasoning !== undefined) {
+    await indexKnowledgeItemsBestEffort(projectId, [updated]);
+  }
+
   return updated;
 }
