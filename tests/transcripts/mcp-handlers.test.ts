@@ -2,8 +2,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeTranscriptDbs } from '../../src/transcripts/database.js';
-import { clampInteger, handleTranscriptRead, handleTranscriptSearch } from '../../src/transcripts/mcp-handlers.js';
+import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/database.js';
+import { closeDb, initDb } from '../../src/store/database.js';
+import * as repo from '../../src/store/repository.js';
+import { clampInteger, handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../../src/transcripts/mcp-handlers.js';
 import { runIndexPass } from '../../src/transcripts/index-pass.js';
 import { encodeProjectDir } from '../../src/transcripts/paths.js';
 import type { ProjectConfig } from '../../src/core/types.js';
@@ -64,6 +66,9 @@ afterEach(async () => {
   if (homeBefore.HOME === undefined) delete process.env.HOME;
   if (homeBefore.USERPROFILE === undefined) delete process.env.USERPROFILE;
   await closeTranscriptDbs();
+  // Only some tests open the knowledge database; closing it unconditionally keeps the
+  // per-test temp root removable and is a no-op when nothing opened one.
+  await closeDb().catch(() => {});
   // Swallowed: Windows keeps the databases locked for the life of the process.
   await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
 });
@@ -185,6 +190,82 @@ describe('session prefix resolution', () => {
     expect(await handleTranscriptRead({
       config: config(), projectRoot: local.root, locator: 'transcript://session-a#L1',
     })).toContain('content here');
+  });
+});
+
+describe('handleSessionList', () => {
+  /** The knowledge database the status and promotion joins read. */
+  async function withProject(root: string): Promise<string> {
+    await initDb(root);
+    return (await repo.createProject(root, 'Session list')).id;
+  }
+
+  async function markIndexIncomplete(root: string) {
+    const client = await openTranscriptDb(path.join(root, '.knowl', 'transcripts.db'));
+    await client.execute('UPDATE transcript_files SET size_at_index = size_at_index + 9999');
+  }
+
+  it('renders each session with a locator-compatible id and a status', async () => {
+    const local = await makeRepo('local', line('a durable finding about caching'), false);
+    const projectId = await withProject(local.root);
+
+    const output = await handleSessionList({ config: config(), projectRoot: local.root, projectId });
+
+    expect(output).toContain('session-abc');
+    expect(output).toMatch(/idle|active|interrupted/);
+  });
+
+  it('describes an unnamed session by its opening ask', async () => {
+    const local = await makeRepo('local', line('why did the reindex run out of memory?'), false);
+    const projectId = await withProject(local.root);
+
+    expect(await handleSessionList({ config: config(), projectRoot: local.root, projectId }))
+      .toContain('why did the reindex run out of memory?');
+  });
+
+  it('filters over intent rather than message bodies', async () => {
+    const local = await makeRepo('local', line('a question about caching'), false);
+    const projectId = await withProject(local.root);
+
+    const output = await handleSessionList({
+      config: config(), projectRoot: local.root, projectId, query: 'nothingmatchesthis',
+    });
+
+    expect(output).toMatch(/no sessions/i);
+  });
+
+  it('says the index is still warming rather than implying the list is whole', async () => {
+    const local = await makeRepo('local', line('content'), false);
+    const projectId = await withProject(local.root);
+    await markIndexIncomplete(local.root);
+
+    expect(await handleSessionList({ config: config(), projectRoot: local.root, projectId }))
+      .toMatch(/still warming/i);
+  });
+
+  it('refuses when the on-disk config says disabled', async () => {
+    const local = await makeRepo('local', line('content'), false);
+    const projectId = await withProject(local.root);
+    await fs.writeFile(
+      path.join(local.root, '.knowl', 'config.json'),
+      JSON.stringify({
+        version: 1,
+        security: { rejectSecrets: true, secretPatterns: [] },
+        search: { transcripts: { enabled: false }, vector: { enabled: false } },
+      }),
+    );
+
+    expect(await handleSessionList({ config: config(), projectRoot: local.root, projectId }))
+      .toMatch(/not enabled/i);
+  });
+
+  it('refuses when the captured config says disabled, without touching the index', async () => {
+    const local = await makeRepo('local', line('content'), false);
+    const projectId = await withProject(local.root);
+
+    expect(await handleSessionList({
+      config: config({ enabled: false }), projectRoot: local.root, projectId,
+    })).toMatch(/not enabled/i);
   });
 });
 

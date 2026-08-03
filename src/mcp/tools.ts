@@ -33,7 +33,7 @@ import { formatPendingHandoffContext, recordDeliberateHandoff } from '../store/s
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
 import { isTranscriptSearchEnabled } from '../transcripts/config.js';
-import { handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
+import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
 
 
 // The write engine never discards content, so a write can leave memory in one of two
@@ -673,6 +673,20 @@ export function registerTools(
             required: ['locator'],
           },
         },
+        {
+          name: 'knowl_session_list',
+          description: "Browse this project's past Claude Code sessions as an inventory: best-known name (a user rename beats a generated title), the opening ask, status, any declared session card, last activity, and what each session promoted into memory. Use to answer 'which session was about X' or to choose between resuming and starting fresh - then knowl_transcript_search with that sessionId to read into it. Filters over intent only; for content questions use knowl_transcript_search.",
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string', maxLength: 500,
+                description: 'Keywords over session names, opening asks and declared cards. Omit to list newest first.',
+              },
+              limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Maximum sessions; defaults to 30.' },
+            },
+          },
+        },
       );
     }
 
@@ -1228,6 +1242,18 @@ export function registerTools(
           query: String(query ?? ''),
           sessionId: sessionId ? String(sessionId) : undefined,
           repos: Array.isArray(repos) ? repos.map(String) : undefined,
+          limit: typeof limit === 'number' ? limit : undefined,
+        });
+        return { content: [{ type: 'text', text }] };
+      }
+
+      else if (name === 'knowl_session_list') {
+        const { query, limit } = args as any;
+        const text = await handleSessionList({
+          config,
+          projectRoot,
+          projectId,
+          query: query ? String(query) : undefined,
           limit: typeof limit === 'number' ? limit : undefined,
         });
         return { content: [{ type: 'text', text }] };

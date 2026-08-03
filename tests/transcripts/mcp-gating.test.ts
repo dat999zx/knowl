@@ -122,6 +122,21 @@ describe('MCP surface', () => {
     expect(names).not.toContain('knowl_transcript_read');
   });
 
+  it('does not list knowl_session_list when disabled', async () => {
+    expect(await toolNames(config(false))).not.toContain('knowl_session_list');
+  });
+
+  it('lists knowl_session_list when enabled', async () => {
+    expect(await toolNames(config(true))).toContain('knowl_session_list');
+  });
+
+  it('refuses a session_list call when disabled', async () => {
+    const response = await rpc(config(false), 'tools/call', {
+      name: 'knowl_session_list', arguments: {},
+    });
+    expect(JSON.stringify(response.result ?? response.error)).toMatch(/not enabled/i);
+  });
+
   it('lists both tools when enabled', async () => {
     const names = await toolNames(config(true));
     expect(names).toContain('knowl_transcript_search');

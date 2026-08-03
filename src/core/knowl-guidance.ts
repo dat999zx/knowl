@@ -100,12 +100,16 @@ export const KNOWL_HOST_NEUTRAL_MODE_LINE = 'Mode: verified hooks, when active, 
 /**
  * One extra Route line, only when transcript search is on.
  *
- * The card is a token cost paid by every session of every user. Measured: 1,746 chars for the
- * server card today, against a 2,000 ceiling. Everyone who leaves the feature off keeps their
- * 1,746 and never learns these tools exist.
+ * The card is a token cost paid by every session of every user. Everyone who leaves the feature
+ * off keeps the shorter card and never learns these tools exist.
+ *
+ * THIS LINE IS AT THE BUDGET LIMIT. The server card is 1,843 chars without it and 1,998 with it,
+ * against a hard 2,000 ceiling asserted in tests/transcripts/mcp-gating.test.ts -- two characters
+ * of headroom. Naming the third tool cost 18 of them, which is why the wording was compressed
+ * rather than extended. Anything added here has to buy its room from this same line.
  */
 const TRANSCRIPT_ROUTE_LINE =
-  '- transcripts: knowl_transcript_search after a knowl_query miss; knowl_transcript_read opens a hit. Promote what you use with knowl_store.';
+  '- transcripts: knowl_session_list lists sessions, knowl_transcript_search after a knowl_query miss, knowl_transcript_read opens a hit. Store what you use.';
 
 function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: boolean } = {}): string {
   return [

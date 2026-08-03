@@ -10,6 +10,7 @@ import { searchTranscriptsFederated } from './federate.js';
 import { formatLocator, parseLocator } from './locator.js';
 import { readWithContext } from './read.js';
 import { escapeLikePrefix } from './search.js';
+import { listSessionDirectory } from './session-directory.js';
 
 export const DISABLED_MESSAGE =
   'Transcript search is not enabled for this repository. Enable search.transcripts.enabled with `knowl config`, then run `knowl reindex --transcripts`.';
@@ -164,6 +165,63 @@ export async function handleTranscriptSearch(input: {
 
   lines.push('If you used any of this, store it with knowl_store so the next session does not have to dig for it again.');
   return truncate(lines.join('\n'), MAX_RESPONSE_CHARS);
+}
+
+/** Default and ceiling for how many sessions one listing renders. */
+const SESSION_LIST_DEFAULT = 30;
+const SESSION_LIST_MAX = 200;
+
+/**
+ * Browse the project's sessions as an inventory.
+ *
+ * Gated exactly like the other two: the tool is not registered when the feature is off, and this
+ * re-checks per call so disabling takes effect for an already-running server.
+ */
+export async function handleSessionList(input: {
+  config: ProjectConfig | null;
+  projectRoot: string | null;
+  projectId: string | null;
+  query?: string;
+  limit?: number;
+}): Promise<string> {
+  const { projectRoot, projectId } = input;
+  if (!input.config || !projectRoot || !projectId) return DISABLED_MESSAGE;
+
+  const config = await enabledConfig(projectRoot, input.config);
+  if (!config) return DISABLED_MESSAGE;
+
+  const limit = clampInteger(input.limit, SESSION_LIST_DEFAULT, 1, SESSION_LIST_MAX);
+  const { sessions, indexComplete } = await listSessionDirectory({
+    projectId,
+    projectRoot,
+    query: input.query ? String(input.query).slice(0, MAX_QUERY_CHARS) : undefined,
+    limit,
+  });
+
+  if (sessions.length === 0) {
+    return indexComplete
+      ? 'No sessions match. Run `knowl reindex --transcripts` if the index looks stale.'
+      : 'No sessions yet. INDEX STILL WARMING - run again once it has caught up.';
+  }
+
+  const lines = sessions.map(session => {
+    const name = session.name ?? '(unnamed)';
+    const parent = session.parentSessionId ? ` (subagent of ${session.parentSessionId})` : '';
+    const parts = [`${session.sessionId}  ${name}  [${session.status}]${parent}`];
+    if (session.card) parts.push(`  card: ${session.card}`);
+    if (session.opening) parts.push(`  opened: ${session.opening}`);
+    if (session.promoted.length) parts.push(`  promoted: ${session.promoted.slice(0, 5).join('; ')}`);
+    parts.push(`  ${session.messages} messages, last active ${session.lastActiveAt ?? 'unknown'}`);
+    return parts.join('\n');
+  });
+
+  // A caller told nothing reads "no matches" as proof of absence. A partial index has to say so.
+  if (!indexComplete) {
+    lines.push('INDEX STILL WARMING - names and openings fill in as it catches up; run again for fuller coverage.');
+  }
+  lines.push('Read into a session with knowl_transcript_search using its sessionId.');
+
+  return truncate(lines.join('\n\n'), MAX_RESPONSE_CHARS);
 }
 
 export async function handleTranscriptRead(input: {
