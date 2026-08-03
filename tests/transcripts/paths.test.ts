@@ -11,6 +11,22 @@ import {
 
 let projectsDir: string;
 
+/**
+ * Roots and their encoded directory names, derived rather than hardcoded.
+ *
+ * Discovery resolves a root before encoding it, and `path.resolve` is platform-dependent:
+ * on POSIX `d:\coding\knowl` is a *relative* path and resolves against the working directory,
+ * so it encodes to something quite different there. CI runs ubuntu-latest, so hardcoding the
+ * Windows spelling would pass locally and fail on every push. The literals stay
+ * platform-realistic; only the expected encoding is computed.
+ */
+const ROOT = path.resolve(process.platform === 'win32' ? 'd:\\coding\\knowl' : '/coding/knowl');
+const WORKTREE_ROOT = path.resolve(process.platform === 'win32'
+  ? 'C:\\Users\\Admin\\AppData\\Local\\Temp\\claude\\knowl-pr7'
+  : '/tmp/claude/knowl-pr7');
+const ENCODED = encodeProjectDir(ROOT);
+const ENCODED_WORKTREE = encodeProjectDir(WORKTREE_ROOT);
+
 beforeEach(async () => {
   projectsDir = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-transcripts-'));
 });
@@ -37,37 +53,24 @@ describe('encodeProjectDir', () => {
 
 describe('discoverTranscriptFiles', () => {
   it('finds top-level session transcripts', async () => {
-    await write('d--coding-knowl/aaa.jsonl');
-    await write('d--coding-knowl/bbb.jsonl');
+    await write(`${ENCODED}/aaa.jsonl`);
+    await write(`${ENCODED}/bbb.jsonl`);
 
-    const found = await discoverTranscriptFiles('d:\\coding\\knowl', { projectsDir });
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
 
     expect(found.map(f => f.sessionId).sort()).toEqual(['aaa', 'bbb']);
     expect(found.every(f => f.parentSessionId === null)).toBe(true);
-  });
-
-  it('finds subagent transcripts nested under the parent session UUID', async () => {
-    await write('d--coding-knowl/parent.jsonl');
-    await write('d--coding-knowl/78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4/sub-one.jsonl');
-    await write('d--coding-knowl/78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4/sub-two.jsonl');
-
-    const found = await discoverTranscriptFiles('d:\\coding\\knowl', { projectsDir });
-
-    expect(found).toHaveLength(3);
-    const subagents = found.filter(f => f.parentSessionId !== null);
-    expect(subagents).toHaveLength(2);
-    expect(subagents[0].parentSessionId).toBe('78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4');
   });
 
   // The shape this repo's archive actually has, measured 2026-08-03: the transcripts are a
   // level deeper than the session UUID, inside `subagents/`. Reading only the UUID directory
   // finds 24 of 76 files here -- every top-level session and not one subagent.
   it('finds subagent transcripts inside the subagents/ directory', async () => {
-    await write('d--coding-knowl/parent.jsonl');
-    await write('d--coding-knowl/78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4/subagents/sub-one.jsonl');
-    await write('d--coding-knowl/78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4/subagents/sub-two.jsonl');
+    await write(`${ENCODED}/parent.jsonl`);
+    await write(`${ENCODED}/78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4/subagents/sub-one.jsonl`);
+    await write(`${ENCODED}/78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4/subagents/sub-two.jsonl`);
 
-    const found = await discoverTranscriptFiles('d:\\coding\\knowl', { projectsDir });
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
 
     expect(found).toHaveLength(3);
     const subagents = found.filter(f => f.parentSessionId !== null);
@@ -79,54 +82,54 @@ describe('discoverTranscriptFiles', () => {
   // archive. It is exactly the tool output this feature exists to keep out of the index, so
   // the descent names the one directory it wants rather than recursing.
   it('does not descend into tool-results/ beside the subagents directory', async () => {
-    await write('d--coding-knowl/4488248f-c38c-403e-9fa2-7b11902405c7/tool-results/webfetch-1.jsonl');
-    await write('d--coding-knowl/4488248f-c38c-403e-9fa2-7b11902405c7/subagents/real.jsonl');
+    await write(`${ENCODED}/4488248f-c38c-403e-9fa2-7b11902405c7/tool-results/webfetch-1.jsonl`);
+    await write(`${ENCODED}/4488248f-c38c-403e-9fa2-7b11902405c7/subagents/real.jsonl`);
 
-    const found = await discoverTranscriptFiles('d:\\coding\\knowl', { projectsDir });
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
 
     expect(found.map(f => f.sessionId)).toEqual(['real']);
   });
 
   it('ignores non-UUID subdirectories such as memory/', async () => {
-    await write('d--coding-knowl/aaa.jsonl');
-    await write('d--coding-knowl/memory/notes.jsonl');
+    await write(`${ENCODED}/aaa.jsonl`);
+    await write(`${ENCODED}/memory/notes.jsonl`);
 
-    const found = await discoverTranscriptFiles('d:\\coding\\knowl', { projectsDir });
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
 
     expect(found.map(f => f.sessionId)).toEqual(['aaa']);
   });
 
   it('includes a worktree whose path is nowhere near the main root', async () => {
-    await write('d--coding-knowl/main.jsonl');
-    await write('C--Users-Admin-AppData-Local-Temp-claude-knowl-pr7/wt.jsonl');
+    await write(`${ENCODED}/main.jsonl`);
+    await write(`${ENCODED_WORKTREE}/wt.jsonl`);
 
-    const found = await discoverTranscriptFiles('d:\\coding\\knowl', {
+    const found = await discoverTranscriptFiles(ROOT, {
       projectsDir,
-      roots: ['d:\\coding\\knowl', 'C:\\Users\\Admin\\AppData\\Local\\Temp\\claude\\knowl-pr7'],
+      roots: [ROOT, WORKTREE_ROOT],
     });
 
     expect(found.map(f => f.sessionId).sort()).toEqual(['main', 'wt']);
   });
 
   it('excludes a different repo whose name merely shares a prefix', async () => {
-    await write('d--coding-knowl/main.jsonl');
-    await write('d--coding-knowl-cloud/other.jsonl');
+    await write(`${ENCODED}/main.jsonl`);
+    await write(`${ENCODED}-cloud/other.jsonl`);
 
-    const found = await discoverTranscriptFiles('d:\\coding\\knowl', { projectsDir });
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
 
     expect(found.map(f => f.sessionId)).toEqual(['main']);
   });
 
   it('matches case-insensitively, since the drive letter is not stable', async () => {
-    await write('D--coding-knowl/main.jsonl');
+    await write(`${ENCODED.toUpperCase()}/main.jsonl`);
 
-    const found = await discoverTranscriptFiles('d:\\coding\\knowl', { projectsDir });
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
 
     expect(found.map(f => f.sessionId)).toEqual(['main']);
   });
 
   it('returns an empty list when the projects directory does not exist', async () => {
-    const found = await discoverTranscriptFiles('d:\\coding\\knowl', {
+    const found = await discoverTranscriptFiles(ROOT, {
       projectsDir: path.join(projectsDir, 'nope'),
     });
     expect(found).toEqual([]);
