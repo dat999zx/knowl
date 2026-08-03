@@ -225,7 +225,16 @@ git commit -m "feat(transcripts): add the off-by-default config gate and storage
 
 ### Task 2: Transcript file discovery
 
-Finds which `.jsonl` files belong to this repo. Two things make this non-obvious and both are load-bearing: worktrees get their own top-level directory, and subagent transcripts are nested one level deep under the parent session's UUID.
+Finds which `.jsonl` files belong to this repo. Three things make this non-obvious and all are load-bearing: worktrees live at arbitrary paths, subagent transcripts are nested one level deep under the parent session's UUID, and a sibling repo can share a name prefix.
+
+**Do not infer a worktree path convention.** An earlier draft matched `<encoded-root>-worktrees-*`, generalising from the one worktree in this repo's archive. It is wrong — verify for yourself with `git worktree list`:
+
+```
+D:/coding/knowl                                     [main]
+C:/Users/Admin/AppData/Local/Temp/claude/knowl-pr7  [pr-7]
+```
+
+The second is on a different drive and shares no prefix with the first. Roots come from git; each is encoded independently; matching is **exact**, which also drops the `d--coding-knowl-cloud` false positive for free.
 
 **Files:**
 - Create: `src/transcripts/paths.ts`
@@ -235,8 +244,10 @@ Finds which `.jsonl` files belong to this repo. Two things make this non-obvious
 - Consumes: nothing
 - Produces:
   - `encodeProjectDir(projectRoot: string): string`
+  - `parseWorktreeList(stdout: string): string[]`
+  - `resolveRepoRoots(projectRoot: string): Promise<string[]>`
   - `type TranscriptFile = { path: string; sessionId: string; parentSessionId: string | null }`
-  - `discoverTranscriptFiles(projectRoot: string, options?: { projectsDir?: string }): Promise<TranscriptFile[]>`
+  - `discoverTranscriptFiles(projectRoot: string, options?: { projectsDir?: string; roots?: string[] }): Promise<TranscriptFile[]>`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -247,7 +258,12 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { discoverTranscriptFiles, encodeProjectDir } from '../../src/transcripts/paths.js';
+import {
+  discoverTranscriptFiles,
+  encodeProjectDir,
+  parseWorktreeList,
+  resolveRepoRoots,
+} from '../../src/transcripts/paths.js';
 
 let projectsDir: string;
 
@@ -308,11 +324,14 @@ describe('discoverTranscriptFiles', () => {
     expect(found.map(f => f.sessionId)).toEqual(['aaa']);
   });
 
-  it('includes worktree directories of the same repo', async () => {
+  it('includes a worktree whose path is nowhere near the main root', async () => {
     await write('d--coding-knowl/main.jsonl');
-    await write('D--coding-knowl-worktrees-pr-6/wt.jsonl');
+    await write('C--Users-Admin-AppData-Local-Temp-claude-knowl-pr7/wt.jsonl');
 
-    const found = await discoverTranscriptFiles('d:\\coding\\knowl', { projectsDir });
+    const found = await discoverTranscriptFiles('d:\\coding\\knowl', {
+      projectsDir,
+      roots: ['d:\\coding\\knowl', 'C:\\Users\\Admin\\AppData\\Local\\Temp\\claude\\knowl-pr7'],
+    });
 
     expect(found.map(f => f.sessionId).sort()).toEqual(['main', 'wt']);
   });
@@ -326,11 +345,61 @@ describe('discoverTranscriptFiles', () => {
     expect(found.map(f => f.sessionId)).toEqual(['main']);
   });
 
+  it('matches case-insensitively, since the drive letter is not stable', async () => {
+    await write('D--coding-knowl/main.jsonl');
+
+    const found = await discoverTranscriptFiles('d:\\coding\\knowl', { projectsDir });
+
+    expect(found.map(f => f.sessionId)).toEqual(['main']);
+  });
+
   it('returns an empty list when the projects directory does not exist', async () => {
     const found = await discoverTranscriptFiles('d:\\coding\\knowl', {
       projectsDir: path.join(projectsDir, 'nope'),
     });
     expect(found).toEqual([]);
+  });
+});
+
+describe('parseWorktreeList', () => {
+  it('extracts every worktree path from porcelain output', () => {
+    const stdout = [
+      'worktree D:/coding/knowl',
+      'HEAD 1cae2ba0000000000000000000000000000000aa',
+      'branch refs/heads/main',
+      '',
+      'worktree C:/Users/Admin/AppData/Local/Temp/claude/knowl-pr7',
+      'HEAD 8f9e5560000000000000000000000000000000bb',
+      'branch refs/heads/pr-7',
+      '',
+    ].join('\n');
+
+    expect(parseWorktreeList(stdout)).toEqual([
+      'D:/coding/knowl',
+      'C:/Users/Admin/AppData/Local/Temp/claude/knowl-pr7',
+    ]);
+  });
+
+  it('handles a bare worktree entry with no branch line', () => {
+    const stdout = 'worktree /srv/repo\nbare\n\n';
+    expect(parseWorktreeList(stdout)).toEqual(['/srv/repo']);
+  });
+
+  it('returns an empty list for empty output', () => {
+    expect(parseWorktreeList('')).toEqual([]);
+  });
+});
+
+describe('resolveRepoRoots', () => {
+  it('falls back to the project root when the directory is not a git checkout', async () => {
+    const roots = await resolveRepoRoots(projectsDir);
+    expect(roots).toEqual([path.resolve(projectsDir)]);
+  });
+
+  it('lists this repository and its worktrees when run inside a real checkout', async () => {
+    const roots = await resolveRepoRoots(process.cwd());
+    expect(roots.length).toBeGreaterThanOrEqual(1);
+    expect(roots.map(r => path.resolve(r))).toContain(path.resolve(process.cwd()));
   });
 });
 ```
@@ -340,16 +409,20 @@ describe('discoverTranscriptFiles', () => {
 Run: `npx vitest run tests/transcripts/paths.test.ts`
 Expected: FAIL — `Cannot find module '../../src/transcripts/paths.js'`
 
-Note the two tests that encode the real trap: `d--coding-knowl-cloud` is a **different repo**, while `D--coding-knowl-worktrees-pr-6` is **this repo**. Both share the prefix `d--coding-knowl`, so a plain `startsWith` is wrong. The rule below is `startsWith(encoded + '-worktrees-')` plus exact match.
+Two tests encode the real traps. `d--coding-knowl-cloud` is a **different repo** that shares a prefix, so any `startsWith` rule is wrong. And the worktree test uses a root on another drive, which is what a path convention cannot reach.
 
 - [ ] **Step 3: Write the implementation**
 
 Create `src/transcripts/paths.ts`:
 
 ```typescript
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
+
+const run = promisify(execFile);
 
 export type TranscriptFile = {
   /** Absolute path to the `.jsonl`. */
@@ -374,19 +447,35 @@ export function defaultProjectsDir(): string {
   return path.join(os.homedir(), '.claude', 'projects');
 }
 
+/** Every `worktree <path>` line from `git worktree list --porcelain`, in order. */
+export function parseWorktreeList(stdout: string): string[] {
+  return stdout
+    .split(/\r?\n/)
+    .filter(line => line.startsWith('worktree '))
+    .map(line => line.slice('worktree '.length).trim())
+    .filter(Boolean);
+}
+
 /**
- * Whether `candidate` is this repo's transcript directory.
+ * This repo's root and the roots of its worktrees.
  *
- * Case-insensitive because the drive letter's case is not stable -- the same repo has produced
- * both `d--coding-knowl` and `D--coding-knowl-worktrees-pr-6`.
+ * Asking git rather than pattern-matching directory names. A worktree lives wherever it was
+ * created -- this repo's own is on a different drive from the main checkout -- so there is no
+ * prefix, suffix or convention that finds them. The trade is that a *deleted* worktree stops
+ * being discovered, which is correct: its rows are then cleaned up as dead files.
  *
- * A worktree lives at `<root>/worktrees/<name>`, which encodes to `<encoded>-worktrees-<name>`.
- * Matching on the bare prefix instead would swallow `d--coding-knowl-cloud`, a different repo.
+ * Any failure degrades to the project root alone. This runs on every enabled session, and a
+ * missing git binary or a non-checkout directory must never be the thing that breaks one.
  */
-function belongsToRepo(candidate: string, encodedRoot: string): boolean {
-  const name = candidate.toLowerCase();
-  const root = encodedRoot.toLowerCase();
-  return name === root || name.startsWith(`${root}-worktrees-`);
+export async function resolveRepoRoots(projectRoot: string): Promise<string[]> {
+  const resolved = path.resolve(projectRoot);
+  try {
+    const { stdout } = await run('git', ['worktree', 'list', '--porcelain'], { cwd: resolved });
+    const roots = parseWorktreeList(stdout).map(root => path.resolve(root));
+    return roots.length > 0 ? [...new Set([resolved, ...roots])] : [resolved];
+  } catch {
+    return [resolved];
+  }
 }
 
 async function readDirSafe(dir: string): Promise<import('node:fs').Dirent[]> {
@@ -405,17 +494,23 @@ async function readDirSafe(dir: string): Promise<import('node:fs').Dirent[]> {
  *
  * The nesting is not optional to handle. In this repo's own archive, 52 of 75 transcript files
  * live in those subdirectories -- a top-level-only scan silently misses 69% of the corpus.
+ *
+ * Directory matching is exact (case-folded), never a prefix: `d--coding-knowl-cloud` is a
+ * different repository that happens to start with this one's encoded name.
  */
 export async function discoverTranscriptFiles(
   projectRoot: string,
-  options: { projectsDir?: string } = {},
+  options: { projectsDir?: string; roots?: string[] } = {},
 ): Promise<TranscriptFile[]> {
   const projectsDir = options.projectsDir ?? defaultProjectsDir();
-  const encodedRoot = encodeProjectDir(path.resolve(projectRoot));
+  const roots = options.roots ?? await resolveRepoRoots(projectRoot);
+  // Case-folded because the drive letter's case is not stable across hosts: this archive holds
+  // both `d--coding-knowl` and `D--coding-knowl-worktrees-pr-6`.
+  const wanted = new Set(roots.map(root => encodeProjectDir(path.resolve(root)).toLowerCase()));
   const found: TranscriptFile[] = [];
 
   for (const repoDir of await readDirSafe(projectsDir)) {
-    if (!repoDir.isDirectory() || !belongsToRepo(repoDir.name, encodedRoot)) continue;
+    if (!repoDir.isDirectory() || !wanted.has(repoDir.name.toLowerCase())) continue;
     const repoPath = path.join(projectsDir, repoDir.name);
 
     for (const entry of await readDirSafe(repoPath)) {
@@ -452,13 +547,32 @@ Note the encoding test expects `d:\coding\knowl` → `d--coding-knowl`, but `pat
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/transcripts/paths.test.ts`
-Expected: PASS, 8 tests
+Expected: PASS, 14 tests
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Verify against the real archive**
+
+This is the step that would have caught the original bug. Run:
+
+```bash
+node -e "
+const { discoverTranscriptFiles, resolveRepoRoots } = require('./dist/index.js');
+" 2>/dev/null || npx tsx -e "
+import { discoverTranscriptFiles, resolveRepoRoots } from './src/transcripts/paths.js';
+const roots = await resolveRepoRoots(process.cwd());
+console.log('roots:', roots);
+const files = await discoverTranscriptFiles(process.cwd());
+console.log('transcripts found:', files.length);
+console.log('subagent files:', files.filter(f => f.parentSessionId).length);
+"
+```
+
+Expected: more than one root if a worktree exists, and a file count in the same order as `find ~/.claude/projects/<encoded> -name '*.jsonl' | wc -l`. A count that matches only the top-level file count means the subagent descent is broken.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 git add src/transcripts/paths.ts tests/transcripts/paths.test.ts
-git commit -m "feat(transcripts): discover session files including worktrees and subagents"
+git commit -m "feat(transcripts): discover session files via git worktree roots"
 ```
 
 ---
@@ -466,6 +580,10 @@ git commit -m "feat(transcripts): discover session files including worktrees and
 ### Task 3: Prose extraction
 
 Streams a `.jsonl` and yields only what a person said, with the byte offset and line number needed to resume and to point back.
+
+**This must actually stream.** The largest sessions here are several megabytes, and the caller enforces a 1.5s hook budget and a `--budget` flag against it. Reading the remainder of a file into one buffer makes both unenforceable and scales memory with session length. Peak memory below is one 64 KB chunk plus one partial line, regardless of file size.
+
+Each yielded message carries the watermark that becomes valid *once that message is committed*, which is what lets Task 5 advance `bytes_indexed` inside the same transaction as the rows.
 
 **Files:**
 - Create: `src/transcripts/parse.ts`
@@ -475,8 +593,11 @@ Streams a `.jsonl` and yields only what a person said, with the byte offset and 
 - Consumes: nothing
 - Produces:
   - `type ProseMessage = { line: number; role: 'user' | 'assistant'; text: string; timestamp: string | null }`
+  - `type ProseChunk = { message: ProseMessage; bytesConsumed: number; linesConsumed: number }`
+  - `type ProseWatermark = { bytesConsumed: number; linesConsumed: number }`
   - `extractProse(entry: unknown): { role: 'user' | 'assistant'; text: string; timestamp: string | null } | null`
-  - `readProseFrom(filePath: string, startByte: number, startLine: number): Promise<{ messages: ProseMessage[]; bytesRead: number; linesRead: number }>`
+  - `streamProseFrom(filePath: string, startByte: number, startLine: number): AsyncGenerator<ProseChunk, ProseWatermark>`
+  - `readProseFrom(filePath: string, startByte: number, startLine: number): Promise<{ messages: ProseMessage[]; bytesRead: number; linesRead: number }>` — thin wrapper that drains the generator; used by tests, not by the index pass
 
 - [ ] **Step 1: Write the failing test**
 
@@ -487,7 +608,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { extractProse, readProseFrom } from '../../src/transcripts/parse.js';
+import { extractProse, readProseFrom, streamProseFrom } from '../../src/transcripts/parse.js';
 
 let dir: string;
 
@@ -599,6 +720,72 @@ describe('readProseFrom', () => {
     expect(result.messages[0].line).toBe(2);
   });
 });
+
+describe('streamProseFrom', () => {
+  it('carries a per-message watermark that resumes exactly after it', async () => {
+    const file = path.join(dir, 's.jsonl');
+    const first = userLine('one') + '\n';
+    const second = userLine('two') + '\n';
+    await fs.writeFile(file, first + second);
+
+    const chunks = [];
+    for await (const chunk of streamProseFrom(file, 0, 0)) chunks.push(chunk);
+
+    expect(chunks[0].bytesConsumed).toBe(Buffer.byteLength(first));
+    expect(chunks[0].linesConsumed).toBe(1);
+
+    // Resuming from the first message's watermark must yield exactly the second.
+    const resumed = [];
+    for await (const chunk of streamProseFrom(file, chunks[0].bytesConsumed, chunks[0].linesConsumed)) {
+      resumed.push(chunk.message.text);
+    }
+    expect(resumed).toEqual(['two']);
+  });
+
+  it('returns a final watermark covering trailing non-prose lines', async () => {
+    const file = path.join(dir, 's.jsonl');
+    const body = userLine('prose') + '\n' + JSON.stringify({ type: 'system', message: { content: 'x' } }) + '\n';
+    await fs.writeFile(file, body);
+
+    const iterator = streamProseFrom(file, 0, 0);
+    let final;
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) { final = next.value; break; }
+    }
+
+    // Past the system line, not stopped at the last prose message.
+    expect(final.bytesConsumed).toBe(Buffer.byteLength(body));
+    expect(final.linesConsumed).toBe(2);
+  });
+
+  it('does not load the file into memory', async () => {
+    const file = path.join(dir, 'big.jsonl');
+    // 20 MB of prose across 2,000 lines. A whole-file read would allocate all of it.
+    await fs.writeFile(file, userLine('x'.repeat(10_000)).repeat(1) + '\n');
+    for (let i = 0; i < 2_000; i++) await fs.appendFile(file, userLine('y'.repeat(10_000)) + '\n');
+
+    const before = process.memoryUsage().heapUsed;
+    let count = 0;
+    for await (const _ of streamProseFrom(file, 0, 0)) count++;
+    const growth = process.memoryUsage().heapUsed - before;
+
+    expect(count).toBe(2_001);
+    // Generous bound: the point is that growth is unrelated to the 20 MB file size.
+    expect(growth).toBeLessThan(8 * 1024 * 1024);
+  });
+
+  it('decodes a multibyte character split across chunk boundaries', async () => {
+    const file = path.join(dir, 'utf8.jsonl');
+    // Long enough to span several 64 KB reads, with multibyte characters throughout.
+    await fs.writeFile(file, userLine('π'.repeat(100_000)) + '\n');
+
+    const chunks = [];
+    for await (const chunk of streamProseFrom(file, 0, 0)) chunks.push(chunk);
+
+    expect(chunks[0].message.text).toBe('π'.repeat(100_000));
+  });
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -611,7 +798,7 @@ Expected: FAIL — `Cannot find module '../../src/transcripts/parse.js'`
 Create `src/transcripts/parse.ts`:
 
 ```typescript
-import fs from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
 
 export type ProseMessage = {
   /** 1-indexed line within the `.jsonl`. This is the pointer stored instead of the text. */
@@ -658,73 +845,118 @@ export function extractProse(entry: unknown): Extracted | null {
   return { role, text, timestamp };
 }
 
+export type ProseWatermark = { bytesConsumed: number; linesConsumed: number };
+
+export type ProseChunk = {
+  message: ProseMessage;
+  /**
+   * The watermark that becomes correct once this message is committed: the byte offset just
+   * past its line, and the line count including it.
+   *
+   * Carried per message so the indexer can advance `bytes_indexed` in the *same* transaction
+   * as the rows. Committing rows and the watermark separately is not crash-safe -- a crash
+   * between them replays those lines into `UNIQUE(path, line)` on the next pass.
+   */
+  bytesConsumed: number;
+  linesConsumed: number;
+};
+
 /**
- * Read prose from `startByte`, continuing line numbering from `startLine`.
+ * Stream prose from `startByte`, continuing line numbering from `startLine`.
  *
- * Returns the byte offset of the last complete line rather than the file length. A transcript
- * being appended to while this runs will have a partial final record; committing a watermark
- * past it would skip that message forever once the rest arrives.
+ * Peak memory is one read chunk plus one partial line, whatever the file's size. Buffering the
+ * remainder instead would scale with session length and make the caller's time budgets
+ * unenforceable -- a multi-megabyte allocation happens before any budget can be checked.
+ *
+ * The returned watermark is the offset of the last *complete* line, never the file length. A
+ * transcript being appended to while this runs has a partial final record; committing past it
+ * would skip that message forever once the rest arrives.
  */
+export async function* streamProseFrom(
+  filePath: string,
+  startByte: number,
+  startLine: number,
+): AsyncGenerator<ProseChunk, ProseWatermark> {
+  let carry = Buffer.alloc(0);
+  /** Absolute file offset of `carry[0]`. */
+  let consumed = startByte;
+  let line = startLine;
+
+  let stream: import('node:fs').ReadStream;
+  try {
+    stream = createReadStream(filePath, { start: startByte });
+  } catch {
+    return { bytesConsumed: startByte, linesConsumed: startLine };
+  }
+
+  for await (const chunk of stream) {
+    carry = carry.length === 0 ? Buffer.from(chunk) : Buffer.concat([carry, Buffer.from(chunk)]);
+    let cursor = 0;
+
+    for (;;) {
+      const newline = carry.indexOf(0x0a, cursor);
+      if (newline === -1) break;
+
+      // Safe to decode here: 0x0a cannot occur inside a multi-byte UTF-8 sequence, so a
+      // complete line is always a complete sequence of characters.
+      const raw = carry.subarray(cursor, newline).toString('utf8');
+      cursor = newline + 1;
+      line++;
+
+      const trimmed = raw.trim();
+      if (trimmed) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(trimmed);
+        } catch {
+          // One unreadable line must not cost the rest of the file.
+          parsed = undefined;
+        }
+        const prose = parsed === undefined ? null : extractProse(parsed);
+        if (prose) {
+          yield { message: { line, ...prose }, bytesConsumed: consumed + cursor, linesConsumed: line };
+        }
+      }
+    }
+
+    consumed += cursor;
+    carry = carry.subarray(cursor);
+  }
+
+  // Past any trailing non-prose lines, which advanced the watermark without yielding.
+  return { bytesConsumed: consumed, linesConsumed: line };
+}
+
+/** Drain `streamProseFrom` into an array. For tests and small files; the indexer streams. */
 export async function readProseFrom(
   filePath: string,
   startByte: number,
   startLine: number,
 ): Promise<{ messages: ProseMessage[]; bytesRead: number; linesRead: number }> {
-  const handle = await fs.open(filePath, 'r');
-  let buffer: Buffer;
-  try {
-    const stat = await handle.stat();
-    const length = Math.max(0, stat.size - startByte);
-    if (length === 0) return { messages: [], bytesRead: startByte, linesRead: startLine };
-    buffer = Buffer.alloc(length);
-    await handle.read(buffer, 0, length, startByte);
-  } finally {
-    await handle.close();
-  }
-
   const messages: ProseMessage[] = [];
-  let line = startLine;
-  let consumed = startByte;
-  let cursor = 0;
-
-  while (cursor < buffer.length) {
-    const newline = buffer.indexOf(0x0a, cursor);
-    if (newline === -1) break; // Partial trailing line: leave it for the next pass.
-
-    const raw = buffer.subarray(cursor, newline).toString('utf8');
-    cursor = newline + 1;
-    consumed = startByte + cursor;
-    line++;
-
-    const trimmed = raw.trim();
-    if (!trimmed) continue;
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      // One unreadable line must not cost the rest of the file.
-      continue;
+  const iterator = streamProseFrom(filePath, startByte, startLine);
+  for (;;) {
+    const next = await iterator.next();
+    if (next.done) {
+      return { messages, bytesRead: next.value.bytesConsumed, linesRead: next.value.linesConsumed };
     }
-
-    const prose = extractProse(parsed);
-    if (prose) messages.push({ line, ...prose });
+    messages.push(next.value.message);
   }
-
-  return { messages, bytesRead: consumed, linesRead: line };
 }
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/transcripts/parse.test.ts`
-Expected: PASS, 10 tests
+Expected: PASS, 14 tests
+
+The memory test is the one guarding the design. If it fails, something reintroduced a whole-file read.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/transcripts/parse.ts tests/transcripts/parse.test.ts
-git commit -m "feat(transcripts): stream prose out of session jsonl with resumable offsets"
+git commit -m "feat(transcripts): stream prose with a per-message resumable watermark"
 ```
 
 ---
@@ -963,16 +1195,237 @@ git commit -m "feat(transcripts): add the separate transcripts database and sche
 
 ---
 
+### Task 4b: Surviving a second writer
+
+Two writers on this database is the normal case, not an edge case: a `--budget` backfill can be running while a live session's per-turn hook fires. PR #11 needed all three of the mitigations below against a real 41k-message job — none were theoretical.
+
+**`busy_timeout` alone is not enough.** `SQLITE_BUSY_SNAPSHOT` is returned when a connection is pinned to a stale read snapshot, and it is **permanent for that connection** — backing off waits for a condition only a reconnect clears. PR #11 measured a fresh process writing the same database in **71 ms** while a long-lived job had been failing on it for **fourteen minutes**.
+
+**Files:**
+- Modify: `src/transcripts/database.ts`
+- Test: `tests/transcripts/concurrency.test.ts`
+
+**Interfaces:**
+- Consumes: `openTranscriptDb` (Task 4)
+- Produces:
+  - `closeTranscriptDb(dbPath: string): Promise<void>` — evict one cached client
+  - `withWriteRetry<T>(dbPath: string, run: (client: Client) => Promise<T>, options?: { attempts?: number }): Promise<T>`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/transcripts/concurrency.test.ts`:
+
+```typescript
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { closeTranscriptDbs, openTranscriptDb, withWriteRetry } from '../../src/transcripts/database.js';
+
+let dir: string;
+let dbPath: string;
+
+beforeEach(async () => {
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-conc-'));
+  dbPath = path.join(dir, 'transcripts.db');
+});
+
+afterEach(async () => {
+  await closeTranscriptDbs();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+describe('withWriteRetry', () => {
+  it('returns the callback result when nothing goes wrong', async () => {
+    const value = await withWriteRetry(dbPath, async client => {
+      await client.execute({ sql: 'INSERT INTO transcript_fts(rowid, body) VALUES (?, ?)', args: [1, 'x'] });
+      return 'done';
+    });
+    expect(value).toBe('done');
+  });
+
+  it('reopens the connection on SQLITE_BUSY_SNAPSHOT and retries', async () => {
+    let attempts = 0;
+    const clients: unknown[] = [];
+
+    const value = await withWriteRetry(dbPath, async client => {
+      attempts++;
+      clients.push(client);
+      if (attempts === 1) {
+        const error = new Error('database is locked (SQLITE_BUSY_SNAPSHOT)');
+        (error as { code?: string }).code = 'SQLITE_BUSY_SNAPSHOT';
+        throw error;
+      }
+      return 'recovered';
+    });
+
+    expect(value).toBe('recovered');
+    expect(attempts).toBe(2);
+    // A retry that reuses the pinned connection would fail forever; it must be a new one.
+    expect(clients[0]).not.toBe(clients[1]);
+  });
+
+  it('retries a plain SQLITE_BUSY without reopening', async () => {
+    let attempts = 0;
+    await withWriteRetry(dbPath, async () => {
+      attempts++;
+      if (attempts < 3) {
+        const error = new Error('database is locked');
+        (error as { code?: string }).code = 'SQLITE_BUSY';
+        throw error;
+      }
+    });
+    expect(attempts).toBe(3);
+  });
+
+  it('gives up after the attempt limit rather than looping forever', async () => {
+    await expect(
+      withWriteRetry(dbPath, async () => {
+        const error = new Error('database is locked');
+        (error as { code?: string }).code = 'SQLITE_BUSY';
+        throw error;
+      }, { attempts: 3 }),
+    ).rejects.toThrow(/locked/);
+  });
+
+  it('does not retry an error that is not a lock', async () => {
+    let attempts = 0;
+    await expect(
+      withWriteRetry(dbPath, async () => {
+        attempts++;
+        throw new Error('UNIQUE constraint failed: transcript_messages.line');
+      }),
+    ).rejects.toThrow(/UNIQUE/);
+    expect(attempts).toBe(1);
+  });
+});
+
+describe('two concurrent writers', () => {
+  it('both complete without a lost update or a uniqueness collision', async () => {
+    await openTranscriptDb(dbPath);
+
+    const writer = (base: number) => withWriteRetry(dbPath, async client => {
+      for (let i = 0; i < 50; i++) {
+        await client.execute('BEGIN IMMEDIATE');
+        await client.execute({
+          sql: 'INSERT INTO transcript_fts(rowid, body) VALUES (?, ?)',
+          args: [base + i, `row ${base + i}`],
+        });
+        await client.execute('COMMIT');
+      }
+    });
+
+    await Promise.all([writer(1_000), writer(2_000)]);
+
+    const client = await openTranscriptDb(dbPath);
+    const n = (await client.execute("SELECT rowid FROM transcript_fts WHERE transcript_fts MATCH 'row'")).rows.length;
+    expect(n).toBe(100);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/transcripts/concurrency.test.ts`
+Expected: FAIL — `withWriteRetry` is not exported.
+
+- [ ] **Step 3: Write the implementation**
+
+Append to `src/transcripts/database.ts`:
+
+```typescript
+/** Drop one cached client so the next acquire reconnects. */
+export async function closeTranscriptDb(dbPath: string): Promise<void> {
+  for (const readOnly of [false, true]) {
+    const key = keyFor(dbPath, readOnly);
+    const client = clients.get(key);
+    if (!client) continue;
+    clients.delete(key);
+    if (!readOnly) await client.execute('PRAGMA wal_checkpoint(TRUNCATE)').catch(() => {});
+    client.close();
+  }
+}
+
+function errorCode(error: unknown): string {
+  const raw = error as { code?: unknown; message?: unknown };
+  const code = typeof raw?.code === 'string' ? raw.code : '';
+  const message = typeof raw?.message === 'string' ? raw.message : '';
+  return `${code} ${message}`.toUpperCase();
+}
+
+const isSnapshotStall = (error: unknown) => errorCode(error).includes('BUSY_SNAPSHOT');
+const isBusy = (error: unknown) => {
+  const text = errorCode(error);
+  return text.includes('SQLITE_BUSY') || text.includes('DATABASE IS LOCKED');
+};
+
+/**
+ * Run a write against the transcripts database, surviving a concurrent writer.
+ *
+ * Retry granularity is one transaction, which is what makes this safe: SQLite guarantees a
+ * failed `COMMIT` rolled back, so re-running the callback cannot double-write.
+ *
+ * `SQLITE_BUSY_SNAPSHOT` is handled differently from `SQLITE_BUSY` on purpose. It is permanent
+ * for a connection pinned to a stale read snapshot -- no amount of waiting clears it, only a
+ * reconnect does. PR #11 measured a fresh process writing in 71 ms while a long-lived job had
+ * been failing on the same database for fourteen minutes.
+ */
+export async function withWriteRetry<T>(
+  dbPath: string,
+  run: (client: Client) => Promise<T>,
+  options: { attempts?: number } = {},
+): Promise<T> {
+  const attempts = options.attempts ?? 5;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const client = await openTranscriptDb(dbPath);
+    try {
+      return await run(client);
+    } catch (error) {
+      lastError = error;
+      if (isSnapshotStall(error)) {
+        await closeTranscriptDb(dbPath);
+      } else if (isBusy(error)) {
+        // busy_timeout already waited; a short extra pause lets the other writer's
+        // transaction land rather than spinning against it.
+        await new Promise(resolve => setTimeout(resolve, 25 * attempt));
+      } else {
+        throw error; // Not a lock. A constraint violation is a bug, not something to retry.
+      }
+    }
+  }
+
+  throw lastError;
+}
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `npx vitest run tests/transcripts/concurrency.test.ts`
+Expected: PASS, 6 tests
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/transcripts/database.ts tests/transcripts/concurrency.test.ts
+git commit -m "feat(transcripts): reconnect on BUSY_SNAPSHOT and retry contended writes"
+```
+
+---
+
 ### Task 5: Incremental index pass
 
 Walks discovered files, indexes new prose from each watermark, handles rewrites and deletions, and respects a time budget.
+
+**The one rule this task exists to enforce:** a batch of message rows and the watermark those rows justify are written in **one transaction**. Writing rows and then updating `bytes_indexed` separately leaves a window where a crash produces durable rows behind a stale watermark — the next pass re-reads those lines and dies on `UNIQUE(path, line)`, leaving an index that cannot repair itself. The budget is also checked only *between* committed batches, so stopping is always at a consistent point.
 
 **Files:**
 - Create: `src/transcripts/index-pass.ts`
 - Test: `tests/transcripts/index-pass.test.ts`
 
 **Interfaces:**
-- Consumes: `discoverTranscriptFiles` (Task 2), `readProseFrom` (Task 3), `openTranscriptDb` (Task 4)
+- Consumes: `discoverTranscriptFiles` (Task 2), `streamProseFrom` / `ProseChunk` (Task 3), `openTranscriptDb` (Task 4)
 - Produces:
   - `type IndexPassResult = { indexed: number; rebuilt: number; removed: number; filesTouched: number; complete: boolean }`
   - `runIndexPass(input: { projectRoot: string; dbPath: string; projectsDir?: string; deadline?: number }): Promise<IndexPassResult>`
@@ -1130,6 +1583,71 @@ describe('runIndexPass', () => {
     expect(finished.complete).toBe(true);
     expect(await countMessages()).toBe(3);
   });
+
+  // The regression test for the blocker this task exists to fix. Before the watermark moved
+  // inside the batch transaction, a crash between the two left rows behind a stale watermark
+  // and the next pass died on UNIQUE(path, line).
+  it('resumes after a crash mid-file instead of replaying committed lines', async () => {
+    // 500 messages: comfortably more than one WRITE_BATCH of 200.
+    await fs.writeFile(
+      sessionFile('a'),
+      Array.from({ length: 500 }, (_, i) => line('user', `message ${i}`)).join(''),
+    );
+
+    // Simulate a crash by aborting the pass partway: the deadline fires between batches.
+    const partial = await runIndexPass({
+      projectRoot: PROJECT_ROOT, dbPath, projectsDir, deadline: Date.now() + 1,
+    });
+    expect(partial.complete).toBe(false);
+
+    const client = await openTranscriptDb(dbPath);
+    const committed = Number((await client.execute('SELECT COUNT(*) AS n FROM transcript_messages')).rows[0].n);
+    const watermark = (await client.execute('SELECT lines_indexed FROM transcript_files')).rows[0];
+
+    // Whatever was committed, the watermark agrees with it. This is the invariant.
+    expect(Number(watermark.lines_indexed)).toBe(committed);
+
+    // And a full pass finishes rather than colliding on the unique index.
+    const finished = await pass();
+    expect(finished.complete).toBe(true);
+    expect(await countMessages()).toBe(500);
+  });
+
+  it('lets two concurrent passes over the same file finish without colliding', async () => {
+    await fs.writeFile(
+      sessionFile('a'),
+      Array.from({ length: 400 }, (_, i) => line('user', `message ${i}`)).join(''),
+    );
+
+    // Both read watermark 0, both stream the same lines. Without the in-transaction re-read,
+    // the loser dies on UNIQUE(path, line).
+    await Promise.all([pass(), pass()]);
+
+    expect(await countMessages()).toBe(400);
+
+    const client = await openTranscriptDb(dbPath);
+    const dupes = (await client.execute(`
+      SELECT line, COUNT(*) AS n FROM transcript_messages GROUP BY path, line HAVING n > 1
+    `)).rows;
+    expect(dupes).toEqual([]);
+  });
+
+  it('never leaves a row whose line is past the recorded watermark', async () => {
+    await fs.writeFile(
+      sessionFile('a'),
+      Array.from({ length: 300 }, (_, i) => line('user', `message ${i}`)).join(''),
+    );
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir, deadline: Date.now() + 1 });
+
+    const client = await openTranscriptDb(dbPath);
+    const orphans = (await client.execute(`
+      SELECT m.line FROM transcript_messages m
+      JOIN transcript_files f ON f.path = m.path
+      WHERE m.line > f.lines_indexed
+    `)).rows;
+
+    expect(orphans).toEqual([]);
+  });
 });
 ```
 
@@ -1145,8 +1663,8 @@ Create `src/transcripts/index-pass.ts`:
 ```typescript
 import fs from 'node:fs/promises';
 import type { Client } from '@libsql/client';
-import { openTranscriptDb } from './database.js';
-import { readProseFrom } from './parse.js';
+import { openTranscriptDb, withWriteRetry } from './database.js';
+import { streamProseFrom, type ProseChunk } from './parse.js';
 import { discoverTranscriptFiles, type TranscriptFile } from './paths.js';
 
 export type IndexPassResult = {
@@ -1206,55 +1724,144 @@ async function dropFileRows(client: Client, filePath: string): Promise<void> {
   await client.execute({ sql: 'DELETE FROM transcript_messages WHERE path = ?', args: [filePath] });
 }
 
-async function indexOneFile(
+/**
+ * Write one batch of messages and the watermark they justify, in a single transaction.
+ *
+ * The atomicity is the entire point. Committing rows and then updating `bytes_indexed`
+ * separately leaves a window where a crash -- or a killed CLI, or a machine sleeping -- has
+ * durable rows behind a stale watermark. The next pass re-reads those lines and dies on
+ * `UNIQUE(path, line)`, so the index is not merely stale but unrepairable without manual
+ * intervention. "Resumable" has to mean both facts move together or neither does.
+ */
+async function commitBatch(
+  dbPath: string,
+  file: TranscriptFile,
+  size: number,
+  batch: ProseChunk[],
+): Promise<number> {
+  return withWriteRetry(dbPath, async client => commitBatchOn(client, file, size, batch));
+}
+
+async function commitBatchOn(
   client: Client,
   file: TranscriptFile,
   size: number,
+  batch: ProseChunk[],
+): Promise<number> {
+  const watermark = batch[batch.length - 1];
+
+  await client.execute('BEGIN IMMEDIATE');
+  try {
+    // Re-read the watermark *inside* the transaction. The caller read it before streaming, and
+    // a second writer -- a hook firing during a backfill -- may have advanced it since. Without
+    // this, both parse the same lines and the loser dies on UNIQUE(path, line). BEGIN IMMEDIATE
+    // serializes the writes; only this re-read makes them agree on what is left to do.
+    const current = (await client.execute({
+      sql: 'SELECT lines_indexed FROM transcript_files WHERE path = ?',
+      args: [file.path],
+    })).rows[0];
+    const already = current ? Number(current.lines_indexed) : 0;
+
+    if (already >= watermark.linesConsumed) {
+      // Another writer covered this batch entirely.
+      await client.execute('COMMIT');
+      return 0;
+    }
+
+    const fresh = batch.filter(chunk => chunk.message.line > already);
+
+    for (const { message } of fresh) {
+      const inserted = await client.execute({
+        sql: `INSERT INTO transcript_messages (path, session_id, parent_session_id, line, role, chars, ts)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        args: [file.path, file.sessionId, file.parentSessionId, message.line, message.role, message.text.length, message.timestamp],
+      });
+      // The FTS rowid is the message id, which is how a hit maps back to a pointer.
+      await client.execute({
+        sql: 'INSERT INTO transcript_fts(rowid, body) VALUES (?, ?)',
+        args: [Number(inserted.lastInsertRowid), message.text],
+      });
+    }
+
+    await client.execute({
+      sql: `INSERT INTO transcript_files (path, session_id, parent_session_id, bytes_indexed, lines_indexed, size_at_index, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(path) DO UPDATE SET
+              bytes_indexed = excluded.bytes_indexed,
+              lines_indexed = excluded.lines_indexed,
+              size_at_index = excluded.size_at_index,
+              updated_at = excluded.updated_at`,
+      args: [
+        file.path, file.sessionId, file.parentSessionId,
+        watermark.bytesConsumed, watermark.linesConsumed, size, new Date().toISOString(),
+      ],
+    });
+
+    await client.execute('COMMIT');
+    return fresh.length;
+  } catch (error) {
+    await client.execute('ROLLBACK').catch(() => {});
+    throw error;
+  }
+}
+
+async function indexOneFile(
+  client: Client,
+  dbPath: string,
+  file: TranscriptFile,
+  size: number,
   state: FileState | null,
-): Promise<{ indexed: number; rebuilt: boolean }> {
+  deadline?: number,
+): Promise<{ indexed: number; rebuilt: boolean; complete: boolean }> {
   // A file that shrank was rewritten, not appended to. Its old line numbers no longer point
   // anywhere, so the only safe move is to rebuild it.
   const rewritten = state !== null && size < state.bytesIndexed;
   if (rewritten) await dropFileRows(client, file.path);
 
-  const from = rewritten || !state ? { bytes: 0, lines: 0 } : { bytes: state.bytesIndexed, lines: state.linesIndexed };
-  const { messages, bytesRead, linesRead } = await readProseFrom(file.path, from.bytes, from.lines);
+  const from = rewritten || !state
+    ? { bytes: 0, lines: 0 }
+    : { bytes: state.bytesIndexed, lines: state.linesIndexed };
 
-  for (let start = 0; start < messages.length; start += WRITE_BATCH) {
-    const slice = messages.slice(start, start + WRITE_BATCH);
-    await client.execute('BEGIN');
-    try {
-      for (const message of slice) {
-        const inserted = await client.execute({
-          sql: `INSERT INTO transcript_messages (path, session_id, parent_session_id, line, role, chars, ts)
-                VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          args: [file.path, file.sessionId, file.parentSessionId, message.line, message.role, message.text.length, message.timestamp],
-        });
-        // The FTS rowid is the message id, which is how a hit maps back to a pointer.
-        await client.execute({
-          sql: 'INSERT INTO transcript_fts(rowid, body) VALUES (?, ?)',
-          args: [Number(inserted.lastInsertRowid), message.text],
-        });
+  let indexed = 0;
+  let batch: ProseChunk[] = [];
+  const iterator = streamProseFrom(file.path, from.bytes, from.lines);
+
+  for (;;) {
+    const next = await iterator.next();
+
+    if (next.done) {
+      if (batch.length > 0) {
+        indexed += await commitBatch(dbPath, file, size, batch);
       }
-      await client.execute('COMMIT');
-    } catch (error) {
-      await client.execute('ROLLBACK').catch(() => {});
-      throw error;
+      // Trailing non-prose lines advanced the stream without yielding, so the final watermark
+      // can be past the last committed batch. Recording it stops the next pass re-reading them.
+      await client.execute({
+        sql: `INSERT INTO transcript_files (path, session_id, parent_session_id, bytes_indexed, lines_indexed, size_at_index, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(path) DO UPDATE SET
+                bytes_indexed = excluded.bytes_indexed,
+                lines_indexed = excluded.lines_indexed,
+                size_at_index = excluded.size_at_index,
+                updated_at = excluded.updated_at`,
+        args: [
+          file.path, file.sessionId, file.parentSessionId,
+          next.value.bytesConsumed, next.value.linesConsumed, size, new Date().toISOString(),
+        ],
+      });
+      return { indexed, rebuilt: rewritten, complete: true };
+    }
+
+    batch.push(next.value);
+    if (batch.length < WRITE_BATCH) continue;
+
+    indexed += await commitBatch(dbPath, file, size, batch);
+    batch = [];
+
+    // Checked between committed batches, so stopping here is always at a consistent point.
+    if (deadline !== undefined && Date.now() >= deadline) {
+      return { indexed, rebuilt: rewritten, complete: false };
     }
   }
-
-  await client.execute({
-    sql: `INSERT INTO transcript_files (path, session_id, parent_session_id, bytes_indexed, lines_indexed, size_at_index, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(path) DO UPDATE SET
-            bytes_indexed = excluded.bytes_indexed,
-            lines_indexed = excluded.lines_indexed,
-            size_at_index = excluded.size_at_index,
-            updated_at = excluded.updated_at`,
-    args: [file.path, file.sessionId, file.parentSessionId, bytesRead, linesRead, size, new Date().toISOString()],
-  });
-
-  return { indexed: messages.length, rebuilt: rewritten };
 }
 
 /**
@@ -1302,10 +1909,15 @@ export async function runIndexPass(input: {
     const state = await readFileState(client, file.path);
     if (state && size === state.sizeAtIndex && size === state.bytesIndexed) continue;
 
-    const { indexed, rebuilt } = await indexOneFile(client, file, size, state);
+    const { indexed, rebuilt, complete } = await indexOneFile(client, input.dbPath, file, size, state, input.deadline);
     result.indexed += indexed;
     result.filesTouched++;
     if (rebuilt) result.rebuilt++;
+    // Mid-file stop: the watermark is committed, so the next pass resumes inside this file.
+    if (!complete) {
+      result.complete = false;
+      break;
+    }
   }
 
   return result;
@@ -1315,13 +1927,15 @@ export async function runIndexPass(input: {
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/transcripts/index-pass.test.ts`
-Expected: PASS, 9 tests
+Expected: PASS, 12 tests
+
+Three tests carry this task's shape. The two crash tests fail the moment `commitBatchOn` is split back into "write rows, then write watermark". The concurrent-passes test fails if the watermark re-read is hoisted out of the transaction.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/transcripts/index-pass.ts tests/transcripts/index-pass.test.ts
-git commit -m "feat(transcripts): incremental index pass with rewrite and deletion handling"
+git commit -m "feat(transcripts): commit each batch and its watermark atomically"
 ```
 
 ---
@@ -1330,14 +1944,17 @@ git commit -m "feat(transcripts): incremental index pass with rewrite and deleti
 
 The counterpart to storing pointers. A hit is `(path, line)`; this turns it into text.
 
+**The batch API is the important one.** Every caller that needs more than one line from a file must use `readMessagesAt` with all of them at once. Reading per message means re-reading a multi-megabyte transcript once per message — for a 3,717-message backfill that is roughly **11 GB of file I/O**, and it makes both the hook budget and `--budget` meaningless. Search does this too: five hits in one session is five whole-file reads if each is fetched alone.
+
 **Files:**
 - Create: `src/transcripts/read.ts`
 - Test: `tests/transcripts/read.test.ts`
 
 **Interfaces:**
-- Consumes: `extractProse` (Task 3)
+- Consumes: `streamProseFrom` (Task 3)
 - Produces:
   - `type TranscriptExcerpt = { line: number; role: 'user' | 'assistant'; text: string; timestamp: string | null }`
+  - `readMessagesAt(filePath: string, lines: number[]): Promise<Map<number, TranscriptExcerpt>>`
   - `readMessageAt(filePath: string, line: number): Promise<TranscriptExcerpt | null>`
   - `readWithContext(filePath: string, line: number, context: number): Promise<TranscriptExcerpt[]>`
 
@@ -1346,11 +1963,12 @@ The counterpart to storing pointers. A hit is `(path, line)`; this turns it into
 Create `tests/transcripts/read.test.ts`:
 
 ```typescript
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { readMessageAt, readWithContext } from '../../src/transcripts/read.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { readMessageAt, readMessagesAt, readWithContext } from '../../src/transcripts/read.js';
 
 let dir: string;
 let file: string;
@@ -1372,6 +1990,35 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await fs.rm(dir, { recursive: true, force: true });
+});
+
+describe('readMessagesAt', () => {
+  it('returns every requested line in one pass', async () => {
+    const found = await readMessagesAt(file, [1, 3, 5]);
+    expect([...found.keys()].sort((a, b) => a - b)).toEqual([1, 3, 5]);
+    expect(found.get(3)?.text).toBe('three');
+  });
+
+  it('omits lines that hold no prose instead of returning null entries', async () => {
+    const found = await readMessagesAt(file, [3, 99]);
+    expect(found.has(99)).toBe(false);
+    expect(found.size).toBe(1);
+  });
+
+  it('returns an empty map for a missing file', async () => {
+    expect((await readMessagesAt(path.join(dir, 'gone.jsonl'), [1])).size).toBe(0);
+  });
+
+  it('returns an empty map when asked for nothing', async () => {
+    expect((await readMessagesAt(file, [])).size).toBe(0);
+  });
+
+  it('reads the file once regardless of how many lines are requested', async () => {
+    const spy = vi.spyOn(fsSync, 'createReadStream');
+    await readMessagesAt(file, [1, 2, 3, 4, 5]);
+    expect(spy).toHaveBeenCalledTimes(1);
+    spy.mockRestore();
+  });
 });
 
 describe('readMessageAt', () => {
@@ -1421,8 +2068,7 @@ Expected: FAIL — `Cannot find module '../../src/transcripts/read.js'`
 Create `src/transcripts/read.ts`:
 
 ```typescript
-import fs from 'node:fs/promises';
-import { extractProse } from './parse.js';
+import { streamProseFrom } from './parse.js';
 
 export type TranscriptExcerpt = {
   line: number;
@@ -1432,42 +2078,48 @@ export type TranscriptExcerpt = {
 };
 
 /**
- * Prose from a line range, 1-indexed and inclusive.
+ * Prose at the given 1-indexed lines, in a single streaming pass.
  *
- * Reads the whole file. Transcripts are single-digit megabytes and this runs once per search
- * result set, not per candidate -- the ranking never touches disk.
+ * The batch shape is the whole point. Fetching one line at a time re-reads the transcript per
+ * message: a 3,717-message backfill against ~3 MB files is roughly 11 GB of I/O, and it makes
+ * every time budget in the system unenforceable. Callers with more than one line to fetch --
+ * search rendering its hits, the embedder filling a batch -- must group by file and come here
+ * once.
+ *
+ * Lines holding no prose are simply absent from the map rather than present and null, so
+ * `size` is a truthful count of what was found.
  */
-async function readRange(filePath: string, from: number, to: number): Promise<TranscriptExcerpt[]> {
-  let raw: string;
+export async function readMessagesAt(
+  filePath: string,
+  lines: number[],
+): Promise<Map<number, TranscriptExcerpt>> {
+  const found = new Map<number, TranscriptExcerpt>();
+  if (lines.length === 0) return found;
+
+  const wanted = new Set(lines);
+  const last = Math.max(...lines);
+
   try {
-    raw = await fs.readFile(filePath, 'utf8');
+    for await (const chunk of streamProseFrom(filePath, 0, 0)) {
+      if (wanted.has(chunk.message.line)) {
+        const { line, role, text, timestamp } = chunk.message;
+        found.set(line, { line, role, text, timestamp });
+        if (found.size === wanted.size) break;
+      }
+      // Nothing further can match; stop rather than stream the rest of the file.
+      if (chunk.message.line >= last) break;
+    }
   } catch {
     // The transcript was deleted since it was indexed. A dead pointer is a miss, not an error;
     // the next index pass drops its rows.
-    return [];
+    return found;
   }
 
-  const excerpts: TranscriptExcerpt[] = [];
-  const lines = raw.split('\n');
-  for (let index = from - 1; index <= to - 1 && index < lines.length; index++) {
-    if (index < 0) continue;
-    const text = lines[index]?.trim();
-    if (!text) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      continue;
-    }
-    const prose = extractProse(parsed);
-    if (prose) excerpts.push({ line: index + 1, ...prose });
-  }
-  return excerpts;
+  return found;
 }
 
 export async function readMessageAt(filePath: string, line: number): Promise<TranscriptExcerpt | null> {
-  const excerpts = await readRange(filePath, line, line);
-  return excerpts[0] ?? null;
+  return (await readMessagesAt(filePath, [line])).get(line) ?? null;
 }
 
 export async function readWithContext(
@@ -1475,20 +2127,23 @@ export async function readWithContext(
   line: number,
   context: number,
 ): Promise<TranscriptExcerpt[]> {
-  return readRange(filePath, Math.max(1, line - context), line + context);
+  const from = Math.max(1, line - context);
+  const lines = Array.from({ length: line + context - from + 1 }, (_, i) => from + i);
+  const found = await readMessagesAt(filePath, lines);
+  return lines.map(n => found.get(n)).filter((e): e is TranscriptExcerpt => e !== undefined);
 }
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `npx vitest run tests/transcripts/read.test.ts`
-Expected: PASS, 7 tests
+Expected: PASS, 12 tests
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/transcripts/read.ts tests/transcripts/read.test.ts
-git commit -m "feat(transcripts): read message bodies back from the source jsonl"
+git commit -m "feat(transcripts): batch read message bodies in one streaming pass"
 ```
 
 ---
@@ -1938,8 +2593,10 @@ The reason the feature exists. The critical test is the word-mismatch case — a
 - Create: `src/transcripts/embed-pass.ts`
 - Test: `tests/transcripts/search-semantic.test.ts`
 
+**Both file-reading paths here must batch by file** — `readMessagesAt`, never `readMessageAt` in a loop. The embedder selects one file's pending messages together; search groups its hits by path before rendering. Per-message reads are what made a backfill ~11 GB of I/O and the deadline unenforceable.
+
 **Interfaces:**
-- Consumes: `lexicalRank`, `TranscriptHit` (Task 7), `quantizeVector`, `dotQuantized` (Task 8), `KnowledgeEmbedder` from `src/store/vector-index.js`
+- Consumes: `lexicalRank`, `TranscriptHit` (Task 7), `quantizeVector`, `dotQuantized` (Task 8), `readMessagesAt` (Task 6), `KnowledgeEmbedder` from `src/store/vector-index.js`
 - Produces:
   - `RRF_K = 60`
   - `fuseRankings(rankings: TranscriptHit[][], limit: number): TranscriptHit[]`
@@ -1952,10 +2609,11 @@ The reason the feature exists. The critical test is the word-mismatch case — a
 Create `tests/transcripts/search-semantic.test.ts`:
 
 ```typescript
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/database.js';
 import { embedPendingMessages } from '../../src/transcripts/embed-pass.js';
 import { runIndexPass } from '../../src/transcripts/index-pass.js';
@@ -2148,6 +2806,35 @@ describe('embedPendingMessages', () => {
     expect(result.complete).toBe(false);
     expect(result.embedded).toBe(0);
   });
+
+  // The regression test for the I/O blocker. Reading per message re-read the whole transcript
+  // each time: ~11 GB for a real backfill, and a deadline that could not be honoured.
+  it('reads each transcript once, not once per message', async () => {
+    await seed('a', Array.from({ length: 120 }, (_, i) => line('user', `memory note ${i}`)).join(''));
+    await seed('b', Array.from({ length: 120 }, (_, i) => line('user', `network note ${i}`)).join(''));
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
+    const client = await openTranscriptDb(dbPath);
+
+    const spy = vi.spyOn(fsSync, 'createReadStream');
+    await embedPendingMessages({ client, embedder: stubEmbedder() });
+
+    // Two files, so two passes -- not 240.
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
+    spy.mockRestore();
+  });
+
+  it('embeds every message across several batches of the same file', async () => {
+    await seed('a', Array.from({ length: 100 }, (_, i) => line('user', `memory note ${i}`)).join(''));
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
+    const client = await openTranscriptDb(dbPath);
+
+    const result = await embedPendingMessages({ client, embedder: stubEmbedder() });
+
+    expect(result.embedded).toBe(100);
+    expect(result.complete).toBe(true);
+    const n = Number((await client.execute('SELECT COUNT(*) AS n FROM transcript_vectors')).rows[0].n);
+    expect(n).toBe(100);
+  });
 });
 ```
 
@@ -2164,7 +2851,7 @@ Create `src/transcripts/embed-pass.ts`:
 import type { Client } from '@libsql/client';
 import type { KnowledgeEmbedder } from '../store/vector-index.js';
 import { quantizeVector } from './quantize.js';
-import { readMessageAt } from './read.js';
+import { readMessagesAt } from './read.js';
 
 /** Messages per embedding call. The provider re-batches by text length underneath. */
 const EMBED_BATCH = 32;
@@ -2173,8 +2860,13 @@ const EMBED_BATCH = 32;
  * Give every indexed message a vector under the embedder's current profile.
  *
  * Resumable by construction: "messages with no vector for this fingerprint" *is* the resume
- * state, so an interrupted pass leaves no bookkeeping to repair. Newest first, so the session
- * you are in is covered before the archive's tail.
+ * state, so an interrupted pass leaves no bookkeeping to repair.
+ *
+ * **Grouped by source file, not newest-first.** Reading each message individually re-reads its
+ * whole transcript: at ~3 MB per file and 3,717 messages that is roughly 11 GB of I/O for one
+ * backfill, and it makes the deadline unenforceable because a single batch can take seconds.
+ * Selecting a file's pending messages together turns that into one streaming pass per file.
+ * Files are taken newest-message-first so the session you are in is covered before the tail.
  */
 export async function embedPendingMessages(input: {
   client: Client;
@@ -2198,52 +2890,88 @@ export async function embedPendingMessages(input: {
       return { embedded, complete: false };
     }
 
+    // The file holding the newest unembedded message, and every pending message in it. One
+    // file per round keeps the read to a single pass while still making progress newest-first.
+    const nextFile = (await client.execute(`
+      SELECT m.path
+      FROM transcript_messages m
+      LEFT JOIN transcript_vectors v ON v.message_id = m.id
+      WHERE v.message_id IS NULL
+      ORDER BY m.id DESC
+      LIMIT 1
+    `)).rows[0];
+
+    if (!nextFile) return { embedded, complete: true };
+
     const pending = (await client.execute({
-      sql: `SELECT m.id, m.path, m.line
+      sql: `SELECT m.id, m.line
             FROM transcript_messages m
             LEFT JOIN transcript_vectors v ON v.message_id = m.id
-            WHERE v.message_id IS NULL
-            ORDER BY m.id DESC
-            LIMIT ?`,
-      args: [EMBED_BATCH],
+            WHERE v.message_id IS NULL AND m.path = ?
+            ORDER BY m.line ASC`,
+      args: [String(nextFile.path)],
     })).rows;
 
-    if (pending.length === 0) return { embedded, complete: true };
+    const filePath = String(nextFile.path);
+    const bodies = await readMessagesAt(filePath, pending.map(row => Number(row.line)));
 
     const targets: Array<{ id: number; text: string }> = [];
     for (const row of pending) {
-      const excerpt = await readMessageAt(String(row.path), Number(row.line));
+      const excerpt = bodies.get(Number(row.line));
       // A pointer whose file vanished cannot be embedded. Leave it; the next index pass
       // removes the row entirely.
       if (excerpt) targets.push({ id: Number(row.id), text: excerpt.text });
     }
 
-    if (targets.length === 0) return { embedded, complete: true };
+    if (targets.length === 0) {
+      // Nothing readable in this file -- its rows are dead pointers. Marking them with a
+      // zero-length vector would corrupt ranking, so instead stop rather than spin forever
+      // selecting the same file. The next index pass removes them.
+      return { embedded, complete: false };
+    }
 
-    const vectors = await embedder.embed(targets.map(target => target.text));
-
-    await client.execute('BEGIN');
-    try {
-      for (let i = 0; i < targets.length; i++) {
-        const vector = vectors[i];
-        if (!vector || vector.length === 0) continue;
-        const { scale, bytes } = quantizeVector(vector);
-        await client.execute({
-          sql: `INSERT INTO transcript_vectors (message_id, fingerprint, dims, scale, vec)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(message_id) DO UPDATE SET
-                  fingerprint = excluded.fingerprint, dims = excluded.dims,
-                  scale = excluded.scale, vec = excluded.vec`,
-          args: [targets[i].id, embedder.profileFingerprint, vector.length, scale, bytes],
-        });
-        embedded++;
+    for (let start = 0; start < targets.length; start += EMBED_BATCH) {
+      const slice = targets.slice(start, start + EMBED_BATCH);
+      embedded += await embedBatch(client, embedder, slice);
+      if (input.deadline !== undefined && Date.now() >= input.deadline) {
+        return { embedded, complete: false };
       }
-      await client.execute('COMMIT');
-    } catch (error) {
-      await client.execute('ROLLBACK').catch(() => {});
-      throw error;
     }
   }
+}
+
+async function embedBatch(
+  client: Client,
+  embedder: KnowledgeEmbedder,
+  targets: Array<{ id: number; text: string }>,
+): Promise<number> {
+  let embedded = 0;
+
+  const vectors = await embedder.embed(targets.map(target => target.text));
+
+  await client.execute('BEGIN IMMEDIATE');
+  try {
+    for (let i = 0; i < targets.length; i++) {
+      const vector = vectors[i];
+      if (!vector || vector.length === 0) continue;
+      const { scale, bytes } = quantizeVector(vector);
+      await client.execute({
+        sql: `INSERT INTO transcript_vectors (message_id, fingerprint, dims, scale, vec)
+              VALUES (?, ?, ?, ?, ?)
+              ON CONFLICT(message_id) DO UPDATE SET
+                fingerprint = excluded.fingerprint, dims = excluded.dims,
+                scale = excluded.scale, vec = excluded.vec`,
+        args: [targets[i].id, embedder.profileFingerprint, vector.length, scale, bytes],
+      });
+      embedded++;
+    }
+    await client.execute('COMMIT');
+  } catch (error) {
+    await client.execute('ROLLBACK').catch(() => {});
+    throw error;
+  }
+
+  return embedded;
 }
 ```
 
@@ -2254,7 +2982,7 @@ Add to the end of `src/transcripts/search.ts`:
 ```typescript
 import type { KnowledgeEmbedder } from '../store/vector-index.js';
 import { dotQuantized } from './quantize.js';
-import { readMessageAt } from './read.js';
+import { readMessagesAt } from './read.js';
 
 /**
  * RRF's rank constant. 60 is the value from the original paper and what the knowledge-side
@@ -2268,21 +2996,31 @@ export const RRF_K = 60;
  * Combines *positions* rather than scores. BM25 magnitudes and cosine similarities are not on a
  * comparable scale, so any weighted sum of the raw numbers is arbitrary.
  */
-export function fuseRankings(rankings: TranscriptHit[][], limit: number): TranscriptHit[] {
-  const scores = new Map<number, number>();
-  const byId = new Map<number, TranscriptHit>();
+export function fuseRankings<T extends TranscriptHit>(
+  rankings: T[][],
+  limit: number,
+  /**
+   * Identity across rankings. Defaults to the message id, which is unique within one database
+   * but NOT across repos -- federation must pass a repo-qualified key or two repos' message 5
+   * would merge into one hit.
+   */
+  keyOf: (hit: T) => string = hit => String(hit.messageId),
+): T[] {
+  const scores = new Map<string, number>();
+  const byKey = new Map<string, T>();
 
   for (const ranking of rankings) {
     ranking.forEach((hit, index) => {
-      scores.set(hit.messageId, (scores.get(hit.messageId) ?? 0) + 1 / (RRF_K + index + 1));
-      if (!byId.has(hit.messageId)) byId.set(hit.messageId, hit);
+      const key = keyOf(hit);
+      scores.set(key, (scores.get(key) ?? 0) + 1 / (RRF_K + index + 1));
+      if (!byKey.has(key)) byKey.set(key, hit);
     });
   }
 
   return [...scores.entries()]
     .sort((left, right) => right[1] - left[1])
     .slice(0, limit)
-    .map(([messageId, score]) => ({ ...byId.get(messageId)!, score }));
+    .map(([key, score]) => ({ ...byKey.get(key)!, score }));
 }
 
 /**
@@ -2361,10 +3099,17 @@ export async function searchTranscripts(
 
   const fused = fuseRankings(rankings, limit);
 
-  // Bodies are read only for what is actually returned -- ranking never touches disk.
+  // Bodies are read only for what is actually returned -- ranking never touches disk. Grouped
+  // by file: five hits in one session is one pass, not five whole-file reads.
+  const byFile = new Map<string, TranscriptHit[]>();
   for (const hit of fused) {
-    const excerpt = await readMessageAt(hit.path, hit.line);
-    if (excerpt) hit.text = excerpt.text;
+    const group = byFile.get(hit.path);
+    if (group) group.push(hit);
+    else byFile.set(hit.path, [hit]);
+  }
+  for (const [filePath, group] of byFile) {
+    const bodies = await readMessagesAt(filePath, group.map(hit => hit.line));
+    for (const hit of group) hit.text = bodies.get(hit.line)?.text;
   }
 
   const indexed = Number((await client.execute('SELECT COUNT(*) AS n FROM transcript_messages')).rows[0].n);
@@ -2382,9 +3127,9 @@ export async function searchTranscripts(
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `npx vitest run tests/transcripts/search-semantic.test.ts`
-Expected: PASS, 11 tests
+Expected: PASS, 13 tests
 
-The first `searchTranscripts` test is the one that matters: it queries `OOM`, a token absent from the entire corpus, and still returns the memory-exhaustion message. Delete `semanticRank` from the fusion and it fails.
+Two tests carry the design. The `OOM` query is a token absent from the entire corpus and still returns the memory-exhaustion message — delete `semanticRank` from the fusion and it fails. And `reads each transcript once` pins the batching: reverting to a per-message read turns 2 file passes into 240.
 
 - [ ] **Step 6: Commit**
 
@@ -2402,8 +3147,10 @@ git commit -m "feat(transcripts): whole-corpus semantic ranking fused with BM25 
 - Create: `src/transcripts/backfill.ts`
 - Test: `tests/transcripts/backfill.test.ts`
 
+**Semantic ranking follows `search.vector.enabled` — decided, not inherited.** The model, dtype and pooling all come from `search.vector.preset`, so embedding transcripts while the config says vector search is off would mean one flag denying what another is doing. With vectors off, transcript search is keyword-only and every result says so. Vector search is on by default, so most repos never see this.
+
 **Interfaces:**
-- Consumes: `runIndexPass` (Task 5), `embedPendingMessages` (Task 9), `isTranscriptSearchEnabled` (Task 1)
+- Consumes: `runIndexPass` (Task 5), `embedPendingMessages` (Task 9), `isTranscriptSearchEnabled` (Task 1), `isVectorSearchEnabled` from `src/ai/embeddings.js`
 - Produces:
   - `type BackfillResult = { indexed: number; embedded: number; removed: number; complete: boolean; skippedEmbedding: string | null }`
   - `rebuildTranscriptIndex(projectRoot: string, options?: { budgetMinutes?: number; projectsDir?: string }): Promise<BackfillResult>`
@@ -2643,411 +3390,24 @@ git commit -m "feat(transcripts): add knowl reindex --transcripts with a resumab
 
 ---
 
-### Task 11: MCP tools, registered only when enabled
-
-**Files:**
-- Modify: `src/mcp/tools.ts` (the `ListToolsRequestSchema` handler and the call dispatcher)
-- Modify: `src/core/knowl-guidance.ts:92-109`
-- Modify: `src/mcp/server.ts:36`
-- Test: `tests/transcripts/mcp-gating.test.ts`
-
-**Interfaces:**
-- Consumes: `isTranscriptSearchEnabled` (Task 1), `searchTranscripts` (Task 9), `readWithContext` (Task 6)
-- Produces: MCP tools `knowl_transcript_search` and `knowl_transcript_read`; `mcpServerInstructions(config: ProjectConfig | null): string` in `knowl-guidance.ts`
-
-**Read this before writing any code — the obvious approach does not work:**
-
-- There is no `buildGuidanceCard`. `renderCompactKnowlGuidance(modeLine)` is **private** ([src/core/knowl-guidance.ts:92](../../../src/core/knowl-guidance.ts#L92)), and the cards are **module-level constants** evaluated at import: `KNOWL_CLAUDE_OPERATIONAL_CARD` and `KNOWL_MCP_SERVER_INSTRUCTIONS` (lines 108–109). A constant cannot depend on config.
-- The compact card's Route section is **hand-written prose, not generated** from `KNOWL_MCP_TOOL_GROUPS`. Adding a group there changes `renderFullKnowlGuidance()` (the KNOWL.md table) and `KNOWL_MCP_TOOL_NAMES` — but not the compact card. So the two need separate handling, and `KNOWL_MCP_TOOL_GROUPS` must stay unchanged or the tool-name list grows unconditionally.
-- `tests/core/knowl-guidance.test.ts:63-64` asserts **exact lengths**. Keeping the existing constants as the disabled-state values means those assertions keep passing untouched, which is the correct outcome: off by default must change nothing.
-
-**Measured on this branch** (`npx vitest` against the real module):
-
-| | chars |
-|---|---|
-| `KNOWL_CLAUDE_OPERATIONAL_CARD` | 1,695 |
-| `KNOWL_MCP_SERVER_INSTRUCTIONS` | 1,746 |
-| `KNOWL_MCP_TOOL_NAMES` | 24 tools |
-| + the transcript Route bullet below | **1,885 / 2,000** |
-
-115 characters of headroom with the feature on. The spec cites 1,917 from PR #8 — that is PR #8's branch, which adds a tool this design does not.
-
-- [ ] **Step 1: Write the failing test**
-
-Create `tests/transcripts/mcp-gating.test.ts`:
-
-```typescript
-import { describe, expect, it } from 'vitest';
-import {
-  KNOWL_MCP_SERVER_INSTRUCTIONS,
-  KNOWL_MCP_TOOL_GROUPS,
-  KNOWL_MCP_TOOL_NAMES,
-  mcpServerInstructions,
-} from '../../src/core/knowl-guidance.js';
-import type { ProjectConfig } from '../../src/core/types.js';
-
-const config = (enabled: boolean): ProjectConfig => ({
-  version: 1,
-  security: { rejectSecrets: true, secretPatterns: [] },
-  search: { transcripts: { enabled } },
-});
-
-describe('transcript tool gating', () => {
-  it('keeps both tools out of the unconditional inventory', () => {
-    const names = KNOWL_MCP_TOOL_GROUPS.flatMap(group => group.tools);
-    expect(names).not.toContain('knowl_transcript_search');
-    expect(names).not.toContain('knowl_transcript_read');
-    expect(KNOWL_MCP_TOOL_NAMES).toHaveLength(24);
-  });
-
-  it('returns the untouched constant when disabled', () => {
-    expect(mcpServerInstructions(config(false))).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
-  });
-
-  it('returns the untouched constant when there is no config at all', () => {
-    expect(mcpServerInstructions(null)).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
-  });
-
-  it('names both tools when enabled', () => {
-    const card = mcpServerInstructions(config(true));
-    expect(card).toContain('knowl_transcript_search');
-    expect(card).toContain('knowl_transcript_read');
-  });
-
-  it('adds exactly one line when enabled', () => {
-    const off = mcpServerInstructions(config(false)).split('\n').length;
-    const on = mcpServerInstructions(config(true)).split('\n').length;
-    expect(on).toBe(off + 1);
-  });
-
-  it('stays inside the 2000-character ceiling with the feature on', () => {
-    expect(mcpServerInstructions(config(true)).length).toBeLessThanOrEqual(2000);
-  });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `npx vitest run tests/transcripts/mcp-gating.test.ts`
-Expected: FAIL — `mcpServerInstructions` is not exported from `knowl-guidance.js`.
-
-- [ ] **Step 3: Make the compact card conditional without touching the constants**
-
-In `src/core/knowl-guidance.ts`, change the private renderer to take an options bag, and add the new export. Leave `KNOWL_MCP_TOOL_GROUPS`, `KNOWL_CLAUDE_OPERATIONAL_CARD` and `KNOWL_MCP_SERVER_INSTRUCTIONS` exactly as they are — they are the disabled-state values, and the existing exact-length assertions must keep passing untouched.
-
-```typescript
-/**
- * One extra Route line, only when transcript search is on.
- *
- * The card is a token cost paid by every session of every user. Measured: 1,746 chars for the
- * server card today, 1,885 with this line, against a 2,000 ceiling. Everyone who leaves the
- * feature off keeps their 1,746 and never learns these tools exist.
- */
-const TRANSCRIPT_ROUTE_LINE =
-  '- transcripts: knowl_transcript_search after a knowl_query miss; knowl_transcript_read opens a hit. Promote what you use with knowl_store.';
-
-function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: boolean } = {}): string {
-  return [
-    // ...every existing line, unchanged, through the '- special: ...' bullet...
-    ...(options.transcripts ? [TRANSCRIPT_ROUTE_LINE] : []),
-    'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
-  ].join('\n');
-}
-
-export const KNOWL_CLAUDE_OPERATIONAL_CARD = renderCompactKnowlGuidance(KNOWL_CLAUDE_MODE_LINE);
-export const KNOWL_MCP_SERVER_INSTRUCTIONS = renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE);
-
-/**
- * The server handshake card for a given project.
- *
- * Returns the shared constant when the feature is off, so the common case allocates nothing and
- * stays byte-identical to what every existing test asserts.
- */
-export function mcpServerInstructions(config: ProjectConfig | null): string {
-  if (!config || !isTranscriptSearchEnabled(config)) return KNOWL_MCP_SERVER_INSTRUCTIONS;
-  return renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE, { transcripts: true });
-}
-```
-
-Add the two imports this needs at the top of the file:
-
-```typescript
-import type { ProjectConfig } from './types.js';
-import { isTranscriptSearchEnabled } from '../transcripts/config.js';
-```
-
-Then in `src/mcp/server.ts`, replace the constant at line 36 with the call — `config` is already a parameter of `createMcpServer`:
-
-```typescript
-      instructions: mcpServerInstructions(config),
-```
-
-and update its import on line 11 from `KNOWL_MCP_SERVER_INSTRUCTIONS` to `mcpServerInstructions`.
-
-Leave `renderFullKnowlGuidance()` alone. It renders the KNOWL.md table from `KNOWL_MCP_TOOL_GROUPS`, that file is committed per-repo, and documenting two tools a reader may not have enabled is worse than omitting them.
-
-- [ ] **Step 4: Register the tools conditionally**
-
-In `src/mcp/tools.ts`, inside the `ListToolsRequestSchema` handler, build the array and append conditionally before returning:
-
-```typescript
-    const tools = [ /* ...every existing tool literal, unchanged... */ ];
-
-    const config = getConfig();
-    if (config && isTranscriptSearchEnabled(config)) {
-      tools.push(
-        {
-          name: 'knowl_transcript_search',
-          description: 'Search this repo\'s past Claude Code session transcripts. Use after knowl_query misses. Returns pointers into the session files; store anything worth keeping with knowl_store.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              query: { type: 'string', description: 'What to look for, in your own words. Semantic search covers the whole archive, so the exact wording need not match.' },
-              sessionId: { type: 'string', description: 'Restrict to one session. Accepts a full id or a unique prefix.' },
-              repos: { type: 'array', items: { type: 'string' }, description: 'Restrict to these linked workspace repos. Omit to search this repo only.' },
-              limit: { type: 'number', description: 'Maximum hits; defaults to 5.' },
-            },
-            required: ['query'],
-          },
-        },
-        {
-          name: 'knowl_transcript_read',
-          description: 'Read one transcript message and the turns around it, using a locator returned by knowl_transcript_search.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              sessionId: { type: 'string', description: 'Session id from a search hit.' },
-              line: { type: 'number', description: 'Line number from a search hit.' },
-              context: { type: 'number', description: 'Turns to include on each side; defaults to 2.' },
-            },
-            required: ['sessionId', 'line'],
-          },
-        },
-      );
-    }
-
-    return { tools };
-```
-
-In the call dispatcher, add both handlers. Each must re-check the gate — a client that cached an older tool list could still call them:
-
-```typescript
-    if (name === 'knowl_transcript_search' || name === 'knowl_transcript_read') {
-      const config = getConfig();
-      const projectRoot = getProjectRoot();
-      if (!config || !projectRoot || !isTranscriptSearchEnabled(config)) {
-        return textResult('Transcript search is not enabled for this repository. Enable search.transcripts.enabled with `knowl config`, then run `knowl reindex --transcripts`.');
-      }
-      // ...dispatch to searchTranscripts / readWithContext, formatting each hit as
-      // `transcript://<sessionId>#L<line>` followed by its text, and appending the
-      // coverage line `Semantic coverage: <embedded>/<indexed> messages.`
-    }
-```
-
-The coverage line is required, not decorative: "BM25 + semantic" over 8% of an archive is a different claim from the same words over all of it, and only one of them justifies trusting a near-miss.
-
-- [ ] **Step 5: Run tests to verify they pass**
-
-Run: `npx vitest run tests/transcripts/mcp-gating.test.ts`
-Expected: PASS, 6 tests
-
-Run: `npx vitest run tests/core/knowl-guidance.test.ts tests/mcp/server.test.ts`
-Expected: PASS **with no edits to either file**. `tests/core/knowl-guidance.test.ts:63-64` asserts the cards are exactly 1,695 and 1,746 characters, and `tests/mcp/server.test.ts:141` asserts the handshake returns `KNOWL_MCP_SERVER_INSTRUCTIONS` verbatim. Those are the off-by-default guarantee stated as tests. If either fails, the change leaked into the disabled path — fix the code, do not update the assertion.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/mcp/tools.ts src/core/knowl-guidance.ts tests/transcripts/mcp-gating.test.ts
-git commit -m "feat(transcripts): register the two MCP tools only when the feature is on"
-```
-
----
-
-### Task 12: Keep the index current from the lifecycle hook
-
-**Files:**
-- Modify: `src/index.ts:1552-1580` (the `agent-hook` command action)
-- Create: `src/transcripts/catch-up.ts`
-- Test: `tests/transcripts/catch-up.test.ts`
-
-**Interfaces:**
-- Consumes: `runIndexPass` (Task 5), `isTranscriptSearchEnabled` (Task 1)
-- Produces: `catchUpTranscripts(projectRoot: string, options?: { budgetMs?: number; projectsDir?: string }): Promise<{ indexed: number } | null>`
-
-- [ ] **Step 1: Write the failing test**
-
-Create `tests/transcripts/catch-up.test.ts`:
-
-```typescript
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { catchUpTranscripts } from '../../src/transcripts/catch-up.js';
-import { closeTranscriptDbs } from '../../src/transcripts/database.js';
-
-let dir: string;
-let projectsDir: string;
-
-beforeEach(async () => {
-  dir = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-catchup-'));
-  projectsDir = path.join(dir, 'projects');
-  await fs.mkdir(path.join(dir, '.knowl'), { recursive: true });
-});
-
-afterEach(async () => {
-  await closeTranscriptDbs();
-  await fs.rm(dir, { recursive: true, force: true });
-});
-
-async function writeConfig(enabled: boolean) {
-  await fs.writeFile(
-    path.join(dir, '.knowl', 'config.json'),
-    JSON.stringify({ version: 1, security: { rejectSecrets: true, secretPatterns: [] }, search: { transcripts: { enabled } } }),
-  );
-}
-
-async function seed() {
-  const encoded = path.resolve(dir).replace(/[^A-Za-z0-9]/g, '-');
-  await fs.mkdir(path.join(projectsDir, encoded), { recursive: true });
-  await fs.writeFile(
-    path.join(projectsDir, encoded, 'a.jsonl'),
-    JSON.stringify({ type: 'user', message: { content: 'a turn happened' } }) + '\n',
-  );
-}
-
-describe('catchUpTranscripts', () => {
-  it('returns null and creates nothing when disabled', async () => {
-    await writeConfig(false);
-    await seed();
-
-    expect(await catchUpTranscripts(dir, { projectsDir })).toBeNull();
-    await expect(fs.access(path.join(dir, '.knowl', 'transcripts.db'))).rejects.toThrow();
-  });
-
-  it('indexes new turns when enabled', async () => {
-    await writeConfig(true);
-    await seed();
-
-    const result = await catchUpTranscripts(dir, { projectsDir });
-    expect(result?.indexed).toBe(1);
-  });
-
-  it('returns null rather than throwing when the config is unreadable', async () => {
-    await seed();
-    expect(await catchUpTranscripts(dir, { projectsDir })).toBeNull();
-  });
-
-  it('never throws, whatever indexing does', async () => {
-    await writeConfig(true);
-    // No projects directory at all.
-    await expect(catchUpTranscripts(dir, { projectsDir: path.join(dir, 'absent') })).resolves.not.toThrow();
-  });
-});
-```
-
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `npx vitest run tests/transcripts/catch-up.test.ts`
-Expected: FAIL — `Cannot find module '../../src/transcripts/catch-up.js'`
-
-- [ ] **Step 3: Write the implementation**
-
-Create `src/transcripts/catch-up.ts`:
-
-```typescript
-import { loadConfig } from '../core/config.js';
-import { resolveStorage } from '../store/storage-roles.js';
-import { isTranscriptSearchEnabled } from './config.js';
-import { closeTranscriptDbs } from './database.js';
-import { runIndexPass } from './index-pass.js';
-
-/** How long a hook-driven pass may take. A hook that delays a turn is worse than a stale index. */
-const DEFAULT_BUDGET_MS = 1_500;
-
-/**
- * Bring the index up to date at the end of an agent turn.
- *
- * Once per turn rather than once per message: transcripts are append-only, so catching up twenty
- * messages costs the same as catching up one, and a write every few seconds is exactly what
- * produced the SQLITE_BUSY failures this design separates databases to avoid.
- *
- * Returns null when the feature is off, and swallows every failure. This runs inside a lifecycle
- * hook; an optional index must never be the reason a turn errors.
- */
-export async function catchUpTranscripts(
-  projectRoot: string,
-  options: { budgetMs?: number; projectsDir?: string } = {},
-): Promise<{ indexed: number } | null> {
-  try {
-    const config = await loadConfig(projectRoot);
-    if (!isTranscriptSearchEnabled(config)) return null;
-
-    const result = await runIndexPass({
-      projectRoot,
-      dbPath: resolveStorage(projectRoot).transcripts,
-      projectsDir: options.projectsDir,
-      deadline: Date.now() + (options.budgetMs ?? DEFAULT_BUDGET_MS),
-    });
-    return { indexed: result.indexed };
-  } catch {
-    return null;
-  } finally {
-    await closeTranscriptDbs().catch(() => {});
-  }
-}
-```
-
-- [ ] **Step 4: Call it from the hook**
-
-In `src/index.ts`, in the `agent-hook` action, add the catch-up immediately after `handleHostLifecycleEvent` and before `closeDb()`:
-
-```typescript
-      const result = await handleHostLifecycleEvent(project.id, normalized);
-
-      // Best-effort and gated: returns null when transcript search is off, and never throws.
-      if (normalized.event === 'turn-stop' || normalized.event === 'session-stop') {
-        await catchUpTranscripts(root);
-      }
-
-      if (result.hostOutput) console.log(JSON.stringify(result.hostOutput));
-```
-
-Add the import alongside the other transcript imports:
-
-```typescript
-import { catchUpTranscripts } from './transcripts/catch-up.js';
-```
-
-- [ ] **Step 5: Run tests to verify they pass**
-
-Run: `npx vitest run tests/transcripts/catch-up.test.ts`
-Expected: PASS, 4 tests
-
-Run: `npx vitest run tests/cli`
-Expected: PASS — the hook path is exercised there and must be unaffected when the feature is off.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/transcripts/catch-up.ts src/index.ts tests/transcripts/catch-up.test.ts
-git commit -m "feat(transcripts): catch the index up once per agent turn"
-```
-
----
-
-### Task 13: Workspace fan-out
+### Task 11: Workspace fan-out
 
 **Files:**
 - Create: `src/transcripts/federate.ts`
 - Modify: `src/mcp/tools.ts` (pass `repos` through to the federated search)
 - Test: `tests/transcripts/federate.test.ts`
 
+**Two things do not follow from "search each repo and concatenate":**
+
+- **Ranking.** RRF scores are computed *within* one repo's candidate set and are not comparable across repos. Sorting the merged list by them makes ties fall in repo iteration order — a bias dressed as a ranking, systematically favouring whichever repo was visited first. The per-repo orders are re-fused by a second RRF over *positions*.
+- **Coverage.** Reported per repo, never summed. A peer at 12% and a local index at 100% average to a number describing neither, and the point of the signal is to say whether a near-miss can be trusted.
+
 **Interfaces:**
-- Consumes: `searchTranscripts` (Task 9), `openTranscriptDb` (Task 4), `isTranscriptSharingEnabled` (Task 1), `resolveWorkspace` / `ActiveWorkspace` from `src/workspace/resolve.js`
+- Consumes: `searchTranscripts`, `fuseRankings` (Task 9), `openTranscriptDb` (Task 4), `isTranscriptSharingEnabled` (Task 1), `resolveWorkspace` / `ActiveWorkspace` from `src/workspace/resolve.js`
 - Produces:
   - `type FederatedTranscriptHit = TranscriptHit & { repo: string }`
-  - `searchTranscriptsFederated(input): Promise<{ hits: FederatedTranscriptHit[]; skipped: Array<{ repo: string; reason: 'absent' | 'not-shared' | 'unreadable' }> }>`
+  - `type RepoCoverage = { repo: string; embedded: number; indexed: number }`
+  - `searchTranscriptsFederated(input): Promise<{ hits: FederatedTranscriptHit[]; skipped: Array<{ repo: string; reason: 'absent' | 'not-shared' | 'unreadable' }>; coverage: RepoCoverage[] }>`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3173,6 +3533,46 @@ describe('searchTranscriptsFederated', () => {
     expect(result.hits).toHaveLength(1);
     expect(result.hits[0].repo).toBe('local');
   });
+
+  it('reports coverage per repo rather than summing it', async () => {
+    const local = await makeRepo('local', 'local finding about caching', true);
+    const peer = await makeRepo('peer', 'peer finding about caching', true);
+
+    const result = await searchTranscriptsFederated({
+      projectRoot: local.root, workspace: workspaceOf([peer]), query: 'caching', limit: 10,
+    });
+
+    expect(result.coverage.map(c => c.repo).sort()).toEqual(['local', 'peer']);
+    for (const entry of result.coverage) expect(entry.indexed).toBeGreaterThan(0);
+  });
+
+  it('does not merge two repos\' hits that share a message id', async () => {
+    // Both indexes are built identically, so both hold message_id 1. Keying fusion on the bare
+    // message id would collapse them into a single hit.
+    const local = await makeRepo('local', 'identical wording here', true);
+    const peer = await makeRepo('peer', 'identical wording here', true);
+
+    const result = await searchTranscriptsFederated({
+      projectRoot: local.root, workspace: workspaceOf([peer]), query: 'identical wording', limit: 10,
+    });
+
+    expect(result.hits).toHaveLength(2);
+    expect(result.hits.map(h => h.repo).sort()).toEqual(['local', 'peer']);
+  });
+
+  it('does not rank by repo order when both repos match equally well', async () => {
+    // Identical corpora: whichever repo is visited first must not win by construction. RRF over
+    // positions gives both rank-1 hits the same score, so neither is systematically ahead.
+    const local = await makeRepo('local', 'symmetric content about caching', true);
+    const peer = await makeRepo('peer', 'symmetric content about caching', true);
+
+    const result = await searchTranscriptsFederated({
+      projectRoot: local.root, workspace: workspaceOf([peer]), query: 'symmetric caching', limit: 10,
+    });
+
+    expect(result.hits).toHaveLength(2);
+    expect(result.hits[0].score).toBeCloseTo(result.hits[1].score, 10);
+  });
 });
 ```
 
@@ -3194,10 +3594,11 @@ import { resolveStorage } from '../store/storage-roles.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
 import { isTranscriptSharingEnabled } from './config.js';
 import { openTranscriptDb } from './database.js';
-import { searchTranscripts, type TranscriptHit } from './search.js';
+import { fuseRankings, searchTranscripts, type TranscriptHit } from './search.js';
 
 export type FederatedTranscriptHit = TranscriptHit & { repo: string };
 export type TranscriptSkipReason = 'absent' | 'not-shared' | 'unreadable';
+export type RepoCoverage = { repo: string; embedded: number; indexed: number };
 
 async function exists(target: string): Promise<boolean> {
   return fs.access(target).then(() => true).catch(() => false);
@@ -3208,6 +3609,18 @@ async function exists(target: string): Promise<boolean> {
  *
  * Each repo owns its own `transcripts.db` and a peer's is opened read-only -- nothing is copied
  * and nothing is promoted, so revoking access is one config flag with no residue to chase.
+ *
+ * Two things do NOT follow from "search each repo and concatenate":
+ *
+ * **Ranking.** A repo's RRF scores are computed within its own candidate set and are not
+ * comparable across repos. Sorting the merged list by them makes ties fall in repo iteration
+ * order -- a bias dressed as a ranking, and one that systematically favours whichever repo was
+ * visited first. Instead the per-repo orders are re-fused by a second RRF over *positions*, so
+ * one repo's rank-1 competes with another's rank-1 on equal terms whatever their corpus sizes.
+ *
+ * **Coverage.** Reported per repo, never summed. A peer at 12% and a local index at 100%
+ * average to a number describing neither, and the whole point of the signal is to say whether a
+ * near-miss can be trusted.
  */
 export async function searchTranscriptsFederated(input: {
   projectRoot: string;
@@ -3218,11 +3631,17 @@ export async function searchTranscriptsFederated(input: {
   repos?: string[];
   embedder?: KnowledgeEmbedder;
   localRepoName?: string;
-}): Promise<{ hits: FederatedTranscriptHit[]; skipped: Array<{ repo: string; reason: TranscriptSkipReason }> }> {
+}): Promise<{
+  hits: FederatedTranscriptHit[];
+  skipped: Array<{ repo: string; reason: TranscriptSkipReason }>;
+  coverage: RepoCoverage[];
+}> {
   const localName = input.localRepoName ?? input.workspace?.repo ?? 'local';
   const wanted = input.repos?.length ? new Set(input.repos) : null;
   const skipped: Array<{ repo: string; reason: TranscriptSkipReason }> = [];
-  const hits: FederatedTranscriptHit[] = [];
+  const coverage: RepoCoverage[] = [];
+  /** One ordered list per repo, kept separate so RRF can fuse positions rather than scores. */
+  const rankings: FederatedTranscriptHit[][] = [];
 
   const search = async (repo: string, dbPath: string, readOnly: boolean) => {
     const client = await openTranscriptDb(dbPath, { readOnly });
@@ -3234,7 +3653,8 @@ export async function searchTranscriptsFederated(input: {
       projectRoot: input.projectRoot,
       embedder: input.embedder,
     });
-    for (const hit of result.hits) hits.push({ ...hit, repo });
+    rankings.push(result.hits.map(hit => ({ ...hit, repo })));
+    coverage.push({ repo, ...result.coverage });
   };
 
   if (!wanted || wanted.has(localName)) {
@@ -3271,28 +3691,29 @@ export async function searchTranscriptsFederated(input: {
     }
   }
 
-  hits.sort((left, right) => right.score - left.score);
-  return { hits: hits.slice(0, input.limit), skipped };
+  // Repo-qualified key: message ids are unique within a database, not across them, so the
+  // default key would silently merge two repos' message 5 into one hit.
+  const hits = fuseRankings(rankings, input.limit, hit => `${hit.repo}:${hit.messageId}`);
+
+  return { hits, skipped, coverage };
 }
 ```
 
 If `PeerRepo` in `src/workspace/resolve.ts` names its filesystem field something other than `path` or `root`, use that name directly and delete the fallback — read the type before writing this.
 
-- [ ] **Step 4: Route the MCP tool through it**
+- [ ] **Step 4: Verify the handler consumes the contract**
 
-In `src/mcp/tools.ts`, change the `knowl_transcript_search` handler to call `searchTranscriptsFederated` with the resolved workspace and the caller's `repos`, and render each hit as:
+Nothing consumes this yet. Task 12 builds `handleTranscriptSearch` against exactly this shape: it destructures `{ hits, skipped, coverage }` and emits one `Coverage [repo]: n/m` line per repo plus one `Skipped [repo]: reason` line. Keep the return type stable or that task will not compile.
 
-```
-[<repo>] transcript://<sessionId>#L<line>  (<role>)
-<text>
-```
-
-Append the coverage line, and one line per skipped repo, so an empty result is distinguishable from a repo that was never searched.
+Run: `npx tsc --noEmit`
+Expected: no errors. A mismatch here means the two tasks disagree about the contract.
 
 - [ ] **Step 5: Run tests to verify they pass**
 
 Run: `npx vitest run tests/transcripts/federate.test.ts`
-Expected: PASS, 5 tests
+Expected: PASS, 9 tests
+
+The last three are the review's P2: per-repo coverage, no message-id collision across repos, and no repo-order bias on equal scores.
 
 Run: `npm test`
 Expected: PASS. Note from PR #7: the full suite is load-sensitive on a busy machine — `query-command`, `workspace-query` and `foreign-item-refusal` can time out under a large parallel run and pass in isolation. Re-run any failure on its own before treating it as real, and confirm the same behaviour on `main`.
@@ -3308,13 +3729,888 @@ git commit -m "feat(transcripts): opt-in read-only workspace fan-out"
 ```
 
 ---
+### Task 12: MCP tools, registered only when enabled
+
+**Files:**
+- Create: `src/transcripts/locator.ts`
+- Create: `src/transcripts/mcp-handlers.ts`
+- Modify: `src/mcp/tools.ts` (the `ListToolsRequestSchema` handler and the call dispatcher)
+- Modify: `src/core/knowl-guidance.ts:92-109`
+- Modify: `src/mcp/server.ts:36`
+- Test: `tests/transcripts/locator.test.ts`, `tests/transcripts/mcp-gating.test.ts`
+
+**Interfaces:**
+- Consumes: `isTranscriptSearchEnabled` (Task 1), `searchTranscriptsFederated` (Task 11), `readWithContext` (Task 6)
+- Produces:
+  - `formatLocator(hit: { repo?: string; sessionId: string; line: number }): string`
+  - `parseLocator(raw: string): { repo: string | null; sessionId: string; line: number } | null`
+  - `handleTranscriptSearch(input): Promise<string>` and `handleTranscriptRead(input): Promise<string>` in `mcp-handlers.ts`
+  - MCP tools `knowl_transcript_search` and `knowl_transcript_read`
+  - `mcpServerInstructions(config: ProjectConfig | null): string` in `knowl-guidance.ts`
+
+**Why a locator and not `(sessionId, line)`:** the reader needs a filesystem path, which requires knowing which repo owns the session — and in a workspace two repos can hold sessions with the same id. Handing the caller a single opaque string it passes straight back removes the chance to reassemble identity wrongly and open the wrong file.
+
+**No pseudocode in this task.** An earlier draft left the dispatcher as a comment. Every branch below is written out, and the gating tests drive a real `tools/list` and a real `tools/call` through the server rather than inspecting guidance strings.
+
+**Read this before writing any code — the obvious approach does not work:**
+
+- There is no `buildGuidanceCard`. `renderCompactKnowlGuidance(modeLine)` is **private** ([src/core/knowl-guidance.ts:92](../../../src/core/knowl-guidance.ts#L92)), and the cards are **module-level constants** evaluated at import: `KNOWL_CLAUDE_OPERATIONAL_CARD` and `KNOWL_MCP_SERVER_INSTRUCTIONS` (lines 108–109). A constant cannot depend on config.
+- The compact card's Route section is **hand-written prose, not generated** from `KNOWL_MCP_TOOL_GROUPS`. Adding a group there changes `renderFullKnowlGuidance()` (the KNOWL.md table) and `KNOWL_MCP_TOOL_NAMES` — but not the compact card. So the two need separate handling, and `KNOWL_MCP_TOOL_GROUPS` must stay unchanged or the tool-name list grows unconditionally.
+- `tests/core/knowl-guidance.test.ts:63-64` asserts **exact lengths**. Keeping the existing constants as the disabled-state values means those assertions keep passing untouched, which is the correct outcome: off by default must change nothing.
+
+**Measured on this branch** (`npx vitest` against the real module):
+
+| | chars |
+|---|---|
+| `KNOWL_CLAUDE_OPERATIONAL_CARD` | 1,695 |
+| `KNOWL_MCP_SERVER_INSTRUCTIONS` | 1,746 |
+| `KNOWL_MCP_TOOL_NAMES` | 24 tools |
+| + the transcript Route bullet below | **1,885 / 2,000** |
+
+115 characters of headroom with the feature on. The spec cites 1,917 from PR #8 — that is PR #8's branch, which adds a tool this design does not.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/transcripts/mcp-gating.test.ts`:
+
+```typescript
+import { describe, expect, it } from 'vitest';
+import {
+  KNOWL_MCP_SERVER_INSTRUCTIONS,
+  KNOWL_MCP_TOOL_GROUPS,
+  KNOWL_MCP_TOOL_NAMES,
+  mcpServerInstructions,
+} from '../../src/core/knowl-guidance.js';
+import type { ProjectConfig } from '../../src/core/types.js';
+
+const config = (enabled: boolean): ProjectConfig => ({
+  version: 1,
+  security: { rejectSecrets: true, secretPatterns: [] },
+  search: { transcripts: { enabled } },
+});
+
+describe('transcript tool gating', () => {
+  it('keeps both tools out of the unconditional inventory', () => {
+    const names = KNOWL_MCP_TOOL_GROUPS.flatMap(group => group.tools);
+    expect(names).not.toContain('knowl_transcript_search');
+    expect(names).not.toContain('knowl_transcript_read');
+    expect(KNOWL_MCP_TOOL_NAMES).toHaveLength(24);
+  });
+
+  it('returns the untouched constant when disabled', () => {
+    expect(mcpServerInstructions(config(false))).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
+  });
+
+  it('returns the untouched constant when there is no config at all', () => {
+    expect(mcpServerInstructions(null)).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
+  });
+
+  it('names both tools when enabled', () => {
+    const card = mcpServerInstructions(config(true));
+    expect(card).toContain('knowl_transcript_search');
+    expect(card).toContain('knowl_transcript_read');
+  });
+
+  it('adds exactly one line when enabled', () => {
+    const off = mcpServerInstructions(config(false)).split('\n').length;
+    const on = mcpServerInstructions(config(true)).split('\n').length;
+    expect(on).toBe(off + 1);
+  });
+
+  it('stays inside the 2000-character ceiling with the feature on', () => {
+    expect(mcpServerInstructions(config(true)).length).toBeLessThanOrEqual(2000);
+  });
+});
+
+// The guidance assertions above are necessary but not sufficient: they check what the agent is
+// *told*, not what the server actually exposes. These drive the real protocol.
+describe('MCP surface', () => {
+  const TEST_ROOT = path.resolve('./.knowl-transcript-mcp-test');
+
+  async function toolNames(cfg: ProjectConfig): Promise<string[]> {
+    const response = await rpc(cfg, 'tools/list', {});
+    return response.result.tools.map((tool: { name: string }) => tool.name);
+  }
+
+  it('does not list either tool when disabled', async () => {
+    const names = await toolNames(config(false));
+    expect(names).not.toContain('knowl_transcript_search');
+    expect(names).not.toContain('knowl_transcript_read');
+  });
+
+  it('lists both tools when enabled', async () => {
+    const names = await toolNames(config(true));
+    expect(names).toContain('knowl_transcript_search');
+    expect(names).toContain('knowl_transcript_read');
+  });
+
+  it('refuses a call to a disabled tool instead of crashing', async () => {
+    // A client that cached an older tool list can still call it. The gate must hold at
+    // dispatch, not only at listing.
+    const response = await rpc(config(false), 'tools/call', {
+      name: 'knowl_transcript_search',
+      arguments: { query: 'anything' },
+    });
+
+    const text = JSON.stringify(response.result ?? response.error);
+    expect(text).toMatch(/not enabled/i);
+    expect(text).not.toMatch(/undefined|cannot read|ENOENT/i);
+  });
+
+  it('rejects a malformed locator with a usable message', async () => {
+    const response = await rpc(config(true), 'tools/call', {
+      name: 'knowl_transcript_read',
+      arguments: { locator: 'not-a-locator' },
+    });
+
+    expect(JSON.stringify(response.result ?? response.error)).toMatch(/locator/i);
+  });
+});
+```
+
+Add the harness this file needs — copy `InMemoryTransport` and the request helper from `tests/mcp/server.test.ts:37-135` rather than inventing a second pattern:
+
+```typescript
+async function rpc(cfg: ProjectConfig, method: string, params: unknown) {
+  const server = createMcpServer(projectId, TEST_ROOT, cfg);
+  const transport = new InMemoryTransport();
+  await server.connect(transport as never);
+  // ...initialize handshake, then send `method`, exactly as tests/mcp/server.test.ts does...
+  await server.close();
+  return response;
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/transcripts/mcp-gating.test.ts`
+Expected: FAIL — `mcpServerInstructions` is not exported from `knowl-guidance.js`.
+
+- [ ] **Step 3: Make the compact card conditional without touching the constants**
+
+In `src/core/knowl-guidance.ts`, change the private renderer to take an options bag, and add the new export. Leave `KNOWL_MCP_TOOL_GROUPS`, `KNOWL_CLAUDE_OPERATIONAL_CARD` and `KNOWL_MCP_SERVER_INSTRUCTIONS` exactly as they are — they are the disabled-state values, and the existing exact-length assertions must keep passing untouched.
+
+```typescript
+/**
+ * One extra Route line, only when transcript search is on.
+ *
+ * The card is a token cost paid by every session of every user. Measured: 1,746 chars for the
+ * server card today, 1,885 with this line, against a 2,000 ceiling. Everyone who leaves the
+ * feature off keeps their 1,746 and never learns these tools exist.
+ */
+const TRANSCRIPT_ROUTE_LINE =
+  '- transcripts: knowl_transcript_search after a knowl_query miss; knowl_transcript_read opens a hit. Promote what you use with knowl_store.';
+
+function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: boolean } = {}): string {
+  return [
+    // ...every existing line, unchanged, through the '- special: ...' bullet...
+    ...(options.transcripts ? [TRANSCRIPT_ROUTE_LINE] : []),
+    'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
+  ].join('\n');
+}
+
+export const KNOWL_CLAUDE_OPERATIONAL_CARD = renderCompactKnowlGuidance(KNOWL_CLAUDE_MODE_LINE);
+export const KNOWL_MCP_SERVER_INSTRUCTIONS = renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE);
+
+/**
+ * The server handshake card for a given project.
+ *
+ * Returns the shared constant when the feature is off, so the common case allocates nothing and
+ * stays byte-identical to what every existing test asserts.
+ */
+export function mcpServerInstructions(config: ProjectConfig | null): string {
+  if (!config || !isTranscriptSearchEnabled(config)) return KNOWL_MCP_SERVER_INSTRUCTIONS;
+  return renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE, { transcripts: true });
+}
+```
+
+Add the two imports this needs at the top of the file:
+
+```typescript
+import type { ProjectConfig } from './types.js';
+import { isTranscriptSearchEnabled } from '../transcripts/config.js';
+```
+
+Then in `src/mcp/server.ts`, replace the constant at line 36 with the call — `config` is already a parameter of `createMcpServer`:
+
+```typescript
+      instructions: mcpServerInstructions(config),
+```
+
+and update its import on line 11 from `KNOWL_MCP_SERVER_INSTRUCTIONS` to `mcpServerInstructions`.
+
+Leave `renderFullKnowlGuidance()` alone. It renders the KNOWL.md table from `KNOWL_MCP_TOOL_GROUPS`, that file is committed per-repo, and documenting two tools a reader may not have enabled is worse than omitting them.
+
+- [ ] **Step 4: Register the tools conditionally**
+
+In `src/mcp/tools.ts`, inside the `ListToolsRequestSchema` handler, build the array and append conditionally before returning:
+
+```typescript
+    const tools = [ /* ...every existing tool literal, unchanged... */ ];
+
+    const config = getConfig();
+    if (config && isTranscriptSearchEnabled(config)) {
+      tools.push(
+        {
+          name: 'knowl_transcript_search',
+          description: 'Search this repo\'s past Claude Code session transcripts. Use after knowl_query misses. Returns pointers into the session files; store anything worth keeping with knowl_store.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'What to look for, in your own words. Semantic search covers the whole archive, so the exact wording need not match.' },
+              sessionId: { type: 'string', description: 'Restrict to one session. Accepts a full id or a unique prefix.' },
+              repos: { type: 'array', items: { type: 'string' }, description: 'Restrict to these linked workspace repos. Omit to search this repo only.' },
+              limit: { type: 'number', description: 'Maximum hits; defaults to 5.' },
+            },
+            required: ['query'],
+          },
+        },
+        {
+          name: 'knowl_transcript_read',
+          description: 'Read one transcript message and the turns around it. Pass a locator from knowl_transcript_search exactly as it was returned.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              locator: { type: 'string', description: 'A transcript://<repo>/<session>#L<line> locator from a search hit, verbatim.' },
+              context: { type: 'number', description: 'Turns to include on each side; defaults to 2.' },
+            },
+            required: ['locator'],
+          },
+        },
+      );
+    }
+
+    return { tools };
+```
+
+- [ ] **Step 4a: Write the locator module**
+
+Create `src/transcripts/locator.ts`:
+
+```typescript
+/**
+ * `transcript://<repo>/<session>#L<line>`, with `<repo>/` omitted for a local hit.
+ *
+ * A locator is handed to the agent and handed straight back. Session id plus line is not enough
+ * to open a file -- the reader needs a path, which needs the owning repo, and in a workspace two
+ * repos can hold sessions with the same id.
+ */
+export function formatLocator(hit: { repo?: string | null; sessionId: string; line: number }): string {
+  const repo = hit.repo ? `${encodeURIComponent(hit.repo)}/` : '';
+  return `transcript://${repo}${hit.sessionId}#L${hit.line}`;
+}
+
+const LOCATOR = /^transcript:\/\/(?:([^/]+)\/)?([^/#]+)#L(\d+)$/;
+
+/** Null rather than a throw: a malformed locator is caller error, answered with a message. */
+export function parseLocator(raw: string): { repo: string | null; sessionId: string; line: number } | null {
+  const match = LOCATOR.exec(raw.trim());
+  if (!match) return null;
+  const line = Number(match[3]);
+  if (!Number.isInteger(line) || line < 1) return null;
+  return {
+    repo: match[1] ? decodeURIComponent(match[1]) : null,
+    sessionId: match[2],
+    line,
+  };
+}
+```
+
+Create `tests/transcripts/locator.test.ts`:
+
+```typescript
+import { describe, expect, it } from 'vitest';
+import { formatLocator, parseLocator } from '../../src/transcripts/locator.js';
+
+describe('locator', () => {
+  it('omits the repo for a local hit', () => {
+    expect(formatLocator({ sessionId: 'abc', line: 42 })).toBe('transcript://abc#L42');
+  });
+
+  it('includes the repo for a federated hit', () => {
+    expect(formatLocator({ repo: 'knowl-cloud', sessionId: 'abc', line: 42 }))
+      .toBe('transcript://knowl-cloud/abc#L42');
+  });
+
+  it('round-trips both shapes', () => {
+    for (const hit of [{ sessionId: 'abc', line: 7 }, { repo: 'peer', sessionId: 'abc', line: 7 }]) {
+      const parsed = parseLocator(formatLocator(hit));
+      expect(parsed?.sessionId).toBe('abc');
+      expect(parsed?.line).toBe(7);
+      expect(parsed?.repo).toBe(hit.repo ?? null);
+    }
+  });
+
+  it('survives a repo name containing a slash', () => {
+    const parsed = parseLocator(formatLocator({ repo: 'group/repo', sessionId: 'abc', line: 1 }));
+    expect(parsed?.repo).toBe('group/repo');
+  });
+
+  it('returns null for anything malformed', () => {
+    for (const bad of ['', 'not-a-locator', 'transcript://abc', 'transcript://abc#L0', 'transcript://abc#Lx']) {
+      expect(parseLocator(bad)).toBeNull();
+    }
+  });
+});
+```
+
+- [ ] **Step 4b: Write the handlers**
+
+Create `src/transcripts/mcp-handlers.ts`. These are plain functions returning strings, so they are testable without a server:
+
+```typescript
+import path from 'node:path';
+import type { ProjectConfig } from '../core/types.js';
+import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
+import { resolveStorage } from '../store/storage-roles.js';
+import { resolveWorkspace } from '../workspace/resolve.js';
+import { isTranscriptSearchEnabled } from './config.js';
+import { openTranscriptDb } from './database.js';
+import { searchTranscriptsFederated } from './federate.js';
+import { formatLocator, parseLocator } from './locator.js';
+import { readWithContext } from './read.js';
+import { discoverTranscriptFiles } from './paths.js';
+
+export const DISABLED_MESSAGE =
+  'Transcript search is not enabled for this repository. Enable search.transcripts.enabled with `knowl config`, then run `knowl reindex --transcripts`.';
+
+/** The embedder, or null when vectors are off or the model is unavailable. Never throws. */
+async function optionalEmbedder(config: ProjectConfig, projectRoot: string) {
+  if (!isVectorSearchEnabled(config)) return null;
+  try {
+    return await createLocalEmbeddingProvider(config, projectRoot);
+  } catch {
+    return null;
+  }
+}
+
+export async function handleTranscriptSearch(input: {
+  config: ProjectConfig | null;
+  projectRoot: string | null;
+  query: string;
+  sessionId?: string;
+  repos?: string[];
+  limit?: number;
+}): Promise<string> {
+  const { config, projectRoot } = input;
+  if (!config || !projectRoot || !isTranscriptSearchEnabled(config)) return DISABLED_MESSAGE;
+
+  const limit = input.limit ?? 5;
+  const embedder = await optionalEmbedder(config, projectRoot);
+  const workspace = await resolveWorkspace(projectRoot, config).catch(() => null);
+
+  const { hits, skipped, coverage } = await searchTranscriptsFederated({
+    projectRoot, workspace, query: input.query, limit,
+    sessionId: input.sessionId, repos: input.repos,
+    embedder: embedder ?? undefined,
+  });
+
+  const lines: string[] = [];
+  if (hits.length === 0) {
+    lines.push(`No transcript matches for "${input.query}".`);
+  } else {
+    for (const hit of hits) {
+      const parent = hit.parentSessionId ? ` (subagent of ${hit.parentSessionId})` : '';
+      lines.push(`${formatLocator(hit)}  [${hit.role}]${parent}`);
+      lines.push(hit.text ?? '(message body unavailable -- the transcript file was removed)');
+      lines.push('');
+    }
+  }
+
+  // Required, not decorative. "BM25 + semantic" over 8% of an archive is a different claim
+  // from the same words over all of it, and only one justifies trusting a near-miss.
+  for (const entry of coverage) {
+    const semantic = entry.embedded === 0 && !embedder
+      ? ' (semantic off: search.vector.enabled is false)'
+      : '';
+    lines.push(`Coverage [${entry.repo}]: ${entry.embedded}/${entry.indexed} messages embedded${semantic}.`);
+  }
+  for (const entry of skipped) {
+    lines.push(`Skipped [${entry.repo}]: ${entry.reason}.`);
+  }
+
+  lines.push('If you used any of this, store it with knowl_store so the next session does not have to dig for it again.');
+  return lines.join('\n');
+}
+
+export async function handleTranscriptRead(input: {
+  config: ProjectConfig | null;
+  projectRoot: string | null;
+  locator: string;
+  context?: number;
+}): Promise<string> {
+  const { config, projectRoot } = input;
+  if (!config || !projectRoot || !isTranscriptSearchEnabled(config)) return DISABLED_MESSAGE;
+
+  const parsed = parseLocator(input.locator);
+  if (!parsed) {
+    return `Malformed locator "${input.locator}". Expected transcript://<repo>/<session>#L<line>, exactly as knowl_transcript_search returned it.`;
+  }
+
+  // Resolve the owning repo's root before resolving the session's file. A locator from another
+  // repo must not be looked up against this one's transcripts.
+  let root = projectRoot;
+  if (parsed.repo) {
+    const workspace = await resolveWorkspace(projectRoot, config).catch(() => null);
+    const peer = workspace?.peers.find(candidate => candidate.name === parsed.repo);
+    if (!peer) return `Unknown repo "${parsed.repo}" in locator. It is not a linked workspace repo.`;
+    root = (peer as { path?: string; root?: string }).path ?? (peer as { root?: string }).root ?? projectRoot;
+  }
+
+  const client = await openTranscriptDb(resolveStorage(root).transcripts, { readOnly: root !== projectRoot });
+  const row = (await client.execute({
+    sql: 'SELECT path FROM transcript_messages WHERE session_id = ? OR session_id LIKE ? LIMIT 1',
+    args: [parsed.sessionId, `${parsed.sessionId}%`],
+  })).rows[0];
+
+  if (!row) return `No indexed session matches "${parsed.sessionId}".`;
+
+  const excerpts = await readWithContext(String(row.path), parsed.line, input.context ?? 2);
+  if (excerpts.length === 0) {
+    return `Nothing readable at ${input.locator}. The transcript file may have been deleted; it will be dropped from the index on the next pass.`;
+  }
+
+  return excerpts
+    .map(excerpt => `${excerpt.line === parsed.line ? '>' : ' '} [${excerpt.role}] ${excerpt.text}`)
+    .join('\n\n');
+}
+```
+
+- [ ] **Step 4c: Dispatch to them**
+
+In `src/mcp/tools.ts`, add both branches to the call dispatcher. Each re-checks the gate, because a client that cached an older tool list can still call:
+
+```typescript
+    if (name === 'knowl_transcript_search') {
+      const text = await handleTranscriptSearch({
+        config: getConfig(),
+        projectRoot: getProjectRoot(),
+        query: String(args.query ?? ''),
+        sessionId: args.sessionId ? String(args.sessionId) : undefined,
+        repos: Array.isArray(args.repos) ? args.repos.map(String) : undefined,
+        limit: typeof args.limit === 'number' ? args.limit : undefined,
+      });
+      return { content: [{ type: 'text', text }] };
+    }
+
+    if (name === 'knowl_transcript_read') {
+      const text = await handleTranscriptRead({
+        config: getConfig(),
+        projectRoot: getProjectRoot(),
+        locator: String(args.locator ?? ''),
+        context: typeof args.context === 'number' ? args.context : undefined,
+      });
+      return { content: [{ type: 'text', text }] };
+    }
+```
+
+Match the surrounding handlers' exact return shape — read two neighbours before writing these, and use whatever result helper they use rather than the literal above if one exists.
+
+- [ ] **Step 5: Run tests to verify they pass**
+
+Run: `npx vitest run tests/transcripts/locator.test.ts tests/transcripts/mcp-gating.test.ts`
+Expected: PASS, 5 + 10 tests
+
+The four `MCP surface` tests are the ones that matter here — they exercise a real `tools/list` and `tools/call`, which is where "off by default" either holds or does not.
+
+Run: `npx vitest run tests/core/knowl-guidance.test.ts tests/mcp/server.test.ts`
+Expected: PASS **with no edits to either file**. `tests/core/knowl-guidance.test.ts:63-64` asserts the cards are exactly 1,695 and 1,746 characters, and `tests/mcp/server.test.ts:141` asserts the handshake returns `KNOWL_MCP_SERVER_INSTRUCTIONS` verbatim. Those are the off-by-default guarantee stated as tests. If either fails, the change leaked into the disabled path — fix the code, do not update the assertion.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/transcripts/locator.ts src/transcripts/mcp-handlers.ts src/mcp/tools.ts \
+        src/mcp/server.ts src/core/knowl-guidance.ts \
+        tests/transcripts/locator.test.ts tests/transcripts/mcp-gating.test.ts
+git commit -m "feat(transcripts): expose the two MCP tools behind the enabled gate"
+```
+
+---
+
+### Task 13: Lifecycle: catch-up on every turn, teardown on disable
+
+**The catch-up must embed, not only index.** A trigger that writes lexical rows and stops leaves every new message permanently unvectored until somebody remembers to run a manual reindex, so coverage decays silently from 100% as the archive grows. Whole-corpus semantic ranking is the design's central claim; a catch-up path that quietly erodes it is worse than none.
+
+**Disabling deletes the database.** Not "stops using it". An index left behind after the feature is off is term and vector data nothing will ever refresh, belonging to the one user who explicitly declined to keep it.
+
+**Files:**
+- Modify: `src/index.ts:1552-1580` (the `agent-hook` command action)
+- Modify: `src/cli/config/ui.ts` (act on the `search.transcripts.enabled` true→false transition)
+- Create: `src/transcripts/catch-up.ts`
+- Create: `src/transcripts/teardown.ts`
+- Test: `tests/transcripts/catch-up.test.ts`, `tests/transcripts/teardown.test.ts`
+
+**Interfaces:**
+- Consumes: `runIndexPass` (Task 5), `embedPendingMessages` (Task 9), `isTranscriptSearchEnabled` (Task 1)
+- Produces:
+  - `catchUpTranscripts(projectRoot, options?: { budgetMs?: number; projectsDir?: string }): Promise<{ indexed: number; embedded: number } | null>`
+  - `removeTranscriptIndex(projectRoot: string): Promise<{ removed: boolean; messages: number }>`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/transcripts/catch-up.test.ts`:
+
+```typescript
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { catchUpTranscripts } from '../../src/transcripts/catch-up.js';
+import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/database.js';
+import type { KnowledgeEmbedder } from '../../src/store/vector-index.js';
+
+/** Deterministic 8-dim stand-in; the real model is not needed to prove vectors were written. */
+const stubEmbedder = (): KnowledgeEmbedder => ({
+  provider: 'stub',
+  model: 'stub',
+  pooling: 'mean',
+  profileFingerprint: 'stub:catchup',
+  embed: async (texts: string[]) => texts.map(() => [1, 0, 0, 0, 0, 0, 0, 0]),
+});
+
+let dir: string;
+let projectsDir: string;
+
+beforeEach(async () => {
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-catchup-'));
+  projectsDir = path.join(dir, 'projects');
+  await fs.mkdir(path.join(dir, '.knowl'), { recursive: true });
+});
+
+afterEach(async () => {
+  await closeTranscriptDbs();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+async function writeConfig(enabled: boolean, options: { vector?: boolean } = {}) {
+  await fs.writeFile(
+    path.join(dir, '.knowl', 'config.json'),
+    JSON.stringify({
+      version: 1,
+      security: { rejectSecrets: true, secretPatterns: [] },
+      search: { transcripts: { enabled }, vector: { enabled: options.vector === true } },
+    }),
+  );
+}
+
+async function seed() {
+  const encoded = path.resolve(dir).replace(/[^A-Za-z0-9]/g, '-');
+  await fs.mkdir(path.join(projectsDir, encoded), { recursive: true });
+  await fs.writeFile(
+    path.join(projectsDir, encoded, 'a.jsonl'),
+    JSON.stringify({ type: 'user', message: { content: 'a turn happened' } }) + '\n',
+  );
+}
+
+describe('catchUpTranscripts', () => {
+  it('returns null and creates nothing when disabled', async () => {
+    await writeConfig(false);
+    await seed();
+
+    expect(await catchUpTranscripts(dir, { projectsDir })).toBeNull();
+    await expect(fs.access(path.join(dir, '.knowl', 'transcripts.db'))).rejects.toThrow();
+  });
+
+  it('indexes new turns when enabled', async () => {
+    await writeConfig(true);
+    await seed();
+
+    const result = await catchUpTranscripts(dir, { projectsDir });
+    expect(result?.indexed).toBe(1);
+  });
+
+  // The regression test for the blocker: catching up lexically but never embedding meant
+  // coverage decayed from 100% with every new turn, with no signal that it had.
+  it('embeds what it indexes, so coverage stays complete', async () => {
+    await writeConfig(true, { vector: true });
+    await seed();
+
+    await catchUpTranscripts(dir, { projectsDir, embedder: stubEmbedder() });
+
+    const client = await openTranscriptDb(path.join(dir, '.knowl', 'transcripts.db'));
+    const indexed = Number((await client.execute('SELECT COUNT(*) AS n FROM transcript_messages')).rows[0].n);
+    const embedded = Number((await client.execute('SELECT COUNT(*) AS n FROM transcript_vectors')).rows[0].n);
+
+    expect(indexed).toBe(1);
+    expect(embedded).toBe(indexed);
+  });
+
+  it('still indexes when vector search is off, and embeds nothing', async () => {
+    await writeConfig(true, { vector: false });
+    await seed();
+
+    const result = await catchUpTranscripts(dir, { projectsDir });
+
+    expect(result?.indexed).toBe(1);
+    expect(result?.embedded).toBe(0);
+  });
+
+  it('returns null rather than throwing when the config is unreadable', async () => {
+    await seed();
+    expect(await catchUpTranscripts(dir, { projectsDir })).toBeNull();
+  });
+
+  it('never throws, whatever indexing does', async () => {
+    await writeConfig(true);
+    // No projects directory at all.
+    await expect(catchUpTranscripts(dir, { projectsDir: path.join(dir, 'absent') })).resolves.not.toThrow();
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/transcripts/catch-up.test.ts`
+Expected: FAIL — `Cannot find module '../../src/transcripts/catch-up.js'`
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/transcripts/catch-up.ts`:
+
+```typescript
+import { loadConfig } from '../core/config.js';
+import { resolveStorage } from '../store/storage-roles.js';
+import { isTranscriptSearchEnabled } from './config.js';
+import { closeTranscriptDbs } from './database.js';
+import { runIndexPass } from './index-pass.js';
+
+/** How long a hook-driven pass may take. A hook that delays a turn is worse than a stale index. */
+const DEFAULT_BUDGET_MS = 1_500;
+
+/**
+ * Bring the index up to date at the end of an agent turn -- both halves.
+ *
+ * Once per turn rather than once per message: transcripts are append-only, so catching up twenty
+ * messages costs the same as catching up one, and a write every few seconds is exactly what
+ * produced the SQLITE_BUSY failures this design separates databases to avoid.
+ *
+ * Indexing and embedding share the one deadline, indexing first: a lexical row is useful on its
+ * own, an orphaned vector is not. Embedding what was just indexed is not optional -- skipping it
+ * lets coverage decay from 100% with every new turn, silently invalidating the whole-corpus
+ * claim that justifies ranking semantically at all.
+ *
+ * Returns null when the feature is off, and swallows every failure. This runs inside a lifecycle
+ * hook; an optional index must never be the reason a turn errors.
+ */
+export async function catchUpTranscripts(
+  projectRoot: string,
+  options: {
+    budgetMs?: number;
+    projectsDir?: string;
+    /** Injected by tests; production resolves it from config. */
+    embedder?: KnowledgeEmbedder;
+  } = {},
+): Promise<{ indexed: number; embedded: number } | null> {
+  try {
+    const config = await loadConfig(projectRoot);
+    if (!isTranscriptSearchEnabled(config)) return null;
+
+    const dbPath = resolveStorage(projectRoot).transcripts;
+    const deadline = Date.now() + (options.budgetMs ?? DEFAULT_BUDGET_MS);
+
+    const pass = await runIndexPass({
+      projectRoot, dbPath, projectsDir: options.projectsDir, deadline,
+    });
+
+    let embedded = 0;
+    if (isVectorSearchEnabled(config)) {
+      try {
+        const embedder = options.embedder ?? await createLocalEmbeddingProvider(config, projectRoot);
+        const client = await openTranscriptDb(dbPath);
+        embedded = (await embedPendingMessages({ client, embedder, deadline })).embedded;
+      } catch {
+        // No model on disk yet, or it failed to load. The lexical index still landed; the next
+        // turn or an explicit reindex fills the vectors in.
+      }
+    }
+
+    return { indexed: pass.indexed, embedded };
+  } catch {
+    return null;
+  } finally {
+    await closeTranscriptDbs().catch(() => {});
+  }
+}
+```
+
+Imports for this file:
+
+```typescript
+import { loadConfig } from '../core/config.js';
+import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
+import { resolveStorage } from '../store/storage-roles.js';
+import type { KnowledgeEmbedder } from '../store/vector-index.js';
+import { isTranscriptSearchEnabled } from './config.js';
+import { closeTranscriptDbs, openTranscriptDb } from './database.js';
+import { embedPendingMessages } from './embed-pass.js';
+import { runIndexPass } from './index-pass.js';
+```
+
+- [ ] **Step 4: Call it from the hook**
+
+In `src/index.ts`, in the `agent-hook` action, add the catch-up immediately after `handleHostLifecycleEvent` and before `closeDb()`:
+
+```typescript
+      const result = await handleHostLifecycleEvent(project.id, normalized);
+
+      // Best-effort and gated: returns null when transcript search is off, and never throws.
+      if (normalized.event === 'turn-stop' || normalized.event === 'session-stop') {
+        await catchUpTranscripts(root);
+      }
+
+      if (result.hostOutput) console.log(JSON.stringify(result.hostOutput));
+```
+
+Add the import alongside the other transcript imports:
+
+```typescript
+import { catchUpTranscripts } from './transcripts/catch-up.js';
+```
+
+- [ ] **Step 5: Delete the database when the feature is turned off**
+
+Create `src/transcripts/teardown.ts`:
+
+```typescript
+import fs from 'node:fs/promises';
+import { resolveStorage } from '../store/storage-roles.js';
+import { closeTranscriptDb, openTranscriptDb } from './database.js';
+
+/**
+ * Remove `.knowl/transcripts.db` and its WAL sidecars.
+ *
+ * Called on the `search.transcripts.enabled` true -> false transition. Leaving the file behind
+ * would keep a copy of the archive's terms and vectors that nothing will ever refresh, belonging
+ * to the one user who explicitly declined to keep it. "Off" has to mean the file is gone.
+ *
+ * Reports the message count first so the caller can say what was discarded rather than deleting
+ * silently.
+ */
+export async function removeTranscriptIndex(
+  projectRoot: string,
+): Promise<{ removed: boolean; messages: number }> {
+  const dbPath = resolveStorage(projectRoot).transcripts;
+
+  let messages = 0;
+  try {
+    await fs.access(dbPath);
+    const client = await openTranscriptDb(dbPath);
+    messages = Number((await client.execute('SELECT COUNT(*) AS n FROM transcript_messages')).rows[0].n);
+  } catch {
+    return { removed: false, messages: 0 };
+  }
+
+  // Close first: Windows refuses to unlink a file this process still holds open, and the WAL
+  // sidecars would survive the main file's removal.
+  await closeTranscriptDb(dbPath);
+
+  for (const suffix of ['', '-wal', '-shm']) {
+    await fs.rm(`${dbPath}${suffix}`, { force: true });
+  }
+
+  return { removed: true, messages };
+}
+```
+
+Create `tests/transcripts/teardown.test.ts`:
+
+```typescript
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/database.js';
+import { removeTranscriptIndex } from '../../src/transcripts/teardown.js';
+
+let dir: string;
+let dbPath: string;
+
+beforeEach(async () => {
+  dir = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-teardown-'));
+  await fs.mkdir(path.join(dir, '.knowl'), { recursive: true });
+  dbPath = path.join(dir, '.knowl', 'transcripts.db');
+});
+
+afterEach(async () => {
+  await closeTranscriptDbs();
+  await fs.rm(dir, { recursive: true, force: true });
+});
+
+describe('removeTranscriptIndex', () => {
+  it('deletes the database and reports what was discarded', async () => {
+    const client = await openTranscriptDb(dbPath);
+    await client.execute({
+      sql: `INSERT INTO transcript_messages (path, session_id, parent_session_id, line, role, chars, ts)
+            VALUES ('/x.jsonl', 's', NULL, 1, 'user', 4, NULL)`,
+      args: [],
+    });
+
+    const result = await removeTranscriptIndex(dir);
+
+    expect(result).toEqual({ removed: true, messages: 1 });
+    await expect(fs.access(dbPath)).rejects.toThrow();
+  });
+
+  it('removes the WAL sidecars too', async () => {
+    await openTranscriptDb(dbPath);
+    await removeTranscriptIndex(dir);
+
+    for (const suffix of ['-wal', '-shm']) {
+      await expect(fs.access(`${dbPath}${suffix}`)).rejects.toThrow();
+    }
+  });
+
+  it('is a no-op when there is no index', async () => {
+    expect(await removeTranscriptIndex(dir)).toEqual({ removed: false, messages: 0 });
+  });
+});
+```
+
+Then wire it into `src/cli/config/ui.ts`. That file already detects changes and offers a reindex on profile changes (`offerReindex`, around line 442); add the symmetric case — when a saved change sets `search.transcripts.enabled` from `true` to `false`, call `removeTranscriptIndex(root)` and print `Removed the transcript index (N messages).` Read `offerReindex` and the `ConfigChange` shape before writing this, and follow whatever it does rather than adding a parallel mechanism.
+
+- [ ] **Step 6: Run tests to verify they pass**
+
+Run: `npx vitest run tests/transcripts/catch-up.test.ts tests/transcripts/teardown.test.ts`
+Expected: PASS, 6 + 3 tests
+
+Run: `npx vitest run tests/cli`
+Expected: PASS — the hook and config paths are exercised there and must be unaffected when the feature is off.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src/transcripts/catch-up.ts src/transcripts/teardown.ts src/index.ts src/cli/config/ui.ts \
+        tests/transcripts/catch-up.test.ts tests/transcripts/teardown.test.ts
+git commit -m "feat(transcripts): embed on catch-up, and delete the index when disabled"
+```
+
+---
+
 
 ## Self-review notes
 
-**Spec coverage.** §1 config gate → Task 1. §2 separate database → Task 4. §3 prose only → Task 3, enforced by `extractProse`. §3a subagents → Task 2. §4 pointers → Task 4 schema (no body column) plus Task 6 read-back. §5 byte-offset resume → Task 5, triggers in Tasks 10 and 12. §6 BM25 + whole-corpus semantic + RRF → Tasks 7–9. §7 coverage and promotion nudge → Tasks 9 and 11. §8 workspace sharing → Task 13.
+**Spec coverage.** §1 config gate → Task 1; disable-deletes-database → Task 13. §2 separate database → Task 4; concurrency → Task 4b. §3 prose only → Task 3, enforced by `extractProse`. §3a subagents → Task 2. §3b git worktree roots → Task 2. §4 pointers → Task 4 schema (no body column) plus Task 6 read-back. §5 byte-offset resume and atomic watermark → Task 5; triggers in Tasks 10 and 13, both halves. §6 BM25 + whole-corpus semantic + RRF → Tasks 7–9. §7 coverage and promotion nudge → Tasks 9 and 12. §8 workspace sharing and federation contract → Task 11. §9 locators → Task 12.
 
 **Deferred deliberately.** The spec's `knowl config` toggle ships in Task 1 as schema entries; if the editor needs a `ConfigCategory` addition beyond `Search`, do it there rather than in a later task.
 
-**Resolved during review.** Task 11 originally assumed a `buildGuidanceCard(config)` function. No such function exists: the cards are module-level constants built by a private renderer, the compact card's Route section is hand-written rather than generated from `KNOWL_MCP_TOOL_GROUPS`, and two existing tests assert the cards' exact byte lengths. Task 11 was rewritten against the real API and now treats those length assertions as the off-by-default guarantee rather than as obstacles to update.
+## Revision history
 
-**Verified, not assumed:** SQLite 3.45.1 with working `contentless_delete=1` and `snippet()` returning null on a contentless table (Task 4 depends on both); card sizes 1,695 / 1,746 chars and 24 tools, measured against the real module; 3,717 prose messages in 2.2 MB across 75 transcript files, 52 of them nested subagent files (Tasks 2 and 3).
+**Round 1 — self-review.** The MCP task originally assumed a `buildGuidanceCard(config)` function. No such function exists: the cards are module-level constants built by a private renderer, the compact card's Route section is hand-written rather than generated from `KNOWL_MCP_TOOL_GROUPS`, and two existing tests assert the cards' exact byte lengths. Rewritten against the real API; those length assertions now serve as the off-by-default guarantee.
+
+**Round 2 — external review (Codex).** Nine blockers, all confirmed against this machine:
+
+| | Was | Now |
+|---|---|---|
+| Crash safety | Rows committed, watermark written after → a crash replays lines into `UNIQUE(path, line)` | One transaction per batch, watermark included (Task 5) |
+| I/O | Whole-file read per message; ~11 GB per backfill, budgets unenforceable | Streaming parser + `readMessagesAt` batched by file (Tasks 3, 6, 9) |
+| Worktrees | Matched `<encoded-root>-worktrees-*`, a convention inferred from one directory | `git worktree list` (Task 2) — this repo's worktree is on another drive |
+| Disable | Never deleted the database | `removeTranscriptIndex` on the true→false transition (Task 13) |
+| Catch-up | Indexed but never embedded, so coverage decayed silently | Both halves under one deadline (Task 13) |
+| Concurrency | `busy_timeout` only; two writers could race the watermark | `withWriteRetry` with `BUSY_SNAPSHOT` reconnect + in-transaction watermark re-read (Tasks 4b, 5) |
+| MCP read | `(sessionId, line)` — insufficient to resolve a file, ambiguous across repos | `transcript://<repo>/<session>#L<line>` locators (Task 12) |
+| Dispatcher | Left as pseudocode, violating this plan's own No Placeholders rule | Written out; gating tested through real `tools/list` and `tools/call` (Task 12) |
+| Federation | Dropped coverage; sorted incomparable cross-repo RRF scores | Per-repo coverage; second RRF over positions with repo-qualified keys (Task 11) |
+
+Also settled: "excludes pasted file bodies" was unenforceable and is now narrowed to exclusion by block type (spec §3), and semantic transcript ranking follows `search.vector.enabled` by decision rather than by accident (Task 10).
+
+**Verified on this machine, not assumed:** SQLite 3.45.1 with working `contentless_delete=1` and `snippet()` returning null on a contentless table; card sizes 1,695 / 1,746 chars and 24 tools; 3,717 prose messages in 2.2 MB across 75 transcript files, 52 of them nested subagent files; prose is 2.7% of the archive by bytes; the live worktree at `C:/Users/Admin/AppData/Local/Temp/claude/knowl-pr7`; and across 8 sessions, 2,005 `tool_result` blocks against 126 `text` blocks with exactly one string user message over 4,000 characters.
