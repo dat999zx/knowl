@@ -35,7 +35,7 @@ const EXPECTED_CLAUDE_CARD = [
   '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
   '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',
   '- special: knowl_ingest only for explicit raw-source ingestion, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an explicitly owned manual session; knowl_gc_preview before maintenance; knowl_gc_apply only after preview and explicit approval.',
-  '- handoff: knowl_handoff when parking a workstream; the next session in this project receives it once, then it is archived.',
+  '- handoff: knowl_handoff parks a workstream for the next session; delivered once, then archived.',
   'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
 ].join('\n');
 
@@ -62,10 +62,11 @@ describe('canonical Knowl agent guidance', () => {
 
   it('keeps both compact renderings bounded and front-loads the required action', () => {
     expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toBe(EXPECTED_CLAUDE_CARD);
-    // One Route line for the handoff group: +123 chars on each card, leaving 130 of headroom
-    // against the 2,000 ceiling. The next group added has to earn that room or replace a line.
-    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_819);
-    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_870);
+    // One Route line for the handoff group: +97 chars on each card. The binding limit is not
+    // this 2,000 ceiling but the transcript-enabled card in tests/transcripts/mcp-gating.test.ts,
+    // which carries one more line and now sits at 1,982. That is the budget to check first.
+    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_792);
+    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_843);
     for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS]) {
       expect(card.length).toBeLessThan(2_000);
       expect(card.slice(0, 512)).toContain('knowl_query');

@@ -24,7 +24,7 @@ describe('transcript tool gating', () => {
     const names = KNOWL_MCP_TOOL_GROUPS.flatMap(group => group.tools);
     expect(names).not.toContain('knowl_transcript_search');
     expect(names).not.toContain('knowl_transcript_read');
-    expect(KNOWL_MCP_TOOL_NAMES).toHaveLength(24);
+    expect(KNOWL_MCP_TOOL_NAMES).toHaveLength(25);
   });
 
   it('returns the untouched constant when disabled', () => {

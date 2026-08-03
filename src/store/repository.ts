@@ -352,6 +352,20 @@ export async function updateKnowledgeItem(
       visibility: updates.visibility !== undefined ? updates.visibility : current[0].visibility,
     };
 
+    // Normalized here as well as on create. A key written raw through update never collides
+    // with the same identity written normalized through create, so exclusivity silently stops
+    // holding for exactly the rows that most need it. Scope has the same failure mode: it is
+    // compared as serialized JSON, so an unsorted object never matches a sorted one.
+    //
+    // Only touched when the update actually mentions it -- a metadata-only edit must not
+    // rewrite an item's identity.
+    const conflictKey = updates.conflictKey !== undefined
+      ? (updates.conflictKey ? normalizeConflictKey(updates.conflictKey) : null)
+      : current[0].conflictKey;
+    const conflictScope = updates.conflictScope !== undefined
+      ? normalizeConflictScope(updates.conflictScope)
+      : current[0].conflictScope;
+
     const tierIsSetExplicitly = updates.tier !== undefined;
     const tierIsReset = !tierIsSetExplicitly
       && (updates.content !== undefined || updates.title !== undefined);
@@ -370,6 +384,8 @@ export async function updateKnowledgeItem(
       ...((tierIsSetExplicitly || tierIsReset) && updates.tierSince === undefined
         ? { tierSince: now }
         : {}),
+      ...(updates.conflictKey !== undefined ? { conflictKey } : {}),
+      ...(updates.conflictScope !== undefined ? { conflictScope } : {}),
       version: nextVersion,
       updatedAt: now,
     };
@@ -386,7 +402,10 @@ export async function updateKnowledgeItem(
       await exec.update(schema.knowledgeAssertions).set({ validTo: now, replacedAt: now }).where(eq(schema.knowledgeAssertions.id, openAssertions[0].id));
       await exec.insert(schema.knowledgeAssertions).values({
         id: generateId(), knowledgeItemId: id, content: merged.content, validFrom: now, validTo: null,
-        recordedAt: now, replacedAt: null, confidence: updates.confidence ?? current[0].confidence, sourceEvidenceId: null, conflictKey: updates.conflictKey ?? current[0].conflictKey, conflictScope: updates.conflictScope ?? current[0].conflictScope, conflictExclusive: updates.conflictExclusive ?? current[0].conflictExclusive,
+        // The same normalized identity the item row just took. The assertion history is what
+        // `knowl_timeline` and conflict auditing read back, so a raw spelling here would
+        // reintroduce the divergence one line below where it was fixed.
+        recordedAt: now, replacedAt: null, confidence: updates.confidence ?? current[0].confidence, sourceEvidenceId: null, conflictKey, conflictScope, conflictExclusive: updates.conflictExclusive ?? current[0].conflictExclusive,
       });
     }
 

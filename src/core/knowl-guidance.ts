@@ -119,7 +119,10 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
     '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',
     '- special: knowl_ingest only for explicit raw-source ingestion, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an explicitly owned manual session; knowl_gc_preview before maintenance; knowl_gc_apply only after preview and explicit approval.',
-    '- handoff: knowl_handoff when parking a workstream; the next session in this project receives it once, then it is archived.',
+    // Kept short on purpose. With transcript search on this card also carries
+    // TRANSCRIPT_ROUTE_LINE, and the longer wording of this line put the total at 2,009 --
+    // over the ceiling. The full routing prose lives in the group table, not here.
+    '- handoff: knowl_handoff parks a workstream for the next session; delivered once, then archived.',
     ...(options.transcripts ? [TRANSCRIPT_ROUTE_LINE] : []),
     'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
   ].join('\n');
