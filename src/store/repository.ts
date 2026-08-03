@@ -319,7 +319,20 @@ export async function updateKnowledgeItem(
       source: updates.source ?? current[0].source,
       affectedPaths,
     };
-    validateKnowledgeWrite(merged, validationOptions);
+    // Only what this update actually writes is scanned. The stored fields were validated
+    // when they were written, under that project's own security settings; validating the
+    // merged record re-scanned them here under default options instead, because most
+    // callers of a metadata-only change have no config to pass. `supersedeKnowledgeItem`
+    // writes just a status, so an item whose accepted content happened to trip a detector
+    // -- a hyphenated model name reads as a high-entropy token -- could never be retired.
+    const written = {
+      ...(updates.title !== undefined ? { title: updates.title } : {}),
+      ...(updates.content !== undefined ? { content: updates.content } : {}),
+      ...(updates.reasoning !== undefined ? { reasoning: updates.reasoning } : {}),
+      ...(updates.source !== undefined ? { source: updates.source } : {}),
+      ...(updates.affectedPaths !== undefined ? { affectedPaths } : {}),
+    };
+    validateKnowledgeWrite(written, validationOptions);
     const shouldRefreshHash = updates.contentHash === undefined && (
       updates.title !== undefined ||
       updates.content !== undefined ||

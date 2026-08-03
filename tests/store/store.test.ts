@@ -404,6 +404,39 @@ describe('Storage Layer', () => {
     expect((await repo.getKnowledgeItem(item.id))!.content).toBe('Safe content.');
   });
 
+  // An update re-validated the stored row it was not rewriting, using default options
+  // rather than the project's. Content accepted under `rejectSecrets: false` could then
+  // never be retired: `supersedeKnowledgeItem` writes only status, but the merged record
+  // it scanned carried the old content, and a hyphenated model name reads as a
+  // high-entropy token.
+  it('retires an item without re-scanning stored content the update does not rewrite', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const stored = await repo.createKnowledgeItem(project!.id, {
+      category: 'fact',
+      title: 'Embedding model in use',
+      content: 'Indexing runs on onnx-community/granite-embedding-small-english-r2-ONNX at q8.',
+    }, undefined, undefined, { rejectSecrets: false });
+    const replacement = await repo.createKnowledgeItem(project!.id, {
+      category: 'fact', title: 'Embedding model in use, revised', content: 'Model changed.',
+    });
+
+    const superseded = await repo.supersedeKnowledgeItem(stored.id, replacement.id);
+
+    expect(superseded.status).toBe('superseded');
+    expect(superseded.supersededById).toBe(replacement.id);
+  });
+
+  it('still scans a field the update does supply, beside stored content it does not', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const item = await repo.createKnowledgeItem(project!.id, {
+      category: 'fact', title: 'Safe title', content: 'Safe content.',
+    });
+
+    await expect(repo.updateKnowledgeItem(item.id, {
+      reasoning: 'Justified by sk-test-123456789012345678901234567890.',
+    })).rejects.toMatchObject({ code: 'KNOWLEDGE_SECRET_TOKEN' });
+  });
+
   it('should store provenance and freshness metadata on knowledge items', async () => {
     const project = await repo.getProjectByRootPath(TEST_ROOT);
     const projectId = project!.id;
