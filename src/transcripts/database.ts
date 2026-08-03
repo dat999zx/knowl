@@ -16,7 +16,10 @@ export const TRANSCRIPT_SCHEMA_STATEMENTS = [
     bytes_indexed INTEGER NOT NULL DEFAULT 0,
     lines_indexed INTEGER NOT NULL DEFAULT 0,
     size_at_index INTEGER NOT NULL DEFAULT 0,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    display_name TEXT,
+    name_kind INTEGER NOT NULL DEFAULT 0,
+    opening TEXT
   );`,
 
   // No `body` column anywhere: a row is a pointer. The text stays in the .jsonl.
@@ -53,6 +56,32 @@ export const TRANSCRIPT_SCHEMA_STATEMENTS = [
 
   `CREATE INDEX IF NOT EXISTS idx_transcript_vectors_fingerprint ON transcript_vectors(fingerprint);`,
 ];
+
+/**
+ * Add the naming columns to an index built before they existed.
+ *
+ * `CREATE TABLE IF NOT EXISTS` is a no-op on an existing table, so an index from the first
+ * transcript release has the old shape. Each column is added only if absent -- `ALTER TABLE ADD
+ * COLUMN` throws on a duplicate, and that would fail every subsequent open of the database.
+ */
+async function addNamingColumns(client: Client): Promise<void> {
+  const columns = (await client.execute('PRAGMA table_info(transcript_files)')).rows
+    .map(row => String(row.name));
+
+  if (!columns.includes('display_name')) {
+    await client.execute('ALTER TABLE transcript_files ADD COLUMN display_name TEXT;');
+  }
+  if (!columns.includes('name_kind')) {
+    await client.execute('ALTER TABLE transcript_files ADD COLUMN name_kind INTEGER NOT NULL DEFAULT 0;');
+  }
+  if (!columns.includes('opening')) {
+    await client.execute('ALTER TABLE transcript_files ADD COLUMN opening TEXT;');
+    // Existing rows are fully indexed, so nothing would ever re-read them to fill these in.
+    // Resetting the watermark makes the next pass refill names and openings. Safe because
+    // `commitBatchOn` skips lines already covered, so no message row is duplicated.
+    await client.execute('UPDATE transcript_files SET bytes_indexed = 0, lines_indexed = 0, size_at_index = 0;');
+  }
+}
 
 const BASE_STATEMENTS = [
   // First, for the same reason as the knowledge database: journal_mode takes a lock, and a
@@ -108,6 +137,7 @@ export async function openTranscriptDb(
     } else {
       for (const statement of BASE_STATEMENTS) await client.execute(statement);
       for (const statement of TRANSCRIPT_SCHEMA_STATEMENTS) await client.execute(statement);
+      await addNamingColumns(client);
     }
   } catch (error) {
     // An un-closed client on a failed open keeps whatever lock its partial bootstrap took, and
