@@ -321,6 +321,62 @@ export function formatPendingHandoffContext(handoff: PendingHandoff): string {
   return truncateText(lines.join('\n'), DEFAULT_CONTEXT_MAX_CHARS);
 }
 
+function confidenceFor(kind: SessionFailureKind): number {
+  // A deliberate baton is a user act and a rate limit or auth failure is read straight off a
+  // structured code. Everything else is inference from a message, and inference can be wrong.
+  return kind === 'handoff' || kind === 'rate_limit' || kind === 'auth' ? 1 : 0.9;
+}
+
+/**
+ * The single write path for a pending handoff, whatever its kind.
+ *
+ * Slot lookup, conflict identity, replacement of whatever is already pending, and the knowledge
+ * commit all live here. A crash and a deliberate baton differ only in `merge`, so there is no
+ * second copy of this to drift out of step with the first.
+ */
+async function persistPendingHandoff(
+  projectId: string,
+  handoff: PendingHandoff,
+  options: { merge: boolean },
+): Promise<{ itemId: string; handoff: PendingHandoff }> {
+  const host = handoff.host;
+  // Normalized here because `findActivePendingHandoff` looks the slot up normalized. Passing
+  // the raw spelling survived a create, which normalizes for us, but an update wrote it
+  // through verbatim -- leaving the row active and permanently undeliverable.
+  const conflictKey = normalizeConflictKey(pendingHandoffConflictKey(host));
+  const identity = { host, externalSessionId: handoff.externalSessionId };
+  const write = (value: PendingHandoff) => ({
+    title: PENDING_HANDOFF_TITLE,
+    content: JSON.stringify(value),
+    tags: ['pending_handoff', value.kind, value.urgency, host, `session:${value.externalSessionId}`],
+    source: `host://${host}/${value.kind === 'handoff' ? 'session-handoff' : 'session-failure'}`,
+    freshness: 'fresh' as const,
+    confidence: confidenceFor(value.kind),
+    conflictKey,
+    conflictScope: identity,
+    conflictExclusive: true,
+  });
+
+  const existing = await findActivePendingHandoff(host);
+  if (existing) {
+    // One active handoff per host. Only repeated failures from the same host session merge.
+    const merged = options.merge && existing.handoff.externalSessionId === handoff.externalSessionId
+      ? mergeHandoff(existing.handoff, handoff)
+      : handoff;
+    const updated = await repo.updateKnowledgeItem(existing.id, write(merged));
+    await repo.createKnowledgeCommit(projectId, `Update pending session handoff (${host}/${merged.kind})`, [
+      { itemId: updated.id, action: 'update', before: existing.handoff as any, after: updated },
+    ]);
+    return { itemId: updated.id, handoff: merged };
+  }
+
+  const created = await repo.createKnowledgeItem(projectId, { category: 'state', ...write(handoff) });
+  await repo.createKnowledgeCommit(projectId, `Record pending session handoff (${host}/${handoff.kind})`, [
+    { itemId: created.id, action: 'insert', after: created },
+  ]);
+  return { itemId: created.id, handoff };
+}
+
 export async function recordPendingSessionHandoff(
   projectId: string,
   input: NormalizedHostHook,
@@ -346,11 +402,10 @@ export async function recordPendingSessionHandoff(
     taskState = mergeTaskState(checkpoint.taskState, taskState);
   }
 
-  const host = String(input.host);
   const handoff: PendingHandoff = {
     kind,
     urgency: urgencyFor(kind),
-    host,
+    host: String(input.host),
     projectRoot: input.projectRoot,
     externalSessionId: input.externalSessionId,
     memorySessionId: options.memorySessionId,
@@ -364,50 +419,47 @@ export async function recordPendingSessionHandoff(
     consumed: false,
   };
 
-  const conflictKey = pendingHandoffConflictKey(host);
-  const identity = {
-    host,
-    externalSessionId: handoff.externalSessionId,
-  };
-  const existing = await findActivePendingHandoff(host);
-  if (existing) {
-    // One active handoff per host. Only repeated failures from the same host session merge.
-    const mergedHandoff = existing.handoff.externalSessionId === handoff.externalSessionId
-      ? mergeHandoff(existing.handoff, handoff)
-      : handoff;
-    const updated = await repo.updateKnowledgeItem(existing.id, {
-      title: PENDING_HANDOFF_TITLE,
-      content: JSON.stringify(mergedHandoff),
-      tags: ['pending_handoff', kind, mergedHandoff.urgency, host, `session:${mergedHandoff.externalSessionId}`],
-      source: `host://${host}/session-failure`,
-      freshness: 'fresh',
-      confidence: kind === 'rate_limit' || kind === 'auth' ? 1 : 0.9,
-      conflictKey,
-      conflictScope: identity,
-      conflictExclusive: true,
-    });
-    await repo.createKnowledgeCommit(projectId, `Update pending session handoff (${host}/${kind})`, [
-      { itemId: updated.id, action: 'update', before: existing.handoff as any, after: updated },
-    ]);
-    return { itemId: updated.id, handoff: mergedHandoff };
-  }
+  // Repeated failures from one host session accumulate detail rather than overwrite it.
+  return persistPendingHandoff(projectId, handoff, { merge: true });
+}
 
-  const created = await repo.createKnowledgeItem(projectId, {
-    category: 'state',
-    title: PENDING_HANDOFF_TITLE,
-    content: JSON.stringify(handoff),
-    tags: ['pending_handoff', kind, handoff.urgency, host, `session:${handoff.externalSessionId}`],
-    source: `host://${host}/session-failure`,
-    freshness: 'fresh',
-    confidence: kind === 'rate_limit' || kind === 'auth' ? 1 : 0.9,
-    conflictKey,
-    conflictScope: identity,
-    conflictExclusive: true,
-  });
-  await repo.createKnowledgeCommit(projectId, `Record pending session handoff (${host}/${kind})`, [
-    { itemId: created.id, action: 'insert', after: created },
-  ]);
-  return { itemId: created.id, handoff };
+/**
+ * Park a workstream on purpose.
+ *
+ * Same slot and same one-shot delivery as a crash handoff, so nothing new is built for the
+ * receiving side -- only the kind differs, and with it the tone the next session opens in.
+ *
+ * One baton per project: an existing pending handoff is replaced. That is the right behaviour
+ * for "I am leaving this session now", and it is also why this is a pass rather than a durable
+ * note -- anything worth keeping goes to `knowl_store`.
+ */
+export async function recordDeliberateHandoff(
+  projectId: string,
+  input: {
+    host: string;
+    projectRoot: string;
+    externalSessionId: string;
+    sessionTitle?: string;
+    taskState: HandoffTaskState;
+  },
+): Promise<{ itemId: string; handoff: PendingHandoff }> {
+  const handoff: PendingHandoff = {
+    kind: 'handoff',
+    urgency: HANDOFF_URGENCY,
+    host: input.host,
+    projectRoot: input.projectRoot,
+    externalSessionId: input.externalSessionId,
+    sessionTitle: input.sessionTitle,
+    taskState: input.taskState,
+    // The same field a crash stamps. A parked baton renders it as "Parked at", so the slot
+    // does not need a second timestamp column that only one kind ever fills.
+    failedAt: new Date().toISOString(),
+    consumed: false,
+  };
+
+  // Never merged. Parking again is a replacement by definition -- carrying the previous
+  // baton's next action into the new one would hand the next session a stale instruction.
+  return persistPendingHandoff(projectId, handoff, { merge: false });
 }
 
 export async function consumePendingSessionHandoff(
