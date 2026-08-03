@@ -9,6 +9,18 @@ export type KnowledgeEmbedder = {
   /** Stamped on every row this embedder writes, and the filter its queries search under. */
   profileFingerprint: string;
   embed(texts: string[]): Promise<number[][]>;
+  /**
+   * A QUERY, not a document.
+   *
+   * Retrieval models are trained asymmetrically: the query carries an instruction the
+   * document does not. Arctic and E5 want `query: `, Nomic wants `search_query: `. Omitting
+   * it is the same class of silent mistake as the wrong pooling -- the model still returns
+   * vectors, they are just measurably worse, and nothing reports a problem.
+   *
+   * A separate entry point rather than a flag on `embed`, because the asymmetry is invisible
+   * at the call site otherwise, and every caller that forgets it loses accuracy silently.
+   */
+  embedQuery(text: string): Promise<number[]>;
 };
 
 export type VectorReindexResult = {

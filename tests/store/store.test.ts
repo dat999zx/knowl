@@ -942,6 +942,7 @@ describe('Storage Layer', () => {
       pooling: 'mean',
       profileFingerprint: 'test-fingerprint',
       embed: async (texts) => texts.map(() => [0.25, 0.75]),
+      embedQuery: async () => [0.25, 0.75],
     });
 
     expect(result.indexed).toBeGreaterThan(0);

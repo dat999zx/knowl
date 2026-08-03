@@ -11,6 +11,7 @@ export type VectorProfile = {
 };
 
 export type PresetId =
+  | 'arctic-embed-m-v2'
   | 'granite-small-en-r2'
   | 'granite-97m-multilingual'
   | 'bge-small-en'
@@ -29,6 +30,31 @@ export type PresetDefinition = VectorProfile & {
  * All four are 384-dimension so switching never changes the stored vector width.
  */
 export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinition> = {
+  /**
+   * The measured pick for this fork, and the one entry here that is not 384-dimension.
+   *
+   * Chosen by enumerating the registry rather than by leaderboard or recall: on a 42-query
+   * set phrased the way someone half-remembers a thing, it scored MRR 0.734 against 0.493
+   * for granite-small-en-r2, the strongest of the 384-dim options. It costs roughly 6x the
+   * parameters and ~9.6s to build the pipeline even with the weights already on disk, which
+   * is first-query latency rather than startup latency -- `serve` never loads a model during
+   * its handshake.
+   *
+   * Listed as a preset rather than left to a bare `model` string on purpose. Pooling is not
+   * discoverable at runtime, and an unmatched model falls back to `mean`; arctic is a CLS
+   * model, and running it mean-pooled produces plausible vectors that rank badly with
+   * nothing to notice. Being in this table is what makes an existing config that names only
+   * the model resolve to the right pooling.
+   */
+  'arctic-embed-m-v2': {
+    provider: 'local',
+    model: 'Snowflake/snowflake-arctic-embed-m-v2.0',
+    dtype: 'q8',
+    pooling: 'cls',
+    label: 'Snowflake Arctic Embed M v2.0 — most accurate, 768-dim',
+    sizeMb: 305,
+    languages: 'English + multilingual',
+  },
   'granite-small-en-r2': {
     provider: 'local',
     model: 'onnx-community/granite-embedding-small-english-r2-ONNX',
@@ -69,6 +95,7 @@ export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinitio
 
 /** Picker order. `custom` last because it asks a follow-up question. */
 export const PRESET_IDS: readonly PresetId[] = [
+  'arctic-embed-m-v2',
   'granite-small-en-r2',
   'granite-97m-multilingual',
   'bge-small-en',
@@ -76,7 +103,7 @@ export const PRESET_IDS: readonly PresetId[] = [
   'custom',
 ];
 
-export const DEFAULT_PRESET_ID: PresetId = 'granite-small-en-r2';
+export const DEFAULT_PRESET_ID: PresetId = 'arctic-embed-m-v2';
 
 function isPresetId(value: unknown): value is Exclude<PresetId, 'custom'> {
   return typeof value === 'string' && value in VECTOR_PRESETS;

@@ -14,6 +14,7 @@ const stubEmbedder = (): KnowledgeEmbedder => ({
   pooling: 'mean',
   profileFingerprint: 'stub:catchup',
   embed: async (texts: string[]) => texts.map(() => [1, 0, 0, 0, 0, 0, 0, 0]),
+  embedQuery: async () => [1, 0, 0, 0, 0, 0, 0, 0],
 });
 
 let dir: string;

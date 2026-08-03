@@ -66,6 +66,7 @@ const stubEmbedder = (): KnowledgeEmbedder => ({
   pooling: 'mean',
   profileFingerprint: 'stub:concept',
   embed: async (texts: string[]) => texts.map(conceptVector),
+  embedQuery: async (text: string) => conceptVector(text),
 });
 
 async function seed(session: string, lines: string) {
@@ -156,6 +157,7 @@ describe('searchTranscripts', () => {
     const broken: KnowledgeEmbedder = {
       ...stubEmbedder(),
       embed: async () => { throw new Error('model missing'); },
+      embedQuery: async () => { throw new Error('model missing'); },
     };
 
     const result = await searchTranscripts({

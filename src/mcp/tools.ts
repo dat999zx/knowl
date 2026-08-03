@@ -938,7 +938,7 @@ export function registerTools(
         let vector;
         if (config && projectRoot && query && isVectorSearchEnabled(config)) {
           const embedder = await createLocalEmbeddingProvider(config, projectRoot);
-          const [embedding] = await embedder.embed([query]);
+          const embedding = await embedder.embedQuery(query);
           vector = {
             enabled: true,
             profileFingerprint: embedder.profileFingerprint,

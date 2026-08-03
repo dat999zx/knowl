@@ -19,6 +19,7 @@ function stubEmbedder() {
     pooling: 'cls' as const,
     profileFingerprint: fingerprintProfile(PROFILE),
     embed: async (texts: string[]) => texts.map(() => [1, 0, 0]),
+    embedQuery: async () => [1, 0, 0],
   };
 }
 

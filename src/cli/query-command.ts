@@ -57,7 +57,7 @@ export async function runCliQuery(input: {
   if (input.query && config && isVectorSearchEnabled(config)) {
     try {
       const embedder = await createLocalEmbeddingProvider(config, input.projectRoot);
-      const [embedding] = await embedder.embed([input.query]);
+      const embedding = await embedder.embedQuery(input.query);
       vector = {
         enabled: true,
         profileFingerprint: embedder.profileFingerprint,

@@ -260,7 +260,7 @@ export async function searchTranscripts(
   let fingerprint: string | null = null;
   if (input.embedder) {
     try {
-      const [vector] = await input.embedder.embed([query]);
+      const vector = await input.embedder.embedQuery(query);
       if (vector?.length) {
         fingerprint = input.embedder.profileFingerprint;
         rankings.push(await semanticRank(client, vector, fingerprint, limit * 2, sessionId));

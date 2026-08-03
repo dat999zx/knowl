@@ -9,8 +9,16 @@ function config(vector: Record<string, unknown>): ProjectConfig {
 }
 
 describe('resolveVectorProfile', () => {
-  it('defaults new projects to the English Granite preset', () => {
-    expect(DEFAULT_PRESET_ID).toBe('granite-small-en-r2');
+  it('defaults new projects to the measured Arctic preset', () => {
+    expect(DEFAULT_PRESET_ID).toBe('arctic-embed-m-v2');
+  });
+
+  it('resolves a bare arctic model string to CLS pooling', () => {
+    // The trap this guards: arctic is a CLS model, an unmatched model falls back to mean,
+    // and a mean-pooled arctic returns plausible vectors that rank badly with nothing to
+    // notice. A config that names only the model has to still land on cls.
+    const profile = resolveVectorProfile(config({ model: 'Snowflake/snowflake-arctic-embed-m-v2.0' }));
+    expect(profile.pooling).toBe('cls');
   });
 
   it('returns the bundle for a named preset, ignoring stray flat keys', () => {

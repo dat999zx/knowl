@@ -67,6 +67,27 @@ export function planEmbeddingBatches(texts: string[]): Array<Array<{ index: numb
   return batches;
 }
 
+/**
+ * The instruction a query carries and a document does not. Empty for symmetric models.
+ *
+ * Keyed by model family and overridable in config, so a model this table has never heard of
+ * can still be given the prefix its card documents.
+ */
+const QUERY_PREFIXES: Array<[RegExp, string]> = [
+  [/arctic-embed-\w*-v2/i, 'query: '],
+  [/arctic-embed/i, 'Represent this sentence for searching relevant passages: '],
+  [/\be5-|multilingual-e5/i, 'query: '],
+  [/nomic-embed|modernbert-embed/i, 'search_query: '],
+  [/bge-\w+-en|mxbai-embed/i, 'Represent this sentence for searching relevant passages: '],
+];
+
+export function queryPrefixFor(model: string, config?: ProjectConfig): string {
+  const configured = (config?.search?.vector as Record<string, unknown> | undefined)?.queryPrefix;
+  if (typeof configured === 'string') return configured;
+  if (!model) return '';
+  return QUERY_PREFIXES.find(([pattern]) => pattern.test(model))?.[1] ?? '';
+}
+
 export interface LocalEmbeddingProviderOptions {
   loadPipeline?: (model: string, dtype: string, cacheDir: string) => Promise<TransformersPipeline>;
   /**
@@ -164,6 +185,13 @@ export async function createLocalEmbeddingProvider(
         });
       }
       return vectors;
+    },
+    embedQuery: async (text: string) => {
+      const output = await localPipeline!([queryPrefixFor(vector.model, config) + text], {
+        pooling: vector.pooling,
+        normalize: true,
+      });
+      return Array.from(output.data).slice(0, output.dims[output.dims.length - 1]) as number[];
     },
   };
 }
