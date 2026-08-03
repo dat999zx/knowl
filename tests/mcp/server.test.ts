@@ -197,7 +197,52 @@ describe('MCP Server Layer', () => {
     const res = await runRpcRequest('tools/list');
     const names = res.result.tools.map((tool: any) => tool.name);
     expect([...names].sort()).toEqual([...KNOWL_MCP_TOOL_NAMES].sort());
-    expect(new Set(names).size).toBe(25);
+    expect(new Set(names).size).toBe(27);
+  });
+
+  it('lists both resume tools', async () => {
+    const names = (await runRpcRequest('tools/list', {})).result.tools.map((t: { name: string }) => t.name);
+    expect(names).toContain('knowl_park');
+    expect(names).toContain('knowl_resume');
+  });
+
+  it('parks and returns a paste-ready instruction, not a bare key', async () => {
+    const response = await runRpcRequest('tools/call', {
+      name: 'knowl_park',
+      arguments: { goal: 'Ship the parser', nextAction: 'Wire the CLI flag' },
+    });
+
+    const text = JSON.stringify(response.result);
+    expect(text).toMatch(/knowl resume [a-z]\d[a-z]\d[a-z]\d/);
+  });
+
+  it('resumes a parked workstream by key', async () => {
+    const parked = await runRpcRequest('tools/call', {
+      name: 'knowl_park', arguments: { goal: 'Ship the parser' },
+    });
+    const key = /([a-z]\d[a-z]\d[a-z]\d)/.exec(JSON.stringify(parked.result))![1];
+
+    const resumed = await runRpcRequest('tools/call', {
+      name: 'knowl_resume', arguments: { key },
+    });
+
+    expect(JSON.stringify(resumed.result)).toContain('Ship the parser');
+  });
+
+  it('lists what is parked here when resume is called with no key', async () => {
+    await runRpcRequest('tools/call', { name: 'knowl_park', arguments: { goal: 'Something parked' } });
+
+    const response = await runRpcRequest('tools/call', { name: 'knowl_resume', arguments: {} });
+
+    expect(JSON.stringify(response.result)).toContain('Something parked');
+  });
+
+  it('says so plainly for an unknown key', async () => {
+    const response = await runRpcRequest('tools/call', {
+      name: 'knowl_resume', arguments: { key: 'k3t9m4' },
+    });
+
+    expect(JSON.stringify(response.result)).toMatch(/no parked workstream|unknown key/i);
   });
 
   it('lists knowl_handoff', async () => {

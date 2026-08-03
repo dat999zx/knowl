@@ -1030,6 +1030,8 @@ Knowl exposes exactly 24 MCP tools:
 | `knowl_gc_preview` | Preview duplicate, stale, or cold-memory maintenance |
 | `knowl_gc_apply` | Apply previewed maintenance after explicit approval |
 | `knowl_handoff` | Park a workstream for the next session in this project, delivered once |
+| `knowl_park` | Park a workstream under a short key the user keeps |
+| `knowl_resume` | Resume a parked workstream from its key, from any directory |
 
 There is no MCP `ask` tool. An MCP client model can query structured results directly; raw-source
 processing is the separate provider-backed `knowl_ingest` tool.

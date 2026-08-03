@@ -45,6 +45,11 @@ export const KNOWL_MCP_TOOL_GROUPS = [
     tools: ['knowl_handoff'],
     routing: 'Use when parking a workstream before ending a session. The next session in this project receives it once, then it is archived. One baton per project -- parking again replaces it. Durable facts still belong in knowl_store.',
   },
+  {
+    label: 'Parked work',
+    tools: ['knowl_park', 'knowl_resume'],
+    routing: 'Park work the user means to come back to: knowl_park mints a short key and returns a paste-ready line to hand them verbatim, since a key reworded is a key lost. knowl_resume takes that key in any later session, from any directory, and returns the brief. Unlike the handoff baton -- which the next session in this project consumes once -- a key is held by the user, is not spent by resuming, and works any number of sessions later. Call knowl_resume as soon as a user supplies a key; with no key it lists what is parked here.',
+  },
 ] as const;
 
 export type KnowlMcpToolName = typeof KNOWL_MCP_TOOL_GROUPS[number]['tools'][number];
@@ -116,19 +121,19 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     'KNOWL WORKFLOW - for project work.',
     'Start: use a relevant active lifecycle hit; else call knowl_query with 2-6 keywords before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
     modeLine,
-    'Manual fallback: one bounded command uses knowl task run; resumable work uses knowl_task_start once, knowl_task_checkpoint at meaningful milestones/blockers with its taskId, and knowl_task_finish once after verification.',
+    'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
     'Route:',
     '- retrieval: knowl_query; knowl_recent only without bootstrap or for refresh; knowl_state for broad state; knowl_context for a token-budgeted pack.',
     '- durable memory: knowl_store one atom; knowl_ingest_atoms a batch; knowl_decide a confirmed choice; knowl_update a stale or contradicted item.',
     '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
-    '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',
-    '- special: knowl_ingest only for explicit raw-source ingestion, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an explicitly owned manual session; knowl_gc_preview before maintenance; knowl_gc_apply only after preview and explicit approval.',
-    // Kept short on purpose. With transcript search on this card also carries
-    // TRANSCRIPT_ROUTE_LINE, and the longer wording of this line put the total at 2,009 --
-    // over the ceiling. The full routing prose lives in the group table, not here.
-    '- handoff: knowl_handoff parks a workstream for the next session; delivered once, then archived.',
+    '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run for a trusted matching entrypoint; knowl_skill_create only on explicit request.',
+    '- special: knowl_ingest only on an explicit raw-source request, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an owned manual session; knowl_gc_preview then knowl_gc_apply, only after approval.',
+    // One bullet for both, because they answer the same routing question -- "where does work I
+    // am stopping go?" -- and the distinction between them is the part worth spending
+    // characters on. Two separate bullets cost more and stated it less clearly.
+    '- leaving work: knowl_handoff leaves one baton the next session here consumes; knowl_park mints a key the user keeps and knowl_resume takes it back later, anywhere.',
     ...(options.transcripts ? [TRANSCRIPT_ROUTE_LINE] : []),
-    'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
+    'During work, store or update verified durable findings; never raw transcripts, secrets, or routine command noise.',
   ].join('\n');
 }
 
