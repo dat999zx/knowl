@@ -100,6 +100,75 @@ export async function openTranscriptDb(
   return client;
 }
 
+/** Drop one cached client so the next acquire reconnects. */
+export async function closeTranscriptDb(dbPath: string): Promise<void> {
+  for (const readOnly of [false, true]) {
+    const key = keyFor(dbPath, readOnly);
+    const client = clients.get(key);
+    if (!client) continue;
+    clients.delete(key);
+    if (!readOnly) await client.execute('PRAGMA wal_checkpoint(TRUNCATE)').catch(() => {});
+    client.close();
+  }
+}
+
+function errorCode(error: unknown): string {
+  const raw = error as { code?: unknown; message?: unknown };
+  const code = typeof raw?.code === 'string' ? raw.code : '';
+  const message = typeof raw?.message === 'string' ? raw.message : '';
+  return `${code} ${message}`.toUpperCase();
+}
+
+const isSnapshotStall = (error: unknown) => errorCode(error).includes('BUSY_SNAPSHOT');
+const isBusy = (error: unknown) => {
+  const text = errorCode(error);
+  return text.includes('SQLITE_BUSY') || text.includes('DATABASE IS LOCKED');
+};
+
+/**
+ * Run a write against the transcripts database, surviving a concurrent writer.
+ *
+ * Retry granularity is one transaction, which is what makes this safe: SQLite guarantees a
+ * failed `COMMIT` rolled back, so re-running the callback cannot double-write.
+ *
+ * `SQLITE_BUSY_SNAPSHOT` is handled differently from `SQLITE_BUSY` on purpose. It is permanent
+ * for a connection pinned to a stale read snapshot -- no amount of waiting clears it, only a
+ * reconnect does. PR #11 measured a fresh process writing in 71 ms while a long-lived job had
+ * been failing on the same database for fourteen minutes.
+ *
+ * The client is passed to the callback rather than captured by it, and a caller must never
+ * hold one across this boundary: a snapshot stall closes and replaces it, which would leave
+ * any handle taken beforehand pointing at a closed connection.
+ */
+export async function withWriteRetry<T>(
+  dbPath: string,
+  run: (client: Client) => Promise<T>,
+  options: { attempts?: number } = {},
+): Promise<T> {
+  const attempts = options.attempts ?? 5;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    const client = await openTranscriptDb(dbPath);
+    try {
+      return await run(client);
+    } catch (error) {
+      lastError = error;
+      if (isSnapshotStall(error)) {
+        await closeTranscriptDb(dbPath);
+      } else if (isBusy(error)) {
+        // busy_timeout already waited; a short extra pause lets the other writer's
+        // transaction land rather than spinning against it.
+        await new Promise(resolve => setTimeout(resolve, 25 * attempt));
+      } else {
+        throw error; // Not a lock. A constraint violation is a bug, not something to retry.
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 export async function closeTranscriptDbs(): Promise<void> {
   const entries = [...clients.entries()];
   clients.clear();
