@@ -197,7 +197,29 @@ describe('MCP Server Layer', () => {
     const res = await runRpcRequest('tools/list');
     const names = res.result.tools.map((tool: any) => tool.name);
     expect([...names].sort()).toEqual([...KNOWL_MCP_TOOL_NAMES].sort());
-    expect(new Set(names).size).toBe(24);
+    expect(new Set(names).size).toBe(25);
+  });
+
+  it('lists knowl_handoff', async () => {
+    const response = await runRpcRequest('tools/list', {});
+    const names = response.result.tools.map((tool: { name: string }) => tool.name);
+    expect(names).toContain('knowl_handoff');
+  });
+
+  it('parks a baton through the tool and reports it back', async () => {
+    const response = await runRpcRequest('tools/call', {
+      name: 'knowl_handoff',
+      arguments: {
+        goal: 'Ship the parser',
+        nextAction: 'Wire the CLI flag',
+        completed: ['schema', 'tests'],
+        verificationStatus: 'unverified',
+      },
+    });
+
+    const text = JSON.stringify(response.result);
+    expect(text).toMatch(/parked/i);
+    expect(text).toContain('Ship the parser');
   });
 
   it('advertises lifecycle and mutation gates in tool descriptions', async () => {

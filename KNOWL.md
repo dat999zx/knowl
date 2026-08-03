@@ -28,6 +28,7 @@ Casual conversation, a single memory lookup, and trivial non-resumable work do n
 | History and quality | `knowl_timeline`, `knowl_evidence_list`, `knowl_conflicts`, `knowl_feedback` | Inspect history, evidence, or conflicts when needed; record feedback only after actual use, rejection, or correction. |
 | Learned skills | `knowl_skill_list`, `knowl_skill_read`, `knowl_skill_run`, `knowl_skill_create` | Discover and read a matching skill before running a trusted entrypoint; create only when explicitly requested. |
 | Special and maintenance | `knowl_ingest`, `knowl_synthesize`, `knowl_session_finish`, `knowl_gc_preview`, `knowl_gc_apply` | Raw-source ingest requires an explicit request and configured AI; never send the current conversation silently. Synthesis is explicitly scoped and never automatic. Session finish is only for an explicitly owned manual memory-session ID, never a hook session. Preview GC first; apply only after explicit approval. |
+| Session handoff | `knowl_handoff` | Use when parking a workstream before ending a session. The next session in this project receives it once, then it is archived. One baton per project -- parking again replaces it. Durable facts still belong in knowl_store. |
 
 ### Linked repositories
 

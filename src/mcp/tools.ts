@@ -29,6 +29,7 @@ import { recordKnowledgeFeedback } from '../store/access-feedback.js';
 import { flagCorrectionSiblingsBestEffort } from '../store/blast-radius.js';
 import { applyFeedbackToTierBestEffort } from '../store/tier.js';
 import { finishMemorySession } from '../store/session-repository.js';
+import { formatPendingHandoffContext, recordDeliberateHandoff } from '../store/session-handoff.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
 import { isTranscriptSearchEnabled } from '../transcripts/config.js';
@@ -610,6 +611,26 @@ export function registerTools(
             required: ['name'],
           },
         },
+        {
+          name: 'knowl_handoff',
+          description: 'Park the current workstream so the next session in this project picks it up. Delivered once, then archived - this is a pass, not a durable note. Store anything worth keeping with knowl_store.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              goal: { type: 'string', description: 'What this workstream is trying to achieve.' },
+              completed: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'What is already done.' },
+              nextAction: { type: 'string', description: 'The single next thing to do.' },
+              blocker: { type: 'string', description: 'What is in the way, if anything.' },
+              artifactRefs: { type: 'array', items: { type: 'string' }, maxItems: 20, description: 'Files or paths the next session should look at.' },
+              verificationStatus: { type: 'string', enum: ['verified', 'unverified'], description: 'Whether the work so far was checked.' },
+              // Advertised because the dispatcher reads it. An MCP client has no session of its
+              // own to report, so this is what a host that knows its session id can pass; the
+              // baton is delivered by project and host either way.
+              sessionId: { type: 'string', description: 'The host session parking this work, if known.' },
+            },
+            required: ['goal', 'nextAction'],
+          },
+        },
     ];
 
     // Registered only when the repo turned transcript search on. Two extra tools cost
@@ -1169,6 +1190,31 @@ export function registerTools(
         const result = await runSkillPackage(projectRoot!, skillName, entrypoint || 'default', runtimeArgs || []);
         await recordSkillRun(projectId!, skillName, result.exitCode === 0);
         return { content: [{ type: 'text', text: compactMcpJson({ ...result, stdout: truncateText(result.stdout, MAX_ITEM_CONTENT_CHARS), stderr: truncateText(result.stderr, MAX_ITEM_CONTENT_CHARS), attempts: result.attempts.map(attempt => ({ entrypoint: attempt.entrypoint, exitCode: attempt.exitCode })) }) }] };
+      }
+
+      else if (name === 'knowl_handoff') {
+        const { goal, completed, nextAction, blocker, artifactRefs, verificationStatus, sessionId } = args as any;
+        const { handoff } = await recordDeliberateHandoff(projectId!, {
+          // The MCP layer is host-neutral and has no way to learn which host is calling, so a
+          // baton parked here is filed under the host whose hooks deliver it on session start.
+          host: 'claude',
+          projectRoot: projectRoot!,
+          externalSessionId: sessionId ? String(sessionId) : 'unknown',
+          taskState: {
+            goal: String(goal ?? ''),
+            nextAction: String(nextAction ?? ''),
+            completed: Array.isArray(completed) ? completed.map(String).slice(0, 20) : undefined,
+            blocker: blocker ? String(blocker) : undefined,
+            artifactRefs: Array.isArray(artifactRefs) ? artifactRefs.map(String).slice(0, 20) : undefined,
+            verificationStatus: verificationStatus === 'verified' ? 'verified' : 'unverified',
+          },
+        });
+        return {
+          content: [{
+            type: 'text',
+            text: `Parked. The next session in this project will receive this once.\n\n${formatPendingHandoffContext(handoff)}`,
+          }],
+        };
       }
 
       // Both handlers re-check the gate themselves and answer with DISABLED_MESSAGE rather than

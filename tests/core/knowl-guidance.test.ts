@@ -21,6 +21,7 @@ const EXPECTED_TOOLS = [
   'knowl_timeline', 'knowl_evidence_list', 'knowl_conflicts', 'knowl_feedback',
   'knowl_skill_list', 'knowl_skill_read', 'knowl_skill_run', 'knowl_skill_create',
   'knowl_ingest', 'knowl_synthesize', 'knowl_session_finish', 'knowl_gc_preview', 'knowl_gc_apply',
+  'knowl_handoff',
 ] as const;
 
 const EXPECTED_CLAUDE_CARD = [
@@ -34,16 +35,17 @@ const EXPECTED_CLAUDE_CARD = [
   '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
   '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',
   '- special: knowl_ingest only for explicit raw-source ingestion, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an explicitly owned manual session; knowl_gc_preview before maintenance; knowl_gc_apply only after preview and explicit approval.',
+  '- handoff: knowl_handoff when parking a workstream; the next session in this project receives it once, then it is archived.',
   'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
 ].join('\n');
 
 const namesIn = (text: string) => [...new Set(text.match(/\bknowl_[a-z_]+\b/g) ?? [])].sort();
 
 describe('canonical Knowl agent guidance', () => {
-  it('defines seven groups and the exact 24-tool inventory', () => {
-    expect(KNOWL_MCP_TOOL_GROUPS).toHaveLength(7);
+  it('defines eight groups and the exact 25-tool inventory', () => {
+    expect(KNOWL_MCP_TOOL_GROUPS).toHaveLength(8);
     expect(KNOWL_MCP_TOOL_NAMES).toEqual(EXPECTED_TOOLS);
-    expect(new Set(KNOWL_MCP_TOOL_NAMES).size).toBe(24);
+    expect(new Set(KNOWL_MCP_TOOL_NAMES).size).toBe(25);
     expect(KNOWL_MCP_TOOL_NAMES).not.toContain('knowl_ask');
   });
 
@@ -60,8 +62,10 @@ describe('canonical Knowl agent guidance', () => {
 
   it('keeps both compact renderings bounded and front-loads the required action', () => {
     expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toBe(EXPECTED_CLAUDE_CARD);
-    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_695);
-    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_746);
+    // One Route line for the handoff group: +123 chars on each card, leaving 130 of headroom
+    // against the 2,000 ceiling. The next group added has to earn that room or replace a line.
+    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_819);
+    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_870);
     for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS]) {
       expect(card.length).toBeLessThan(2_000);
       expect(card.slice(0, 512)).toContain('knowl_query');
@@ -82,7 +86,7 @@ describe('canonical Knowl agent guidance', () => {
     const documentedTools = [...readme.matchAll(/^\| \`(knowl_[a-z_]+)\` \|/gm)]
       .map(match => match[1]);
     expect(documentedTools).toEqual([...KNOWL_MCP_TOOL_NAMES]);
-    expect(new Set(documentedTools).size).toBe(24);
+    expect(new Set(documentedTools).size).toBe(25);
     expect(readme).toContain('KNOWL.md');
     expect(readme).toContain('GEMINI.md');
     expect(readme).toContain('agent-reminder claude --json');

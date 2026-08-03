@@ -1029,6 +1029,7 @@ Knowl exposes exactly 24 MCP tools:
 | `knowl_session_finish` | Finish an explicitly owned manual memory session |
 | `knowl_gc_preview` | Preview duplicate, stale, or cold-memory maintenance |
 | `knowl_gc_apply` | Apply previewed maintenance after explicit approval |
+| `knowl_handoff` | Park a workstream for the next session in this project, delivered once |
 
 There is no MCP `ask` tool. An MCP client model can query structured results directly; raw-source
 processing is the separate provider-backed `knowl_ingest` tool.

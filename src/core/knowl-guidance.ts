@@ -40,6 +40,11 @@ export const KNOWL_MCP_TOOL_GROUPS = [
     tools: ['knowl_ingest', 'knowl_synthesize', 'knowl_session_finish', 'knowl_gc_preview', 'knowl_gc_apply'],
     routing: 'Raw-source ingest requires an explicit request and configured AI; never send the current conversation silently. Synthesis is explicitly scoped and never automatic. Session finish is only for an explicitly owned manual memory-session ID, never a hook session. Preview GC first; apply only after explicit approval.',
   },
+  {
+    label: 'Session handoff',
+    tools: ['knowl_handoff'],
+    routing: 'Use when parking a workstream before ending a session. The next session in this project receives it once, then it is archived. One baton per project -- parking again replaces it. Durable facts still belong in knowl_store.',
+  },
 ] as const;
 
 export type KnowlMcpToolName = typeof KNOWL_MCP_TOOL_GROUPS[number]['tools'][number];
@@ -114,6 +119,7 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
     '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run only for a trusted matching entrypoint; knowl_skill_create only when explicitly requested.',
     '- special: knowl_ingest only for explicit raw-source ingestion, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an explicitly owned manual session; knowl_gc_preview before maintenance; knowl_gc_apply only after preview and explicit approval.',
+    '- handoff: knowl_handoff when parking a workstream; the next session in this project receives it once, then it is archived.',
     ...(options.transcripts ? [TRANSCRIPT_ROUTE_LINE] : []),
     'During work, store or update verified durable findings; never store raw transcripts, secrets, or routine command noise.',
   ].join('\n');
