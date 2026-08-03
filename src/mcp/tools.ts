@@ -79,7 +79,11 @@ export function registerTools(
   getProjectId: () => string | null,
   getProjectRoot: () => string | null,
   getConfig: () => ProjectConfig | null,
-  getInitError: () => string | null
+  getInitError: () => string | null,
+  // Startup completes the handshake before the database is open (see `startMcpServer`), so a
+  // tool call can arrive while project id, root and config are all still null. Awaiting this
+  // is what makes that restructure invisible to every handler below.
+  whenReady: () => Promise<void> = async () => {}
 ): void {
   // 1. List tools
   server.setRequestHandler(ListToolsRequestSchema, async () => {
@@ -725,6 +729,7 @@ export function registerTools(
   // 2. Call tool
   const callTool = async (request: CallToolRequest): Promise<CallToolResult> => {
     const { name, arguments: args } = request.params;
+    await whenReady();
     const initError = getInitError();
     const projectId = getProjectId();
     const projectRoot = getProjectRoot();
@@ -1378,6 +1383,9 @@ export function registerTools(
    * notice" -- memory news must never be able to fail a tool call.
    */
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    // Before `getProjectRoot()`, not just before dispatch: startup fills that variable in
+    // behind the handshake, and reading it early would take a watermark against `null`.
+    await whenReady();
     const projectRoot = getProjectRoot();
     const watermark = await captureChangeWatermark(projectRoot);
     const result = await callTool(request);
