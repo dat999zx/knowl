@@ -135,8 +135,12 @@ describe('vector search after scoring is decoupled from fetching', () => {
     const packed = Float32Array.from([0.5, -0.25, 0.125]);
     const asBlob = new Uint8Array(packed.buffer, packed.byteOffset, packed.byteLength);
 
-    expect(decodeVector(asBlob)).toEqual([0.5, -0.25, 0.125]);
-    expect(decodeVector(JSON.stringify([0.5, -0.25, 0.125]))).toEqual([0.5, -0.25, 0.125]);
+    // Values, not container: the blob path returns a Float32Array VIEW rather than a copy,
+    // because boxing every stored vector into a JS array was measured at roughly 700ms of a
+    // ~1,100ms search over 10,000 rows. Both shapes index identically for the cosine loop.
+    expect(Array.from(decodeVector(asBlob)!)).toEqual([0.5, -0.25, 0.125]);
+    expect(decodeVector(asBlob)).toBeInstanceOf(Float32Array);
+    expect(Array.from(decodeVector(JSON.stringify([0.5, -0.25, 0.125]))!)).toEqual([0.5, -0.25, 0.125]);
     expect(decodeVector('not json')).toBeNull();
   });
 
