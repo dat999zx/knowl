@@ -1,8 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { sql } from 'drizzle-orm';
-import { closeDb, getDb, initDb } from '../../src/store/database.js';
+import { closeResumeDb, openResumeDb, resumeDbPath } from '../../src/store/resume-store.js';
 import {
   createResumePoint,
   formatResumeBrief,
@@ -11,22 +10,33 @@ import {
 } from '../../src/store/resume-points.js';
 import type { ResumePoint } from '../../src/store/resume-points.js';
 
-const TEST_ROOT = path.resolve('./.knowl-resume-points-test');
+const TEST_HOME = path.resolve('./.knowl-resume-points-home');
 
 describe('resume points', () => {
   beforeAll(async () => {
-    await fs.rm(TEST_ROOT, { recursive: true, force: true });
-    await fs.mkdir(path.join(TEST_ROOT, '.knowl'), { recursive: true });
-    await initDb(TEST_ROOT);
+    // Parked work lives in the Knowl home, not in any repo, so isolating the tests means
+    // redirecting the home rather than making a project.
+    process.env.KNOWL_HOME = TEST_HOME;
+    await closeResumeDb();
+    await fs.rm(TEST_HOME, { recursive: true, force: true }).catch(() => {});
   });
 
   afterAll(async () => {
-    await closeDb();
-    await fs.rm(TEST_ROOT, { recursive: true, force: true }).catch(() => {});
+    await closeResumeDb();
+    delete process.env.KNOWL_HOME;
+    await fs.rm(TEST_HOME, { recursive: true, force: true }).catch(() => {});
   });
 
   beforeEach(async () => {
-    await (getDb() as any).run(sql`DELETE FROM resume_points`);
+    await (await openResumeDb()).execute('DELETE FROM resume_points');
+  });
+
+  it('stores parked work outside every project, so a key is not owned by a directory', () => {
+    // The bug this guards: in the per-project database a key parked in one repo was invisible
+    // from another, which is the single thing the feature promises not to do.
+    expect(resumeDbPath()).toBe(path.join(TEST_HOME, 'resume.db'));
+    // Specifically not the per-project knowledge database, which is where it started.
+    expect(path.basename(resumeDbPath())).not.toBe('knowl.db');
   });
 
   describe('createResumePoint', () => {

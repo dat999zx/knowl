@@ -1,5 +1,5 @@
-import { getClient } from './database.js';
 import { mintResumeKey, normalizeResumeKey } from './resume-keys.js';
+import { openResumeDb } from './resume-store.js';
 
 export type ResumeBrief = {
   goal: string;
@@ -33,7 +33,7 @@ export async function createResumePoint(projectDir: string, brief: ResumeBrief):
   for (let attempt = 0; attempt < MINT_ATTEMPTS; attempt++) {
     const key = mintResumeKey();
     try {
-      await getClient().execute({
+      await (await openResumeDb()).execute({
         sql: 'INSERT INTO resume_points (key, project_dir, brief, created_at) VALUES (?, ?, ?, ?)',
         args: [key, projectDir, JSON.stringify(brief), createdAt],
       });
@@ -77,7 +77,7 @@ export async function readResumePoint(rawKey: string): Promise<ResumePoint | nul
   const key = normalizeResumeKey(rawKey);
   if (!key) return null;
 
-  const rows = (await getClient().execute({
+  const rows = (await (await openResumeDb()).execute({
     sql: 'SELECT key, project_dir, brief, created_at FROM resume_points WHERE key = ?',
     args: [key],
   })).rows;
@@ -130,7 +130,7 @@ export function formatResumeBrief(point: ResumePoint): string {
 
 /** What is parked in this project, newest first. The "what did I leave here" view. */
 export async function listResumePoints(projectDir: string, limit = 20): Promise<ResumePoint[]> {
-  const rows = (await getClient().execute({
+  const rows = (await (await openResumeDb()).execute({
     // `rowid` breaks the tie, not `created_at` alone: several parks in one tick share an
     // identical ISO timestamp, and ordering on it alone returns them in engine order.
     sql: `SELECT key, project_dir, brief, created_at FROM resume_points

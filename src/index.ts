@@ -28,6 +28,8 @@ import { promoteItems } from './workspace/promote.js';
 import { existingItemsNotice, visibilityGateNotice } from './cli/workspace-visibility-notice.js';
 import { repoEntry, updateRepoSettings } from './workspace/repo-settings.js';
 import { runCliQuery } from './cli/query-command.js';
+import { runCliResume } from './cli/resume-command.js';
+import { closeResumeDb } from './store/resume-store.js';
 import { formatCrossRepoNotice } from './cli/cross-repo-notice.js';
 import { formatWorkspaceBlock } from './cli/workspace-report.js';
 import { resolveWorkspace } from './workspace/resolve.js';
@@ -374,6 +376,30 @@ program
       await closeDb();
     } catch (error: any) {
       console.error(`❌ Error fetching project state: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('resume')
+  .argument('[key]', 'The key you were given when the work was parked')
+  .description('Resume a parked workstream, or list what is parked here')
+  .action(async (key?: string) => {
+    try {
+      // Resuming by key must work from anywhere, including a directory that is not a Knowl
+      // project at all -- parked work lives in the Knowl home, not in any repo. Only the
+      // "what did I leave here" listing needs a project, so only it resolves one.
+      const root = key ? undefined : await findProjectRoot(process.cwd()).catch(() => undefined);
+      const result = await runCliResume({ projectRoot: root, key });
+      if (result.kind === 'unknown-key') {
+        console.error(result.text);
+        process.exitCode = 1;
+      } else {
+        console.log(result.text);
+      }
+      await closeResumeDb();
+    } catch (error: any) {
+      console.error(`Error resuming: ${error.message}`);
       process.exit(1);
     }
   });
