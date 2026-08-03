@@ -32,6 +32,36 @@ that each move a symptom. One lane, one shape.
 owns. Either give lane 1 that schema change (the design is already written in the research
 verdict) or run lane 5 after lane 1 merges.
 
+**Resolved 2026-08-04:** lane 5 went first and merged (`934a5d8`), so lane 1 inherited the
+schema change with the runtime contract already settled — `.cmd`/`.bat` refused, `autoRun`
+defaulting false, shell entrypoints rejecting args. Lane 5 also had to move `run.cmd` skill
+fixtures to `run.js` in three *other* lanes' test files, which is why it could not run in
+parallel with them: dropping batch support poisons any tree that still uses it as a fixture.
+
+### The table above missed five findings
+
+K-45, K-55, K-58, K-59, K-65 and K-67 appear in no lane. Partitioning by file ownership was
+done from the S1/S2/S3 tables and silently skipped the SUSPECTED block and two late entries.
+Routed on dispatch: K-55 and K-58 → lane 3, K-59 and K-67 → lane 7, K-45 → lane 8,
+K-65 → lane 4. **A partition needs a completeness check against the ledger, not just an
+ownership check** — nothing in the plan would have caught this before the last lane reported
+clean and the findings were simply gone.
+
+### Running the lanes
+
+`isolation: "worktree"` on the Agent tool worktrees the *session's* repo. When the session's
+working directory is not `D:\Code\knowl` that flag silently produces worktrees of the wrong
+repository, so set them up by hand instead:
+
+```
+git -C D:\Code\knowl worktree add <path> -b fix/lane-N-<slug> HEAD
+New-Item -ItemType Junction -Path <path>\node_modules -Target D:\Code\knowl\node_modules
+```
+
+The junction avoids seven copies of a 604 MB `node_modules`; `vitest.config.ts` resolves
+`KNOWL_HOME` against the working directory, so each worktree still gets its own test state.
+Verify one worktree runs vitest before dispatching agents into the other six.
+
 ## The rules every lane gets
 
 1. **Write the failing test first.** The fix is not done until reverting it turns the test red.
