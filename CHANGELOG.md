@@ -3,6 +3,35 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.15.2 — 2026-08-03
+
+### Fixed
+
+- **Knowledge you can store but can never retire.** Updating an item validated a *merged*
+  record — the update's fields falling back to the stored row — instead of what the update
+  actually writes. So a metadata-only change re-scanned content it was not rewriting, and
+  it scanned with no validation options, because a caller making a metadata-only change
+  has no project config to hand it. `validateKnowledgeWrite` only short-circuits on
+  `rejectSecrets === false`, and absent is not `false`.
+
+  `supersedeKnowledgeItem` writes just a status, so retiring an item re-validated its whole
+  stored body under default settings, ignoring the project's own. Anything accepted under
+  `rejectSecrets: false` that happened to trip a detector was then permanent.
+
+  The detector in question wants 32+ characters of `[A-Za-z0-9_-]` holding a lowercase, an
+  uppercase and a digit. `granite-embedding-small-english-r2-ONNX` is 39 of them — so
+  recording which embedding model a repo uses produced an item that could be written and
+  never superseded. Hyphenated identifiers hit this routinely: model names, image tags,
+  branch names.
+
+  Updates now validate only the fields they supply. A status change scans nothing, and
+  content already accepted when it was written is not re-litigated. This covers every
+  caller that issues a metadata-only update — supersede, gc, tier, drift, blast-radius.
+
+  Unchanged for now: a store that creates an item and then supersedes its predecessor does
+  the two outside a single transaction, so a failure between them still leaves the new item
+  written.
+
 ## 2.15.1 — 2026-08-02
 
 ### Fixed
