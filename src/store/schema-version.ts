@@ -1,14 +1,21 @@
 import { Client } from '@libsql/client';
 
 /**
- * Bump when a schema change makes a database unreadable by older clients.
+ * Bump on EVERY schema change, additive ones included.
  *
- * Additive columns do not need a bump -- an older client ignores them. A bump is for
- * changes that would make an older client corrupt or misread the data: a primary key
- * change, a table rebuild, or a column an older writer would leave NULL where a newer
- * reader requires a value.
+ * The old rule was the opposite -- additive columns did not need a bump, because an older
+ * client simply ignores a column it does not know about. That reasoning was about READING a
+ * newer database, and it was sound for that. It stopped being sound when this number became
+ * the gate that decides whether to run the migration at all: a version cannot mean "up to
+ * date" for the reader and "nothing to do" for the writer at the same time. An additive
+ * column that does not bump the version is a migration the fast path will skip forever.
+ *
+ * The same applies to data backfills, which no schema comparison can represent at all.
+ *
+ * `tests/store/schema-pin.test.ts` enforces this: it hashes the schema a fresh bootstrap
+ * produces and fails if that hash moves without this number moving. Nobody has to remember.
  */
-export const KNOWL_SCHEMA_VERSION = 1;
+export const KNOWL_SCHEMA_VERSION = 2;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {
