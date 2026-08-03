@@ -11,6 +11,8 @@ export const AUTH_URGENCY = 'critical';
 export const PROVIDER_OUTAGE_URGENCY = 'high';
 export const INTERRUPTED_URGENCY = 'high';
 export const GENERIC_FAILURE_URGENCY = 'high';
+/** Not an urgency in the alarm sense. A parked baton is waiting, not burning. */
+export const HANDOFF_URGENCY = 'planned';
 
 /**
  * Every kind a pending handoff can carry.
@@ -45,7 +47,13 @@ export type HandoffTaskState = {
 
 export type PendingHandoff = {
   kind: SessionFailureKind;
-  urgency: typeof RATE_LIMIT_URGENCY | typeof AUTH_URGENCY | typeof PROVIDER_OUTAGE_URGENCY | typeof INTERRUPTED_URGENCY | typeof GENERIC_FAILURE_URGENCY;
+  urgency:
+    | typeof RATE_LIMIT_URGENCY
+    | typeof AUTH_URGENCY
+    | typeof PROVIDER_OUTAGE_URGENCY
+    | typeof INTERRUPTED_URGENCY
+    | typeof GENERIC_FAILURE_URGENCY
+    | typeof HANDOFF_URGENCY;
   host: string;
   projectRoot: string;
   externalSessionId: string;
@@ -277,15 +285,21 @@ async function findActivePendingHandoff(host: string) {
 }
 
 export function formatPendingHandoffContext(handoff: PendingHandoff): string {
+  // A planned baton and a crash both arrive here and deserve opposite openings: one resumes
+  // work, the other recovers from a blocker. Telling a session that parked cleanly it "ended
+  // before a clean finish" invites it to go looking for damage that does not exist.
+  const planned = handoff.kind === 'handoff';
   const lines = [
-    '# KNOWL - PENDING SESSION HANDOFF',
+    planned ? '# KNOWL - SESSION HANDOFF' : '# KNOWL - PENDING SESSION HANDOFF',
     '',
-    'Previous host session ended before a clean finish. Continue from this handoff first.',
+    planned
+      ? 'The previous session parked this work for you on purpose. Pick it up from here.'
+      : 'Previous host session ended before a clean finish. Continue from this handoff first.',
     '',
     `- Kind: ${handoff.kind}`,
     `- Urgency: ${handoff.urgency}`,
     `- Host: ${handoff.host}`,
-    `- Failed at: ${handoff.failedAt}`,
+    planned ? `- Parked at: ${handoff.failedAt}` : `- Failed at: ${handoff.failedAt}`,
     `- External session: ${handoff.externalSessionId}`,
   ];
   if (handoff.memorySessionId) lines.push(`- Memory session: ${handoff.memorySessionId}`);
