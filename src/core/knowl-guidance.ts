@@ -106,32 +106,51 @@ export const KNOWL_HOST_NEUTRAL_MODE_LINE = 'Mode: verified hooks, when active, 
  * One extra Route line, only when transcript search is on.
  *
  * The card is a token cost paid by every session of every user. Everyone who leaves the feature
- * off keeps the shorter card and never learns these tools exist.
- *
- * THIS LINE IS AT THE BUDGET LIMIT. The server card is 1,843 chars without it and 1,998 with it,
- * against a hard 2,000 ceiling asserted in tests/transcripts/mcp-gating.test.ts -- two characters
- * of headroom. Naming the third tool cost 18 of them, which is why the wording was compressed
- * rather than extended. Anything added here has to buy its room from this same line.
+ * off keeps the shorter card and never learns this capability exists.
  */
 const TRANSCRIPT_ROUTE_LINE =
-  '- transcripts: knowl_session_list lists sessions, knowl_transcript_search after a knowl_query miss, knowl_transcript_read opens a hit. Store what you use.';
+  '- transcripts: list past sessions, search them after a knowl_query miss, open a hit. Store what you use.';
 
+/**
+ * The compact card carries POLICY, not an inventory.
+ *
+ * It used to name all 27 tools, and a test required every one of them to appear. That made the
+ * card grow with the tool count and it hit the ceiling: 1,994 of 2,000 characters, six to spare,
+ * with the last feature paid for by compressing four unrelated lines.
+ *
+ * Measured, which is what settled it: the same MCP handshake already delivers `tools/list` --
+ * 22,394 characters, including every tool name and 6,195 characters of descriptions. The card
+ * was spending its scarcest resource restating a payload eleven times its size. Names are not
+ * what an agent lacks.
+ *
+ * So the Route lines describe *behaviour* and the agent maps behaviour to a name using those
+ * descriptions. What still gets named here is only what the descriptions cannot carry:
+ *
+ *   - `knowl_query`, because "call this first, before files" is sequencing across tools.
+ *   - the four lifecycle tools, because "never call these while hooks are active" is a
+ *     prohibition, and a tool's own description is the last place a caller looks for one.
+ *
+ * Everything else -- which of four write tools, which of three audit tools -- is a choice
+ * `tools/list` already describes better than a bullet can.
+ *
+ * The full guidance (`renderFullKnowlGuidance`) still names all 27 in its table. That is a file
+ * written once per repo, not a cost paid per session, and it is the right home for an inventory.
+ */
 function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: boolean } = {}): string {
   return [
     'KNOWL WORKFLOW - for project work.',
     'Start: use a relevant active lifecycle hit; else call knowl_query with 2-6 keywords before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
     modeLine,
     'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
-    'Route:',
-    '- retrieval: knowl_query; knowl_recent only without bootstrap or for refresh; knowl_state for broad state; knowl_context for a token-budgeted pack.',
-    '- durable memory: knowl_store one atom; knowl_ingest_atoms a batch; knowl_decide a confirmed choice; knowl_update a stale or contradicted item.',
-    '- audit: knowl_timeline, knowl_evidence_list, knowl_conflicts; knowl_feedback after actual use or correction.',
-    '- skills: knowl_skill_list, knowl_skill_read, knowl_skill_run for a trusted matching entrypoint; knowl_skill_create only on explicit request.',
-    '- special: knowl_ingest only on an explicit raw-source request, never silent chat; knowl_synthesize only for an explicit scope; knowl_session_finish only for an owned manual session; knowl_gc_preview then knowl_gc_apply, only after approval.',
+    'Route by what you need; the tool list names them:',
+    '- retrieval: knowl_query first. Recent context only without bootstrap or for a refresh, broad state for status, a packed context only when a token budget is given.',
+    '- durable memory: store one verified atom, batch several, record a confirmed decision, or correct a stale one. Correct rather than duplicate.',
+    '- audit: inspect history, evidence or conflicts when needed; record feedback only after actual use or correction.',
+    '- skills: read a matching skill before running a trusted entrypoint; create one only on explicit request.',
+    '- special: raw-source ingest only on an explicit request, never silent chat; synthesis only for an explicit scope; preview garbage collection first and apply only after approval.',
     // One bullet for both, because they answer the same routing question -- "where does work I
-    // am stopping go?" -- and the distinction between them is the part worth spending
-    // characters on. Two separate bullets cost more and stated it less clearly.
-    '- leaving work: knowl_handoff leaves one baton the next session here consumes; knowl_park mints a key the user keeps and knowl_resume takes it back later, anywhere.',
+    // am stopping go?" -- and the distinction between them is the part worth the characters.
+    '- leaving work: one baton the next session here consumes once, or a key the user keeps and hands back any time later, from anywhere.',
     ...(options.transcripts ? [TRANSCRIPT_ROUTE_LINE] : []),
     'During work, store or update verified durable findings; never raw transcripts, secrets, or routine command noise.',
   ].join('\n');

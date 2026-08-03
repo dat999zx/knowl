@@ -35,10 +35,18 @@ describe('transcript tool gating', () => {
     expect(mcpServerInstructions(null)).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
   });
 
-  it('names both tools when enabled', () => {
+  it('routes to transcripts when enabled, without naming the tools', () => {
+    // The card carries policy, not an inventory. When the feature is on, its three tools are in
+    // tools/list with their own descriptions -- restating the names here would cost the card's
+    // scarcest resource to duplicate a payload eleven times its size. What the card must carry
+    // is the part tools/list cannot: that this is a fallback for a knowl_query miss, and that
+    // what you use should be stored.
     const card = mcpServerInstructions(config(true));
-    expect(card).toContain('knowl_transcript_search');
-    expect(card).toContain('knowl_transcript_read');
+
+    expect(card).toMatch(/- transcripts:/);
+    expect(card).toMatch(/knowl_query miss/);
+    expect(card).toMatch(/store what you use/i);
+    expect(card).not.toContain('knowl_transcript_search');
   });
 
   it('adds exactly one line when enabled', () => {
