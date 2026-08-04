@@ -283,17 +283,25 @@ describe('runIndexPass', () => {
   it('makes at least one batch of progress rather than spending its whole budget on set-up', async () => {
     await fs.writeFile(
       sessionFile('a'),
-      Array.from({ length: 1_000 }, (_, i) => line('user', `message ${i}`)).join(''),
+      Array.from({ length: 8_000 }, (_, i) => line('user', `message ${i}`)).join(''),
     );
 
-    // A real budget, and far too small: opening the database alone outlasts it.
+    // A real budget, and far too small for 8,000 messages.
+    //
+    // The margin is deliberate. `budgeted` is `deadline > startedAt`, so a deadline of
+    // `now + 1` is a coin flip: if more than a millisecond passes between this line and the
+    // pass recording its own start -- which it does on a loaded CI runner -- the pass reads a
+    // real budget as one already spent, correctly declines to start work it cannot afford, and
+    // indexes nothing. That failed on ubuntu and passed on Windows for no better reason than
+    // scheduling. 50ms is unambiguously a budget at call time and nowhere near enough to walk
+    // 8,000 messages, so both halves of the assertion hold without racing.
     const result = await runIndexPass({
-      projectRoot: PROJECT_ROOT, dbPath, projectsDir, deadline: Date.now() + 1,
+      projectRoot: PROJECT_ROOT, dbPath, projectsDir, deadline: Date.now() + 50,
     });
 
     expect(result.complete).toBe(false);
     expect(result.indexed).toBeGreaterThan(0);
-    expect(result.indexed).toBeLessThan(1_000);
+    expect(result.indexed).toBeLessThan(8_000);
 
     // And what it did is still consistent: the watermark covers exactly the rows it committed.
     const client = await openTranscriptDb(dbPath);

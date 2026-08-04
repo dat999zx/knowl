@@ -63,7 +63,11 @@ describe('a restore that fails its audit', () => {
     expect(message).toMatch(/applied/i);
     expect(message).toMatch(/knowl snapshot restore/);
 
-    const named = message.match(/([A-Za-z]:[\\/][^\s"]+\.db)/)?.[1];
+    // Absolute either way: `C:\...` on Windows, `/...` elsewhere. Matching only the
+    // drive-letter form passed here and failed on CI's ubuntu runner, where nothing matched
+    // and `named` was undefined — the assertion below then failed for the one reason it was
+    // not written to catch.
+    const named = message.match(/((?:[A-Za-z]:[\\/]|\/)[^\s"]+\.db)/)?.[1];
     expect(named, 'the message must name a file that exists').toBeTruthy();
     await expect(fs.access(named!)).resolves.toBeUndefined();
     expect(path.resolve(named!)).not.toBe(path.resolve(badSnapshot));
