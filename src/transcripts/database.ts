@@ -89,12 +89,21 @@ async function addNamingColumns(client: Client): Promise<void> {
   if (!columns.includes('name_kind')) {
     await client.execute('ALTER TABLE transcript_files ADD COLUMN name_kind INTEGER NOT NULL DEFAULT 0;');
   }
+  // Added, like `anchor` below, without resetting a single watermark. It used to reset all of
+  // them -- `bytes_indexed`, `lines_indexed` and `size_at_index` to 0 -- so the next pass would
+  // re-read every file and refill names and openings, on the stated grounds that `commitBatchOn`
+  // skips lines already covered so nothing could be duplicated. It does not skip them: it
+  // re-reads `lines_indexed`, which this had just set to 0, so every surviving message row was
+  // re-inserted and the pass died on UNIQUE(path, line) -- permanently, since the column now
+  // exists and the migration never runs again to undo it. Rows and watermark are one fact; a
+  // migration that moves one without the other strands the index.
+  //
+  // What is given up: a session indexed before this column and never appended to again keeps a
+  // null name and opening. One that is still being written to picks its name up from the lines
+  // it grows by, the same lazy adoption the anchor uses. The opening ask is *not* filled in that
+  // way -- see `indexOneFile`, which refuses to call a message mid-file the session's first ask.
   if (!columns.includes('opening')) {
     await client.execute('ALTER TABLE transcript_files ADD COLUMN opening TEXT;');
-    // Existing rows are fully indexed, so nothing would ever re-read them to fill these in.
-    // Resetting the watermark makes the next pass refill names and openings. Safe because
-    // `commitBatchOn` skips lines already covered, so no message row is duplicated.
-    await client.execute('UPDATE transcript_files SET bytes_indexed = 0, lines_indexed = 0, size_at_index = 0;');
   }
   // Deliberately *not* accompanied by a watermark reset. A null anchor means "unknown", which
   // the index pass adopts the next time it looks at the file -- so an existing index gains
