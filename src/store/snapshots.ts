@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Client } from '@libsql/client';
 import { auditKnowledgeStore } from './integrity.js';
-import { getClient } from './database.js';
+import { getClient, withClientTransaction } from './database.js';
 import { pruneSnapshots, SNAPSHOT_KEEP } from './retention.js';
 import { resolveStorage } from './storage-roles.js';
 
@@ -138,6 +138,35 @@ async function restoreStatements(client: Client): Promise<string[]> {
   return statements;
 }
 
+/**
+ * A restore that landed and then failed its own audit.
+ *
+ * The distinction this error exists to carry is that the destruction is already committed:
+ * the audit runs afterwards, so by the time it objects the store holds the snapshot's
+ * contents, faults and all. `restoreSnapshot` takes a pre-restore snapshot precisely for
+ * this case, and then said nothing about it -- the one message in the system that most needs
+ * to name a file. An operator was left knowing the restore broke, in a store that is already
+ * broken, with the way back sitting unnamed among timestamped filenames.
+ */
+export class SnapshotRestoreAuditError extends Error {
+  constructor(
+    public readonly preRestorePath: string,
+    public readonly findings: Awaited<ReturnType<typeof auditKnowledgeStore>>['findings'],
+  ) {
+    const errors = findings.filter(finding => finding.severity === 'error');
+    super(
+      `Restored snapshot failed its integrity audit: ${errors.length} error finding(s) ` +
+      `(${[...new Set(errors.map(finding => finding.code))].join(', ')}).\n` +
+      `The restore was already applied -- this store now holds the snapshot's contents, ` +
+      `faults and all.\n` +
+      `Your previous state was snapshotted first, and is at:\n` +
+      `  ${preRestorePath}\n` +
+      `To put it back: knowl snapshot restore "${preRestorePath}" --confirm`,
+    );
+    this.name = 'SnapshotRestoreAuditError';
+  }
+}
+
 export async function restoreSnapshot(
   projectRoot: string,
   snapshotPath: string,
@@ -160,22 +189,25 @@ export async function restoreSnapshot(
 
   const preRestore = await createSnapshot(root);
   const client = getClient();
+  // ATTACH cannot run inside a transaction, so it stays outside the wrapper on both sides.
   await client.execute(`ATTACH DATABASE '${quoteSqlPath(source)}' AS snapshot_restore`);
   try {
-    await client.execute('BEGIN');
-    for (const statement of await restoreStatements(client)) {
-      await client.execute(statement);
-    }
-    await client.execute('COMMIT');
-  } catch (error) {
-    await client.execute('ROLLBACK').catch(() => {});
-    throw error;
+    // Through the shared wrapper rather than a raw BEGIN. A transaction belongs to the
+    // connection and this process holds exactly one, so an unserialised BEGIN here could
+    // interleave with any other writer into `BEGIN; BEGIN;` -- which SQLite refuses with
+    // SQLITE_ERROR, not SQLITE_BUSY, so nothing retries it. Restore is the worst possible
+    // place for a half-applied transaction.
+    await withClientTransaction(async () => {
+      for (const statement of await restoreStatements(client)) {
+        await client.execute(statement);
+      }
+    });
   } finally {
     await client.execute('DETACH DATABASE snapshot_restore');
   }
   const report = await auditKnowledgeStore();
   if (report.findings.some(finding => finding.severity === 'error')) {
-    throw new Error('Restored snapshot failed integrity audit.');
+    throw new SnapshotRestoreAuditError(preRestore.path, report.findings);
   }
   return { preRestore, findings: report.findings };
 }
