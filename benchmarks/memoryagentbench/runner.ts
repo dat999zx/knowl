@@ -125,8 +125,12 @@ export async function runConflictResolution(options: CrRunOptions): Promise<CrRu
       const vector = embedder
         ? {
             enabled: true,
-            provider: embedder.provider,
-            model: embedder.model,
+            // Required by RankOptions since the embedding-profile guard landed: rows written
+            // under a different model, dtype or pooling are in a different space and must be
+            // excluded. Without it every run of this benchmark died on `undefined cannot be
+            // passed as argument to the database`, which is why the newest recorded result
+            // here is 2.8.0. `provider` and `model` were never read by the ranker.
+            profileFingerprint: embedder.profileFingerprint,
             embedding: (await embedder.embed([question]))[0],
           }
         : undefined;

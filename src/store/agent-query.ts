@@ -59,24 +59,51 @@ export const RRF_K = 60;
 export const FUSION_ALPHA = 0.8;
 
 /**
- * MMR's relevance weight, on the lexical path.
+ * Token overlap at or above which a candidate is the *same atom again* rather than a second
+ * answer, and is moved behind everything that is not.
  *
- * Was 0.2, which weights novelty four times relevance and is off the map Carbonell and
- * Goldstein drew: their lambda multiplies *relevance*, and they suggest 0.3 for exploring an
- * unfamiliar space and 0.7 once focused. LangChain defaults to 0.5. At 0.2 a 30% token overlap
- * cost more than the whole relevance term could award, and a legitimate second answer was
- * reproducibly dropped for an unrelated note.
+ * **This replaces MMR, which was solving the wrong problem here.** Carbonell and Goldstein's
+ * lambda trades relevance against novelty for a human scanning a list of web documents. Our
+ * consumer is an agent that reads all k snippets, k is 3, and the thing being ranked is a
+ * hand-written atom rather than a chunk of a document. In that setting the trade is not merely
+ * mistuned, it is inverted: **on a topical query the second-best answer necessarily shares
+ * vocabulary with the best one, and that overlap is evidence of relevance, not a cost.** Past
+ * rank one a lexical score is a small fraction of the corpus best, so half of it loses to half
+ * a novelty gap, and the second slot goes to whatever has least in common with the answer.
  *
- * 0.5 rather than 0.7: our consumer is not exploring, which argues for the focused end, but
- * the suite deliberately asserts that two byte-identical atoms do not both occupy a two-result
- * page. 0.7 stops de-duplicating those and 0.5 still does, while comfortably clearing the
- * legitimate-second-answer case. It is the value that satisfies both, and it is a published
- * default rather than a number invented here.
+ * Measured over all three shipped suites, lexical-only path, MMR at 0.5 against no penalty
+ * (`docs/evals/diversity-sweep.md`):
  *
- * Diversity is no longer folded into the reported score. MMR is a property of the result set,
+ * | suite | Recall@3 | Recall@10 | MRR |
+ * | --- | --- | --- | --- |
+ * | semantic-suite | 0.80909 -> 0.87273 | 0.84545 -> **0.96364** | 0.79276 -> 0.82776 |
+ * | retrieval-suite | 0.93867 -> 0.96267 | 0.97933 -> 0.99400 | 0.91495 -> 0.92497 |
+ * | retrieval-suite-v2 | 0.96227 -> 0.97316 | 0.98483 -> 0.99575 | 0.95297 -> 0.95675 |
+ *
+ * Every metric of every suite improves, and Recall@10 on the paraphrase suite by 11.8 points.
+ *
+ * What MMR was *actually* buying is one invariant: two byte-identical atoms must not both
+ * occupy a two-result page. That is a duplicate rule, and it is kept as one. **0.9 is a
+ * duplicate detector rather than a diversity dial** -- two atoms sharing 90% of their combined
+ * vocabulary are the same note written twice -- which is why it does not need to be right the
+ * way lambda did. Swept on the same three suites: 0.9 costs at most 0.0003 Recall@10 against no
+ * guard at all, while 0.6 costs retrieval-suite-v2 0.99727 -> 0.98979 on the vector path by
+ * demoting the *legitimately* similar. Two notes about one subsystem share a lot of words and
+ * are still two answers.
+ *
+ * It runs on **both** paths, where MMR ran only on the lexical one. That asymmetry meant the
+ * duplicate invariant held only for a store with no embedder -- every store with a working
+ * model took the vector path, where nothing de-duplicated at all. Measured cost of extending
+ * it: Recall@10 0.99727 -> 0.99697 on retrieval-suite-v2 and unchanged on the other two.
+ *
+ * It **demotes and never deletes**, for the reason the relevance floor stopped deleting: a
+ * duplicate still on the page is visible and can be judged, and a short page cannot be told
+ * apart from a store that knows nothing more.
+ *
+ * Diversity is still not folded into the reported score. It is a property of the result set,
  * not of an item, and mixing it in is why scores went negative and non-monotonic.
  */
-const MMR_LAMBDA = 0.5;
+const NEAR_DUPLICATE_OVERLAP = 0.9;
 
 /**
  * Priors: bounded multipliers applied after the floor, never additive terms.
@@ -287,6 +314,46 @@ function corpusOf(candidate: { repo?: string }): string {
 function rawLexical(candidate: Candidate): number | undefined {
   if (candidate.lexicalScore !== undefined) return candidate.lexicalScore;
   return candidate.bm25Rank ? 1 / (RRF_K + candidate.bm25Rank) : undefined;
+}
+
+/**
+ * Score order, with any row that is a near-duplicate of one already on the page moved behind
+ * every row that is not. See `NEAR_DUPLICATE_OVERLAP` for why this is not MMR.
+ *
+ * Lazy and short-circuiting, because it now runs on the path that ships rather than only on the
+ * fallback: token sets are built only for rows actually compared, and the scan stops the moment
+ * `limit` non-duplicates are held, since nothing below them can reach the page. The ordinary
+ * query -- limit 3, no duplicates in the store -- tokenises three items and compares three pairs.
+ *
+ * `diversity` is reported for every returned row as how much of it the reader has already seen
+ * above it. It stays out of `score`.
+ */
+function withoutDuplicates<T extends { result: { item: KnowledgeItem } }>(
+  scored: T[],
+  limit: number,
+): Array<T & { diversity: number }> {
+  const tokens = new Map<string, Set<string>>();
+  const tokensOf = (item: KnowledgeItem): Set<string> => {
+    const cached = tokens.get(item.id);
+    if (cached) return cached;
+    const built = itemTokens(item);
+    tokens.set(item.id, built);
+    return built;
+  };
+
+  const kept: Array<T & { diversity: number }> = [];
+  const deferred: Array<T & { diversity: number }> = [];
+  for (const candidate of scored) {
+    if (kept.length >= limit) break;
+    const diversity = kept.reduce(
+      (most, chosen) => Math.max(most, tokenOverlap(tokensOf(candidate.result.item), tokensOf(chosen.result.item))),
+      0,
+    );
+    (diversity >= NEAR_DUPLICATE_OVERLAP ? deferred : kept).push({ ...candidate, diversity });
+  }
+
+  // Demotion, not deletion: a duplicate still fills the page when nothing else can.
+  return [...kept, ...deferred].slice(0, limit);
 }
 
 export async function queryKnowledgeForAgent(
@@ -501,7 +568,6 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     })
     .sort((left, right) => right.score - left.score);
 
-  let selected: Array<typeof scored[number] & { diversity: number }>;
   // Item ids the floor's verdict covers. Empty when the query is answerable.
   let abstained = new Set<string>();
   if (usingVector) {
@@ -556,34 +622,9 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
         .filter(candidate => floorApplies(candidate.result) || !corporaThatJudged.has(corpusOf(candidate.result)))
         .map(candidate => candidate.result.item.id));
     }
-    selected = scored.slice(0, limit).map(candidate => ({ ...candidate, diversity: 0 }));
-  } else {
-    // Maximal Marginal Relevance, on the path that has no semantic ranking to trust. The
-    // vector path deliberately has none: de-duplication scrambles legitimately
-    // distinct-but-similar atoms and was measured to hurt recall there.
-    selected = [];
-    const candidateTokens = new Map(scored.map(candidate => [candidate.result.item.id, itemTokens(candidate.result.item)]));
-    while (selected.length < limit && selected.length < scored.length) {
-      const next = scored
-        .filter(candidate => !selected.some(chosen => chosen.result.item.id === candidate.result.item.id))
-        .map(candidate => {
-          const overlap = selected.length === 0 ? 0 : Math.max(...selected.map(chosen => tokenOverlap(
-            candidateTokens.get(candidate.result.item.id)!, candidateTokens.get(chosen.result.item.id)!,
-          )));
-          return {
-            ...candidate,
-            diversity: overlap,
-            // Carbonell and Goldstein's form: lambda multiplies relevance. `score` is already
-            // in [0,1], so no per-query rescaling is needed to make the two terms commensurate
-            // -- the previous `score / highestScore` was standing in for exactly that.
-            mmr: MMR_LAMBDA * candidate.score - (1 - MMR_LAMBDA) * overlap,
-          };
-        })
-        .sort((left, right) => right.mmr - left.mmr)[0];
-      if (!next) break;
-      selected.push(next);
-    }
   }
+
+  const selected = withoutDuplicates(scored, limit);
 
   return selected.map(({ result, score, contributions, diversity }) => ({
     item: result.item,
