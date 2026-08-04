@@ -1,7 +1,9 @@
 import { findProjectRoot } from '../core/config.js';
+import { ProjectNotFoundError } from '../core/errors.js';
 import { closeDb, initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
 import { handleHostLifecycleEvent } from '../store/host-lifecycle.js';
+import { assertKnowledgeDatabasePresent } from './database-presence.js';
 import { readLifecyclePayload } from './agents/lifecycle.js';
 import { IncompleteHostHookPayloadError, normalizeHostHook } from './agents/host-hook.js';
 import { hostProfile } from './agents/hosts/index.js';
@@ -30,6 +32,8 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
     const normalized = normalizeHostHook(host, event, payload);
     const root = await findProjectRoot(normalized.projectRoot);
     normalized.projectRoot = root;
+    // Before the store is opened, because opening it is what creates it.
+    assertKnowledgeDatabasePresent(root);
     await initDb(root);
     const project = await getProjectByRootPath(root);
     if (!project) throw new Error('Project not found in database.');
@@ -45,7 +49,18 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
     else if (!hostProfile(normalized.host).nativeOutput) console.log(JSON.stringify(result));
     await closeDb();
   } catch (error: any) {
-    if (error instanceof IncompleteHostHookPayloadError) {
+    // Two silences, for two things that are not faults.
+    //
+    // An incomplete payload is a host event this build does not carry enough of to record.
+    //
+    // An unresolvable project is the ordinary case for a hook installed in a host's global
+    // settings: it fires in every directory the agent visits, most of which are not Knowl
+    // repositories, and a renamed or moved repository puts a session permanently in that
+    // state. Reporting it printed an error and exited 1 on every single tool call, with no
+    // way to turn it off -- a channel that cries wolf on a normal condition is a channel
+    // nobody reads when something is actually wrong. A missing *database* still speaks up
+    // (see `assertKnowledgeDatabasePresent`); that one is neither normal nor permanent.
+    if (error instanceof IncompleteHostHookPayloadError || error instanceof ProjectNotFoundError) {
       await closeDb().catch(() => {});
       return;
     }

@@ -65,6 +65,7 @@ import { captureMemorySessionEvent } from '../store/session-capture.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { isLifecycleEvent, isSessionEventType, readLifecyclePayload, stringPayloadValue } from './agents/lifecycle.js';
 import { runAgentHook } from './agent-hook.js';
+import { assertDatabasePresentForCommand } from './database-presence.js';
 import { bootstrapAgentSession } from '../store/context-bootstrap.js';
 import { listAssertions } from '../store/assertions.js';
 import { listActiveConflictKeys } from '../store/conflicts.js';
@@ -82,6 +83,29 @@ import { applyTranscriptConfigTransition, describeTranscriptTeardown } from '../
 dotenv.config();
 
 const program = new Command();
+
+/**
+ * One guard for every command, rather than one per call site.
+ *
+ * ~30 actions follow the same two lines -- resolve the root, open the store -- and opening
+ * the store is what recreates a database that has gone missing. Checking inside each of them
+ * means the next command added is the one that forgets. A `preAction` hook runs before any
+ * of them, and the exemptions are named in `database-presence.ts` beside the reasoning.
+ *
+ * Synchronous so the entry can keep `program.parse`; commander only awaits hooks under
+ * `parseAsync`, and moving the whole CLI onto it for one `stat` would be a larger change
+ * than the check.
+ */
+program.hook('preAction', (_thisCommand, actionCommand) => {
+  let top = actionCommand;
+  while (top.parent && top.parent.parent) top = top.parent;
+  try {
+    assertDatabasePresentForCommand(top.name());
+  } catch (error: any) {
+    console.error(error.message);
+    process.exit(1);
+  }
+});
 
 function printProjectGuidanceStatus(status: KnowlProjectGuidanceInstallResult) {
   console.log(`KNOWL.md: ${status.knowl}`);
