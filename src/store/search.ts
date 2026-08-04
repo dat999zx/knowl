@@ -1,5 +1,5 @@
-import { sql } from 'drizzle-orm';
-import { getKnowledgeItem } from './repository.js';
+import { sql, type SQL } from 'drizzle-orm';
+import { getKnowledgeItems } from './repository.js';
 import { localStore, type StoreHandle } from './store-handle.js';
 import { KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 
@@ -52,30 +52,85 @@ function buildFtsQuery(query: string): string | null {
   return tokens.map(token => `${token}*`).join(' OR ');
 }
 
+export type SearchOptions = {
+  category?: KnowledgeCategory;
+  status?: KnowledgeStatus;
+  tags?: string[];
+  query: string;
+  limit?: number;
+  /**
+   * Restricts to shared items. Required when the store is a peer: a repo-private row must
+   * not be read into this process at all, so this is a SQL predicate and never a filter
+   * applied to rows that have already been loaded.
+   */
+  visibility?: 'repo' | 'workspace';
+};
+
+/**
+ * One lexical hit and the number FTS5 scored it with.
+ *
+ * `bm25` is SQLite's raw output: **negative, and more negative is a better match** -- measured,
+ * not inferred from `ORDER BY score ASC` (see tests/store/lexical-path.test.ts). It is also
+ * corpus-relative to a degree that rules out any absolute threshold: the same single occurrence
+ * of a rare term scores -7.95 in a one-word document and -0.64 in a 600-word one, while a term
+ * common enough for SQLite to clamp its IDF to 1e-6 scores around -2e-6 for an equally good
+ * match. Six orders of magnitude, decided by the corpus rather than by the match.
+ *
+ * The ranker used to discard this and recount tokens in JavaScript instead. It is returned
+ * because it is the length-normalised evidence the recount was a worse copy of.
+ */
+export type LexicalHit = { item: KnowledgeItem; bm25: number };
+
+/**
+ * A SQL predicate that keeps only rows carrying every requested tag.
+ *
+ * Tags are a JSON array in a text column, and the filter used to run in JavaScript *after* the
+ * SQL LIMIT -- so a tagged query spent its whole candidate window on untagged rows and returned
+ * nothing, at every limit, while the same query without tags returned a full page. The vector
+ * path has always filtered tags before its own cap; this is the half that disagreed.
+ *
+ * Deliberately a substring test rather than `json_each`: it matches both the current encoding
+ * (`["a","b"]`) and the double-encoded legacy rows `unwrapJson` exists to repair, and it needs
+ * no JSON1 predicate over a column that may be NULL or malformed. Surrounding quotes make it
+ * exact enough that `"a"` cannot match `["ab"]`; the caller still verifies against the parsed
+ * array, so this narrows and never decides.
+ */
+function tagPredicates(tags: string[] | undefined): SQL[] {
+  if (!tags || tags.length === 0) return [];
+  return tags.map(tag => sql`AND i.tags LIKE ${`%"${tag}"%`}`);
+}
+
+/** Exact tag check against the parsed array. The SQL predicate above is a superset of this. */
+function hasEveryTag(item: KnowledgeItem, tags: string[] | undefined): boolean {
+  if (!tags || tags.length === 0) return true;
+  return Boolean(item.tags) && tags.every(tag => item.tags!.includes(tag));
+}
+
 export async function searchKnowledgeItems(
   projectId: string,
-  options: {
-    category?: KnowledgeCategory;
-    status?: KnowledgeStatus;
-    tags?: string[];
-    query: string;
-    limit?: number;
-    /**
-     * Restricts to shared items. Required when the store is a peer: a repo-private row must
-     * not be read into this process at all, so this is a SQL predicate and never a filter
-     * applied to rows that have already been loaded.
-     */
-    visibility?: 'repo' | 'workspace';
-  },
+  options: SearchOptions,
   // Optional and trailing, so every existing call site is unchanged and the whole suite is
   // the regression test. Evaluated at call time, exactly like the getDb() it replaces.
   store: StoreHandle = localStore(),
 ): Promise<KnowledgeItem[]> {
+  return (await searchKnowledgeItemsRanked(projectId, options, store)).map(hit => hit.item);
+}
+
+export async function searchKnowledgeItemsRanked(
+  projectId: string,
+  options: SearchOptions,
+  store: StoreHandle = localStore(),
+): Promise<LexicalHit[]> {
   const db = store.db;
   const ftsQuery = buildFtsQuery(options.query);
   if (!ftsQuery) return [];
 
   const status = options.status || 'active';
+  const limit = options.limit ?? 20;
+  // Every filter is now in SQL, so the only rows the exact tag check can still remove are
+  // ones whose tag text contains a quote character. A small over-read absorbs that without
+  // reopening the hole: read-then-filter is only a defect when it reads too FEW rows.
+  const readLimit = options.tags && options.tags.length > 0 ? limit * 2 + 8 : limit;
 
   // Joined and filtered above the LIMIT. Filtering afterwards spends the candidate window on
   // rows that can never be returned: a query whose top lexical hits are all archived came
@@ -91,32 +146,32 @@ export async function searchKnowledgeItems(
       AND i.status = ${status}
       ${options.category ? sql`AND i.category = ${options.category}` : sql``}
       ${options.visibility ? sql`AND i.visibility = ${options.visibility}` : sql``}
+      ${sql.join(tagPredicates(options.tags), sql` `)}
     ORDER BY score ASC
-    LIMIT ${options.limit ?? 20}
+    LIMIT ${readLimit}
   `) as { itemId: string; score: number }[];
 
-  const items: KnowledgeItem[] = [];
+  const ordered: Array<{ itemId: string; score: number }> = [];
   const seen = new Set<string>();
-
   for (const row of rows) {
     if (seen.has(row.itemId)) continue;
     seen.add(row.itemId);
-
-    // Hydrated from the same database the ids came from. Loading them from the ambient
-    // handle instead would silently return nothing for a peer -- or, on an id collision, an
-    // unrelated local row presented as the peer's.
-    const item = await getKnowledgeItem(row.itemId, store.db);
-    if (!item) continue;
-    // Status, category and visibility are already applied in SQL. Only the JSON-array tag
-    // filter remains here, and it narrows an already-correct candidate set rather than
-    // deciding whether a row may be seen at all.
-    if (options.tags && options.tags.length > 0) {
-      if (!item.tags || !options.tags.every(tag => item.tags!.includes(tag))) continue;
-    }
-
-    items.push(item);
-    if (items.length >= (options.limit ?? 20)) break;
+    ordered.push(row);
   }
 
-  return items;
+  // One statement for the whole page. Hydrating row by row was 72% of lexical retrieval cost
+  // at limit 30 and 17x at limit 100, next to a batch fetch this module's vector sibling was
+  // already using. Hydrated from the store the ids came from -- the ambient handle would
+  // return nothing for a peer, or an unrelated local row presented as the peer's.
+  const items = await getKnowledgeItems(ordered.map(row => row.itemId), store.db);
+
+  const hits: LexicalHit[] = [];
+  for (const row of ordered) {
+    const item = items.get(row.itemId);
+    if (!item || !hasEveryTag(item, options.tags)) continue;
+    hits.push({ item, bm25: row.score });
+    if (hits.length >= limit) break;
+  }
+
+  return hits;
 }
