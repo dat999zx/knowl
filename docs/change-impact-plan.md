@@ -488,6 +488,42 @@ Adjudication is not optional and not vibes: every `impact_findings` row gets a r
 precision is `1 − false_positive / total`. **Publishing that number would make this the first
 system in the space to report one.**
 
+### 9.1 The measurement, run — 2026-08-05 `[C]`
+
+`tests/store/impact-precision.test.ts`, **46 adjudicated scenarios**, labels fixed before the run
+and never shown to the detector:
+
+| locator kind | precision | recall | tp | fp | fn |
+|---|---|---|---|---|---|
+| **`symbol://`** — the tier allowed to refuse a write | **100.0%** | 89.5% | 17 | 0 | 2 |
+| `file://` | 100.0% | 100.0% | 2 | 0 | 0 |
+| blended | 100.0% | 90.5% | 19 | 0 | 2 |
+
+**The ≥95% bar is met and the ≥40-finding sample size is met**, both asserted in the suite so the
+number cannot later be quoted off a sample too small to support it. The benign half deliberately
+includes the adversarial cases — a licence header added above the read symbol, two functions
+swapped in order, an import inserted at the top — because each would fire if line position had
+leaked into the signature hash. None did.
+
+Two recall misses remain, and both are the **symbol extractor**, not the detector, each diagnosed
+by direct measurement rather than assumed: it emits no symbol at all for `function*`, and it
+strips `export` from signatures, so un-exporting a symbol hashes identically. They are recorded in
+the suite as invalidating and still counted as misses — the number must not improve because
+something was hard.
+
+**The measurement paid for itself on its first run.** Deleted and renamed symbols never fired: the
+candidate set was built only from symbols a file has *now*, so a symbol the change removed could
+never be looked up, while the card and refusal text had both carried a "gone" case nothing could
+reach. That is the strongest invalidation in the design and it was worth 28.6 points of recall.
+Fixed by seeding candidates with the pre-change symbols, guarded so absence only counts when the
+file demonstrably re-parsed — otherwise a file caught mid-edit, which yields no symbols at all,
+would report every symbol in it as deleted at once.
+
+Caveat, stated rather than buried: these are **constructed** scenarios, not a field sample. They
+establish that the detector does not fire on benign edits of the shapes a formatter, a linter or a
+neighbouring agent actually produce. They do not establish the *prevalence* of those shapes in real
+sessions, which only §9's live adjudication of `impact_findings` rows can.
+
 **Claims about the outside world** — do not assert until run:
 
 - **CooperBench** [P]: 652 tasks, 12 libraries, 4 languages; 77.3% of task pairs have
@@ -520,18 +556,44 @@ each hole below has a number you can check.
 
 *Ours, by design:* writes through `Bash` (`sed -i`, `>`, `git checkout`) are ungated — STORM
 concedes the identical hole, and upstream has it filed as **#29709, "Claude Code circumvents
-PreToolUse:Edit hook via Bash tool"** [W]. `NotebookEdit` is ungated until `notebook_path` joins
-the `lifecycle.ts` stdin allowlist. Any host without a deny verdict fails closed to allowing.
+PreToolUse:Edit hook via Bash tool"** [W]. Any host without a deny verdict fails closed to
+allowing.
+
+~~`NotebookEdit` is ungated until `notebook_path` joins the `lifecycle.ts` stdin allowlist.~~
+**Closed 2026-08-05** `[C]`. `NotebookEdit` is the one write tool that does not name its target
+`file_path`, and `notebook_path` was missing from *two* places — the stdin allowlist and
+`changedPaths`. It did not fail, it went quiet: a notebook edit normalised to an event carrying no
+changed path at all, so the file was never re-indexed and nothing downstream could fire, for
+notebooks only. Both are fixed, and one of the two tests goes through the allowlist rather than
+around it, because a field absent from it is dropped before the normaliser is ever reached.
 
 *The host's, and these bound the mechanism itself* [W, all OPEN as of 2026-08-05]:
 
-- **#78970 — `PreToolUse` is not invoked for subagent (Task/Agent-tool) tool calls.** This is the
-  most important line in this section. Subagents are Claude Code's own concurrency primitive, so
-  they are *the* population this feature exists to protect, and the gate may not see them at all.
-  Filed against `Bash`; whether `Edit`/`Write` from a subagent also bypass is **unverified** and
-  is the first thing to measure at P-3. If it holds for all tools, the gate protects the
-  single-agent-plus-human case and not the multi-agent one, which would be a real demotion of the
-  claim — not of the design.
+- ~~**#78970 — `PreToolUse` is not invoked for subagent (Task/Agent-tool) tool calls.**~~
+  **DOES NOT REPRODUCE on 2.1.221 — measured, 2026-08-05** `[C]`. This was written as the most
+  important line in this section, because subagents are Claude Code's own concurrency primitive and
+  therefore *the* population the gate exists to protect. It was taken from the open issue rather
+  than tested, and testing it says the opposite.
+
+  A hook fixture logging both `PreToolUse` and `PostToolUse` was driven through two headless runs.
+  Every subagent tool call fired `PreToolUse`, carrying `agent_id` and `agent_type`:
+
+  | run | agent type | `PreToolUse` fired for |
+  |---|---|---|
+  | 1 | `general-purpose` | `Bash`, `Read`, **`Edit`** |
+  | 2 | `Explore` — the type the issue names | `Bash`, `Read` |
+
+  Main-thread calls in the same runs fired too, which is the control that matters: it separates
+  "no subagent events" from "no events at all". So the gate **does** cover subagent writes,
+  including `Edit`, which is its exact path.
+
+  The same experiment incidentally disposes of **#79480** for this configuration — the hooks were
+  registered from a project-scoped `.claude/settings.local.json`, which is the shape knowl writes
+  (`project-adapters.ts:76`), and they fired.
+
+  Scope-tagged, as everything here is: Claude Code 2.1.221, headless `-p`, `bypassPermissions`,
+  two agent types. Not a claim about every version or every agent type, and worth re-running on
+  host upgrades — the point is that the limitation this section asserted is not currently real.
 - **#77708 — deny is not enforced in Claude Desktop / Cowork, only native CLI.** Scope-tag
   accordingly: proven for the CLI, silent elsewhere.
 - **#78527 — a `2.1.210` regression where deny ends the turn (`hook_stopped_continuation`)
@@ -554,10 +616,13 @@ establishes the `spawnSync` pattern for process-level hook assertions.
 write-intent parsing, which is undecidable in a shell; it needs only to ask whether the command
 text mentions a path that **already carries an open certain finding** — a far narrower test,
 made safe by fail-open and the one-shot release, since a false refusal on `cat src/a.ts` costs
-one call and then releases. Three reasons it waits: its precision is unmeasured and §9's rule
-forbids shipping on that; **#79440** means shell aliases can rewrite a command *after* the hook
-approved it, so the matched text is not provably the executed text; and **#78970** means subagent
-Bash bypasses the hook regardless, so closing this hole would not close the multi-agent case.
+one call and then releases. Two reasons it still waits, one fewer than when this was written:
+that narrower test has **its own** precision, unmeasured, and §9's rule forbids shipping on that;
+and **#79440** means shell aliases can rewrite a command *after* the hook approved it, so the
+matched text is not provably the executed text. *(The third reason was #78970 — that closing this
+hole would not close the multi-agent case anyway. It does not reproduce, so it is no longer an
+argument for leaving Bash open, and this is now the largest remaining hole rather than one of
+several.)*
 
 **"Precision ≥95% may be unreachable even for the certain tier."** The tier is a hash equality
 on something the session provably read, so a *detection* false positive should be near zero.
