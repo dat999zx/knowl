@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { Client } from '@libsql/client';
 import { drizzle, LibSQLDatabase } from 'drizzle-orm/libsql';
 import * as schema from './schema.js';
@@ -92,44 +93,88 @@ export async function withDbPath<T>(dbPath: string, run: () => Promise<T>): Prom
 }
 
 /**
+ * The one transaction in flight on the shared connection, and the queue of the rest.
+ *
+ * `BEGIN` belongs to the *connection*, and this process holds exactly one. Two transactions
+ * started while the other was open therefore interleaved into `BEGIN; BEGIN;` and SQLite
+ * refused the second with `cannot start a transaction within a transaction`. That is
+ * `SQLITE_ERROR`, not `SQLITE_BUSY`, so no retry anywhere recognises it, and the caller sees
+ * an intermittently failed write whose timing it cannot reproduce. Reproduced with two
+ * `withClientTransaction` calls in flight, and with an ordinary write racing `knowl gc`.
+ *
+ * The queue is a promise chain rather than a lock library: a caller waits on whoever was ahead
+ * of it, and hands the baton on in `finally` so a thrown transaction cannot strand the rest.
+ * `getClient`/`getDb` resolve *after* the wait, so a queued caller transacts against whatever
+ * connection is open when its turn comes rather than one captured before a namespace swap.
+ */
+const transactionScope = new AsyncLocalStorage<true>();
+let transactionQueue: Promise<unknown> = Promise.resolve();
+
+/**
  * A transaction on the raw client rather than through Drizzle's wrapper.
  *
- * `drizzle-orm@0.45.2`'s libSQL `transaction()` leaks native state for every statement past the
- * first inside one transaction, and the process dies at exit once enough have accumulated.
- * Measured, all writing the same rows to the same table on the same connection:
+ * `drizzle-orm@0.45.2`'s libSQL `transaction()` leaks native state per transaction and the
+ * process dies at exit once enough have accumulated. Re-measured on 2026-08-04 (node 24.13,
+ * @libsql/client 0.14, same rows, same table, same connection):
  *
- * | shape                              | total inserts | result   |
- * | ---------------------------------- | ------------- | -------- |
- * | 1 statement x 2400 transactions    | 2400          | clean    |
- * | 2 statements x 1200 transactions   | 2400          | segfault |
- * | 2 statements x 1200, BEGIN/COMMIT  | 2400          | clean    |
+ * | shape                                        | transactions | result   |
+ * | -------------------------------------------- | ------------ | -------- |
+ * | 1 statement x 800 drizzle transactions       | 800          | clean    |
+ * | 2 statements x 800 drizzle transactions      | 800          | clean    |
+ * | 2 statements x 1000 drizzle transactions     | 1000         | segfault |
+ * | 1 statement x 1200 drizzle transactions      | 1200         | segfault |
+ * | 1 statement x 2400 drizzle transactions      | 2400         | segfault |
+ * | 10,000 statements in ONE drizzle transaction | 1            | clean    |
+ * | 2 statements x 1200, BEGIN/COMMIT            | 1200         | clean    |
  *
- * So it is neither statement count nor transaction count -- it is statements *within* a
- * transaction, and going through the client instead of the wrapper avoids it entirely. Knowl
- * writes an item and its assertion together, so every knowledge write is a two-statement
- * transaction and a long-running writer died at roughly 1200 of them. 0.45.2 is the latest
- * release, so there is no upgrade to take.
+ * An earlier table here read this as "statements *within* a transaction" and recorded
+ * `1 statement x 2400 transactions` as clean. It is not: single-statement transactions die
+ * too, and one transaction holding ten thousand statements does not. The variable is the
+ * **count of `db.transaction()` calls**, and the threshold sits between 800 and 1000. That
+ * matters because the old reading implied a big single transaction was the dangerous shape and
+ * many small ones were safe, which is exactly backwards. Going through the client instead of
+ * the wrapper avoids it entirely. 0.45.2 is the latest release, so there is no upgrade to take.
  *
  * A SQLite transaction belongs to the connection, so statements issued on the base connection
  * between BEGIN and COMMIT are inside it. Callers therefore get the ordinary connection back
  * rather than a transaction object, and the code inside them is unchanged.
  *
- * **Not nestable, deliberately.** Both callers skip this entirely when an outer transaction
- * hands them a connection, so it only ever opens the outermost. Adding a savepoint layer would
- * mean reimplementing the driver code this exists to avoid.
+ * **Not nestable, deliberately.** Callers skip this entirely when an outer transaction hands
+ * them a connection, so it only ever opens the outermost. Under a queue a nested call would
+ * wait on the outer transaction that is waiting on it, so nesting is detected and raised
+ * immediately: a deadlock is strictly worse than the error it replaces.
  */
 export async function withClientTransaction<T>(run: (conn: DbConnection) => Promise<T>): Promise<T> {
-  const client = getClient();
-  const db = getDb();
-  await client.execute('BEGIN');
+  if (transactionScope.getStore()) {
+    throw new DatabaseError(
+      'withClientTransaction cannot be nested: pass the connection it hands you down to the inner write instead.',
+    );
+  }
+
+  const previous = transactionQueue;
+  let release!: () => void;
+  transactionQueue = new Promise<void>(resolve => { release = resolve; });
+  // A predecessor that threw has already finished with the connection; its error is its
+  // caller's problem, not a reason to refuse the next transaction.
+  await previous.catch(() => {});
+
   try {
-    const result = await run(db);
-    await client.execute('COMMIT');
-    return result;
-  } catch (error) {
-    // A failed rollback must not mask the error that caused it.
-    await client.execute('ROLLBACK').catch(() => {});
-    throw error;
+    return await transactionScope.run(true, async () => {
+      const client = getClient();
+      const db = getDb();
+      await client.execute('BEGIN');
+      try {
+        const result = await run(db);
+        await client.execute('COMMIT');
+        return result;
+      } catch (error) {
+        // A failed rollback must not mask the error that caused it.
+        await client.execute('ROLLBACK').catch(() => {});
+        throw error;
+      }
+    });
+  } finally {
+    release();
   }
 }
 
