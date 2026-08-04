@@ -1,6 +1,14 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { NormalizedHostHook } from '../core/host-hook-types.js';
-import { renderChangeCard } from './change-card.js';
+import { renderChangeCard, type ImpactCardEntry } from './change-card.js';
 import { hostProfile } from './hosts/index.js';
+import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
+import { loadConfig } from '../core/config.js';
+import { isImpactEnabled } from '../store/impact-config.js';
+import { detectCertainImpactBestEffort, openFindingsForSession } from '../store/impact.js';
+import { recordReadBestEffort, releaseReadSetBestEffort, repoRelativePath } from '../store/read-set.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';
 import {
   ChangeSummary,
@@ -44,6 +52,56 @@ import { describeAutoDrift, runAutoDriftCheckBestEffort, type AutoDriftResult } 
 // Emit the mid-turn continuation reminder after this many consecutive non-Knowl
 // tool calls; any Knowl tool call resets the counter to zero.
 const KNOWL_REMINDER_DRIFT = 12;
+
+/**
+ * The tools whose paths become a read-set entry -- and the two that look like they belong here
+ * and deliberately do not.
+ *
+ * A read-set row asserts "this session saw this text and holds a belief about it", and the
+ * certain tier spends that assertion by interrupting the agent and gating its task finish. So the
+ * set is the tools that return *contents*: `Read`, and `NotebookRead` for the same reason (it is
+ * listed even though `changedPaths` reads `file_path`/`path` and the host names that field
+ * `notebook_path`, so it may never fire -- an unfired name costs nothing, a missing one is a
+ * silent hole nobody re-derives).
+ *
+ * `Grep` and `Glob` are read-ish and are excluded. Their `path` argument is usually a directory,
+ * which `normalizeLocator` already refuses -- but the case that decides this is the one where it
+ * is a file. `Grep` returns matching lines and `Glob` returns names; recording either as a read
+ * of that file would write one row per symbol in it, claiming the agent saw signatures it never
+ * received. The next edit to any of those symbols then fires against a belief the session does
+ * not hold: a fabricated false positive, pushed into tool-side context, which AgentNoiseBench
+ * measures at ~20.8% mean accuracy cost to the agent receiving it. The trade is the one
+ * `normalizeLocator`'s own directory heuristic already makes in this subsystem -- recall on a
+ * tier allowed to be incomplete, never precision on the one tier allowed to interrupt.
+ *
+ * Matched verbatim and case-sensitively against the host's own name (`host-hook.ts:42` keeps it
+ * raw for exactly this judgement). A host whose tool vocabulary has not been read is silent here
+ * rather than guessed at, for the same asymmetry.
+ */
+const IMPACT_READ_TOOLS = new Set(['Read', 'NotebookRead']);
+
+/** The write tools whose paths trigger a re-index and certain-tier detection. */
+const IMPACT_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
+
+/**
+ * Symbols above which one read records a single `file://` row instead of one row per symbol.
+ *
+ * A barrel file, a generated client or a large module carries hundreds of symbols, and a single
+ * `Read` of one would otherwise write hundreds of rows -- on a path that runs per tool call,
+ * against a subsystem whose own measurement target is "steady-state rows bounded post-GC"
+ * (plan §9). The coarse row is a degradation and not silence: the reader stays detectable at file
+ * granularity and loses only per-symbol discrimination. 200 matches `READ_SET_CHUNK`, so the
+ * fallback also keeps one file's candidate list inside one `IN (...)` batch on the detector side.
+ */
+const IMPACT_MAX_SYMBOLS_PER_READ = 200;
+
+/**
+ * Paths considered from one tool event. `host-hook.ts:128` already caps its own hosts at 50;
+ * `normalizeGeneric` copies `changedPaths` through uncapped, so a host that reports a thousand
+ * paths would otherwise index and hash all of them inside one agent's tool call.
+ */
+const IMPACT_MAX_PATHS = 50;
 
 export type HostLifecycleResult = {
   accepted: boolean;
@@ -283,18 +341,239 @@ async function evaluateChangeNotification(
   return mergeChangeSummaries([...(local ? [local] : []), ...peers]);
 }
 
+/**
+ * Whether this repository asked for change-impact detection. The single gate: capture,
+ * detection, delivery and the gate itself all hang off this one boolean, so a repository that
+ * never opted in writes no read-set row, produces no finding, and receives a card byte-identical
+ * to the one it gets today.
+ *
+ * Loaded per event rather than cached in module state. The hook path is a one-shot process per
+ * tool call, where a cache saves nothing; in the long-lived `serve` process a cache would mean
+ * that turning the flag *off* -- the direction that matters, since the subsystem spends the
+ * agent's context -- needs a restart to take effect. The cost is a read this path already pays:
+ * `evaluatePeerChanges` -> `resolveWorkspace` loads the same file on the same events.
+ *
+ * `.catch(() => null)` because `loadConfig` throws on a missing or unreadable config, and an
+ * unreadable config is the off case by the same rule `isImpactEnabled` states: every failure mode
+ * of this subsystem is a failure of turning it on.
+ */
+async function impactEnabled(projectRoot: string): Promise<boolean> {
+  const config = await loadConfig(projectRoot).catch(() => null);
+  return isImpactEnabled(config ?? undefined);
+}
+
+/**
+ * The hash a `file://` observation records: raw bytes, sha256, no normalisation.
+ *
+ * Byte-for-byte the digest `impact.ts:118` takes when it later asks whether that file moved,
+ * which is itself the digest `evidence-repository.ts:180` takes. Any other one -- utf-8
+ * normalised, line endings folded, trimmed -- disagrees with the comparison side, and then every
+ * `file://` read in the store looks changed the first time anybody writes anywhere near it.
+ */
+async function impactFileHash(root: string, relativePath: string): Promise<string | null> {
+  try {
+    return crypto.createHash('sha256').update(await fs.readFile(path.resolve(root, relativePath))).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+/** The paths a tool event reported, bounded. Non-strings are dropped rather than stringified. */
+function impactChangedPaths(payload: Record<string, unknown>): string[] {
+  const value = payload.changedPaths;
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is string => typeof entry === 'string').slice(0, IMPACT_MAX_PATHS);
+}
+
+/**
+ * Record what this session just read, at symbol granularity wherever the file yields symbols.
+ *
+ * **One `symbol://path#Name` row per symbol, not one `file://path` row per file.** This is the
+ * single design difference between this and the only published system with the same shape:
+ * STORM's own stated limitation is that file-level granularity makes "two agents editing
+ * different functions in the same file" a false-positive rejection (plan §6). The certain tier is
+ * the only tier allowed to push into an agent's context and gate a task finish, held to ≥95%
+ * precision, and file granularity spends that budget on edits that never touched anything the
+ * reader saw. `file://` is recorded only when the file yields no symbols at all -- a non-code
+ * file, a language with no grammar here, or a parse that produced nothing -- where the file hash
+ * is the only observable there is.
+ *
+ * **`indexFile` first, rather than trusting the index as it stands.** The hash stored here is the
+ * agent's belief, and a row left from an earlier version of the file is a hash the agent never
+ * saw: the next write to that file would compare against it, find it moved, and report a
+ * staleness the reader does not hold -- a manufactured false positive on the tier that may
+ * interrupt. When the content has not moved, `indexFile` stops before the parse and the write.
+ *
+ * Locators are handed over verbatim for `recordRead` to normalise, so the canonical form is
+ * decided in exactly one place (`normalizeLocator`); a second spelling of the same rule here is
+ * not a bug anyone sees, it is a detector that quietly never fires.
+ *
+ * One failed path does not cost the others: a file deleted between the tool call and this line is
+ * ordinary traffic on a path that observes rather than acts.
+ */
+async function recordToolReads(input: NormalizedHostHook, sessionId: string, paths: string[]): Promise<void> {
+  for (const changed of paths) {
+    try {
+      // Shared with the write gate rather than copied: `listCodeSymbols` is a `WHERE file_path = ?`
+      // equality, so a spelling that disagrees with the one the gate compares against does not
+      // fail loudly -- one side stops matching the other and the subsystem quietly never fires.
+      const relativePath = repoRelativePath(input.projectRoot, changed);
+      if (relativePath === null) continue;
+      await indexFile(input.projectRoot, relativePath);
+
+      const observations: { locator: string; observedHash: string }[] = [];
+      const symbols = await listCodeSymbols(relativePath);
+      if (symbols.length > 0 && symbols.length <= IMPACT_MAX_SYMBOLS_PER_READ) {
+        // A symbol the extractor gave no signature has no hash to compare against later, so a row
+        // for it would be a belief nothing could ever falsify; `recordRead` drops it regardless.
+        for (const symbol of symbols) {
+          if (symbol.signatureHash) observations.push({ locator: symbol.locator, observedHash: symbol.signatureHash });
+        }
+      } else {
+        const hash = await impactFileHash(input.projectRoot, relativePath);
+        if (hash !== null) observations.push({ locator: `file://${relativePath}`, observedHash: hash });
+      }
+
+      for (const observation of observations) {
+        await recordReadBestEffort({
+          sessionId,
+          // Recorded for provenance only: belief is session-scoped by `recordRead`'s own dedupe
+          // key, so a subagent and its parent share one belief per locator by design.
+          agentId: input.agentId ?? null,
+          locator: observation.locator,
+          observedHash: observation.observedHash,
+          toolName: input.toolName ?? null,
+        });
+      }
+    } catch {
+      // Observation is advisory; a tool call must never fail because we could not describe it.
+    }
+  }
+}
+
+/**
+ * This session's unresolved certain findings, in the shape the card renders.
+ *
+ * Queried on every tool event and not only after a write, because the writes that produce these
+ * findings happen in *other* sessions: MCP cannot push and there is no async interrupt into a
+ * running agent (plan §5 C-2), so a session learns at its next tool call or never.
+ *
+ * `path_json` is parsed rather than recomputed because it cannot be recomputed: by the time a
+ * card is drawn, the only surviving record of the old state is a hash, and a hash does not render
+ * (`impact.ts:79`). Parsing is guarded -- a row written by a different version, or truncated, must
+ * degrade to a locator with no was/now pair rather than throw inside a hook.
+ *
+ * **Known repeat window:** an open finding renders again on the next tool event, and the one after
+ * it, until it is resolved. Closing that needs a `delivered_at` column on `impact_findings`, which
+ * belongs to `bootstrap.ts` and not to this lane. The available shortcut is worse than the
+ * problem: `resolution` is the adjudication the ≥95% precision number is computed from (plan §9),
+ * so spending `dismissed` to quiet a card would corrupt the one measurement this phase exists to
+ * produce. Left visible rather than papered over, and bounded meanwhile by the plan's own
+ * division of labour -- the gate is the mechanism, the card is the courtesy.
+ */
+async function openImpactCardEntries(sessionId: string): Promise<ImpactCardEntry[]> {
+  const findings = await openFindingsForSession(sessionId, 'certain');
+  return findings.map(finding => {
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = finding.pathJson ? JSON.parse(finding.pathJson) as Record<string, unknown> : {};
+    } catch {
+      payload = {};
+    }
+    const asText = (value: unknown): string | null => typeof value === 'string' && value.length > 0 ? value : null;
+    return {
+      locator: asText(payload.locator) ?? finding.causeLocator,
+      wasSignature: asText(payload.observedSignature),
+      nowSignature: asText(payload.currentSignature),
+    };
+  });
+}
+
+/**
+ * The subsystem's whole presence on the tool path: capture on a read, detect on a write, and hand
+ * back what this session has to be told.
+ *
+ * Returns entries rather than a card, so the single mid-turn slot stays one decision made in one
+ * place (`:416-418`, pinned by `tests/mcp/dual-channel-notification.test.ts`).
+ *
+ * A write is *not* indexed here before detection, deliberately. `detectCertainImpact` re-indexes
+ * each path itself, and it snapshots the pre-change signatures first because that snapshot is the
+ * only surviving source of the card's `was:` line -- indexing here would overwrite it before the
+ * detector could read it, and every card would announce a change with nothing to compare it to.
+ * The session id is passed as the cause so the detector excludes it: a session is never told it
+ * invalidated its own read.
+ *
+ * Totally contained. This runs inside the capture path of every tool call in every session, and a
+ * memory server that breaks the agent it is trying to help has done more damage than the
+ * staleness it was watching for. The two subsystem calls swallow their own failures; the outer
+ * catch covers what sits between them -- the config read, the index, `listCodeSymbols`, and the
+ * findings query, which is the one call here with no advisory wrapper of its own.
+ */
+async function runToolEventImpact(input: NormalizedHostHook, sessionId: string): Promise<ImpactCardEntry[]> {
+  try {
+    if (!await impactEnabled(input.projectRoot)) return [];
+
+    const toolName = input.toolName ?? '';
+    const paths = impactChangedPaths(input.payload);
+    if (paths.length > 0 && IMPACT_READ_TOOLS.has(toolName)) {
+      await recordToolReads(input, sessionId, paths);
+    } else if (paths.length > 0 && IMPACT_WRITE_TOOLS.has(toolName)) {
+      await detectCertainImpactBestEffort(input.projectRoot, paths, sessionId);
+    }
+    return await openImpactCardEntries(sessionId);
+  } catch {
+    return [];
+  }
+}
+
+
+/**
+ * Release a memory session's read-set when that session stops holding beliefs -- which is when
+ * the *memory session* is finished, not when a turn ends.
+ *
+ * `turn-stop` is not that boundary by itself. A Claude `Stop` ends one assistant response inside
+ * a conversation that keeps its context: the agent still holds every file it read in the previous
+ * turn and routinely continues on those same files, so releasing there would disarm the detector
+ * for the rest of the session -- the failure `releaseReadSet`'s own contract names for releasing
+ * a whole session at task-finish. It *is* called from the `turn-stop` paths that finish the memory
+ * session (a host with no shared session binding, and either hard-failure path), because there the
+ * id these rows are keyed to is over and a new turn binds a new one. Not called on `agent-stop`: a
+ * subagent shares its parent's memory session id, so releasing there would drop the parent's live
+ * beliefs on the parent's behalf.
+ *
+ * Alone in this subsystem, this is not gated on the config flag. Every other operation costs
+ * something when it runs needlessly; this one costs something when it fails to run. An unreleased
+ * row is a live belief forever: `activeReadersOf` keeps handing it to detectors, which then
+ * manufacture findings against a session that has ended and can neither be told nor adjudicate
+ * them -- straight into the denominator of the precision number this phase exists to produce. And
+ * gating it would mean that turning the flag off strands every row recorded while it was on. The
+ * price when the feature was never enabled is one UPDATE matching zero rows, at a session
+ * boundary rather than on the tool path.
+ */
+async function releaseSessionReadSet(sessionId: string): Promise<void> {
+  await releaseReadSetBestEffort(sessionId);
+}
+
 async function finalizeFailedStop(projectId: string, input: NormalizedHostHook, sessionId: string) {
   await finishMemorySession(
     sessionId,
     'failed',
     typeof input.payload.summary === 'string' ? input.payload.summary : undefined,
   );
+  // A hard failure ends the session as surely as a clean stop does, and it is the likelier of
+  // the two to be followed by a handoff into a fresh session that inherits none of these beliefs.
+  await releaseSessionReadSet(sessionId);
   const promotion = await finalizeMemorySession(projectId, sessionId);
   const handoff = await recordPendingSessionHandoff(projectId, input, { memorySessionId: sessionId });
   return { promotion, handoff };
 }
 
 export async function handleHostLifecycleEvent(projectId: string, input: NormalizedHostHook): Promise<HostLifecycleResult> {
+  // First, and claimed before anything else can mistake it for a session boundary: every event
+  // this function does not recognise falls through to the session-stop handler at the bottom, and
+  // this one fires ahead of every tool call. It captures nothing, advances no watermark and
+  // finishes nothing -- the tool has not run yet, and the only question here is whether it should.
+
   if (input.event === 'session-start') {
     const recovered = await recoverAbandonedSessions();
     const purgedEventCount = await purgeExpiredSessionEvents();
@@ -397,6 +676,11 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       const type = input.event === 'checkpoint' ? 'checkpoint' : input.type;
       if (!type) throw new Error('Normalized host session event requires a type.');
       await captureMemorySessionEvent(started.session.id, type, input.payload);
+      // Runs for `checkpoint` events too -- a host that reports a tool under that event still
+      // read or wrote the file it named -- but never for a failed one: a tool that failed
+      // returned no contents, so a read-set row from it would record a belief the agent was
+      // never given, and the certain tier would later interrupt it over text it never saw.
+      const impact = input.status === 'failed' ? [] : await runToolEventImpact(input, started.session.id);
       // Adaptive continuation reminder: only nudge Claude after a run of tool calls
       // that ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
       // that is querying/storing memory never sees a reminder.
@@ -408,11 +692,19 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
         // The watermark runs for every host; only delivery depends on the host having a
         // mid-turn channel, which `midTurnContext` answers by returning an envelope.
         changes = await evaluateChangeNotification(input, key);
-        if (changes) {
+        if (changes || impact.length > 0) {
           // Change news implies "go query", so it replaces the static drift nudge and
           // resets the counter. At most one card per tool event, never two.
+          //
+          // Code impact rides inside that one card rather than beside it, and resets the counter
+          // on the same reasoning: it is the strongest "go re-read before you continue" signal
+          // the system can send, so freezing the drift counter behind it would make the generic
+          // reminder fire later for an agent that was just told something specific. When impact
+          // is the only news, `summary` is undefined and the card renders from impact alone --
+          // which is why the renderer takes an optional summary rather than this branch
+          // synthesising an empty one, and why there is still exactly one `hostOutput` here.
           await resetHostSuccessfulToolCount(key);
-          hostOutput = profile.midTurnContext(renderChangeCard(changes));
+          hostOutput = profile.midTurnContext(renderChangeCard(changes, impact.length > 0 ? impact : undefined));
         } else if (profile.midTurnContext('') !== undefined) {
           // A change card always wins the single mid-turn slot; below it, a specific
           // capture suggestion beats the generic continuation reminder.
@@ -498,6 +790,11 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     }
 
     await finishMemorySession(session.id, input.status ?? 'finished', typeof input.payload.summary === 'string' ? input.payload.summary : undefined);
+    // Reached only by a host that does *not* share one binding across turns -- the branch above
+    // returns before this for the ones that do. Here the turn's memory session is finished and
+    // the next turn binds a new one, so these rows can never be queried again and must not be
+    // left live for other sessions' detectors to keep finding.
+    await releaseSessionReadSet(session.id);
     const promotion = await finalizeMemorySession(projectId, session.id);
     await closeHostSessionBinding(key);
     return { accepted: true, sessionId: session.id, promotion };
@@ -518,6 +815,9 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
   }
 
   await finishMemorySession(session.id, input.status ?? 'finished', typeof input.payload.summary === 'string' ? input.payload.summary : undefined);
+  // The session is over: every belief it held is now historical, and an unreleased row here is
+  // the case `read-set.ts` names -- a finished session's reads looking like live work forever.
+  await releaseSessionReadSet(session.id);
   const promotion = await finalizeMemorySession(projectId, session.id);
   await closeHostSessionBinding(key);
   await closeHostSessionBindings(bindingKey(input, 'turn'));
