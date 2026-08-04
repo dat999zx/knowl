@@ -233,6 +233,27 @@ describe('imported knowledge is not the importer\'s to claim or publish', () => 
     }
   });
 
+  it('explains itself when asked to promote an imported id by name', async () => {
+    // A silent no-op is the one outcome promote already refuses elsewhere: "matched nothing"
+    // reads identically to "already shared". An id the caller typed in full is present in the
+    // database and simply not promotable, and saying which is the difference between a bug
+    // report and an answer.
+    await session(A, async () => {
+      await write(A, 'A owns the deploy key', 'The stranger\'s repo knows where the key lives.');
+      await exportKnowledge('local', DUMP, A);
+    });
+    const id = await session(B, async () => {
+      await importKnowledge(DUMP, { projectRoot: B });
+      const rows = await getClient().execute('SELECT id FROM knowledge_items');
+      return String(rows.rows[0].id);
+    });
+    await joinWorkspace({ projectRoot: B, workspaceName: WS, repoName: 'b' });
+
+    await expect(promoteItems({ projectRoot: B, repoName: 'b', ids: [id], apply: true }))
+      .rejects.toThrow(/import/i);
+    expect((await rowsOf(B)).get('A owns the deploy key')?.visibility).toBe('repo');
+  });
+
   it('treats a version-2 file, which names no exporter, as unknown rather than as mine', async () => {
     await session(A, async () => {
       await write(A, 'A owns the deploy key', 'The stranger\'s repo knows where the key lives.');
