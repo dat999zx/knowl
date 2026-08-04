@@ -19,6 +19,9 @@ import { KNOWL_SCHEMA_VERSION, readSchemaVersion, SchemaTooNewError } from '../.
  */
 const SCHEMA_PINS: Record<number, string> = {
   2: '9e6779b05c8176eb9023e305699b85f9',
+  // K-48: knowledge_commit_items, the write-time index that replaces blast radius's
+  // substring scan over knowledge_commits.changes.
+  3: '1e9ab9fdb263a49ec80f26eff98fe0c3',
 };
 
 let root: string;

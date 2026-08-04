@@ -534,6 +534,16 @@ export async function createKnowledgeCommit(
     createdAt: now,
   };
 
+  // Which items this commit touched, written down while it is still known rather than
+  // recovered later by substring match over the JSON that encodes it (K-48). One row per
+  // item, deduplicated: a commit legitimately carries several changes to the same item.
+  const touched = new Map<string, string>();
+  for (const change of changes) {
+    if (typeof change?.itemId === 'string' && !touched.has(change.itemId)) {
+      touched.set(change.itemId, change.action ?? 'unknown');
+    }
+  }
+
   try {
     await conn.insert(schema.knowledgeCommits).values({
       id,
@@ -541,6 +551,11 @@ export async function createKnowledgeCommit(
       changes: newCommit.changes,
       createdAt: now,
     });
+    if (touched.size > 0) {
+      await conn.insert(schema.knowledgeCommitItems).values(
+        [...touched].map(([itemId, action]) => ({ commitId: id, itemId, action })),
+      );
+    }
     return newCommit;
   } catch (error: any) {
     throw new DatabaseError(`Failed to create commit: ${error.message}`);

@@ -55,6 +55,19 @@ export const knowledgeCommits = sqliteTable('knowledge_commits', {
   createdAt: text('created_at').notNull(),
 });
 
+/**
+ * Which items a commit touched. An index over `knowledgeCommits.changes` (K-48), never a
+ * second source of truth -- readers use it to pick commits and still parse `changes`.
+ */
+export const knowledgeCommitItems = sqliteTable('knowledge_commit_items', {
+  commitId: text('commit_id').notNull().references(() => knowledgeCommits.id, { onDelete: 'cascade' }),
+  itemId: text('item_id').notNull(),
+  action: text('action').notNull(),
+}, (table) => [
+  primaryKey({ columns: [table.commitId, table.itemId] }),
+  index('idx_knowledge_commit_items_item').on(table.itemId, table.action, table.commitId),
+]);
+
 export const knowledgeAssertions = sqliteTable('knowledge_assertions', {
   id: text('id').primaryKey(),
   knowledgeItemId: text('knowledge_item_id').notNull().references(() => knowledgeItems.id, { onDelete: 'cascade' }),
