@@ -1,10 +1,10 @@
-import fs from 'node:fs/promises';
+﻿import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
-import { rankKnowledge, scoreCandidates, MIN_VECTOR_RELEVANCE, type Candidate } from '../../src/store/agent-query.js';
+import { rankKnowledge, scoreCandidates, type Candidate } from '../../src/store/agent-query.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
 
@@ -123,9 +123,12 @@ describe('K-70 -- a prior may move an item, never carry it', () => {
 });
 
 describe('K-30 -- the floor judges relevance, not standing', () => {
+  // Any calibrated floor demonstrates the property; this one is arctic's. The point is that
+  // the SAME cosine decides for every dressing, whatever the threshold happens to be.
+  const FLOOR = 0.16;
   const judged = (cosine: number, dressing: Dressing) => scoreCandidates(
     [{ item: item('only', dressing), embedded: true, vectorRank: 1, vectorScore: cosine }],
-    { limit: 10, usingVector: true },
+    { limit: 10, usingVector: true, minRelevance: FLOOR },
   );
 
   it('answers a query the same way for a fresh item and an identical stale one', () => {
@@ -144,8 +147,8 @@ describe('K-30 -- the floor judges relevance, not standing', () => {
   it('requires the same cosine of every candidate however it is dressed', () => {
     // The 36% spread in required cosine, closed. At the floor exactly, everything answers.
     for (const dressing of [BEST_DRESSED, WORST_DRESSED, { freshness: 'needs_review' as const }]) {
-      expect(judged(MIN_VECTOR_RELEVANCE, dressing)[0].explanation.abstained).toBeUndefined();
-      expect(judged(MIN_VECTOR_RELEVANCE - 0.001, dressing)[0].explanation.abstained).toBe(true);
+      expect(judged(FLOOR, dressing)[0].explanation.abstained).toBeUndefined();
+      expect(judged(FLOOR - 0.001, dressing)[0].explanation.abstained).toBe(true);
     }
   });
 
@@ -159,6 +162,11 @@ describe('K-30 -- the floor judges relevance, not standing', () => {
 });
 
 describe('K-36 -- an unindexed store cannot answer a question the indexed one abstained on', () => {
+  // 0.30, because these cases reproduce lane 3's original probe and its cosines were chosen
+  // against that value -- 0.18 is under it and over arctic's 0.16. K-36 is about WHICH rows a
+  // verdict covers rather than about where the bar sits, so the historical number is kept and
+  // stated rather than restaged against a model whose scale it was not measured on.
+  const FLOOR = 0.30;
   // AMENDED, deliberately: the old assertions here were the RETURNED set, which encoded
   // deletion. The floor now labels instead of deleting, so the identical rule shows up as which
   // row is left UNLABELLED. All three cases assert the same distinction they always did --
@@ -172,7 +180,7 @@ describe('K-36 -- an unindexed store cannot answer a question the indexed one ab
         { item: item('distant'), embedded: true, vectorRank: 1, vectorScore: 0.06 },
         { item: item('unindexed'), embedded: false, bm25Rank: 1, lexicalScore: 5 },
       ],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
     const byId = new Map(scored.map(row => [row.item.id, row]));
     expect([...byId.keys()].sort()).toEqual(['distant', 'unindexed']);
@@ -188,12 +196,12 @@ describe('K-36 -- an unindexed store cannot answer a question the indexed one ab
     // hazard, and it is what is now impossible: a store that judged nothing is labelled, never
     // exempted -- on this page it is less trustworthy than the rows that were judged, not more.
     const local = { item: item('local'), repo: 'mine', embedded: true, vectorRank: 1, vectorScore: 0.18 };
-    const alone = scoreCandidates([{ ...local }], { limit: 10, usingVector: true });
+    const alone = scoreCandidates([{ ...local }], { limit: 10, usingVector: true, minRelevance: FLOOR });
     expect(alone.map(row => row.explanation.abstained)).toEqual([true]);
 
     const union = scoreCandidates(
       [{ ...local }, { item: item('peer'), repo: 'theirs', embedded: false, bm25Rank: 1 }],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
     expect(union).toHaveLength(2);
     expect(union.every(row => row.explanation.abstained === true)).toBe(true);
@@ -209,7 +217,7 @@ describe('K-36 -- an unindexed store cannot answer a question the indexed one ab
         { item: item('local-distant'), repo: 'mine', embedded: true, vectorRank: 1, vectorScore: 0.06 },
         { item: item('peer-offtopic'), repo: 'theirs', embedded: false, bm25Rank: 1, lexicalScore: 5 },
       ],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
     expect(scored).toHaveLength(2);
     expect(scored.every(row => row.explanation.abstained === true)).toBe(true);

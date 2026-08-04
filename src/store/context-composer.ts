@@ -73,6 +73,7 @@ async function resolveVector(root: string, query: string): Promise<RankOptions['
       enabled: true,
       profileFingerprint: embedder.profileFingerprint,
       embedding: await embedder.embedQuery(query),
+      relevanceFloor: embedder.relevanceFloor,
     };
   } catch {
     // An unavailable embedder degrades to lexical composition rather than failing the call.

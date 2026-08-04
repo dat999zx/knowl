@@ -1,18 +1,8 @@
 import { Client } from '@libsql/client';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from './freshness.js';
-import { assertSchemaSupported, KNOWL_SCHEMA_VERSION, readSchemaVersion, stampSchemaVersion } from './schema-version.js';
-
-/**
- * Is this database already at the version this build ships?
- *
- * `PRAGMA user_version` is a 4-byte read at a fixed offset in the file header, so this is
- * O(1) regardless of database size, and in WAL it never blocks on a writer. A database
- * *newer* than this build is not handled here -- `assertSchemaSupported` refuses it before
- * this is reached, because "newer than me" must be a refusal rather than a shrug.
- */
-async function isSchemaCurrent(client: Client): Promise<boolean> {
-  return (await readSchemaVersion(client)) === KNOWL_SCHEMA_VERSION;
-}
+import {
+  assertSchemaSupported, isMigrationCurrent, stampMigrationLevel, stampSchemaVersion,
+} from './schema-version.js';
 
 /**
  * Per-CONNECTION setup, and deliberately outside the version gate below.
@@ -767,16 +757,21 @@ async function migrateLegacyProjectSchema(client: Client): Promise<void> {
  * the first opens after an upgrade adds one, which is precisely when many sessions restart
  * at once.
  *
- * So: read the version first (an O(1) header read, lock-free in WAL) and do nothing at all
- * when it is current. Only a database that actually needs work takes a lock, and it is
+ * So: read the migration level first (an O(1) header read, lock-free in WAL) and do nothing
+ * at all when it is current. Only a database that actually needs work takes a lock, and it is
  * `BEGIN IMMEDIATE` -- never `DEFERRED`, which upgrades a read transaction to a write one
  * and is answered with `SQLITE_BUSY_SNAPSHOT` that no busy handler is allowed to wait out.
- * The version is re-read *under* the lock, so processes that queued behind the winner see
+ * The level is re-read *under* the lock, so processes that queued behind the winner see
  * the finished work and leave. Measured over eight racing processes: IMMEDIATE elects one
  * migrator and the other seven skip cleanly; DEFERRED killed seven of eight; no election at
  * all applied the migration eight times.
  *
- * Everything, stamp included, commits as one transaction, so a process killed mid-migration
+ * The gate is `KNOWL_MIGRATION_LEVEL` and not `KNOWL_SCHEMA_VERSION` because those two
+ * numbers answer different questions -- "has my migration run here" versus "can an older
+ * build read this file" -- and only the second is allowed to lock anyone out. Both are
+ * stamped inside the transaction below; see schema-version.ts.
+ *
+ * Everything, stamps included, commits as one transaction, so a process killed mid-migration
  * leaves the database exactly as it found it.
  */
 export async function bootstrapSchema(
@@ -791,7 +786,7 @@ export async function bootstrapSchema(
   // database written by a newer Knowl is the case this exists to prevent.
   await assertSchemaSupported(client, '(open database)');
 
-  if (await isSchemaCurrent(client)) return;
+  if (await isMigrationCurrent(client)) return;
 
   // Exactly one migrator. IMMEDIATE takes the write lock up front rather than upgrading into
   // it, which is what makes the losers wait politely instead of failing.
@@ -799,7 +794,7 @@ export async function bootstrapSchema(
   try {
     // The winner may have finished while this process waited for the lock. Re-reading here
     // is what turns a queue of migrators into a queue of no-ops.
-    if (await isSchemaCurrent(client)) {
+    if (await isMigrationCurrent(client)) {
       await client.execute('COMMIT');
       return;
     }
@@ -823,7 +818,10 @@ export async function bootstrapSchema(
     await backfillKnowledgeAssertions(client);
     await backfillCommitItems(client);
     await repairSkillForeignKeys(client);
+    // The compatibility floor first, then the gate. Order matters only if the process dies
+    // between them, and the whole block is one transaction, so it cannot.
     await stampSchemaVersion(client);
+    await stampMigrationLevel(client);
 
     await client.execute('COMMIT');
   } catch (error) {

@@ -11,7 +11,7 @@ import {
   KNOWL_MCP_TOOL_NAMES,
   mcpServerInstructions,
 } from '../core/knowl-guidance.js';
-import { beginStartupTrace, finishStartupTrace, tracePhase } from '../core/startup-trace.js';
+import { beginStartupTrace, finishStartupTrace, serveBanner, tracePhase } from '../core/startup-trace.js';
 
 export { KNOWL_MCP_TOOL_NAMES };
 
@@ -101,6 +101,13 @@ export function createMcpServer(
  * working-as-designed waiting on a 30s deadline, so a busy machine could not help but lose
  * the race. Twenty-two recorded kills across four repos are that arithmetic, not a fault.
  *
+ * Those two numbers arrived with the audit branch, which is why this note used to describe
+ * a smaller exposure and attribute the larger one to a fork. The retrying pool is this
+ * repo's now, so the arithmetic above is this repo's too. The structure was wrong either
+ * way -- unbounded work sitting on a bounded deadline -- and a slow open for any other
+ * reason, a large migration, a network-backed disk, a loaded machine, lands on the same
+ * deadline.
+ *
  * Nothing in the handshake needs the database: the tool list is a static literal and the
  * declared capabilities are constants. So connect first and initialize behind it. Tool calls
  * await `ready`, and they answer to the tool-call timeout -- hours, not seconds -- which is
@@ -155,21 +162,25 @@ export async function startMcpServer(): Promise<void> {
   });
 
   const transport = new StdioServerTransport();
+  const connectedAt = Date.now();
   await tracePhase('connect', () => server.connect(transport));
 
   // Printed after the handshake rather than after initialization: this line is the host log's
   // proof that the process is alive and talking, and it used to be withheld until the slowest
   // part of startup had finished -- which is why a stalled boot left no evidence but a banner.
-  process.stderr.write(
-    [
-      '[knowl serve]',
-      `pid=${process.pid}`,
-      `projectRoot=${projectRoot ?? 'unresolved'}`,
-      'note=host-owned stdio process; one serve process per connected host session; hooks use agent-hook and do not spawn serve',
-    ].join(' ') + '\n'
-  );
+  //
+  // The root is already known here, unlike in the version this replaces: settling it before
+  // the server is built (see above) is what the `instructions` card needs, and it means the
+  // very first line a host log gets can name its repository instead of saying `unresolved`
+  // and correcting itself later.
+  process.stderr.write(serveBanner({ pid: process.pid, projectRoot }) + '\n');
 
   void ready.then(() => {
+    // The second line is about the database, which the first could not wait for. `readyMs`
+    // is the number that separates "connected and working" from "connected and stuck".
+    process.stderr.write(
+      serveBanner({ pid: process.pid, projectRoot, readyMs: Date.now() - connectedAt }) + '\n',
+    );
     finishStartupTrace({
       ok: !initError,
       initError,

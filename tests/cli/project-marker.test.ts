@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { findProjectRoot } from '../../src/core/config.js';
@@ -18,15 +19,31 @@ import { discoverRepos } from '../../src/cli/repo-discovery.js';
  * command reads -- rather than the directory. A home directory has no config.json in it.
  */
 
-const BASE = path.resolve('./.knowl-project-marker');
-const FAKE_HOME = path.join(BASE, 'home');
-const UNDER_HOME = path.join(FAKE_HOME, 'scratch', 'not-a-repo');
-const REAL = path.join(BASE, 'real');
-const NESTED = path.join(REAL, 'src', 'deep');
+/**
+ * Outside the repository, and that is load-bearing rather than tidiness.
+ *
+ * `findProjectRoot` walks UP until it finds a marker, so a fixture placed under the checkout
+ * is only isolated while the checkout is not itself a Knowl project. It is one on every
+ * maintainer's machine -- `.knowl/` is gitignored, so CI's fresh clone has none and passed
+ * while `npm test` failed locally with the repo's own root as the resolved answer. A test
+ * whose verdict depends on whether the developer has run `knowl init` is testing the machine.
+ *
+ * `os.tmpdir()` also makes the first case a truer version of what K-51 actually was: a scratch
+ * directory somewhere under the real home, walking up past the real `~/.knowl`.
+ */
+let BASE: string;
+let FAKE_HOME: string;
+let UNDER_HOME: string;
+let REAL: string;
+let NESTED: string;
 
 describe('what marks a directory as a Knowl project', () => {
   beforeEach(async () => {
-    await fs.rm(BASE, { recursive: true, force: true }).catch(() => {});
+    BASE = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-project-marker-'));
+    FAKE_HOME = path.join(BASE, 'home');
+    UNDER_HOME = path.join(FAKE_HOME, 'scratch', 'not-a-repo');
+    REAL = path.join(BASE, 'real');
+    NESTED = path.join(REAL, 'src', 'deep');
 
     // Shaped like a real ~/.knowl: machine-local state, and no project config.
     await fs.mkdir(path.join(FAKE_HOME, '.knowl', 'workspaces'), { recursive: true });

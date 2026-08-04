@@ -1,8 +1,8 @@
-import path from 'node:path';
+﻿import path from 'node:path';
 import fsPromises from 'node:fs/promises';
 import { ProjectConfig } from '../core/types.js';
 import { EmbedOptions, KnowledgeEmbedder } from '../store/vector-index.js';
-import { fingerprintProfile, resolveVectorProfile, type VectorPooling } from '../core/vector-profile.js';
+import { fingerprintProfile, relevanceFloorFor, resolveVectorProfile, type VectorPooling } from '../core/vector-profile.js';
 import { noteModelLoad } from '../core/startup-trace.js';
 import { knowlHome } from '../workspace/paths.js';
 
@@ -24,9 +24,9 @@ const MAX_EMBED_BATCH = 32;
 /**
  * The most tokens of one item that get embedded, and the real memory ceiling.
  *
- * Attention allocates `batch × heads × seq × seq`, so the largest single allocation this
+ * Attention allocates `batch Ã— heads Ã— seq Ã— seq`, so the largest single allocation this
  * module can ever request is one clipped item on its own: arctic-embed-m-v2 has 12 heads
- * and fp32 scores, giving `2,560² × 12 × 4 bytes ≈ 315 MB`. Nothing else here can exceed
+ * and fp32 scores, giving `2,560Â² Ã— 12 Ã— 4 bytes â‰ˆ 315 MB`. Nothing else here can exceed
  * that, because the batch budget below is far smaller.
  *
  * A CHARACTER clip cannot make that promise. The old limit was 8,000 characters, justified
@@ -39,13 +39,13 @@ const MAX_EMBED_BATCH = 32;
 const MAX_EMBED_TOKENS = 2_560;
 
 /**
- * Budget for `items × longest²`, in TOKENS. A THROUGHPUT bound, not the memory one.
+ * Budget for `items Ã— longestÂ²`, in TOKENS. A THROUGHPUT bound, not the memory one.
  *
  * Batching an embedding model is not free parallelism: on CPU one 500-token sequence
  * already saturates the cores, so a batch adds padding and cache pressure and buys nothing.
  * Measured on arctic q8 with equal-length real prose, per-item cost against n=1:
  * 45 tokens 1.41x FASTER at n=32, 128 tokens 1.28x faster, 256 tokens best at n=1,
- * 512 tokens best at n=1. The crossover is around 256 tokens, and `256²` is the budget
+ * 512 tokens best at n=1. The crossover is around 256 tokens, and `256Â²` is the budget
  * that puts it there: 32 items at 45 tokens, 4 at 128, 1 above 256.
  *
  * That is the inversion this constant needed. In characters at 64,000,000 the budget bound
@@ -123,7 +123,7 @@ export const EMBEDDING_LIMITS = {
  * The batch has to be sized against the text, not the row count.
  *
  * Every sequence in a batch is padded up to the longest one, so a batch costs
- * `items × longest²` however short the rest are: one long atom landing beside 31 short ones
+ * `items Ã— longestÂ²` however short the rest are: one long atom landing beside 31 short ones
  * charges all 32 the long one's price. Under the old character budget that was the dominant
  * cost -- the real 470-atom corpus planned 80 batches with 34.7% of the padded work
  * embedding nothing, and 342 MB peak. It now plans 446 with 0.1%, and 161 MB.
@@ -343,6 +343,9 @@ export async function createLocalEmbeddingProvider(
     model: vector.model,
     pooling: vector.pooling,
     profileFingerprint: fingerprintProfile(resolveVectorProfile(config)),
+    // Null for a model this build has not measured, which switches abstention off rather than
+    // borrowing another model's number. See MODEL_RELEVANCE_FLOORS.
+    relevanceFloor: relevanceFloorFor(vector.model),
     embed: async (texts: string[], options?: EmbedOptions) => {
       const vectors: number[][] = [];
       for (const batch of planEmbeddingBatches(texts, options)) {
