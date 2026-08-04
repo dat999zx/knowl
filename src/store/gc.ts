@@ -1,7 +1,10 @@
-import { withClientTransaction } from './database.js';
+import { sql } from 'drizzle-orm';
+import { getDb, withClientTransaction } from './database.js';
+import type { DbConnection } from './database.js';
 import * as repo from './repository.js';
 import { pruneTombstones } from './tombstones.js';
 import { getAccessSummary, KnowledgeAccessSummary } from './access-feedback.js';
+import { carriesNothingNew, KnowledgePayload } from './knowledge-writer.js';
 import { CommitChange, KnowledgeCategory, KnowledgeItem } from '../core/types.js';
 
 export type KnowledgeGcAction = 'archive' | 'compress' | 'purge';
@@ -79,11 +82,78 @@ function duplicateKey(item: KnowledgeItem): string {
   ].join('|');
 }
 
+/**
+ * What an item holds outside `knowledge_items`, so a purge cannot destroy it unseen.
+ *
+ * Two grouped reads for the whole store, not one per item: this runs on every preview.
+ */
+export type ItemHistory = { evidence: string[]; assertions: number };
+
+async function loadItemHistory(dbConnection?: DbConnection): Promise<Map<string, ItemHistory>> {
+  const conn = (dbConnection ?? getDb()) as any;
+  const history = new Map<string, ItemHistory>();
+  const entry = (id: string): ItemHistory => {
+    const existing = history.get(id);
+    if (existing) return existing;
+    const created: ItemHistory = { evidence: [], assertions: 0 };
+    history.set(id, created);
+    return created;
+  };
+
+  for (const row of await conn.all(sql`SELECT knowledge_item_id AS item, evidence_id AS ev FROM knowledge_evidence`)) {
+    entry(String(row.item)).evidence.push(String(row.ev));
+  }
+  for (const row of await conn.all(sql`SELECT knowledge_item_id AS item, COUNT(*) AS n FROM knowledge_assertions GROUP BY knowledge_item_id`)) {
+    entry(String(row.item)).assertions = Number(row.n);
+  }
+  return history;
+}
+
+function payloadOf(item: KnowledgeItem, history: Map<string, ItemHistory>): KnowledgePayload {
+  return {
+    ...item,
+    // Excluded deliberately: confidence is a quality signal, not information the item carries,
+    // and it is already the first tie-break below. Including it would stop collection whenever
+    // two identical copies happened to disagree about how sure they were.
+    confidence: undefined,
+    evidence: history.get(item.id)?.evidence ?? [],
+  };
+}
+
+/**
+ * Whether `survivor` holds everything `loser` holds, so deleting `loser` destroys nothing.
+ *
+ * The duplicate key is category, title and content. Reasoning, tags, affectedPaths, the source
+ * commit, provenance, evidence and the assertion trail are all invisible to it -- and the
+ * survivor was then picked by confidence and recency alone, so the newer, barer copy won and
+ * the purge hard deleted the richer one, cascading its evidence and history with it. A delete
+ * is the one GC action with no undo, so it now has to be provably redundant first.
+ */
+function subsumes(survivor: KnowledgeItem, loser: KnowledgeItem, history: Map<string, ItemHistory>): boolean {
+  if (!carriesNothingNew(payloadOf(loser, history), payloadOf(survivor, history))) return false;
+  return (history.get(loser.id)?.assertions ?? 0) <= (history.get(survivor.id)?.assertions ?? 0);
+}
+
 function preferredDuplicate(left: KnowledgeItem, right: KnowledgeItem): KnowledgeItem {
   if (left.confidence !== right.confidence) {
     return left.confidence > right.confidence ? left : right;
   }
   return left.updatedAt >= right.updatedAt ? left : right;
+}
+
+/**
+ * The copy that may absorb every other in its bucket, or null when there is no such copy.
+ *
+ * Null is the honest answer when two twins each carry something the other lacks: neither is
+ * redundant, so neither is collected. Keeping both is recoverable; hard deleting either is not.
+ */
+function survivorOf(bucket: KnowledgeItem[], history: Map<string, ItemHistory>): KnowledgeItem | null {
+  let best: KnowledgeItem | null = null;
+  for (const candidate of bucket) {
+    if (!bucket.every(other => other.id === candidate.id || subsumes(candidate, other, history))) continue;
+    best = best ? preferredDuplicate(best, candidate) : candidate;
+  }
+  return best;
 }
 
 function summarize(item: KnowledgeItem): string {
@@ -104,19 +174,34 @@ function summarizeCandidates(candidates: KnowledgeGcCandidate[]): Record<Knowled
   return summary;
 }
 
-function buildCandidates(items: KnowledgeItem[], options: KnowledgeGcOptions, access: Map<string, KnowledgeAccessSummary>): KnowledgeGcCandidate[] {
+function buildCandidates(
+  items: KnowledgeItem[],
+  options: KnowledgeGcOptions,
+  access: Map<string, KnowledgeAccessSummary>,
+  history: Map<string, ItemHistory>,
+): KnowledgeGcCandidate[] {
   const now = new Date(options.now || new Date().toISOString());
   const staleStateDays = options.staleStateDays ?? DEFAULT_STALE_STATE_DAYS;
   const compressArchivedDays = options.compressArchivedDays ?? DEFAULT_COMPRESS_ARCHIVED_DAYS;
   const minCompressBytes = options.minCompressBytes ?? DEFAULT_MIN_COMPRESS_BYTES;
   const candidates: KnowledgeGcCandidate[] = [];
-  const bestByDuplicateKey = new Map<string, KnowledgeItem>();
+  const buckets = new Map<string, KnowledgeItem[]>();
 
   for (const item of items) {
     if (item.status !== 'active') continue;
     const key = duplicateKey(item);
-    const currentBest = bestByDuplicateKey.get(key);
-    bestByDuplicateKey.set(key, currentBest ? preferredDuplicate(currentBest, item) : item);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(item);
+    else buckets.set(key, [item]);
+  }
+
+  // Resolved per bucket rather than by folding pairwise: "which copy absorbs all the others"
+  // is a property of the whole bucket, and a fold can elect a survivor that subsumes the one
+  // it beat but not the one it never met.
+  const bestByDuplicateKey = new Map<string, KnowledgeItem>();
+  for (const [key, bucket] of buckets) {
+    const survivor = bucket.length > 1 ? survivorOf(bucket, history) : bucket[0];
+    if (survivor) bestByDuplicateKey.set(key, survivor);
   }
 
   for (const item of items) {
@@ -193,7 +278,7 @@ export async function previewKnowledgeGc(
 ): Promise<KnowledgeGcResult> {
   const items = await repo.listKnowledgeItems();
   const access = await getAccessSummary();
-  const candidates = buildCandidates(items, options, access);
+  const candidates = buildCandidates(items, options, access, await loadItemHistory());
   return {
     candidates,
     summary: summarizeCandidates(candidates),
@@ -215,7 +300,7 @@ export async function applyKnowledgeGc(
   // one of them however many candidates it has -- 5,000 purges, 10,000 statements, clean exit.
   return withClientTransaction(async (tx) => {
     const items = await repo.listKnowledgeItems(tx);
-    const candidates = buildCandidates(items, options, access);
+    const candidates = buildCandidates(items, options, access, await loadItemHistory(tx));
     const byId = new Map(items.map(item => [item.id, item]));
     const changes: CommitChange[] = [];
 

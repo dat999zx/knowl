@@ -171,6 +171,85 @@ describe('supersede on write', () => {
     expect(result.outcomes[1].action).toBe('inserted');
   });
 
+  it('a restatement that adds affectedPaths is not a verbatim no-op', async () => {
+    // The no-op test compared title and content and nothing else, so a second write of the
+    // same sentence carrying the paths it applies to was answered "already held verbatim,
+    // nothing was lost" and silently dropped. `affectedPaths` is what the whole drift system
+    // keys on, so the dropped write is the difference between an item that gets re-checked
+    // when its file changes and one that never does.
+    const first = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Retry budget', content: 'The HTTP client retries three times.',
+    });
+    const withPaths = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Retry budget', content: 'The HTTP client retries three times.',
+      affectedPaths: ['src/http/client.ts'],
+    });
+
+    expect(withPaths.action).toBe('inserted');
+    expect((await repo.getKnowledgeItem(withPaths.item.id))!.affectedPaths).toEqual(['src/http/client.ts']);
+    expect((await repo.getKnowledgeItem(first.item.id))!.status).toBe('superseded');
+  });
+
+  it('a restatement that adds tags, a source commit or a confidence is not a no-op either', async () => {
+    const base = {
+      category: 'fact' as const,
+      title: 'Session cookie lifetime',
+      content: 'Session cookies expire after fourteen days.',
+    };
+    await storeKnowledgeItemDeduped(projectId, base);
+
+    const tagged = await storeKnowledgeItemDeduped(projectId, { ...base, tags: ['auth', 'cookies'] });
+    expect(tagged.action).toBe('inserted');
+    expect((await repo.getKnowledgeItem(tagged.item.id))!.tags).toEqual(['auth', 'cookies']);
+
+    const committed = await storeKnowledgeItemDeduped(projectId, {
+      ...base, tags: ['auth', 'cookies'], sourceCommit: 'abc1234',
+    });
+    expect(committed.action).toBe('inserted');
+    expect((await repo.getKnowledgeItem(committed.item.id))!.sourceCommit).toBe('abc1234');
+
+    const downgraded = await storeKnowledgeItemDeduped(projectId, {
+      ...base, tags: ['auth', 'cookies'], sourceCommit: 'abc1234', confidence: 0.4,
+    });
+    expect(downgraded.action).toBe('inserted');
+    expect((await repo.getKnowledgeItem(downgraded.item.id))!.confidence).toBeCloseTo(0.4);
+  });
+
+  it('a barer restatement of a richer record is still a no-op, and leaves the richer one active', async () => {
+    // The other half of the same rule. "Carries something new" is not "differs": a write that
+    // simply omits what the store already holds adds nothing, so writing it would retire the
+    // richer record in favour of a barer one -- the same field-blindness pointed the other way.
+    const rich = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Password hashing', content: 'Passwords are hashed with argon2id.',
+      reasoning: 'Chosen for memory hardness.', tags: ['auth', 'crypto'], affectedPaths: ['src/auth/hash.ts'],
+    });
+
+    const bare = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Password hashing', content: 'Passwords are hashed with argon2id.',
+    });
+
+    expect(bare.action).toBe('duplicate');
+    expect(bare.item.id).toBe(rich.item.id);
+    const stored = await repo.getKnowledgeItem(rich.item.id);
+    expect(stored!.status).toBe('active');
+    expect(stored!.tags).toEqual(['auth', 'crypto']);
+    expect(stored!.affectedPaths).toEqual(['src/auth/hash.ts']);
+  });
+
+  it('a batch atom that adds a field is not counted as already held', async () => {
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Log shipping', content: 'Application logs ship to Loki.',
+    });
+    const result = await storeKnowledgeAtomsDeduped(projectId, [{
+      category: 'fact', title: 'Log shipping', content: 'Application logs ship to Loki.',
+      affectedPaths: ['src/logging/ship.ts'],
+    }], 'Log shipping paths');
+
+    expect(result.duplicateCount).toBe(0);
+    expect(result.insertedCount).toBe(1);
+    expect((await repo.getKnowledgeItem(result.itemIds[0]))!.affectedPaths).toEqual(['src/logging/ship.ts']);
+  });
+
   it('an explicit supersedes id works in the batch path too', async () => {
     const original = await storeKnowledgeItemDeduped(projectId, {
       category: 'architecture', title: 'Transport layer', content: 'Clients talk to the server over REST.',
