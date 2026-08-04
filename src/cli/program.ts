@@ -34,7 +34,7 @@ import { formatWorkspaceBlock } from './workspace-report.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { formatDoctorReport, runDoctor } from './doctor-report.js';
 import { upgradeExistingRepository, type UpgradeResult } from './upgrade.js';
-import { recordKnownRepo } from './repo-registry.js';
+import { readKnownRepos, recordKnownRepo } from './repo-registry.js';
 import { discoverRepos } from './repo-discovery.js';
 import { applyDoctorRemedies } from './doctor-fix.js';
 import { formatSweepReport, sweepRepos } from './upgrade-all.js';
@@ -1430,6 +1430,16 @@ program
         printUpgradeStatus(result);
         return;
       }
+
+      // Read before discovery so the registry is healed first and the sweep list below is
+      // already the corrected one. A registry line is dropped only when the filesystem
+      // positively says it is not a repository, and a sweep must not shrink in silence:
+      // these are the paths `upgrade --all` and `doctor --fix` will stop acting on.
+      const { forgotten } = await readKnownRepos();
+      for (const stale of forgotten) {
+        console.log(`Forgot ${stale} -- recorded as a Knowl repository, but no longer one.`);
+      }
+      if (forgotten.length > 0) console.log('');
 
       const discovered = await discoverRepos({ roots: options.root, record: !options.dryRun });
       if (discovered.length === 0) {
