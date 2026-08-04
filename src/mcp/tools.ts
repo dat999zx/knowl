@@ -52,6 +52,7 @@ const MAX_CONTEXT_TOKEN_BUDGET = 4_000;
 /** Matches `MAX_RESPONSE_CHARS` in the transcript handlers, deliberately. */
 const MAX_RESPONSE_CHARS = 12_000;
 const MAX_SKILLS_LISTED = 30;
+const MAX_SKILL_PURPOSE_CHARS = 200;
 const MAX_TRIGGERS_LISTED = 5;
 const MAX_TRIGGER_CHARS = 80;
 
@@ -1392,7 +1393,7 @@ export function registerTools(
         // is for choosing which skill to read; knowl_skill_read is where the detail lives.
         const listed = skills.slice(0, MAX_SKILLS_LISTED).map(skill => ({
           name: skill.name,
-          purpose: truncateText(skill.purpose, MAX_ITEM_CONTENT_CHARS),
+          purpose: truncateText(skill.purpose, MAX_SKILL_PURPOSE_CHARS),
           triggers: skill.triggers.slice(0, MAX_TRIGGERS_LISTED).map(trigger => truncateText(trigger, MAX_TRIGGER_CHARS)),
           entrypoints: skill.entrypoints,
         }));
