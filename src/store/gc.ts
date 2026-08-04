@@ -1,4 +1,4 @@
-import { getDb } from './database.js';
+import { withClientTransaction } from './database.js';
 import * as repo from './repository.js';
 import { pruneTombstones } from './tombstones.js';
 import { getAccessSummary, KnowledgeAccessSummary } from './access-feedback.js';
@@ -204,9 +204,16 @@ export async function applyKnowledgeGc(
   projectId: string,
   options: KnowledgeGcOptions = {}
 ): Promise<KnowledgeGcResult> {
-  const db = getDb();
   const access = await getAccessSummary();
-  return db.transaction(async (tx) => {
+  // Drizzle's wrapper opens its own BEGIN on the shared connection, outside the queue that
+  // serializes every other transaction, so an ordinary write racing `knowl gc` died on
+  // "cannot start a transaction within a transaction". Collection is also the longest
+  // transaction the store ever opens, which makes it the likeliest thing for a write to race.
+  //
+  // Measured separately (2026-08-04): this call is NOT exposed to the wrapper's exit crash.
+  // That crash counts `db.transaction()` calls, not statements, and collection makes exactly
+  // one of them however many candidates it has -- 5,000 purges, 10,000 statements, clean exit.
+  return withClientTransaction(async (tx) => {
     const items = await repo.listKnowledgeItems(tx);
     const candidates = buildCandidates(items, options, access);
     const byId = new Map(items.map(item => [item.id, item]));

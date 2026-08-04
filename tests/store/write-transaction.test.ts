@@ -1,9 +1,10 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeDb, getClient, initDb } from '../../src/store/database.js';
+import { closeDb, getClient, getDb, initDb, withClientTransaction } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
+import { applyKnowledgeGc } from '../../src/store/gc.js';
 import { resetWriteOwnershipCache } from '../../src/store/write-ownership.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 
@@ -87,6 +88,59 @@ describe('knowledge writes are atomic', () => {
       const after = await counts();
       expect(after).toEqual(before);
       expect(after.orphans).toBe(0);
+    } finally {
+      await closeDb();
+    }
+  });
+
+  it('two transactions started together do not collide on the shared connection', async () => {
+    // BEGIN/COMMIT are issued on the one process-wide client, so two transactions in flight at
+    // the same time interleaved into `BEGIN; BEGIN;` and SQLite refused the second with
+    // "cannot start a transaction within a transaction". That is not SQLITE_BUSY, so no retry
+    // anywhere sees it -- it surfaces as an intermittently lost write. One MCP server handling
+    // two tool calls is enough; so is any Promise.all over writes.
+    await initDb(ROOT);
+    try {
+      const project = await repo.createProject(ROOT, 'p');
+      const bodies = Array.from({ length: 6 }, (_, index) => withClientTransaction(async () => {
+        return repo.createKnowledgeItem(project.id, {
+          category: 'fact',
+          title: `Concurrent fact number ${index}`,
+          content: `Body of concurrent fact number ${index}.`,
+        }, undefined, getDb());
+      }));
+
+      await expect(Promise.all(bodies)).resolves.toHaveLength(6);
+
+      const after = await counts();
+      expect(after.items).toBe(6);
+      expect(after.assertions).toBe(6);
+      expect(after.orphans).toBe(0);
+    } finally {
+      await closeDb();
+    }
+  });
+
+  it('a write started while GC is running does not collide with it', async () => {
+    // GC opened its own BEGIN through a different wrapper, so serializing only the write path
+    // would leave exactly this pair colliding.
+    await initDb(ROOT);
+    try {
+      const project = await repo.createProject(ROOT, 'p');
+      await repo.createKnowledgeItem(project.id, {
+        category: 'fact', title: 'Seeded before collection', content: 'Present so GC has something to scan.',
+      });
+
+      const [, written] = await Promise.all([
+        applyKnowledgeGc(project.id, {}),
+        repo.createKnowledgeItem(project.id, {
+          category: 'fact', title: 'Written during collection', content: 'Racing the collector.',
+        }),
+      ]);
+
+      expect(written.id).toBeTruthy();
+      expect(await repo.getKnowledgeItem(written.id)).not.toBeNull();
+      expect((await counts()).orphans).toBe(0);
     } finally {
       await closeDb();
     }
