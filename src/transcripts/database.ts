@@ -168,6 +168,11 @@ const BASE_STATEMENTS = [
   // connection's default busy_timeout is 0, so a concurrent writer would fail the open outright.
   'PRAGMA busy_timeout = 10000;',
   'PRAGMA journal_mode = WAL;',
+  // Same choice and the same reasoning as the knowledge database -- see the long note on
+  // `BASE_STATEMENTS` in `../store/bootstrap.ts` for the measurements and the durability trade.
+  // It matters at least as much here: an index pass writes a great many small rows, and this
+  // database is the one a backfill hammers while a live session writes beside it.
+  'PRAGMA synchronous = NORMAL;',
 ];
 
 const clients = new Map<string, Client>();
