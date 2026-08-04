@@ -566,7 +566,7 @@ Each rejected with a reason, not a shrug.
 |---|---|---|---|
 | **D-1** | Build here vs. standalone | **Here.** 60–70% of substrate exists [C]; niche unoccupied [W]; standalone means rebuilding it with no distribution. | provisional |
 | **D-2** | Upstream-shaped vs. fork-local | **Upstream-shaped from P-0** (§8 house rules), per the 2026-08-05 no-separate-version decision. | provisional |
-| **D-3** | Tell the upstream maintainer before or after P-3 | **Before.** Five tables in someone else's project; surprising a collaborator is worse than a slow start. | **William's — still open.** P-0…P-4 were built ahead of it, uncommitted; the ask is now larger, not smaller |
+| **D-3** | Tell the upstream maintainer before or after P-3 | **Before.** Two tables, four indexes, a migration-level bump and a hook that can deny a write, in someone else's project; surprising a collaborator is worse than a slow start. | **William's — still open, and now urgent.** P-0…P-4 were built ahead of it, and the branch they are on (`fork/mainline-2.16`) is the head of the *open* PR #16 — pushing lands 10 unrelated commits inside a PR already under review. Held local for that reason |
 | **D-4** | Gate-first vs. notice-first | **Gate-first.** Notification is measured at ~0 effect twice [P]. This reverses v1. | **held** — survived the build |
 | **D-5** | Language scope | **TS/JS only** at P-4. | provisional |
 | **D-6** | Research doc's business model | **Out of scope** under C-1. | **William's** |
