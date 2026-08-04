@@ -315,7 +315,13 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
                       description: 'How this came to be believed: observed (execution or direct inspection), user_stated (the human said so), or inferred (concluded without direct evidence). Inferred items rank lower until confirmed by use.',
                     },
                     steps: { type: 'array', items: { type: 'string' } },
-                    supersedes: { type: 'string', description: 'Id of an active item this atom replaces; it is marked superseded (retired but still queryable), not deleted.' },
+                    supersedes: { type: 'string', minLength: 1, description: 'Id of an active item this atom replaces; it is marked superseded (retired but still queryable), not deleted.' },
+                    // The batch writer forwards these; the schema did not offer them, so
+                    // exclusivity was enforceable from knowl_store and unreachable from a
+                    // batch -- the two write paths disagreeing about what a conflict key means.
+                    conflictKey: { type: 'string', description: 'Optional normalized semantic identity key.' },
+                    conflictScope: { type: 'object', description: 'Optional scope for the conflict key.' },
+                    conflictExclusive: { type: 'boolean', description: 'Whether only one active value may exist for this key/scope.' },
                   },
                   required: ['category', 'title', 'content'],
                 },
@@ -854,6 +860,28 @@ function boundContextResponse(pack: { sections: Array<{ name: string; items: unk
   return text;
 }
 
+/**
+ * Every id a write is about to touch, checked before any of it happens.
+ *
+ * `supersedes`/`supersedeId` retires an item, which is a write to that item, and it was
+ * unguarded on all four write tools while the item being *updated* was checked. Sequential
+ * calls rather than one array call so this holds against either signature of
+ * `assertOwnedItem`; the checks still all precede the first write, which is the property
+ * that matters. Resolving the workspace is skipped entirely when no retire is requested,
+ * so an ordinary write pays nothing for this.
+ */
+async function assertOwnedTargets(
+  ids: Array<string | undefined | null>,
+  projectRoot: string | null,
+  config: ProjectConfig | null,
+): Promise<void> {
+  const present = [...new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+  if (present.length === 0 || !projectRoot) return;
+  const owner = await resolveWorkspace(projectRoot, config ?? undefined);
+  if (!owner) return;
+  for (const id of present) await assertOwnedItem(id, owner);
+}
+
 export function registerTools(
   server: Server,
   getProjectId: () => string | null,
@@ -958,6 +986,8 @@ export function registerTools(
         if (!KNOWLEDGE_CATEGORIES.includes(category)) {
           throw new Error(`Invalid knowledge category: ${category}`);
         }
+        try { await assertOwnedTargets([supersedes], projectRoot, config); }
+        catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
 
         const store = () => storeKnowledgeItemDeduped(
           projectId!,
@@ -1009,6 +1039,10 @@ export function registerTools(
             throw new Error(`Invalid knowledge category: ${atom.category}`);
           }
         }
+        // Every atom's retire target, before the first atom is written. A batch that fails
+        // partway leaves the earlier atoms behind, so this cannot be checked per atom.
+        try { await assertOwnedTargets(atoms.map((atom: any) => atom.supersedes), projectRoot, config); }
+        catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
 
         const result = await storeKnowledgeAtomsDeduped(
           projectId!,
@@ -1044,6 +1078,8 @@ export function registerTools(
       
       else if (name === 'knowl_decide') {
         const { title, content, reasoning, alternatives, tags, supersedes } = args as any;
+        try { await assertOwnedTargets([supersedes], projectRoot, config); }
+        catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         const result = await recordDecisionDirect(projectId!, {
           title,
           content,
@@ -1296,7 +1332,11 @@ export function registerTools(
       else if (name === 'knowl_update') {
         const { id, title, content, status, reasoning, source, sourceCommit, affectedPaths, freshness, supersedeId } = args as any;
         const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
-        try { await assertOwnedItem(id, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
+        // Both ids, not just the one being edited. Retiring an item is a write to that item,
+        // and `supersedeId` reached `supersedeKnowledgeItem` with no ownership check at all
+        // while the item named by `id` was guarded on the line above.
+        try { await assertOwnedItem(id, owner); if (supersedeId) await assertOwnedItem(supersedeId, owner); }
+        catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
         // Checked BEFORE the update is written. It used to be resolved after, so an unknown
         // supersedeId threw once the update had already committed and the whole call was
         // reported as failed -- the agent believed nothing happened while memory had moved.

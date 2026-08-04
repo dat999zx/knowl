@@ -298,6 +298,24 @@ describe('MCP tool arguments are validated against the published schema', () => 
     expect(unsupported).toEqual([]);
   });
 
+  // K-19: the batch writer forwards these; the schema never offered them, so the exclusive
+  // conflict contract was enforceable from knowl_store and unreachable from a batch.
+  it('offers the conflict fields on a batch atom, not only on a single store', async () => {
+    const { knowlToolDefinitions } = await import('../../src/mcp/tools.js');
+    const atoms = knowlToolDefinitions(null).find(tool => tool.name === 'knowl_ingest_atoms')!;
+    const atom = (atoms.inputSchema as any).properties.atoms.items.properties;
+
+    expect(Object.keys(atom)).toEqual(expect.arrayContaining(['conflictKey', 'conflictScope', 'conflictExclusive']));
+
+    const result = await call('knowl_ingest_atoms', {
+      atoms: [{
+        category: 'fact', title: 'Exclusive by key', content: 'Only one of these may be active.',
+        conflictKey: 'runtime', conflictScope: { area: 'server' }, conflictExclusive: true,
+      }],
+    });
+    expect(result.isError).toBeUndefined();
+  });
+
   it('leaves a well-formed call untouched', async () => {
     const result = await call('knowl_store', { category: 'fact', title: 'Ordinary', content: 'Nothing unusual.' });
     expect(result.isError).toBeUndefined();
