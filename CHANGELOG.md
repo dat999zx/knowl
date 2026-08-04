@@ -3,6 +3,82 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 2.17.0 — 2026-08-04
+
+Two fixes in this release came from [@William-Sommers](https://github.com/William-Sommers), in
+[#13](https://github.com/dat999zx/knowl/pull/13) and
+[#14](https://github.com/dat999zx/knowl/pull/14), both diagnosed by measurement rather than
+inspection — which is how the second one turned out to be a different bug than it looked like.
+
+### Added
+
+- **`knowl diagnose-startup`, and a trace behind it.** A `serve` process killed at the host's
+  connect deadline leaves nothing behind but a boot banner, so "hung opening the database" and
+  "crashed on startup" were indistinguishable from the outside. A watchdog now fires at 5s/15s/25s
+  — inside the host's 30s window — and names the phase currently running, to stderr and to a
+  machine-wide JSONL that survives the kill. `knowl diagnose-startup [--since <hours>]` reads it
+  back: boots started versus became ready, per-phase percentiles, model load times split cold and
+  warm, stalls by owning phase, and concurrent-boot bursts. Silent on healthy boots, capped at
+  4 MB, and `KNOWL_DISABLE_STARTUP_TRACE=1` turns it off.
+
+### Changed
+
+- **`knowl reindex --vectors` embeds only what is out of date.** It re-embedded every item on
+  every call, so a run after a handful of writes paid the full corpus cost to write back vectors
+  identical to the ones already stored. The scan now selects items with no vector under the
+  current profile fingerprint, or one older than the item's own `updated_at`.
+
+  There is deliberately no "did the model change" branch: after a profile switch no row carries
+  the new fingerprint, so the same predicate selects everything and the run is a full rebuild.
+  One rule, both cases. Measured on a 565-item store, both including model load: **1.1s against
+  92.8s**. `--force` re-embeds regardless, for the staleness a fingerprint cannot see.
+
+- **The MCP handshake completes before the database opens.** `startMcpServer` ran
+  `bootstrapSchema` and the project lookup before connecting the transport, so all of it was
+  charged against a deadline none of it knew about — 30s in Claude Code, and the process is killed
+  when it expires. Nothing in the handshake needs the database: the tool list is a static literal
+  and the capabilities are constants. Tool calls now await readiness and answer to the tool-call
+  timeout instead, which is hours rather than seconds — the right clock for work whose duration
+  depends on what other processes are doing to the same file.
+
+- **Schema bootstrap is gated, so the steady-state open path is read-only.** Every read-write open
+  re-ran the full suite: a legacy migration, ~40 `CREATE TABLE IF NOT EXISTS`, ten
+  `PRAGMA table_info` passes and two data repairs. It now reads a migration level from the file
+  header first and returns immediately when current.
+
+  That level is its own number in `PRAGMA application_id`, separate from `KNOWL_SCHEMA_VERSION`,
+  because the two answer different questions. "Can an older build read this file" is a
+  compatibility floor and must move rarely — every bump locks out every Knowl already installed.
+  "Has my migration run here" moves on every additive column. One value cannot be honest about
+  both. Existing databases migrate exactly once and stay readable by older builds.
+
+### Fixed
+
+- **Two processes bootstrapping the same new database could kill each other.** The ten column
+  passes read `PRAGMA table_info` and then conditionally `ALTER TABLE ADD COLUMN` — check-then-act
+  across processes. Both see a column missing, both issue the `ALTER`, and the loser dies on
+  `duplicate column name`: a `SQLITE_ERROR` that no `busy_timeout` and no BUSY retry can perceive.
+  Reproduced at **1 in 96 cold-start opens** with twelve processes racing, and it can only fire
+  when a column is genuinely absent — the first opens after a release adds one, which is exactly
+  when many sessions restart together.
+
+  A database needing work now takes `BEGIN IMMEDIATE` and re-reads the level under the lock, so
+  one process migrates and the rest find the work done and leave. `DEFERRED` would not do:
+  a read-to-write upgrade is answered with `SQLITE_BUSY_SNAPSHOT`, which a busy handler is not
+  allowed to wait out. Everything commits as one transaction, so a process killed mid-migration
+  leaves the database exactly as it found it.
+
+- **The startup trace changed the process it was observing.** Listening for `unhandledRejection`
+  suppresses Node's default, which since v15 is to crash, so a fatal bug anywhere in the process
+  became a logged one; it is now re-thrown after recording. A signal handler called
+  `process.exit(0)`, announcing a host kill to the host, any supervisor and CI as a clean finish;
+  it now re-raises, falling back to the conventional 128+n code.
+
+- **The `serve` banner no longer names an anonymous process.** Deferring the database open left it
+  reading `projectRoot=pending` permanently, and that line is how you tell which repository a
+  `serve` process in a host log belongs to. The resolved root now arrives on a second line, with
+  the time initialization took.
+
 ## 2.16.0 — 2026-08-03
 
 ### Added
