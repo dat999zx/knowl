@@ -3,6 +3,173 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 3.0.0 — 2026-08-04
+
+Almost all of this release is [@William-Sommers](https://github.com/William-Sommers)'
+[#15](https://github.com/dat999zx/knowl/pull/15): seven parallel read-only audits over 25,331
+lines, 86 findings, every one reproduced before it was fixed and none left open. The full ledger
+with each finding's mechanism, reproduction and outcome is in `docs/audit-2026-08-04.md`.
+
+Worth naming separately: a second round re-tested the *dismissals* from the first, under the rule
+that "not worth fixing" is a claim needing evidence exactly like a fix does. It found worse than
+the round it was checking — including the best-evidenced defect in the audit, which had been
+recorded as a known-flaky test.
+
+The major version is for the breaking changes below, not for a rewrite. Most stores will notice
+only the reindex.
+
+### Breaking
+
+- **Every stored vector is invalidated and will be re-embedded on the next reindex.** Batch
+  composition changes what a q8 model produces for a given text — measured up to 4.79e-2 cosine —
+  so write-time embedding and `reindex --vectors` disagreed about the same atom, and over 120 real
+  queries the top-10 order moved for 13 of them. Reindex now embeds one text per forward pass so
+  the two agree. The shape of the batch is therefore an input to the vector, and it is now part of
+  the vector's identity, which is what makes rows written by an older build invalidate rather than
+  linger. Run `knowl reindex --vectors` after upgrading.
+
+- **`.cmd` and `.bat` skill entrypoints are refused, and `autoRun` now defaults to `false`.**
+  Windows re-parses a batch file's command line *after* Node has quoted it, under rules that do
+  not honour `\"` (BatBadBut / CVE-2024-24576), so no argv quoting can make them safe — Node itself
+  has refused to spawn them without an explicit shell since April 2024. `.cmd` was the *promoted*
+  path here and the tests used it as the canonical example. A hand-rolled escape was attempted
+  during research and was still injectable on the first try, so it is dropped rather than escaped:
+  `quoteShellArg` is deleted, and a `shell` entrypoint now refuses arguments outright instead of
+  quoting them into a command string. Use `.ps1`, `.js` or `.sh`, and pass values through the
+  `KNOWL_*` environment.
+
+- **MCP tool arguments are validated against the schema each tool publishes.** The SDK validates
+  the *envelope* of a `tools/call`, never the tool's own `inputSchema`, so every constraint eleven
+  tools declared was decorative. Calls that were silently accepted are now refused: an out-of-range
+  `confidence`, a negative `maxChars`, a `banana` timestamp, an unbounded `limit`, a missing
+  required field. One validator at dispatch closed seven findings.
+
+- **The relevance floor reports instead of deleting, and `MIN_VECTOR_RELEVANCE` is gone.** A query
+  below the floor used to return nothing, which the caller could not tell apart from an empty store
+  or a missing index — and it deleted real answers: 23 of 110 answerable queries on
+  `semantic-suite.json`, Recall@10 0.9818 → 0.7909. Results now come back ranked and carry
+  `abstained`, with the verdict stated in words. A caller keyed on "empty means miss" must read
+  that flag or the notice. See also the per-model floors under **Changed**.
+
+- **Export format is now v3, and imported knowledge stays foreign.** Importing a stranger's export
+  published *their* rows to your peers — no join, no promote, no flag — because peers filter on
+  `visibility` with no origin predicate and an imported row was indistinguishable from one you
+  wrote. An export now names the workspace and repo that wrote it; a foreign file may update
+  content but never ownership or visibility, and imported rows are stamped `import:` so `join`
+  cannot claim them and `promote` refuses them with a reason. v1 and v2 files still import, and
+  their items are attributed to an unknown origin rather than to you.
+
+### Security
+
+- **Reading a peer created a database inside that peer's repository.** `file:` creates, and
+  `query_only` applies only after the connection is open, so every read-only open of a peer with
+  no database wrote an empty one into its `.knowl/` — reached from federated query, the ownership
+  guard, the cross-repo overlap check and peer change detection.
+
+- **The ownership guard failed open when the owning peer was not checked out.** It answered "not
+  foreign" when it meant "I could not look", so on a partial checkout — two of five repos on a
+  laptop, the documented case — the guard was simply off for every repo that was not there. It now
+  refuses an operation whose ownership it cannot establish, and checks *every* id an operation
+  touches rather than only the one it is named after.
+
+- **`$HOME` was treated as a Knowl repository**, because a bare `.knowl` directory is
+  indistinguishable from a project marker and `~/.knowl` is where machine-local state lives. That
+  admitted a real home directory to `upgrade --all` and `doctor --fix`, which snapshot and migrate.
+  Discovery now requires `.knowl/config.json`. Reproduced live during remediation.
+
+- Statement text and bound parameters no longer leave the process in an MCP error message.
+
+### Added
+
+- **Retention for the three things that only ever grew.** Snapshots keep the newest 3 and say what
+  they pruned; commit payloads have a 90-day horizon; and the shared model cache is pruned to what
+  some repository on the machine still names, 30 days after anything last touched it — 3,187 MB →
+  335 MB in the measured case. Machine-wide rather than per-repo, because the cache is, and it
+  fails closed: a registry that cannot be read prunes nothing.
+
+### Changed
+
+- **The relevance floor is one value per model.** A cosine scale belongs to the model that produced
+  it, and one constant could not be right for five. Measured over the same 110 on-topic queries and
+  15 off-topic probes on one corpus, `0.30` mislabelled 24 of 110 real answers on arctic and fired
+  **not once** on granite, granite-97m or bge — so on the default preset the feature was dead. Per
+  model, all five now mislabel 0 of 110 while catching 11–14 of 15. A model nobody has measured
+  gets no floor and does not abstain, rather than borrowing another model's number. The
+  scale-free alternative — judging how far the top result stands out from the rest — was measured
+  and is worse on every model, because a query that finds nothing still produces a peaked
+  distribution. `docs/evals/per-model-floor.md`.
+
+- **Ranking is a convex combination, not additive boosts on a fused rank.** RRF deliberately
+  destroys magnitude, so an additive constant has nothing to be a proportion *of*: at a fixed
+  cosine of 0.50 the standing terms alone moved a result 0.204, which is 96% of the entire range
+  this file documents as a legitimate query. Alpha was swept over 2,149 cases; priors are bounded
+  multipliers applied after the floor, so a prior may change where an item sits but never whether
+  it is returned.
+
+- **`knowl query` and `knowl_query` rank by the same engine.** The CLI had no test and had drifted
+  onto different rules than the MCP tool answering the same question. Both now report the
+  calibrated score.
+
+- **The startup banner is printed after the handshake, not after initialization**, and names its
+  repository on the first line.
+
+### Fixed
+
+- **Snapshot restore cleared 5 tables while the delete cascaded into 8.** Assertions, evidence,
+  access and drift state were emptied and never refilled, and because
+  `updateKnowledgeItemWithCommit` refuses a content edit on an item with no open assertion, a
+  restored store looked intact and then rejected every write to it — while the audit that runs
+  immediately afterwards reported success, having never checked assertions. The table set is now
+  derived from the schema rather than hand-listed, and a restore that fails its audit names the
+  pre-restore snapshot and the command to put it back.
+
+- **Transcript search returned zero hits for any query containing `.`, `-` or `/`.** Tokens were
+  stripped to word characters and glued together, so `index-pass.ts` became `indexpassts`, which
+  the tokenizer can never have produced. Filenames, paths, domains and versions — the most natural
+  things to search a transcript for — all matched nothing. Transcript discovery separately missed
+  282 files (34.8%).
+
+- **GC hard-deleted the richer of two duplicates.** The duplicate key is category, title and
+  content, so reasoning, tags, paths, provenance, evidence and the assertion trail were invisible
+  to it, and the survivor was then chosen by confidence and recency alone. A delete is the one GC
+  action with no undo, so it now has to be provably redundant first; when neither twin subsumes the
+  other, both are kept.
+
+- **`withClientTransaction` raised `SQLITE_ERROR`, not `SQLITE_BUSY`**, on a collision, so no retry
+  anywhere recognised it. A failed batch ingest left rows with no commit record; a batch now lands
+  whole or not at all.
+
+- **`doctor` could not see the gap it was written to find** — its coverage check omitted the
+  `profile_fingerprint` predicate every read path applies.
+
+- **Four tests were asserting the defects they covered**, including the secret-leak regression
+  guard, which set no environment variable, so `${OPENAI_API_KEY}` resolved to `''` and it passed
+  whether or not the fix was present.
+
+### Performance
+
+| | before | after |
+| --- | --- | --- |
+| Embedding reindex (10,050 rows) | 88,549 ms | **2,220 ms** |
+| Blast-radius scan @ 100k commits | 14.2 ms | **0.007 ms** |
+| Transcript hit rendering | 218 ms / 15.8 MB | **3.8 ms / ≤64 KB** |
+| `commandExists` (6 lookups) | 1,483 ms | **38 ms** |
+| `knowl --version` module graph | 339 modules | **42** |
+
+Dependencies are now bundled, which takes the lifecycle hook from ~2.5s to ~0.9s with no source
+change — it runs as a fresh process per agent tool call, so it pays startup hundreds of times a
+session.
+
+### Known limits
+
+- `src/transcripts/embed-pass.ts` still batches, and shares the non-reproducibility the atom path
+  just fixed. The atom path took one-text-per-pass for free; the transcript path is short-message
+  shaped, where unbatching costs a measured ~2.7×. Recorded as a decision to take rather than
+  patched blind.
+- The per-model floors are measured on one 50-fixture corpus with 15 off-topic probes. They are
+  good defaults, not universal constants, and `minRelevance` is a parameter so a re-sweep is a
+  measurement rather than a patch.
+
 ## 2.17.0 — 2026-08-04
 
 Two fixes in this release came from [@William-Sommers](https://github.com/William-Sommers), in
