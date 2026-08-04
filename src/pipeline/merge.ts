@@ -1,4 +1,4 @@
-import { getDb } from '../store/database.js';
+import { withClientTransaction } from '../store/database.js';
 import * as repo from '../store/repository.js';
 import { VerifiedAtomAction } from './verify.js';
 import { CommitChange, KnowledgeItem } from '../core/types.js';
@@ -23,7 +23,6 @@ export async function runMerge(
   actions: VerifiedAtomAction[],
   options: MergeOptions = {}
 ): Promise<MergeResult> {
-  const db = getDb();
   const commitMessage = options.commitMessage || 'Merge knowledge updates';
   const autoResolve = options.autoResolveContradictions ?? false;
 
@@ -52,8 +51,9 @@ export async function runMerge(
   }
 
   try {
-    // Run the merge in a single transaction
-    await db.transaction(async (tx) => {
+    // Run the merge in a single transaction. Client-level, not db.transaction: see
+    // withClientTransaction for the measurement.
+    await withClientTransaction(async (tx) => {
       for (const action of actionsToApply) {
         if (action.action === 'insert') {
           const newItem = await repo.createKnowledgeItem(
