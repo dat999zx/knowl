@@ -7,11 +7,16 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
   title: text('title').notNull(),
   content: text('content').notNull(),
   reasoning: text('reasoning'),
-  alternatives: text('alternatives', { mode: 'json' }), // string[]
-  tags: text('tags', { mode: 'json' }), // string[]
+  // `$type` on each JSON column rather than a comment saying the same thing: without it
+  // drizzle infers `unknown`, and every mapper has to restate the shape as a cast. A cast
+  // is only as good as the reader who wrote it -- `conflictScope` was missed for exactly
+  // that reason and reached `KnowledgeItem` typed from a hole. Compile-time only: `$type`
+  // changes no column definition, so the generated DDL is byte-identical.
+  alternatives: text('alternatives', { mode: 'json' }).$type<string[]>(),
+  tags: text('tags', { mode: 'json' }).$type<string[]>(),
   source: text('source'),
   sourceCommit: text('source_commit'),
-  affectedPaths: text('affected_paths', { mode: 'json' }), // string[]
+  affectedPaths: text('affected_paths', { mode: 'json' }).$type<string[]>(),
   contentHash: text('content_hash'),
   /**
    * Fingerprint of the fields that decide lifecycle rather than content: status, freshness,
@@ -36,7 +41,7 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
   tierSince: text('tier_since'),
   /** 'observed' | 'user_stated' | 'inferred'; NULL on rows written before the column existed. */
   provenance: text('provenance'),
-  conflictKey: text('conflict_key'), conflictScope: text('conflict_scope', { mode: 'json' }), conflictExclusive: integer('conflict_exclusive', { mode: 'boolean' }).notNull().default(false),
+  conflictKey: text('conflict_key'), conflictScope: text('conflict_scope', { mode: 'json' }).$type<Record<string, unknown>>(), conflictExclusive: integer('conflict_exclusive', { mode: 'boolean' }).notNull().default(false),
   supersededById: text('superseded_by_id'),
   version: integer('version').notNull().default(1),
   createdAt: text('created_at').notNull(),

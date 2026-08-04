@@ -90,12 +90,10 @@ export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSe
     tier: (row.tier || 'asserted') as KnowledgeTier,
     tierSince: (row.tierSince ?? null) as string | null,
     provenance: (row.provenance ?? null) as KnowledgeProvenance | null,
-    alternatives: row.alternatives as string[] | null,
-    tags: row.tags as string[] | null,
-    affectedPaths: row.affectedPaths as string[] | null,
-    // The fourth JSON column, and the one this mapper used to leave at drizzle's `unknown`
-    // while naming its siblings.
-    conflictScope: row.conflictScope as Record<string, unknown> | null,
+    // alternatives, tags, affectedPaths and conflictScope used to be restated as casts here.
+    // The columns carry `$type` now, so `...row` already has them right -- and a fifth JSON
+    // column added later arrives typed instead of silently `unknown`, which is how
+    // conflictScope was missed.
   };
 }
 
