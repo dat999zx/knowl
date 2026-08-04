@@ -1,14 +1,17 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfig, upgradeConfigDefaults } from '../core/config.js';
+import type { ProjectConfig } from '../core/types.js';
 import { installKnowlProjectGuidance, KnowlProjectGuidanceInstallResult } from '../core/agents-guidance.js';
 import { installKnowlGitignoreEntry } from '../core/gitignore.js';
 import { closeDb, initDb } from '../store/database.js';
 import * as repo from '../store/repository.js';
-import { runStoreRetention, type RetentionReport } from '../store/retention.js';
+import { runStoreRetention, type ModelCacheRetention, type RetentionReport } from '../store/retention.js';
+import { resolveVectorProfile } from '../core/vector-profile.js';
 import { backfillOriginRepo } from '../workspace/membership.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
-import { recordKnownRepo } from './repo-registry.js';
+import { knowlHome } from '../workspace/paths.js';
+import { listKnownRepos, recordKnownRepo } from './repo-registry.js';
 
 export type UpgradeResult = {
   project: Awaited<ReturnType<typeof repo.createProject>>;
@@ -20,6 +23,32 @@ export type UpgradeResult = {
   /** What retention removed. Reported so a repository never shrinks without saying so. */
   retention: RetentionReport;
 };
+
+/**
+ * Every model any repository on this machine names, for the cache prune.
+ *
+ * Machine-wide because the cache is: one repo's upgrade must not remove weights another
+ * repo's config depends on, and the running `serve` that would notice is not this process.
+ * The current repository is included by its caller even when the registry has not caught up.
+ *
+ * Best-effort per repository, but the *set* is fail-closed: an empty result prunes nothing
+ * (see `pruneModelCache`), so a registry that cannot be read costs disk rather than weights.
+ */
+async function modelsNamedOnThisMachine(projectRoot: string, config: ProjectConfig): Promise<string[]> {
+  const named = new Set<string>([resolveVectorProfile(config).model]);
+
+  for (const root of await listKnownRepos()) {
+    if (path.resolve(root) === path.resolve(projectRoot)) continue;
+    try {
+      named.add(resolveVectorProfile(await loadConfig(root)).model);
+    } catch {
+      // A repository whose config will not load names nothing we can act on. It also cannot
+      // be pruned *for*, which is why the horizon in pruneModelCache exists as a second guard.
+    }
+  }
+
+  return [...named];
+}
 
 /**
  * Bring an existing repository up to the current release: config defaults, schema, guidance
@@ -47,7 +76,16 @@ export async function upgradeExistingRepository(projectRoot: string, fallbackNam
   // Retention runs here because this is the command that already visits every repository on
   // the machine -- the same habit that grew `.knowl/snapshots` to 1.12 GB now pays for it.
   // Best-effort inside: housekeeping must never be why an upgrade fails.
-  const retention = await runStoreRetention(projectRoot);
+  //
+  // `src/ai/embeddings.ts` owns where the model cache *is*; this only says which two
+  // directories retention may move things between, in one expression so a change there has
+  // one obvious place to meet.
+  const modelCache: ModelCacheRetention = {
+    legacyDir: path.join(projectRoot, '.knowl', 'models'),
+    sharedDir: path.join(knowlHome(), 'models'),
+    keepModels: await modelsNamedOnThisMachine(projectRoot, config),
+  };
+  const retention = await runStoreRetention(projectRoot, modelCache);
   await closeDb();
 
   // The join-time backfill runs exactly once, so items written between joining a workspace

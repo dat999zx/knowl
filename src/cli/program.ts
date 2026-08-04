@@ -248,6 +248,24 @@ function printUpgradeStatus(result: UpgradeResult) {
   }
   if (sessions > 0) console.log(`Retention: removed ${sessions} expired memory session(s)`);
   if (claims > 0) console.log(`Retention: removed ${claims} stale hook debounce file(s)`);
+
+  // Gigabytes move here on the first upgrade after this release, so it says so in megabytes
+  // and names anything it declined to decide about.
+  const models = result.retention.models;
+  const mb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  if (models.adopted > 0 || models.deduplicated > 0) {
+    console.log(
+      `Models: moved ${models.adopted} file(s) to the shared cache and dropped ` +
+      `${models.deduplicated} already-shared duplicate(s), freeing ${mb(models.bytesFreed)} in this repo`,
+    );
+  }
+  for (const conflict of models.conflicts) {
+    console.log(`Models: kept both copies of ${conflict} -- the repo copy and the shared one differ in size`);
+  }
+  if (models.pruned.length > 0) {
+    console.log(`Models: removed ${models.pruned.length} cached model(s) no repository names, freeing ${mb(models.prunedBytes)}`);
+    for (const pruned of models.pruned) console.log(`        ${pruned}`);
+  }
 }
 
 program
