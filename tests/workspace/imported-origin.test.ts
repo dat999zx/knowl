@@ -254,6 +254,68 @@ describe('imported knowledge is not the importer\'s to claim or publish', () => 
     expect((await rowsOf(B)).get('A owns the deploy key')?.visibility).toBe('repo');
   });
 
+  it('claims a file for this repo when a person asserts --mine, at repo visibility only', async () => {
+    // The restore case: A is this same repo on a machine that is now off, wiped, or being
+    // restored from. No file can prove that -- an unlinked export has no identity to carry --
+    // so the assertion has to come from the person, and what they can honestly assert is
+    // authorship. Whether it was ever published is a separate, irreversible act with its own
+    // command, so --mine claims ownership and leaves visibility alone.
+    await session(A, async () => {
+      const id = await write(A, 'A owns the deploy key', 'The stranger\'s repo knows where the key lives.');
+      await getClient().execute({
+        sql: "UPDATE knowledge_items SET visibility = 'workspace' WHERE id = ?",
+        args: [id],
+      });
+      await exportKnowledge('local', DUMP, A);
+    });
+
+    const config = await loadConfig(B);
+    await saveConfig(B, { ...config, workspace: { workspace: WS, repo: 'b' } });
+    const manifest = createManifest(WS, null);
+    manifest.repos.push({ name: 'b', path: B, addedAt: new Date().toISOString() });
+    await writeManifest(workspaceManifestPath(WS), manifest);
+
+    const result = await session(B, () => importKnowledge(DUMP, { projectRoot: B, claimAsMine: true }));
+
+    const row = (await rowsOf(B)).get('A owns the deploy key');
+    expect(row?.originRepo).toBe('b');
+    // The half --mine must never assert: the file said 'workspace' and it is not honoured.
+    // Claiming is not publishing -- the same line `backfillOriginRepo` draws on join.
+    expect(row?.visibility).toBe('repo');
+    expect(result.ownership).toBe('claimed');
+  });
+
+  it('leaves a claimed row unowned in an unlinked repo, so a later join picks it up', async () => {
+    // Restoring into a fresh clone that is in no workspace yet. A locally-written row would
+    // hold NULL here, and --mine says "treat these as locally written", so they hold NULL too
+    // and the join backfill claims them exactly as it claims everything else this repo wrote.
+    await session(A, async () => {
+      await write(A, 'A owns the deploy key', 'The stranger\'s repo knows where the key lives.');
+      await exportKnowledge('local', DUMP, A);
+    });
+    await session(B, () => importKnowledge(DUMP, { projectRoot: B, claimAsMine: true }));
+
+    expect((await rowsOf(B)).get('A owns the deploy key')?.originRepo).toBeNull();
+
+    await joinWorkspace({ projectRoot: B, workspaceName: WS, repoName: 'b' });
+    const promoted = await promoteItems({
+      projectRoot: B, repoName: 'b', categories: [...KNOWLEDGE_CATEGORIES], apply: true,
+    });
+
+    expect(promoted.items.map(item => item.title)).toEqual(['A owns the deploy key']);
+  });
+
+  it('reports how a file was attributed, so silent stamping is visible', async () => {
+    await session(A, async () => {
+      await write(A, 'A owns the deploy key', 'The stranger\'s repo knows where the key lives.');
+      await exportKnowledge('local', DUMP, A);
+    });
+    const result = await session(B, () => importKnowledge(DUMP, { projectRoot: B }));
+
+    // Without this the rows are stamped and nothing in the output says so.
+    expect(result.ownership).toBe('attributed');
+  });
+
   it('treats a version-2 file, which names no exporter, as unknown rather than as mine', async () => {
     await session(A, async () => {
       await write(A, 'A owns the deploy key', 'The stranger\'s repo knows where the key lives.');
