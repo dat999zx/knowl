@@ -14,7 +14,17 @@ export type NormalizedHookEventName =
   | 'turn-stop'
   | 'session-stop'
   | 'agent-start'
-  | 'agent-stop';
+  | 'agent-stop'
+  /**
+   * A tool call the host is asking about *before* running it, and whose answer decides
+   * whether it runs at all.
+   *
+   * Separate from `session-event` because tense is the whole point: a post-tool event
+   * records what happened and its return value is advice, while this one is a question the
+   * host is waiting on. Folding the two together would let a consumer record a write that
+   * was then refused, and answer a refusal request for a call that already executed.
+   */
+  | 'tool-precheck';
 
 export interface NormalizedHostHook {
   host: HookHost;
@@ -314,6 +324,29 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
   const event = profile.normalizedEvent(eventName);
   if (!event) throw new Error(`Unsupported ${normalizedHost} hook event: ${eventName}`);
   if (normalizedHost === 'generic') return normalizeGeneric(event, raw, projectRoot, ids);
+  // Checked before every other event because this one fires ahead of *every* tool call --
+  // the only branch here whose cost is paid on that path -- and because the host is blocked
+  // on the answer, so work done before recognising it is latency in front of the agent.
+  if (event === 'tool-precheck') {
+    const toolName = stringValue(raw.tool_name) ?? stringValue(raw.toolName);
+    return {
+      host: normalizedHost,
+      event,
+      ...ids,
+      ...agent,
+      projectRoot,
+      // The same `changedPaths` helper the post-tool path uses, not a second copy: a gate
+      // matches these against paths recorded by earlier events, and two spellings of one
+      // file (absolute vs relative, backslashes vs forward) miss each other silently --
+      // a gate that never fires looks exactly like a gate with nothing to report.
+      // The name keeps the post-tool field's spelling for the same reason; here it means
+      // "about to change", and only the event name says which tense applies.
+      payload: { changedPaths: changedPaths(projectRoot, { ...raw, ...toolInput(raw) }) },
+      // Spread, so a host that named no tool leaves the field absent rather than empty --
+      // see `toolName` on NormalizedHostHook.
+      ...(toolName ? { toolName } : {}),
+    };
+  }
   if (event === 'session-start' || event === 'turn-start') {
     return { host: normalizedHost, event, ...ids, projectRoot, title: event === 'turn-start' ? 'Agent turn' : 'Agent session', payload: {} };
   }
@@ -363,5 +396,11 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
 
 export function normalizeHostHook(host: string, eventName: string, raw: Record<string, unknown>): NormalizedHostHook {
   const normalized = normalizeHostHookUnchecked(host, eventName, raw);
+  // A precheck is answered and thrown away, never written, so the write validator is
+  // guarding nothing here -- and it rejects on a sensitive path, which would turn "the
+  // agent is about to touch .env" into a hook error printed in front of that call and
+  // every retry of it. Anything a consumer does go on to persist passes the validator at
+  // the store, which is the door that actually protects the row.
+  if (normalized.event === 'tool-precheck') return normalized;
   return validateNormalizedHostHook(normalized);
 }

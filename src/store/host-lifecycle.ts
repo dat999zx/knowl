@@ -9,6 +9,7 @@ import { loadConfig } from '../core/config.js';
 import { isImpactEnabled } from './impact-config.js';
 import { detectCertainImpactBestEffort, openFindingsForSession } from './impact.js';
 import { recordReadBestEffort, releaseReadSetBestEffort, repoRelativePath } from './read-set.js';
+import { shouldRefuseWrite } from './write-gate.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';
 import {
   ChangeSummary,
@@ -526,6 +527,49 @@ async function runToolEventImpact(input: NormalizedHostHook, sessionId: string):
   }
 }
 
+/**
+ * The pre-write branch: refuse this one call when the session is about to write over something it
+ * read and has not seen since.
+ *
+ * Ordered by cost, and the first three checks touch nothing. This fires ahead of *every* tool call
+ * with the host blocked on the answer, so the tool-name filter is what keeps it off the path of
+ * every read, grep and shell command the agent makes.
+ *
+ * The session binding is looked up, never created. A pre-tool event is an observation of something
+ * about to happen; a session that does not exist yet has read nothing, and bootstrapping one here
+ * would mint memory sessions from hook traffic.
+ *
+ * Wrapped whole, following `flagCorrectionSiblingsBestEffort`. Every failure here allows the
+ * write: the worst outcome this subsystem can produce is not a missed detection, it is a person
+ * whose agent cannot edit a file because a memory server had an opinion about it.
+ */
+async function runWriteGate(input: NormalizedHostHook): Promise<HostLifecycleResult> {
+  try {
+    if (!IMPACT_WRITE_TOOLS.has(input.toolName ?? '')) return { accepted: true };
+    const paths = impactChangedPaths(input.payload);
+    if (paths.length === 0) return { accepted: true };
+
+    // Absent on every host without a pre-tool callback of its own -- capability by return value,
+    // the rule the rest of this interface follows. A host that cannot refuse has no use for the
+    // answer, and asking anyway would spend the gate's one-shot on a refusal nobody could deliver.
+    const { denyToolCall } = hostProfile(input.host);
+    if (typeof denyToolCall !== 'function') return { accepted: true };
+
+    const session = await findHostSession(bindingKey(input, 'turn'))
+      ?? await findHostSession(bindingKey(input, 'session'));
+    if (!session) return { accepted: true };
+
+    const decision = await shouldRefuseWrite(input.projectRoot, session.id, paths);
+    if (!decision.deny || !decision.reason) return { accepted: true, sessionId: session.id };
+    // A host that declines to produce an envelope costs this one refusal: the gate has already
+    // spent its one-shot, so the write proceeds and the finding stays open for the card to carry.
+    // Silence is the right degradation -- the alternative is holding the block armed for a host
+    // that has no way to explain it, which is a refusal with no reason attached.
+    return { accepted: true, sessionId: session.id, hostOutput: denyToolCall(decision.reason) };
+  } catch {
+    return { accepted: true };
+  }
+}
 
 /**
  * Release a memory session's read-set when that session stops holding beliefs -- which is when
@@ -573,6 +617,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
   // this function does not recognise falls through to the session-stop handler at the bottom, and
   // this one fires ahead of every tool call. It captures nothing, advances no watermark and
   // finishes nothing -- the tool has not run yet, and the only question here is whether it should.
+  if (input.event === 'tool-precheck') return runWriteGate(input);
 
   if (input.event === 'session-start') {
     const recovered = await recoverAbandonedSessions();
