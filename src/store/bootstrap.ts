@@ -193,6 +193,96 @@ const SCHEMA_STATEMENTS = [
     checked_at TEXT NOT NULL
   );`,
 
+  /**
+   * What a session actually read, and the hash of it AT READ TIME.
+   *
+   * The one thing this store has never had. The per-tool path stream is already captured
+   * (`host-hook.ts` -> `session-capture.ts`), but nothing keys a path to a locator, hashes it
+   * at the moment of the read, or scopes it to live work -- so "has anything I relied on moved
+   * since I looked at it" is currently unanswerable, and every staleness check has to fall back
+   * to path/title matching over the whole store.
+   *
+   * Filled from that captured stream and never from an agent reporting its own reads.
+   * CooperBench measures agents defecting from their own stated commitments 32% of the time,
+   * so nothing load-bearing may depend on an agent declaring anything about itself.
+   *
+   * `observed_hash` is NOT NULL because it is the entire mechanism. A row without the hash as
+   * of the read cannot answer the only question the table exists to answer, and a nullable
+   * column is an invitation for the capture path to write those rows silently and for the
+   * detector to read their absence as "unchanged".
+   *
+   * No CHECK on `locator`, deliberately: the shape hazard is real -- `Grep` carries a `path`
+   * argument through the stdin filter, so it can emit a *directory* where every other tool
+   * emits a file -- but rejecting it belongs at insert, where the caller can be told which
+   * tool produced the bad locator. A CHECK would only turn that into an opaque SQLITE_CONSTRAINT
+   * inside a best-effort capture path that swallows it.
+   *
+   * No foreign key to `memory_sessions` either. Sessions expire and are collected on their own
+   * schedule, and a cascade would take the read-set with them -- but a released read-set is the
+   * evidence that a finding was justified, which is the denominator precision is computed
+   * against. It is swept by GC on its own terms instead of vanishing with its session.
+   *
+   * `released_at` NULL means live work; release happens at task-finish and session-stop. An
+   * unreleased row makes a historical read look like something an agent is still relying on,
+   * which is a false positive -- and tool-side false positives are the expensive kind, measured
+   * at ~20.8% mean accuracy cost against the agent that receives them.
+   */
+  `CREATE TABLE IF NOT EXISTS work_read_sets (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    agent_id TEXT,
+    task_id TEXT,
+    locator TEXT NOT NULL,
+    observed_hash TEXT NOT NULL,
+    tool_name TEXT,
+    read_at TEXT NOT NULL,
+    released_at TEXT
+  );`,
+
+  /**
+   * One detected impact: something changed, and something that depended on it may now be wrong.
+   *
+   * Recorded whether or not anybody is told about it. That is the design, not an implementation
+   * detail: notification is measured at approximately zero effect twice independently
+   * (SWE-Touch finds an explicit announcement of a conflicting edit no better than the silent
+   * edit, and worse for 3 of 4 models; CooperBench finds communication halves conflicts and
+   * moves end-to-end success by an amount that is not statistically significant). What the
+   * record buys is a gate that reads it and a number that counts it.
+   *
+   * `resolution` is the column this table is really for. Every finding is adjudicated --
+   * 'repaired' | 'dismissed' | 'expired' | 'false_positive' -- which is what gives precision a
+   * denominator: 1 - false_positive/total. Nobody in this space publishes that number; STORM
+   * rejects 19-33% of writes and never evaluates whether the rejections were correct. It has to
+   * be a column or it does not exist.
+   *
+   * `affected_id` carries no foreign key because `affected_kind` decides which table it points
+   * into -- 'knowledge' is a `knowledge_items` id, 'work' is a `work_read_sets` id. The cost is
+   * that a deleted target leaves an orphan row rather than cascading, which is survivable
+   * precisely because a finding is never re-read once resolved.
+   *
+   * `tier` ('certain' | 'likely' | 'possible') decides delivery, not merely wording: only
+   * 'certain' may push and gate, everything softer is pull-only. `drift-auto.ts` already runs
+   * the 'possible' tier with `apply: false` and already refuses to act on it, having measured
+   * one commit window matching 36/301 atoms and fifteen windows matching a third of the store.
+   * This column is that judgment made explicit instead of hard-coded into one call site.
+   *
+   * `path_json` holds the edge chain that justified the finding, and is nullable because the
+   * certain tier has no chain: the session read that exact locator and there is nothing to
+   * explain.
+   */
+  `CREATE TABLE IF NOT EXISTS impact_findings (
+    id TEXT PRIMARY KEY,
+    cause_locator TEXT NOT NULL,
+    cause_session TEXT,
+    affected_kind TEXT NOT NULL,
+    affected_id TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    path_json TEXT,
+    detected_at TEXT NOT NULL,
+    resolution TEXT,
+    resolved_at TEXT
+  );`,
+
   `CREATE INDEX IF NOT EXISTS idx_ki_cat_status ON knowledge_items(category, status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_status ON knowledge_items(status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_updated ON knowledge_items(updated_at);`,
@@ -217,6 +307,38 @@ const SCHEMA_STATEMENTS = [
   // The lookup blast radius actually makes: "which commit inserted this item". Covering, so
   // the plan never has to touch the table itself.
   `CREATE INDEX IF NOT EXISTS idx_knowledge_commit_items_item ON knowledge_commit_items(item_id, action, commit_id);`,
+
+  // The detector's query, and the one that has to be cheap: a write lands on exactly one
+  // locator, and the question is who holds an unreleased read of it. `locator` leads because
+  // that is the equality the write supplies; `released_at` trails so the live rows for a
+  // locator are a contiguous range rather than a filter applied over every read the project
+  // has ever recorded. Without it this runs per tool call over a table that only grows, which
+  // is the shape the plan already identifies as fatal on a per-call path.
+  `CREATE INDEX IF NOT EXISTS idx_work_read_sets_locator ON work_read_sets(locator, released_at);`,
+  // Everything one session still holds. Serves the release path as much as the read path:
+  // task-finish and session-stop rewrite a whole session's read-set at once, and that is a
+  // range scan on this index rather than a table scan per row.
+  `CREATE INDEX IF NOT EXISTS idx_work_read_sets_session ON work_read_sets(session_id, released_at);`,
+  // The write gate's query -- "does this session have unresolved findings at the tier allowed to
+  // block" -- which runs in `PreToolUse` in front of every write, with a user waiting on the tool
+  // call behind it. That is a far hotter path than the task-finish gate this index was first
+  // written for, so the seek matters more now, not less.
+  //
+  // `resolution` leads rather than `tier` because open-ness is the prefix every caller shares:
+  // the gate adds `tier = 'certain'`, and the pull tool takes tier as an *optional* filter, so
+  // a tier-first index would leave the unfiltered pull to a scan. `resolution IS NULL` seeks an
+  // index in SQLite exactly as an equality does, so an open finding is a seek and not a filter.
+  //
+  // The trailing pair makes it covering for the join that resolves a finding to the session
+  // that owns it: `affected_id` reaches the read-set row by primary key from here, so the gate
+  // never touches the findings table itself.
+  `CREATE INDEX IF NOT EXISTS idx_impact_findings_open ON impact_findings(resolution, tier, affected_kind, affected_id);`,
+  // The other direction, which detection uses on every candidate: given a thing -- a read-set
+  // row, a knowledge item -- is there already an open finding against it? Re-reporting the same
+  // impact is not a duplicate row problem, it is a repeated notice into a channel whose noise
+  // is measured at ~20.8% mean accuracy cost, so this lookup happens before every insert and
+  // must not be a scan.
+  `CREATE INDEX IF NOT EXISTS idx_impact_findings_affected ON impact_findings(affected_kind, affected_id, resolution);`,
 
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
