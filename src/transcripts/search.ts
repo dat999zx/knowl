@@ -2,7 +2,7 @@ import type { Client } from '@libsql/client';
 import type { KnowledgeEmbedder } from '../store/vector-index.js';
 import { readTranscriptIndexState } from './database.js';
 import { dotQuantized } from './quantize.js';
-import { readMessagesAt } from './read.js';
+import { readMessagesFor } from './read.js';
 
 export type TranscriptHit = {
   messageId: number;
@@ -12,6 +12,13 @@ export type TranscriptHit = {
   line: number;
   role: 'user' | 'assistant';
   score: number;
+  /**
+   * Where the message's line starts, and how long its text was when indexed. Carried so the
+   * body can be read with a seek instead of a scan, and so a stale offset can be rejected
+   * rather than rendered as the wrong message. Null on rows indexed before offsets existed.
+   */
+  byteOffset?: number | null;
+  chars?: number | null;
   /** Filled in by the caller from the source file; never stored. */
   text?: string;
 };
@@ -179,6 +186,7 @@ export async function lexicalRank(
 
   const rows = (await client.execute({
     sql: `SELECT m.id, m.path, m.session_id, m.parent_session_id, m.line, m.role,
+                 m.byte_offset, m.chars,
                  bm25(transcript_fts) AS rank
           FROM transcript_fts
           JOIN transcript_messages m ON m.id = transcript_fts.rowid
@@ -198,6 +206,8 @@ export async function lexicalRank(
         parentSessionId: row.parent_session_id === null ? null : String(row.parent_session_id),
         line: Number(row.line),
         role,
+        byteOffset: row.byte_offset === null || row.byte_offset === undefined ? null : Number(row.byte_offset),
+        chars: row.chars === null || row.chars === undefined ? null : Number(row.chars),
         score: -Number(row.rank) * (ROLE_WEIGHTS[role] ?? 1),
       };
     })
@@ -298,7 +308,8 @@ export async function semanticRank(
   }
 
   const rows = (await client.execute({
-    sql: `SELECT m.id, m.path, m.session_id, m.parent_session_id, m.line, m.role, v.scale, v.vec
+    sql: `SELECT m.id, m.path, m.session_id, m.parent_session_id, m.line, m.role,
+                 m.byte_offset, m.chars, v.scale, v.vec
           FROM transcript_vectors v
           JOIN transcript_messages m ON m.id = v.message_id
           WHERE v.fingerprint = ?${scope}`,
@@ -313,6 +324,8 @@ export async function semanticRank(
       parentSessionId: row.parent_session_id === null ? null : String(row.parent_session_id),
       line: Number(row.line),
       role: String(row.role) as 'user' | 'assistant',
+      byteOffset: row.byte_offset === null || row.byte_offset === undefined ? null : Number(row.byte_offset),
+      chars: row.chars === null || row.chars === undefined ? null : Number(row.chars),
       score: dotQuantized(queryVector, new Uint8Array(row.vec as ArrayBuffer), Number(row.scale)),
     }))
     .sort((left, right) => right.score - left.score)
@@ -382,7 +395,8 @@ export async function searchTranscripts(
   const fused = fuseRankings(rankings, limit);
 
   // Bodies are read only for what is actually returned -- ranking never touches disk. Grouped
-  // by file: five hits in one session is one pass, not five whole-file reads.
+  // by file so one file is opened once for all of its hits, and each hit inside it is read by
+  // seeking to the offset the indexer recorded rather than counting newlines from byte zero.
   const byFile = new Map<string, TranscriptHit[]>();
   for (const hit of fused) {
     const group = byFile.get(hit.path);
@@ -390,7 +404,10 @@ export async function searchTranscripts(
     else byFile.set(hit.path, [hit]);
   }
   for (const [filePath, group] of byFile) {
-    const bodies = await readMessagesAt(filePath, group.map(hit => hit.line));
+    const bodies = await readMessagesFor(
+      filePath,
+      group.map(hit => ({ line: hit.line, byteOffset: hit.byteOffset, chars: hit.chars })),
+    );
     for (const hit of group) hit.text = bodies.get(hit.line)?.text;
   }
 

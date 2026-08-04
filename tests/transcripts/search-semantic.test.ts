@@ -215,8 +215,32 @@ describe('searchTranscripts', () => {
     expect(result.hits[0].text).toBe('the reindex ran out of memory');
   });
 
-  // Rendering hits must group by file for the same reason the embedder does.
-  it('reads each source file once when several hits share it', async () => {
+  // K-47. Rendering a hit used to stream its transcript from byte 0 -- measured at 224 ms and
+  // 16.1 MB of I/O to produce a ~400-byte message. The indexer already knew the byte offset of
+  // every line it wrote; it just threw it away. What matters is bytes read, not passes taken:
+  // seeking to each of six hits reads six small windows, where one pass from zero reads
+  // everything up to the last of them.
+  it('reads a hit by seeking to its recorded offset rather than from the start of the file', async () => {
+    const filler = Array.from({ length: 400 }, (_, i) => line('user', `filler note ${i}`)).join('');
+    await seed('a', filler + line('user', 'the distinctive memory marker'));
+    const client = await buildIndex();
+
+    const offset = Number((await client.execute(
+      "SELECT byte_offset FROM transcript_messages WHERE line = 401",
+    )).rows[0].byte_offset);
+    expect(offset).toBeGreaterThan(filler.length - 1);
+
+    vi.mocked(parse.streamProseFrom).mockClear();
+    const result = await searchTranscripts({
+      client, query: 'distinctive marker', limit: 1, projectRoot: PROJECT_ROOT,
+    });
+
+    expect(result.hits[0].text).toBe('the distinctive memory marker');
+    const starts = vi.mocked(parse.streamProseFrom).mock.calls.map(call => call[1]);
+    expect(starts).toEqual([offset]);
+  });
+
+  it('reads several hits in one file by seeking to each, never past the last of them', async () => {
     await seed('a', Array.from({ length: 6 }, (_, i) => line('user', `memory note ${i}`)).join(''));
     const client = await buildIndex();
 
@@ -224,7 +248,39 @@ describe('searchTranscripts', () => {
     const result = await searchTranscripts({ client, query: 'memory note', limit: 6, projectRoot: PROJECT_ROOT });
 
     expect(result.hits.length).toBeGreaterThan(1);
-    expect(parse.streamProseFrom).toHaveBeenCalledTimes(1);
+    expect(result.hits.every(hit => typeof hit.text === 'string')).toBe(true);
+
+    // Every read started exactly at the offset of the message it was fetching -- one window per
+    // hit, not one walk over everything up to the last one.
+    const offsets = (await client.execute('SELECT line, byte_offset FROM transcript_messages'));
+    const byLine = new Map(offsets.rows.map(row => [Number(row.line), Number(row.byte_offset)]));
+    const starts = vi.mocked(parse.streamProseFrom).mock.calls.map(call => call[1]).sort((a, b) => a - b);
+    const wanted = result.hits.map(hit => byLine.get(hit.line)!).sort((a, b) => a - b);
+    expect(starts).toEqual(wanted);
+  });
+
+  // An index built before offsets were recorded has null in that column, and its pointers still
+  // have to resolve -- by the streaming scan that was there before.
+  it('falls back to a streaming read when the row has no offset', async () => {
+    await seed('a', line('user', 'first memory note') + line('user', 'second memory note'));
+    const client = await buildIndex();
+    await client.execute('UPDATE transcript_messages SET byte_offset = NULL');
+
+    const result = await searchTranscripts({ client, query: 'second', limit: 1, projectRoot: PROJECT_ROOT });
+
+    expect(result.hits[0].text).toBe('second memory note');
+  });
+
+  // A stale offset must not render the wrong message: the indexed length is checked against
+  // what the offset actually produces, and a mismatch falls back to the scan.
+  it('refuses a byte offset that no longer points at the message it indexed', async () => {
+    await seed('a', line('user', 'first memory note') + line('user', 'second memory note here'));
+    const client = await buildIndex();
+    await client.execute('UPDATE transcript_messages SET byte_offset = 0 WHERE line = 2');
+
+    const result = await searchTranscripts({ client, query: 'second', limit: 1, projectRoot: PROJECT_ROOT });
+
+    expect(result.hits[0].text).toBe('second memory note here');
   });
 });
 

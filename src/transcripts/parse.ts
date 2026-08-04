@@ -131,6 +131,14 @@ export type ProseWatermark = { bytesConsumed: number; linesConsumed: number };
 export type ProseChunk = {
   message: ProseMessage;
   /**
+   * Absolute offset of the first byte of this message's line.
+   *
+   * Stored with the pointer so reading one message back is a seek rather than a scan. The
+   * indexer has this for free -- it is mid-stream when it yields -- and throwing it away is
+   * what made rendering a single hit cost a pass over the whole transcript.
+   */
+  byteOffset: number;
+  /**
    * The watermark that becomes correct once this message is committed: the byte offset just
    * past its line, and the line count including it.
    *
@@ -180,6 +188,7 @@ export async function* streamProseFrom(
       const newline = carry.indexOf(0x0a, cursor);
       if (newline === -1) break;
 
+      const lineStart = consumed + cursor;
       // Safe to decode here: 0x0a cannot occur inside a multi-byte UTF-8 sequence, so a
       // complete line is always a complete sequence of characters.
       const raw = carry.subarray(cursor, newline).toString('utf8');
@@ -197,7 +206,12 @@ export async function* streamProseFrom(
         }
         const prose = parsed === undefined ? null : extractProse(parsed);
         if (prose) {
-          yield { message: { line, ...prose }, bytesConsumed: consumed + cursor, linesConsumed: line };
+          yield {
+            message: { line, ...prose },
+            byteOffset: lineStart,
+            bytesConsumed: consumed + cursor,
+            linesConsumed: line,
+          };
         } else if (parsed !== undefined && onNaming) {
           // Naming entries are not prose and must not become messages -- they carry no line the
           // reader would ever want to open. Surfaced by callback so no existing caller changes.

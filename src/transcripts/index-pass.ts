@@ -251,11 +251,11 @@ async function commitBatchOn(
 
     const fresh = batch.filter(chunk => chunk.message.line > already);
 
-    for (const { message } of fresh) {
+    for (const { message, byteOffset } of fresh) {
       const inserted = await client.execute({
-        sql: `INSERT INTO transcript_messages (path, session_id, parent_session_id, line, role, chars, ts)
-              VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        args: [file.path, file.sessionId, file.parentSessionId, message.line, message.role, message.text.length, message.timestamp],
+        sql: `INSERT INTO transcript_messages (path, session_id, parent_session_id, line, role, chars, ts, byte_offset)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        args: [file.path, file.sessionId, file.parentSessionId, message.line, message.role, message.text.length, message.timestamp, byteOffset],
       });
       // The FTS rowid is the message id, which is how a hit maps back to a pointer.
       await client.execute({

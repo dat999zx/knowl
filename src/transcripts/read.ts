@@ -53,6 +53,87 @@ export async function readMessageAt(filePath: string, line: number): Promise<Tra
 }
 
 /**
+ * A stored pointer: the line, and what the index recorded about where it is.
+ *
+ * `byteOffset` is null for rows written before the column existed; `chars` is the length the
+ * indexer saw, which is what makes a stale offset detectable.
+ */
+export type MessagePointer = {
+  line: number;
+  byteOffset?: number | null;
+  chars?: number | null;
+};
+
+/**
+ * One message, read by seeking to where the indexer said its line begins.
+ *
+ * Null when the offset does not produce that message -- the file was rewritten, the row predates
+ * the column, the read failed. The caller falls back to a scan, which is slower but cannot be
+ * wrong, so a stale offset costs time rather than correctness. Rendering the *wrong body* is the
+ * one outcome this must not have, since nothing downstream could tell.
+ */
+async function readAtOffset(
+  filePath: string,
+  pointer: MessagePointer,
+): Promise<TranscriptExcerpt | null> {
+  if (typeof pointer.byteOffset !== 'number' || pointer.byteOffset < 0) return null;
+
+  // Numbered from one before the target, so the first line the stream completes is the target's.
+  const iterator = streamProseFrom(filePath, pointer.byteOffset, pointer.line - 1);
+  try {
+    const next = await iterator.next();
+    if (next.done) return null;
+
+    const { line, role, text, timestamp } = next.value.message;
+    // Two guards, because an offset is a claim about a file that may have changed since. A
+    // different line number means the offset landed mid-file somewhere else; a different length
+    // means the line moved under it.
+    if (line !== pointer.line) return null;
+    if (typeof pointer.chars === 'number' && text.length !== pointer.chars) return null;
+    return { line, role, text, timestamp };
+  } catch {
+    return null;
+  } finally {
+    // Ends the iteration, which destroys the underlying read stream. Windows keeps the file
+    // handle otherwise, and the stream would go on reading a file nobody is listening to.
+    await iterator.return({ bytesConsumed: 0, linesConsumed: 0 }).catch(() => {});
+  }
+}
+
+/**
+ * Prose for a set of stored pointers into one file.
+ *
+ * Each pointer with a usable byte offset is a seek: one read of the region the message lives in,
+ * whatever the file's size. Measured before this existed, rendering a single ~400-byte hit
+ * streamed 16.1 MB and took 224 ms, because the reader knew only the line number and had to
+ * count newlines from the start of the file to find it.
+ *
+ * Anything without a usable offset falls back to the one grouped streaming pass, which is what
+ * an index built before offsets were recorded still gets.
+ */
+export async function readMessagesFor(
+  filePath: string,
+  pointers: MessagePointer[],
+): Promise<Map<number, TranscriptExcerpt>> {
+  const found = new Map<number, TranscriptExcerpt>();
+  const unresolved: number[] = [];
+
+  for (const pointer of pointers) {
+    const excerpt = await readAtOffset(filePath, pointer);
+    if (excerpt) found.set(pointer.line, excerpt);
+    else unresolved.push(pointer.line);
+  }
+
+  if (unresolved.length > 0) {
+    for (const [line, excerpt] of await readMessagesAt(filePath, unresolved)) {
+      found.set(line, excerpt);
+    }
+  }
+
+  return found;
+}
+
+/**
  * The target message plus `context` prose turns on each side.
  *
  * Counts *turns*, not physical lines. Taking a line window and filtering it afterwards is what
