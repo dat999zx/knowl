@@ -332,6 +332,62 @@ describe('embedPendingMessages', () => {
     expect(vi.mocked(parse.streamProseFrom).mock.calls.length).toBeLessThanOrEqual(2);
   });
 
+  // K-65. The hook budget is 1,500 ms and the deadline was only ever checked *between* batches,
+  // while a batch is 32 messages of any length. One real 8,000-character message costs 7,843 ms
+  // in a single forward pass on this machine, so one batch could hold minutes of work and the
+  // budget could not refuse it. Enforcement has to happen before the call, on what it will cost.
+  it('does not start an embedding batch it cannot afford', async () => {
+    const long = 'memory '.repeat(570); // ~4,000 characters, three of them
+    await seed('a', Array.from({ length: 3 }, () => line('user', long)).join(''));
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
+    await openTranscriptDb(dbPath);
+
+    // Two milliseconds per character is a slow model, not an absurd one -- the measured local
+    // model is about one. Three of these in one batch is ~24 seconds against a 300 ms budget.
+    const slow: KnowledgeEmbedder = {
+      ...stubEmbedder(),
+      embed: async (texts: string[]) => {
+        const chars = texts.reduce((total, text) => total + text.length, 0);
+        await new Promise(resolve => setTimeout(resolve, chars / 2));
+        return texts.map(conceptVector);
+      },
+    };
+
+    const started = Date.now();
+    const result = await embedPendingMessages({ dbPath, embedder: slow, deadline: Date.now() + 300 });
+    const elapsed = Date.now() - started;
+
+    expect(result.embedded).toBe(0);
+    expect(result.complete).toBe(false);
+    // Generous, because the point is that it declined to start rather than that it was quick.
+    expect(elapsed).toBeLessThan(2_000);
+  }, 60_000);
+
+  it('still embeds what does fit in the budget', async () => {
+    await seed('a', Array.from({ length: 10 }, (_, i) => line('user', `memory note ${i}`)).join(''));
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
+    await openTranscriptDb(dbPath);
+
+    const result = await embedPendingMessages({
+      dbPath, embedder: stubEmbedder(), deadline: Date.now() + 5_000,
+    });
+
+    expect(result.embedded).toBe(10);
+    expect(result.complete).toBe(true);
+  });
+
+  // The backfill has minutes, not milliseconds. Nothing is refused there.
+  it('embeds a long message when there is no deadline to overrun', async () => {
+    await seed('a', line('user', 'memory '.repeat(570)));
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
+    await openTranscriptDb(dbPath);
+
+    const result = await embedPendingMessages({ dbPath, embedder: stubEmbedder() });
+
+    expect(result.embedded).toBe(1);
+    expect(result.complete).toBe(true);
+  });
+
   it('embeds every message across several batches of the same file', async () => {
     await seed('a', Array.from({ length: 100 }, (_, i) => line('user', `memory note ${i}`)).join(''));
     await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
