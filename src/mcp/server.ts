@@ -42,6 +42,9 @@ export function createMcpServer(
   initError: string | null = null,
   deferred: DeferredServerState = {}
 ): Server {
+  // Register tools and resources
+  const getConfig = deferred.getConfig ?? (() => config);
+
   const server = new Server(
     {
       name: 'knowl-knowledge-server',
@@ -52,11 +55,18 @@ export function createMcpServer(
         tools: {},
         resources: {},
       },
-      instructions: mcpServerInstructions(config),
+      // From the getter, not the positional argument. The real startup passes `null`
+      // positionally and hands the live config over through `deferred`, so this card was
+      // always built from a null config in production -- the transcript routing line existed
+      // and reached nobody. Only the tests, which construct positionally, ever saw it.
+      //
+      // The SDK captures this string in the constructor and replays it in the initialize
+      // response, so it cannot be recomputed later; `startMcpServer` settles the config read
+      // before building the server for exactly that reason.
+      instructions: mcpServerInstructions(getConfig()),
     }
   );
 
-  // Register tools and resources
   const getProjectId = deferred.getProjectId ?? (() => projectId);
   const getInitError = deferred.getInitError ?? (() => initError);
 
@@ -64,7 +74,7 @@ export function createMcpServer(
     server,
     getProjectId,
     deferred.getProjectRoot ?? (() => projectRoot),
-    deferred.getConfig ?? (() => config),
+    getConfig,
     getInitError,
     deferred.whenReady ?? (async () => {})
   );
@@ -107,13 +117,22 @@ export async function startMcpServer(): Promise<void> {
   let project: any = null;
   let initError: string | null = null;
 
+  // Root and config settle BEFORE the server is built, deliberately, and they are the only
+  // two things that do. Neither is the database open the handshake is racing -- one walks
+  // directories and one reads a JSON file -- and the `instructions` card is captured by the
+  // SDK at construction, so a config that arrives afterwards can never reach a client.
+  try {
+    projectRoot = await tracePhase('findProjectRoot', () => findProjectRoot(process.cwd()));
+    config = await tracePhase('loadConfig', () => loadConfig(projectRoot!));
+  } catch (error: any) {
+    initError = error.message;
+  }
+
   // Never rejects: every failure is captured as `initError`, which the tools already render
   // for the user. An unhandled rejection here would take down a server that is otherwise fine.
   const ready = (async () => {
+    if (initError) return;
     try {
-      projectRoot = await tracePhase('findProjectRoot', () => findProjectRoot(process.cwd()));
-      config = await tracePhase('loadConfig', () => loadConfig(projectRoot!));
-
       // Init DB. AI is optional and initialized lazily only for AI-backed tools.
       await tracePhase('initDb', () => initDb(projectRoot!));
 
@@ -145,7 +164,7 @@ export async function startMcpServer(): Promise<void> {
     [
       '[knowl serve]',
       `pid=${process.pid}`,
-      'projectRoot=pending',
+      `projectRoot=${projectRoot ?? 'unresolved'}`,
       'note=host-owned stdio process; one serve process per connected host session; hooks use agent-hook and do not spawn serve',
     ].join(' ') + '\n'
   );
