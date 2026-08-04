@@ -3,9 +3,21 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/database.js';
+import { embedPendingMessages } from '../../src/transcripts/embed-pass.js';
 import { runIndexPass } from '../../src/transcripts/index-pass.js';
 import { encodeProjectDir } from '../../src/transcripts/paths.js';
-import { lexicalRank, toMatchQuery } from '../../src/transcripts/search.js';
+import { lexicalRank, resolveSessionScope, semanticRank, toMatchQuery } from '../../src/transcripts/search.js';
+import type { KnowledgeEmbedder } from '../../src/store/vector-index.js';
+
+/** Every message embeds to the same direction: scoping is the only thing that can vary. */
+const stubEmbedder = (): KnowledgeEmbedder => ({
+  provider: 'stub',
+  model: 'stub',
+  pooling: 'mean',
+  profileFingerprint: 'stub:scope',
+  embed: async (texts: string[]) => texts.map(() => [1, 0, 0, 0]),
+  embedQuery: async () => [1, 0, 0, 0],
+});
 
 let dir: string;
 let projectsDir: string;
@@ -177,5 +189,85 @@ describe('sessionId scoping treats wildcards literally', () => {
 
     const hits = await lexicalRank(client, 'shared subject', 10, 'a_b');
     expect(hits.map(hit => hit.sessionId)).toEqual(['a_b']);
+  });
+});
+
+// K-40. A prefix that names more than one session is a question the caller has not finished
+// asking. The reader already answers it by saying so; search answered it by quietly searching
+// all of them -- up to fifty, then cut off wherever the LIMIT fell.
+describe('resolveSessionScope', () => {
+  it('resolves an exact id even when it is also a prefix of another', async () => {
+    await seed('session-a', line('user', 'shared subject matter'));
+    await seed('session-ab', line('user', 'shared subject matter'));
+    const client = await indexed();
+
+    const scope = await resolveSessionScope(client, 'session-a');
+
+    expect(scope.kind).toBe('resolved');
+    expect(scope.kind === 'resolved' && scope.sessionId).toBe('session-a');
+  });
+
+  it('resolves a prefix that names exactly one session', async () => {
+    await seed('alpha', line('user', 'shared subject matter'));
+    await seed('beta', line('user', 'shared subject matter'));
+    const client = await indexed();
+
+    const scope = await resolveSessionScope(client, 'alp');
+
+    expect(scope.kind === 'resolved' && scope.sessionId).toBe('alpha');
+  });
+
+  it('refuses a prefix that names several sessions instead of widening to all of them', async () => {
+    await seed('session-a', line('user', 'shared subject matter'));
+    await seed('session-b', line('user', 'shared subject matter'));
+    const client = await indexed();
+
+    const scope = await resolveSessionScope(client, 'session-');
+
+    expect(scope.kind).toBe('ambiguous');
+    expect(scope.kind === 'ambiguous' && scope.candidates.sort()).toEqual(['session-a', 'session-b']);
+  });
+
+  it('reports no match rather than every session', async () => {
+    await seed('alpha', line('user', 'shared subject matter'));
+    const client = await indexed();
+
+    expect((await resolveSessionScope(client, 'nosuch')).kind).toBe('none');
+  });
+});
+
+describe('an ambiguous session prefix scopes both halves the same way', () => {
+  it('returns nothing lexically rather than hits from several sessions', async () => {
+    await seed('session-a', line('user', 'shared subject matter'));
+    await seed('session-b', line('user', 'shared subject matter'));
+    const client = await indexed();
+
+    expect(await lexicalRank(client, 'shared subject', 10, 'session-')).toEqual([]);
+  });
+
+  it('returns nothing semantically either', async () => {
+    await seed('session-a', line('user', 'shared subject matter'));
+    await seed('session-b', line('user', 'shared subject matter'));
+    const client = await indexed();
+    // One vector per message, all identical: any hit at all would be a scoping failure, since
+    // ranking cannot distinguish them.
+    await embedPendingMessages({ dbPath, embedder: stubEmbedder() });
+
+    const hits = await semanticRank(client, [1, 0, 0, 0], 'stub:scope', 10, 'session-');
+
+    expect(hits).toEqual([]);
+  });
+
+  it('still scopes both halves to the same single session for a unique prefix', async () => {
+    await seed('alpha', line('user', 'shared subject matter'));
+    await seed('beta', line('user', 'shared subject matter'));
+    const client = await indexed();
+    await embedPendingMessages({ dbPath, embedder: stubEmbedder() });
+
+    const lexical = await lexicalRank(client, 'shared subject', 10, 'alp');
+    const semantic = await semanticRank(client, [1, 0, 0, 0], 'stub:scope', 10, 'alp');
+
+    expect(lexical.map(hit => hit.sessionId)).toEqual(['alpha']);
+    expect(semantic.map(hit => hit.sessionId)).toEqual(['alpha']);
   });
 });
