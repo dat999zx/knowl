@@ -93,6 +93,9 @@ export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSe
     alternatives: row.alternatives as string[] | null,
     tags: row.tags as string[] | null,
     affectedPaths: row.affectedPaths as string[] | null,
+    // The fourth JSON column, and the one this mapper used to leave at drizzle's `unknown`
+    // while naming its siblings.
+    conflictScope: row.conflictScope as Record<string, unknown> | null,
   };
 }
 

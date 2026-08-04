@@ -72,23 +72,27 @@ function nameSimilarity(left: string, right: string): number {
 export async function createEvidence(input: Omit<Evidence, 'id'>): Promise<Evidence> {
   const client = getClient();
   const locator = normalizeLocator(input.locator);
+  // Both columns are nullable and both inputs are optional, so absent becomes null once,
+  // here, rather than at each of the three places that go on to use it. The driver binds
+  // null; undefined it refuses outright.
+  const contentHash = input.contentHash ?? null;
   const excerpt = input.excerpt ? input.excerpt.slice(0, MAX_EXCERPT_LENGTH) : null;
   const metadata = input.metadata ? JSON.stringify(input.metadata) : null;
   validateKnowledgeWrite({ content: excerpt, reasoning: metadata });
 
   const existing = await client.execute({
     sql: 'SELECT * FROM evidence WHERE type = ? AND locator = ? AND content_hash IS ? LIMIT 1',
-    args: [input.type, locator, input.contentHash ?? null],
+    args: [input.type, locator, contentHash],
   });
   if (existing.rows[0]) return mapEvidence(existing.rows[0]);
 
   const evidence: Evidence = {
-    id: generateId(), type: input.type, locator, contentHash: input.contentHash ?? null,
+    id: generateId(), type: input.type, locator, contentHash,
     excerpt, observedAt: input.observedAt, metadata: input.metadata ?? null,
   };
   await client.execute({
     sql: 'INSERT INTO evidence (id, type, locator, content_hash, excerpt, observed_at, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    args: [evidence.id, evidence.type, evidence.locator, evidence.contentHash, evidence.excerpt, evidence.observedAt, metadata],
+    args: [evidence.id, evidence.type, evidence.locator, contentHash, excerpt, evidence.observedAt, metadata],
   });
   return evidence;
 }
