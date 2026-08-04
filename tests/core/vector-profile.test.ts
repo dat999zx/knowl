@@ -9,8 +9,10 @@ function config(vector: Record<string, unknown>): ProjectConfig {
 }
 
 describe('resolveVectorProfile', () => {
-  it('defaults new projects to the measured Arctic preset', () => {
-    expect(DEFAULT_PRESET_ID).toBe('arctic-embed-m-v2');
+  // The cheaper side of the trade, not the most accurate entry: 52 MB and 384 dimensions
+  // against arctic's 305 MB and 768. Arctic stays in the table and is one `preset` key away.
+  it('defaults new projects to the small Granite preset', () => {
+    expect(DEFAULT_PRESET_ID).toBe('granite-small-en-r2');
   });
 
   it('resolves a bare arctic model string to CLS pooling', () => {

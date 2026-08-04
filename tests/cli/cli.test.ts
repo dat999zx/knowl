@@ -667,7 +667,7 @@ describe('CLI Integration', () => {
     // states themselves are asserted in tests/cli/vector-coverage.test.ts.
     // The model named here is whatever a fresh `init` selects, which is the default
     // preset -- not DEFAULT_CONFIG's model, which exists only as the upgrade baseline.
-    expect(output).toContain('[OK] Vector search enabled with local/Snowflake/snowflake-arctic-embed-m-v2.0');
+    expect(output).toContain('[OK] Vector search enabled with local/onnx-community/granite-embedding-small-english-r2-ONNX');
     expect(output).toContain('Result: READY');
 
     await fs.rm(doctorDir, { recursive: true, force: true });

@@ -103,7 +103,22 @@ export const PRESET_IDS: readonly PresetId[] = [
   'custom',
 ];
 
-export const DEFAULT_PRESET_ID: PresetId = 'arctic-embed-m-v2';
+/**
+ * What `knowl init` writes. Deliberately not the most accurate entry in the table.
+ *
+ * The audit branch moved this to `arctic-embed-m-v2` on a measured retrieval win (MRR 0.734
+ * against 0.493 on a 42-query half-remembered-phrasing set), and that measurement stands --
+ * it is why arctic is in the table at all, and any repo that wants it is one `preset` key
+ * away. What a default has to weigh besides accuracy is what it costs someone who never
+ * chose it: 305 MB against 52 MB on first run, 768 dimensions against 384 in every stored
+ * row, and roughly 6x the parameters to build the pipeline before the first query answers.
+ *
+ * A default is the choice made for people who have not made one, so it takes the cheaper
+ * side and leaves the better retrieval to be opted into. Existing repos were never affected
+ * either way: `preset` lives in `NEW_PROJECT_CONFIG` and not `DEFAULT_CONFIG`, precisely so
+ * that changing this line cannot move a repository that already has an answer.
+ */
+export const DEFAULT_PRESET_ID: PresetId = 'granite-small-en-r2';
 
 function isPresetId(value: unknown): value is Exclude<PresetId, 'custom'> {
   return typeof value === 'string' && value in VECTOR_PRESETS;

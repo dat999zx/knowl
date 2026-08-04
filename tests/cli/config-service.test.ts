@@ -53,9 +53,9 @@ describe('preset defaults', () => {
     expect((DEFAULT_CONFIG.search?.vector as Record<string, unknown>).preset).toBeUndefined();
   });
 
-  it('defaults new projects to the measured Arctic preset', () => {
+  it('defaults new projects to the small Granite preset', () => {
     expect((NEW_PROJECT_CONFIG.search?.vector as Record<string, unknown>).preset)
-      .toBe('arctic-embed-m-v2');
+      .toBe('granite-small-en-r2');
   });
 
   it('does not add a preset to an existing repository on upgrade', async () => {
