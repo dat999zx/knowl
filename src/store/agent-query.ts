@@ -134,42 +134,42 @@ const CATEGORY_MISS_PRIOR = 0.90;
 const IDENTIFIER_MISS_PRIOR = 0.98;
 
 /**
- * Below this **raw cosine**, a vector-backed result is noise rather than a weak answer.
+ * The relevance floor: below this **raw cosine**, the best match is noise rather than a weak
+ * answer. There is no constant here any more -- the caller supplies it, and it comes from
+ * `MODEL_RELEVANCE_FLOORS` in `core/vector-profile.ts`, one value per model.
  *
- * Measured 2026-08-01 over 20 queries against a 424-item store: on-topic and near-miss
- * queries score 0.401-0.614, off-topic queries 0.170-0.223, and nothing falls between.
+ * **Why a shared constant could not work.** A cosine scale belongs to the model that produced
+ * it. `MIN_VECTOR_RELEVANCE = 0.30` lived here and was applied to all five presets; measured
+ * over the same 110 on-topic queries and 15 off-topic probes on one 50-fixture corpus, it
+ * mislabelled 24 of 110 real answers on arctic and fired **not once** on granite,
+ * granite-97m or bge, whose scales sit entirely above it. On the default preset the whole
+ * feature was dead. Per model, every one of the five now mislabels 0 of 110 while catching
+ * 11-14 of 15 (docs/evals/per-model-floor.md).
  *
- * **Re-measured 2026-08-04, and the margins were optimistic** (docs/evals/floor-sweep.md). On a
- * copy of the same store, 483 items and 22 queries instead of 20: junk tops out at 0.2678 and
- * legitimate answers bottom out at 0.3137. The gap is real but a third as wide as recorded --
- * 0.30 sits 0.032 above the worst junk and **0.014** below the weakest real answer, not 0.10.
+ * **Why not a scale-free rule.** The tempting fix is to ask how far the top result stands out
+ * from the pack instead of what it scores, which would need no per-model number at all. It was
+ * measured and it is worse: on granite, on-topic and off-topic overlap across 0.0305-0.0899 on
+ * the margin over the mean of the rest, 1.0416-1.1427 on the ratio, and 0.4143-5.1212 on the
+ * z-score, against 0.7637-0.7644 for the absolute cosine. Arctic behaves the same way. A query
+ * that finds nothing still produces a peaked distribution -- the best of fifty unrelated notes
+ * stands out from the other forty-nine much as a real answer does.
  *
- * **And it does not transfer.** On `docs/evals/semantic-suite.json` the two distributions
- * overlap outright: gold answers score 0.087-0.277, inside and below this store's junk band.
- * While the floor still deleted, 0.30 blanked 23 of 110 answerable queries there and took
- * Recall@10 from 0.9818 to 0.7909, concentrated in the moderate and extreme paraphrase tiers.
- * Not the embeddings: re-embedding each blanked gold alone (K-71, worth up to 5.4e-2) lifted 0
- * of 13 over the bar. A fixed absolute cosine is the wrong shape for the job -- the same class
- * of error as K-28 and K-70, one level down.
+ * **The floor reports; it does not delete.** A false abstention is indistinguishable at the
+ * call site from "the store does not know", so silencing a real answer is worse than admitting
+ * a weak one. Deletion broke that rule: at 0.30 it blanked 23 of 110 answerable queries on
+ * `semantic-suite.json` and took Recall@10 from 0.9818 to 0.7909. The verdict is kept and the
+ * ranking stands, which is also what keeps the number off the critical path -- being wrong now
+ * costs a label a caller can overrule, not an answer they never see.
  *
- * So the number is no longer load-bearing. **The floor reports; it does not delete** -- see
- * `scoreCandidates` -- because silencing a real answer is worse than admitting a weak one, and
- * a false abstention is indistinguishable at the call site from "the store does not know".
- * 0.30 stays because it is the best value for the corpus that ships (0.25 mislabels half as
- * often on both synthetic suites at identical off-topic abstention, but would let this store's
- * 0.2678 junk query through unlabelled). Re-sweep rather than re-guess: `scoreCandidates` takes
- * `minRelevance`, so the sweep is a parameter and not a patch.
- *
- * It is judged on the cosine itself, before fusion and before any prior. That is the rule
- * Azure ships verbatim -- "filtering occurs before fusing results from different recall sets"
- * -- and it is what makes the 0.30 above still mean what it was measured to mean, since the
- * measurement was taken on raw cosines. It judged the *post-penalty* score until now, which
+ * It is judged on the cosine itself, before fusion and before any prior. That is the rule Azure
+ * ships verbatim -- "filtering occurs before fusing results from different recall sets" -- and
+ * it is what makes each measured value still mean what it was measured to mean, since the
+ * measurements are taken on raw cosines. It judged the *post-penalty* score until 2.17, which
  * put freshness and provenance in charge of whether the store answers at all: a 36% spread in
  * required cosine, and at 0.34 a fresh item was returned while an identical stale one yielded
  * empty. A stale note can be the only true answer in the store; its age is a reason to rank it
  * lower, never a reason to claim the store knows nothing.
  */
-export const MIN_VECTOR_RELEVANCE = 0.30;
 
 function queryTokens(query?: string): string[] {
   return [...new Set((query ?? '').toLowerCase().split(/[^a-z0-9]+/).filter(token => token.length > 1))];
@@ -232,6 +232,15 @@ export type RankOptions = {
      */
     profileFingerprint: string;
     embedding?: number[];
+    /**
+     * This model's relevance floor, from `relevanceFloorFor(model)`. `null` or absent means no
+     * abstention -- see `scoreCandidates`.
+     *
+     * Carried beside the embedding rather than looked up here, because the embedder is what
+     * knows which model produced these numbers. `profileFingerprint` identifies the same
+     * embedding space but is a hash, so nothing can be recovered from it.
+     */
+    relevanceFloor?: number | null;
   };
 };
 
@@ -466,12 +475,17 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     /** The sweep knob. Production callers omit it and get FUSION_ALPHA. */
     alpha?: number;
     /**
-     * The other sweep knob. Production callers omit it and get MIN_VECTOR_RELEVANCE.
+     * This model's relevance floor, from `relevanceFloorFor`. Also the sweep knob.
      *
-     * Alpha had one from the day it was measured and the floor did not, which is why the
-     * alpha sweep could report `empty` in every row and never vary the thing that causes it.
+     * `null` or absent means **do not abstain**. That is the honest reading of "no calibration
+     * for this model", and it is not a default waiting to be filled in: a default here would
+     * take a number measured on one model and use it to tell a user of another that their
+     * store has no answer, which is the exact defect the per-model table replaces.
+     *
+     * Alpha had a sweep knob from the day it was measured and the floor did not, which is why
+     * the alpha sweep could report `empty` in every row and never vary the thing causing it.
      */
-    minRelevance?: number;
+    minRelevance?: number | null;
   },
 ): ScoredCandidate[] {
   const limit = options.limit;
@@ -603,7 +617,12 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     // signal: it could not be told apart from an empty store or a missing index.
     const judged = scored.filter(candidate => floorApplies(candidate.result));
     const bestCosine = judged.reduce((best, candidate) => Math.max(best, candidate.semantic), 0);
-    const answerable = judged.length === 0 || bestCosine >= (options.minRelevance ?? MIN_VECTOR_RELEVANCE);
+    // No floor means no verdict. An uncalibrated model is one this build has never measured,
+    // and "I cannot tell" has to read as silence rather than as confidence in either direction.
+    const floor = typeof options.minRelevance === 'number' && Number.isFinite(options.minRelevance)
+      ? options.minRelevance
+      : null;
+    const answerable = floor === null || judged.length === 0 || bestCosine >= floor;
     // Exactly the set the destructive floor used to KEEP is the set left unlabelled; everything
     // it used to delete is returned and labelled. The rule is unchanged, only its consequence:
     //
@@ -688,6 +707,7 @@ export async function rankKnowledge(
     category: options.category,
     limit: options.limit ?? DEFAULT_AGENT_QUERY_LIMIT,
     usingVector: Boolean(options.vector?.enabled && options.vector.embedding),
+    minRelevance: options.vector?.relevanceFloor ?? null,
   }).map(({ item, explanation }) => ({ ...item, explanation }));
 }
 

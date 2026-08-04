@@ -1135,6 +1135,7 @@ export function registerTools(
             enabled: true,
             profileFingerprint: embedder.profileFingerprint,
             embedding,
+            relevanceFloor: embedder.relevanceFloor,
           };
         }
 

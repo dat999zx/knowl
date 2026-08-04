@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { MIN_VECTOR_RELEVANCE, scoreCandidates } from '../../src/store/agent-query.js';
+﻿import { describe, expect, it } from 'vitest';
+import { scoreCandidates } from '../../src/store/agent-query.js';
+
+// Arctic's floor, named here so the assertions say which model's scale they are on. The floor
+// is per-model now (see tests/core/model-relevance-floor.test.ts); this file is about the
+// non-destructive guarantee, which holds at every value.
+const FLOOR = 0.16;
 import type { KnowledgeItem } from '../../src/core/types.js';
 
 /**
@@ -43,7 +48,7 @@ describe('the floor reports rather than deletes', () => {
         { item: item('a'), embedded: true, vectorRank: 1, vectorScore: 0.06 },
         { item: item('b'), embedded: true, vectorRank: 2, vectorScore: 0.04 },
       ],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
 
     // Nothing is deleted...
@@ -51,7 +56,7 @@ describe('the floor reports rather than deletes', () => {
     // ...and every result says the store has no confident match for this query.
     expect(scored.every(row => row.explanation.abstained === true)).toBe(true);
     // The score is the evidence behind the verdict: low, and comparable across queries.
-    expect(scored[0].score).toBeLessThan(MIN_VECTOR_RELEVANCE);
+    expect(scored[0].score).toBeLessThan(FLOOR);
   });
 
   it('says nothing about abstention when the query is answered', () => {
@@ -60,7 +65,7 @@ describe('the floor reports rather than deletes', () => {
         { item: item('top'), embedded: true, vectorRank: 1, vectorScore: 0.62 },
         { item: item('tail'), embedded: true, vectorRank: 2, vectorScore: 0.05 },
       ],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
 
     expect(scored.map(row => row.item.id)).toEqual(['top', 'tail']);
@@ -75,7 +80,7 @@ describe('the floor reports rather than deletes', () => {
         { item: item('b'), embedded: true, vectorRank: 2, vectorScore: 0.09 },
         { item: item('c'), embedded: true, vectorRank: 3, vectorScore: 0.08 },
       ],
-      { limit: 2, usingVector: true },
+      { limit: 2, usingVector: true, minRelevance: FLOOR },
     );
 
     expect(scored.map(row => row.item.id)).toEqual(['a', 'b']);
@@ -97,7 +102,7 @@ describe('the floor reports rather than deletes', () => {
     // looking at anything is not a verdict.
     const scored = scoreCandidates(
       [{ item: item('a'), embedded: false, bm25Rank: 1 }, { item: item('b'), embedded: false, bm25Rank: 2 }],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
 
     expect(scored.map(row => row.item.id)).toEqual(['a', 'b']);
@@ -118,7 +123,7 @@ describe('the floor reports rather than deletes', () => {
         // A peer with no embeddings at all: it took part in nothing.
         { item: item('peer'), repo: 'unindexed', embedded: false, bm25Rank: 1 },
       ],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
 
     const byId = new Map(scored.map(row => [row.item.id, row]));

@@ -84,6 +84,7 @@ export async function runCliQuery(input: {
         enabled: true,
         profileFingerprint: embedder.profileFingerprint,
         embedding,
+        relevanceFloor: embedder.relevanceFloor,
       };
     } catch {
       // An unavailable embedder degrades to lexical ranking rather than failing the query.

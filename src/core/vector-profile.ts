@@ -103,7 +103,22 @@ export const PRESET_IDS: readonly PresetId[] = [
   'custom',
 ];
 
-export const DEFAULT_PRESET_ID: PresetId = 'arctic-embed-m-v2';
+/**
+ * What `knowl init` writes. Deliberately not the most accurate entry in the table.
+ *
+ * The audit branch moved this to `arctic-embed-m-v2` on a measured retrieval win (MRR 0.734
+ * against 0.493 on a 42-query half-remembered-phrasing set), and that measurement stands --
+ * it is why arctic is in the table at all, and any repo that wants it is one `preset` key
+ * away. What a default has to weigh besides accuracy is what it costs someone who never
+ * chose it: 305 MB against 52 MB on first run, 768 dimensions against 384 in every stored
+ * row, and roughly 6x the parameters to build the pipeline before the first query answers.
+ *
+ * A default is the choice made for people who have not made one, so it takes the cheaper
+ * side and leaves the better retrieval to be opted into. Existing repos were never affected
+ * either way: `preset` lives in `NEW_PROJECT_CONFIG` and not `DEFAULT_CONFIG`, precisely so
+ * that changing this line cannot move a repository that already has an answer.
+ */
+export const DEFAULT_PRESET_ID: PresetId = 'granite-small-en-r2';
 
 function isPresetId(value: unknown): value is Exclude<PresetId, 'custom'> {
   return typeof value === 'string' && value in VECTOR_PRESETS;
@@ -168,12 +183,87 @@ export function resolveVectorProfile(config: ProjectConfig): VectorProfile {
 }
 
 /**
+ * Below this raw cosine, this model's best match is noise rather than a weak answer.
+ *
+ * **One number per model, because a cosine scale is a property of the model.** There used to be
+ * one shared constant, `MIN_VECTOR_RELEVANCE = 0.30`, and it could not be right twice: measured
+ * over the same 110 on-topic queries and 15 off-topic probes on the same 50-fixture corpus, it
+ * mislabelled 24 of 110 real answers on arctic while firing not once on granite, whose entire
+ * scale sits above it. Granite's floor is 4.75x arctic's for the same reason a Fahrenheit
+ * reading is not a Celsius one.
+ *
+ * Each value is the observed on-topic minimum rounded down to two decimals -- the highest cut
+ * that mislabels nothing on the on-topic set. Measured 2026-08-04; see
+ * `docs/evals/per-model-floor.md` for the method and `tests/core/model-relevance-floor.test.ts`
+ * for the bands, which fail if a number here moves without a re-measurement.
+ *
+ * | model | floor | mislabelled | junk caught |
+ * | --- | --- | --- | --- |
+ * | arctic-embed-m-v2 | 0.16 | 0/110 | 12/15 |
+ * | granite-small-en-r2 | 0.76 | 0/110 | 14/15 |
+ * | granite-97m-multilingual | 0.74 | 0/110 | 12/15 |
+ * | bge-small-en | 0.53 | 0/110 | 11/15 |
+ * | minilm-l6-en | 0.20 | 0/110 | 12/15 |
+ *
+ * The conservative cut is taken over the Youden-optimal one, which reaches 15/15 everywhere at
+ * the cost of 1-5 mislabelled real answers per 110. Two reasons: `agent-query.ts` already holds
+ * that silencing a real answer is worse than admitting a weak one, and agent traffic is
+ * overwhelmingly on-topic; and the Youden cut is fit to the 15-probe junk set while this one is
+ * fit to the 110-query on-topic set, so with these sample sizes the conservative estimate is
+ * the more robust one rather than merely the safer one.
+ *
+ * Keyed on the model id and not the preset name, so a config that names a known model by hand
+ * without naming a preset still gets the right floor.
+ */
+export const MODEL_RELEVANCE_FLOORS: Record<string, number> = {
+  'Snowflake/snowflake-arctic-embed-m-v2.0': 0.16,
+  'onnx-community/granite-embedding-small-english-r2-ONNX': 0.76,
+  'onnx-community/granite-embedding-97m-multilingual-r2-ONNX': 0.74,
+  'Xenova/bge-small-en-v1.5': 0.53,
+  'Xenova/all-MiniLM-L6-v2': 0.20,
+};
+
+/**
+ * This model's floor, or `null` when nobody has measured it.
+ *
+ * `null` means **no abstention**, and that is the deliberate answer rather than a gap left by
+ * accident. Falling back to another model's constant is precisely the defect this table
+ * replaces, one model along: it would take a number measured on arctic and use it to tell a
+ * user of some custom model that their store has no answer. Knowl declines to claim a store
+ * cannot answer when it has no calibration to say so with -- a withheld claim, not a wrong one.
+ */
+export function relevanceFloorFor(model: string): number | null {
+  return MODEL_RELEVANCE_FLOORS[model] ?? null;
+}
+
+/**
+ * How atom texts are grouped into forward passes, as an input to the vector's identity.
+ *
+ * Not part of `VectorProfile`, because it is not a thing a config states -- it is a property
+ * of the code that produced the row. It is in the fingerprint because the q8 graph quantises
+ * per batch, so the same text embedded alone and embedded beside neighbours yields vectors up
+ * to 4.79e-2 apart in cosine. That is the same *kind* of difference as a dtype switch, and it
+ * has to invalidate rows the same way.
+ *
+ * Without it two individually correct behaviours combine into a wrong one:
+ * `reindexKnowledgeEmbeddings` now embeds one text per pass, and it also skips any item whose
+ * stored row already carries this fingerprint. A row written by a build that batched carries
+ * the same fingerprint and a materially different vector, so the skip would preserve exactly
+ * the write-time/reindex disagreement that `maxBatch: 1` exists to remove -- permanently, and
+ * only on stores that upgraded rather than started fresh.
+ *
+ * Bump this string if the batching policy changes again.
+ */
+const EMBEDDING_BATCH_POLICY = 'single';
+
+/**
  * Written to every embedding row so a stored vector describes the profile that
  * produced it. provider and model alone are not enough: dtype and pooling both
  * change the numbers, so without them a dtype-only switch leaves old rows
  * matching the filter and being scored against incompatible query vectors.
  */
 export function fingerprintProfile(profile: VectorProfile): string {
-  const canonical = `${profile.provider}|${profile.model}|${profile.dtype}|${profile.pooling}`;
+  const canonical =
+    `${profile.provider}|${profile.model}|${profile.dtype}|${profile.pooling}|${EMBEDDING_BATCH_POLICY}`;
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }

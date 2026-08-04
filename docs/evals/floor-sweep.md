@@ -1,5 +1,14 @@
 # Relevance-floor sweep — 2026-08-04
 
+> **Section 5 is superseded by `per-model-floor.md` (same day, later).** Everything measured
+> here holds and is arctic-embed-m-v2 throughout. What it could not see is that `0.30` is a
+> number on *arctic's* scale: measured across all five presets, granite's cosines run ~0.5
+> higher, so the same constant mislabelled 24 of 110 real answers on arctic and fired **not
+> once** on granite, granite-97m or bge. "Why 0.30 stays" was the right conclusion from a
+> one-model sweep and the wrong one for a five-model product. There is now one floor per model
+> and no shared constant. The finding this document exists for — that the floor must report
+> rather than delete — is unchanged and is what made the miscalibration survivable.
+
 `MIN_VECTOR_RELEVANCE = 0.30` was measured on 2026-08-01, before the scoring redesign, as the
 gap between on-topic and off-topic **top scores** on one real store. The redesign then moved the
 floor onto the raw cosine and reused the number. It had never been re-validated against the

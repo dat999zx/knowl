@@ -88,7 +88,11 @@ export const CONFIG_FIELDS: ConfigField[] = [
     key: 'search.vector.preset', category: 'Search', type: 'enum', values: PRESET_IDS,
     parse: enumValue(PRESET_IDS), defaultValue: DEFAULT_PRESET_ID,
     label: 'Embedding model',
-    description: 'Which local model produces the vectors. Every preset is 384-dimension, so switching never changes the stored vector width.',
+    // "Every preset is 384-dimension" stopped being true when arctic-embed-m-v2 (768) joined
+    // the table. What a reader needs here is not the width but the consequence of changing it,
+    // which is the same either way: a switch changes the profile fingerprint, so the existing
+    // vectors stop matching and are rebuilt.
+    description: 'Which local model produces the vectors. Changing it re-embeds the store on the next reindex, because vectors from different models are not comparable.',
   },
   {
     key: 'search.vector.enabled', category: 'Search', type: 'boolean',
