@@ -522,3 +522,38 @@ describe('host hook normalization', () => {
     });
   });
 });
+
+describe('NotebookEdit, whose target field is spelled differently from every other write tool', () => {
+  /**
+   * `notebook_path`, not `file_path`. Every other write tool knowl watches uses `file_path`, so a
+   * notebook edit normalised to an event carrying no changed path at all -- which does not fail,
+   * it goes quiet: the file is never re-indexed and nothing downstream that depends on knowing it
+   * changed can fire, for notebooks only. Two places had to agree, and the allowlist is the one
+   * that is easy to miss, because a field absent from it is dropped before the normaliser is ever
+   * reached.
+   */
+  it('carries a notebook edit through as a changed path', () => {
+    const normalized = normalizeHostHook('claude', 'PostToolUse', {
+      session_id: 'nb-session',
+      cwd: process.cwd(),
+      tool_name: 'NotebookEdit',
+      tool_input: { notebook_path: path.join(process.cwd(), 'analysis.ipynb') },
+    });
+
+    expect(normalized.toolName).toBe('NotebookEdit');
+    expect(normalized.payload.changedPaths).toEqual(['analysis.ipynb']);
+  });
+
+  it('survives the stdin allowlist, which drops unlisted fields before normalisation', async () => {
+    const stdin = Readable.from([JSON.stringify({
+      session_id: 'nb-session',
+      cwd: process.cwd(),
+      tool_name: 'NotebookEdit',
+      tool_input: { notebook_path: 'analysis.ipynb' },
+    })]);
+
+    const payload = await readLifecyclePayload(stdin as unknown as NodeJS.ReadStream);
+
+    expect((payload.tool_input as Record<string, unknown>).notebook_path).toBe('analysis.ipynb');
+  });
+});
