@@ -75,6 +75,39 @@ export interface StoreKnowledgeBatchResult {
   outcomes: StoreKnowledgeAtomOutcome[];
 }
 
+/**
+ * `confidence` refused rather than clamped, at the store rather than at one caller.
+ *
+ * It was bounded in the MCP tool schema, which covers exactly one of the doors: CLI, hook and
+ * in-process writes reach this module without passing that schema, and what lands here is
+ * permanent. The ranker clamps on read, so ranking itself is no longer poisoned -- but the
+ * stored number still decides which of two duplicates GC keeps and hard deletes the other,
+ * weights session-candidate promotion, and is handed to the agent verbatim in every compact
+ * MCP response, on a scale the response never declares.
+ *
+ * **Refused, not clamped**, for two reasons and one measurement. The MCP schema already refuses
+ * and says so in its own description, so clamping here would make the same input behave
+ * differently depending on which door it came in -- and the silent door is the one with no
+ * schema and no reviewer. A refusal is also recoverable: the caller is told the value was
+ * rejected and can send the right one, where a clamp is undetectable afterwards.
+ *
+ * The measurement settles what a clamp would actually do. Across the five real stores on this
+ * machine -- 764 items -- every confidence sits in [0.70, 1.00], and 487 of them are exactly
+ * 1.00. So a caller on a percent scale writing 90, meaning "less sure than usual", would be
+ * clamped to 1.00: not rounded, but moved to the most confident value the store holds and tied
+ * with the default. Clamping inverts the claim it is trying to salvage.
+ *
+ * Absent stays absent -- "no opinion" is not an error, and the column defaults to 1.0.
+ */
+export function assertConfidenceInRange(confidence: number | null | undefined, subject: string): void {
+  if (confidence === undefined || confidence === null) return;
+  if (Number.isFinite(confidence) && confidence >= 0 && confidence <= 1) return;
+  throw new Error(
+    `Invalid confidence ${String(confidence)} for "${subject}": confidence is a probability in [0, 1] and was refused rather than clamped, `
+    + 'because clamping a percent-scale value would silently record it as maximum confidence. Divide by 100 if you meant a percentage.',
+  );
+}
+
 function duplicateTokens(value: string): Set<string> {
   return new Set(
     value
@@ -420,6 +453,7 @@ export async function storeKnowledgeItemDeduped(
   commitMessage?: string,
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<StoreKnowledgeResult> {
+  assertConfidenceInRange(input.confidence, input.title);
   const conflicts = await checkKnowledgeConflict(input);
   if (conflicts.length) throw new KnowledgeConflictError(conflicts.map(item => ({ id: item.id, title: item.title })));
   const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, input);
@@ -503,6 +537,10 @@ export async function storeKnowledgeAtomsDeduped(
   commitMessage?: string,
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<StoreKnowledgeBatchResult> {
+  // Every atom's confidence, before the first one is written -- the same reason the ownership
+  // guard is hoisted out of the loop. A batch is all-or-nothing, so a per-atom check would
+  // refuse the batch after opening a transaction the caller was told nothing about.
+  for (const atom of atoms) assertConfidenceInRange(atom.confidence, atom.title);
   // Resolved once for the whole batch, not once per atom. Ten atoms against three peers is
   // thirty workspace resolutions inside the loop, for something that cannot change mid-batch.
   const workspace = await activeWorkspaceForWrite();
