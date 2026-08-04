@@ -68,6 +68,10 @@ async function regressToFirstRelease(): Promise<void> {
     for (const column of ['opening', 'anchor', 'display_name', 'name_kind']) {
       await client.execute(`ALTER TABLE transcript_files DROP COLUMN ${column}`);
     }
+    // The partial index over un-filled offsets is built on the column below, and SQLite refuses
+    // to drop a column an index depends on. Dropping it first is the faithful order anyway: that
+    // release had neither the index nor the column.
+    await client.execute('DROP INDEX IF EXISTS idx_transcript_messages_pending_offset');
     await client.execute('ALTER TABLE transcript_messages DROP COLUMN byte_offset');
   });
 }

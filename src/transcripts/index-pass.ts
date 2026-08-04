@@ -2,7 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import type { Client } from '@libsql/client';
 import { openTranscriptDb, withWriteRetry } from './database.js';
-import { NAME_KIND, readOpeningAsk, streamProseFrom, type ProseChunk, type ProseMessage } from './parse.js';
+import { describesSameMessage, NAME_KIND, readOpeningAsk, streamProseFrom, type ProseChunk } from './parse.js';
+import { fillMissingByteOffsets } from './offset-backfill.js';
 import { defaultProjectsDir, scanTranscriptArchive, type TranscriptFile } from './paths.js';
 
 /** Whether the transcript archive can be listed at all, as opposed to being empty. */
@@ -17,6 +18,13 @@ export type IndexPassResult = {
   filesTouched: number;
   /** False when a deadline cut the pass short. The watermarks are still valid; just resume. */
   complete: boolean;
+  /**
+   * Rows given a byte offset they were indexed without. See `offset-backfill.ts`.
+   *
+   * Kept out of `complete`: an offset is enrichment, so leaving some for the next pass is not
+   * the index being behind the archive, which is the one thing that flag is asked to mean.
+   */
+  offsetsFilled: number;
 };
 
 /** Rows per write transaction. Small on purpose: a long transaction starves a live session. */
@@ -231,22 +239,6 @@ async function commitBatch(
   // lock across a file read would starve a live session for no reason.
   const anchor = await anchorAt(file.path, batch[batch.length - 1].bytesConsumed);
   return withWriteRetry(dbPath, async client => commitBatchOn(client, file, size, batch, naming, anchor));
-}
-
-/**
- * Whether the row already stored for a line still describes the message now on that line.
- *
- * The text itself cannot be compared: the FTS table is contentless, so nothing in the database
- * holds a body to compare against. Role, length and timestamp are what a row does keep, and the
- * combination is enough to tell an unchanged line from a rewritten one. The accepted limit is
- * the same shape as the anchor's: a rewrite that puts a message of the same role, the same
- * length and the same timestamp on the same line reads as unchanged.
- */
-function describesSameMessage(row: Record<string, unknown>, message: ProseMessage): boolean {
-  const ts = row.ts === null || row.ts === undefined ? null : String(row.ts);
-  return String(row.role) === message.role
-    && Number(row.chars) === message.text.length
-    && ts === message.timestamp;
 }
 
 /** Remove one message and everything keyed to its id. */
@@ -533,7 +525,8 @@ export async function runIndexPass(input: {
   const files = scan.files;
   const onDisk = new Set(files.map(file => file.path));
 
-  const result: IndexPassResult = { indexed: 0, rebuilt: 0, removed: 0, filesTouched: 0, complete: true };
+  const result: IndexPassResult =
+    { indexed: 0, rebuilt: 0, removed: 0, filesTouched: 0, complete: true, offsetsFilled: 0 };
 
   // Deleted transcripts first: their pointers are dead, and a search that returns them wastes a
   // file read to discover it. Cheap when nothing vanished, which is the usual case.
@@ -646,6 +639,23 @@ export async function runIndexPass(input: {
     // Recorded whatever happened, because "did the last pass finish" cannot be recovered from
     // the rows afterwards: a file the pass never reached leaves nothing behind to notice.
     await recordIndexState(input.dbPath, result.complete, files.length).catch(() => {});
+  }
+
+  // Offsets last, and only once the archive is caught up. Indexing new content beats enriching
+  // old rows: a hook's whole budget is 1.5s, and a session still being written to needs its
+  // latest turns findable more than a finished one needs a faster seek. With no deadline -- an
+  // explicit `knowl reindex --transcripts` -- this runs to the end.
+  //
+  // Failure is swallowed rather than failing a pass that indexed correctly. A null offset is a
+  // correct pointer that reads by scanning, so the cost of not filling it is time, and the next
+  // pass tries again; letting it throw would turn a slow read into a failed catch-up.
+  if (result.complete && !(input.deadline !== undefined && Date.now() >= input.deadline)) {
+    try {
+      result.offsetsFilled =
+        (await fillMissingByteOffsets({ dbPath: input.dbPath, deadline: input.deadline })).filled;
+    } catch {
+      // Left for the next pass.
+    }
   }
 
   return result;
