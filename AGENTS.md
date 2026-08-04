@@ -69,7 +69,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 ### Required workflow
 
-1. For every project-specific request, call `knowl_query` with 2-6 concise keywords before repository files or commands.
+1. For every project-specific request, call `knowl_query` before repository files or commands, using the words that name the subject: another on-subject term retrieves better, an off-subject one retrieves worse, so do not pad the query and do not trim a real term to shorten it.
 2. Skip a new query only when directly relevant active lifecycle context, a same-request query, or manual `knowl_task_start` relevant memory already answers it.
 3. Use a relevant active hit immediately. Inspect files only after a miss, conflict, stale/low-confidence memory, or explicit verification request.
 4. Query again before switching to a distinct subtask or project area.
@@ -87,13 +87,15 @@ Casual conversation, a single memory lookup, and trivial non-resumable work do n
 
 | Group | Tools | Routing |
 | --- | --- | --- |
-| Focused retrieval | `knowl_query` | Default first call for a specific project request and again when switching areas. Use 2-6 keywords and omit category unless certain. |
+| Focused retrieval | `knowl_query` | Default first call for a specific project request and again when switching areas. Use the words that name the subject, without padding, and omit category unless certain. |
 | Context views | `knowl_recent`, `knowl_state`, `knowl_context` | Use recent only without lifecycle bootstrap or for an explicit refresh; state for broad status; context for an explicitly token-budgeted pack. |
 | Manual work loop | `knowl_task_start`, `knowl_task_checkpoint`, `knowl_task_finish` | Use only without verified lifecycle hooks: start once, checkpoint meaningful milestones or blockers, and finish once after verification. |
 | Durable writes | `knowl_store`, `knowl_ingest_atoms`, `knowl_decide`, `knowl_update` | Store one verified atom, batch verified atoms, record a confirmed decision, or correct/supersede stale memory. |
 | History and quality | `knowl_timeline`, `knowl_evidence_list`, `knowl_conflicts`, `knowl_feedback` | Inspect history, evidence, or conflicts when needed; record feedback only after actual use, rejection, or correction. |
 | Learned skills | `knowl_skill_list`, `knowl_skill_read`, `knowl_skill_run`, `knowl_skill_create` | Discover and read a matching skill before running a trusted entrypoint; create only when explicitly requested. |
 | Special and maintenance | `knowl_ingest`, `knowl_synthesize`, `knowl_session_finish`, `knowl_gc_preview`, `knowl_gc_apply` | Raw-source ingest requires an explicit request and configured AI; never send the current conversation silently. Synthesis is explicitly scoped and never automatic. Session finish is only for an explicitly owned manual memory-session ID, never a hook session. Preview GC first; apply only after explicit approval. |
+| Session handoff | `knowl_handoff` | Use when parking a workstream before ending a session. The next session in this project receives it once, then it is archived. One baton per project -- parking again replaces it. Durable facts still belong in knowl_store. |
+| Parked work | `knowl_park`, `knowl_resume` | Park work the user means to come back to: knowl_park mints a short key and returns a paste-ready line to hand them verbatim, since a key reworded is a key lost. knowl_resume takes that key in any later session, from any directory, and returns the brief. Unlike the handoff baton -- which the next session in this project consumes once -- a key is held by the user, is not spent by resuming, and works any number of sessions later. Call knowl_resume as soon as a user supplies a key; with no key it lists what is parked here. |
 
 ### Linked repositories
 
