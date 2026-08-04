@@ -5,7 +5,7 @@ import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { fingerprintProfile } from '../../src/core/vector-profile.js';
 import {
-  cosineSimilarity, resetVectorScanProbe, searchKnowledgeEmbeddings, upsertKnowledgeEmbedding,
+  cosineSimilarity, searchKnowledgeEmbeddings, upsertKnowledgeEmbedding,
 } from '../../src/store/vector.js';
 import { localStore } from '../../src/store/store-handle.js';
 
@@ -47,7 +47,6 @@ async function seed(count: number, options: { tagEvery?: number } = {}) {
       profileFingerprint: FP, dimensions: DIM, vector: vectorFor(index),
     });
   }
-  resetVectorScanProbe(getClient());
   return ids;
 }
 
@@ -96,15 +95,9 @@ describe('the vector scan', () => {
     await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
   });
 
-  beforeEach(() => {
-    resetVectorScanProbe(getClient());
-  });
-
   it('never reads a stored vector into this process', async () => {
     await seed(40);
     const query = vectorFor(3);
-    // The probe runs on the first search of a connection; it is not the scan.
-    await searchKnowledgeEmbeddings(projectId, { vector: query, profileFingerprint: FP, limit: 5 });
 
     const trace = traceClient();
     try {
@@ -150,7 +143,6 @@ describe('the vector scan', () => {
         args: [JSON.stringify(vectorFor(index)), ids[index]],
       });
     }
-    resetVectorScanProbe(getClient());
 
     const query = vectorFor(11);
     const results = await searchKnowledgeEmbeddings(projectId, { vector: query, profileFingerprint: FP, limit: 10 });
@@ -159,23 +151,81 @@ describe('the vector scan', () => {
     expect(results.map(result => result.item.id)).toEqual(await expectedRanking(query, 10));
   });
 
-  it('takes the JavaScript path only while a legacy row is present', async () => {
+  it('finds a legacy row that appears after searches have already run on this connection', async () => {
+    // The hazard a cached probe cannot see. An earlier version of this file asked once per
+    // connection whether every row was a packed blob and trusted the answer; a row written
+    // afterwards by another process on an older build then stayed invisible to semantic
+    // search while `findEmbeddedItemIds` still called its item embedded.
     const ids = await seed(20);
+    await searchKnowledgeEmbeddings(projectId, { vector: vectorFor(1), profileFingerprint: FP, limit: 5 });
+
     await getClient().execute({
       sql: 'UPDATE knowledge_embeddings SET vector = ? WHERE knowledge_item_id = ?',
       args: [JSON.stringify(vectorFor(2)), ids[2]],
     });
-    resetVectorScanProbe(getClient());
+
+    const results = await searchKnowledgeEmbeddings(projectId, { vector: vectorFor(2), profileFingerprint: FP, limit: 5 });
+    expect(results[0].item.id).toBe(ids[2]);
+    expect(results[0].score).toBeCloseTo(1, 5);
+  });
+
+  it('scores a legacy JSON row and a packed one to the same number', async () => {
+    const ids = await seed(6);
+    const packed = await searchKnowledgeEmbeddings(projectId, { vector: vectorFor(3), profileFingerprint: FP, limit: 6 });
+    const before = packed.find(result => result.item.id === ids[3])!.score;
+
+    await getClient().execute({
+      sql: 'UPDATE knowledge_embeddings SET vector = ? WHERE knowledge_item_id = ?',
+      args: [JSON.stringify(vectorFor(3)), ids[3]],
+    });
+    const legacy = await searchKnowledgeEmbeddings(projectId, { vector: vectorFor(3), profileFingerprint: FP, limit: 6 });
+    expect(legacy.find(result => result.item.id === ids[3])!.score).toBeCloseTo(before, 5);
+  });
+
+  it('falls back to the decoder rather than failing when a stored value is unreadable', async () => {
+    const ids = await seed(12);
+    // A value no vector function can parse: the row this module used to score as 0 and skip.
+    await getClient().execute({
+      sql: 'UPDATE knowledge_embeddings SET vector = ? WHERE knowledge_item_id = ?',
+      args: ['not a vector at all', ids[5]],
+    });
 
     const trace = traceClient();
+    let results;
     try {
-      await searchKnowledgeEmbeddings(projectId, { vector: vectorFor(2), profileFingerprint: FP, limit: 5 });
+      results = await searchKnowledgeEmbeddings(projectId, { vector: vectorFor(1), profileFingerprint: FP, limit: 10 });
     } finally {
       trace.restore();
     }
-    const scans = trace.seen.filter(statement => /JOIN knowledge_items/.test(statement.sql));
-    expect(scans.some(statement => /e\.vector AS vector/.test(statement.sql))).toBe(true);
-    expect(scans.some(statement => /vector_distance_cos/.test(statement.sql))).toBe(false);
+
+    // The search still answers, and the unreadable row is simply absent.
+    expect(results.length).toBeGreaterThan(0);
+    expect(results.map(result => result.item.id)).not.toContain(ids[5]);
+    // It got there by trying SQL, failing, and decoding instead.
+    expect(trace.seen.some(statement => /e\.vector AS vector/.test(statement.sql))).toBe(true);
+
+    // And the next search on this connection does not repeat the failed statement.
+    const second = traceClient();
+    try {
+      await searchKnowledgeEmbeddings(projectId, { vector: vectorFor(1), profileFingerprint: FP, limit: 10 });
+    } finally {
+      second.restore();
+    }
+    expect(second.seen.some(statement => /vector_distance_cos/.test(statement.sql))).toBe(false);
+
+    // The downgrade belongs to that connection and not to the store: repair the row, reopen,
+    // and SQL scoring is back. This also keeps the fixture usable for the tests below.
+    await getClient().execute({ sql: 'DELETE FROM knowledge_embeddings WHERE knowledge_item_id = ?', args: [ids[5]] });
+    await closeDb();
+    await initDb(ROOT);
+
+    const third = traceClient();
+    try {
+      await searchKnowledgeEmbeddings(projectId, { vector: vectorFor(1), profileFingerprint: FP, limit: 10 });
+    } finally {
+      third.restore();
+    }
+    expect(third.seen.some(statement => /vector_distance_cos/.test(statement.sql))).toBe(true);
   });
 
   it('drops a vector that scores zero rather than returning it', async () => {
@@ -184,7 +234,6 @@ describe('the vector scan', () => {
       projectId, knowledgeItemId: ids[0], provider: 'local', model: 'a/b',
       profileFingerprint: FP, dimensions: DIM, vector: new Array(DIM).fill(0),
     });
-    resetVectorScanProbe(getClient());
     const results = await searchKnowledgeEmbeddings(projectId, { vector: vectorFor(1), profileFingerprint: FP, limit: 10 });
     expect(results.map(result => result.item.id)).not.toContain(ids[0]);
   });
@@ -215,7 +264,6 @@ describe('the vector scan', () => {
         profileFingerprint: FP, dimensions: DIM, vector: vectorFor(1),
       });
     }
-    resetVectorScanProbe(getClient());
 
     const results = await searchKnowledgeEmbeddings(projectId, {
       vector: vectorFor(1), profileFingerprint: FP, tags: ['keep'], limit: 10,

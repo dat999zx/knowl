@@ -183,63 +183,21 @@ export async function upsertKnowledgeEmbeddings(inputs: KnowledgeEmbeddingInput[
 }
 
 /**
- * Which (connection, profile, width) combinations SQLite can score by itself.
+ * Connections whose stored vectors SQLite could not score, so they use the JavaScript scan.
  *
- * The fast path below asks SQLite for the cosine, which needs the packed float32 blob this
- * module has written since `encodeVector` landed. A row still holding the legacy JSON-text
- * encoding cannot be scored that way, and dropping it from the scan would make its item
- * silently invisible to semantic search while `findEmbeddedItemIds` still reported it as
- * embedded -- the exact shape of K-60, where an unreachable row and a missing row look
- * identical from the outside. So a store holding one stays on the JavaScript scan.
+ * Learned from a failure rather than predicted. An earlier version of this file probed each
+ * connection once for the legacy encoding and trusted the answer for the life of the process,
+ * on the reasoning that a row's encoding only changes when it is rewritten and every rewrite
+ * writes a blob. That reasoning is wrong in the one direction that matters: a row this process
+ * did not write can appear at any time -- another process on an older build, an import, a
+ * restore -- and a stale "all blobs" answer would then hide it from semantic search entirely
+ * while `findEmbeddedItemIds` still called its item embedded. That is K-60's shape, and a
+ * cached prediction is exactly how you get it.
  *
- * Probed once per connection instead of per query. A row's encoding changes only when the row
- * is rewritten, and every rewrite goes through `upsertKnowledgeEmbedding`, which writes a
- * blob -- so a store can move from mixed to uniform but never back. The cost of being late to
- * notice is one process running the old path until it restarts; the cost of caching the other
- * direction would be reading rows that are no longer there.
- *
- * Keyed by fingerprint and width because those are exactly the rows a search reads: a store
- * can hold rows from a superseded profile, and their encoding says nothing about the current
- * one's.
+ * A connection lands here only when the SQL scan raised AND the JavaScript scan then succeeded
+ * on the same query, so it records a fact about the data rather than a guess about it.
  */
-const sqlScorable = new WeakMap<Client, Map<string, boolean>>();
-
-/** Test seam: a fresh probe, as a new connection would do. */
-export function resetVectorScanProbe(client: Client): void {
-  sqlScorable.delete(client);
-}
-
-/**
- * Can every row this search will read be scored in SQL?
- *
- * One `LIMIT 1` lookup for the first row that cannot be. It is a scan, and it is paid once per
- * connection rather than per query -- against the alternative, which is scanning for legacy
- * rows on every search to prove they are still absent.
- */
-async function canScoreInSql(
-  store: StoreHandle,
-  profileFingerprint: string,
-  vectorBytes: number,
-): Promise<boolean> {
-  const key = `${profileFingerprint}|${vectorBytes}`;
-  let byProfile = sqlScorable.get(store.client);
-  if (!byProfile) {
-    byProfile = new Map();
-    sqlScorable.set(store.client, byProfile);
-  }
-  const known = byProfile.get(key);
-  if (known !== undefined) return known;
-
-  const legacy = await store.client.execute({
-    sql: `SELECT 1 FROM knowledge_embeddings
-          WHERE profile_fingerprint = ? AND NOT (typeof(vector) = 'blob' AND length(vector) = ?)
-          LIMIT 1`,
-    args: [profileFingerprint, vectorBytes],
-  });
-  const answer = legacy.rows.length === 0;
-  byProfile.set(key, answer);
-  return answer;
-}
+const jsScanOnly = new WeakSet<Client>();
 
 /** One page of the ranking: the highest-scoring candidates after `offset`, already ordered. */
 type RankedPage = (offset: number, size: number) => Promise<Array<{ id: string; score: number }>>;
@@ -253,8 +211,12 @@ type RankedPage = (offset: number, size: number) => Promise<Array<{ id: string; 
  * stores: the whole vector column stops being transferred (30 MB at 10,000 rows), and what a
  * search reads back is one page of ids and floats.
  *
- * The blob predicate is what `canScoreInSql` has already vouched for; it is repeated here so
- * the statement is total on its own rather than relying on a promise made elsewhere.
+ * BOTH encodings are scored here. The function parses the legacy JSON-text form as readily as
+ * the blob and returns the same number for it, so old rows are not merely tolerated by a
+ * side path -- they are ranked by the same statement, which is what stops them from going
+ * quietly missing. `dimensions` is the width predicate because it is the one column that
+ * describes both encodings; the blob length check catches a blob that disagrees with it, which
+ * is precisely the row the JavaScript scan used to score as 0 and drop.
  *
  * `score <= 0` is filtered here rather than in SQL so the distance is computed once per row: a
  * `WHERE` on the same expression would double the arithmetic this path exists to move. A zero
@@ -265,7 +227,11 @@ type RankedPage = (offset: number, size: number) => Promise<Array<{ id: string; 
  */
 function sqlScoredPages(store: StoreHandle, where: string[], args: unknown[], vector: number[]): RankedPage {
   const encoded = encodeVector(vector);
-  const guarded = [...where, `typeof(e.vector) = 'blob'`, 'length(e.vector) = ?'];
+  const guarded = [
+    ...where,
+    'e.dimensions = ?',
+    `(typeof(e.vector) = 'text' OR length(e.vector) = ?)`,
+  ];
   return async (offset, size) => {
     const rows = await store.client.execute({
       sql: `SELECT e.knowledge_item_id AS id, 1 - vector_distance_cos(e.vector, ?) AS score
@@ -274,7 +240,7 @@ function sqlScoredPages(store: StoreHandle, where: string[], args: unknown[], ve
             WHERE ${guarded.join(' AND ')}
             ORDER BY score DESC, e.knowledge_item_id
             LIMIT ? OFFSET ?`,
-      args: [encoded, ...args, vector.length * 4, size, offset] as any[],
+      args: [encoded, ...args, vector.length, vector.length * 4, size, offset] as any[],
     });
     const page: Array<{ id: string; score: number }> = [];
     for (const row of rows.rows) {
@@ -287,8 +253,13 @@ function sqlScoredPages(store: StoreHandle, where: string[], args: unknown[], ve
 }
 
 /**
- * The fallback for a store that still holds the legacy JSON-text encoding: fetch every vector,
- * decode and score in JavaScript, exactly as this module did before SQLite could do it.
+ * The safety net: fetch every vector, decode and score in JavaScript, exactly as this module
+ * did before SQLite could do it.
+ *
+ * Reached only when the SQL scan raises, which it does for a stored value libSQL cannot parse
+ * as a vector -- a truncated write, a hand-edited row. `decodeVector` returns null for those
+ * and the row is skipped, so one unreadable row costs its own visibility instead of every
+ * search on the store.
  *
  * Scored once, then served as slices, so paging costs nothing extra.
  */
@@ -376,35 +347,48 @@ export async function searchKnowledgeEmbeddings(
     const queryMagnitude = magnitude(options.vector);
     if (queryMagnitude === 0) return [];
 
-    const nextPage = (await canScoreInSql(store, options.profileFingerprint, options.vector.length * 4))
-      ? sqlScoredPages(store, where, args, options.vector)
-      : await decodedPages(store, where, args, options.vector, queryMagnitude);
-
     // Walk the ranking in pages and stop as soon as enough survive the filters. Only the
     // highest-scoring candidates are ever materialised, instead of every row in the table.
-    const results: VectorSearchResult[] = [];
-    const pageSize = Math.max(limit * 4, 32);
-    for (let start = 0; results.length < limit; start += pageSize) {
-      const page = await nextPage(start, pageSize);
-      if (page.length === 0) break;
-      // Hydrated from the store the ids came from -- same reason as the FTS path. The
-      // ambient handle would return nothing for a peer, or the wrong row on a collision.
-      const items = await getKnowledgeItems(page.map(candidate => candidate.id), store.db);
-      for (const candidate of page) {
-        const item = items.get(candidate.id);
-        if (!item) continue;
-        // Status, category and visibility were applied in SQL, and the tag predicate above is a
-        // superset -- this is the exact check against the parsed array.
-        if (options.tags && options.tags.length > 0) {
-          if (!item.tags || !options.tags.every(tag => item.tags!.includes(tag))) continue;
+    const walk = async (nextPage: RankedPage): Promise<VectorSearchResult[]> => {
+      const results: VectorSearchResult[] = [];
+      const pageSize = Math.max(limit * 4, 32);
+      for (let start = 0; results.length < limit; start += pageSize) {
+        const page = await nextPage(start, pageSize);
+        if (page.length === 0) break;
+        // Hydrated from the store the ids came from -- same reason as the FTS path. The
+        // ambient handle would return nothing for a peer, or the wrong row on a collision.
+        const items = await getKnowledgeItems(page.map(candidate => candidate.id), store.db);
+        for (const candidate of page) {
+          const item = items.get(candidate.id);
+          if (!item) continue;
+          // Status, category and visibility were applied in SQL, and the tag predicate above is
+          // a superset -- this is the exact check against the parsed array.
+          if (options.tags && options.tags.length > 0) {
+            if (!item.tags || !options.tags.every(tag => item.tags!.includes(tag))) continue;
+          }
+          results.push({ item, score: candidate.score });
+          if (results.length >= limit) break;
         }
-        results.push({ item, score: candidate.score });
-        if (results.length >= limit) break;
+        if (page.length < pageSize) break;
       }
-      if (page.length < pageSize) break;
-    }
+      return results;
+    };
 
-    return results;
+    const decoded = () => decodedPages(store, where, args, options.vector, queryMagnitude);
+    if (jsScanOnly.has(store.client)) return await walk(await decoded());
+
+    try {
+      return await walk(sqlScoredPages(store, where, args, options.vector));
+    } catch (scoringError) {
+      // Retry once through the decoder. Every error is retried rather than only the ones whose
+      // message names a vector, because matching on message text is a guess; if the cause was
+      // not the scoring, the JavaScript scan raises too and that error is the one reported.
+      const results = await walk(await decoded()).catch(() => { throw scoringError; });
+      // Only now is it a fact about the data: SQL could not score these rows and JavaScript
+      // could. Remembered so the next search on this connection does not repeat the failure.
+      jsScanOnly.add(store.client);
+      return results;
+    }
   } catch (error: any) {
     throw new DatabaseError(`Failed to search knowledge embeddings: ${error.message}`);
   }
