@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { isProjectRoot } from '../core/config.js';
 import { knowlHome } from '../workspace/paths.js';
 
 /**
@@ -10,7 +11,7 @@ import { knowlHome } from '../workspace/paths.js';
  * machine could only find it by walking the filesystem. This is the cheap alternative: the
  * commands that already visit a repo write its path down, and one visit is enough forever.
  *
- * Convenience state, deliberately not a source of truth. It is filtered against the
+ * Convenience state, deliberately not a source of truth. It is checked against the
  * filesystem on every read, a corrupt file is replaced rather than reported, and losing it
  * entirely costs one `knowl upgrade` per repo to rebuild.
  */
@@ -30,6 +31,11 @@ async function readRegistry(): Promise<Registry> {
   }
 }
 
+async function writeRegistry(repos: string[]): Promise<void> {
+  await fs.mkdir(path.dirname(repoRegistryPath()), { recursive: true });
+  await fs.writeFile(repoRegistryPath(), `${JSON.stringify({ repos }, null, 2)}\n`, 'utf-8');
+}
+
 /** Remember a repository. Never throws: this must not be able to fail an upgrade. */
 export async function recordKnownRepo(projectRoot: string): Promise<void> {
   try {
@@ -37,33 +43,104 @@ export async function recordKnownRepo(projectRoot: string): Promise<void> {
     const registry = await readRegistry();
     if (registry.repos.some(entry => path.resolve(entry) === root)) return;
 
-    const repos = [...registry.repos, root].sort();
-    await fs.mkdir(path.dirname(repoRegistryPath()), { recursive: true });
-    await fs.writeFile(repoRegistryPath(), `${JSON.stringify({ repos }, null, 2)}\n`, 'utf-8');
+    await writeRegistry([...registry.repos, root].sort());
   } catch {
     // A machine-local convenience index is not worth failing the caller over.
   }
 }
 
 /**
- * Recorded repositories that are still Knowl repositories.
+ * What an entry turned out to be when the filesystem was asked.
  *
- * Filtered rather than pruned: a checkout can be absent because it was deleted or because
- * the drive holding it is not mounted right now, and only one of those should forget it.
+ * `live` and `forgotten` are both answers. `unverifiable` is the absence of one, and it is
+ * the case that keeps this from being a one-line filter: an entry can be missing because the
+ * checkout was deleted or because the volume holding it is not mounted right now, and only
+ * the first of those should cost the user a registry line.
  */
-export async function listKnownRepos(): Promise<string[]> {
+type EntryVerdict = 'live' | 'forgotten' | 'unverifiable';
+
+async function classify(root: string): Promise<EntryVerdict> {
+  // Same marker as `isProjectRoot`, which is the whole point: this list feeds `upgrade --all`
+  // and `doctor --fix`, and it used to be filtered on the bare existence of a `.knowl`
+  // directory. `knowlHome()` is *also* called `.knowl`, so that predicate made the user's
+  // home directory a repository (K-51). `discoverRepos` re-filtered correctly and hid it,
+  // which made the disagreement survivable rather than harmless -- the next caller of this
+  // exported function would have inherited the wrong answer instead of the re-filter.
+  if (await isProjectRoot(root)) return 'live';
+
+  // Not a repository *that we can see*. Whether that means "gone" or "not mounted" is
+  // decided by the parent: if the directory that would contain it is readable, the
+  // filesystem has positively told us this checkout is not there. If the parent is missing
+  // too, we are looking at an unplugged drive and know nothing.
+  try {
+    await fs.stat(path.dirname(root));
+    return 'forgotten';
+  } catch {
+    return 'unverifiable';
+  }
+}
+
+export type KnownRepos = {
+  /** Recorded paths that are Knowl repositories right now. */
+  repos: string[];
+  /** Paths dropped from the file because the filesystem says they are not repositories. */
+  forgotten: string[];
+};
+
+/**
+ * The registry, healed against the filesystem, and what healing removed.
+ *
+ * Pruned rather than merely filtered. Filtering on read leaves a dead entry to be re-read on
+ * every sweep forever, and a dead entry is not inert: `upgrade --all` and `doctor --fix` act
+ * on every path this returns, so a scratch directory that once ran `knowl init` keeps being
+ * snapshotted and migrated long after anyone cared about it. That is the hazard
+ * `vitest.config.ts` warns about in a comment, arriving through the registry instead.
+ *
+ * What is never pruned is an entry we could not check. A missing directory under a readable
+ * parent is a deleted checkout; a missing directory whose parent is also missing is an
+ * unmounted volume, and forgetting one of those would cost a repository per drive that
+ * happened to be unplugged on the day someone ran an upgrade.
+ *
+ * The write is best-effort and only happens when something actually changed. A read-only or
+ * absent home degrades to the old filter-on-read behaviour rather than failing the caller --
+ * `assertKnowledgeDatabasePresent` reads this file to tell a moved database from a fresh
+ * clone, and an empty registry silently disables that guard.
+ */
+export async function readKnownRepos(): Promise<KnownRepos> {
   const registry = await readRegistry();
-  const live: string[] = [];
+
+  const repos: string[] = [];
+  const forgotten: string[] = [];
+  const keep: string[] = [];
 
   for (const entry of registry.repos) {
     const root = path.resolve(entry);
-    try {
-      await fs.access(path.join(root, '.knowl'));
-      if (!live.includes(root)) live.push(root);
-    } catch {
-      // Not a Knowl repository (any more).
+    switch (await classify(root)) {
+      case 'live':
+        if (!repos.includes(root)) repos.push(root);
+        keep.push(root);
+        break;
+      case 'forgotten':
+        if (!forgotten.includes(root)) forgotten.push(root);
+        break;
+      case 'unverifiable':
+        keep.push(root);
+        break;
     }
   }
 
-  return live.sort();
+  if (forgotten.length > 0) {
+    try {
+      await writeRegistry([...new Set(keep)].sort());
+    } catch {
+      // Still reported as forgotten for this run; the next one will try the write again.
+    }
+  }
+
+  return { repos: repos.sort(), forgotten: forgotten.sort() };
+}
+
+/** Recorded repositories that are still Knowl repositories. */
+export async function listKnownRepos(): Promise<string[]> {
+  return (await readKnownRepos()).repos;
 }

@@ -134,6 +134,31 @@ describe('upgrade --all sweep', () => {
     expect(await isKnowlProjectGuidanceCurrent(A)).toBe(false);
   });
 
+  it('says which registry entries it forgot instead of quietly sweeping fewer repos', async () => {
+    // The live hazard: `~/.knowl/repos.json` on this machine carries a scratch path that a
+    // sweep would snapshot and migrate. A registry line is dropped the moment the filesystem
+    // says it is not a repository -- and dropping it in silence is how a sweep comes to visit
+    // three repos when the user believes it visits four.
+    const CLI = path.resolve('./dist/index.js');
+    // Marker only, no database: this fixture exists to be un-made, and an open libSQL file
+    // cannot be removed on Windows -- which is the same lock global teardown exists for.
+    const gone = path.join(BASE, 'was-a-repo');
+    await fs.mkdir(path.join(gone, '.knowl'), { recursive: true });
+    await saveConfig(gone, { ...DEFAULT_CONFIG });
+    await recordKnownRepo(A);
+    await recordKnownRepo(gone);
+    await fs.rm(path.join(gone, '.knowl'), { recursive: true, force: true });
+
+    const planned = spawnSync(process.execPath, [CLI, 'upgrade', '--all', '--dry-run'], {
+      cwd: BASE, encoding: 'utf-8', env: { ...process.env, KNOWL_HOME: HOME, KNOWL_NO_UPDATE_CHECK: '1' },
+    });
+
+    expect(planned.status).toBe(0);
+    expect(planned.stdout).toContain(`Forgot ${gone}`);
+    // And the sweep list itself no longer names it.
+    expect(planned.stdout.slice(planned.stdout.indexOf('Would sweep'))).not.toContain(gone);
+  });
+
   it('refuses a sweep-only flag outside a sweep rather than ignoring it', () => {
     const CLI = path.resolve('./dist/index.js');
     const result = spawnSync(process.execPath, [CLI, 'upgrade', '--reindex'], {

@@ -15,7 +15,7 @@ import { Client } from '@libsql/client';
  * `tests/store/schema-pin.test.ts` enforces this: it hashes the schema a fresh bootstrap
  * produces and fails if that hash moves without this number moving. Nobody has to remember.
  */
-export const KNOWL_SCHEMA_VERSION = 2;
+export const KNOWL_SCHEMA_VERSION = 3;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

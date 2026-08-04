@@ -2,7 +2,7 @@ import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { closeDb, getClient, getDb, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
@@ -18,8 +18,11 @@ import {
   CLAIM_SWEEP_BUDGET,
   CLAIM_MAX_AGE_MS,
   COMMIT_PAYLOAD_HORIZON_DAYS,
+  MODEL_CACHE_HORIZON_DAYS,
   SNAPSHOT_KEEP,
+  adoptLegacyModelCache,
   compactKnowledgeCommits,
+  pruneModelCache,
   purgeExpiredMemorySessions,
   sweepDebounceClaims,
 } from '../../src/store/retention.js';
@@ -318,6 +321,299 @@ describe('retention', () => {
       const ids = (await getClient().execute('SELECT id FROM memory_sessions')).rows.map(row => String(row.id));
       expect(ids).toContain(live.id);
       expect(ids).not.toContain(dead.id);
+    });
+  });
+});
+
+/**
+ * K-42's retention half.
+ *
+ * The forward half shipped: a new download resolves to a shared cache under `knowlHome()`
+ * instead of `<repo>/.knowl/models`. What it deliberately did not do is touch what was
+ * already on disk, because switching the path outright would have orphaned it. Measured on
+ * one machine: DuckPrep-server 71 files / 2,495 MB across 16 models, SAT-tests-server and
+ * students 8 files / 336 MB each and byte-identical. Roughly 2.8 GB duplicated or dead.
+ *
+ * So `knowl upgrade` adopts the tree and then prunes what nothing names. Both halves obey the
+ * same two rules as the rest of this module: an interrupted adoption must never leave the
+ * only copy of a model missing, and nothing is removed that this module did not put there.
+ */
+const MODELS_ROOT = path.resolve('.knowl-models-test');
+const SHARED = path.join(MODELS_ROOT, 'shared');
+const MODEL_REPO = path.join(MODELS_ROOT, 'repo');
+const LEGACY = path.join(MODEL_REPO, '.knowl', 'models');
+
+const ARCTIC = 'Snowflake/snowflake-arctic-embed-m-v2.0';
+const MINILM = 'Xenova/all-MiniLM-L6-v2';
+
+/** The real on-disk shape: config + tokenizer beside an `onnx/` directory of weights. */
+async function writeModel(cacheDir: string, model: string, weightBytes = 64): Promise<void> {
+  const dir = path.join(cacheDir, ...model.split('/'));
+  await fs.mkdir(path.join(dir, 'onnx'), { recursive: true });
+  await fs.writeFile(path.join(dir, 'config.json'), '{"model_type":"bert"}', 'utf8');
+  await fs.writeFile(path.join(dir, 'tokenizer.json'), '{"version":"1.0"}', 'utf8');
+  await fs.writeFile(path.join(dir, 'onnx', 'model_quantized.onnx'), Buffer.alloc(weightBytes, 7));
+}
+
+const weightsPath = (cacheDir: string, model: string) =>
+  path.join(cacheDir, ...model.split('/'), 'onnx', 'model_quantized.onnx');
+
+const hasModel = (cacheDir: string, model: string) => fsSync.existsSync(weightsPath(cacheDir, model));
+
+async function ageModel(cacheDir: string, model: string, days: number): Promise<void> {
+  const when = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const dir = path.join(cacheDir, ...model.split('/'));
+  for (const file of ['config.json', 'tokenizer.json', path.join('onnx', 'model_quantized.onnx')]) {
+    await fs.utimes(path.join(dir, file), when, when);
+  }
+}
+
+describe('K-42: the model cache', () => {
+  beforeEach(async () => {
+    await fs.rm(MODELS_ROOT, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(SHARED, { recursive: true });
+  });
+
+  afterAll(async () => {
+    await fs.rm(MODELS_ROOT, { recursive: true, force: true }).catch(() => {});
+  });
+
+  describe('adoption', () => {
+    it('moves a model the shared cache does not have, and frees the repo copy', async () => {
+      await writeModel(LEGACY, ARCTIC, 4096);
+
+      const report = await adoptLegacyModelCache(LEGACY, SHARED);
+
+      expect(hasModel(SHARED, ARCTIC)).toBe(true);
+      expect(fsSync.existsSync(LEGACY)).toBe(false);
+      expect(report.adopted).toBe(3);
+      expect(report.bytesFreed).toBeGreaterThan(4096);
+    });
+
+    it('drops a duplicate without rewriting the copy that is already shared', async () => {
+      // Two of the three repos measured held byte-identical 336 MB trees. Copying them over
+      // each other would move a third of a gigabyte to change nothing.
+      await writeModel(SHARED, ARCTIC, 4096);
+      await writeModel(LEGACY, ARCTIC, 4096);
+      const before = (await fs.stat(weightsPath(SHARED, ARCTIC))).mtimeMs;
+
+      const report = await adoptLegacyModelCache(LEGACY, SHARED);
+
+      expect((await fs.stat(weightsPath(SHARED, ARCTIC))).mtimeMs).toBe(before);
+      expect(fsSync.existsSync(LEGACY)).toBe(false);
+      expect(report.adopted).toBe(0);
+      expect(report.deduplicated).toBe(3);
+    });
+
+    it('keeps both copies and says so when they disagree', async () => {
+      // Different sizes mean different revisions of the same file. Neither one is safe to
+      // declare the loser, so nothing is deleted and the path is reported.
+      await writeModel(SHARED, ARCTIC, 4096);
+      await writeModel(LEGACY, ARCTIC, 8192);
+
+      const report = await adoptLegacyModelCache(LEGACY, SHARED);
+
+      expect(hasModel(LEGACY, ARCTIC)).toBe(true);
+      expect((await fs.stat(weightsPath(SHARED, ARCTIC))).size).toBe(4096);
+      expect(report.conflicts).toHaveLength(1);
+      expect(report.conflicts[0]).toContain('model_quantized.onnx');
+    });
+
+    it('never leaves the only copy missing when the copy fails partway', async () => {
+      // The one rule that matters. The source is unlinked only after the destination is
+      // completely written and renamed into place, so every interruption point has at least
+      // one whole copy of the weights.
+      await writeModel(LEGACY, ARCTIC, 4096);
+
+      const report = await adoptLegacyModelCache(LEGACY, SHARED, {
+        copyFile: async () => { throw new Error('disk full'); },
+      });
+
+      expect(report.adopted).toBe(0);
+      expect(hasModel(LEGACY, ARCTIC)).toBe(true);
+      expect(hasModel(SHARED, ARCTIC)).toBe(false);
+      // And no half-written file left looking like a model to the next resolver.
+      const onnx = path.join(SHARED, ...ARCTIC.split('/'), 'onnx');
+      const leftovers = fsSync.existsSync(onnx) ? await fs.readdir(onnx) : [];
+      expect(leftovers).toEqual([]);
+    });
+
+    it('collects a partial file a killed run left behind', async () => {
+      const onnx = path.join(SHARED, ...ARCTIC.split('/'), 'onnx');
+      await fs.mkdir(onnx, { recursive: true });
+      const orphan = path.join(onnx, 'model_quantized.onnx.9999.knowl-partial');
+      await fs.writeFile(orphan, Buffer.alloc(128));
+      await fs.utimes(orphan, new Date(Date.now() - 86_400_000), new Date(Date.now() - 86_400_000));
+      await writeModel(LEGACY, ARCTIC, 4096);
+
+      await adoptLegacyModelCache(LEGACY, SHARED);
+
+      expect(fsSync.existsSync(orphan)).toBe(false);
+      expect(hasModel(SHARED, ARCTIC)).toBe(true);
+    });
+
+    it('collects one even when the tree it came from is already gone', async () => {
+      // Found by killing a real migration: SIGKILL during the last file leaves an orphan
+      // behind an emptied legacy tree, and a sweep that only runs when there is something
+      // left to adopt would never come back for it. It was 110 MB.
+      const onnx = path.join(SHARED, ...ARCTIC.split('/'), 'onnx');
+      await fs.mkdir(onnx, { recursive: true });
+      const orphan = path.join(onnx, 'model_quantized.onnx.11300.knowl-partial');
+      await fs.writeFile(orphan, Buffer.alloc(128));
+      await fs.utimes(orphan, new Date(Date.now() - 86_400_000), new Date(Date.now() - 86_400_000));
+
+      await adoptLegacyModelCache(LEGACY, SHARED);
+
+      expect(fsSync.existsSync(orphan)).toBe(false);
+    });
+
+    it('leaves a partial another upgrade is still writing', async () => {
+      // Two upgrades can overlap. Taking a live partial costs the other process a gigabyte
+      // of recopying and buys nothing.
+      const onnx = path.join(SHARED, ...ARCTIC.split('/'), 'onnx');
+      await fs.mkdir(onnx, { recursive: true });
+      const inflight = path.join(onnx, 'model_quantized.onnx.4242.knowl-partial');
+      await fs.writeFile(inflight, Buffer.alloc(128));
+
+      await adoptLegacyModelCache(LEGACY, SHARED);
+
+      expect(fsSync.existsSync(inflight)).toBe(true);
+    });
+
+    it('does nothing at all when there is no legacy tree', async () => {
+      const report = await adoptLegacyModelCache(LEGACY, SHARED);
+
+      expect(report).toMatchObject({ adopted: 0, deduplicated: 0, bytesFreed: 0 });
+      expect(await fs.readdir(SHARED)).toEqual([]);
+    });
+  });
+
+  describe('pruning', () => {
+    it('removes a model no repository on this machine names', async () => {
+      await writeModel(SHARED, ARCTIC);
+      await writeModel(SHARED, MINILM);
+      await ageModel(SHARED, MINILM, MODEL_CACHE_HORIZON_DAYS + 1);
+
+      const report = await pruneModelCache(SHARED, [ARCTIC]);
+
+      expect(hasModel(SHARED, ARCTIC)).toBe(true);
+      expect(hasModel(SHARED, MINILM)).toBe(false);
+      expect(report.pruned).toEqual([path.join(SHARED, ...MINILM.split('/'))]);
+    });
+
+    it('keeps a model some config names however old it is', async () => {
+      // This is what stops a running `serve` losing its weights: the model it loaded is the
+      // model its config names, and a named model is never pruned. The filesystem is no help
+      // here -- measured on this machine, an open file can be deleted and the holder keeps
+      // reading it, so "it is in use" is not something the OS will refuse on our behalf.
+      await writeModel(SHARED, ARCTIC);
+      await ageModel(SHARED, ARCTIC, MODEL_CACHE_HORIZON_DAYS * 10);
+
+      const report = await pruneModelCache(SHARED, [ARCTIC]);
+
+      expect(hasModel(SHARED, ARCTIC)).toBe(true);
+      expect(report.pruned).toEqual([]);
+    });
+
+    it('leaves an unnamed model alone until it is past the horizon', async () => {
+      // A model-selection sweep downloads a dozen models no config names, and running an
+      // upgrade the next morning must not undo the afternoon.
+      await writeModel(SHARED, MINILM);
+
+      const report = await pruneModelCache(SHARED, [ARCTIC]);
+
+      expect(hasModel(SHARED, MINILM)).toBe(true);
+      expect(report.pruned).toEqual([]);
+    });
+
+    it('prunes nothing when it could not find out what is named', async () => {
+      // Fail closed. An empty keep set means the configs could not be read, not that no
+      // model is wanted, and the difference is 2.5 GB.
+      await writeModel(SHARED, ARCTIC);
+      await ageModel(SHARED, ARCTIC, MODEL_CACHE_HORIZON_DAYS + 1);
+
+      const report = await pruneModelCache(SHARED, []);
+
+      expect(hasModel(SHARED, ARCTIC)).toBe(true);
+      expect(report.pruned).toEqual([]);
+    });
+
+    it('touches nothing it did not put there', async () => {
+      await writeModel(SHARED, ARCTIC);
+      const stranger = path.join(SHARED, 'notes.txt');
+      await fs.writeFile(stranger, 'a human put this here', 'utf8');
+      const strangerDir = path.join(SHARED, 'my-own-things');
+      await fs.mkdir(strangerDir, { recursive: true });
+      await fs.writeFile(path.join(strangerDir, 'keep.bin'), Buffer.alloc(8));
+
+      await pruneModelCache(SHARED, [ARCTIC]);
+
+      expect(fsSync.existsSync(stranger)).toBe(true);
+      // A top-level entry is an org, not a model: only `<org>/<name>` is ours to remove.
+      expect(fsSync.existsSync(path.join(strangerDir, 'keep.bin'))).toBe(true);
+    });
+  });
+
+  describe('through `knowl upgrade`', () => {
+    // The command that already visits every repository on the machine is the one that pays
+    // for the migration, exactly as it does for snapshots and commit payloads.
+    const UPGRADE_ROOT = path.resolve('.knowl-models-upgrade-test');
+    const UPGRADE_HOME = path.join(UPGRADE_ROOT, 'home');
+    const UPGRADE_REPO = path.join(UPGRADE_ROOT, 'repo');
+
+    beforeEach(async () => {
+      await closeDb();
+      await fs.rm(UPGRADE_ROOT, { recursive: true, force: true }).catch(() => {});
+      await fs.mkdir(path.join(UPGRADE_REPO, '.knowl'), { recursive: true });
+      await saveConfig(UPGRADE_REPO, {
+        ...DEFAULT_CONFIG,
+        search: { ...DEFAULT_CONFIG.search, vector: { ...DEFAULT_CONFIG.search?.vector, enabled: true, model: ARCTIC } },
+      } as any);
+      process.env.KNOWL_HOME = UPGRADE_HOME;
+    });
+
+    afterEach(async () => {
+      delete process.env.KNOWL_HOME;
+      await closeDb();
+      await releaseAll();
+      await fs.rm(UPGRADE_ROOT, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it('adopts this repository tree and reports the bytes it gave back', async () => {
+      await writeModel(path.join(UPGRADE_REPO, '.knowl', 'models'), ARCTIC, 4096);
+
+      const result = await upgradeExistingRepository(UPGRADE_REPO, 'Model cache test');
+
+      expect(result.retention.models.adopted).toBe(3);
+      expect(result.retention.models.bytesFreed).toBeGreaterThan(4096);
+      expect(hasModel(path.join(UPGRADE_HOME, 'models'), ARCTIC)).toBe(true);
+      expect(fsSync.existsSync(path.join(UPGRADE_REPO, '.knowl', 'models'))).toBe(false);
+    });
+
+    it('never prunes the model this repository is configured to use', async () => {
+      // The upgrade that adopts a model must not then decide nothing needs it. This is the
+      // path a `serve` holding those weights would be destroyed by.
+      const shared = path.join(UPGRADE_HOME, 'models');
+      await writeModel(shared, ARCTIC);
+      await ageModel(shared, ARCTIC, MODEL_CACHE_HORIZON_DAYS * 5);
+
+      const result = await upgradeExistingRepository(UPGRADE_REPO, 'Model cache test');
+
+      expect(result.retention.models.pruned).toEqual([]);
+      expect(hasModel(shared, ARCTIC)).toBe(true);
+    });
+
+    it('prunes a stale model this machine no longer names', async () => {
+      const shared = path.join(UPGRADE_HOME, 'models');
+      await writeModel(shared, ARCTIC);
+      await writeModel(shared, MINILM);
+      await ageModel(shared, MINILM, MODEL_CACHE_HORIZON_DAYS + 1);
+
+      const result = await upgradeExistingRepository(UPGRADE_REPO, 'Model cache test');
+
+      expect(hasModel(shared, ARCTIC)).toBe(true);
+      expect(hasModel(shared, MINILM)).toBe(false);
+      expect(result.retention.models.pruned).toHaveLength(1);
     });
   });
 });

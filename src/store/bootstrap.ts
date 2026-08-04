@@ -79,6 +79,21 @@ const SCHEMA_STATEMENTS = [
     created_at TEXT NOT NULL
   );`,
 
+  /**
+   * Which items each commit touched, so blast radius does not have to recover it by
+   * substring match over the JSON that encodes it (K-48).
+   *
+   * An index over `knowledge_commits.changes`, not a second source of truth: it decides
+   * which commits are worth opening, and every answer still comes out of `changes`. The
+   * cascade matters -- an index row whose commit is gone is the shape corruption reads as.
+   */
+  `CREATE TABLE IF NOT EXISTS knowledge_commit_items (
+    commit_id TEXT NOT NULL REFERENCES knowledge_commits(id) ON DELETE CASCADE,
+    item_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    PRIMARY KEY (commit_id, item_id)
+  );`,
+
   `CREATE TABLE IF NOT EXISTS knowledge_assertions (
     id TEXT PRIMARY KEY,
     knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
@@ -209,6 +224,9 @@ const SCHEMA_STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS idx_mcp_call_commits_lookup ON mcp_call_commits(project_root, tool_name, created_at);`,
   `CREATE INDEX IF NOT EXISTS idx_host_session_bindings_memory ON host_session_bindings(memory_session_id);`,
   `CREATE INDEX IF NOT EXISTS idx_host_session_bindings_session ON host_session_bindings(host, project_root, external_session_id, active);`,
+  // The lookup blast radius actually makes: "which commit inserted this item". Covering, so
+  // the plan never has to touch the table itself.
+  `CREATE INDEX IF NOT EXISTS idx_knowledge_commit_items_item ON knowledge_commit_items(item_id, action, commit_id);`,
 
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
@@ -542,6 +560,48 @@ async function backfillKnowledgeAssertions(client: Client): Promise<void> {
     WHERE NOT EXISTS (SELECT 1 FROM knowledge_assertions WHERE knowledge_item_id = knowledge_items.id);`);
 }
 
+/**
+ * Index every commit already on disk, so an existing history is not half-covered.
+ *
+ * Blast radius falls back to the old scan for a commit it finds no index rows for, which
+ * makes a missing row cost speed rather than a sibling -- but a store that never ran this
+ * would take that fallback forever and the index would buy nothing. It runs once, inside the
+ * migration transaction, gated on the version like everything else here.
+ *
+ * The parse happens in SQL-adjacent JS rather than with `json_each` because `changes` is
+ * written by this codebase and has been through several shapes; a row that will not parse is
+ * skipped and keeps the fallback, which is the same contract the readers already have.
+ */
+async function backfillCommitItems(client: Client): Promise<void> {
+  const rows = (await client.execute(
+    `SELECT commits.id AS id, commits.changes AS changes FROM knowledge_commits commits
+     WHERE NOT EXISTS (SELECT 1 FROM knowledge_commit_items WHERE commit_id = commits.id)`,
+  )).rows;
+
+  for (const row of rows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(String(row.changes));
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed)) continue;
+
+    // Deduplicated here rather than left to the primary key: one commit legitimately carries
+    // several changes to one item, and INSERT OR IGNORE would hide a real collision too.
+    const seen = new Set<string>();
+    for (const change of parsed as Array<Record<string, unknown>>) {
+      const itemId = typeof change?.itemId === 'string' ? change.itemId : null;
+      if (!itemId || seen.has(itemId)) continue;
+      seen.add(itemId);
+      await client.execute({
+        sql: 'INSERT OR IGNORE INTO knowledge_commit_items (commit_id, item_id, action) VALUES (?, ?, ?)',
+        args: [String(row.id), itemId, String(change?.action ?? 'unknown')],
+      });
+    }
+  }
+}
+
 async function migrateLegacyProjectSchema(client: Client): Promise<void> {
   if (!(await tableExists(client, 'knowledge_items'))) {
     return;
@@ -730,6 +790,7 @@ export async function bootstrapSchema(
     await ensureCodeIndexColumns(client);
     await ensureEmbeddingProfileColumns(client, options.profileFingerprint ?? null);
     await backfillKnowledgeAssertions(client);
+    await backfillCommitItems(client);
     await repairSkillForeignKeys(client);
     await stampSchemaVersion(client);
 

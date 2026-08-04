@@ -81,6 +81,37 @@ export const COMMIT_PAYLOAD_HORIZON_DAYS = 90;
 /** Commits rewritten per pass, so one upgrade cannot stall on a very long history. */
 const COMMIT_COMPACT_BATCH = 2_000;
 
+/**
+ * How long a model no repository names is kept before it is removed.
+ *
+ * Long, because the thing this protects is a model-selection sweep. The 16 models measured in
+ * one repo's cache were downloaded by one -- 2,495 MB in an afternoon -- and an upgrade run
+ * the next morning must not undo the afternoon's work while the results are still being read.
+ * A month is well past that and still bounded, and weights are the one thing in this module
+ * that can be fetched again rather than being gone.
+ */
+export const MODEL_CACHE_HORIZON_DAYS = 30;
+
+/**
+ * Suffix for a copy still in flight.
+ *
+ * Distinctive on purpose: the sweep that collects abandoned ones matches on it, so a killed
+ * adoption costs disk until the next upgrade rather than forever, and nothing else in the
+ * cache can be mistaken for one. `@huggingface/transformers` uses `.tmp.<pid>.<random>` for
+ * the same job, which is why this is not that -- the two must never collect each other's.
+ */
+const PARTIAL_SUFFIX = '.knowl-partial';
+
+/**
+ * How long an in-flight copy is left alone before it is treated as abandoned.
+ *
+ * Not zero, because two upgrades can run at once and deleting a live partial would make the
+ * other one redo a gigabyte. Not long, because an abandoned one is dead weight: a SIGKILL
+ * during the rehearsal left a 110 MB orphan. The largest model measured copies in seconds,
+ * so an hour is three orders of magnitude of headroom.
+ */
+const PARTIAL_MAX_AGE_MS = 60 * 60 * 1000;
+
 // --- files -------------------------------------------------------------------------------
 
 /**
@@ -167,6 +198,294 @@ export async function pruneSnapshots(
   return removed;
 }
 
+// --- model cache -------------------------------------------------------------------------
+
+/**
+ * K-42's retention half.
+ *
+ * The forward half made a *new* download resolve to a shared cache under `knowlHome()`.
+ * It deliberately left what was already on disk alone, because repointing the constant would
+ * have orphaned every existing tree and made the next query refetch a model sitting two
+ * directories away. That leaves the trees orphaned in the other direction: measured on one
+ * machine, 2,495 MB in one repo across 16 models, and two other repos holding byte-identical
+ * 336 MB copies of the same eight files.
+ *
+ * Adoption is a copy, not a rename: `<repo>/.knowl/models` and `knowlHome()` are routinely on
+ * different volumes -- D: and C: on the machine this was measured on -- and `rename` cannot
+ * cross one.
+ *
+ * Which makes the ordering the whole design. Each file is copied to a `.knowl-partial` name,
+ * checked for length, flushed, renamed into place, and only then removed from the repo. The
+ * source is the last thing to go, so at every point where this can be killed -- and it moves
+ * gigabytes, so it will be -- there is at least one complete copy of the weights. There is no
+ * window in which a model exists only as a partial file.
+ */
+export type ModelAdoption = {
+  /** Files copied into the shared cache. */
+  adopted: number;
+  /** Files the shared cache already held identically, removed from the repo unread. */
+  deduplicated: number;
+  /** Bytes returned to the repository's volume. */
+  bytesFreed: number;
+  /** Files present in both at different sizes. Neither copy is touched. */
+  conflicts: string[];
+};
+
+export type ModelAdoptionOptions = {
+  /** Seam for testing the interrupted-copy path, which is the one that must not lose data. */
+  copyFile?: (source: string, destination: string) => Promise<void>;
+};
+
+async function listFilesRecursive(dir: string, prefix = ''): Promise<string[]> {
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  const files: string[] = [];
+  for (const entry of entries) {
+    const relative = prefix ? path.join(prefix, entry.name) : entry.name;
+    if (entry.isDirectory()) {
+      files.push(...await listFilesRecursive(path.join(dir, entry.name), relative));
+    } else if (entry.isFile()) {
+      files.push(relative);
+    }
+  }
+  return files;
+}
+
+/** Remove directories that are empty after a move, deepest first. Never the root itself. */
+async function removeEmptyDirectories(root: string): Promise<void> {
+  let entries;
+  try {
+    entries = await fs.readdir(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (entry.isDirectory()) await removeEmptyDirectories(path.join(root, entry.name));
+  }
+  try {
+    await fs.rmdir(root); // fails, correctly, while anything is left
+  } catch {
+    // Not empty, or gone. Either is fine.
+  }
+}
+
+/** Copy one file into place so that no reader ever sees it half-written. */
+async function adoptOne(
+  source: string,
+  destination: string,
+  copyFile: (source: string, destination: string) => Promise<void>,
+): Promise<void> {
+  const partial = `${destination}.${process.pid}${PARTIAL_SUFFIX}`;
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  try {
+    await copyFile(source, partial);
+
+    // Length is the cheap end of "did all of it arrive". A short copy is what a full disk
+    // looks like, and a 300 MB model that is silently 200 MB fails much later and much worse.
+    const [from, to] = await Promise.all([fs.stat(source), fs.stat(partial)]);
+    if (from.size !== to.size) throw new Error(`short copy: ${to.size} of ${from.size} bytes`);
+
+    // Flushed before the rename, not after. Rename is atomic with respect to other
+    // processes, not with respect to power loss: without this the directory entry can reach
+    // the disk while the contents have not, which is a model that exists and is empty.
+    const handle = await fs.open(partial, 'r+');
+    try {
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+
+    await fs.rename(partial, destination);
+  } catch (error) {
+    await fs.rm(partial, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+/**
+ * Move a repository's model cache into the shared one, and give the space back.
+ *
+ * Returns rather than throws: this runs from `knowl upgrade`, and a machine that could not
+ * finish a migration must still get its upgrade. Whatever is left behind is picked up next
+ * time, because every step is idempotent -- a file already adopted is a duplicate on the
+ * next pass, and a duplicate is removed without being copied again.
+ */
+export async function adoptLegacyModelCache(
+  legacyDir: string,
+  sharedDir: string,
+  options: ModelAdoptionOptions = {},
+): Promise<ModelAdoption> {
+  const copyFile = options.copyFile ?? ((from, to) => fs.copyFile(from, to));
+  const report: ModelAdoption = { adopted: 0, deduplicated: 0, bytesFreed: 0, conflicts: [] };
+
+  // Anything a killed run left mid-copy, before writing more of them, and *before* the
+  // early return below -- a SIGKILL during the last file of a migration leaves an orphan
+  // behind an emptied legacy tree, and gating this on there being more to adopt is how a
+  // 110 MB partial comes to sit in the cache forever. Found exactly that way.
+  //
+  // Matched by suffix, so this collects only its own: `@huggingface/transformers` names its
+  // in-flight downloads `.tmp.<pid>.<random>` and they are none of our business.
+  for (const relative of await listFilesRecursive(sharedDir)) {
+    if (!relative.endsWith(PARTIAL_SUFFIX)) continue;
+    const partial = path.join(sharedDir, relative);
+    try {
+      // Age, not ownership: a second upgrade running right now owns a fresh one, and taking
+      // it would make that process recopy a gigabyte for nothing.
+      if (Date.now() - (await fs.stat(partial)).mtimeMs < PARTIAL_MAX_AGE_MS) continue;
+      await fs.rm(partial, { force: true });
+    } catch {
+      // Gone, or not ours to remove. Next upgrade.
+    }
+  }
+
+  const files = await listFilesRecursive(legacyDir);
+  if (files.length === 0) {
+    await removeEmptyDirectories(legacyDir);
+    return report;
+  }
+
+  for (const relative of files) {
+    const source = path.join(legacyDir, relative);
+    const destination = path.join(sharedDir, relative);
+
+    let size = 0;
+    try {
+      size = (await fs.stat(source)).size;
+    } catch {
+      continue; // vanished under us
+    }
+
+    let existing: Awaited<ReturnType<typeof fs.stat>> | null = null;
+    try {
+      existing = await fs.stat(destination);
+    } catch {
+      existing = null;
+    }
+
+    try {
+      if (existing) {
+        if (existing.size !== size) {
+          // Two revisions of one file. Declaring either the loser is a guess, and the guess
+          // that is wrong destroys the working copy -- so keep both and say which.
+          report.conflicts.push(destination);
+          continue;
+        }
+        // Same size, same name, same origin: the shared cache already has this. Removing the
+        // repo copy unread is the entire 336 MB saving on two of the three repos measured.
+        await fs.rm(source, { force: true });
+        report.deduplicated += 1;
+        report.bytesFreed += size;
+        continue;
+      }
+
+      await adoptOne(source, destination, copyFile);
+      await fs.rm(source, { force: true });
+      report.adopted += 1;
+      report.bytesFreed += size;
+    } catch {
+      // This file stays where it is, whole, and the next upgrade tries again.
+    }
+  }
+
+  await removeEmptyDirectories(legacyDir);
+  return report;
+}
+
+export type ModelPrune = { pruned: string[]; bytesFreed: number };
+
+/**
+ * Remove cached models that no repository on this machine names.
+ *
+ * Two guards, and the first is the one that matters. **A model named by any known
+ * repository's config is never removed, at any age.** That is what stops a running `serve`
+ * losing the weights underneath it: the model it loaded is the model its config names.
+ *
+ * The filesystem will not do that for us, which is worth stating because the opposite is the
+ * natural assumption. Measured on this machine: a file held open by another process can be
+ * deleted, the delete succeeds, and the holder goes on reading it. Windows does not refuse.
+ * So "it is in use" has to be a fact this function knows, not a lock it trips over.
+ *
+ * The second guard is the horizon, which only ever delays: a model nothing names is kept
+ * `MODEL_CACHE_HORIZON_DAYS` past its newest file, so an afternoon of benchmarking survives
+ * the next morning's upgrade.
+ *
+ * Fails closed. An empty keep set means the configs could not be read, not that nothing is
+ * wanted, and on the machine this was measured on the difference is 2.5 GB.
+ */
+export async function pruneModelCache(
+  cacheDir: string,
+  keepModels: string[],
+  now = Date.now(),
+  horizonDays = MODEL_CACHE_HORIZON_DAYS,
+): Promise<ModelPrune> {
+  const report: ModelPrune = { pruned: [], bytesFreed: 0 };
+  if (keepModels.length === 0) return report;
+
+  const keep = new Set(keepModels.map(model => model.split('/').join(path.sep)));
+  const cutoff = now - horizonDays * 24 * 60 * 60 * 1000;
+
+  let orgs;
+  try {
+    orgs = await fs.readdir(cacheDir, { withFileTypes: true });
+  } catch {
+    return report;
+  }
+
+  for (const org of orgs) {
+    // A model is `<org>/<name>`, always two levels. A file at the top is not ours, and
+    // neither is a directory holding no model directory.
+    if (!org.isDirectory()) continue;
+
+    let models;
+    try {
+      models = await fs.readdir(path.join(cacheDir, org.name), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const model of models) {
+      if (!model.isDirectory()) continue;
+      const relative = path.join(org.name, model.name);
+      if (keep.has(relative)) continue;
+
+      const dir = path.join(cacheDir, relative);
+      const files = await listFilesRecursive(dir);
+      if (files.length === 0) continue;
+
+      let newest = 0;
+      let bytes = 0;
+      for (const file of files) {
+        try {
+          const stat = await fs.stat(path.join(dir, file));
+          newest = Math.max(newest, stat.mtimeMs);
+          bytes += stat.size;
+        } catch {
+          // Gone under us; it costs nothing either way.
+        }
+      }
+      if (newest === 0 || newest > cutoff) continue;
+
+      try {
+        await fs.rm(dir, { recursive: true, force: true });
+        report.pruned.push(dir);
+        report.bytesFreed += bytes;
+      } catch {
+        // Locked or in use by something that does hold it. Next upgrade.
+      }
+    }
+
+    // An org directory with no models left is an empty shell.
+    await fs.rmdir(path.join(cacheDir, org.name)).catch(() => {});
+  }
+
+  return report;
+}
+
 // --- database ----------------------------------------------------------------------------
 
 export type CommitCompaction = { commits: number; bytesFreed: number };
@@ -186,10 +505,19 @@ const isoDaysAgo = (days: number, now = Date.now()) =>
  * last one there is. Deletes are rare, so keeping them costs nothing and losing them would
  * be the one irreversible thing in an otherwise reversible sweep.
  *
- * This is also the honest answer to "blast radius full-scans an unindexed LIKE." That scan
- * is `changes LIKE '%<id>%'`, and a leading wildcard cannot use an index in SQLite at all,
- * so there is no index to add. What can be made smaller is the thing being scanned, and the
- * before/after payloads are almost all of it.
+ * This is NOT the answer to "blast radius full-scans an unindexed LIKE", though it was
+ * recorded as one. The premise is right -- `changes LIKE '%<id>%'` leads with a wildcard, and
+ * no B-tree can serve that -- but "no index serves this query as written" was read as "this
+ * query cannot be made fast", and the two are different claims. Measured on a copy of a real
+ * store: compaction takes the scan from 6.49 ms to 0.13 ms at 643 commits, and the same
+ * compacted table at 20,000 commits is back to 2.54 ms. It shrinks the bytes, not the rows,
+ * and commit rows are never deleted -- so the scan stays O(commits) and that store writes
+ * 21.5 of them a day.
+ *
+ * What actually fixes it is not an index on this column but a column to index:
+ * `knowledge_commit_items` records which items a commit touched at write time, which turns
+ * the lookup into an equality search. See `blast-radius.ts`. Compaction still earns its
+ * place here -- it is 80x fewer bytes in the store -- it just was not a performance fix.
  */
 export async function compactKnowledgeCommits(
   horizonDays = COMMIT_PAYLOAD_HORIZON_DAYS,
@@ -291,6 +619,34 @@ export type RetentionReport = {
   commitBytesFreed: number;
   sessions: number;
   claims: number;
+  models: {
+    /** Files copied out of `<repo>/.knowl/models` into the shared cache. */
+    adopted: number;
+    /** Files the shared cache already held identically, removed from the repo unread. */
+    deduplicated: number;
+    /** Bytes returned to the repository's volume by adoption. */
+    bytesFreed: number;
+    /** Files present in both caches at different sizes. Neither copy was touched. */
+    conflicts: string[];
+    /** Model directories removed from the shared cache because nothing names them. */
+    pruned: string[];
+    /** Bytes returned to the shared cache's volume by pruning. */
+    prunedBytes: number;
+  };
+};
+
+/**
+ * Where a repository's own weights live, and where the machine's live.
+ *
+ * Passed in rather than resolved here. `src/ai/embeddings.ts` decides where the cache *is*;
+ * this module only decides what happens to what is already sitting in one, and two modules
+ * that both compute a path are two modules that can disagree about it.
+ */
+export type ModelCacheRetention = {
+  legacyDir: string;
+  sharedDir: string;
+  /** Every model any known repository names. Empty means "could not tell", and prunes none. */
+  keepModels: string[];
 };
 
 /**
@@ -300,8 +656,36 @@ export type RetentionReport = {
  * part of it is idempotent, so the next upgrade finishes whatever this one did not.
  * Requires an open database.
  */
-export async function runStoreRetention(projectRoot: string): Promise<RetentionReport> {
-  const report: RetentionReport = { commits: 0, commitBytesFreed: 0, sessions: 0, claims: 0 };
+export async function runStoreRetention(
+  projectRoot: string,
+  modelCache?: ModelCacheRetention,
+): Promise<RetentionReport> {
+  const report: RetentionReport = {
+    commits: 0, commitBytesFreed: 0, sessions: 0, claims: 0,
+    models: { adopted: 0, deduplicated: 0, bytesFreed: 0, conflicts: [], pruned: [], prunedBytes: 0 },
+  };
+
+  // Adopt before pruning, in that order: a model this repo was the last holder of is in the
+  // shared cache before anything decides whether the shared cache still needs it.
+  if (modelCache) {
+    try {
+      const adoption = await adoptLegacyModelCache(modelCache.legacyDir, modelCache.sharedDir);
+      report.models.adopted = adoption.adopted;
+      report.models.deduplicated = adoption.deduplicated;
+      report.models.bytesFreed = adoption.bytesFreed;
+      report.models.conflicts = adoption.conflicts;
+    } catch {
+      // Whole files, where they were. Next upgrade.
+    }
+
+    try {
+      const pruned = await pruneModelCache(modelCache.sharedDir, modelCache.keepModels);
+      report.models.pruned = pruned.pruned;
+      report.models.prunedBytes = pruned.bytesFreed;
+    } catch {
+      // As above.
+    }
+  }
 
   try {
     const compaction = await compactKnowledgeCommits();
