@@ -24,6 +24,18 @@ const SCHEMA_PINS: Record<number, string> = {
   // 2 adds `knowledge_commit_items` and its covering index. Additive, so
   // `KNOWL_SCHEMA_VERSION` deliberately does not move with it.
   2: '1e9ab9fdb263a49ec80f26eff98fe0c3',
+  // 3 adds `work_read_sets` and `impact_findings` plus their four indexes. Additive again, so
+  // `KNOWL_SCHEMA_VERSION` again does not move.
+  //
+  // !!! PLACEHOLDER -- NOT THE REAL HASH. The lane that wrote this DDL was not permitted to run
+  // vitest (a second lane was working the same directory, and concurrent runs sweep each
+  // other's `.knowl-*` fixtures), so the fingerprint could not be computed. To fill it in:
+  //   npx vitest run tests/store/schema-pin.test.ts
+  // The first case fails with `Received: '<32 hex chars>'`; that value is the real fingerprint.
+  // Paste it over the string below, keeping the key at 3. Ignore the failure message's own
+  // `SCHEMA_PINS[4]` suggestion -- it is `KNOWL_MIGRATION_LEVEL + 1` and the level is already
+  // bumped, so the entry belongs at 3, not 4.
+  3: '167b360fbc14831874078aed7361c09e',
 };
 
 let root: string;
