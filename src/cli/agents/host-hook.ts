@@ -154,21 +154,25 @@ function toolCaptureKey(toolName: string, input: Record<string, unknown>): strin
   }
 }
 
-function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'knowlTool' | 'knowlToolName' | 'knowlChangeKeys' | 'captureKey'> {
+function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'toolName' | 'knowlTool' | 'knowlToolName' | 'knowlChangeKeys' | 'captureKey'> {
   const input = toolInput(raw);
   const toolName = stringValue(raw.tool_name) ?? stringValue(raw.toolName) ?? '';
   const knowlTool = /knowl/i.test(toolName);
   const changeKeys = knowlTool
     ? { knowlChangeKeys: knowlChangeKeys(input), knowlToolName: bareKnowlToolName(toolName) }
     : {};
+  // Spread, so a payload with no tool_name leaves the field absent rather than empty:
+  // `toolName: ''` asserts "a tool called nothing", which a consumer cannot distinguish
+  // from a real name it fails to recognise, whereas undefined says the host stayed silent.
+  const named = toolName ? { toolName } : {};
   const isShell = hostProfile(host).isShellEvent(eventName, toolName);
   // Shell events already fingerprint on the command itself, so they were never affected.
-  if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, knowlTool, ...changeKeys };
+  if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, ...named, knowlTool, ...changeKeys };
 
   const captureKey = toolCaptureKey(toolName, input);
   const paths = changedPaths(projectRoot, { ...raw, ...input });
-  if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths }, knowlTool, captureKey, ...changeKeys };
-  return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) }, knowlTool, captureKey, ...changeKeys };
+  if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths }, ...named, knowlTool, captureKey, ...changeKeys };
+  return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) }, ...named, knowlTool, captureKey, ...changeKeys };
 }
 
 function failurePayload(raw: Record<string, unknown>, failed: boolean): Record<string, unknown> {
@@ -295,5 +299,6 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
 }
 
 export function normalizeHostHook(host: string, eventName: string, raw: Record<string, unknown>): NormalizedHostHook {
-  return validateNormalizedHostHook(normalizeHostHookUnchecked(host, eventName, raw));
+  const normalized = normalizeHostHookUnchecked(host, eventName, raw);
+  return validateNormalizedHostHook(normalized);
 }

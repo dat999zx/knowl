@@ -32,6 +32,20 @@ export interface NormalizedHostHook {
   status?: 'finished' | 'failed';
   type?: SessionEventType;
   payload: Record<string, unknown>;
+  /**
+   * The host's own name for the tool this event fired for, verbatim and unclassified.
+   *
+   * `changedPaths` records that a path was touched but not how, so a `Read` normalises to
+   * exactly the same event as an `Edit` -- and "this session read that file" and "this
+   * session wrote it" are opposite facts. The name was already computed to pick the shell
+   * branch and to build the capture key, then discarded, so nothing downstream could tell
+   * them apart. It also separates a real file from a `Grep` given a `path` argument, which
+   * is allowlisted (`lifecycle.ts:34`) and emits a directory that looks like a changed file.
+   *
+   * Kept raw: deciding which tools count as a read is a consumer's judgement, and baking it
+   * in here would hide the tools it guessed wrong about behind a field nobody can re-derive.
+   */
+  toolName?: string;
   /** True when this tool event is a Knowl MCP/CLI call — used to reset the drift reminder. */
   knowlTool?: boolean;
   /**
