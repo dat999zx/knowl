@@ -28,28 +28,59 @@ const SEARCH_SYNONYMS: Record<string, string[]> = Object.assign(Object.create(nu
   storage: ['persistence', 'persist', 'database', 'db'],
 });
 
-function tokenizeSearchQuery(query: string): string[] {
+/**
+ * The query as groups of interchangeable terms: each original token with its synonyms.
+ *
+ * Grouped rather than flattened because coverage has to be counted per *term the user asked
+ * for*. Flattening makes `db` two terms and an item that says "database" cover half a query
+ * it answers completely.
+ */
+function queryTokenGroups(query: string): string[][] {
   const tokens = query
     .toLowerCase()
     .split(/[^a-z0-9_]+/)
     .map(token => token.trim())
     .filter(token => token.length >= 2 && !SEARCH_STOP_WORDS.has(token));
 
-  const expanded = new Set<string>();
+  const groups: string[][] = [];
+  const seen = new Set<string>();
   for (const token of tokens) {
-    expanded.add(token);
-    for (const synonym of SEARCH_SYNONYMS[token] || []) {
-      expanded.add(synonym);
-    }
+    if (seen.has(token)) continue;
+    seen.add(token);
+    groups.push([token, ...(SEARCH_SYNONYMS[token] || [])]);
   }
+  return groups;
+}
 
-  return [...expanded];
+function tokenizeSearchQuery(query: string): string[] {
+  return [...new Set(queryTokenGroups(query).flat())];
 }
 
 function buildFtsQuery(query: string): string | null {
   const tokens = tokenizeSearchQuery(query);
   if (tokens.length === 0) return null;
   return tokens.map(token => `${token}*`).join(' OR ');
+}
+
+/**
+ * The share of the query's distinct terms this item contains.
+ *
+ * FTS5 is asked `a* OR b* OR c*`, so a document matching one term out of three is a hit with
+ * a real BM25 score, and nothing in that score says how much of the question it answered.
+ * Coverage does, and unlike BM25 it means the same thing in every repo: it is a property of
+ * the item and the query, with no corpus statistics in it. Prefix-matched, because that is
+ * what the FTS query asked for.
+ */
+function queryCoverage(item: KnowledgeItem, groups: string[][]): number {
+  if (groups.length === 0) return 1;
+  const haystack = new Set(
+    [item.title, item.content, item.reasoning ?? '', (item.tags ?? []).join(' ')]
+      .join(' ').toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean),
+  );
+  const words = [...haystack];
+  const covered = groups.filter(group =>
+    group.some(term => haystack.has(term) || words.some(word => word.startsWith(term)))).length;
+  return covered / groups.length;
 }
 
 export type SearchOptions = {
@@ -79,7 +110,7 @@ export type SearchOptions = {
  * The ranker used to discard this and recount tokens in JavaScript instead. It is returned
  * because it is the length-normalised evidence the recount was a worse copy of.
  */
-export type LexicalHit = { item: KnowledgeItem; bm25: number };
+export type LexicalHit = { item: KnowledgeItem; bm25: number; coverage: number };
 
 /**
  * A SQL predicate that keeps only rows carrying every requested tag.
@@ -165,11 +196,12 @@ export async function searchKnowledgeItemsRanked(
   // return nothing for a peer, or an unrelated local row presented as the peer's.
   const items = await getKnowledgeItems(ordered.map(row => row.itemId), store.db);
 
+  const groups = queryTokenGroups(options.query);
   const hits: LexicalHit[] = [];
   for (const row of ordered) {
     const item = items.get(row.itemId);
     if (!item || !hasEveryTag(item, options.tags)) continue;
-    hits.push({ item, bm25: row.score });
+    hits.push({ item, bm25: row.score, coverage: queryCoverage(item, groups) });
     if (hits.length >= limit) break;
   }
 

@@ -92,7 +92,13 @@ export type KnowledgeQueryOptions = {
  * consumer that fuses several stores must normalise each store's scores separately anyway,
  * because BM25 is corpus-relative by construction.
  */
-export type LexicalCandidate = { item: KnowledgeItem; lexicalScore: number; source: 'fts' | 'like' };
+export type LexicalCandidate = {
+  item: KnowledgeItem;
+  lexicalScore: number;
+  /** Share of the query's distinct terms present. See queryCoverage in search.ts. */
+  coverage: number;
+  source: 'fts' | 'like';
+};
 
 /**
  * BM25's term-saturation and length-normalisation components, for the substring fallback.
@@ -163,7 +169,7 @@ export async function queryKnowledgeCandidates(
         // Negated on the way out: FTS5 returns a negative score where more negative is a
         // better match, and every consumer above this line reads "higher is better".
         const candidates: LexicalCandidate[] = ftsResults.map(hit => ({
-          item: hit.item, lexicalScore: -hit.bm25, source: 'fts',
+          item: hit.item, lexicalScore: -hit.bm25, coverage: hit.coverage, source: 'fts',
         }));
         if (!options.asOf) return resultLimit === undefined ? candidates : candidates.slice(0, resultLimit);
         // An `asOf` query used to compute these and throw them away, dropping to the
@@ -234,11 +240,12 @@ export async function queryKnowledgeCandidates(
 
     // Ranked BEFORE the cap. Without a query there is nothing to rank by, and the caller is
     // browsing rather than searching, so insertion order stands.
-    let candidates: LexicalCandidate[] = mapped.map(item => ({ item, lexicalScore: 0, source: 'like' }));
+    // The fallback matches one literal pattern, so every candidate covers all of it.
+    let candidates: LexicalCandidate[] = mapped.map(item => ({ item, lexicalScore: 0, coverage: 1, source: 'like' }));
     if (options.query) {
       const scores = likeCandidateScores(mapped, options.query);
       candidates = mapped
-        .map((item, index) => ({ item, lexicalScore: scores[index], source: 'like' as const }))
+        .map((item, index) => ({ item, lexicalScore: scores[index], coverage: 1, source: 'like' as const }))
         // Ties broken by recency, so equal-strength matches are not silently ordered oldest
         // first -- which is what rowid order meant and is the opposite of what a reader wants.
         .sort((left, right) => right.lexicalScore - left.lexicalScore

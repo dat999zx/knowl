@@ -165,13 +165,18 @@ describe('scoreCandidates', () => {
   it('reconstructs the lexical base score from the ranks it was given', () => {
     // The field the old merge loop accumulated is gone; the ranks are the inputs now. A
     // better lexical rank must still score higher, or the lexical path is silently flat.
+    //
+    // `contributions.rank` was renamed `contributions.lexical`: the term stopped being a
+    // reciprocal-rank number and became the normalised lexical score, of which a rank is now
+    // only the stand-in when no score was supplied -- which is exactly this case. The
+    // assertion is unchanged.
     const first = { ...candidate('a', '2026-01-01T00:00:00.000Z'), bm25Rank: 1 };
     const tenth = { ...candidate('b', '2026-01-01T00:00:00.000Z'), bm25Rank: 10 };
 
     const scored = scoreCandidates([tenth, first], { limit: 2, usingVector: false });
     expect(scored[0].item.id).toBe('a');
-    expect(scored[0].explanation.contributions.rank)
-      .toBeGreaterThan(scored[1].explanation.contributions.rank);
+    expect(scored[0].explanation.contributions.lexical)
+      .toBeGreaterThan(scored[1].explanation.contributions.lexical);
   });
 
   it('counts the lexical rank of an item vector also returned', () => {

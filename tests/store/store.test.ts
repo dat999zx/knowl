@@ -596,8 +596,28 @@ describe('Storage Layer', () => {
     });
 
     expect(architectureHintResults.length).toBeGreaterThanOrEqual(2);
-    expect(architectureHintResults[0].category).toBe('architecture');
     expect(architectureHintResults.some(item => item.category === 'fact')).toBe(true);
+
+    // The hint moves the matching item UP; it does not decide the top slot outright.
+    //
+    // This assertion used to be `architectureHintResults[0].category === 'architecture'`, and
+    // it passed because the category constant was additive at 0.015 against a lexical score
+    // whose entire range was about 0.016 -- so the "hint" was really a re-sort key. It is now
+    // a bounded multiplier (10%, the largest of the priors), and the two fixtures here are no
+    // longer a near-tie: `data.db` in the fact's content matches the `db` synonym of the
+    // query, which BM25 scores as a genuinely stronger lexical match (1.00 against 0.74).
+    // A hint that overturns a 26% relevance gap is a filter, which is what the tool
+    // description promises it is not -- so what is asserted is that the hint closes the gap,
+    // which a no-op cannot do.
+    const hinted = await queryKnowledgeForAgentExplained(projectId, {
+      query: 'database persistence', category: 'architecture', limit: 10,
+    });
+    const unhinted = await queryKnowledgeForAgentExplained(projectId, { query: 'database persistence', limit: 10 });
+    const gap = (rows: typeof hinted) => {
+      const score = (title: string) => rows.find(row => row.title === title)!.explanation.finalScore;
+      return score('Database persistence fact') - score('Database persistence architecture');
+    };
+    expect(gap(hinted)).toBeLessThan(gap(unhinted));
 
     const constraintHintResults = await queryKnowledgeForAgent(projectId, {
       query: 'database persistence',
@@ -621,7 +641,12 @@ describe('Storage Layer', () => {
     expect(explained[0].explanation).toMatchObject({
       finalScore: expect.any(Number),
       bm25Rank: expect.any(Number),
-      contributions: expect.objectContaining({ text: expect.any(Number), category: expect.any(Number), recency: expect.any(Number) }),
+      // `text` was the raw term-frequency recount K-28 deleted; `lexical` is the normalised
+      // BM25 that replaced it, and `relevance` is the fused number the score is built from.
+      contributions: expect.objectContaining({
+        relevance: expect.any(Number), lexical: expect.any(Number),
+        category: expect.any(Number), recency: expect.any(Number),
+      }),
       reason: expect.any(String),
     });
   });
