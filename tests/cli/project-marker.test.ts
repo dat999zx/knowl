@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -56,5 +57,64 @@ describe('what marks a directory as a Knowl project', () => {
     const roots = found.map(entry => entry.root);
     expect(roots).toContain(REAL);
     expect(roots).not.toContain(FAKE_HOME);
+  });
+});
+
+/**
+ * `knowl init` has to read the marker the same way, and it was the one command that did not.
+ *
+ * It asked whether the `.knowl` *directory* existed and, if it did, routed to the upgrade
+ * path -- which begins by reading `.knowl/config.json`. A directory without that file is not
+ * an exotic state: an interrupted first init leaves one, and so does a removal that got
+ * partway, which is the normal outcome on Windows where `fs.rm(recursive)` rejects on a held
+ * libSQL file *after* it has already unlinked the file's siblings. The user then saw a bare
+ * `ENOENT ... .knowl/config.json` naming a file they never had, and every re-run of the one
+ * command that should repair it produced the same error.
+ */
+const CLI = path.resolve('./dist/index.js');
+
+function initIn(cwd: string, home: string) {
+  return spawnSync(process.execPath, [CLI, 'init', '--yes'], {
+    cwd, encoding: 'utf8', env: { ...process.env, KNOWL_HOME: home },
+  });
+}
+
+describe('knowl init against a .knowl directory that is not a project', () => {
+  let root = '';
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.resolve('./.knowl-init-marker-'));
+  });
+
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('finishes a half-initialized repository instead of failing on the config it never wrote', async () => {
+    const repoDir = path.join(root, 'repo');
+    // Exactly what a rejected recursive remove leaves behind: the directory, minus the file.
+    await fs.mkdir(path.join(repoDir, '.knowl'), { recursive: true });
+
+    const result = initIn(repoDir, path.join(root, 'home'));
+
+    expect(result.stderr).not.toContain('ENOENT');
+    expect(result.status).toBe(0);
+    await expect(fs.access(path.join(repoDir, '.knowl', 'config.json'))).resolves.toBeUndefined();
+    await expect(fs.access(path.join(repoDir, '.knowl', 'knowl.db'))).resolves.toBeUndefined();
+  });
+
+  it('refuses to turn the machine Knowl home into a project', async () => {
+    // The K-51 directory itself. Reading the marker as config.json is what makes init willing
+    // to write into a `.knowl` it did not create, so the one `.knowl` that must never become a
+    // repository has to be named explicitly rather than protected by an accident.
+    const home = path.join(root, 'home', '.knowl');
+    await fs.mkdir(path.join(home, 'workspaces'), { recursive: true });
+    await fs.writeFile(path.join(home, 'repos.json'), '{"repos":[]}', 'utf8');
+
+    const result = initIn(path.join(root, 'home'), home);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/Knowl home/i);
+    await expect(fs.access(path.join(home, 'config.json'))).rejects.toThrow();
   });
 });
