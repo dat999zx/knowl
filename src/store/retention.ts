@@ -186,10 +186,19 @@ const isoDaysAgo = (days: number, now = Date.now()) =>
  * last one there is. Deletes are rare, so keeping them costs nothing and losing them would
  * be the one irreversible thing in an otherwise reversible sweep.
  *
- * This is also the honest answer to "blast radius full-scans an unindexed LIKE." That scan
- * is `changes LIKE '%<id>%'`, and a leading wildcard cannot use an index in SQLite at all,
- * so there is no index to add. What can be made smaller is the thing being scanned, and the
- * before/after payloads are almost all of it.
+ * This is NOT the answer to "blast radius full-scans an unindexed LIKE", though it was
+ * recorded as one. The premise is right -- `changes LIKE '%<id>%'` leads with a wildcard, and
+ * no B-tree can serve that -- but "no index serves this query as written" was read as "this
+ * query cannot be made fast", and the two are different claims. Measured on a copy of a real
+ * store: compaction takes the scan from 6.49 ms to 0.13 ms at 643 commits, and the same
+ * compacted table at 20,000 commits is back to 2.54 ms. It shrinks the bytes, not the rows,
+ * and commit rows are never deleted -- so the scan stays O(commits) and that store writes
+ * 21.5 of them a day.
+ *
+ * What actually fixes it is not an index on this column but a column to index:
+ * `knowledge_commit_items` records which items a commit touched at write time, which turns
+ * the lookup into an equality search. See `blast-radius.ts`. Compaction still earns its
+ * place here -- it is 80x fewer bytes in the store -- it just was not a performance fix.
  */
 export async function compactKnowledgeCommits(
   horizonDays = COMMIT_PAYLOAD_HORIZON_DAYS,
