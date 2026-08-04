@@ -178,6 +178,34 @@ describe('searchTranscripts', () => {
     expect(result.coverage).toEqual({ embedded: 2, indexed: 2 });
   });
 
+  // K-32. Coverage answered "how much of what is indexed has vectors" and never "how much of
+  // the archive is indexed at all". A pass cut short by its deadline leaves whole sessions with
+  // no row anywhere, and every number the search reports is computed over the rows that do
+  // exist -- so an index missing half the archive reports 100%.
+  it('reports that indexing itself is incomplete, not just embedding', async () => {
+    await seed('a', line('user', 'first memory note'));
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
+
+    await seed('b', line('user', 'second memory note'));
+    // Stops before reaching anything: session b never gets a row.
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir, deadline: Date.now() - 1 });
+
+    const client = await openTranscriptDb(dbPath);
+    const result = await searchTranscripts({ client, query: 'memory', limit: 5, projectRoot: PROJECT_ROOT });
+
+    expect(result.coverage.indexed).toBe(1); // the rows that exist all look complete
+    expect(result.indexComplete).toBe(false);
+  });
+
+  it('reports indexing complete once the pass has caught up', async () => {
+    await seed('a', line('user', 'first memory note'));
+    const client = await buildIndex();
+
+    const result = await searchTranscripts({ client, query: 'memory', limit: 5, projectRoot: PROJECT_ROOT });
+
+    expect(result.indexComplete).toBe(true);
+  });
+
   it('attaches the message text read back from the source file', async () => {
     await seed('a', line('user', 'the reindex ran out of memory'));
     const client = await buildIndex();
@@ -187,8 +215,32 @@ describe('searchTranscripts', () => {
     expect(result.hits[0].text).toBe('the reindex ran out of memory');
   });
 
-  // Rendering hits must group by file for the same reason the embedder does.
-  it('reads each source file once when several hits share it', async () => {
+  // K-47. Rendering a hit used to stream its transcript from byte 0 -- measured at 224 ms and
+  // 16.1 MB of I/O to produce a ~400-byte message. The indexer already knew the byte offset of
+  // every line it wrote; it just threw it away. What matters is bytes read, not passes taken:
+  // seeking to each of six hits reads six small windows, where one pass from zero reads
+  // everything up to the last of them.
+  it('reads a hit by seeking to its recorded offset rather than from the start of the file', async () => {
+    const filler = Array.from({ length: 400 }, (_, i) => line('user', `filler note ${i}`)).join('');
+    await seed('a', filler + line('user', 'the distinctive memory marker'));
+    const client = await buildIndex();
+
+    const offset = Number((await client.execute(
+      "SELECT byte_offset FROM transcript_messages WHERE line = 401",
+    )).rows[0].byte_offset);
+    expect(offset).toBeGreaterThan(filler.length - 1);
+
+    vi.mocked(parse.streamProseFrom).mockClear();
+    const result = await searchTranscripts({
+      client, query: 'distinctive marker', limit: 1, projectRoot: PROJECT_ROOT,
+    });
+
+    expect(result.hits[0].text).toBe('the distinctive memory marker');
+    const starts = vi.mocked(parse.streamProseFrom).mock.calls.map(call => call[1]);
+    expect(starts).toEqual([offset]);
+  });
+
+  it('reads several hits in one file by seeking to each, never past the last of them', async () => {
     await seed('a', Array.from({ length: 6 }, (_, i) => line('user', `memory note ${i}`)).join(''));
     const client = await buildIndex();
 
@@ -196,7 +248,39 @@ describe('searchTranscripts', () => {
     const result = await searchTranscripts({ client, query: 'memory note', limit: 6, projectRoot: PROJECT_ROOT });
 
     expect(result.hits.length).toBeGreaterThan(1);
-    expect(parse.streamProseFrom).toHaveBeenCalledTimes(1);
+    expect(result.hits.every(hit => typeof hit.text === 'string')).toBe(true);
+
+    // Every read started exactly at the offset of the message it was fetching -- one window per
+    // hit, not one walk over everything up to the last one.
+    const offsets = (await client.execute('SELECT line, byte_offset FROM transcript_messages'));
+    const byLine = new Map(offsets.rows.map(row => [Number(row.line), Number(row.byte_offset)]));
+    const starts = vi.mocked(parse.streamProseFrom).mock.calls.map(call => call[1]).sort((a, b) => a - b);
+    const wanted = result.hits.map(hit => byLine.get(hit.line)!).sort((a, b) => a - b);
+    expect(starts).toEqual(wanted);
+  });
+
+  // An index built before offsets were recorded has null in that column, and its pointers still
+  // have to resolve -- by the streaming scan that was there before.
+  it('falls back to a streaming read when the row has no offset', async () => {
+    await seed('a', line('user', 'first memory note') + line('user', 'second memory note'));
+    const client = await buildIndex();
+    await client.execute('UPDATE transcript_messages SET byte_offset = NULL');
+
+    const result = await searchTranscripts({ client, query: 'second', limit: 1, projectRoot: PROJECT_ROOT });
+
+    expect(result.hits[0].text).toBe('second memory note');
+  });
+
+  // A stale offset must not render the wrong message: the indexed length is checked against
+  // what the offset actually produces, and a mismatch falls back to the scan.
+  it('refuses a byte offset that no longer points at the message it indexed', async () => {
+    await seed('a', line('user', 'first memory note') + line('user', 'second memory note here'));
+    const client = await buildIndex();
+    await client.execute('UPDATE transcript_messages SET byte_offset = 0 WHERE line = 2');
+
+    const result = await searchTranscripts({ client, query: 'second', limit: 1, projectRoot: PROJECT_ROOT });
+
+    expect(result.hits[0].text).toBe('second memory note here');
   });
 });
 
@@ -246,6 +330,62 @@ describe('embedPendingMessages', () => {
 
     // Two files, so two passes -- not 240.
     expect(vi.mocked(parse.streamProseFrom).mock.calls.length).toBeLessThanOrEqual(2);
+  });
+
+  // K-65. The hook budget is 1,500 ms and the deadline was only ever checked *between* batches,
+  // while a batch is 32 messages of any length. One real 8,000-character message costs 7,843 ms
+  // in a single forward pass on this machine, so one batch could hold minutes of work and the
+  // budget could not refuse it. Enforcement has to happen before the call, on what it will cost.
+  it('does not start an embedding batch it cannot afford', async () => {
+    const long = 'memory '.repeat(570); // ~4,000 characters, three of them
+    await seed('a', Array.from({ length: 3 }, () => line('user', long)).join(''));
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
+    await openTranscriptDb(dbPath);
+
+    // Two milliseconds per character is a slow model, not an absurd one -- the measured local
+    // model is about one. Three of these in one batch is ~24 seconds against a 300 ms budget.
+    const slow: KnowledgeEmbedder = {
+      ...stubEmbedder(),
+      embed: async (texts: string[]) => {
+        const chars = texts.reduce((total, text) => total + text.length, 0);
+        await new Promise(resolve => setTimeout(resolve, chars / 2));
+        return texts.map(conceptVector);
+      },
+    };
+
+    const started = Date.now();
+    const result = await embedPendingMessages({ dbPath, embedder: slow, deadline: Date.now() + 300 });
+    const elapsed = Date.now() - started;
+
+    expect(result.embedded).toBe(0);
+    expect(result.complete).toBe(false);
+    // Generous, because the point is that it declined to start rather than that it was quick.
+    expect(elapsed).toBeLessThan(2_000);
+  }, 60_000);
+
+  it('still embeds what does fit in the budget', async () => {
+    await seed('a', Array.from({ length: 10 }, (_, i) => line('user', `memory note ${i}`)).join(''));
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
+    await openTranscriptDb(dbPath);
+
+    const result = await embedPendingMessages({
+      dbPath, embedder: stubEmbedder(), deadline: Date.now() + 5_000,
+    });
+
+    expect(result.embedded).toBe(10);
+    expect(result.complete).toBe(true);
+  });
+
+  // The backfill has minutes, not milliseconds. Nothing is refused there.
+  it('embeds a long message when there is no deadline to overrun', async () => {
+    await seed('a', line('user', 'memory '.repeat(570)));
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
+    await openTranscriptDb(dbPath);
+
+    const result = await embedPendingMessages({ dbPath, embedder: stubEmbedder() });
+
+    expect(result.embedded).toBe(1);
+    expect(result.complete).toBe(true);
   });
 
   it('embeds every message across several batches of the same file', async () => {

@@ -9,7 +9,7 @@ import { openTranscriptDb, TranscriptIndexMissingError } from './database.js';
 import { searchTranscriptsFederated } from './federate.js';
 import { formatLocator, parseLocator } from './locator.js';
 import { readWithContext } from './read.js';
-import { escapeLikePrefix } from './search.js';
+import { resolveSessionScope } from './search.js';
 import { listSessionDirectory } from './session-directory.js';
 
 export const DISABLED_MESSAGE =
@@ -125,11 +125,21 @@ export async function handleTranscriptSearch(input: {
   const embedder = await optionalEmbedder(config, projectRoot);
   const workspace = await resolveWorkspace(projectRoot, config).catch(() => null);
 
-  const { hits, skipped, coverage, localRepo } = await searchTranscriptsFederated({
+  const { hits, skipped, coverage, ambiguous, localRepo } = await searchTranscriptsFederated({
     projectRoot, workspace, query, limit,
     sessionId: input.sessionId, repos: input.repos,
     embedder: embedder ?? undefined,
   });
+
+  // Answered the way the reader answers it. A prefix naming several sessions is an unfinished
+  // question, and searching all of them is not the narrower search that was asked for.
+  if (ambiguous.length > 0 && hits.length === 0) {
+    return ambiguous
+      .map(entry =>
+        `Session prefix "${input.sessionId}" is ambiguous in [${entry.repo}]: `
+        + `${entry.candidates.slice(0, 10).join(', ')}. Use a longer prefix.`)
+      .join('\n');
+  }
 
   const lines: string[] = [];
   if (hits.length === 0) {
@@ -153,11 +163,18 @@ export async function handleTranscriptSearch(input: {
 
   // Required, not decorative. "BM25 + semantic" over 8% of an archive is a different claim
   // from the same words over all of it, and only one justifies trusting a near-miss.
+  //
+  // Both halves are reported, because they fail independently and only one of them used to be
+  // visible: `embedded/indexed` is computed over the rows that exist, so an index still missing
+  // whole transcripts reports full coverage of the part it has.
   for (const entry of coverage) {
     const semantic = entry.embedded === 0 && !embedder
       ? ' (semantic off: search.vector.enabled is false)'
       : '';
-    lines.push(`Coverage [${entry.repo}]: ${entry.embedded}/${entry.indexed} messages embedded${semantic}.`);
+    const indexing = entry.indexComplete
+      ? ''
+      : ' INDEXING INCOMPLETE - transcripts are still missing from this index; run `knowl reindex --transcripts`.';
+    lines.push(`Coverage [${entry.repo}]: ${entry.embedded}/${entry.indexed} messages embedded${semantic}.${indexing}`);
   }
   for (const entry of skipped) {
     lines.push(`Skipped [${entry.repo}]: ${entry.reason}.`);
@@ -283,28 +300,18 @@ export async function handleTranscriptRead(input: {
     throw error;
   }
 
-  // `%` and `_` are LIKE wildcards, and a session id is agent-supplied. Escaping them keeps a
-  // prefix a prefix rather than a pattern that matches something else entirely.
-  const escaped = escapeLikePrefix(parsed.sessionId);
-  const matches = (await client.execute({
-    sql: `SELECT DISTINCT session_id, path FROM transcript_messages
-          WHERE session_id = ? OR session_id LIKE ? ESCAPE '\\'
-          LIMIT 5`,
-    args: [parsed.sessionId, `${escaped}%`],
-  })).rows;
-
-  if (matches.length === 0) return `No indexed session matches "${parsed.sessionId}".`;
-
-  // An exact id always wins; otherwise an ambiguous prefix must say so rather than silently
-  // picking whichever row the database returned first.
-  const exact = matches.find(row => String(row.session_id) === parsed.sessionId);
-  if (!exact && matches.length > 1) {
-    const names = matches.map(row => String(row.session_id)).join(', ');
-    return `Session prefix "${parsed.sessionId}" is ambiguous: ${names}. Use a longer prefix.`;
+  // The same resolver the search uses. Two implementations of "which session is this" is what
+  // let one tool refuse an ambiguous prefix while the other quietly searched everything it
+  // matched -- and `%` and `_` are LIKE wildcards in an agent-supplied string, so the escaping
+  // has to be the same in both places too.
+  const scope = await resolveSessionScope(client, parsed.sessionId);
+  if (scope.kind === 'none') return `No indexed session matches "${parsed.sessionId}".`;
+  if (scope.kind === 'ambiguous') {
+    return `Session prefix "${parsed.sessionId}" is ambiguous: ${scope.candidates.slice(0, 10).join(', ')}. Use a longer prefix.`;
   }
-  const row = exact ?? matches[0];
+  if (scope.kind === 'all') return `No indexed session matches "${parsed.sessionId}".`;
 
-  const excerpts = await readWithContext(String(row.path), parsed.line, context);
+  const excerpts = await readWithContext(scope.paths[0], parsed.line, context);
   if (excerpts.length === 0) {
     return `Nothing readable at ${input.locator}. The transcript file has probably been deleted; its rows are dropped on the next index pass.`;
   }
