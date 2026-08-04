@@ -149,14 +149,38 @@ export function poolSize(): number {
 export async function releaseAll(): Promise<void> {
   const entries = [...clients.entries()];
   clients.clear();
-  for (const [key, client] of entries) {
-    if (key.startsWith('rw:')) {
-      try {
-        await client.execute('PRAGMA wal_checkpoint(TRUNCATE)');
-      } catch {
-        // Already closed, locked by another process, or not in WAL. Closing regardless.
-      }
-    }
-    client.close();
+  for (const [key, client] of entries) await closeEntry(key, client);
+}
+
+/**
+ * Close one database's pooled clients and leave the rest of the pool alone.
+ *
+ * `releaseAll` is the right primitive for shutting the store down and the wrong one for
+ * finishing with a single database. `withDbPath` had only `releaseAll` to reach for, so every
+ * namespace hop closed and WAL-checkpointed the *project* connection too, then reopened and
+ * re-bootstrapped it on the way back -- the pool was empty again by the time the hop returned,
+ * which is the whole thing the pool exists to prevent.
+ *
+ * Both modes for the path are released: the caller is saying it is done with this database
+ * file, not with one view of it.
+ */
+export async function releaseClient(dbPath: string): Promise<void> {
+  for (const readOnly of [false, true]) {
+    const key = keyFor(dbPath, readOnly);
+    const client = clients.get(key);
+    if (!client) continue;
+    clients.delete(key);
+    await closeEntry(key, client);
   }
+}
+
+async function closeEntry(key: string, client: Client): Promise<void> {
+  if (key.startsWith('rw:')) {
+    try {
+      await client.execute('PRAGMA wal_checkpoint(TRUNCATE)');
+    } catch {
+      // Already closed, locked by another process, or not in WAL. Closing regardless.
+    }
+  }
+  client.close();
 }

@@ -5,7 +5,7 @@ import { drizzle, LibSQLDatabase } from 'drizzle-orm/libsql';
 import * as schema from './schema.js';
 import { DatabaseError } from '../core/errors.js';
 import { resolveStorage } from './storage-roles.js';
-import { acquireClient, releaseAll } from './connection-pool.js';
+import { acquireClient, releaseAll, releaseClient } from './connection-pool.js';
 
 /** Shared type for database connection or transaction context. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -77,18 +77,43 @@ export async function initDbPath(dbPath: string, options: InitDbOptions = {}): P
   }
 }
 
+/**
+ * Run `run` against a different database, then put the previous one back.
+ *
+ * This is a swap of the *active handle*, not a shutdown, and it used to be written as one:
+ * `closeDb` on the way in and again on the way out, each of which releases the entire pool and
+ * WAL-checkpoints every writable client in it. A hop to the session namespace therefore closed
+ * the project connection, and coming back reopened and re-bootstrapped it -- so a layered query
+ * over two namespaces paid four opens, and the pool was empty again at the end of every one.
+ * `queryLayeredKnowledge` walks every namespace on every agent query, inside a long-lived MCP
+ * server, so this was the pool being defeated on each hop rather than in some edge case.
+ *
+ * Both databases stay pooled afterwards: the next hop is then free. Nothing is left holding a
+ * file that `closeDb` would not have released anyway -- it is still the teardown primitive, and
+ * still releases everything.
+ */
 export async function withDbPath<T>(dbPath: string, run: () => Promise<T>): Promise<T> {
   const previousPath = databasePathInstance;
   const previousConfigRoot = configRootInstance;
-  await closeDb();
   // The swapped-in database keeps the caller's config root. A namespace store lives outside
   // the `<root>/.knowl/` layout, so deriving one from its path would point at nothing.
   await initDbPath(dbPath, previousConfigRoot ? { configRoot: previousConfigRoot } : {});
   try {
     return await run();
   } finally {
-    await closeDb();
-    if (previousPath) await initDbPath(previousPath, previousConfigRoot ? { configRoot: previousConfigRoot } : {});
+    if (previousPath) {
+      // Pooled, so this is a handle swap rather than an open.
+      await initDbPath(previousPath, previousConfigRoot ? { configRoot: previousConfigRoot } : {});
+    } else {
+      // Nothing was open before, so leaving this one open would be a handle the caller never
+      // asked for. Only this database is released; whatever else the pool holds is not ours.
+      await releaseClient(dbPath);
+      clientInstance = null;
+      dbInstance = null;
+      projectRootInstance = null;
+      configRootInstance = null;
+      databasePathInstance = null;
+    }
   }
 }
 
