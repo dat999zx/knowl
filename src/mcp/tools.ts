@@ -28,7 +28,11 @@ import { isEvidenceStale, listEvidenceForItem } from '../store/evidence-reposito
 import { recordKnowledgeFeedback } from '../store/access-feedback.js';
 import { flagCorrectionSiblingsBestEffort } from '../store/blast-radius.js';
 import { applyFeedbackToTierBestEffort } from '../store/tier.js';
-import { finishMemorySession } from '../store/session-repository.js';
+import { finishMemorySession, listActiveMemorySessions } from '../store/session-repository.js';
+import { getKnowledgeItem } from '../store/repository.js';
+import { isImpactEnabled } from '../store/impact-config.js';
+import { openFindingsForSession, resolveFinding, type ImpactFinding, type ImpactTier } from '../store/impact.js';
+import { activeReadSetForSession } from '../store/read-set.js';
 import { formatPendingHandoffContext, recordDeliberateHandoff } from '../store/session-handoff.js';
 import { createResumePoint, formatResumeBrief, listResumePoints, readResumePoint } from '../store/resume-points.js';
 import { resumeInstruction } from '../store/resume-keys.js';
@@ -144,6 +148,67 @@ const TRANSCRIPT_TOOLS: ToolDefinition[] = [
                 description: 'Keywords over session names, opening asks and declared cards. Omit to list newest first.',
               },
               limit: { type: 'integer', minimum: 1, maximum: 200, description: 'Maximum sessions; defaults to 30.' },
+            },
+          },
+        },
+];
+
+/** Resolutions `knowl_impact` accepts, matching `ImpactResolution` in the store. */
+const IMPACT_RESOLUTIONS = ['repaired', 'dismissed', 'expired', 'false_positive'];
+
+/**
+ * The default tier set: everything measured, and nothing that is not.
+ *
+ * `possible` is path- and title-matching -- the tier `drift-auto.ts:17-40` already measured at
+ * one commit window matching 36 of 301 atoms, and already refused to act on. Returning it by
+ * default would spend the agent's context on the one tier this repo has on record as mostly
+ * noise, so it is reachable only by asking for it by name.
+ */
+const DEFAULT_IMPACT_TIERS: ImpactTier[] = ['certain', 'likely'];
+
+/**
+ * Ceilings on a reply the agent did not size. A signature is one line of code, not a file, and
+ * fifteen findings each carrying two of them lands around 8,000 characters -- inside the 12,000
+ * every other bounded reply on this surface is held to, with room for the wrapper.
+ */
+const MAX_IMPACT_FINDINGS = 15;
+const MAX_IMPACT_SIGNATURE_CHARS = 200;
+
+const IMPACT_DISABLED_MESSAGE =
+  'Change-impact detection is not enabled for this repository. Enable impact.enabled with `knowl config`.';
+
+// Registered only when the repo turned change impact on. One tool, not two: `types.ts:267-271`
+// records that every registered tool costs guidance-card space in every session of every user,
+// so reading findings and adjudicating one share a surface rather than splitting into a pull
+// tool and a resolve tool.
+const IMPACT_TOOLS: ToolDefinition[] = [
+        {
+          name: 'knowl_impact',
+          description: 'Change-impact findings: code a live session read that has since moved underneath it. Pass resolve to adjudicate one. A certain-tier finding also refuses the next edit to that file until you re-read it, so listing them here is how you see what is about to be blocked and why.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              scope: {
+                type: 'string', enum: ['mine', 'all'],
+                description: 'mine (default): findings against reads still held open -- the work someone can still act on. all: every open finding, including ones whose read was released when a task finished and which nobody has adjudicated yet.',
+              },
+              tier: {
+                type: 'string', enum: ['certain', 'likely', 'possible'],
+                description: 'One tier. Omit for certain + likely; `possible` is unmeasured path matching and is returned only when asked for by name.',
+              },
+              resolve: {
+                type: 'object',
+                description: 'Adjudicate one finding. This is the only way a finding is ever closed -- the write gate deliberately leaves them open -- and the resolutions are the measurement: false_positive is what makes a precision number possible, so use it when it is the true answer.',
+                properties: {
+                  id: { type: 'string', minLength: 1, maxLength: 64, description: 'The finding id, exactly as it was returned.' },
+                  resolution: {
+                    type: 'string', enum: IMPACT_RESOLUTIONS,
+                    description: 'repaired: you reconciled your work with the change. false_positive: the change does not affect what you were doing. dismissed: it does affect you and you are proceeding anyway. expired: the work it concerned is gone.',
+                  },
+                },
+                required: ['id', 'resolution'],
+                additionalProperties: false,
+              },
             },
           },
         },
@@ -825,18 +890,22 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
     tools.push(...TRANSCRIPT_TOOLS);
   }
 
+  if (config && isImpactEnabled(config)) {
+    tools.push(...IMPACT_TOOLS);
+  }
+
   return tools;
 }
 
 /**
- * Every schema by tool name, including the transcript tools whether or not they are listed.
+ * Every schema by tool name, including the gated tools whether or not they are listed.
  *
  * Dispatch answers gated tools with their own disabled message rather than "unknown tool",
  * because a client that cached an older tool list can still call them -- so validation has
  * to know their shape even when listing does not offer them.
  */
 const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
-  [...knowlToolDefinitions(null), ...TRANSCRIPT_TOOLS].map(tool => [tool.name, tool.inputSchema]),
+  [...knowlToolDefinitions(null), ...TRANSCRIPT_TOOLS, ...IMPACT_TOOLS].map(tool => [tool.name, tool.inputSchema]),
 );
 
 /**
@@ -880,6 +949,60 @@ async function assertOwnedTargets(
   const owner = await resolveWorkspace(projectRoot, config ?? undefined);
   if (!owner) return;
   for (const id of present) await assertOwnedItem(id, owner);
+}
+
+/** One open finding, with the session whose work it is against. */
+type OpenImpact = { sessionId: string; finding: ImpactFinding };
+
+/**
+ * The evidence a certain finding carries, parsed, or null when it is not that shape.
+ *
+ * `path_json` is written at detection time because the "was:" side cannot be recomputed later
+ * (`impact.ts:71-87`) -- so this is the only place the old signature still exists, and a finding
+ * whose payload will not parse is still worth reporting without it. Never throws: a malformed
+ * payload must cost a rendering detail, never the finding.
+ */
+function impactEvidence(finding: ImpactFinding): Record<string, unknown> | null {
+  if (!finding.pathJson) return null;
+  try {
+    const parsed = JSON.parse(finding.pathJson);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : null;
+  } catch {
+    return null;
+  }
+}
+
+const impactText = (value: unknown): string | null =>
+  typeof value === 'string' && value.length > 0 ? truncateText(value, MAX_IMPACT_SIGNATURE_CHARS) : null;
+
+/**
+ * Open findings across the sessions still running in this repo.
+ *
+ * `scope: 'mine'` is served as "against a read still held open" rather than "against the calling
+ * session", because MCP has no session identity to compare against: the 2026-07-28 revision made
+ * the protocol stateless and removed `Mcp-Session-Id`, so a tool call carries nothing that names
+ * its caller. A held read is the closest honest proxy -- it is work somebody is still standing on,
+ * which is the set an agent can act on -- and `all` widens it to include findings whose read was
+ * released at a task finish and which nobody has adjudicated, since an unadjudicated finding is
+ * exactly what the precision denominator is missing (plan §9).
+ *
+ * The read-set query runs only for a session that actually has findings, so the common case --
+ * every session clean -- costs one query per live session and nothing else.
+ */
+async function openImpactFindings(scope: 'mine' | 'all', tiers: ImpactTier[]): Promise<OpenImpact[]> {
+  const open: OpenImpact[] = [];
+  for (const session of await listActiveMemorySessions()) {
+    const findings = (await openFindingsForSession(session.id)).filter(finding => tiers.includes(finding.tier));
+    if (findings.length === 0) continue;
+    const held = scope === 'mine'
+      ? new Set((await activeReadSetForSession(session.id)).map(entry => entry.id))
+      : null;
+    for (const finding of findings) {
+      if (held && !held.has(finding.affectedId)) continue;
+      open.push({ sessionId: session.id, finding });
+    }
+  }
+  return open;
 }
 
 export function registerTools(
@@ -1444,6 +1567,17 @@ export function registerTools(
 
       else if (name === 'knowl_task_finish') {
         const { taskId, summary } = args as any;
+
+        // Change impact deliberately does NOT gate here, and the reason is worth keeping: it
+        // was built to and could not reach. Reads are captured only by the hook path, under the
+        // *host* session (`host-lifecycle.ts`, the one non-test caller of `recordRead`);
+        // `startWorkLoop` mints its own session (`work-loop.ts:114`) and tags the task with
+        // that instead, and `openFindingsForSession` joins `work_read_sets.session_id` -- so a
+        // gate resolved through the task's tag queries an id under which no read exists. The
+        // loose repair (any recent session) is the one thing this must not do: it would block
+        // one agent's finish over another agent's stale read. The write gate
+        // (`store/write-gate.ts`) is the chokepoint instead, and it needs no such join because
+        // it runs inside the session that holds the read. Plan §15.
         const result = await finishWorkLoop(projectId!, taskId, summary);
         return {
           content: [{ type: 'text', text: compactMcpJson(result) }],
@@ -1625,6 +1759,69 @@ export function registerTools(
           context: typeof context === 'number' ? context : undefined,
         });
         return { content: [{ type: 'text', text }] };
+      }
+
+      // Re-checks its own gate rather than trusting the listing, for the reason above: a
+      // cached tool list keeps this callable after the flag goes off.
+      else if (name === 'knowl_impact') {
+        if (!isImpactEnabled(config ?? undefined)) {
+          return { content: [{ type: 'text', text: IMPACT_DISABLED_MESSAGE }] };
+        }
+
+        const { scope, tier, resolve } = args as any;
+        const tiers: ImpactTier[] = tier ? [tier as ImpactTier] : DEFAULT_IMPACT_TIERS;
+
+        let adjudicated: Record<string, unknown> | undefined;
+        if (resolve) {
+          // Every tier and the widest scope, because the id being adjudicated came from a gate
+          // message or an earlier listing that may have used either -- refusing to resolve a
+          // `possible` finding because this call asked for `certain` would make the adjudication
+          // path narrower than the reporting path, and the resolutions are the measurement.
+          const before = await openImpactFindings('all', ['certain', 'likely', 'possible']);
+          const wasOpen = before.some(entry => entry.finding.id === resolve.id);
+          await resolveFinding(String(resolve.id), resolve.resolution);
+          adjudicated = {
+            id: resolve.id,
+            resolution: resolve.resolution,
+            wasOpen,
+            // Said plainly rather than reported as success: an agent told "resolved" after a
+            // mistyped id would call knowl_task_finish and meet the same gate with no idea why.
+            ...(wasOpen ? {} : { note: 'That id was not among the open findings visible here -- already resolved, or not a finding id. Nothing was changed if it does not exist.' }),
+          };
+        }
+
+        const open = await openImpactFindings(scope === 'all' ? 'all' : 'mine', tiers);
+        const listed = open.slice(0, MAX_IMPACT_FINDINGS).map(({ sessionId, finding }) => {
+          const evidence = impactEvidence(finding);
+          return {
+            id: finding.id,
+            tier: finding.tier,
+            session: sessionId,
+            locator: finding.causeLocator,
+            detectedAt: finding.detectedAt,
+            // The evidence chain as detection wrote it, with only the free text bounded: an
+            // agent reconciling a change needs the before and after, not a count of them.
+            evidence: evidence && {
+              ...evidence,
+              observedSignature: impactText(evidence.observedSignature),
+              currentSignature: impactText(evidence.currentSignature),
+            },
+          };
+        });
+
+        return {
+          content: [{
+            type: 'text',
+            text: compactMcpJson({
+              scope: scope === 'all' ? 'all' : 'mine',
+              tiers,
+              open: open.length,
+              findings: listed,
+              ...(open.length > listed.length ? { omitted: open.length - listed.length } : {}),
+              ...(adjudicated ? { resolved: adjudicated } : {}),
+            }),
+          }],
+        };
       }
 
       throw new Error(`Unknown tool: ${name}`);
