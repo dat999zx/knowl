@@ -104,6 +104,32 @@ describe('evidence tier and provenance', () => {
       .toEqual({ itemId: item.id, tier: 'verified', reason: 'promoted' });
   });
 
+  // The boundary is inclusive, and that is not cosmetic. `tier_since` is stamped at creation,
+  // and the confirmation count used a strict `>` against it — so a confirmation landing in the
+  // same millisecond as the boundary was silently dropped and the item needed VERIFY_THRESHOLD
+  // + 1 events to promote. On Windows the clock had usually ticked and it passed; on CI's
+  // ubuntu runner the loop finished inside one millisecond and `tier` stayed `asserted`. This
+  // pins the semantics rather than the timing: the rows are written AT the boundary instant,
+  // so it fails on every platform before the fix and passes on every platform after.
+  it('counts a confirmation recorded in the same instant as the tier boundary', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Boundary fact', content: 'Confirmed at the instant it began.',
+    });
+    const boundary = (await repo.getKnowledgeItem(item.id))!.tierSince!;
+    expect(boundary).toBeTruthy();
+
+    for (let i = 0; i < VERIFY_THRESHOLD; i++) {
+      await getClient().execute({
+        sql: `INSERT INTO knowledge_access (id, knowledge_item_id, surface, rank, useful, retrieved_at)
+              VALUES (?, ?, 'feedback', 1, 1, ?)`,
+        args: [`boundary-${i}`, item.id, boundary],
+      });
+    }
+
+    expect(await applyFeedbackToTier(projectId, item.id, { useful: true }))
+      .toEqual({ itemId: item.id, tier: 'verified', reason: 'promoted' });
+  });
+
   it('a correction restarts the confirmation count — one useful event does not undo it', async () => {
     const item = await repo.createKnowledgeItem(projectId, {
       category: 'fact', title: 'Corrected fact', content: 'A claim proven wrong.',
