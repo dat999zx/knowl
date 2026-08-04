@@ -129,20 +129,28 @@ export async function findProjectRoot(startPath: string = process.cwd()): Promis
   throw new ProjectNotFoundError(startPath);
 }
 
+/** `${SOME_VAR}` and nothing else; the name is group 1. */
+const ENV_REFERENCE = /^\$\{([^}]+)\}$/;
+
+function envReferenceName(value: unknown): string | null {
+  return typeof value === 'string' ? value.match(ENV_REFERENCE)?.[1] ?? null : null;
+}
+
 /**
  * Loads the project configuration from the specified project root.
+ *
+ * `ai.apiKey` may be written as `${SOME_VAR}`, and is resolved here so consumers never think
+ * about it. The object this returns therefore holds a real secret -- see `saveConfig`, which
+ * is the other half of that bargain.
  */
 export async function loadConfig(projectRoot: string): Promise<ProjectConfig> {
   const configPath = path.join(projectRoot, '.knowl', 'config.json');
   try {
     const content = await fs.readFile(configPath, 'utf8');
     const parsed = JSON.parse(content) as ProjectConfig;
-    
-    // Resolve env variables if present in API keys or other settings
-    if (parsed.ai?.apiKey && parsed.ai.apiKey.startsWith('${') && parsed.ai.apiKey.endsWith('}')) {
-      const envVarName = parsed.ai.apiKey.substring(2, parsed.ai.apiKey.length - 1);
-      parsed.ai.apiKey = process.env[envVarName] || '';
-    }
+
+    const envVarName = envReferenceName(parsed.ai?.apiKey);
+    if (envVarName && parsed.ai) parsed.ai.apiKey = process.env[envVarName] || '';
 
     return stripDeprecatedConfigFields(parsed);
   } catch (error: any) {
@@ -151,13 +159,46 @@ export async function loadConfig(projectRoot: string): Promise<ProjectConfig> {
 }
 
 /**
+ * Put back any `${ENV_VAR}` reference the caller is about to overwrite with its own value.
+ *
+ * `loadConfig` returns an object with the secret resolved, and that object looks exactly
+ * like a config anyone may modify and save. `workspace add`, `workspace join` and
+ * `workspace remove` each read it, add or drop one field and write it back -- and wrote the
+ * real API key into `.knowl/config.json`, a file that lives in the repository and that
+ * people do commit. The reference exists precisely so the key does not live there.
+ *
+ * Fixed at the boundary rather than at those three call sites: "the object loadConfig hands
+ * you must not be saved" is a rule every future caller would have to be told, and the one
+ * who is not told writes the secret.
+ *
+ * The test is exact rather than heuristic -- the incoming value has to *be* the substitution
+ * the reference currently resolves to. So `knowl config set ai.apiKey sk-...`, which reads
+ * the raw file and means to write a literal, still writes it.
+ */
+async function preserveEnvReferences(configPath: string, next: ProjectConfig): Promise<ProjectConfig> {
+  let onDisk: ProjectConfig;
+  try {
+    onDisk = JSON.parse(await fs.readFile(configPath, 'utf8')) as ProjectConfig;
+  } catch {
+    return next; // No previous file, so nothing was resolved from one.
+  }
+
+  const reference = onDisk.ai?.apiKey;
+  const envVarName = envReferenceName(reference);
+  if (!envVarName || !next.ai || typeof next.ai.apiKey !== 'string') return next;
+  if (next.ai.apiKey !== (process.env[envVarName] || '')) return next;
+
+  return { ...next, ai: { ...next.ai, apiKey: reference } };
+}
+
+/**
  * Saves the configuration to the specified project root.
  */
 export async function saveConfig(projectRoot: string, config: ProjectConfig): Promise<void> {
   const configDir = path.join(projectRoot, '.knowl');
   const configPath = path.join(configDir, 'config.json');
-  const normalized = stripDeprecatedConfigFields(config);
-  
+  const normalized = stripDeprecatedConfigFields(await preserveEnvReferences(configPath, config));
+
   try {
     await fs.mkdir(configDir, { recursive: true });
     await fs.writeFile(configPath, JSON.stringify(normalized, null, 2), 'utf8');

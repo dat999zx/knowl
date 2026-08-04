@@ -1,6 +1,7 @@
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { resolveStorage } from '../store/storage-roles.js';
+import { repoRegistryPath } from './repo-registry.js';
 
 /**
  * A missing database file is a missing file, not an empty memory.
@@ -12,10 +13,18 @@ import { resolveStorage } from '../store/storage-roles.js';
  * `knowl status` reports `Active: 0` and the store has apparently forgotten everything. The
  * empty schema then *is* the store, and the next write is written into it.
  *
- * The distinction that makes this detectable is the one K-51 introduced: an initialized
- * repository is marked by `.knowl/config.json`, which `knowl init` writes *before* it opens
- * the database. So config.json present and the database file absent is not a state any
- * healthy sequence produces -- it means the file went away after the repository existed.
+ * What makes it detectable is the known-repository registry: `~/.knowl/repos.json` records
+ * every repository this machine has initialized or upgraded, which is precisely the event
+ * that creates the database. Registered here, but no database file -- that file went away.
+ *
+ * config.json alone is not enough, and that is not hypothetical: `.knowl/config.json` can be
+ * committed (`workspace add --force` exists for repositories that track it), so a fresh
+ * clone legitimately has config and no database, and bootstrapping one there is correct. The
+ * registry is machine-local, exactly like the database it vouches for.
+ *
+ * Fails open in every direction. A registry that was deleted, or a different `KNOWL_HOME`,
+ * gives back the old silent-bootstrap behaviour rather than a false accusation -- an
+ * unnecessary refusal in a working repository is worse than a missed warning.
  *
  * Deliberately synchronous. It runs from a commander `preAction` hook, and making that async
  * would mean moving the whole CLI onto `parseAsync` for one `stat`.
@@ -56,17 +65,34 @@ export function findProjectRootSync(startPath: string): string | null {
   }
 }
 
+/** Has this machine ever initialized or upgraded this repository? */
+function isRegisteredRepo(root: string): boolean {
+  try {
+    const parsed = JSON.parse(readFileSync(repoRegistryPath(), 'utf8'));
+    if (!Array.isArray(parsed?.repos)) return false;
+    const target = path.resolve(root).toLowerCase();
+    return parsed.repos.some(
+      (entry: unknown) => typeof entry === 'string' && path.resolve(entry).toLowerCase() === target,
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Throws when `root` is an initialized repository whose database file has gone missing.
+ * Throws when `root` is a repository this machine has opened before whose database file has
+ * gone missing.
  *
- * Silent when the file is there, and silent when `root` is not a repository at all -- that
- * is the caller's own question, and answering it here would turn every hook fired outside a
- * repository into an error (K-52).
+ * Silent when the file is there, silent when `root` is not a repository at all -- that is
+ * the caller's own question, and answering it here would turn every hook fired outside a
+ * repository into an error (K-52) -- and silent for a repository this machine has never
+ * initialized, which is a fresh clone rather than a loss.
  */
 export function assertKnowledgeDatabasePresent(root: string): void {
   if (!isProjectRootSync(root)) return;
   const databasePath = resolveStorage(root).knowledge;
   if (existsSync(databasePath)) return;
+  if (!isRegisteredRepo(root)) return;
   throw new MissingKnowledgeDatabaseError(root, databasePath);
 }
 

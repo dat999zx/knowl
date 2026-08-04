@@ -88,6 +88,20 @@ describe('a store that is not where it was expected', () => {
     }
   });
 
+  it('K-16: a checkout this machine has never opened is not accused of losing anything', async () => {
+    // `.knowl/config.json` can legitimately be committed -- `workspace add --force` exists
+    // for repositories that track it -- so a fresh clone has config and no database, and
+    // bootstrapping one there is the correct behaviour, not a loss.
+    const clone = path.join(BASE, 'fresh-clone');
+    await fs.mkdir(path.join(clone, '.knowl'), { recursive: true });
+    await fs.copyFile(path.join(REPO, '.knowl', 'config.json'), path.join(clone, '.knowl', 'config.json'));
+
+    const result = spawnSync(process.execPath, [CLI_PATH, 'status'], { cwd: clone, encoding: 'utf8' });
+
+    expect(result.stderr).not.toMatch(/database is missing/i);
+    await expect(fs.access(path.join(clone, '.knowl', 'knowl.db'))).resolves.toBeUndefined();
+  });
+
   it('K-16: `knowl upgrade` is the way back, and says so', async () => {
     const moved = `${DB}.moved`;
     await fs.rename(DB, moved);
