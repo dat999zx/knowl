@@ -94,6 +94,78 @@ describe('runIndexPass', () => {
     expect(await countMessages()).toBe(1);
   });
 
+  // K-12. `size < bytes_indexed` is blind to a rewrite that keeps the file the same length or
+  // makes it longer, and the file is then skipped as "unchanged" -- so every stored line number
+  // points into content that is no longer there. The hits resolve to the wrong bodies and the
+  // new text is never indexed.
+  it('rebuilds a file rewritten in place at the same size', async () => {
+    const before = line('user', 'antiquated terminology');
+    await fs.writeFile(sessionFile('a'), before);
+    await pass();
+
+    // Same byte length, entirely different content.
+    const after = line('user', 'replacement vocabulary');
+    expect(after.length).toBe(before.length);
+    await fs.writeFile(sessionFile('a'), after);
+
+    const result = await pass();
+
+    expect(result.rebuilt).toBe(1);
+    const client = await openTranscriptDb(dbPath);
+    const stale = (await client.execute("SELECT rowid FROM transcript_fts WHERE transcript_fts MATCH 'antiquated'")).rows;
+    const fresh = (await client.execute("SELECT rowid FROM transcript_fts WHERE transcript_fts MATCH 'replacement'")).rows;
+    expect(stale).toHaveLength(0);
+    expect(fresh).toHaveLength(1);
+  });
+
+  it('rebuilds a file rewritten in place and then grown', async () => {
+    await fs.writeFile(sessionFile('a'), line('user', 'antiquated terminology'));
+    await pass();
+
+    await fs.writeFile(sessionFile('a'), line('user', 'replacement one') + line('user', 'replacement two'));
+    await pass();
+
+    const client = await openTranscriptDb(dbPath);
+    const stale = (await client.execute("SELECT rowid FROM transcript_fts WHERE transcript_fts MATCH 'antiquated'")).rows;
+    expect(stale).toHaveLength(0);
+    expect(await countMessages()).toBe(2);
+  });
+
+  // K-57. A rebuild drops the file's rows and resets its watermark. As two steps, an
+  // interruption between them leaves zero rows behind a high watermark -- and once the file has
+  // grown past that watermark again, nothing detects it: the pass "resumes" into a transcript
+  // whose earlier messages exist nowhere. The interruption here is real, not simulated: a
+  // trigger aborts the watermark reset, which is exactly the second of the two steps.
+  it('does not drop a file\'s rows unless the watermark reset lands with them', async () => {
+    await fs.writeFile(sessionFile('a'), line('user', 'antiquated one') + line('user', 'antiquated two'));
+    await pass();
+    expect(await countMessages()).toBe(2);
+
+    // Rewritten in place, so the next pass has to rebuild.
+    await fs.writeFile(sessionFile('a'), line('user', 'replacement one'));
+
+    const client = await openTranscriptDb(dbPath);
+    await client.execute(`CREATE TRIGGER stop_reset BEFORE UPDATE ON transcript_files
+                          BEGIN SELECT RAISE(ABORT, 'interrupted'); END;`);
+    await expect(pass()).rejects.toThrow(/interrupted/);
+    await client.execute('DROP TRIGGER stop_reset');
+
+    // Nothing was dropped, because the reset it belongs with never landed.
+    expect(await countMessages()).toBe(2);
+
+    // Now the file grows past the old watermark, so a size comparison can no longer notice
+    // anything is wrong. The rebuild has to happen anyway.
+    await fs.writeFile(
+      sessionFile('a'),
+      line('user', 'replacement one') + line('user', 'replacement two') + line('user', 'replacement three'),
+    );
+    await pass();
+
+    expect(await countMessages()).toBe(3);
+    const stale = (await client.execute("SELECT rowid FROM transcript_fts WHERE transcript_fts MATCH 'antiquated'")).rows;
+    expect(stale).toHaveLength(0);
+  });
+
   it('drops rows for a transcript that was deleted from disk', async () => {
     await fs.writeFile(sessionFile('a'), line('user', 'gone soon'));
     await pass();

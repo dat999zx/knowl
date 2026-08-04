@@ -9,7 +9,13 @@ import { fuseRankings, searchTranscripts, type TranscriptHit } from './search.js
 
 export type FederatedTranscriptHit = TranscriptHit & { repo: string };
 export type TranscriptSkipReason = 'absent' | 'not-shared' | 'unreadable';
-export type RepoCoverage = { repo: string; embedded: number; indexed: number };
+export type RepoCoverage = {
+  repo: string;
+  embedded: number;
+  indexed: number;
+  /** Whether that repo's last index pass caught up with its archive. */
+  indexComplete: boolean;
+};
 
 /**
  * Search this repo's transcripts and, where a peer has opted in, its linked repos'.
@@ -70,7 +76,7 @@ export async function searchTranscriptsFederated(input: {
       embedder: input.embedder,
     });
     rankings.push(result.hits.map(hit => ({ ...hit, repo })));
-    coverage.push({ repo, ...result.coverage });
+    coverage.push({ repo, ...result.coverage, indexComplete: result.indexComplete });
   };
 
   if (!wanted || wanted.has(localName)) {

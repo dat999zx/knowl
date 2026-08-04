@@ -153,11 +153,18 @@ export async function handleTranscriptSearch(input: {
 
   // Required, not decorative. "BM25 + semantic" over 8% of an archive is a different claim
   // from the same words over all of it, and only one justifies trusting a near-miss.
+  //
+  // Both halves are reported, because they fail independently and only one of them used to be
+  // visible: `embedded/indexed` is computed over the rows that exist, so an index still missing
+  // whole transcripts reports full coverage of the part it has.
   for (const entry of coverage) {
     const semantic = entry.embedded === 0 && !embedder
       ? ' (semantic off: search.vector.enabled is false)'
       : '';
-    lines.push(`Coverage [${entry.repo}]: ${entry.embedded}/${entry.indexed} messages embedded${semantic}.`);
+    const indexing = entry.indexComplete
+      ? ''
+      : ' INDEXING INCOMPLETE - transcripts are still missing from this index; run `knowl reindex --transcripts`.';
+    lines.push(`Coverage [${entry.repo}]: ${entry.embedded}/${entry.indexed} messages embedded${semantic}.${indexing}`);
   }
   for (const entry of skipped) {
     lines.push(`Skipped [${entry.repo}]: ${entry.reason}.`);

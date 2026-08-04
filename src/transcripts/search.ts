@@ -1,5 +1,6 @@
 import type { Client } from '@libsql/client';
 import type { KnowledgeEmbedder } from '../store/vector-index.js';
+import { readTranscriptIndexState } from './database.js';
 import { dotQuantized } from './quantize.js';
 import { readMessagesAt } from './read.js';
 
@@ -277,7 +278,19 @@ export type SearchInput = {
 
 export async function searchTranscripts(
   input: SearchInput,
-): Promise<{ hits: TranscriptHit[]; coverage: { embedded: number; indexed: number } }> {
+): Promise<{
+  hits: TranscriptHit[];
+  coverage: { embedded: number; indexed: number };
+  /**
+   * Whether the archive itself is indexed, as opposed to how much of the index has vectors.
+   *
+   * Reported separately because they fail separately and the failure looks identical: every
+   * count here is taken over the rows that exist, and a transcript the index pass never reached
+   * has no row to be missing from. "12/12 embedded" over a third of the archive is not the same
+   * claim as over all of it, and only one of them makes a miss meaningful.
+   */
+  indexComplete: boolean;
+}> {
   const { client, query, limit, sessionId } = input;
 
   const rankings: TranscriptHit[][] = [await lexicalRank(client, query, limit * 2, sessionId)];
@@ -319,5 +332,7 @@ export async function searchTranscripts(
       })).rows[0].n)
     : 0;
 
-  return { hits: fused, coverage: { embedded, indexed } };
+  const passState = await readTranscriptIndexState(client);
+
+  return { hits: fused, coverage: { embedded, indexed }, indexComplete: passState?.complete === true };
 }

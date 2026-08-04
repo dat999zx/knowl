@@ -178,6 +178,34 @@ describe('searchTranscripts', () => {
     expect(result.coverage).toEqual({ embedded: 2, indexed: 2 });
   });
 
+  // K-32. Coverage answered "how much of what is indexed has vectors" and never "how much of
+  // the archive is indexed at all". A pass cut short by its deadline leaves whole sessions with
+  // no row anywhere, and every number the search reports is computed over the rows that do
+  // exist -- so an index missing half the archive reports 100%.
+  it('reports that indexing itself is incomplete, not just embedding', async () => {
+    await seed('a', line('user', 'first memory note'));
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir });
+
+    await seed('b', line('user', 'second memory note'));
+    // Stops before reaching anything: session b never gets a row.
+    await runIndexPass({ projectRoot: PROJECT_ROOT, dbPath, projectsDir, deadline: Date.now() - 1 });
+
+    const client = await openTranscriptDb(dbPath);
+    const result = await searchTranscripts({ client, query: 'memory', limit: 5, projectRoot: PROJECT_ROOT });
+
+    expect(result.coverage.indexed).toBe(1); // the rows that exist all look complete
+    expect(result.indexComplete).toBe(false);
+  });
+
+  it('reports indexing complete once the pass has caught up', async () => {
+    await seed('a', line('user', 'first memory note'));
+    const client = await buildIndex();
+
+    const result = await searchTranscripts({ client, query: 'memory', limit: 5, projectRoot: PROJECT_ROOT });
+
+    expect(result.indexComplete).toBe(true);
+  });
+
   it('attaches the message text read back from the source file', async () => {
     await seed('a', line('user', 'the reindex ran out of memory'));
     const client = await buildIndex();
