@@ -16,6 +16,30 @@ export const MAX_AFFECTED_PATHS = 6;
 /** Same corpus: p99 path length 57 chars, longest 81. Nothing real is cut at 120. */
 export const MAX_PATH_CHARS = 120;
 
+/**
+ * Why a score was withheld, where the withholding is deliberate.
+ *
+ * The gate on publishing a number is sound and stays: a lexical-only ranking divides each
+ * candidate by its own corpus's best hit, so its top result scores ~1.0 whatever it is;
+ * the layered namespace path normalises per namespace, so two 1.0s from two stores invite a
+ * comparison they cannot support; and a row vector never saw has a semantic half of 0 by
+ * absence, not by verdict. What was wrong was the silence: 907 of 924 archived `knowl_query`
+ * results carried no score (docs/evals/agent-surface.md §10), and "the ranker has no opinion"
+ * was indistinguishable from "the ranker forgot to say". The reader's decision -- trust this
+ * or go read the files -- is exactly the one that silence blocks.
+ */
+export type UncalibratedReason = 'lexical-only' | 'layered namespaces' | 'not embedded';
+/**
+ * The marker itself, riding in the `score` field rather than beside it: the reader is already
+ * told to judge by `score`, so the verdict goes where the eye already is, and `typeof` is the
+ * machine-legible switch -- a number is the ranker's opinion, this string is its refusal, with
+ * the reason attached. One idiom with `NO CONFIDENT MATCH`, not a second one.
+ */
+export type UncalibratedScore = `uncalibrated (${UncalibratedReason})`;
+export function uncalibratedScore(reason: UncalibratedReason): UncalibratedScore {
+  return `uncalibrated (${reason})`;
+}
+
 export type CompactKnowledgeItem = Pick<KnowledgeItem, 'id' | 'category' | 'title' | 'content' | 'freshness' | 'confidence'> & {
   tags?: string[];
   /**
@@ -44,10 +68,11 @@ export type CompactKnowledgeItem = Pick<KnowledgeItem, 'id' | 'category' | 'titl
   /** Namespace the item came from. queryLayeredKnowledge attaches this and it was dropped here. */
   namespace?: string;
   /**
-   * The ranker's fused relevance for this result, in [0,1]. Absent when the ranking carried no
-   * absolute half -- see `CompactProvenance.score`.
+   * The ranker's fused relevance for this result, in [0,1] -- or, when the ranking carried no
+   * absolute half, the explicit refusal `uncalibrated (<reason>)`. Never absent-but-meant:
+   * absence now means the caller supplied nothing, not that the ranker had no opinion.
    */
-  score?: number;
+  score?: number | UncalibratedScore;
 };
 
 /** What the caller knows about this result that the item itself does not carry. */
@@ -55,7 +80,7 @@ export type CompactProvenance = {
   repo?: string;
   namespace?: string;
   /**
-   * The calibrated score, when there is one.
+   * The calibrated score when there is one, or the marker saying why there is not.
    *
    * Supplied by the caller rather than read off the item, because it is a property of *this
    * query* and the same row scores differently under the next one. Absent unless supplied, so
@@ -64,9 +89,10 @@ export type CompactProvenance = {
    * A rank cannot tell "this is the answer" apart from "this is the best of a bad lot", and the
    * consumer of a memory read is deciding exactly that: trust this, or go read the files. The
    * ranker has known the difference since the floor moved onto the raw cosine; it reached
-   * `explain` only, which nothing sets by default.
+   * `explain` only, which nothing sets by default. The `UncalibratedScore` string is the same
+   * decision served on the paths where no calibrated number exists -- see `UncalibratedReason`.
    */
-  score?: number;
+  score?: number | UncalibratedScore;
 };
 
 /**
@@ -111,10 +137,13 @@ export function compactKnowledgeItem(item: KnowledgeItem, extras: CompactProvena
     ...(affectedPaths?.length ? { affectedPaths } : {}),
     ...(extras.repo ? { repo: extras.repo } : {}),
     ...(extras.namespace ? { namespace: extras.namespace } : {}),
+    // A marker string passes through whole: it is already bounded (the longest reason is 33
+    // characters) and rounding is a property of numbers.
+    ...(typeof extras.score === 'string' ? { score: extras.score } : {}),
     // Compared against undefined rather than tested for truth: a score of 0 is the single most
     // useful one this field can carry, and `extras.score ? ...` would be the one value it drops.
-    ...(extras.score === undefined || !Number.isFinite(extras.score)
-      ? {}
-      : { score: Number(extras.score.toFixed(SCORE_DECIMALS)) }),
+    ...(typeof extras.score === 'number' && Number.isFinite(extras.score)
+      ? { score: Number(extras.score.toFixed(SCORE_DECIMALS)) }
+      : {}),
   };
 }

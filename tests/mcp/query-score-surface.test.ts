@@ -48,7 +48,8 @@ vi.mock('../../src/ai/embeddings.js', async importOriginal => {
   const actual = await importOriginal<typeof import('../../src/ai/embeddings.js')>();
   return {
     ...actual,
-    isVectorSearchEnabled: () => true,
+    // The real, config-sensitive isVectorSearchEnabled is kept on purpose: the withheld-score
+    // tests below reach the layered and lexical paths by passing a config with vector off.
     createLocalEmbeddingProvider: async () => FAKE_EMBEDDER,
   };
 });
@@ -61,6 +62,11 @@ const CONFIG: ProjectConfig = {
   version: 1,
   security: { rejectSecrets: true, secretPatterns: [] },
   search: { vector: { enabled: true } },
+} as ProjectConfig;
+// The same store with the semantic half off: what most archived calls actually ran as.
+const NO_VECTOR_CONFIG: ProjectConfig = {
+  version: 1,
+  security: { rejectSecrets: true, secretPatterns: [] },
 } as ProjectConfig;
 
 class InMemoryTransport {
@@ -75,8 +81,8 @@ class InMemoryTransport {
 
 let projectId = '';
 
-async function call(name: string, args: Record<string, unknown>): Promise<any> {
-  const server = createMcpServer(projectId, TEST_ROOT, CONFIG);
+async function call(name: string, args: Record<string, unknown>, config: ProjectConfig = CONFIG): Promise<any> {
+  const server = createMcpServer(projectId, TEST_ROOT, config);
   const transport = new InMemoryTransport();
   await server.connect(transport as never);
   const waitFor = (id: string) => new Promise<any>(resolve => {
@@ -98,36 +104,38 @@ async function call(name: string, args: Record<string, unknown>): Promise<any> {
 
 const jsonOf = (result: any): any => JSON.parse(String(result?.content?.[0]?.text ?? ''));
 
+// File-scope rather than suite-scope, so the withheld-score suite below runs against the
+// same indexed store after this suite finishes.
+beforeAll(async () => {
+  await closeDb();
+  await releaseAll();
+  await fs.rm(TEST_ROOT, { recursive: true, force: true }).catch(() => {});
+  await fs.mkdir(path.join(TEST_ROOT, '.knowl'), { recursive: true });
+  await initDb(TEST_ROOT);
+  projectId = (await repo.createProject(TEST_ROOT, 'query-score')).id;
+
+  await repo.createKnowledgeItem(projectId, {
+    category: 'fact', title: 'Vector index rebuild',
+    content: 'The vector index rebuild runs on a nightly schedule.',
+  });
+  await repo.createKnowledgeItem(projectId, {
+    category: 'fact', title: 'Invoice rounding',
+    content: 'Invoice currency rounding follows the ledger tax rule.',
+  });
+  await repo.createKnowledgeItem(projectId, {
+    category: 'fact', title: 'Deploy rollback',
+    content: 'A deploy to the staging cluster can rollback via canary.',
+  });
+  await reindexKnowledgeEmbeddings(projectId, FAKE_EMBEDDER as never);
+});
+
+afterAll(async () => {
+  await closeDb();
+  await releaseAll();
+  await fs.rm(TEST_ROOT, { recursive: true, force: true }).catch(() => {});
+});
+
 describe('knowl_query surfaces the calibrated score without being asked', () => {
-  beforeAll(async () => {
-    await closeDb();
-    await releaseAll();
-    await fs.rm(TEST_ROOT, { recursive: true, force: true }).catch(() => {});
-    await fs.mkdir(path.join(TEST_ROOT, '.knowl'), { recursive: true });
-    await initDb(TEST_ROOT);
-    projectId = (await repo.createProject(TEST_ROOT, 'query-score')).id;
-
-    await repo.createKnowledgeItem(projectId, {
-      category: 'fact', title: 'Vector index rebuild',
-      content: 'The vector index rebuild runs on a nightly schedule.',
-    });
-    await repo.createKnowledgeItem(projectId, {
-      category: 'fact', title: 'Invoice rounding',
-      content: 'Invoice currency rounding follows the ledger tax rule.',
-    });
-    await repo.createKnowledgeItem(projectId, {
-      category: 'fact', title: 'Deploy rollback',
-      content: 'A deploy to the staging cluster can rollback via canary.',
-    });
-    await reindexKnowledgeEmbeddings(projectId, FAKE_EMBEDDER as never);
-  });
-
-  afterAll(async () => {
-    await closeDb();
-    await releaseAll();
-    await fs.rm(TEST_ROOT, { recursive: true, force: true }).catch(() => {});
-  });
-
   it('puts a bounded score on every result of an ordinary, non-explain query', async () => {
     const items = jsonOf(await call('knowl_query', { query: 'vector index rebuild schedule', limit: 3 }));
     expect(items.length).toBeGreaterThan(0);
@@ -195,5 +203,56 @@ describe('knowl_query surfaces the calibrated score without being asked', () => 
     const result = await call('knowl_query', { query: 'vector index rebuild schedule', limit: 3 });
     const blocks = (result.content as Array<{ text: string }>).map(block => block.text);
     expect(blocks.some(text => text.startsWith('NO CONFIDENT MATCH'))).toBe(false);
+  });
+});
+
+/**
+ * The other half of the same contract: when the score is withheld, the response says so, and
+ * says why. Measured on the archive (docs/evals/agent-surface.md §10), 907 of 924 real
+ * `knowl_query` results carried no score because the semantic half was off -- and that absence
+ * was indistinguishable from the field having been forgotten. The gate itself is right (a
+ * lexical-only ranking's top result scores ~1.0 whatever it is; the layered path normalises
+ * per namespace, so two 1.0s invite a false comparison), so what ships is not a number but the
+ * verdict, in the score field the reader is already told to judge by: the string
+ * `uncalibrated (<reason>)`, one idiom with NO CONFIDENT MATCH rather than a second one.
+ */
+describe('a withheld score says so, and says why', () => {
+  beforeAll(async () => {
+    // Written AFTER the reindex above and never embedded: vector has never seen it. It shares
+    // the query's vocabulary, so its lexical half puts it on the page beside judged rows.
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Vector index rebuild follow-up',
+      content: 'The vector index rebuild schedule follow-up note.',
+    });
+  });
+
+  it('labels the layered default path, which normalises per namespace', async () => {
+    const items = jsonOf(await call('knowl_query', { query: 'invoice currency rounding', limit: 3 }, NO_VECTOR_CONFIG));
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) {
+      expect(item.score).toBe('uncalibrated (layered namespaces)');
+    }
+  });
+
+  it('labels the lexical-only ranking under explain', async () => {
+    const items = jsonOf(await call('knowl_query', { query: 'invoice currency rounding', limit: 3, explain: true }, NO_VECTOR_CONFIG));
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) {
+      expect(item.score).toBe('uncalibrated (lexical-only)');
+    }
+  });
+
+  it('labels the one row vector never saw, and leaves its judged neighbours numeric', async () => {
+    const items = jsonOf(await call('knowl_query', { query: 'vector index rebuild schedule', limit: 3 }));
+    const unseen = items.find((entry: any) => entry.title === 'Vector index rebuild follow-up');
+    expect(unseen).toBeDefined();
+    // Its fused number's semantic half is 0 by absence, not by verdict. Published unmarked it
+    // reads "very weak"; the truth is "unjudged".
+    expect(unseen.score).toBe('uncalibrated (not embedded)');
+    const judged = items.filter((entry: any) => entry.title !== 'Vector index rebuild follow-up');
+    expect(judged.length).toBeGreaterThan(0);
+    for (const item of judged) {
+      expect(typeof item.score).toBe('number');
+    }
   });
 });

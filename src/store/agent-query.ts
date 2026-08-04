@@ -626,25 +626,46 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
 
   const selected = withoutDuplicates(scored, limit);
 
-  return selected.map(({ result, score, contributions, diversity }) => ({
-    item: result.item,
-    repo: result.repo,
-    // Diversity is NOT in here. It is a property of the result set rather than of the item,
-    // and folding it in is what drove reported scores negative and non-monotonic.
-    score,
-    explanation: {
-      finalScore: score,
-      bm25Rank: result.bm25Rank,
-      vectorRank: result.vectorRank,
-      // Present only when true: an answered query is the common case and pays nothing.
-      ...(abstained.has(result.item.id) ? { abstained: true } : {}),
-      contributions: { ...contributions, diversity },
-      reason: `relevance=${contributions.relevance.toFixed(3)} `
-        + `(semantic=${contributions.semantic.toFixed(3)}, lexical=${contributions.lexical.toFixed(3)}, `
-        + `alpha=${alpha.toFixed(2)}), prior=${contributions.prior.toFixed(3)}, `
-        + `diversity=${diversity.toFixed(3)}`,
-    },
-  }));
+  // Whether `score` is a calibrated relevance for this row, and if not, why -- so the surface
+  // can say "no opinion" instead of publishing a number that reads as a verdict. Both reasons
+  // are already computed, nothing new is judged here:
+  //
+  // - No semantic half ran: every corpus's lexical evidence is normalised against its own best
+  //   hit, so the top result scores ~1.0 whatever it is. The number is an order, not a strength.
+  // - Vector ran and never saw this row (`embedded !== true`, the same predicate `floorApplies`
+  //   exempts on): its semantic half is 0 by absence, not by verdict, so the fused number reads
+  //   "very weak" where the truth is "unjudged". A row vector *returned* is judged by
+  //   definition, and a row that is embedded but unreturned is judged distant -- that one keeps
+  //   its number.
+  const uncalibratedFor = (result: Candidate): 'lexical-only' | 'not embedded' | undefined => {
+    if (!usingVector) return 'lexical-only';
+    return result.vectorScore !== undefined || result.embedded === true ? undefined : 'not embedded';
+  };
+
+  return selected.map(({ result, score, contributions, diversity }) => {
+    const uncalibrated = uncalibratedFor(result);
+    return {
+      item: result.item,
+      repo: result.repo,
+      // Diversity is NOT in here. It is a property of the result set rather than of the item,
+      // and folding it in is what drove reported scores negative and non-monotonic.
+      score,
+      explanation: {
+        finalScore: score,
+        bm25Rank: result.bm25Rank,
+        vectorRank: result.vectorRank,
+        // Present only when true: an answered query is the common case and pays nothing.
+        ...(abstained.has(result.item.id) ? { abstained: true } : {}),
+        // Same economy: present only on a row whose number is not a calibrated relevance.
+        ...(uncalibrated ? { uncalibrated } : {}),
+        contributions: { ...contributions, diversity },
+        reason: `relevance=${contributions.relevance.toFixed(3)} `
+          + `(semantic=${contributions.semantic.toFixed(3)}, lexical=${contributions.lexical.toFixed(3)}, `
+          + `alpha=${alpha.toFixed(2)}), prior=${contributions.prior.toFixed(3)}, `
+          + `diversity=${diversity.toFixed(3)}`,
+      },
+    };
+  });
 }
 
 /**

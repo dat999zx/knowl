@@ -191,6 +191,17 @@ export type KnowledgeSearchExplanation = {
    * corpora (docs/evals/floor-sweep.md).
    */
   abstained?: boolean;
+  /**
+   * `finalScore` is not a calibrated relevance for this row, and this is why. Present only
+   * when set, mirroring `abstained`, so the calibrated path costs nothing.
+   *
+   * Two reasons are the ranker's to know: no semantic half ran at all (`lexical-only` -- the
+   * ranking is each corpus's rows against its own best hit, so the top result scores ~1.0
+   * whatever it is), or vector ran and never saw this row (`not embedded` -- its semantic half
+   * is 0 by absence, not by verdict, the same predicate the relevance floor exempts on). The
+   * third reason a caller can add, `layered namespaces`, belongs to the path that layers.
+   */
+  uncalibrated?: 'lexical-only' | 'not embedded';
 };
 
 export type ExplainedKnowledgeItem = KnowledgeItem & { explanation: KnowledgeSearchExplanation };
