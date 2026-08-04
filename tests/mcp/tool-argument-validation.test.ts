@@ -273,6 +273,31 @@ describe('MCP tool arguments are validated against the published schema', () => 
     });
   });
 
+  // The validator refuses a keyword it does not implement, on the grounds that a schema
+  // constraint which silently does nothing is the defect it exists to close. That refusal
+  // must never be reachable from a published schema, so every one of them is walked here.
+  it('publishes no schema keyword the validator cannot enforce', async () => {
+    const { knowlToolDefinitions } = await import('../../src/mcp/tools.js');
+    const { SUPPORTED_SCHEMA_KEYWORDS } = await import('../../src/mcp/tool-schema.js');
+
+    const unsupported: string[] = [];
+    const walk = (node: any, where: string): void => {
+      if (!node || typeof node !== 'object' || Array.isArray(node)) return;
+      for (const [keyword, value] of Object.entries(node)) {
+        if (!SUPPORTED_SCHEMA_KEYWORDS.has(keyword)) unsupported.push(`${where}.${keyword}`);
+        if (keyword === 'properties' || keyword === 'oneOf') {
+          Object.values(value as any).forEach((child, index) => walk(child, `${where}.${keyword}[${index}]`));
+        }
+        if (keyword === 'items' || keyword === 'additionalProperties') walk(value, `${where}.${keyword}`);
+      }
+    };
+
+    const transcriptsOn = { version: 1, security: { rejectSecrets: true, secretPatterns: [] }, search: { transcripts: { enabled: true } } } as any;
+    for (const tool of knowlToolDefinitions(transcriptsOn)) walk(tool.inputSchema, tool.name);
+
+    expect(unsupported).toEqual([]);
+  });
+
   it('leaves a well-formed call untouched', async () => {
     const result = await call('knowl_store', { category: 'fact', title: 'Ordinary', content: 'Nothing unusual.' });
     expect(result.isError).toBeUndefined();

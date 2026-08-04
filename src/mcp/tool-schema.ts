@@ -26,11 +26,17 @@ export class ToolInputError extends Error {
 
 type Schema = Record<string, any>;
 
-const KNOWN_KEYWORDS = new Set([
+/**
+ * Exported so a test can walk every published schema and prove none uses a keyword this
+ * validator would refuse. A schema keyword that silently does nothing is the defect this
+ * whole module exists to close; one that throws at the caller is a worse version of it.
+ */
+export const SUPPORTED_SCHEMA_KEYWORDS = new Set([
   'type', 'description', 'properties', 'required', 'additionalProperties', 'items',
   'enum', 'const', 'minLength', 'maxLength', 'format', 'minimum', 'maximum',
   'minItems', 'maxItems', 'oneOf', 'default',
 ]);
+const KNOWN_KEYWORDS = SUPPORTED_SCHEMA_KEYWORDS;
 
 function kindOf(value: unknown): string {
   if (value === null) return 'null';
