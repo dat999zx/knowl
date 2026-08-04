@@ -9,7 +9,7 @@ export type FederatedItem = KnowledgeItem & {
   repo: string;
   explanation?: ExplainedKnowledgeItem['explanation'];
 };
-export type SkipReason = 'absent' | 'unreadable' | 'schema-too-new';
+export type SkipReason = 'absent' | 'unreadable' | 'schema-too-new' | 'unknown';
 export type FederatedResult = {
   items: FederatedItem[];
   skipped: Array<{ repo: string; reason: SkipReason }>;
@@ -69,6 +69,17 @@ export async function queryFederated(input: {
   const wanted = input.repos && input.repos.length > 0 ? new Set(input.repos) : null;
   const skipped: FederatedResult['skipped'] = [];
   const candidates: RepoCandidate[] = [];
+
+  // A name that matches no repo used to filter every real one out and return nothing, which
+  // reads as "the workspace does not know this" -- the one conclusion a misspelling must not
+  // produce. Reported rather than raised: a request naming three repos and one typo should
+  // still search the three, and the notice is what makes the fourth's absence visible.
+  if (wanted) {
+    const known = new Set([input.workspace.repo, ...input.workspace.peers.map(peer => peer.name)]);
+    for (const name of wanted) {
+      if (!known.has(name)) skipped.push({ repo: name, reason: 'unknown' });
+    }
+  }
 
   const selection: RankOptions = {
     query: input.query,
