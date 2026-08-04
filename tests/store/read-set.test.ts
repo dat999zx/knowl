@@ -1,0 +1,313 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { closeDb, getClient, initDb } from '../../src/store/database.js';
+import {
+  READ_SET_CHUNK,
+  activeReadSetForSession,
+  activeReadersOf,
+  normalizeLocator,
+  recordRead,
+  releaseReadSet,
+  sweepReadSets,
+} from '../../src/store/read-set.js';
+
+/**
+ * The read-set store: what a session read, hashed at read time.
+ *
+ * The assertions that matter here are the ones about what is *not* stored and what is *not*
+ * returned. A row that should not exist (a directory locator, a duplicate of an observation
+ * already on file) and a row that should no longer be live (released, superseded) both become
+ * false positives on the one tier allowed to interrupt an agent, which is the tier this table
+ * exists to serve.
+ */
+const ROOT = path.resolve('./.knowl-read-set-test');
+
+const rowsFor = async (sessionId: string) =>
+  (await getClient().execute({
+    sql: 'SELECT id, locator, observed_hash, released_at FROM work_read_sets WHERE session_id = ? ORDER BY observed_hash',
+    args: [sessionId],
+  })).rows;
+
+const countFor = async (sessionId: string): Promise<number> => (await rowsFor(sessionId)).length;
+
+describe('work read-set store', () => {
+  beforeAll(async () => {
+    await fs.rm(ROOT, { recursive: true, force: true });
+    await fs.mkdir(path.join(ROOT, '.knowl'), { recursive: true });
+    await initDb(ROOT);
+  });
+
+  afterAll(async () => {
+    await closeDb();
+    await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('records a read and returns it with every field mapped', async () => {
+    await recordRead({
+      sessionId: 'sess-record',
+      agentId: '__agent__:lane-d',
+      taskId: 'task-1',
+      locator: 'symbol://src/auth/session.ts#createSession',
+      observedHash: 'h-sig-1',
+      toolName: 'Read',
+    });
+
+    const [entry, ...rest] = await activeReadSetForSession('sess-record');
+    expect(rest).toEqual([]);
+    expect(entry).toMatchObject({
+      sessionId: 'sess-record',
+      agentId: '__agent__:lane-d',
+      taskId: 'task-1',
+      locator: 'symbol://src/auth/session.ts#createSession',
+      observedHash: 'h-sig-1',
+      toolName: 'Read',
+      releasedAt: null,
+    });
+    expect(entry.id).toMatch(/^[0-9a-f]{16}$/);
+    expect(Date.parse(entry.readAt)).not.toBeNaN();
+  });
+
+  /** The optional columns are absent, not empty strings: `releaseReadSet(s, '')` must match nothing. */
+  it('stores omitted and blank agent, task and tool as NULL', async () => {
+    await recordRead({
+      sessionId: 'sess-nulls',
+      taskId: '   ',
+      locator: 'file://src/plain.ts',
+      observedHash: 'h-plain',
+    });
+
+    const [entry] = await activeReadSetForSession('sess-nulls');
+    expect(entry.agentId).toBeNull();
+    expect(entry.taskId).toBeNull();
+    expect(entry.toolName).toBeNull();
+  });
+
+  /**
+   * The capture path fires on every tool call and agents re-read constantly. Without this the
+   * table grows with tool calls rather than with distinct observations, and the plan's own
+   * steady-state-rows target is unmeetable by construction.
+   */
+  it('is idempotent when the same session re-reads the same locator at the same hash', async () => {
+    const observation = {
+      sessionId: 'sess-idem',
+      locator: 'file://src/idem.ts',
+      observedHash: 'h-same',
+      toolName: 'Read',
+    };
+    await recordRead(observation);
+    const [first] = await activeReadSetForSession('sess-idem');
+
+    await recordRead(observation);
+    await recordRead({ ...observation, toolName: 'Edit' });
+
+    const live = await activeReadSetForSession('sess-idem');
+    expect(live).toHaveLength(1);
+    // The same row, not a replacement one: the first read is when the belief was formed.
+    expect(live[0].id).toBe(first.id);
+    expect(live[0].toolName).toBe('Read');
+    expect(await countFor('sess-idem')).toBe(1);
+  });
+
+  /** Dedupe is scoped to unreleased rows, or a session that finishes a task and reads the same
+   * file again would be treated as still holding the finished row and never record the new read. */
+  it('records the read again once the earlier one has been released', async () => {
+    await recordRead({ sessionId: 'sess-rearm', locator: 'file://src/rearm.ts', observedHash: 'h-rearm' });
+    await releaseReadSet('sess-rearm');
+    await recordRead({ sessionId: 'sess-rearm', locator: 'file://src/rearm.ts', observedHash: 'h-rearm' });
+
+    expect(await activeReadSetForSession('sess-rearm')).toHaveLength(1);
+    expect(await countFor('sess-rearm')).toBe(2);
+  });
+
+  /**
+   * A changed hash is a genuinely new observation -- the agent has now seen a newer version -- and
+   * the belief it replaces is retired in the same call. Leaving both live would let the certain
+   * tier report the session as stale for a change it has already read: a guaranteed false positive
+   * on the only tier permitted to push and gate.
+   */
+  it('records a new row at a changed hash and retires the belief it replaces', async () => {
+    await recordRead({ sessionId: 'sess-moved', locator: 'file://src/moved.ts', observedHash: 'h-old' });
+    await recordRead({ sessionId: 'sess-moved', locator: 'file://src/moved.ts', observedHash: 'h-new' });
+
+    const live = await activeReadSetForSession('sess-moved');
+    expect(live).toHaveLength(1);
+    expect(live[0].observedHash).toBe('h-new');
+
+    const stored = await rowsFor('sess-moved');
+    expect(stored).toHaveLength(2);
+    expect(String(stored[0].observed_hash)).toBe('h-new');
+    expect(stored[0].released_at).toBeNull();
+    expect(String(stored[1].observed_hash)).toBe('h-old');
+    expect(stored[1].released_at).not.toBeNull();
+  });
+
+  /** Another session's belief about the same locator is its own; only the re-reader's is retired. */
+  it('retires only the re-reading session, not every reader of the locator', async () => {
+    await recordRead({ sessionId: 'sess-mine', locator: 'file://src/shared.ts', observedHash: 'h-1' });
+    await recordRead({ sessionId: 'sess-theirs', locator: 'file://src/shared.ts', observedHash: 'h-1' });
+    await recordRead({ sessionId: 'sess-mine', locator: 'file://src/shared.ts', observedHash: 'h-2' });
+
+    const readers = await activeReadersOf(['file://src/shared.ts']);
+    expect(readers.map(entry => [entry.sessionId, entry.observedHash]).sort()).toEqual([
+      ['sess-mine', 'h-2'],
+      ['sess-theirs', 'h-1'],
+    ]);
+  });
+
+  /**
+   * The load-bearing rejection. `Grep`'s `path` argument is allowlisted through the stdin filter
+   * and arrives on the same stream every other tool's file path does, so a directory can reach
+   * this call -- and a directory in the read-set makes every edit beneath it look like it
+   * invalidated the session. Rejection is silent: this runs inside a capture path that must not
+   * fail the tool call it is observing.
+   */
+  it('rejects directory and malformed locators without throwing', async () => {
+    const refused = [
+      'src/store',                    // a Grep `path` argument: no scheme, no extension
+      'file://src/store',             // the same directory, correctly schemed
+      'file://src/store/',            // trailing slash
+      'file:///abs/leading.ts',       // leading slash: aliases the relative form
+      'file://src/../store/a.ts',     // `..` segment: two locators for one file
+      'file://src/./a.ts',            // `.` segment: likewise
+      'file://',                      // empty path
+      'file://src/a.ts#Name',         // a symbol locator wearing the file scheme
+      'symbol://src/a.ts',            // no symbol name
+      'symbol://src/a.ts#',           // empty symbol name
+      'symbol://src/store#Name',      // symbol on a directory
+      'http://example.com/a.ts',      // not a locator at all
+      '',
+      '   ',
+      // Deliberate recall cost, not an oversight: extensionless names are rejected so that
+      // directories are, and losing a `.gitignore` read is cheaper than a per-write false positive.
+      'file://.gitignore',
+      'file://Makefile',
+    ];
+
+    for (const locator of refused) {
+      expect(normalizeLocator(locator), locator).toBeNull();
+      await expect(recordRead({ sessionId: 'sess-junk', locator, observedHash: 'h' })).resolves.toBeUndefined();
+    }
+    expect(await countFor('sess-junk')).toBe(0);
+  });
+
+  /** A row that cannot answer the question the table exists to answer is not worth storing. */
+  it('rejects a read with no session or no hash as of the read', async () => {
+    await recordRead({ sessionId: '', locator: 'file://src/a.ts', observedHash: 'h' });
+    await recordRead({ sessionId: 'sess-blank', locator: 'file://src/a.ts', observedHash: '  ' });
+    expect(await countFor('')).toBe(0);
+    expect(await countFor('sess-blank')).toBe(0);
+  });
+
+  /**
+   * Windows separators are normalized rather than rejected. Storing both spellings would mean the
+   * detector's equality never fires on the platform this repo is developed on.
+   */
+  it('canonicalises separators so a write and a read agree on one locator', async () => {
+    expect(normalizeLocator('symbol://src\\auth\\session.ts#createSession'))
+      .toBe('symbol://src/auth/session.ts#createSession');
+
+    await recordRead({ sessionId: 'sess-win', locator: 'file://src\\win\\file.ts', observedHash: 'h-win' });
+    const [entry] = await activeReadSetForSession('sess-win');
+    expect(entry.locator).toBe('file://src/win/file.ts');
+    // Found by either spelling, because both normalise to the stored one.
+    expect(await activeReadersOf(['file://src\\win\\file.ts'])).toHaveLength(1);
+  });
+
+  /**
+   * The detector hands over every locator a re-indexed file produced, which is unbounded in the
+   * size of the file. An unbounded `IN (...)` is a hard bind-parameter error, not a slow query.
+   */
+  it('answers a locator list well past one chunk', async () => {
+    const total = READ_SET_CHUNK + 50;
+    expect(READ_SET_CHUNK).toBe(200);
+
+    const locators = Array.from({ length: total }, (_, index) => `file://src/bulk/f${index}.ts`);
+    for (const locator of locators) {
+      await recordRead({ sessionId: 'sess-bulk', locator, observedHash: `h-${locator}` });
+    }
+    // One locator nobody read, and one duplicate: neither may change the count.
+    const asked = [...locators, 'file://src/bulk/absent.ts', locators[0]];
+
+    const readers = await activeReadersOf(asked);
+    expect(readers).toHaveLength(total);
+    expect(new Set(readers.map(entry => entry.locator)).size).toBe(total);
+  });
+
+  it('returns nothing for an empty or entirely invalid locator list', async () => {
+    expect(await activeReadersOf([])).toEqual([]);
+    expect(await activeReadersOf(['src/store', 'file://src/store'])).toEqual([]);
+  });
+
+  it('releases a whole session and reports how many rows it took', async () => {
+    await recordRead({ sessionId: 'sess-rel', taskId: 'task-a', locator: 'file://src/rel1.ts', observedHash: 'h1' });
+    await recordRead({ sessionId: 'sess-rel', taskId: 'task-b', locator: 'file://src/rel2.ts', observedHash: 'h2' });
+
+    expect(await releaseReadSet('sess-rel')).toBe(2);
+    expect(await activeReadSetForSession('sess-rel')).toEqual([]);
+    expect(await activeReadersOf(['file://src/rel1.ts', 'file://src/rel2.ts'])).toEqual([]);
+    // Released, not deleted: the row is the denominator the precision number is computed against.
+    expect(await countFor('sess-rel')).toBe(2);
+    // Nothing left to release, and saying so is not an error.
+    expect(await releaseReadSet('sess-rel')).toBe(0);
+  });
+
+  /**
+   * `knowl_task_finish` ends one task inside a session that keeps running. Releasing the whole
+   * session there would drop the reads the session still relies on and silently disarm the
+   * detector for the rest of it.
+   */
+  it('releases only the named task and leaves the rest of the session live', async () => {
+    await recordRead({ sessionId: 'sess-task', taskId: 'task-done', locator: 'file://src/t1.ts', observedHash: 'h1' });
+    await recordRead({ sessionId: 'sess-task', taskId: 'task-open', locator: 'file://src/t2.ts', observedHash: 'h2' });
+    await recordRead({ sessionId: 'sess-task', locator: 'file://src/t3.ts', observedHash: 'h3' });
+
+    expect(await releaseReadSet('sess-task', 'task-done')).toBe(1);
+
+    const live = await activeReadSetForSession('sess-task');
+    expect(live.map(entry => entry.locator).sort()).toEqual(['file://src/t2.ts', 'file://src/t3.ts']);
+    // A task id nobody carries releases nothing, rather than everything.
+    expect(await releaseReadSet('sess-task', 'task-missing')).toBe(0);
+    expect(await activeReadSetForSession('sess-task')).toHaveLength(2);
+  });
+
+  /**
+   * GC's half. The unreleased row is the case this whole subsystem exists for -- a long-lived
+   * session is not garbage -- so age alone must never be enough to collect one.
+   */
+  it('sweeps released rows older than the cutoff and spares everything else', async () => {
+    await recordRead({ sessionId: 'sess-gc', locator: 'file://src/gc-old.ts', observedHash: 'h-old' });
+    await recordRead({ sessionId: 'sess-gc', locator: 'file://src/gc-recent.ts', observedHash: 'h-recent' });
+    await recordRead({ sessionId: 'sess-gc', locator: 'file://src/gc-live.ts', observedHash: 'h-live' });
+    await releaseReadSet('sess-gc');
+    // Live again after the release, so the session has one unreleased row of real age.
+    await recordRead({ sessionId: 'sess-gc', locator: 'file://src/gc-live.ts', observedHash: 'h-live-2' });
+
+    // Backdated in SQL rather than by waiting: release stamps `new Date()`, and the property under
+    // test is the cutoff comparison, not the clock.
+    await getClient().execute({
+      sql: 'UPDATE work_read_sets SET released_at = ? WHERE session_id = ? AND locator = ?',
+      args: ['2026-01-01T00:00:00.000Z', 'sess-gc', 'file://src/gc-old.ts'],
+    });
+    // The earlier observation of the locator that is live again: a locator with both a collectable
+    // row and a live one is the case a sweep written as "delete this session's old rows" fails.
+    await getClient().execute({
+      sql: `UPDATE work_read_sets SET released_at = ?
+            WHERE session_id = ? AND locator = ? AND observed_hash = ?`,
+      args: ['2026-01-01T00:00:00.000Z', 'sess-gc', 'file://src/gc-live.ts', 'h-live'],
+    });
+
+    expect(await sweepReadSets('2026-06-01T00:00:00.000Z')).toBe(2);
+
+    const survivors = (await rowsFor('sess-gc')).map(row => String(row.locator)).sort();
+    expect(survivors).toEqual(['file://src/gc-live.ts', 'file://src/gc-recent.ts']);
+    // The live row survives at any cutoff, including one in the future. Asserted on this
+    // session's surviving rows rather than on the returned count: the sweep is global by
+    // design -- GC does not run per session -- so the count also collects released rows left
+    // by every earlier case in this file, which share one database. A count assertion here
+    // would pass or fail on the order and content of its siblings rather than on the cutoff.
+    await sweepReadSets('2099-01-01T00:00:00.000Z');
+    expect((await rowsFor('sess-gc')).map(row => String(row.locator))).toEqual(['file://src/gc-live.ts']);
+    expect(await activeReadSetForSession('sess-gc')).toHaveLength(1);
+  });
+});
