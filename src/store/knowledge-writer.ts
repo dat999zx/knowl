@@ -3,7 +3,7 @@ import { searchKnowledgeItems } from './search.js';
 import * as repo from './repository.js';
 import { checkKnowledgeConflict, normalizeConflictScope } from './conflicts.js';
 import { KnowledgeConflictError } from '../core/errors.js';
-import { getConfigRoot } from './database.js';
+import { getConfigRoot, withClientTransaction } from './database.js';
 import type { CrossRepoOverlap, OverlapSubject } from '../workspace/cross-repo-overlap.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
 import { attachEvidenceToKnowledge, listEvidenceForItem } from './evidence-repository.js';
@@ -430,38 +430,45 @@ export async function storeKnowledgeItemDeduped(
     return { action: 'duplicate', item: duplicate };
   }
 
-  const item = await repo.createKnowledgeItem(
-    projectId,
-    {
-      category: input.category,
-      title: input.title,
-      content: input.content,
-      reasoning: input.reasoning,
-      alternatives: input.alternatives,
-      tags: input.tags,
-      source: input.source,
-      sourceCommit: input.sourceCommit,
-      affectedPaths: input.affectedPaths,
-      confidence: input.confidence,
-      provenance: input.provenance,
-      conflictKey: input.conflictKey,
-      conflictScope: input.conflictScope,
-      conflictExclusive: input.conflictExclusive,
-    },
-    input.steps,
-    undefined,
-    validationOptions,
-  );
-  await attachEvidenceToKnowledge(item.id, input.evidence, input);
+  // The item, the predecessor it retires and the commit record naming both land together or
+  // not at all -- the same invariant the batch path holds. Rows with no commit record are
+  // invisible to blast-radius, which is the mechanism that decides what to re-check when one
+  // of them turns out to be wrong.
+  const { item, superseded } = await withClientTransaction(async (conn) => {
+    const written = await repo.createKnowledgeItem(
+      projectId,
+      {
+        category: input.category,
+        title: input.title,
+        content: input.content,
+        reasoning: input.reasoning,
+        alternatives: input.alternatives,
+        tags: input.tags,
+        source: input.source,
+        sourceCommit: input.sourceCommit,
+        affectedPaths: input.affectedPaths,
+        confidence: input.confidence,
+        provenance: input.provenance,
+        conflictKey: input.conflictKey,
+        conflictScope: input.conflictScope,
+        conflictExclusive: input.conflictExclusive,
+      },
+      input.steps,
+      conn,
+      validationOptions,
+    );
+    await attachEvidenceToKnowledge(written.id, input.evidence, input);
 
-  const changes: CommitChange[] = [];
-  const superseded = await resolveSupersedeTarget(input, duplicate, resolution === 'supersede');
-  if (superseded && superseded.id !== item.id) {
-    await repo.updateKnowledgeItem(superseded.id, { status: 'superseded', supersededById: item.id });
-    changes.push({ itemId: superseded.id, action: 'supersede', before: superseded });
-  }
-  changes.push({ itemId: item.id, action: 'insert', after: item });
-  await repo.createKnowledgeCommit(projectId, commitMessage || `Store ${input.category}: ${input.title}`, changes);
+    const changes: CommitChange[] = [];
+    const retired = await resolveSupersedeTarget(input, duplicate, resolution === 'supersede');
+    if (retired && retired.id !== written.id) {
+      await repo.updateKnowledgeItem(retired.id, { status: 'superseded', supersededById: written.id }, undefined, conn);
+      changes.push({ itemId: retired.id, action: 'supersede', before: retired });
+    }
+    changes.push({ itemId: written.id, action: 'insert', after: written });
+    await repo.createKnowledgeCommit(projectId, commitMessage || `Store ${input.category}: ${input.title}`, changes, conn);
+    return { item: written, superseded: retired };
+  });
   await indexKnowledgeItemsBestEffort(projectId, [item]);
 
   return {
@@ -473,102 +480,141 @@ export async function storeKnowledgeItemDeduped(
   };
 }
 
+/**
+ * Write a batch of atoms, or write none of it.
+ *
+ * The atoms used to be written one transaction at a time with the commit record appended once
+ * at the end, so an atom refused halfway through -- an oversized field, a secret, an exclusive
+ * conflict -- threw out of the loop and skipped the commit entirely. The caller was told the
+ * call failed while the earlier atoms sat in the store, and with no commit naming them
+ * blast-radius could never implicate them if one later turned out to be wrong. A retired
+ * predecessor stayed retired too, so a failed batch could leave a subject with no active
+ * answer at all.
+ *
+ * One transaction over the whole batch makes the report and the state agree, and makes a retry
+ * of the same batch trivially idempotent. The duplicate search runs inside it and therefore
+ * still sees the atoms written earlier in the same batch. What stays outside is everything
+ * that is not this database: peer overlap reports and embedding, both advisory and both
+ * reasons to hold a write lock longer than the write needs it.
+ */
 export async function storeKnowledgeAtomsDeduped(
   projectId: string,
   atoms: StoreKnowledgeInput[],
   commitMessage?: string,
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<StoreKnowledgeBatchResult> {
-  const changes: CommitChange[] = [];
-  const itemIds: string[] = [];
-  const inserted: KnowledgeItem[] = [];
-  const supersededIds: string[] = [];
-  const outcomes: StoreKnowledgeAtomOutcome[] = [];
-  let duplicateCount = 0;
-  let insertedCount = 0;
   // Resolved once for the whole batch, not once per atom. Ten atoms against three peers is
   // thirty workspace resolutions inside the loop, for something that cannot change mid-batch.
   const workspace = await activeWorkspaceForWrite();
 
-  for (const atom of atoms) {
-    const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, {
-      category: atom.category,
-      title: atom.title,
-      content: atom.content,
-      reasoning: atom.reasoning,
-      tags: atom.tags,
-    });
+  const written = await withClientTransaction(async (conn) => {
+    const changes: CommitChange[] = [];
+    const itemIds: string[] = [];
+    const inserted: KnowledgeItem[] = [];
+    const supersededIds: string[] = [];
+    const outcomes: StoreKnowledgeAtomOutcome[] = [];
+    // Which atom produced which outcome, so the peer lookups can be resolved after the
+    // transaction commits rather than inside it.
+    const overlapSubjects: Array<{ outcome: StoreKnowledgeAtomOutcome; atom: StoreKnowledgeInput }> = [];
+    let duplicateCount = 0;
+    let insertedCount = 0;
 
-    const resolution = duplicate
-      ? resolveDuplicate(atom, duplicate, await heldPayloadFor(atom, duplicate))
-      : null;
-    if (duplicate && resolution === 'no-op' && !atom.supersedes) {
-      itemIds.push(duplicate.id);
-      duplicateCount++;
-      outcomes.push({ action: 'duplicate', itemId: duplicate.id, title: atom.title });
-      continue;
-    }
-
-    const item = await repo.createKnowledgeItem(
-      projectId,
-      {
+    for (const atom of atoms) {
+      const duplicate = await findLikelyDuplicateKnowledgeItem(projectId, {
         category: atom.category,
         title: atom.title,
         content: atom.content,
         reasoning: atom.reasoning,
-        alternatives: atom.alternatives,
         tags: atom.tags,
-        source: atom.source,
-        sourceCommit: atom.sourceCommit,
-        affectedPaths: atom.affectedPaths,
-        confidence: atom.confidence,
-        provenance: atom.provenance,
-      },
-      atom.steps,
-      undefined,
-      validationOptions,
-    );
-    await attachEvidenceToKnowledge(item.id, atom.evidence, atom);
+      });
 
-    const superseded = await resolveSupersedeTarget(atom, duplicate, resolution === 'supersede');
-    if (superseded && superseded.id !== item.id) {
-      await repo.updateKnowledgeItem(superseded.id, { status: 'superseded', supersededById: item.id });
-      changes.push({ itemId: superseded.id, action: 'supersede', before: superseded });
-      supersededIds.push(superseded.id);
+      const resolution = duplicate
+        ? resolveDuplicate(atom, duplicate, await heldPayloadFor(atom, duplicate))
+        : null;
+      if (duplicate && resolution === 'no-op' && !atom.supersedes) {
+        itemIds.push(duplicate.id);
+        duplicateCount++;
+        outcomes.push({ action: 'duplicate', itemId: duplicate.id, title: atom.title });
+        continue;
+      }
+
+      const item = await repo.createKnowledgeItem(
+        projectId,
+        {
+          category: atom.category,
+          title: atom.title,
+          content: atom.content,
+          reasoning: atom.reasoning,
+          alternatives: atom.alternatives,
+          tags: atom.tags,
+          source: atom.source,
+          sourceCommit: atom.sourceCommit,
+          affectedPaths: atom.affectedPaths,
+          confidence: atom.confidence,
+          provenance: atom.provenance,
+          // Dropped here until now, while the comment on StoreKnowledgeInput claimed both
+          // store paths forwarded them. Exclusivity is enforced inside createKnowledgeItem's
+          // own transaction, so an atom that never carried the key was never checked against
+          // it -- the guard was simply off for anything ingested as a batch.
+          conflictKey: atom.conflictKey,
+          conflictScope: atom.conflictScope,
+          conflictExclusive: atom.conflictExclusive,
+        },
+        atom.steps,
+        conn,
+        validationOptions,
+      );
+      await attachEvidenceToKnowledge(item.id, atom.evidence, atom);
+
+      const superseded = await resolveSupersedeTarget(atom, duplicate, resolution === 'supersede');
+      if (superseded && superseded.id !== item.id) {
+        await repo.updateKnowledgeItem(superseded.id, { status: 'superseded', supersededById: item.id }, undefined, conn);
+        changes.push({ itemId: superseded.id, action: 'supersede', before: superseded });
+        supersededIds.push(superseded.id);
+      }
+
+      itemIds.push(item.id);
+      insertedCount++;
+      inserted.push(item);
+      changes.push({ itemId: item.id, action: 'insert', after: item });
+      const outcome: StoreKnowledgeAtomOutcome = {
+        action: 'inserted',
+        itemId: item.id,
+        title: atom.title,
+        ...(superseded && superseded.id !== item.id ? { supersededId: superseded.id } : {}),
+        ...(resolution === 'coexist' && duplicate
+          ? { nearDuplicateId: duplicate.id, nearDuplicateTitle: duplicate.title }
+          : {}),
+      };
+      outcomes.push(outcome);
+      overlapSubjects.push({ outcome, atom });
     }
 
-    itemIds.push(item.id);
-    insertedCount++;
-    inserted.push(item);
-    changes.push({ itemId: item.id, action: 'insert', after: item });
-    outcomes.push({
-      action: 'inserted',
-      itemId: item.id,
-      title: atom.title,
-      ...(superseded && superseded.id !== item.id ? { supersededId: superseded.id } : {}),
-      ...(resolution === 'coexist' && duplicate
-        ? { nearDuplicateId: duplicate.id, nearDuplicateTitle: duplicate.title }
-        : {}),
-      // Per atom, so an agent can tell which of five findings overlapped rather than being
-      // told only that something in the batch did.
-      crossRepo: await overlapFor(workspace, atom),
-    });
-  }
+    if (changes.length > 0) {
+      await repo.createKnowledgeCommit(
+        projectId,
+        commitMessage || `Store ${atoms.length} structured knowledge atom(s)`,
+        changes,
+        conn,
+      );
+    }
 
-  if (changes.length > 0) {
-    await repo.createKnowledgeCommit(
-      projectId,
-      commitMessage || `Store ${atoms.length} structured knowledge atom(s)`,
-      changes
-    );
+    return { itemIds, insertedCount, duplicateCount, supersededIds, outcomes, inserted, overlapSubjects };
+  });
+
+  // Per atom, so an agent can tell which of five findings overlapped rather than being told
+  // only that something in the batch did. Advisory, so it reads peers after the local write
+  // is durable instead of holding the write open across them.
+  for (const { outcome, atom } of written.overlapSubjects) {
+    outcome.crossRepo = await overlapFor(workspace, atom);
   }
-  await indexKnowledgeItemsBestEffort(projectId, inserted);
+  await indexKnowledgeItemsBestEffort(projectId, written.inserted);
 
   return {
-    itemIds,
-    insertedCount,
-    duplicateCount,
-    supersededIds,
-    outcomes,
+    itemIds: written.itemIds,
+    insertedCount: written.insertedCount,
+    duplicateCount: written.duplicateCount,
+    supersededIds: written.supersededIds,
+    outcomes: written.outcomes,
   };
 }
