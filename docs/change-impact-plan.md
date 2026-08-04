@@ -258,11 +258,13 @@ Mechanism → precondition → does it hold here? Kill on failure. This is where
 | **STORM** — return current content + diff-since-your-read + stale deps | you have the read snapshot | **YES**, once G-3 exists. Adopt the payload shape. |
 | **STORM** — file-level granularity | — | **REJECT.** Its own limitation: "two agents editing different functions in the same file trigger a false-positive rejection." We have symbol locators; use them. |
 | **CoAgent** — advisory notify, agent repairs the affected part | agents consume notices and self-heal (its A2/A3) | **NO.** SWE-Touch measures A3 failing broadly. → the notice cannot be the mechanism. |
-| **CoAgent** — saga inverses for undo | every tool declares a reverse script | **NO.** Not available through a memory server. |
+| **CoAgent** — MTPO: fix a serialization order at launch, serve each read the order-filtered value, apply writes speculatively in place, undo and reorder misplaced ones | every tool registers a **saga-style inverse in advance**, and the runtime owns launch order | **NO**, and the precondition is the whole reason. Not available through a memory server that joins a session already in progress. Worth stating that its numbers are good — 1.4× on 10 contended workloads, within 5% of serial correctness, near-serial token cost [P] — so this is a kill on transfer, not on merit. |
 | **CAID** — test-gated sequential integration | an executable test suite | **YES**, for most repos. → **this is the transferable one.** |
 | **CAID** — dependency-DAG task decomposition | a manager agent that owns planning | **NO** — that's an orchestrator. §11. |
 | **Tricorder** — <10% FP or the check is disabled | you can measure FP | **Only if we build the measurement.** → §9 is not optional. |
 | **Nx/Bazel/TAP** — reverse-dependency walk for affected set | a coarse, sound, already-maintained graph | **PARTIAL.** Ours is inferred and symbol-level, which has hub fan-in that package graphs don't. → depth cap mandatory; `MAX_BLAST_RADIUS = 12` is the in-repo precedent. |
+| **STORM** — intent annotations: structured comments agents leave so the next reader sees intent, not just code | you may write into the user's source files | **NO.** A memory server that edits source to leave notes for other agents is a different product, and §11 already rules out mutating code. Its goal is served, weakly but honestly, by the was/now pair in the refusal. |
+| **Atomix** [P, 2602.14849] — progress-aware transactions: buffer effects, seal when the footprint is complete, commit behind per-resource frontiers | effects are **bufferable** and externalised ones are **compensable** | **NO.** A `PreToolUse` hook is a veto, not a transaction manager: it can refuse a write, never hold one and replay it, and there is no per-tool compensating inverse to abort into. It also does not target cross-agent stale reads — it prevents partial effects and losing-branch residue. Same precondition that kills CoAgent's sagas, one layer lower. |
 
 **The cross-cut that survives all of it:** STORM and CAID reach *opposite* conclusions on
 isolation using the same two benchmarks [P] — and the sub-agent's read, which I accept, is
@@ -499,19 +501,60 @@ enforces it — the write does not happen. The correct residual objection is nar
 below.
 
 **"The gate's coverage is partial, and the holes are the interesting cases."** True, and this is
-now the honest ceiling. `PreToolUse` covers `Edit`/`Write`/`MultiEdit` on Claude Code. It does
-not cover: writes through `Bash` (`sed -i`, `>`, `git checkout`) — STORM concedes the identical
-hole and it is the largest one; `NotebookEdit`, until `notebook_path` joins the `lifecycle.ts`
-stdin allowlist; and any host whose hook protocol has no deny verdict, where `denyToolCall`
-fails closed to allow. *Mitigation:* none that is honest. A `PostToolUse` after-the-fact notice
-for the Bash path would be the measured-at-zero notice again, so it is not worth its tokens.
-Report the coverage rather than paper over it.
+the honest ceiling. Researched 2026-08-05 against the host's issue tracker rather than assumed;
+each hole below has a number you can check.
+
+*Ours, by design:* writes through `Bash` (`sed -i`, `>`, `git checkout`) are ungated — STORM
+concedes the identical hole, and upstream has it filed as **#29709, "Claude Code circumvents
+PreToolUse:Edit hook via Bash tool"** [W]. `NotebookEdit` is ungated until `notebook_path` joins
+the `lifecycle.ts` stdin allowlist. Any host without a deny verdict fails closed to allowing.
+
+*The host's, and these bound the mechanism itself* [W, all OPEN as of 2026-08-05]:
+
+- **#78970 — `PreToolUse` is not invoked for subagent (Task/Agent-tool) tool calls.** This is the
+  most important line in this section. Subagents are Claude Code's own concurrency primitive, so
+  they are *the* population this feature exists to protect, and the gate may not see them at all.
+  Filed against `Bash`; whether `Edit`/`Write` from a subagent also bypass is **unverified** and
+  is the first thing to measure at P-3. If it holds for all tools, the gate protects the
+  single-agent-plus-human case and not the multi-agent one, which would be a real demotion of the
+  claim — not of the design.
+- **#77708 — deny is not enforced in Claude Desktop / Cowork, only native CLI.** Scope-tag
+  accordingly: proven for the CLI, silent elsewhere.
+- **#78527 — a `2.1.210` regression where deny ends the turn (`hook_stopped_continuation`)
+  instead of returning a tool error**, still reproducing at `2.1.214`. Filed for `type: "prompt"`
+  hooks; knowl's is `type: "command"`, so it likely does not apply — but if that path ever
+  generalises it breaks the core safety claim of this design, which is that a denial costs *one
+  tool call*, not a turn. Worth re-checking on every host upgrade.
+- **#79480 — project-scoped `PreToolUse` hooks silently not registered.** knowl writes to
+  `.claude/settings.local.json` (`project-adapters.ts:76`), which is project scope. Adjacent
+  rather than identical; verify empirically before trusting installation.
+
+*Load-bearing and verified `[C]`:* the hook must **exit 0** when it denies. Exit 2 is read as a
+hook crash and the deny is discarded — upstream's own #37210 was resolved as exactly that
+operator error, and it is the single most common cause of "deny is ignored" reports. knowl's
+deny path returns normally with no `process.exit` (`agent-hook.ts:48-50`), so it exits 0. Nothing
+pins this in a test, and it should be pinned: `tests/cli/missing-database.test.ts` already
+establishes the `spawnSync` pattern for process-level hook assertions.
+
+*Mitigation for the Bash hole, deliberately deferred rather than absent.* The gate does not need
+write-intent parsing, which is undecidable in a shell; it needs only to ask whether the command
+text mentions a path that **already carries an open certain finding** — a far narrower test,
+made safe by fail-open and the one-shot release, since a false refusal on `cat src/a.ts` costs
+one call and then releases. Three reasons it waits: its precision is unmeasured and §9's rule
+forbids shipping on that; **#79440** means shell aliases can rewrite a command *after* the hook
+approved it, so the matched text is not provably the executed text; and **#78970** means subagent
+Bash bypasses the hook regardless, so closing this hole would not close the multi-agent case.
 
 **"Precision ≥95% may be unreachable even for the certain tier."** The tier is a hash equality
 on something the session provably read, so a *detection* false positive should be near zero.
 The real risk is **relevance** FPs: the symbol changed, but not in a way that matters (a
-comment, a rename the agent doesn't care about). CoAgent asserts most such overlaps are benign
-and never measured it [P]. If relevance FPs run high, the certain tier shrinks to
+comment, a rename the agent doesn't care about). ~~CoAgent asserts most such overlaps are benign
+and never measured it [P].~~ **Downgraded to [?] on 2026-08-05.** Re-checking CoAgent found no
+such claim at abstract level; what it does say is that the LLM inside each agent judges, case by
+case, whether a conflicting write invalidates its plan — a capability claim, not a prevalence
+one. The cited §4.1 was not re-read in full, so this is *unverified rather than refuted*, but it
+may not carry the weight this paragraph put on it and nothing should lean on it until someone
+reads the section. If relevance FPs run high, the certain tier shrinks to
 *signature-hash changed* only, and body-only edits drop to `likely`. Decide with the P-3
 measurement, not now.
 
