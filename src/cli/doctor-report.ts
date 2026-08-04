@@ -11,6 +11,7 @@ import { getProjectByRootPath } from '../store/repository.js';
 import { queryKnowledgeForAgent } from '../store/agent-query.js';
 import { KNOWL_MCP_TOOL_NAMES } from '../core/knowl-guidance.js';
 import { getVectorSearchConfig, isVectorSearchEnabled } from '../ai/embeddings.js';
+import { fingerprintProfile, resolveVectorProfile } from '../core/vector-profile.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
 import { createAgentRegistry } from './agents/registry.js';
 import type { DoctorRemedy } from './doctor-remedy.js';
@@ -232,12 +233,23 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       const vector = getVectorSearchConfig(config);
       // Coverage, not configuration. "Enabled" was always true and told the user nothing
       // about whether their knowledge is actually reachable by semantic search.
+      //
+      // Counted under the CURRENT profile fingerprint, because that is what search counts.
+      // `searchKnowledgeEmbeddings` and `findEmbeddedItemIds` both filter on
+      // `profile_fingerprint`, so a row written under a different model, dtype or pooling --
+      // or under none, which is how a pre-migration `serve` process writes -- is unreachable
+      // and its item is exactly as invisible as one with no row at all. This join had no
+      // such predicate, so it counted those rows as coverage: eight active items in the
+      // duckprep store carried a NULL fingerprint, were invisible to every query, and doctor
+      // reported `all 470 active item(s) embedded`. A check written to turn a silent
+      // permanent gap into a visible one could not see the gap it was written for.
+      const fingerprint = fingerprintProfile(resolveVectorProfile(config));
       const counts = await (getDb() as any).all(sql`
         SELECT
           (SELECT COUNT(*) FROM knowledge_items WHERE status = 'active') AS active,
           (SELECT COUNT(*) FROM knowledge_items i
              JOIN knowledge_embeddings e ON e.knowledge_item_id = i.id
-           WHERE i.status = 'active') AS embedded
+           WHERE i.status = 'active' AND e.profile_fingerprint = ${fingerprint}) AS embedded
       `);
       checks.push(vectorCoverageCheck({
         enabled: true,
