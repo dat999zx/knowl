@@ -59,6 +59,12 @@ const WRITE_TOOLS = new Set([
   'knowl_store', 'knowl_ingest', 'knowl_ingest_atoms', 'knowl_decide', 'knowl_update',
   'knowl_synthesize', 'knowl_session_finish', 'knowl_task_start', 'knowl_task_checkpoint',
   'knowl_task_finish', 'knowl_gc_apply', 'knowl_feedback', 'knowl_skill_create', 'knowl_skill_run',
+  // Parking a baton commits a knowledge item, so leaving the watermark behind read the
+  // session its own handoff back as somebody else's news on the very next call. `knowl_park`
+  // writes to the resume store rather than the commit log and moves nothing here, but it is
+  // listed for the same reason: what belongs in this set is "tools that write", not "tools
+  // that happen to write to this table today".
+  'knowl_handoff', 'knowl_park',
 ]);
 
 /**

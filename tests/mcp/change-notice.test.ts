@@ -99,6 +99,17 @@ describe('MCP change notice', () => {
     expect(await toolCall('knowl_query')).toContain('Theirs, after mine');
   });
 
+  // K-53: parking a baton commits a knowledge item, and knowl_handoff was missing from the
+  // write set -- so the watermark stayed behind it and the very next call read the session
+  // its own handoff back as somebody else's news.
+  it('never reads a session its own parked baton back as news', async () => {
+    await toolCall('knowl_query');
+
+    const atHandoff = await toolCall('knowl_handoff', () => siblingCommit('My own baton', 'baton-1'));
+    expect(atHandoff).toBeUndefined();
+    expect(await toolCall('knowl_query')).toBeUndefined();
+  });
+
   it('degrades to no notice rather than throwing when there is no project root', async () => {
     expect(await captureChangeWatermark(null)).toBeNull();
     expect(await consumeChangeNotice(null, 'knowl_query', null)).toBeUndefined();
