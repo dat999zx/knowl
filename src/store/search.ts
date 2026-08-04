@@ -36,9 +36,19 @@ const SEARCH_SYNONYMS: Record<string, string[]> = Object.assign(Object.create(nu
  * it answers completely.
  */
 function queryTokenGroups(query: string): string[][] {
+  // `\p{L}\p{N}` rather than `a-z0-9`, because an ASCII-only class makes every letter outside
+  // a-z a SEPARATOR rather than a character. Measured (docs/evals/multilingual.md):
+  // `hành vi của cờ đánh dấu đã xóa` tokenised to ["nh", "vi", "nh"] -- eight words to three
+  // fragments, one a duplicate -- and `cờ đã xóa`, whose every word shreds below the
+  // two-character minimum, produced NO tokens at all, so buildFtsQuery returned null and the
+  // lexical path returned nothing for a query that names the stored item.
+  //
+  // Not a new convention: `src/transcripts/search.ts` toMatchQuery already tokenises this way.
+  // Blast radius on the real 482-item store: 5 items (1.0%), each an accented word that used
+  // to break into fragments (`hambüchen` was `hamb` + `chen`) and is now one token.
   const tokens = query
     .toLowerCase()
-    .split(/[^a-z0-9_]+/)
+    .split(/[^\p{L}\p{N}_]+/u)
     .map(token => token.trim())
     .filter(token => token.length >= 2 && !SEARCH_STOP_WORDS.has(token));
 
@@ -73,9 +83,11 @@ function buildFtsQuery(query: string): string | null {
  */
 function queryCoverage(item: KnowledgeItem, groups: string[][]): number {
   if (groups.length === 0) return 1;
+  // Same class as queryTokenGroups, and it has to be: coverage compares the query's tokens
+  // against this set, so an ASCII-split haystack could never contain a non-ASCII query term.
   const haystack = new Set(
     [item.title, item.content, item.reasoning ?? '', (item.tags ?? []).join(' ')]
-      .join(' ').toLowerCase().split(/[^a-z0-9_]+/).filter(Boolean),
+      .join(' ').toLowerCase().split(/[^\p{L}\p{N}_]+/u).filter(Boolean),
   );
   const words = [...haystack];
   const covered = groups.filter(group =>
