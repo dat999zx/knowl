@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { getDb } from './database.js';
+import { withClientTransaction } from './database.js';
 import * as repo from './repository.js';
 import type { CommitChange, KnowledgeFreshness, KnowledgeItem } from '../core/types.js';
 import { knowledgeMentionsChangedPath, normalizePathForKnowledge } from './freshness.js';
@@ -100,10 +100,12 @@ export async function checkKnowledgeDrift(
 
   let updatedCount = 0;
   if (options.apply && candidates.length > 0) {
-    const db = getDb();
     const changes: CommitChange[] = [];
 
-    await db.transaction(async tx => {
+    // Client-level, not db.transaction: see withClientTransaction for the measurement. This
+    // runs on every session hook via `runAutoDriftCheckBestEffort`, inside the long-lived MCP
+    // server, so it is one of the paths that can actually reach the wrapper's ceiling.
+    await withClientTransaction(async tx => {
       for (const candidate of candidates) {
         if (candidate.item.freshness === 'needs_review') {
           continue;
