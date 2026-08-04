@@ -307,7 +307,10 @@ describe('MCP Server Layer', () => {
     expect(queryTool.description).toContain('before each new subtask');
     expect(queryTool.description).toContain('answer from Knowl without inspecting repository files');
     expect(queryTool.description).toContain('Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests');
-    expect(queryTool.inputSchema.properties.query.description).toContain('2-6 concise keywords');
+    // Was "2-6 concise keywords". A ground-truth ablation over this project's own suites
+    // refuted the numeric cap -- see tests/core/knowl-guidance.test.ts and docs/evals/agent-surface.md.
+    expect(queryTool.inputSchema.properties.query.description).toContain('not the whole sentence');
+    expect(queryTool.inputSchema.properties.query.description).toContain('Length is not the variable');
     expect(queryTool.inputSchema.properties.category.description).toContain('Omit unless you are certain');
     expect(queryTool.inputSchema.properties.limit.description).toContain('defaults to 3');
     expect(stateTool.description).toContain('broad project-memory summaries');

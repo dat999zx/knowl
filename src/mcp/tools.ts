@@ -258,7 +258,7 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
               affectedPaths: {
                 type: 'array',
                 items: { type: 'string' },
-                description: 'Optional repository-relative file paths that this knowledge depends on.',
+                description: 'Repository-relative file paths this knowledge depends on. Every query that returns this item returns them with it, and because content comes back truncated they are how the next reader reaches the source instead of searching for it. An item without them is a fact whose evidence only you can find.',
               },
               // Bounded because confidence is a linear term in the ranking sum: an item stored
               // on a percent scale outranks everything for every future query, permanently,
@@ -307,7 +307,10 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
                     tags: { type: 'array', items: { type: 'string' } },
                     source: { type: 'string' },
                     sourceCommit: { type: 'string' },
-                    affectedPaths: { type: 'array', items: { type: 'string' } },
+                    affectedPaths: {
+                      type: 'array', items: { type: 'string' },
+                      description: 'Repository-relative file paths this atom depends on. Returned with the atom on every query, and the only route from a truncated result back to the source.',
+                    },
                     confidence: { type: 'number', minimum: 0, maximum: 1, description: 'Optional confidence from 0.0 to 1.0. Values outside that range are refused.' },
                     provenance: {
                       type: 'string',
@@ -377,14 +380,14 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
         },
         {
           name: 'knowl_query',
-          description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. Query with 2-6 keywords. Skip only for directly relevant active lifecycle context, a same-request query, or relevant memory returned by knowl_task_start. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests. Results carry `score` (0-1) when semantic search is available: it is the relevance the ranker ordered by and it is comparable across queries, so a low top score means the best available match is weak rather than that it is the answer.',
+          description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. Use every word that names the subject and none that does not: one more on-subject term retrieves better, one off-subject term retrieves worse, so never pad a query to reach a length and never drop a real term to stay under one. Skip only for directly relevant active lifecycle context, a same-request query, or relevant memory returned by knowl_task_start. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests -- and on a miss, re-run once with different words first, because a first-pass miss is usually vocabulary rather than absence. `content` is cut at 600 characters and marked `truncated` when it was; `affectedPaths` names the files the item depends on, so open those rather than searching for them. Results carry `score` (0-1) when semantic search is available: it is the relevance the ranker ordered by and it is comparable across queries, so a low top score means the best available match is weak rather than that it is the answer.',
           inputSchema: {
             type: 'object',
             properties: {
               query: {
                 type: 'string',
                 maxLength: 500,
-                description: 'Use 2-6 concise keywords from the user question, not the whole sentence. Example: "database sqlite persistence".',
+                description: 'The words that name the subject, not the whole sentence. Length is not the variable -- relevance is: adding a term that is genuinely about the subject helps, and adding one that is not costs more than leaving a term out. Example: "sqlite wal checkpoint corruption durability".',
               },
               category: {
                 type: 'string',
@@ -1223,19 +1226,28 @@ export function registerTools(
         // comparable to each other, and two numbers that invite a comparison they cannot
         // support are worse than no number. Absent means "no calibrated evidence", not zero.
         const scored = Boolean(vector?.enabled && vector.embedding);
-        const compact = (item: any) => ({
-          ...compactItemResponse(item, {
-            ...(item.repo ? { repo: item.repo } : {}),
-            ...(scored && typeof item.explanation?.finalScore === 'number'
-              ? { score: item.explanation.finalScore }
-              : {}),
-          }),
-          ...(explain && item.explanation ? { explanation: item.explanation } : {}),
-        });
         // Evidence and staleness resolve against THIS repo's filesystem and database, so a
         // foreign item would be judged against the wrong checkout -- reporting "stale" for a
         // file that is simply somewhere else. Omitting it beats answering wrongly.
         const isForeign = (item: any) => Boolean(active) && item.repo && item.repo !== active!.repo;
+        const compact = (item: any) => {
+          const { affectedPaths, ...rest } = compactItemResponse(item, {
+            ...(item.repo ? { repo: item.repo } : {}),
+            ...(scored && typeof item.explanation?.finalScore === 'number'
+              ? { score: item.explanation.finalScore }
+              : {}),
+          });
+          return {
+            ...rest,
+            // Paths are repository-relative, so a foreign item's are relative to a checkout
+            // that is not this one. Handing them over unqualified invites a reader to open a
+            // same-named file here and treat it as the evidence -- and the repos most likely
+            // to be linked are fork siblings, where the same path exists in both and means
+            // different things. Same reasoning as the evidence omission directly above.
+            ...(affectedPaths && !isForeign(item) ? { affectedPaths } : {}),
+            ...(explain && item.explanation ? { explanation: item.explanation } : {}),
+          };
+        };
         const payload = includeEvidence
           ? await Promise.all(resolvedItems.map(async item => (isForeign(item)
             ? compact(item)
