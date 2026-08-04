@@ -22,7 +22,7 @@ import {
 import { DatabaseError, KnowledgeConflictError } from '../core/errors.js';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, hashKnowledgeLifecycle, normalizeAffectedPaths } from './freshness.js';
 import { resolveWriteDefaults } from './write-ownership.js';
-import { KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
+import { assertConfidenceInRange, KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 
 export const LOCAL_PROJECT_ID = 'local';
 
@@ -90,12 +90,10 @@ export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSe
     tier: (row.tier || 'asserted') as KnowledgeTier,
     tierSince: (row.tierSince ?? null) as string | null,
     provenance: (row.provenance ?? null) as KnowledgeProvenance | null,
-    alternatives: row.alternatives as string[] | null,
-    tags: row.tags as string[] | null,
-    affectedPaths: row.affectedPaths as string[] | null,
-    // The fourth JSON column, and the one this mapper used to leave at drizzle's `unknown`
-    // while naming its siblings.
-    conflictScope: row.conflictScope as Record<string, unknown> | null,
+    // alternatives, tags, affectedPaths and conflictScope used to be restated as casts here.
+    // The columns carry `$type` now, so `...row` already has them right -- and a fifth JSON
+    // column added later arrives typed instead of silently `unknown`, which is how
+    // conflictScope was missed.
   };
 }
 
@@ -132,6 +130,13 @@ export async function createKnowledgeItem(
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<KnowledgeItem> {
   validateKnowledgeWrite(item, validationOptions);
+  // The last door before the row, so the invariant is stated here rather than at each caller.
+  // `knowledge-writer` checks it earlier as well -- deliberately, so a batch is refused before
+  // a transaction the caller was never told about is opened -- but merge, synthesis,
+  // session-handoff, work-loop and the CLI fixture path all arrive here directly. Import does
+  // not: it writes raw SQL precisely because a dump is foreign data that may predate any guard
+  // this build has, and refusing it would make someone's export unloadable.
+  assertConfidenceInRange(item.confidence, item.title);
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
   const id = generateId();
@@ -297,6 +302,10 @@ export async function updateKnowledgeItem(
   dbConnection?: DbConnection,
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<KnowledgeItem> {
+  // An update does not rewrite `knowledge_items.confidence`, but it does record a fresh
+  // `knowledge_assertions` row carrying `updates.confidence` -- the same column, one table
+  // over, and the one temporal queries read.
+  assertConfidenceInRange(updates.confidence, updates.title ?? id);
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
 
