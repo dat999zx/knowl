@@ -90,6 +90,18 @@ describe('token budget', () => {
     expect(compactKnowledgeItem(item, { score: Number.NaN })).not.toHaveProperty('score');
   });
 
+  it('carries an uncalibrated marker through the score field untouched', () => {
+    // "The ranker has no opinion" has to be distinguishable from "the ranker forgot to say",
+    // and it is said where the reader is already told to look -- the score field -- rather
+    // than in a sibling field the silence would hide.
+    expect(compactKnowledgeItem(item, { score: 'uncalibrated (lexical-only)' }).score)
+      .toBe('uncalibrated (lexical-only)');
+    expect(compactKnowledgeItem(item, { score: 'uncalibrated (layered namespaces)' }).score)
+      .toBe('uncalibrated (layered namespaces)');
+    expect(compactKnowledgeItem(item, { score: 'uncalibrated (not embedded)' }).score)
+      .toBe('uncalibrated (not embedded)');
+  });
+
   it('survives the MCP serialization boundary, which is where provenance actually died', async () => {
     // compactItemResponse -> compactMcpJson is the path every knowl_query result takes.
     // Asserting on the in-memory object would pass even with the field stripped downstream.
