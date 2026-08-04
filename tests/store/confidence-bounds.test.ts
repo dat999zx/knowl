@@ -5,8 +5,10 @@ import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
+import { exportKnowledge, importKnowledge } from '../../src/store/portability.js';
 import { resetWriteOwnershipCache } from '../../src/store/write-ownership.js';
 import { compactKnowledgeItem } from '../../src/core/token-budget.js';
+import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 
 let counter = 0;
 let ROOT = '';
@@ -100,17 +102,121 @@ describe('confidence is bounded where it is stored, not only at the MCP boundary
     expect(await storedConfidences()).toEqual([...legitimate, 1]);
   });
 
-  // The residual the writer-level guard does NOT close, recorded so it is not mistaken for
-  // closed: `repository.createKnowledgeItem` is the actual column write and several callers
-  // reach it directly (pipeline/merge.ts, portability import, session-handoff). A value that
-  // arrives that way is still unbounded, and it reaches the agent verbatim -- the compact MCP
-  // shape passes `confidence` straight through, so an agent is shown a number on a scale the
-  // response never declares.
-  it('documents the repository-level door the writer guard does not cover', async () => {
-    const item = await repo.createKnowledgeItem(projectId, {
+  /**
+   * The residual the writer-level guard did not close, now closed at the repository -- the
+   * last door before the row, rather than a fourth caller-side check. `pipeline/merge.ts`
+   * forwards `action.atom.confidence` straight from a model, which is exactly where a
+   * percent-scale value comes from, and the value reaches the agent verbatim afterwards:
+   * the compact MCP shape passes `confidence` through, so an agent would be shown a number
+   * on a scale the response never declares.
+   */
+  it('refuses an out-of-range confidence at the repository, not only under the writer', async () => {
+    await expect(repo.createKnowledgeItem(projectId, {
       category: 'fact', title: 'Written under the writer', content: 'Straight through the repository.', confidence: 999,
+    })).rejects.toThrow(/confidence/i);
+
+    expect(await storedConfidences()).toEqual([]);
+  });
+
+  it('refuses one on the repository update path, which writes the assertion row', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Updated later', content: 'Starts out perfectly reasonable.', confidence: 0.8,
     });
-    expect(item.confidence).toBe(999);
-    expect(compactKnowledgeItem(item).confidence).toBe(999);
+
+    await expect(repo.updateKnowledgeItem(item.id, { confidence: 90 })).rejects.toThrow(/confidence/i);
+
+    const assertions = await getClient().execute('SELECT confidence FROM knowledge_assertions ORDER BY recorded_at');
+    expect(assertions.rows.map(row => Number(row.confidence))).toEqual([0.8]);
+  });
+
+  it('still takes every legitimate value straight through the repository', async () => {
+    for (const confidence of [0, 0.5, 1]) {
+      await repo.createKnowledgeItem(projectId, {
+        category: 'fact', title: `Repository confidence ${confidence}`, content: `Recorded as ${confidence}.`, confidence,
+      });
+    }
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Repository no opinion', content: 'Says nothing about confidence.',
+    });
+
+    expect(await storedConfidences()).toEqual([0, 0.5, 1, 1]);
+    const item = await repo.getKnowledgeItem((await repo.listKnowledgeItems())[0].id);
+    expect(compactKnowledgeItem(item!).confidence).toBeLessThanOrEqual(1);
+  });
+});
+
+/**
+ * Import is deliberately NOT behind that guard, and this is the test that says so on purpose.
+ *
+ * A dump is foreign data that may predate any guard this build has, and it is written by raw
+ * SQL in `portability.ts` rather than through the repository -- so the repository-level
+ * refusal cannot reach it, which is the correct outcome rather than an oversight. Refusing an
+ * import because one row carries a value a later build would reject makes someone's export
+ * unloadable, and an export you cannot load is worse than a number you can query for and fix.
+ */
+describe('an export that predates the guard still loads', () => {
+  let SRC = '';
+  let DST = '';
+  let DUMP = '';
+
+  async function makeRepo(root: string) {
+    await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
+    await saveConfig(root, { ...DEFAULT_CONFIG });
+  }
+
+  async function session<T>(root: string, run: () => Promise<T>): Promise<T> {
+    await initDb(root);
+    try {
+      return await run();
+    } finally {
+      await closeDb();
+    }
+  }
+
+  beforeEach(async () => {
+    await closeDb();
+    await releaseAll();
+    resetWriteOwnershipCache();
+    counter += 1;
+    SRC = path.resolve(`./.knowl-confidence-src${counter}`);
+    DST = path.resolve(`./.knowl-confidence-dst${counter}`);
+    DUMP = path.resolve(`./.knowl-confidence-dump${counter}.jsonl`);
+    for (const dir of [SRC, DST]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(DUMP, { force: true }).catch(() => {});
+    await makeRepo(SRC);
+    await makeRepo(DST);
+  });
+
+  afterEach(async () => {
+    await closeDb();
+    await releaseAll();
+    resetWriteOwnershipCache();
+    for (const dir of [SRC, DST]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(DUMP, { force: true }).catch(() => {});
+  });
+
+  it('imports an item whose confidence the repository would now refuse', async () => {
+    await session(SRC, async () => {
+      const projectId = (await repo.createProject(SRC, 'confidence-src')).id;
+      const item = await repo.createKnowledgeItem(projectId, {
+        category: 'fact', title: 'Recorded before anything checked', content: 'Its confidence is on a percent scale.',
+      });
+      // Raw, because the store it came from had no guard -- which is the whole premise.
+      await getClient().execute({
+        sql: 'UPDATE knowledge_items SET confidence = 90 WHERE id = ?', args: [item.id],
+      });
+      await exportKnowledge('local', DUMP, SRC);
+    });
+
+    const landed = await session(DST, async () => {
+      await importKnowledge(DUMP, { projectRoot: DST });
+      const rows = await getClient().execute({
+        sql: 'SELECT confidence FROM knowledge_items WHERE title = ?',
+        args: ['Recorded before anything checked'],
+      });
+      return rows.rows.map(row => Number(row.confidence));
+    });
+
+    expect(landed).toEqual([90]);
   });
 });
