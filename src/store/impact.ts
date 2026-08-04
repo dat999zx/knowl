@@ -33,12 +33,19 @@ import { activeReadersOf, normalizeLocator } from './read-set.js';
  *   never reported, even against a reader holding a non-null hash. "No hash now" cannot be
  *   distinguished from "the extractor changed", and reporting the extractor's own behaviour as
  *   someone else's edit is a false positive with no cause to point at.
- * - A symbol that the change *deleted* is not in the candidate set, because the set is built from
- *   the symbols the file has now. A vanished symbol is often a rename, and `evidence-repository
- *   .ts:158-170` already shows what saying so responsibly costs: a name-similarity search that
- *   only speaks when exactly one candidate scores ≥0.6. Until that resolution exists here, a
- *   deleted symbol is reported by nothing rather than reported wrongly. A deleted *file* is
- *   different and is caught: `file://` has no name to recover, so its absence is unambiguous.
+ * - A symbol deleted from a file that **fails to parse** is not reported. This was once true of
+ *   every deleted symbol -- the candidate set was built only from the symbols a file has now, so a
+ *   vanished one could never be looked up -- and `impact-precision.test.ts` measured the cost at
+ *   28.6 points of recall on the strongest invalidation there is. Deletions and renames are now
+ *   caught by seeding the candidate set with the pre-change symbols too. What stays silent is the
+ *   narrow case the old silence was really protecting against: a file caught mid-edit yields *no*
+ *   symbols, and calling that "everything in it was deleted" would fire a burst of findings at
+ *   exactly the moment someone is typing. So absence counts only when at least one other symbol in
+ *   the file survived the re-index. A file whose last remaining symbol was deleted is
+ *   indistinguishable from a parse failure by that test, and is the recall this knowingly loses.
+ *   Note that a rename still reports as a deletion rather than as a rename: naming the new symbol
+ *   would need the ≥0.6 single-candidate similarity search of `evidence-repository.ts:158-170`,
+ *   and "this is gone" is true and useful without it.
  * - A read-set entry with no `observedHash` proves nothing about movement and is skipped.
  * - A locator that is neither `symbol://` nor `file://` gets no verdict at all.
  *
@@ -132,13 +139,33 @@ async function currentStateOf(
   locator: string,
   symbolsNow: Map<string, CodeSymbol>,
   fileHashes: Map<string, string | null>,
+  parsedFiles: Set<string>,
 ): Promise<CurrentState> {
   if (locator.startsWith('symbol://')) {
     const symbol = symbolsNow.get(locator);
-    // Absent from the post-index snapshot, or present with nothing to hash: no verdict. See the
-    // silence notes in the module comment -- this is the deleted/renamed-symbol case.
-    if (!symbol?.signatureHash) return null;
-    return { kind: 'hash', hash: symbol.signatureHash, signature: symbol.signature };
+    if (symbol?.signatureHash) return { kind: 'hash', hash: symbol.signatureHash, signature: symbol.signature };
+
+    // The symbol is not in the post-index snapshot. Deleted and renamed both land here, and they
+    // are the *strongest* invalidation there is -- stronger than a signature change, because the
+    // thing the reader was building against is not there at all. Staying silent on them was
+    // measured at a 28.6-point recall hole in `impact-precision.test.ts`, which is what surfaced
+    // this; the card and the refusal text had both carried a "gone" case all along that nothing
+    // could reach.
+    //
+    // The reason for the old silence was real, though, and it is why this is not simply "absent
+    // means gone": a file caught mid-edit can fail to parse, and a parse failure yields *no*
+    // symbols, so treating absence as deletion would report every symbol in that file as deleted
+    // at once -- a burst of false refusals at precisely the moment an agent is typing.
+    //
+    // So absence only counts when the file demonstrably parsed: at least one other symbol in the
+    // same file survived the re-index. That separates "this one symbol went away" from "this file
+    // stopped being readable", which is the distinction the old code could not draw and therefore
+    // resolved by saying nothing. A file whose last symbol was deleted is indistinguishable from a
+    // parse failure by this test and stays silent -- recall lost in the one case where the
+    // alternative is unfalsifiable.
+    const file = locator.slice('symbol://'.length).split('#')[0];
+    if (file && parsedFiles.has(file)) return { kind: 'gone' };
+    return null;
   }
 
   if (locator.startsWith('file://')) {
@@ -254,12 +281,16 @@ export async function detectCertainImpact(
 
   const symbolsNow = new Map<string, CodeSymbol>();
   const candidates = new Set<string>();
+  // Files that still yield at least one symbol after the re-index -- the evidence that a file
+  // parsed, which is what lets  tell a deleted symbol from an unreadable file.
+  const parsedFiles = new Set<string>();
   for (const relativePath of relativePaths) {
     for (const symbol of await listCodeSymbols(relativePath)) {
       const locator = normalizeLocator(symbol.locator);
       if (!locator) continue;
       symbolsNow.set(locator, symbol);
       candidates.add(locator);
+      parsedFiles.add(relativePath);
     }
     const fileLocator = normalizeLocator(`file://${relativePath}`);
     // Null for a path the read-set will not hold either -- an extensionless file, which its
@@ -267,6 +298,15 @@ export async function detectCertainImpact(
     // pointless; dropping it here keeps the candidate set equal to the set of findable things.
     if (fileLocator) candidates.add(fileLocator);
   }
+
+  // The symbols that existed *before* the change are candidates too, and this is what makes a
+  // deletion reachable at all. Built only from what the file has now, the candidate set can never
+  // name a symbol the change removed -- so `activeReadersOf` never returns its reader, and the
+  // strongest invalidation in the system was unreportable no matter what the comparison said. The
+  // verdict for these still comes from `currentStateOf`, which only calls a missing symbol `gone`
+  // when its file demonstrably re-parsed; a candidate that turns out to be present and unchanged
+  // costs one map lookup and emits nothing.
+  for (const locator of before.keys()) candidates.add(locator);
 
   const readers = await activeReadersOf(Array.from(candidates));
   const detectedAt = new Date().toISOString();
@@ -287,7 +327,7 @@ export async function detectCertainImpact(
     // Nothing recorded as of the read means nothing can be proven to have moved.
     if (!entry.locator || !entry.observedHash) continue;
 
-    const state = await currentStateOf(root, entry.locator, symbolsNow, fileHashes);
+    const state = await currentStateOf(root, entry.locator, symbolsNow, fileHashes, parsedFiles);
     if (state === null) continue;
     if (state.kind === 'hash' && state.hash === entry.observedHash) continue;
 
