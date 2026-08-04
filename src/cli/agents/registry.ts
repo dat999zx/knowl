@@ -1,6 +1,6 @@
-import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { commandExistsOnPath } from './command-exists.js';
 import { createClaudeDesktopAdapter } from './desktop-adapter.js';
 import { createCursorAdapter } from './cursor.js';
 import { createClaudeCodeAdapter, createCodexAdapter, createGeminiAdapter } from './project-adapters.js';
@@ -13,7 +13,7 @@ function defaultEnvironment(): AgentEnvironment {
     platform: process.platform,
     homeDir: os.homedir(),
     appDataDir: process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming'),
-    commandExists: async command => spawnSync(command, ['--version'], { stdio: 'ignore', shell: process.platform === 'win32' }).status === 0,
+    commandExists: async command => commandExistsOnPath(command),
   };
 }
 
