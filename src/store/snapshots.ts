@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { Client } from '@libsql/client';
 import { auditKnowledgeStore } from './integrity.js';
 import { getClient } from './database.js';
+import { pruneSnapshots, SNAPSHOT_KEEP } from './retention.js';
 import { resolveStorage } from './storage-roles.js';
 
 export type SnapshotManifest = {
@@ -13,7 +14,13 @@ export type SnapshotManifest = {
   sha256: string;
 };
 
-export type Snapshot = { path: string; manifestPath: string; manifest: SnapshotManifest };
+export type Snapshot = {
+  path: string;
+  manifestPath: string;
+  manifest: SnapshotManifest;
+  /** Older snapshots this one replaced. Reported rather than silent; see `pruneSnapshots`. */
+  pruned: string[];
+};
 
 function databasePath(projectRoot: string): string {
   return path.resolve(resolveStorage(projectRoot).knowledge);
@@ -46,7 +53,14 @@ export async function createSnapshot(projectRoot: string): Promise<Snapshot> {
   };
   const manifestPath = `${snapshotPath}.manifest.json`;
   await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
-  return { path: snapshotPath, manifestPath, manifest };
+
+  // Pruned here rather than in a maintenance command, because this is the moment the older
+  // ones became redundant -- and because `upgrade --all` snapshots every repository on the
+  // machine, so without this the growth is on a schedule. Returned, never silent: the caller
+  // prints what went, so nobody discovers it from a directory listing.
+  const pruned = await pruneSnapshots(snapshotDir, SNAPSHOT_KEEP, snapshotPath);
+
+  return { path: snapshotPath, manifestPath, manifest, pruned };
 }
 
 /**

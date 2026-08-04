@@ -5,6 +5,7 @@ import { installKnowlProjectGuidance, KnowlProjectGuidanceInstallResult } from '
 import { installKnowlGitignoreEntry } from '../core/gitignore.js';
 import { closeDb, initDb } from '../store/database.js';
 import * as repo from '../store/repository.js';
+import { runStoreRetention, type RetentionReport } from '../store/retention.js';
 import { backfillOriginRepo } from '../workspace/membership.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { recordKnownRepo } from './repo-registry.js';
@@ -16,6 +17,8 @@ export type UpgradeResult = {
   gitignoreStatus: Awaited<ReturnType<typeof installKnowlGitignoreEntry>>;
   /** Previously unowned items claimed for this repo; always 0 outside a workspace. */
   claimedItems: number;
+  /** What retention removed. Reported so a repository never shrinks without saying so. */
+  retention: RetentionReport;
 };
 
 /**
@@ -41,6 +44,10 @@ export async function upgradeExistingRepository(projectRoot: string, fallbackNam
   if (!project) {
     project = await repo.createProject(projectRoot, fallbackName);
   }
+  // Retention runs here because this is the command that already visits every repository on
+  // the machine -- the same habit that grew `.knowl/snapshots` to 1.12 GB now pays for it.
+  // Best-effort inside: housekeeping must never be why an upgrade fails.
+  const retention = await runStoreRetention(projectRoot);
   await closeDb();
 
   // The join-time backfill runs exactly once, so items written between joining a workspace
@@ -63,5 +70,6 @@ export async function upgradeExistingRepository(projectRoot: string, fallbackNam
     guidanceStatus,
     gitignoreStatus,
     claimedItems,
+    retention,
   };
 }

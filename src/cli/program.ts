@@ -239,6 +239,15 @@ function printUpgradeStatus(result: UpgradeResult) {
   if (result.claimedItems > 0) {
     console.log(`Ownership: claimed ${result.claimedItems} previously unowned item(s) for this repo`);
   }
+  // Same rule, for the same reason: silent only when it did nothing. A store that gets
+  // smaller must always be able to say why, and the first upgrade after this release is
+  // where years of accumulation goes.
+  const { commits, commitBytesFreed, sessions, claims } = result.retention;
+  if (commits > 0) {
+    console.log(`Retention: compacted ${commits} commit record(s) older than 90 days, freeing ${Math.round(commitBytesFreed / 1024)} KB of before/after snapshots`);
+  }
+  if (sessions > 0) console.log(`Retention: removed ${sessions} expired memory session(s)`);
+  if (claims > 0) console.log(`Retention: removed ${claims} stale hook debounce file(s)`);
 }
 
 program
