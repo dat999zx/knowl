@@ -86,10 +86,16 @@ export function createMcpServer(
  *
  * The host allows 30s for an MCP server to connect and then kills it. Opening the database
  * runs `bootstrapSchema` -- real writes -- against a file every other live session is also
- * writing to, and the pool waits out a lock rather than failing on it: `busy_timeout` is 10s
- * and `acquireClient` retries five times. That is a bound of roughly 50s of legitimate,
- * working-as-designed waiting on a 30s deadline, so a busy machine could not help but lose
- * the race. Twenty-two recorded kills across four repos are that arithmetic, not a fault.
+ * writing to, and `busy_timeout = 5000` means each contended statement waits up to five
+ * seconds rather than failing. Bootstrap issues many, so the wait compounds with the number
+ * of processes racing, and none of it knows about the deadline it is being charged against.
+ *
+ * How bad that gets is deployment-specific. Twenty-two recorded kills of this shape came
+ * from a fork that raises `busy_timeout` and retries in `acquireClient`, which turns "slow"
+ * into "reliably fatal"; this repo has neither, so its exposure is smaller. The structure is
+ * the same either way, and it is the structure that is wrong: unbounded work sitting on a
+ * bounded deadline. A slow open for any reason -- a large migration, a network-backed disk,
+ * a loaded machine -- lands on the connect deadline today.
  *
  * Nothing in the handshake needs the database: the tool list is a static literal and the
  * declared capabilities are constants. So connect first and initialize behind it. Tool calls
