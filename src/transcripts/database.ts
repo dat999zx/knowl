@@ -119,6 +119,16 @@ async function addNamingColumns(client: Client): Promise<void> {
   if (!messageColumns.includes('byte_offset')) {
     await client.execute('ALTER TABLE transcript_messages ADD COLUMN byte_offset INTEGER;');
   }
+
+  // Partial on purpose: it holds only the rows still waiting for an offset, so it empties itself
+  // as the backfill finishes and costs nothing to maintain afterwards -- a new row is written
+  // with its offset and never enters it. Without it, the "is there anything left to fill" probe
+  // scans the whole messages table on every pass, which is every agent turn, for ever.
+  //
+  // Created here rather than with the other schema statements because it is built *on* the
+  // column above, which an index from the first release does not have yet.
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_transcript_messages_pending_offset
+    ON transcript_messages(path, line) WHERE byte_offset IS NULL;`);
 }
 
 export type TranscriptIndexState = {

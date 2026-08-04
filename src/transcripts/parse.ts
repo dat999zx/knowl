@@ -126,6 +126,28 @@ export function readOpeningAsk(text: string): string | null {
   return trimmed;
 }
 
+/**
+ * Whether a stored row still describes the message now parsed at its line.
+ *
+ * The text itself cannot be compared: the FTS table is contentless, so nothing in the database
+ * holds a body to compare against. Role, length and timestamp are what a row keeps, and together
+ * they tell an unchanged line from a rewritten one. The accepted limit is the same shape as the
+ * anchor's: a rewrite that puts a message of the same role, the same length and the same
+ * timestamp on the same line reads as unchanged.
+ *
+ * Shared by the two places that meet a row they did not just write -- the index pass repairing a
+ * stranded index, and the offset backfill deciding whether a line is still where a row says.
+ */
+export function describesSameMessage(
+  row: Record<string, unknown>,
+  message: ProseMessage,
+): boolean {
+  const ts = row.ts === null || row.ts === undefined ? null : String(row.ts);
+  return String(row.role) === message.role
+    && Number(row.chars) === message.text.length
+    && ts === message.timestamp;
+}
+
 export type ProseWatermark = { bytesConsumed: number; linesConsumed: number };
 
 export type ProseChunk = {
