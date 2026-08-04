@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { isProjectRoot } from '../core/config.js';
 import { readManifest } from '../workspace/manifest.js';
 import { listKnownWorkspaces, workspaceManifestPath } from '../workspace/paths.js';
 import { listKnownRepos, recordKnownRepo } from './repo-registry.js';
@@ -19,13 +20,13 @@ export type DiscoverOptions = {
 const DEFAULT_SCAN_DEPTH = 3;
 const SKIPPED_DIRECTORIES = new Set(['node_modules', '.git', 'dist', 'build', 'vendor', 'target']);
 
+/**
+ * Same marker the project walk uses, for the same reason: this list drives
+ * `upgrade --all` and `doctor --fix`, which act on every repository in it. A bare `.knowl`
+ * directory admitted the user's home directory to a sweep that snapshots and migrates.
+ */
 async function isKnowlRepo(root: string): Promise<boolean> {
-  try {
-    const stats = await fs.stat(path.join(root, '.knowl'));
-    return stats.isDirectory();
-  } catch {
-    return false;
-  }
+  return isProjectRoot(root);
 }
 
 /**

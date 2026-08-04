@@ -82,37 +82,49 @@ function stripDeprecatedConfigFields(config: ProjectConfig): ProjectConfig {
 }
 
 /**
- * Traverses up from the starting path to find the directory containing `.knowl` directory.
+ * Whether this directory is the root of a Knowl project.
+ *
+ * The marker is `.knowl/config.json`, not the `.knowl` directory. Machine-local Knowl state
+ * -- workspace manifests, the known-repository registry, the resume store, diagnostics --
+ * lives in a directory that is also called `.knowl`, under the user's home. A predicate that
+ * asked only whether `.knowl` existed therefore answered yes for `$HOME`, and every walk up
+ * from a directory beneath it terminated there.
+ *
+ * Reproduced during the 2026-08-04 audit: one `agent-hook` call made from a scratch directory
+ * under `C:\Users\Admin` resolved the project root to `C:\Users\Admin` and bootstrapped a
+ * fresh, empty knowledge database inside the real `~/.knowl`. Nothing reported it, because
+ * from the inside that is indistinguishable from a first run in a new repository.
+ *
+ * `knowl init` writes config.json before it opens the database, so an initialized repository
+ * always has one, and a home directory never does. This is also what lets a *missing*
+ * database be recognised as missing rather than as "never initialized" -- see
+ * `assertKnowledgeDatabasePresent`.
+ */
+export async function isProjectRoot(candidate: string): Promise<boolean> {
+  try {
+    const stat = await fs.stat(path.join(candidate, '.knowl', 'config.json'));
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Traverses up from the starting path to find the root of the enclosing Knowl project.
  */
 export async function findProjectRoot(startPath: string = process.cwd()): Promise<string> {
   let current = path.resolve(startPath);
   const root = path.parse(current).root;
 
   while (current !== root) {
-    const knowlPath = path.join(current, '.knowl');
-    try {
-      const stat = await fs.stat(knowlPath);
-      if (stat.isDirectory()) {
-        return current;
-      }
-    } catch {
-      // Ignored: directory does not exist, keep traversing up
-    }
+    if (await isProjectRoot(current)) return current;
     const parent = path.dirname(current);
     if (parent === current) break;
     current = parent;
   }
 
   // Check root directory itself
-  const knowlPath = path.join(current, '.knowl');
-  try {
-    const stat = await fs.stat(knowlPath);
-    if (stat.isDirectory()) {
-      return current;
-    }
-  } catch {
-    // Ignored
-  }
+  if (await isProjectRoot(current)) return current;
 
   throw new ProjectNotFoundError(startPath);
 }
