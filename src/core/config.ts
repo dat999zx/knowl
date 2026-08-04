@@ -221,13 +221,25 @@ export async function upgradeConfigDefaults(projectRoot: string): Promise<'updat
 }
 
 /**
- * Checks whether AI is configured via project config or environment variables.
+ * Whether this repository has asked for the AI pipeline.
+ *
+ * This is the gate on billable work, not a capability probe. `recordDecisionDirect` runs
+ * `runDeriveTruth` behind it, so the answer decides whether `knowl decide` records a
+ * decision deterministically or makes provider calls on every write.
+ *
+ * It used to answer yes for `provider: 'anthropic'` with no key in the config at all, as
+ * long as `ANTHROPIC_API_KEY` happened to be exported -- which on a machine running Claude
+ * Code is a variable set for something else entirely. Nothing in the repository said the AI
+ * path was on, and nothing marked the moment it turned on: exporting a variable in a shell
+ * profile, for an unrelated tool, silently changed what writing a decision costs.
+ *
+ * So configuration has to be in the configuration. Using the environment is still supported
+ * and is one line -- `"apiKey": "${ANTHROPIC_API_KEY}"` -- which says so in the file, and is
+ * safe to write there now that `saveConfig` stops resolving it in place.
  */
 export function hasAiConfigured(config?: ProjectConfig): boolean {
   if (!config?.ai?.provider || !config.ai.model) return false;
+  // Ollama is local and keyless; naming it is the whole opt-in.
   if (config.ai.provider === 'ollama') return true;
-  if (config.ai.apiKey) return true;
-  if (config.ai.provider === 'openai' && process.env.OPENAI_API_KEY) return true;
-  if (config.ai.provider === 'anthropic' && process.env.ANTHROPIC_API_KEY) return true;
-  return false;
+  return Boolean(config.ai.apiKey);
 }
