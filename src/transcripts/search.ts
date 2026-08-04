@@ -1,7 +1,8 @@
 import type { Client } from '@libsql/client';
 import type { KnowledgeEmbedder } from '../store/vector-index.js';
+import { readTranscriptIndexState } from './database.js';
 import { dotQuantized } from './quantize.js';
-import { readMessagesAt } from './read.js';
+import { readMessagesFor } from './read.js';
 
 export type TranscriptHit = {
   messageId: number;
@@ -11,6 +12,13 @@ export type TranscriptHit = {
   line: number;
   role: 'user' | 'assistant';
   score: number;
+  /**
+   * Where the message's line starts, and how long its text was when indexed. Carried so the
+   * body can be read with a seek instead of a scan, and so a stale offset can be rejected
+   * rather than rendered as the wrong message. Null on rows indexed before offsets existed.
+   */
+  byteOffset?: number | null;
+  chars?: number | null;
   /** Filled in by the caller from the source file; never stored. */
   text?: string;
 };
@@ -80,27 +88,74 @@ export function escapeLikePrefix(sessionId: string): string {
 }
 
 /**
- * Cap on paths a prefix may expand to.
+ * Rows a scope lookup will look at.
  *
- * Bounded because the expansion becomes one `IN (?, ?, ...)` list: an over-broad prefix would
- * otherwise build a parameter list the size of the archive.
+ * Bounded because a resolved scope becomes one `IN (?, ?, ...)` list. Ambiguity is decided on
+ * the rows seen, which is safe in the direction that matters: a prefix with more matches than
+ * this is ambiguous whichever subset comes back. The exact id is ordered first so it is never
+ * the one the cut-off drops.
  */
-const MAX_SESSION_PATHS = 50;
+const MAX_SESSION_CANDIDATES = 50;
 
 /**
- * Resolve a session id or unique prefix to the paths it covers.
+ * What a caller's `sessionId` argument turned out to mean.
  *
- * A prefix that matches nothing yields an empty list, which correctly produces no hits rather
- * than silently widening to the whole archive.
+ * One resolver for every consumer, because the alternative is what was here: the reader refused
+ * an ambiguous prefix, the keyword half searched up to fifty sessions and truncated wherever
+ * the LIMIT fell, and the semantic half searched all of them however many there were. The same
+ * argument meant three different things, and two of those silently widened the very thing the
+ * caller passed it to narrow.
  */
-async function pathsForSession(client: Client, sessionId: string): Promise<string[]> {
+export type SessionScope =
+  | { kind: 'all' }
+  | { kind: 'resolved'; sessionId: string; paths: string[] }
+  | { kind: 'none' }
+  | { kind: 'ambiguous'; candidates: string[] };
+
+/**
+ * Resolve a session id or prefix.
+ *
+ * An exact id always wins, even when it is also a prefix of others. Otherwise a prefix has to
+ * name exactly one session: naming several is an unfinished question, and answering it by
+ * searching all of them is not a narrower search, it is a differently-shaped wide one.
+ */
+export async function resolveSessionScope(
+  client: Client,
+  sessionId?: string,
+): Promise<SessionScope> {
+  if (!sessionId) return { kind: 'all' };
+
+  const like = `${escapeLikePrefix(sessionId)}%`;
   const rows = (await client.execute({
-    sql: `SELECT DISTINCT path FROM transcript_messages
+    sql: `SELECT DISTINCT session_id, path FROM transcript_messages
           WHERE session_id = ? OR session_id LIKE ? ESCAPE '\\'
+          ORDER BY (session_id = ?) DESC
           LIMIT ?`,
-    args: [sessionId, `${escapeLikePrefix(sessionId)}%`, MAX_SESSION_PATHS],
+    args: [sessionId, like, sessionId, MAX_SESSION_CANDIDATES],
   })).rows;
-  return rows.map(row => String(row.path));
+
+  if (rows.length === 0) return { kind: 'none' };
+
+  // One session can own more than one file: the same session id appears under a repo and under
+  // one of its worktrees.
+  const paths = new Map<string, string[]>();
+  for (const row of rows) {
+    const id = String(row.session_id);
+    (paths.get(id) ?? paths.set(id, []).get(id)!).push(String(row.path));
+  }
+
+  const exact = paths.get(sessionId);
+  if (exact) return { kind: 'resolved', sessionId, paths: exact };
+  if (paths.size > 1) return { kind: 'ambiguous', candidates: [...paths.keys()] };
+
+  const [only, onlyPaths] = [...paths.entries()][0];
+  return { kind: 'resolved', sessionId: only, paths: onlyPaths };
+}
+
+/** Accept either a raw argument or an already-resolved scope, so both halves can share one. */
+async function asScope(client: Client, session?: string | SessionScope): Promise<SessionScope> {
+  if (session === undefined) return { kind: 'all' };
+  return typeof session === 'string' ? resolveSessionScope(client, session) : session;
 }
 
 /**
@@ -113,23 +168,25 @@ export async function lexicalRank(
   client: Client,
   query: string,
   limit: number,
-  sessionId?: string,
+  session?: string | SessionScope,
 ): Promise<TranscriptHit[]> {
   const match = toMatchQuery(query);
   if (!match) return [];
 
+  const resolved = await asScope(client, session);
+  if (resolved.kind === 'none' || resolved.kind === 'ambiguous') return [];
+
   const args: unknown[] = [match];
   let scope = '';
-  if (sessionId) {
-    const paths = await pathsForSession(client, sessionId);
-    if (paths.length === 0) return [];
-    scope = ` AND m.path IN (${paths.map(() => '?').join(', ')})`;
-    args.push(...paths);
+  if (resolved.kind === 'resolved') {
+    scope = ` AND m.path IN (${resolved.paths.map(() => '?').join(', ')})`;
+    args.push(...resolved.paths);
   }
   args.push(limit * 4);
 
   const rows = (await client.execute({
     sql: `SELECT m.id, m.path, m.session_id, m.parent_session_id, m.line, m.role,
+                 m.byte_offset, m.chars,
                  bm25(transcript_fts) AS rank
           FROM transcript_fts
           JOIN transcript_messages m ON m.id = transcript_fts.rowid
@@ -149,6 +206,8 @@ export async function lexicalRank(
         parentSessionId: row.parent_session_id === null ? null : String(row.parent_session_id),
         line: Number(row.line),
         role,
+        byteOffset: row.byte_offset === null || row.byte_offset === undefined ? null : Number(row.byte_offset),
+        chars: row.chars === null || row.chars === undefined ? null : Number(row.chars),
         score: -Number(row.rank) * (ROLE_WEIGHTS[role] ?? 1),
       };
     })
@@ -233,19 +292,24 @@ export async function semanticRank(
   queryVector: number[],
   fingerprint: string,
   limit: number,
-  sessionId?: string,
+  session?: string | SessionScope,
 ): Promise<TranscriptHit[]> {
+  const resolved = await asScope(client, session);
+  if (resolved.kind === 'none' || resolved.kind === 'ambiguous') return [];
+
   const args: unknown[] = [fingerprint];
   let scope = '';
-  if (sessionId) {
-    // Same escaping as the lexical side. Leaving it out here would mean a `%` narrowed the
-    // keyword half and not the semantic half, so the two rankings would disagree about scope.
-    scope = " AND (m.session_id = ? OR m.session_id LIKE ? ESCAPE '\\')";
-    args.push(sessionId, `${escapeLikePrefix(sessionId)}%`);
+  if (resolved.kind === 'resolved') {
+    // The same resolved paths as the lexical half, not a second interpretation of the same
+    // argument. Re-deciding here is what let one half narrow to fifty sessions while the other
+    // narrowed to all of them, so the two rankings were fused across different corpora.
+    scope = ` AND m.path IN (${resolved.paths.map(() => '?').join(', ')})`;
+    args.push(...resolved.paths);
   }
 
   const rows = (await client.execute({
-    sql: `SELECT m.id, m.path, m.session_id, m.parent_session_id, m.line, m.role, v.scale, v.vec
+    sql: `SELECT m.id, m.path, m.session_id, m.parent_session_id, m.line, m.role,
+                 m.byte_offset, m.chars, v.scale, v.vec
           FROM transcript_vectors v
           JOIN transcript_messages m ON m.id = v.message_id
           WHERE v.fingerprint = ?${scope}`,
@@ -260,6 +324,8 @@ export async function semanticRank(
       parentSessionId: row.parent_session_id === null ? null : String(row.parent_session_id),
       line: Number(row.line),
       role: String(row.role) as 'user' | 'assistant',
+      byteOffset: row.byte_offset === null || row.byte_offset === undefined ? null : Number(row.byte_offset),
+      chars: row.chars === null || row.chars === undefined ? null : Number(row.chars),
       score: dotQuantized(queryVector, new Uint8Array(row.vec as ArrayBuffer), Number(row.scale)),
     }))
     .sort((left, right) => right.score - left.score)
@@ -277,10 +343,40 @@ export type SearchInput = {
 
 export async function searchTranscripts(
   input: SearchInput,
-): Promise<{ hits: TranscriptHit[]; coverage: { embedded: number; indexed: number } }> {
+): Promise<{
+  hits: TranscriptHit[];
+  coverage: { embedded: number; indexed: number };
+  /**
+   * Whether the archive itself is indexed, as opposed to how much of the index has vectors.
+   *
+   * Reported separately because they fail separately and the failure looks identical: every
+   * count here is taken over the rows that exist, and a transcript the index pass never reached
+   * has no row to be missing from. "12/12 embedded" over a third of the archive is not the same
+   * claim as over all of it, and only one of them makes a miss meaningful.
+   */
+  indexComplete: boolean;
+  /**
+   * The sessions a `sessionId` prefix turned out to name, when it named more than one. Reported
+   * rather than picked between: the caller asked to narrow to a session and has not yet said
+   * which, and searching all of them is not what was asked.
+   */
+  ambiguousSession: string[] | null;
+}> {
   const { client, query, limit, sessionId } = input;
 
-  const rankings: TranscriptHit[][] = [await lexicalRank(client, query, limit * 2, sessionId)];
+  // Resolved once and shared, so the two halves cannot scope differently.
+  const scope = await resolveSessionScope(client, sessionId);
+  if (scope.kind === 'ambiguous') {
+    const state = await readTranscriptIndexState(client);
+    return {
+      hits: [],
+      coverage: { embedded: 0, indexed: 0 },
+      indexComplete: state?.complete === true,
+      ambiguousSession: scope.candidates,
+    };
+  }
+
+  const rankings: TranscriptHit[][] = [await lexicalRank(client, query, limit * 2, scope)];
 
   let fingerprint: string | null = null;
   if (input.embedder) {
@@ -288,7 +384,7 @@ export async function searchTranscripts(
       const vector = await input.embedder.embedQuery(query);
       if (vector?.length) {
         fingerprint = input.embedder.profileFingerprint;
-        rankings.push(await semanticRank(client, vector, fingerprint, limit * 2, sessionId));
+        rankings.push(await semanticRank(client, vector, fingerprint, limit * 2, scope));
       }
     } catch {
       // A missing model or a failed load degrades to lexical. Returning nothing because the
@@ -299,7 +395,8 @@ export async function searchTranscripts(
   const fused = fuseRankings(rankings, limit);
 
   // Bodies are read only for what is actually returned -- ranking never touches disk. Grouped
-  // by file: five hits in one session is one pass, not five whole-file reads.
+  // by file so one file is opened once for all of its hits, and each hit inside it is read by
+  // seeking to the offset the indexer recorded rather than counting newlines from byte zero.
   const byFile = new Map<string, TranscriptHit[]>();
   for (const hit of fused) {
     const group = byFile.get(hit.path);
@@ -307,7 +404,10 @@ export async function searchTranscripts(
     else byFile.set(hit.path, [hit]);
   }
   for (const [filePath, group] of byFile) {
-    const bodies = await readMessagesAt(filePath, group.map(hit => hit.line));
+    const bodies = await readMessagesFor(
+      filePath,
+      group.map(hit => ({ line: hit.line, byteOffset: hit.byteOffset, chars: hit.chars })),
+    );
     for (const hit of group) hit.text = bodies.get(hit.line)?.text;
   }
 
@@ -319,5 +419,12 @@ export async function searchTranscripts(
       })).rows[0].n)
     : 0;
 
-  return { hits: fused, coverage: { embedded, indexed } };
+  const passState = await readTranscriptIndexState(client);
+
+  return {
+    hits: fused,
+    coverage: { embedded, indexed },
+    indexComplete: passState?.complete === true,
+    ambiguousSession: null,
+  };
 }

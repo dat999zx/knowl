@@ -191,6 +191,28 @@ describe('session prefix resolution', () => {
       config: config(), projectRoot: local.root, locator: 'transcript://session-a#L1',
     })).toContain('content here');
   });
+
+  // K-40. The reader refused an ambiguous prefix while the search silently widened to every
+  // session it matched -- so the same argument meant "this session" in one tool and "up to
+  // fifty sessions, truncated wherever the LIMIT fell" in the other.
+  it('refuses an ambiguous prefix in search, the way read already does', async () => {
+    const local = await makeRepo('local', line('a durable finding about caching'), false);
+    const projectsDir = projectsDirFor();
+    const encoded = encodeProjectDir(path.resolve(local.root));
+    await fs.writeFile(
+      path.join(projectsDir, encoded, 'session-abd.jsonl'),
+      line('another durable finding about caching'),
+    );
+
+    const output = await handleTranscriptSearch({
+      config: config(), projectRoot: local.root, query: 'caching', sessionId: 'session-ab',
+    });
+
+    expect(output).toMatch(/ambiguous/i);
+    expect(output).toMatch(/session-abc/);
+    expect(output).toMatch(/session-abd/);
+    expect(output).not.toMatch(/transcript:\/\//);
+  });
 });
 
 describe('handleSessionList', () => {

@@ -9,7 +9,13 @@ import { fuseRankings, searchTranscripts, type TranscriptHit } from './search.js
 
 export type FederatedTranscriptHit = TranscriptHit & { repo: string };
 export type TranscriptSkipReason = 'absent' | 'not-shared' | 'unreadable';
-export type RepoCoverage = { repo: string; embedded: number; indexed: number };
+export type RepoCoverage = {
+  repo: string;
+  embedded: number;
+  indexed: number;
+  /** Whether that repo's last index pass caught up with its archive. */
+  indexComplete: boolean;
+};
 
 /**
  * Search this repo's transcripts and, where a peer has opted in, its linked repos'.
@@ -42,6 +48,8 @@ export async function searchTranscriptsFederated(input: {
   hits: FederatedTranscriptHit[];
   skipped: Array<{ repo: string; reason: TranscriptSkipReason }>;
   coverage: RepoCoverage[];
+  /** Per repo, the sessions a `sessionId` prefix named there when it named more than one. */
+  ambiguous: Array<{ repo: string; candidates: string[] }>;
   /**
    * Which repo name means "here". Returned rather than assumed: the caller must omit it when
    * formatting a locator, or a local hit becomes `transcript://local/...` and the reader --
@@ -53,6 +61,8 @@ export async function searchTranscriptsFederated(input: {
   const wanted = input.repos?.length ? new Set(input.repos) : null;
   const skipped: Array<{ repo: string; reason: TranscriptSkipReason }> = [];
   const coverage: RepoCoverage[] = [];
+  // Per repo, because a prefix that names one session here can name three in a peer.
+  const ambiguous: Array<{ repo: string; candidates: string[] }> = [];
   /** One ordered list per repo, kept separate so RRF can fuse positions rather than scores. */
   const rankings: FederatedTranscriptHit[][] = [];
 
@@ -70,7 +80,8 @@ export async function searchTranscriptsFederated(input: {
       embedder: input.embedder,
     });
     rankings.push(result.hits.map(hit => ({ ...hit, repo })));
-    coverage.push({ repo, ...result.coverage });
+    coverage.push({ repo, ...result.coverage, indexComplete: result.indexComplete });
+    if (result.ambiguousSession) ambiguous.push({ repo, candidates: result.ambiguousSession });
   };
 
   if (!wanted || wanted.has(localName)) {
@@ -129,5 +140,5 @@ export async function searchTranscriptsFederated(input: {
   // default key would silently merge two repos' message 5 into one hit.
   const hits = fuseRankings(rankings, input.limit, hit => `${hit.repo}:${hit.messageId}`);
 
-  return { hits, skipped, coverage, localRepo: localName };
+  return { hits, skipped, coverage, ambiguous, localRepo: localName };
 }
