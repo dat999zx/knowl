@@ -40,6 +40,11 @@ const FAKE_EMBEDDER = {
   model: 'test/bag-of-words',
   pooling: 'mean' as const,
   profileFingerprint: 'test-bag-of-words-fp',
+  // The floor is per model now, and a model with no measured floor does not abstain at all --
+  // which would make the abstention cases below assert nothing. This stub declares its own,
+  // chosen for the bag-of-words scale these fixtures produce: the borrowed-word queries land
+  // near 0.17 and a real match well above 0.3.
+  relevanceFloor: 0.30,
   embed: async (texts: string[]) => texts.map(bagOfWords),
   embedQuery: async (text: string) => bagOfWords(text),
 };

@@ -1369,7 +1369,12 @@ program
       const evaluation = await evaluateRetrieval(cases, async (testCase) => {
         const startedAt = Date.now();
         const vectorOption = embedder
-          ? { enabled: true, profileFingerprint: embedder.profileFingerprint, embedding: await embedder.embedQuery(testCase.query) }
+          ? {
+            enabled: true,
+            profileFingerprint: embedder.profileFingerprint,
+            embedding: await embedder.embedQuery(testCase.query),
+            relevanceFloor: embedder.relevanceFloor,
+          }
           : undefined;
         const items = await queryKnowledgeForAgent(project.id, {
           query: testCase.query,

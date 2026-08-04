@@ -183,6 +183,60 @@ export function resolveVectorProfile(config: ProjectConfig): VectorProfile {
 }
 
 /**
+ * Below this raw cosine, this model's best match is noise rather than a weak answer.
+ *
+ * **One number per model, because a cosine scale is a property of the model.** There used to be
+ * one shared constant, `MIN_VECTOR_RELEVANCE = 0.30`, and it could not be right twice: measured
+ * over the same 110 on-topic queries and 15 off-topic probes on the same 50-fixture corpus, it
+ * mislabelled 24 of 110 real answers on arctic while firing not once on granite, whose entire
+ * scale sits above it. Granite's floor is 4.75x arctic's for the same reason a Fahrenheit
+ * reading is not a Celsius one.
+ *
+ * Each value is the observed on-topic minimum rounded down to two decimals -- the highest cut
+ * that mislabels nothing on the on-topic set. Measured 2026-08-04; see
+ * `docs/evals/per-model-floor.md` for the method and `tests/core/model-relevance-floor.test.ts`
+ * for the bands, which fail if a number here moves without a re-measurement.
+ *
+ * | model | floor | mislabelled | junk caught |
+ * | --- | --- | --- | --- |
+ * | arctic-embed-m-v2 | 0.16 | 0/110 | 12/15 |
+ * | granite-small-en-r2 | 0.76 | 0/110 | 14/15 |
+ * | granite-97m-multilingual | 0.74 | 0/110 | 12/15 |
+ * | bge-small-en | 0.53 | 0/110 | 11/15 |
+ * | minilm-l6-en | 0.20 | 0/110 | 12/15 |
+ *
+ * The conservative cut is taken over the Youden-optimal one, which reaches 15/15 everywhere at
+ * the cost of 1-5 mislabelled real answers per 110. Two reasons: `agent-query.ts` already holds
+ * that silencing a real answer is worse than admitting a weak one, and agent traffic is
+ * overwhelmingly on-topic; and the Youden cut is fit to the 15-probe junk set while this one is
+ * fit to the 110-query on-topic set, so with these sample sizes the conservative estimate is
+ * the more robust one rather than merely the safer one.
+ *
+ * Keyed on the model id and not the preset name, so a config that names a known model by hand
+ * without naming a preset still gets the right floor.
+ */
+export const MODEL_RELEVANCE_FLOORS: Record<string, number> = {
+  'Snowflake/snowflake-arctic-embed-m-v2.0': 0.16,
+  'onnx-community/granite-embedding-small-english-r2-ONNX': 0.76,
+  'onnx-community/granite-embedding-97m-multilingual-r2-ONNX': 0.74,
+  'Xenova/bge-small-en-v1.5': 0.53,
+  'Xenova/all-MiniLM-L6-v2': 0.20,
+};
+
+/**
+ * This model's floor, or `null` when nobody has measured it.
+ *
+ * `null` means **no abstention**, and that is the deliberate answer rather than a gap left by
+ * accident. Falling back to another model's constant is precisely the defect this table
+ * replaces, one model along: it would take a number measured on arctic and use it to tell a
+ * user of some custom model that their store has no answer. Knowl declines to claim a store
+ * cannot answer when it has no calibration to say so with -- a withheld claim, not a wrong one.
+ */
+export function relevanceFloorFor(model: string): number | null {
+  return MODEL_RELEVANCE_FLOORS[model] ?? null;
+}
+
+/**
  * How atom texts are grouped into forward passes, as an input to the vector's identity.
  *
  * Not part of `VectorProfile`, because it is not a thing a config states -- it is a property

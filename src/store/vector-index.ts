@@ -24,6 +24,15 @@ export type KnowledgeEmbedder = {
   pooling: 'mean' | 'cls';
   /** Stamped on every row this embedder writes, and the filter its queries search under. */
   profileFingerprint: string;
+  /**
+   * Below this raw cosine, this model's best match is noise. `null` when nobody has measured
+   * this model, which means no abstention rather than a borrowed number.
+   *
+   * It lives on the embedder because a cosine scale belongs to the model that produced it, so
+   * the thing that makes the vectors is the thing that knows what they mean. Every caller that
+   * already passes an embedding passes this beside it and needs to know nothing more.
+   */
+  relevanceFloor: number | null;
   embed(texts: string[], options?: EmbedOptions): Promise<number[][]>;
   /**
    * A QUERY, not a document.

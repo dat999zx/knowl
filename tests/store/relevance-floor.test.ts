@@ -1,19 +1,17 @@
-import { describe, expect, it } from 'vitest';
-import { MIN_VECTOR_RELEVANCE, scoreCandidates } from '../../src/store/agent-query.js';
+﻿import { describe, expect, it } from 'vitest';
+import { scoreCandidates } from '../../src/store/agent-query.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
 
-describe('MIN_VECTOR_RELEVANCE', () => {
-  it('sits inside the gap re-measured on the same store, which is narrower than recorded', () => {
-    // Re-measured 2026-08-04 on a copy of the same real store (483 items, 481 embedded),
-    // 10 off-topic and 12 on-topic queries rather than the original 20: off-topic tops out at
-    // 0.2678 and legitimate bottoms out at 0.3137. The bound was 0.223/0.401 from the smaller
-    // set; the gap is real but a third as wide as it was believed to be, and 0.30 sits 0.014
-    // below the weakest real answer rather than 0.10. Tightened here so the next query that
-    // closes it fails this test instead of silently silencing an answer.
-    expect(MIN_VECTOR_RELEVANCE).toBeGreaterThan(0.2678);
-    expect(MIN_VECTOR_RELEVANCE).toBeLessThan(0.3137);
-  });
-});
+// The `MIN_VECTOR_RELEVANCE` describe block that stood here is gone with the constant. It
+// pinned one shared number to arctic's measured band, which is the assumption that turned out
+// to be wrong: the same value mislabelled 24 of 110 real answers on arctic and never fired at
+// all on granite, granite-97m or bge. The per-model bands are pinned in
+// tests/core/model-relevance-floor.test.ts, and the "no floor means no verdict" rule that
+// replaces the default is in tests/store/floor-uncalibrated.test.ts.
+//
+// Every case below now passes its floor explicitly, which is also clearer: a test about
+// abstention should say which threshold it is abstaining against.
+const FLOOR = 0.30;
 
 const item = (id: string): KnowledgeItem => ({
   id, category: 'fact', status: 'active', title: `item ${id}`, content: 'content',
@@ -34,7 +32,7 @@ describe('scoreCandidates with the relevance floor', () => {
         { item: item('a'), embedded: true, vectorRank: 1, vectorScore: 0.06 },
         { item: item('b'), embedded: true, vectorRank: 2, vectorScore: 0.04 },
       ],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
 
     expect(scored.map((row) => row.item.id)).toEqual(['a', 'b']);
@@ -51,7 +49,7 @@ describe('scoreCandidates with the relevance floor', () => {
         { item: item('top'), embedded: true, vectorRank: 1, vectorScore: 0.62 },
         { item: item('tail'), embedded: true, vectorRank: 2, vectorScore: 0.05 },
       ],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
 
     expect(scored.map((row) => row.item.id)).toEqual(['top', 'tail']);
@@ -73,7 +71,7 @@ describe('scoreCandidates with the relevance floor', () => {
         { item: item('distant'), embedded: true, vectorRank: 1, vectorScore: 0.06 },
         { item: item('unindexed'), embedded: false, bm25Rank: 1 },
       ],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
 
     const byId = new Map(scored.map((row) => [row.item.id, row]));
@@ -91,7 +89,7 @@ describe('scoreCandidates with the relevance floor', () => {
         { item: item('a'), embedded: false, bm25Rank: 1 },
         { item: item('b'), embedded: false, bm25Rank: 2 },
       ],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
 
     expect(scored.map((row) => row.item.id)).toEqual(['a', 'b']);
@@ -102,7 +100,7 @@ describe('scoreCandidates with the relevance floor', () => {
     // results silently deleted. Absent evidence, the floor does not apply.
     const scored = scoreCandidates(
       [{ item: item('a'), bm25Rank: 1 }, { item: item('b'), bm25Rank: 2 }],
-      { limit: 10, usingVector: true },
+      { limit: 10, usingVector: true, minRelevance: FLOOR },
     );
 
     expect(scored).toHaveLength(2);
@@ -127,7 +125,7 @@ describe('scoreCandidates with the relevance floor', () => {
         { item: item('c'), embedded: true, vectorRank: 3, vectorScore: 0.70 },
         { item: item('d'), embedded: true, vectorRank: 4, vectorScore: 0.60 },
       ],
-      { limit: 3, usingVector: true },
+      { limit: 3, usingVector: true, minRelevance: FLOOR },
     );
 
     expect(scored.map((row) => row.item.id)).toEqual(['a', 'b', 'c']);
