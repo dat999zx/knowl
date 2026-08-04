@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 import { getClient } from './database.js';
+import { normalizePathForKnowledge } from './freshness.js';
 
 /**
  * What a session read, and the hash of it as of that read.
@@ -114,6 +116,26 @@ const toEntry = (row: Record<string, unknown>): ReadSetEntry => ({
  * slash, and `.` or `..` segments are all refused because each of them lets one file be described
  * by two different locators, and two locators for one file is a missed match, not a duplicate row.
  */
+/**
+ * Repo-relative and forward-slashed -- the form `code_files.path`, `listCodeSymbols` and every
+ * locator use.
+ *
+ * It lives here because this is the module that owns what a locator's path may look like, and
+ * because every consumer of a locator needs the same answer. The capture path hands over whatever
+ * the host named, which for a generic host is an absolute path, and a locator built from the wrong
+ * spelling matches no row. That failure is silent by construction: comparing `D:/repo/src/a.ts`
+ * against `src/a.ts` does not throw, it simply never matches, so a consumer that disagrees with
+ * this function about spelling looks exactly like one with nothing to report.
+ *
+ * Null for anything that escapes the root. A path outside the repository has no locator, and
+ * inventing one from `..` segments would file a belief against a file this index never saw.
+ */
+export function repoRelativePath(root: string, filePath: string): string | null {
+  const relative = normalizePathForKnowledge(path.relative(root, path.resolve(root, filePath)));
+  if (!relative || relative === '..' || relative.startsWith('../') || path.isAbsolute(relative)) return null;
+  return relative;
+}
+
 export function normalizeLocator(raw: string): string | null {
   const value = (raw ?? '').trim();
 
