@@ -182,8 +182,16 @@ important lesson of the round: a sweep survivor is a candidate, never a finding.
 One sweep pass, lines 79–327, `tests/store/supersede-on-write.test.ts`:
 **246 mutants — 108 killed, 78 survived, 38 timeout (artifact), 22 NoCoverage. 1110 s.**
 
-Score **before: 108/246 = 43.9%** (48.2% of covered). After-score: a re-sweep was started and the
-session was wrapped before it landed — see §6.
+Re-swept after the tests landed: **135 killed, 53 survived, 51 timeout, 7 NoCoverage. 1384 s.**
+
+| | Killed / all 246 | Killed / covered |
+| --- | --- | --- |
+| **before** | 108 — **43.9%** | 108/224 — **48.2%** |
+| **after** | 135 — **54.9%** | 135/239 — **56.5%** |
+
+**+27 killed by 4 added cases**, the same ~4× multiplier the ranker showed. NoCoverage fell 22 → 7
+because the new skill and exclusivity cases reach code no previous test entered. Timeouts rose
+38 → 51, which is the runner artifact and not a change in what is detected — see §2.
 
 13 candidates probed against the 59-file covering set (~31 s each); control killed; **9 survived**.
 Six now killed by four new cases in `supersede-on-write.test.ts`, each proved red-before-green
@@ -244,10 +252,6 @@ look like it covers a rule and be decided by a different one. The probe is what 
 - **`src/mcp/tool-schema.ts`: 0 of ~217 lines mutated.** Dropped by instruction.
 - **`knowledge-writer.ts` lines 1–78 and 328–626 were never mutated** — the transaction handling,
   commit records and batch atomicity are unmeasured. Roughly 60% of the file.
-- **`knowledge-writer.ts` after-score not measured.** The re-sweep was started and the session was
-  wrapped before it finished. Six mutants are individually verified killed through the probe, so
-  the after-score is **at least 114/246 = 46.3%**; the true figure is higher, because the ranker's
-  re-sweep showed added tests killing ~4× the mutants they targeted.
 - **`knowledge-writer` holes #7, #8, #9 have no tests.** Rows above are complete enough to write
   them without re-running anything.
 - **agent-query lines 407–447 have no covering test at all** (25 NoCoverage mutants). Adding one
@@ -269,6 +273,7 @@ look like it covers a rule and be decided by a different one. The probe is what 
 | agent-query confirm, whole suite, 13 probes | ~11.9 min |
 | agent-query re-sweep (A, B, C) | ~30 min |
 | knowledge-writer sweep, 1 pass | 1110 s (18.5 min) |
+| knowledge-writer re-sweep | 1384 s (23 min) |
 | knowledge-writer confirm, 59-file cover, 13 probes | ~6.7 min |
 | red-before-green proofs | ~1 min total (2 s per probe, narrow scope) |
 
