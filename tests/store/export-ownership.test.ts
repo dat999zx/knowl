@@ -6,19 +6,42 @@ import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
-import { exportKnowledge, importKnowledge } from '../../src/store/portability.js';
+import { exportKnowledge, importKnowledge, UNKNOWN_IMPORT_ORIGIN } from '../../src/store/portability.js';
 import { promoteItems } from '../../src/workspace/promote.js';
 import { resetWriteOwnershipCache } from '../../src/store/write-ownership.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
+import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
+import { workspaceManifestPath } from '../../src/workspace/paths.js';
 
 let counter = 0;
 let SOURCE = '';
 let TARGET = '';
 let DUMP = '';
+let WS = '';
 
 async function makeRepo(root: string) {
   await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
   await saveConfig(root, { ...DEFAULT_CONFIG });
+}
+
+/**
+ * Link both fixtures as the same repo in the same workspace: one repo, two checkouts.
+ *
+ * That is the scenario every ownership round trip here describes -- "a machine holding the
+ * old copy", "the second machine" -- and since format version 3 it is also the scenario the
+ * file has to *say* it is. An export names the workspace and repo that wrote it, and only a
+ * file from this repo's own workspace may set who owns a row and who may read it; anything
+ * else is a stranger's file whose owner names mean nothing here. Linking the fixtures makes
+ * these tests describe the case they were always written about, rather than two unrelated
+ * repos that happened to be trusted because nothing could tell them apart.
+ */
+async function linkBothAsOneRepo() {
+  const manifest = createManifest(WS, null);
+  manifest.repos.push({ name: 'server', path: SOURCE, addedAt: new Date().toISOString() });
+  await writeManifest(workspaceManifestPath(WS), manifest);
+  for (const root of [SOURCE, TARGET]) {
+    await saveConfig(root, { ...DEFAULT_CONFIG, workspace: { workspace: WS, repo: 'server' } });
+  }
 }
 
 /**
@@ -75,6 +98,7 @@ describe('ownership and lifecycle survive export and import', () => {
     SOURCE = path.resolve(`./.knowl-export-src${counter}`);
     TARGET = path.resolve(`./.knowl-export-dst${counter}`);
     DUMP = path.resolve(`./.knowl-export-dump${counter}.jsonl`);
+    WS = `exportws${counter}`;
     for (const dir of [SOURCE, TARGET]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     await fs.rm(DUMP, { force: true }).catch(() => {});
     await makeRepo(SOURCE);
@@ -87,9 +111,11 @@ describe('ownership and lifecycle survive export and import', () => {
     resetWriteOwnershipCache();
     for (const dir of [SOURCE, TARGET]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     await fs.rm(DUMP, { force: true }).catch(() => {});
+    await fs.rm(workspaceManifestPath(WS), { force: true }).catch(() => {});
   });
 
   it('carries the owning repo and visibility through a round trip', async () => {
+    await linkBothAsOneRepo();
     // The bug: ITEM_COLUMNS listed 21 columns and included neither origin_repo nor
     // visibility, while export emitted both. So a workspace-visible item owned by "server"
     // came back owned by nobody, private, with nothing reporting it.
@@ -113,6 +139,7 @@ describe('ownership and lifecycle survive export and import', () => {
   it('converges a promotion that reaches a machine holding the old copy', async () => {
     // content_hash is unchanged by a promotion, so the receiving side classified this as
     // identical and skipped it. The item stayed private on the second machine forever.
+    await linkBothAsOneRepo();
     const id = await session(SOURCE, async () => {
       const written = await write(SOURCE, 'Retries cap at three', 'Outbound calls retry three times.');
       await exportKnowledge('local', DUMP, SOURCE);
@@ -142,6 +169,7 @@ describe('ownership and lifecycle survive export and import', () => {
   it('stops trading updates once a metadata change has landed', async () => {
     // The metadata update must write content_hash verbatim, or the next round classifies it
     // as divergent again and the two sides ping-pong a fresh winner forever.
+    await linkBothAsOneRepo();
     const id = await session(SOURCE, async () => {
       const written = await write(SOURCE, 'Queue is at-least-once', 'Consumers must be idempotent.');
       await exportKnowledge('local', DUMP, SOURCE);
@@ -187,7 +215,7 @@ describe('ownership and lifecycle survive export and import', () => {
     expect(after?.contentHash).toBe(before?.contentHash);
   });
 
-  it('accepts a version-1 file with ownership defaulted rather than refusing it', async () => {
+  it('accepts a version-1 file, attributing it to an unknown origin rather than to this repo', async () => {
     await session(SOURCE, async () => {
       await write(SOURCE, 'Auth uses mTLS', 'Services authenticate with client certificates.');
       await exportKnowledge('local', DUMP, SOURCE);
@@ -208,13 +236,24 @@ describe('ownership and lifecycle survive export and import', () => {
     }));
 
     expect(result.inserted).toBe(1);
-    expect(landed).toMatchObject({ originRepo: null, visibility: 'repo' });
+    // Was `originRepo: null`, on the reading that a file predating ownership "means" unowned.
+    // That reading is what K-58 broke: NULL is also what a row this repo wrote before joining
+    // a workspace carries, and `backfillOriginRepo` claims every NULL on join while
+    // `--promote-existing` publishes what it claimed, with no demote. A version-1 file names
+    // no exporter, so the one thing that can be said about its rows is that they came from
+    // somewhere else. Unknown is a third state, and it is not "mine".
+    expect(landed).toMatchObject({ originRepo: UNKNOWN_IMPORT_ORIGIN, visibility: 'repo' });
   });
 
-  it('converges a promotion carried by a version-1 file, which has no lifecycle hash', async () => {
-    // A version-1 export predates lifecycle_hash but still serialises visibility and
-    // origin_repo, so the promotion is in the file. Treating the missing hash as agreement
-    // discarded it, and the receiving side stayed private forever with nothing reporting it.
+  it('will not publish on the word of a version-1 file, which names no exporter', async () => {
+    // Was 'converges a promotion carried by a version-1 file'. A version-1 export does carry
+    // visibility and origin_repo, and applying them is what that test asserted -- but a
+    // version-1 header says nothing about who wrote the file, so "server promoted this" is a
+    // claim from an unidentified source, and honouring it publishes the row to this repo's
+    // peers the moment it lands. The convergence itself is not lost: it is what the two
+    // same-workspace tests above prove, on a version-3 file that names its exporter. What is
+    // deliberately gone is convergence from a file that cannot say whose promotion it is.
+    await linkBothAsOneRepo();
     const id = await session(SOURCE, async () => {
       const written = await write(SOURCE, 'Rate limit is per tenant', 'Quotas are counted per tenant, not per key.');
       await exportKnowledge('local', DUMP, SOURCE);
@@ -237,20 +276,41 @@ describe('ownership and lifecycle survive export and import', () => {
       landed: await ownership('Rate limit is per tenant'),
     }));
 
-    expect(result.updated).toBe(1);
-    expect(landed).toMatchObject({ visibility: 'workspace', originRepo: 'server' });
+    // Seen and declined, not missed: the row is compared and found to agree on everything the
+    // file is allowed to say, which is what keeps a repeated import idempotent rather than
+    // permanently divergent.
+    expect(result.updated).toBe(0);
+    expect(result.identical).toBe(1);
+    expect(landed).toMatchObject({ visibility: 'repo', originRepo: 'server' });
     // And the row is left fingerprinted, so the next round can compare it at all.
     expect(landed?.lifecycleHash).toBeTruthy();
   });
 
-  it('exports at format version 2, since ownership is now a portable field', async () => {
+  it('exports at format version 3, naming the workspace and repo that wrote the file', async () => {
+    await linkBothAsOneRepo();
     await session(SOURCE, async () => {
       await write(SOURCE, 'Region is eu-west-1', 'All services run in eu-west-1.');
       await exportKnowledge('local', DUMP, SOURCE);
     });
 
     const header = JSON.parse((await fs.readFile(DUMP, 'utf8')).split('\n')[0]);
-    expect(header).toMatchObject({ type: 'header', format: 'knowl-jsonl', version: 2 });
+    // Version 2 was the last format whose owner names came with nothing to say whose
+    // namespace they belonged to.
+    expect(header).toMatchObject({
+      type: 'header', format: 'knowl-jsonl', version: 3, origin: { workspace: WS, repo: 'server' },
+    });
+  });
+
+  it('names no origin when the exporting repo is in no workspace', async () => {
+    // Emitted as an explicit null rather than omitted: "this build knows about origin and
+    // there is none" has to be distinguishable from a version-2 file, which cannot say.
+    await session(SOURCE, async () => {
+      await write(SOURCE, 'Region is eu-west-1', 'All services run in eu-west-1.');
+      await exportKnowledge('local', DUMP, SOURCE);
+    });
+
+    const header = JSON.parse((await fs.readFile(DUMP, 'utf8')).split('\n')[0]);
+    expect(header.origin).toBeNull();
   });
 
   it('refuses a format version it does not understand, naming the version', async () => {
@@ -260,11 +320,12 @@ describe('ownership and lifecycle survive export and import', () => {
       await write(SOURCE, 'Deploys are blue-green', 'Two identical fleets swap on release.');
       await exportKnowledge('local', DUMP, SOURCE);
     });
+    // 4 rather than 3: 3 is this build's own format now.
     await rewrite(DUMP, records => records.map(record =>
-      record.type === 'header' ? { ...record, version: 3 } : record));
+      record.type === 'header' ? { ...record, version: 4 } : record));
 
     await session(TARGET, async () => {
-      await expect(importKnowledge(DUMP, { projectRoot: TARGET })).rejects.toThrow(/version 3/i);
+      await expect(importKnowledge(DUMP, { projectRoot: TARGET })).rejects.toThrow(/version 4/i);
     });
   });
 });

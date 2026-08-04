@@ -1,5 +1,6 @@
 import { getKnowledgeItem } from '../store/repository.js';
 import { acquireClient, PeerDatabaseMissingError } from '../store/connection-pool.js';
+import { isImportedOrigin } from '../store/portability.js';
 import type { ActiveWorkspace } from './resolve.js';
 
 export class ForeignItemError extends Error {
@@ -70,7 +71,14 @@ async function ownerFromPeers(itemId: string, workspace: ActiveWorkspace): Promi
 async function assertOne(itemId: string, workspace: ActiveWorkspace): Promise<void> {
   const local = await getKnowledgeItem(itemId);
   // A null origin means the item predates workspace ownership and is local by definition.
-  if (local && (local.originRepo == null || local.originRepo === workspace.repo)) return;
+  //
+  // An imported origin is local for this purpose too, and deliberately so. This guard exists
+  // to stop an operation reaching into another repo's live database -- that is what makes a
+  // wrong answer confident rather than missing. An imported row has no such database behind
+  // it: it is a copy sitting here, and editing it changes nothing anywhere else, exactly as
+  // editing a null-origin row always did. The stamp's job is to keep `join` from claiming it
+  // and `promote` from publishing it, and neither of those comes through here.
+  if (local && (local.originRepo == null || isImportedOrigin(local.originRepo) || local.originRepo === workspace.repo)) return;
   // Held here, owned elsewhere: no peer needs consulting, and none may be reachable anyway.
   if (local?.originRepo) throw new ForeignItemError(itemId, local.originRepo);
 
