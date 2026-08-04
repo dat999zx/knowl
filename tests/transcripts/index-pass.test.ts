@@ -275,6 +275,32 @@ describe('runIndexPass', () => {
     expect(row.parent_session_id).toBe('78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4');
   });
 
+  // The other side of K-65: a budget that governs only whether to *continue* lets a pass
+  // return having done nothing at all. Opening and migrating the database and walking the
+  // archive happen before the first file, and on a loaded machine that alone outlasts a hook's
+  // budget -- so every pass pays the set-up cost, reports an honest incomplete result, and
+  // advances by zero. The index never warms up, one truthful `complete: false` at a time.
+  it('makes at least one batch of progress rather than spending its whole budget on set-up', async () => {
+    await fs.writeFile(
+      sessionFile('a'),
+      Array.from({ length: 1_000 }, (_, i) => line('user', `message ${i}`)).join(''),
+    );
+
+    // A real budget, and far too small: opening the database alone outlasts it.
+    const result = await runIndexPass({
+      projectRoot: PROJECT_ROOT, dbPath, projectsDir, deadline: Date.now() + 1,
+    });
+
+    expect(result.complete).toBe(false);
+    expect(result.indexed).toBeGreaterThan(0);
+    expect(result.indexed).toBeLessThan(1_000);
+
+    // And what it did is still consistent: the watermark covers exactly the rows it committed.
+    const client = await openTranscriptDb(dbPath);
+    const watermark = (await client.execute('SELECT lines_indexed FROM transcript_files')).rows[0];
+    expect(Number(watermark.lines_indexed)).toBe(await countMessages());
+  });
+
   it('stops at the deadline and reports itself incomplete, then resumes without duplicating', async () => {
     for (const name of ['a', 'b', 'c']) {
       await fs.writeFile(sessionFile(name), line('user', `session ${name}`));

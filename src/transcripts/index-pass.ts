@@ -387,6 +387,10 @@ export async function runIndexPass(input: {
   /** `Date.now()` value after which the pass stops between files. */
   deadline?: number;
 }): Promise<IndexPassResult> {
+  // Taken before anything else, so the pass can tell a budget it was given from a budget that
+  // had already expired when it was handed one. See the loop below.
+  const startedAt = Date.now();
+
   // Deliberately no long-lived `client` local. `withWriteRetry` closes and reopens the cached
   // connection when it hits SQLITE_BUSY_SNAPSHOT, so any handle captured up here would be a
   // closed one for the rest of the pass. Every operation re-acquires through the helper.
@@ -431,12 +435,36 @@ export async function runIndexPass(input: {
   // to have caught up with it however far it got.
   if (scan.degraded) result.complete = false;
 
+  /**
+   * Whether the caller gave this pass time to work in, as opposed to a deadline that had
+   * already passed when it arrived.
+   *
+   * The distinction is the whole reason the first file is treated differently. A deadline in the
+   * past is an instruction -- do nothing -- and is obeyed. A real budget can still be gone
+   * before the loop is reached, because opening and migrating the database and walking the
+   * archive all happen first, and on a loaded machine that alone outlasts a hook's budget. A
+   * pass that returns having indexed nothing leaves the index exactly where it was, so those
+   * conditions do not produce a slow catch-up, they produce none at all: every pass pays the
+   * set-up cost, reports an honest `complete: false`, and advances by zero. The index never
+   * warms up and nothing in the result says why.
+   *
+   * So a pass given a real budget always attempts one file. The overrun is bounded: one file
+   * means one 200-row batch before `indexOneFile`'s own deadline check applies, which is
+   * database work of a known size. That is exactly what an embedding batch is not -- a single
+   * forward pass over one long message is seconds -- which is why the embed pass refuses to
+   * start work it cannot afford instead of guaranteeing a unit of it.
+   */
+  const budgeted = input.deadline !== undefined && input.deadline > startedAt;
+  let examined = 0;
+
   try {
     for (const file of files) {
-      if (input.deadline !== undefined && Date.now() >= input.deadline) {
+      const expired = input.deadline !== undefined && Date.now() >= input.deadline;
+      if (expired && !(budgeted && examined === 0)) {
         result.complete = false;
         break;
       }
+      examined++;
 
       let size: number;
       try {
