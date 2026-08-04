@@ -289,14 +289,14 @@ describe('K-29 -- MMR is a property of the result set, not of an item', () => {
       const { relevance, prior } = row.explanation.contributions;
       expect(row.score).toBeCloseTo(relevance * prior, 10);
     }
-    // Some item in this set overlaps another enough for MMR to have a say, or the assertion
+    // Some item in this set overlaps another enough to be reported as such, or the assertion
     // above is passing for want of anything to correct.
     expect(scored.some(row => row.explanation.contributions.diversity > 0)).toBe(true);
   });
 
   it('leaves the ranking monotone where nothing reorders it', () => {
-    // The vector path runs no MMR, so the returned order is the score order and a reader can
-    // rely on the number falling as they read down.
+    // Nothing here is a near-duplicate of anything else, so the returned order is the score
+    // order and a reader can rely on the number falling as they read down.
     const scored = scoreCandidates(
       [
         { item: item('a'), embedded: true, vectorRank: 1, vectorScore: 0.9 },
@@ -323,6 +323,86 @@ describe('K-29 -- MMR is a property of the result set, not of an item', () => {
     );
 
     expect(scored.map(row => row.item.id)).toEqual(['answer-1', 'answer-2']);
+  });
+});
+
+describe('near-duplicate demotion replaces the MMR penalty', () => {
+  const bodied = (id: string, body: string, lexicalScore: number) => ({
+    item: item(id, { title: body, content: body }),
+    bm25Rank: 1,
+    lexicalScore,
+    lexicalCoverage: 1,
+  });
+
+  it('does not spend a slot on an unrelated note because the real answer shares the topic', () => {
+    // The mechanism MMR gets backwards. On a topical query the second-best answer necessarily
+    // shares vocabulary with the best one -- that overlap is EVIDENCE of relevance -- and MMR
+    // charges for it. At lambda 0.5 the charge is half the novelty gap against half a lexical
+    // score that, past rank one, is a small fraction of the corpus best. So an unrelated note
+    // with almost no relevance wins the second slot on having nothing in common.
+    //
+    // Measured over the shipped suites (docs/evals/diversity-sweep.md): removing the penalty
+    // took the lexical-only path from Recall@10 0.84545 to 0.96364 on semantic-suite.json,
+    // 0.97933 to 0.99400 on retrieval-suite.json and 0.98483 to 0.99575 on retrieval-suite-v2.
+    const scored = scoreCandidates(
+      [
+        bodied('best', 'postgres connection pool sizing sixteen primary', 100),
+        bodied('second', 'postgres connection pool overflow four primary', 8),
+        bodied('unrelated', 'baloo nunito typeface weights', 6),
+      ],
+      { limit: 2, usingVector: false, query: 'postgres connection pool sizing' },
+    );
+
+    expect(scored.map(row => row.item.id)).toEqual(['best', 'second']);
+  });
+
+  it('keeps one copy of a duplicated atom off the page on the path that ships', () => {
+    // The store asserts that two byte-identical atoms do not both occupy a two-result page --
+    // and until now only the lexical fallback honoured it, because MMR ran nowhere else. Every
+    // store with a working embedder took the vector path, where nothing de-duplicated at all.
+    const twice = 'nightly backup runs at 03:00 utc and retains fourteen days';
+    const scored = scoreCandidates(
+      [
+        { item: item('copy-a', { title: twice, content: twice }), embedded: true, vectorRank: 1, vectorScore: 0.81 },
+        { item: item('copy-b', { title: twice, content: twice }), embedded: true, vectorRank: 2, vectorScore: 0.80 },
+        { item: item('distinct', { title: 'restore drill', content: 'quarterly restore rehearsal from cold storage' }), embedded: true, vectorRank: 3, vectorScore: 0.62 },
+      ],
+      { limit: 2, usingVector: true },
+    );
+
+    expect(scored.map(row => row.item.id)).toEqual(['copy-a', 'distinct']);
+  });
+
+  it('returns the duplicate rather than an empty slot when there is nothing else', () => {
+    // Demotion, not deletion. This file's own rule -- silencing a real answer is worse than
+    // admitting a weak one -- is why the relevance floor stopped deleting, and a duplicate
+    // guard that shortened the page would be the same error in a new place.
+    const twice = 'nightly backup runs at 03:00 utc and retains fourteen days';
+    const scored = scoreCandidates(
+      [
+        { item: item('copy-a', { title: twice, content: twice }), embedded: true, vectorRank: 1, vectorScore: 0.81 },
+        { item: item('copy-b', { title: twice, content: twice }), embedded: true, vectorRank: 2, vectorScore: 0.80 },
+      ],
+      { limit: 2, usingVector: true },
+    );
+
+    expect(scored.map(row => row.item.id)).toEqual(['copy-a', 'copy-b']);
+  });
+
+  it('leaves a merely similar neighbour where its score put it', () => {
+    // The threshold is a duplicate detector, not a diversity dial. Two notes about the same
+    // subsystem share a lot of vocabulary and are still two different answers; on
+    // retrieval-suite-v2, demoting at 0.6 instead cost Recall@10 0.99727 -> 0.98979.
+    const scored = scoreCandidates(
+      [
+        bodied('sizing', 'postgres connection pool sizing sixteen for the primary', 100),
+        bodied('overflow', 'postgres connection pool overflow four for the primary', 90),
+      ],
+      { limit: 2, usingVector: false, query: 'postgres connection pool' },
+    );
+
+    expect(scored.map(row => row.item.id)).toEqual(['sizing', 'overflow']);
+    expect(scored[1].explanation.contributions.diversity).toBeGreaterThan(0);
   });
 });
 
