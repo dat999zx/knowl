@@ -1,6 +1,7 @@
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { closeDb, getClient, getDb, initDb } from '../../src/store/database.js';
@@ -160,6 +161,23 @@ describe('retention', () => {
       for (const name of remaining) {
         expect(fsSync.existsSync(path.join(SNAPSHOT_DIR, `${name}.manifest.json`))).toBe(true);
       }
+    });
+
+    it('names every snapshot it pruned, through the CLI', async () => {
+      for (let i = 0; i < SNAPSHOT_KEEP + 1; i++) await createSnapshot(ROOT);
+      const before = (await fs.readdir(SNAPSHOT_DIR)).filter(name => name.endsWith('.db'));
+      expect(before).toHaveLength(SNAPSHOT_KEEP);
+      await closeDb();
+
+      const result = spawnSync(process.execPath, [path.resolve('./dist/index.js'), 'snapshot', 'create'], {
+        cwd: ROOT, encoding: 'utf8',
+      });
+      await initDb(ROOT);
+
+      expect(result.status, result.stderr).toBe(0);
+      // A snapshot that disappears without being named is the one someone goes looking for.
+      expect(result.stdout).toContain('Pruned:');
+      expect(result.stdout).toMatch(/Pruned: .+\.db/);
     });
 
     it('touches nothing it did not put there', async () => {

@@ -2048,6 +2048,9 @@ snapshotCommand
       console.log(`Snapshot: ${snapshot.path}`);
       console.log(`Manifest: ${snapshot.manifestPath}`);
       console.log(`SHA-256: ${snapshot.manifest.sha256}`);
+      // Named, not counted. A snapshot that disappears without being named is the thing
+      // someone goes looking for later.
+      for (const pruned of snapshot.pruned) console.log(`Pruned: ${pruned}`);
     } catch (error: any) {
       await closeDb().catch(() => {});
       console.error(`Error creating snapshot: ${error.message}`);
