@@ -104,7 +104,10 @@ export async function indexKnowledgeItemsBestEffort(projectId: string, items: Kn
   try {
     const embedder = await resolveEmbedder();
     if (!embedder) return;
-    const vectors = await embedder.embed(items.map(buildKnowledgeEmbeddingText));
+    // One text per forward pass. A single write already got that for free; a batch write of
+    // several atoms did not, and its vectors then disagreed with the ones a reindex produced
+    // for the same text. See `EmbedOptions`.
+    const vectors = await embedder.embed(items.map(buildKnowledgeEmbeddingText), { maxBatch: 1 });
     // One transaction for the batch. Each row written on its own is an implicit commit, and
     // this schema fsyncs the WAL on every one -- 11.57 ms per row against 0.088 ms inside a
     // transaction. A single-item write, which is the common case here, still takes the plain

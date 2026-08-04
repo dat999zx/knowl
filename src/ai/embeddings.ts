@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fsPromises from 'node:fs/promises';
 import { ProjectConfig } from '../core/types.js';
-import { KnowledgeEmbedder } from '../store/vector-index.js';
+import { EmbedOptions, KnowledgeEmbedder } from '../store/vector-index.js';
 import { fingerprintProfile, resolveVectorProfile, type VectorPooling } from '../core/vector-profile.js';
 import { noteModelLoad } from '../core/startup-trace.js';
 import { knowlHome } from '../workspace/paths.js';
@@ -141,11 +141,25 @@ export const EMBEDDING_LIMITS = {
  * Why order-independence matters: padding is not inert in this pipeline. A q8 graph
  * quantises per batch, so a text's vector depends on what shares its batch. The same atom
  * moved 2.78e-2 in cosine between being embedded alone and sitting in a batch of 32; in a
- * batch of 2 it moves 1.52e-2, and alone it is exact. Small batches of near-equal items
- * therefore also mean `reindex --vectors` reproduces very nearly what write-time embedding
- * produced for the same text, instead of quietly disagreeing with it.
+ * batch of 2 it moves 1.52e-2, and alone it is exact.
+ *
+ * "Very nearly reproduces" was the earlier claim here, and very nearly turned out not to be
+ * enough. The shipped plan still batches 36 of the real corpus's 483 atoms, and swapping
+ * those batched vectors for their embedded-alone counterparts changed the shipped ranker's
+ * top ten for 13 of 120 real queries, and which items it returned at all for 4. The
+ * knowledge path therefore asks for `maxBatch: 1` and takes exactness over nearness; the
+ * transcript path, where batching is a measured 2.7x, does not.
  */
-export function planEmbeddingBatches(texts: string[]): PlannedEmbedding[][] {
+export function planEmbeddingBatches(
+  texts: string[],
+  /**
+   * `maxBatch: 1` asks for one forward pass per text, which is the only way to get a vector
+   * that does not depend on its neighbours. See `EmbedOptions`.
+   */
+  options: { maxBatch?: number } = {},
+): PlannedEmbedding[][] {
+  const maxBatch = Math.max(1, Math.min(options.maxBatch ?? MAX_EMBED_BATCH, MAX_EMBED_BATCH));
+
   // Stable, so items of equal length keep the caller's order and planning is deterministic.
   const entries = texts
     .map((text, index) => ({ index, ...clipToTokenBudget(text ?? '') }))
@@ -161,7 +175,7 @@ export function planEmbeddingBatches(texts: string[]): PlannedEmbedding[][] {
     const nextLongest = Math.max(longest, entry.tokens);
     const wouldExceed = (current.length + 1) * nextLongest * nextLongest > ATTENTION_BUDGET;
 
-    if (current.length > 0 && (wouldExceed || current.length >= MAX_EMBED_BATCH)) {
+    if (current.length > 0 && (wouldExceed || current.length >= maxBatch)) {
       batches.push(current);
       current = [];
       longest = 0;
@@ -321,9 +335,9 @@ export async function createLocalEmbeddingProvider(
     model: vector.model,
     pooling: vector.pooling,
     profileFingerprint: fingerprintProfile(resolveVectorProfile(config)),
-    embed: async (texts: string[]) => {
+    embed: async (texts: string[], options?: EmbedOptions) => {
       const vectors: number[][] = [];
-      for (const batch of planEmbeddingBatches(texts)) {
+      for (const batch of planEmbeddingBatches(texts, options)) {
         const output = await localPipeline!(batch.map(entry => entry.text), {
           // Per-model, not a constant: MiniLM is mean-pooled while both Granite R2
           // models and BGE are CLS-pooled. Using the wrong one produces plausible
