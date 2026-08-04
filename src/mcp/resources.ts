@@ -6,6 +6,7 @@ import { formatRecentContextToMarkdown, formatHierarchyToMarkdown } from '../cor
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, truncateText } from '../core/token-budget.js';
 import { formatInitError } from './init-error.js';
+import { sanitizeToolErrorMessage } from './tool-schema.js';
 
 export function registerResources(
   server: Server,
@@ -119,7 +120,11 @@ export function registerResources(
 
       throw new Error(`Resource not found: ${uri}`);
     } catch (error: any) {
-      throw new Error(`Error reading resource "${uri}": ${error.message}`);
+      // The second place a raw driver message can reach a client. No resource URI carries a
+      // caller-supplied field, so the missing-argument route into it does not exist here --
+      // but "statement text and bound parameters never leave the process" is the rule, and a
+      // rule with one unguarded exit is the shape of the finding, not a fix for it.
+      throw new Error(`Error reading resource "${uri}": ${sanitizeToolErrorMessage(String(error?.message ?? error))}`);
     }
   });
 }

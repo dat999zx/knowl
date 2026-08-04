@@ -3,10 +3,15 @@ import { MIN_VECTOR_RELEVANCE, scoreCandidates } from '../../src/store/agent-que
 import type { KnowledgeItem } from '../../src/core/types.js';
 
 describe('MIN_VECTOR_RELEVANCE', () => {
-  it('sits inside the measured gap between off-topic and legitimate queries', () => {
-    // Measured 2026-08-01: off-topic tops out at 0.223, legitimate bottoms out at 0.401.
-    expect(MIN_VECTOR_RELEVANCE).toBeGreaterThan(0.223);
-    expect(MIN_VECTOR_RELEVANCE).toBeLessThan(0.401);
+  it('sits inside the gap re-measured on the same store, which is narrower than recorded', () => {
+    // Re-measured 2026-08-04 on a copy of the same real store (483 items, 481 embedded),
+    // 10 off-topic and 12 on-topic queries rather than the original 20: off-topic tops out at
+    // 0.2678 and legitimate bottoms out at 0.3137. The bound was 0.223/0.401 from the smaller
+    // set; the gap is real but a third as wide as it was believed to be, and 0.30 sits 0.014
+    // below the weakest real answer rather than 0.10. Tightened here so the next query that
+    // closes it fails this test instead of silently silencing an answer.
+    expect(MIN_VECTOR_RELEVANCE).toBeGreaterThan(0.2678);
+    expect(MIN_VECTOR_RELEVANCE).toBeLessThan(0.3137);
   });
 });
 
@@ -17,8 +22,13 @@ const item = (id: string): KnowledgeItem => ({
 } as KnowledgeItem);
 
 describe('scoreCandidates with the relevance floor', () => {
-  it('returns nothing when the best candidate is below the floor', () => {
-    // The point of the feature: a question the store knows nothing about gets no answer.
+  // REPLACED, deliberately. This asserted `scored` was `[]` below the floor -- deletion as the
+  // feature. The sweep in docs/evals/floor-sweep.md shows deletion was wrong: a fixed absolute
+  // cosine does not transfer between corpora, and at 0.30 the floor blanked 23 of 110
+  // answerable queries on semantic-suite.json (Recall@10 0.9818 -> 0.7909) while sitting only
+  // 0.014 below the weakest real answer on the store it was tuned on. The verdict is kept; the
+  // deletion is not. Behaviour now lives in tests/store/floor-non-destructive.test.ts.
+  it('reports the verdict instead of deleting the ranking', () => {
     const scored = scoreCandidates(
       [
         { item: item('a'), embedded: true, vectorRank: 1, vectorScore: 0.06 },
@@ -27,7 +37,8 @@ describe('scoreCandidates with the relevance floor', () => {
       { limit: 10, usingVector: true },
     );
 
-    expect(scored).toEqual([]);
+    expect(scored.map((row) => row.item.id)).toEqual(['a', 'b']);
+    expect(scored.every((row) => row.explanation.abstained === true)).toBe(true);
   });
 
   it('keeps the whole ranking once the best candidate clears the floor', () => {
@@ -46,9 +57,12 @@ describe('scoreCandidates with the relevance floor', () => {
     expect(scored.map((row) => row.item.id)).toEqual(['top', 'tail']);
   });
 
-  it('keeps an unembedded candidate even when the query is judged unanswerable', () => {
+  // AMENDED, deliberately. The old assertion was `['unindexed']` -- the embedded-but-distant
+  // row was deleted and only the unjudged one survived. Both now stand; what the exemption
+  // still buys is that the unjudged row is not LABELLED by a verdict reached without it.
+  it('does not label a candidate the floor never judged', () => {
     // Written since the last successful index, or written while the embedding model was not
-    // cached. A verdict reached without ever looking at it must not suppress it.
+    // cached. A verdict reached without ever looking at it must not describe it.
     //
     // The verdict itself reads only embedded candidates. That guard is defensive rather than
     // observable: an unembedded candidate scores on the BM25 fallback and tops out near 0.086,
@@ -62,7 +76,10 @@ describe('scoreCandidates with the relevance floor', () => {
       { limit: 10, usingVector: true },
     );
 
-    expect(scored.map((row) => row.item.id)).toEqual(['unindexed']);
+    const byId = new Map(scored.map((row) => [row.item.id, row]));
+    expect([...byId.keys()].sort()).toEqual(['distant', 'unindexed']);
+    expect(byId.get('distant')!.explanation.abstained).toBe(true);
+    expect(byId.get('unindexed')!.explanation.abstained).toBeUndefined();
   });
 
   it('does NOT apply the floor when vector was requested but nothing is embedded', () => {

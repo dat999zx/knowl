@@ -4,8 +4,56 @@ import { withWriteRetry } from './database.js';
 import { quantizeVector } from './quantize.js';
 import { readMessagesAt } from './read.js';
 
-/** Messages per embedding call. The provider re-batches by text length underneath. */
+/** Ceiling on messages per embedding call. The provider re-batches by text length underneath. */
 const EMBED_BATCH = 32;
+
+/**
+ * Starting estimate of how many characters the model gets through per millisecond.
+ *
+ * Deliberately pessimistic, and measured rather than guessed: one real 8,000-character message
+ * costs 7,843 ms in a single forward pass on this machine's local model, so about one character
+ * per millisecond. A short-lived hook process gets exactly one chance to be wrong about this,
+ * so being wrong in the direction of doing less work is the safe side.
+ */
+const INITIAL_CHARS_PER_MS = 1;
+
+/**
+ * How much of the new observation replaces the old estimate, per batch.
+ *
+ * The rate is learned within a pass because it varies by an order of magnitude between machines
+ * and models, and the first batch of a backfill would otherwise hold the whole run to a
+ * pessimistic default.
+ */
+const RATE_SMOOTHING = 0.5;
+
+/**
+ * The next batch, sized to what the remaining budget can pay for.
+ *
+ * Returns an empty slice when not even one message fits, which is the deadline being enforced
+ * rather than observed. A batch of 32 arbitrary-length messages is unbounded work, and checking
+ * the clock after it is not a budget -- it is a record of how far past the budget the call went.
+ * Nothing is refused when there is no deadline, so the backfill still does the long messages.
+ */
+function affordableSlice(
+  targets: Array<{ id: number; text: string }>,
+  start: number,
+  budgetChars: number,
+): Array<{ id: number; text: string }> {
+  const slice: Array<{ id: number; text: string }> = [];
+  let chars = 0;
+
+  for (let i = start; i < targets.length && slice.length < EMBED_BATCH; i++) {
+    const next = targets[i];
+    // The first message is what decides whether any work happens at all: if even it is
+    // unaffordable the pass stops, and a bigger budget (the backfill's) picks it up.
+    if (chars + next.text.length > budgetChars && slice.length > 0) break;
+    if (chars + next.text.length > budgetChars && slice.length === 0) return [];
+    slice.push(next);
+    chars += next.text.length;
+  }
+
+  return slice;
+}
 
 /**
  * Give every indexed message a vector under the embedder's current profile.
@@ -18,6 +66,12 @@ const EMBED_BATCH = 32;
  * backfill, and it makes the deadline unenforceable because a single batch can take seconds.
  * Selecting a file's pending messages together turns that into one streaming pass per file.
  * Files are taken newest-message-first so the session you are in is covered before the tail.
+ *
+ * **The deadline is enforced before the work, not after it.** Embedding cost is driven by text
+ * length, and a fixed batch count is therefore unbounded work: 32 messages of 8,000 characters
+ * is minutes on the local model, against a hook budget of 1,500 ms. Each batch is sized to the
+ * remaining budget at a learned characters-per-millisecond rate, and a batch that cannot be
+ * afforded is not started -- the rows stay pending for a run that has the time.
  */
 export async function embedPendingMessages(input: {
   /**
@@ -41,6 +95,8 @@ export async function embedPendingMessages(input: {
   }));
 
   let embedded = 0;
+  /** Learned within the pass; see `INITIAL_CHARS_PER_MS`. */
+  let charsPerMs = INITIAL_CHARS_PER_MS;
   /**
    * Files whose pending rows turned out to be unreadable. Without this the loop re-selects the
    * same file forever: its rows stay pending because there is nothing to embed them from.
@@ -98,12 +154,26 @@ export async function embedPendingMessages(input: {
       continue;
     }
 
-    for (let start = 0; start < targets.length; start += EMBED_BATCH) {
-      const slice = targets.slice(start, start + EMBED_BATCH);
+    for (let start = 0; start < targets.length;) {
+      const remainingMs = input.deadline === undefined ? Infinity : input.deadline - Date.now();
+      if (remainingMs <= 0) return { embedded, complete: false };
+
+      const slice = affordableSlice(targets, start, remainingMs * charsPerMs);
+      // Nothing the budget can pay for. Stopping here is what makes the budget real; the rows
+      // stay pending and `knowl reindex --transcripts` has minutes rather than milliseconds.
+      if (slice.length === 0) return { embedded, complete: false };
+
+      const chars = slice.reduce((total, target) => total + target.text.length, 0);
+      const startedAt = Date.now();
       embedded += await embedBatch(dbPath, embedder, slice);
-      if (input.deadline !== undefined && Date.now() >= input.deadline) {
-        return { embedded, complete: false };
+      const elapsed = Date.now() - startedAt;
+      // Learned from what actually happened, so a fast machine is not held to the pessimistic
+      // default for a whole backfill and a slow one stops overrunning after the first batch.
+      if (elapsed > 0) {
+        charsPerMs = charsPerMs * (1 - RATE_SMOOTHING) + (chars / elapsed) * RATE_SMOOTHING;
       }
+
+      start += slice.length;
     }
   }
 }

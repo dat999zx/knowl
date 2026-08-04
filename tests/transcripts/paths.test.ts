@@ -1,13 +1,19 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   discoverTranscriptFiles,
   encodeProjectDir,
   parseWorktreeList,
   resolveRepoRoots,
+  resolveRepoRootSet,
+  scanTranscriptArchive,
 } from '../../src/transcripts/paths.js';
+
+const run = promisify(execFile);
 
 let projectsDir: string;
 
@@ -134,6 +140,71 @@ describe('discoverTranscriptFiles', () => {
     });
     expect(found).toEqual([]);
   });
+
+  // K-24. The archive nests a third level: a subagent spawned inside a workflow run lands in
+  // `<uuid>/subagents/workflows/<wf_id>/`. Measured against this machine's archive on
+  // 2026-08-04: 282 of 825 files in `d--Code-DuckPrep-server` -- 34.2% of that repo's corpus --
+  // sit at that depth and were never indexed.
+  it('finds a subagent transcript nested under subagents/workflows/', async () => {
+    await write(`${ENCODED}/parent.jsonl`);
+    await write(`${ENCODED}/78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4/subagents/workflows/wf_1b6f540c-149/agent-a007.jsonl`);
+
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
+
+    const nested = found.find(f => f.sessionId === 'agent-a007');
+    expect(nested).toBeDefined();
+    expect(nested!.parentSessionId).toBe('78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4');
+  });
+
+  // The descent follows the `subagents/` subtree wherever it goes rather than enumerating the
+  // shapes seen in one snapshot of the archive -- which is what left the level above unindexed.
+  it('follows the subagents subtree however deep the host nests it', async () => {
+    await write(`${ENCODED}/78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4/subagents/workflows/wf_x/inner/deep.jsonl`);
+
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
+
+    expect(found.map(f => f.sessionId)).toEqual(['deep']);
+  });
+
+  // Recursion stays inside `subagents/`, so the sibling that holds fetched artifacts is still
+  // out of reach however deep it goes.
+  it('still refuses to descend into tool-results/, at any depth', async () => {
+    await write(`${ENCODED}/4488248f-c38c-403e-9fa2-7b11902405c7/tool-results/nested/deep/webfetch.jsonl`);
+    await write(`${ENCODED}/4488248f-c38c-403e-9fa2-7b11902405c7/subagents/real.jsonl`);
+
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
+
+    expect(found.map(f => f.sessionId)).toEqual(['real']);
+  });
+});
+
+describe('scanTranscriptArchive', () => {
+  it('reports a healthy scan as not degraded', async () => {
+    await write(`${ENCODED}/aaa.jsonl`);
+
+    const scan = await scanTranscriptArchive(ROOT, { projectsDir, roots: [ROOT] });
+
+    expect(scan.files.map(f => f.sessionId)).toEqual(['aaa']);
+    expect(scan.degraded).toBe(false);
+  });
+
+  // K-11. The root set is answered by `git`, and a missing binary is indistinguishable from
+  // "this project has no worktrees" by the file list alone. The caller has to be told, because
+  // acting on the shrunken list deletes rows and embeddings that were never stale.
+  it('reports degraded when the root set could not be established', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-degraded-'));
+    const emptyPath = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-nogit-'));
+    const savedPath = process.env.PATH;
+    try {
+      process.env.PATH = emptyPath; // git becomes unresolvable: ENOENT on spawn
+      const scan = await scanTranscriptArchive(repo, { projectsDir });
+      expect(scan.degraded).toBe(true);
+    } finally {
+      process.env.PATH = savedPath;
+      await fs.rm(repo, { recursive: true, force: true });
+      await fs.rm(emptyPath, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('parseWorktreeList', () => {
@@ -175,5 +246,40 @@ describe('resolveRepoRoots', () => {
     const roots = await resolveRepoRoots(process.cwd());
     expect(roots.length).toBeGreaterThanOrEqual(1);
     expect(roots.map(r => path.resolve(r))).toContain(path.resolve(process.cwd()));
+  });
+
+  // K-09 privacy leak. `git worktree list` answers for the *enclosing* repository, so a knowl
+  // project that is a subdirectory of a larger checkout was told its roots were that checkout
+  // and every one of its worktrees -- and then indexed their transcripts. With sharing on it
+  // serves peers content the enclosing repo never opted into.
+  it('does not adopt the enclosing repository when the project root is a subdirectory', async () => {
+    const inner = path.join(process.cwd(), 'src', 'transcripts');
+
+    // The premise: git really does answer for the enclosing checkout from in here.
+    const { stdout } = await run('git', ['worktree', 'list', '--porcelain'], { cwd: inner });
+    expect(parseWorktreeList(stdout).length).toBeGreaterThan(0);
+    expect(parseWorktreeList(stdout).map(r => path.resolve(r))).not.toContain(path.resolve(inner));
+
+    expect(await resolveRepoRoots(inner)).toEqual([path.resolve(inner)]);
+  });
+
+  it('is not degraded when the directory is definitively not a checkout', async () => {
+    // "fatal: not a git repository" is an answer, not a failure: there are no worktrees to miss,
+    // so reclaiming rows for deleted transcripts stays safe.
+    const result = await resolveRepoRootSet(projectsDir);
+    expect(result).toEqual({ roots: [path.resolve(projectsDir)], degraded: false });
+  });
+
+  it('degrades when git cannot be run at all', async () => {
+    const emptyPath = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-nogit-'));
+    const savedPath = process.env.PATH;
+    try {
+      process.env.PATH = emptyPath;
+      const result = await resolveRepoRootSet(projectsDir);
+      expect(result).toEqual({ roots: [path.resolve(projectsDir)], degraded: true });
+    } finally {
+      process.env.PATH = savedPath;
+      await fs.rm(emptyPath, { recursive: true, force: true });
+    }
   });
 });

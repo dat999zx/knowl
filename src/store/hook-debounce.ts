@@ -3,8 +3,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { canonicalProjectRoot } from '../core/project-path.js';
 import { NormalizedHostHook } from '../cli/agents/host-hook.js';
+import { HOOK_CAPTURE_DEBOUNCE_MS, sweepDebounceClaims } from './retention.js';
 
-export const HOOK_CAPTURE_DEBOUNCE_MS = 1500;
+// The window and the lifetime of the file that enforces it are one decision, so they are
+// made in one place. Re-exported because this is where every caller already looks for it.
+export { HOOK_CAPTURE_DEBOUNCE_MS };
 
 function cacheDir(projectRoot: string): string {
   return path.join(projectRoot, '.knowl', 'cache', 'hook-debounce');
@@ -95,6 +98,14 @@ export function claimCapture(input: NormalizedHostHook, now = Date.now()): boole
   } catch {
     return true;
   }
+
+  // One claim file per tool call was written and none was ever removed: 7,134 of them in one
+  // repository, essentially the entire file count of a 3.95 GB directory, every one of them
+  // dead 1500 ms after it was written. Swept here rather than in a maintenance command,
+  // because this is the only code that ever visits the directory. Bounded, so the first pass
+  // over a grown one costs a few milliseconds of an agent's turn and the rest drains over
+  // the following calls.
+  sweepDebounceClaims(cacheDir(input.projectRoot), now);
 
   try {
     const fd = fs.openSync(filePath, 'wx');

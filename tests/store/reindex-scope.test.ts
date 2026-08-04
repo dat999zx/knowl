@@ -23,6 +23,7 @@ function stubEmbedder(overrides: { model?: string; calls?: string[][] } = {}) {
       overrides.calls?.push(texts);
       return texts.map(() => [1, 0, 0]);
     },
+    embedQuery: async () => [1, 0, 0],
   };
 }
 

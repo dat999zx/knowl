@@ -1,17 +1,25 @@
 import { Client } from '@libsql/client';
 
 /**
- * Bump when a schema change makes a database unreadable by older clients.
+ * Bump ONLY when a schema change makes a database unreadable by older clients.
  *
- * Additive columns do not need a bump -- an older client ignores them. A bump is for
- * changes that would make an older client corrupt or misread the data: a primary key
- * change, a table rebuild, or a column an older writer would leave NULL where a newer
- * reader requires a value.
+ * Additive columns and new tables do not need a bump -- an older client ignores them. A bump
+ * is for changes that would make an older client corrupt or misread the data: a primary key
+ * change, a table rebuild, or a column an older writer would leave NULL where a newer reader
+ * requires a value.
  *
  * **This is a compatibility floor, not a changelog.** `assertSchemaSupported` refuses any
  * database stamped higher than the running build, so every bump locks out every Knowl
  * already installed. That is the correct answer to a breaking change and the wrong answer
  * to an added column -- see `KNOWL_MIGRATION_LEVEL`, which is what the migration gate reads.
+ *
+ * The audit branch reached the opposite rule -- bump on every change -- and it was right
+ * about the problem and wrong about which number solves it. Its reasoning was that a version
+ * cannot mean "up to date" for the reader and "nothing to do" for the writer at the same
+ * time, and that an additive column which does not bump is a migration the fast path skips
+ * forever. Both halves are true. The resolution is two numbers rather than one: this stays a
+ * floor and `KNOWL_MIGRATION_LEVEL` carries the changelog, so `knowledge_commit_items` gets
+ * its migration without locking every 2.16 and 2.17 install out of its own database.
  */
 export const KNOWL_SCHEMA_VERSION = 1;
 
@@ -31,8 +39,12 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * Level 0 means "written before the gate existed", so every database predating it migrates
  * once. `tests/store/schema-pin.test.ts` hashes the schema a fresh bootstrap produces and
  * fails if that hash moves without this number moving. Nobody has to remember.
+ *
+ * Level 2 adds `knowledge_commit_items` and its covering index, and backfills it from every
+ * commit already on disk (`backfillCommitItems`). Purely additive, so `KNOWL_SCHEMA_VERSION`
+ * stays where it is and no older build is locked out.
  */
-export const KNOWL_MIGRATION_LEVEL = 1;
+export const KNOWL_MIGRATION_LEVEL = 2;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

@@ -12,9 +12,16 @@ export type KnowledgeAccessInput = {
   causedCorrection?: boolean;
 };
 
-export type KnowledgeAccess = Omit<KnowledgeAccessInput, 'query'> & {
+export type KnowledgeAccess = Omit<KnowledgeAccessInput, 'query' | 'retrievedAt'> & {
   id: string;
   queryFingerprint: string | null;
+  /**
+   * Optional to supply, never absent once recorded: `retrieved_at` is NOT NULL, and both
+   * producers -- the insert below and `mapAccess` -- always have a value. Carrying the
+   * input's optionality through would describe a row the column cannot hold, and
+   * `undefined` is not a value the driver will bind at all.
+   */
+  retrievedAt: string;
 };
 
 export type KnowledgeAccessReportItem = {

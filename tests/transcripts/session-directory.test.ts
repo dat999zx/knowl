@@ -9,6 +9,8 @@ import { bindHostSession } from '../../src/store/host-session-bindings.js';
 import { startMemorySession } from '../../src/store/session-repository.js';
 import { resolveStorage } from '../../src/store/storage-roles.js';
 import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/database.js';
+import { runIndexPass } from '../../src/transcripts/index-pass.js';
+import { encodeProjectDir } from '../../src/transcripts/paths.js';
 import { listSessionDirectory } from '../../src/transcripts/session-directory.js';
 
 let dir: string;
@@ -43,6 +45,9 @@ describe('listSessionDirectory', () => {
     const client = await openTranscriptDb(resolveStorage(projectRoot).transcripts);
     await client.execute('DELETE FROM transcript_files');
     await client.execute('DELETE FROM transcript_messages');
+    // What the last pass reported about itself is index-wide state, so it outlives a row wipe
+    // and would otherwise leak between tests.
+    await client.execute('DELETE FROM transcript_index_state').catch(() => {});
   });
 
   async function seedSession(sessionId: string, options: {
@@ -197,6 +202,31 @@ describe('listSessionDirectory', () => {
 
     const { indexComplete } = await listSessionDirectory({ projectId, projectRoot });
 
+    expect(indexComplete).toBe(false);
+  });
+
+  // K-32. Completeness was computed over the rows that exist -- and a file the pass never
+  // reached has no row at all. So a listing that is missing whole sessions reported itself
+  // whole, and the caller reads "no sessions match" as proof of absence.
+  it('reports incomplete when the last pass never reached some transcripts', async () => {
+    const archive = path.join(dir, 'archive');
+    const encoded = path.join(archive, encodeProjectDir(path.resolve(projectRoot)));
+    await fs.mkdir(encoded, { recursive: true });
+    const entry = (text: string) =>
+      JSON.stringify({ type: 'user', timestamp: '2026-08-03T10:00:00Z', message: { content: text } }) + '\n';
+    const dbPath = resolveStorage(projectRoot).transcripts;
+
+    await fs.writeFile(path.join(encoded, 'first.jsonl'), entry('an indexed session'));
+    await runIndexPass({ projectRoot, dbPath, projectsDir: archive });
+
+    await fs.writeFile(path.join(encoded, 'second.jsonl'), entry('a session never reached'));
+    await runIndexPass({ projectRoot, dbPath, projectsDir: archive, deadline: Date.now() - 1 });
+
+    const { sessions, indexComplete } = await listSessionDirectory({ projectId, projectRoot });
+
+    // The premise: a whole session is missing from the listing, and every row that exists
+    // says it is fully indexed.
+    expect(sessions.map(s => s.sessionId)).toEqual(['first']);
     expect(indexComplete).toBe(false);
   });
 

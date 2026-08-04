@@ -126,10 +126,40 @@ export function readOpeningAsk(text: string): string | null {
   return trimmed;
 }
 
+/**
+ * Whether a stored row still describes the message now parsed at its line.
+ *
+ * The text itself cannot be compared: the FTS table is contentless, so nothing in the database
+ * holds a body to compare against. Role, length and timestamp are what a row keeps, and together
+ * they tell an unchanged line from a rewritten one. The accepted limit is the same shape as the
+ * anchor's: a rewrite that puts a message of the same role, the same length and the same
+ * timestamp on the same line reads as unchanged.
+ *
+ * Shared by the two places that meet a row they did not just write -- the index pass repairing a
+ * stranded index, and the offset backfill deciding whether a line is still where a row says.
+ */
+export function describesSameMessage(
+  row: Record<string, unknown>,
+  message: ProseMessage,
+): boolean {
+  const ts = row.ts === null || row.ts === undefined ? null : String(row.ts);
+  return String(row.role) === message.role
+    && Number(row.chars) === message.text.length
+    && ts === message.timestamp;
+}
+
 export type ProseWatermark = { bytesConsumed: number; linesConsumed: number };
 
 export type ProseChunk = {
   message: ProseMessage;
+  /**
+   * Absolute offset of the first byte of this message's line.
+   *
+   * Stored with the pointer so reading one message back is a seek rather than a scan. The
+   * indexer has this for free -- it is mid-stream when it yields -- and throwing it away is
+   * what made rendering a single hit cost a pass over the whole transcript.
+   */
+  byteOffset: number;
   /**
    * The watermark that becomes correct once this message is committed: the byte offset just
    * past its line, and the line count including it.
@@ -180,6 +210,7 @@ export async function* streamProseFrom(
       const newline = carry.indexOf(0x0a, cursor);
       if (newline === -1) break;
 
+      const lineStart = consumed + cursor;
       // Safe to decode here: 0x0a cannot occur inside a multi-byte UTF-8 sequence, so a
       // complete line is always a complete sequence of characters.
       const raw = carry.subarray(cursor, newline).toString('utf8');
@@ -197,7 +228,12 @@ export async function* streamProseFrom(
         }
         const prose = parsed === undefined ? null : extractProse(parsed);
         if (prose) {
-          yield { message: { line, ...prose }, bytesConsumed: consumed + cursor, linesConsumed: line };
+          yield {
+            message: { line, ...prose },
+            byteOffset: lineStart,
+            bytesConsumed: consumed + cursor,
+            linesConsumed: line,
+          };
         } else if (parsed !== undefined && onNaming) {
           // Naming entries are not prose and must not become messages -- they carry no line the
           // reader would ever want to open. Surfaced by callback so no existing caller changes.

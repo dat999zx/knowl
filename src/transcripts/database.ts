@@ -19,10 +19,13 @@ export const TRANSCRIPT_SCHEMA_STATEMENTS = [
     updated_at TEXT NOT NULL,
     display_name TEXT,
     name_kind INTEGER NOT NULL DEFAULT 0,
-    opening TEXT
+    opening TEXT,
+    anchor TEXT
   );`,
 
   // No `body` column anywhere: a row is a pointer. The text stays in the .jsonl.
+  // `byte_offset` is part of the pointer: the offset of the line's first byte, so reading one
+  // message back seeks to it instead of streaming the file from the start.
   `CREATE TABLE IF NOT EXISTS transcript_messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     path TEXT NOT NULL,
@@ -31,7 +34,19 @@ export const TRANSCRIPT_SCHEMA_STATEMENTS = [
     line INTEGER NOT NULL,
     role TEXT NOT NULL,
     chars INTEGER NOT NULL,
-    ts TEXT
+    ts TEXT,
+    byte_offset INTEGER
+  );`,
+
+  // What the last pass could say about itself. Completeness cannot be derived from the rows
+  // that exist: a file the pass never reached has no row, so "every row is caught up" is true
+  // of an index missing half the archive. One row, id 1.
+  `CREATE TABLE IF NOT EXISTS transcript_index_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    complete INTEGER NOT NULL,
+    files_seen INTEGER NOT NULL,
+    files_indexed INTEGER NOT NULL,
+    updated_at TEXT NOT NULL
   );`,
 
   `CREATE INDEX IF NOT EXISTS idx_transcript_messages_path ON transcript_messages(path);`,
@@ -74,12 +89,77 @@ async function addNamingColumns(client: Client): Promise<void> {
   if (!columns.includes('name_kind')) {
     await client.execute('ALTER TABLE transcript_files ADD COLUMN name_kind INTEGER NOT NULL DEFAULT 0;');
   }
+  // Added, like `anchor` below, without resetting a single watermark. It used to reset all of
+  // them -- `bytes_indexed`, `lines_indexed` and `size_at_index` to 0 -- so the next pass would
+  // re-read every file and refill names and openings, on the stated grounds that `commitBatchOn`
+  // skips lines already covered so nothing could be duplicated. It does not skip them: it
+  // re-reads `lines_indexed`, which this had just set to 0, so every surviving message row was
+  // re-inserted and the pass died on UNIQUE(path, line) -- permanently, since the column now
+  // exists and the migration never runs again to undo it. Rows and watermark are one fact; a
+  // migration that moves one without the other strands the index.
+  //
+  // What is given up: a session indexed before this column and never appended to again keeps a
+  // null name and opening. One that is still being written to picks its name up from the lines
+  // it grows by, the same lazy adoption the anchor uses. The opening ask is *not* filled in that
+  // way -- see `indexOneFile`, which refuses to call a message mid-file the session's first ask.
   if (!columns.includes('opening')) {
     await client.execute('ALTER TABLE transcript_files ADD COLUMN opening TEXT;');
-    // Existing rows are fully indexed, so nothing would ever re-read them to fill these in.
-    // Resetting the watermark makes the next pass refill names and openings. Safe because
-    // `commitBatchOn` skips lines already covered, so no message row is duplicated.
-    await client.execute('UPDATE transcript_files SET bytes_indexed = 0, lines_indexed = 0, size_at_index = 0;');
+  }
+  // Deliberately *not* accompanied by a watermark reset. A null anchor means "unknown", which
+  // the index pass adopts the next time it looks at the file -- so an existing index gains
+  // rewrite detection without re-reading anything.
+  if (!columns.includes('anchor')) {
+    await client.execute('ALTER TABLE transcript_files ADD COLUMN anchor TEXT;');
+  }
+
+  const messageColumns = (await client.execute('PRAGMA table_info(transcript_messages)')).rows
+    .map(row => String(row.name));
+  // Null for rows written before this column existed; the reader falls back to a streaming
+  // scan for those, so an old index keeps working and gets faster as files are touched.
+  if (!messageColumns.includes('byte_offset')) {
+    await client.execute('ALTER TABLE transcript_messages ADD COLUMN byte_offset INTEGER;');
+  }
+
+  // Partial on purpose: it holds only the rows still waiting for an offset, so it empties itself
+  // as the backfill finishes and costs nothing to maintain afterwards -- a new row is written
+  // with its offset and never enters it. Without it, the "is there anything left to fill" probe
+  // scans the whole messages table on every pass, which is every agent turn, for ever.
+  //
+  // Created here rather than with the other schema statements because it is built *on* the
+  // column above, which an index from the first release does not have yet.
+  await client.execute(`CREATE INDEX IF NOT EXISTS idx_transcript_messages_pending_offset
+    ON transcript_messages(path, line) WHERE byte_offset IS NULL;`);
+}
+
+export type TranscriptIndexState = {
+  /** Whether the last pass reached the end of the archive. */
+  complete: boolean;
+  /** Transcripts discovered on disk by that pass. */
+  filesSeen: number;
+  /** Transcripts with a row when it finished. */
+  filesIndexed: number;
+};
+
+/**
+ * What the last index pass reported about itself, or null when nothing has.
+ *
+ * Null is not "complete". An index built by a version that did not record this, or a peer's
+ * older schema, has not proven anything -- and the whole point of the signal is that a caller
+ * told "no matches" must be able to tell absence from ignorance.
+ */
+export async function readTranscriptIndexState(client: Client): Promise<TranscriptIndexState | null> {
+  try {
+    const rows = (await client.execute(
+      'SELECT complete, files_seen, files_indexed FROM transcript_index_state WHERE id = 1',
+    )).rows;
+    if (rows.length === 0) return null;
+    return {
+      complete: Number(rows[0].complete) === 1,
+      filesSeen: Number(rows[0].files_seen),
+      filesIndexed: Number(rows[0].files_indexed),
+    };
+  } catch {
+    return null; // No such table: an index from before this existed.
   }
 }
 

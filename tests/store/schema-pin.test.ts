@@ -21,6 +21,9 @@ import {
  */
 const SCHEMA_PINS: Record<number, string> = {
   1: '9e6779b05c8176eb9023e305699b85f9',
+  // 2 adds `knowledge_commit_items` and its covering index. Additive, so
+  // `KNOWL_SCHEMA_VERSION` deliberately does not move with it.
+  2: '1e9ab9fdb263a49ec80f26eff98fe0c3',
 };
 
 let root: string;

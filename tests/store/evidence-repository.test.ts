@@ -172,4 +172,44 @@ describe('evidence repository', () => {
     ]));
     expect(evidence.filter(item => item.type === 'commit')).toHaveLength(1);
   });
+
+  it('sees evidence when deciding whether a re-decide adds anything', async () => {
+    // `resolveDuplicate` compares evidence and skill steps only when the caller hands it the
+    // stored item's held payload; without one those two fields are simply not compared. Every
+    // other write path passes `heldPayloadFor`. `recordDecisionDirect` did not, so `knowl
+    // decide` and `knowl_decide` answered "already held verbatim, nothing was lost" to a
+    // decision whose only new content was the evidence backing it -- and dropped it.
+    const first = await recordDecisionDirect(projectId, {
+      title: 'Ship the importer behind a flag',
+      content: 'The importer ships dark until the backfill has run once in production.',
+    });
+    expect(first.action).toBe('inserted');
+
+    const again = await recordDecisionDirect(projectId, {
+      title: 'Ship the importer behind a flag',
+      content: 'The importer ships dark until the backfill has run once in production.',
+      evidence: [{
+        type: 'commit', locator: 'deadbeef', observedAt: '2026-08-04T00:00:00.000Z', relationship: 'supports',
+      }],
+    } as any);
+
+    expect(again.action).toBe('inserted');
+    expect(await listEvidenceForItem(again.item.id)).toEqual([
+      expect.objectContaining({ type: 'commit', locator: 'deadbeef', relationship: 'supports' }),
+    ]);
+    expect((await repo.getKnowledgeItem(first.item.id))!.status).toBe('superseded');
+  });
+
+  it('still deduplicates a re-decide that carries no evidence either side', async () => {
+    // The comparison is asymmetric on purpose: comparing evidence must not turn an ordinary
+    // identical re-decide into churn.
+    const first = await recordDecisionDirect(projectId, {
+      title: 'Keep the queue single-writer', content: 'One writer, no locking protocol to get wrong.',
+    });
+    const again = await recordDecisionDirect(projectId, {
+      title: 'Keep the queue single-writer', content: 'One writer, no locking protocol to get wrong.',
+    });
+    expect(again.action).toBe('duplicate');
+    expect(again.item.id).toBe(first.item.id);
+  });
 });

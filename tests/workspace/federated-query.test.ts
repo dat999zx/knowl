@@ -129,6 +129,23 @@ describe('federated read', () => {
     expect(result.items.every(item => item.repo === 'b')).toBe(true);
   });
 
+  it('reports a repo name that matches nothing, instead of quietly not searching it', async () => {
+    // A typo in `repos:` used to filter every real repo out and return an empty list, which
+    // reads as "the workspace does not know this" -- the one conclusion the caller must not
+    // draw from a misspelling. The name is surfaced so the mistake is visible in the answer.
+    const result = await federate('auth', 5, ['bee']);
+
+    expect(result.items).toEqual([]);
+    expect(result.skipped).toEqual([{ repo: 'bee', reason: 'unknown' }]);
+  });
+
+  it('still searches the repos that do resolve when one name is wrong', async () => {
+    const result = await federate('auth', 5, ['b', 'bee']);
+
+    expect(result.items.some(item => item.repo === 'b')).toBe(true);
+    expect(result.skipped).toEqual([{ repo: 'bee', reason: 'unknown' }]);
+  });
+
   it('reports an absent peer instead of swallowing it', async () => {
     // Repoint the peer at a path that was never checked out here.
     const { readManifest } = await import('../../src/workspace/manifest.js');

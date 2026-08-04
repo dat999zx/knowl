@@ -16,8 +16,17 @@ const STANDALONE = path.join(BASE, 'standalone');
 const SCAN_ROOT = path.join(BASE, 'scan');
 const ABSENT = path.join(BASE, 'never-created');
 
+/**
+ * A repository fixture writes `.knowl/config.json`, not a bare `.knowl` directory.
+ *
+ * The directory alone stopped being the marker in the K-51 fix: `~/.knowl` is also called
+ * `.knowl`, so a bare-directory test would admit the user's home directory to a sweep that
+ * snapshots and migrates every repository it finds. What is asserted below is unchanged --
+ * only what it takes to *be* a repository is.
+ */
 async function makeRepo(root: string): Promise<void> {
   await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
+  await fs.writeFile(path.join(root, '.knowl', 'config.json'), JSON.stringify({ version: 1 }), 'utf8');
 }
 
 describe('repo discovery', () => {

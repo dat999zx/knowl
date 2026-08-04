@@ -11,6 +11,7 @@ export type VectorProfile = {
 };
 
 export type PresetId =
+  | 'arctic-embed-m-v2'
   | 'granite-small-en-r2'
   | 'granite-97m-multilingual'
   | 'bge-small-en'
@@ -29,6 +30,31 @@ export type PresetDefinition = VectorProfile & {
  * All four are 384-dimension so switching never changes the stored vector width.
  */
 export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinition> = {
+  /**
+   * The measured pick for this fork, and the one entry here that is not 384-dimension.
+   *
+   * Chosen by enumerating the registry rather than by leaderboard or recall: on a 42-query
+   * set phrased the way someone half-remembers a thing, it scored MRR 0.734 against 0.493
+   * for granite-small-en-r2, the strongest of the 384-dim options. It costs roughly 6x the
+   * parameters and ~9.6s to build the pipeline even with the weights already on disk, which
+   * is first-query latency rather than startup latency -- `serve` never loads a model during
+   * its handshake.
+   *
+   * Listed as a preset rather than left to a bare `model` string on purpose. Pooling is not
+   * discoverable at runtime, and an unmatched model falls back to `mean`; arctic is a CLS
+   * model, and running it mean-pooled produces plausible vectors that rank badly with
+   * nothing to notice. Being in this table is what makes an existing config that names only
+   * the model resolve to the right pooling.
+   */
+  'arctic-embed-m-v2': {
+    provider: 'local',
+    model: 'Snowflake/snowflake-arctic-embed-m-v2.0',
+    dtype: 'q8',
+    pooling: 'cls',
+    label: 'Snowflake Arctic Embed M v2.0 — most accurate, 768-dim',
+    sizeMb: 305,
+    languages: 'English + multilingual',
+  },
   'granite-small-en-r2': {
     provider: 'local',
     model: 'onnx-community/granite-embedding-small-english-r2-ONNX',
@@ -69,6 +95,7 @@ export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinitio
 
 /** Picker order. `custom` last because it asks a follow-up question. */
 export const PRESET_IDS: readonly PresetId[] = [
+  'arctic-embed-m-v2',
   'granite-small-en-r2',
   'granite-97m-multilingual',
   'bge-small-en',
@@ -76,7 +103,7 @@ export const PRESET_IDS: readonly PresetId[] = [
   'custom',
 ];
 
-export const DEFAULT_PRESET_ID: PresetId = 'granite-small-en-r2';
+export const DEFAULT_PRESET_ID: PresetId = 'arctic-embed-m-v2';
 
 function isPresetId(value: unknown): value is Exclude<PresetId, 'custom'> {
   return typeof value === 'string' && value in VECTOR_PRESETS;
@@ -141,12 +168,33 @@ export function resolveVectorProfile(config: ProjectConfig): VectorProfile {
 }
 
 /**
+ * How atom texts are grouped into forward passes, as an input to the vector's identity.
+ *
+ * Not part of `VectorProfile`, because it is not a thing a config states -- it is a property
+ * of the code that produced the row. It is in the fingerprint because the q8 graph quantises
+ * per batch, so the same text embedded alone and embedded beside neighbours yields vectors up
+ * to 4.79e-2 apart in cosine. That is the same *kind* of difference as a dtype switch, and it
+ * has to invalidate rows the same way.
+ *
+ * Without it two individually correct behaviours combine into a wrong one:
+ * `reindexKnowledgeEmbeddings` now embeds one text per pass, and it also skips any item whose
+ * stored row already carries this fingerprint. A row written by a build that batched carries
+ * the same fingerprint and a materially different vector, so the skip would preserve exactly
+ * the write-time/reindex disagreement that `maxBatch: 1` exists to remove -- permanently, and
+ * only on stores that upgraded rather than started fresh.
+ *
+ * Bump this string if the batching policy changes again.
+ */
+const EMBEDDING_BATCH_POLICY = 'single';
+
+/**
  * Written to every embedding row so a stored vector describes the profile that
  * produced it. provider and model alone are not enough: dtype and pooling both
  * change the numbers, so without them a dtype-only switch leaves old rows
  * matching the filter and being scored against incompatible query vectors.
  */
 export function fingerprintProfile(profile: VectorProfile): string {
-  const canonical = `${profile.provider}|${profile.model}|${profile.dtype}|${profile.pooling}`;
+  const canonical =
+    `${profile.provider}|${profile.model}|${profile.dtype}|${profile.pooling}|${EMBEDDING_BATCH_POLICY}`;
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }

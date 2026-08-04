@@ -182,6 +182,15 @@ export type KnowledgeSearchExplanation = {
   vectorRank?: number;
   contributions: Record<string, number>;
   reason: string;
+  /**
+   * The relevance floor found no confident match for this query, and this row is one of the
+   * stores it judged. Present only when true, so an answered query costs nothing.
+   *
+   * A verdict rather than a filter. The floor used to delete the whole ranking here; it was
+   * measured deleting real answers, because a fixed absolute cosine does not transfer between
+   * corpora (docs/evals/floor-sweep.md).
+   */
+  abstained?: boolean;
 };
 
 export type ExplainedKnowledgeItem = KnowledgeItem & { explanation: KnowledgeSearchExplanation };

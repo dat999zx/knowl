@@ -164,6 +164,84 @@ describe('item-scoped tools and foreign items', () => {
     expect(result.content[0].text).toMatch(/belongs to repo "b"/);
   });
 
+  // K-07. Retiring an item is a write to that item, and every write tool accepted a retire
+  // target with no ownership check at all -- while the item being edited was checked on the
+  // line above. Reachable from any repo that holds foreign-owned rows, which is every repo in
+  // a workspace.
+  describe('the retire target is checked too', () => {
+    it('knowl_update refuses a foreign supersedeId', async () => {
+      await initDb(A);
+      const result = await callTool(A, await loadConfig(A), 'knowl_update', {
+        id: localId, content: 'A legitimate local edit.', supersedeId: foreignId,
+      });
+      await closeDb();
+
+      expect(result.content[0].text).toMatch(/belongs to repo "b"/);
+    });
+
+    it('and does not commit the update it refused', async () => {
+      await initDb(A);
+      const before = (await repo.getKnowledgeItem(localId))!.content;
+      await callTool(A, await loadConfig(A), 'knowl_update', {
+        id: localId, content: 'A legitimate local edit.', supersedeId: foreignId,
+      });
+      const after = (await repo.getKnowledgeItem(localId))!.content;
+      await closeDb();
+
+      expect(after).toBe(before);
+    });
+
+    it('knowl_store refuses a foreign supersedes and writes nothing', async () => {
+      await initDb(A);
+      const before = (await repo.listKnowledgeItems()).length;
+      const result = await callTool(A, await loadConfig(A), 'knowl_store', {
+        category: 'fact', title: 'A new local fact', content: 'Written from repo a.', supersedes: foreignId,
+      });
+      const after = (await repo.listKnowledgeItems()).length;
+      await closeDb();
+
+      expect(result.content[0].text).toMatch(/belongs to repo "b"/);
+      expect(after).toBe(before);
+    });
+
+    it('knowl_decide refuses a foreign supersedes', async () => {
+      await initDb(A);
+      const result = await callTool(A, await loadConfig(A), 'knowl_decide', {
+        title: 'A new local decision', content: 'Decided in repo a.', reasoning: 'Because.', supersedes: foreignId,
+      });
+      await closeDb();
+
+      expect(result.content[0].text).toMatch(/belongs to repo "b"/);
+    });
+
+    it('knowl_ingest_atoms refuses the whole batch, before the first atom is written', async () => {
+      await initDb(A);
+      const before = (await repo.listKnowledgeItems()).length;
+      const result = await callTool(A, await loadConfig(A), 'knowl_ingest_atoms', {
+        atoms: [
+          { category: 'fact', title: 'Harmless leading atom', content: 'Written first, and durable if the batch fails partway.' },
+          { category: 'fact', title: 'The atom with the foreign target', content: 'Retires something it does not own.', supersedes: foreignId },
+        ],
+      });
+      const after = (await repo.listKnowledgeItems()).length;
+      await closeDb();
+
+      expect(result.content[0].text).toMatch(/belongs to repo "b"/);
+      expect(after, 'the leading atom was written before the batch was refused').toBe(before);
+    });
+
+    it('leaves a local retire target alone', async () => {
+      await initDb(A);
+      const replacement = await repo.createKnowledgeItem('local', { category: 'fact', title: 'Replacement', content: 'New.' });
+      const result = await callTool(A, await loadConfig(A), 'knowl_update', {
+        id: replacement.id, content: 'Newer.', supersedeId: localId,
+      });
+      await closeDb();
+
+      expect(result.content[0].text).not.toMatch(/belongs to repo/);
+    });
+  });
+
   it('local items are unaffected', async () => {
     await initDb(A);
     const result = await callTool(A, await loadConfig(A), 'knowl_update', { id: localId, content: 'Updated locally, which is allowed.' });

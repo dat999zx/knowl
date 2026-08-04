@@ -7,7 +7,7 @@ import { supersedeKnowledgeItem } from './repository.js';
 
 export type IntegrityFinding = {
   code: 'secret' | 'dangling-reference' | 'missing-index-row' | 'invalid-json' | 'invalid-status'
-    | 'raw-conflict-key' | 'duplicate-conflict-identity';
+    | 'raw-conflict-key' | 'duplicate-conflict-identity' | 'missing-assertion';
   severity: 'error' | 'warning';
   itemId?: string;
   detail: string;
@@ -143,6 +143,28 @@ export async function auditKnowledgeStore(
   `);
   for (const row of missingFts) {
     findings.push({ code: 'missing-index-row', severity: 'warning', itemId: String(row.id), detail: 'Knowledge item is missing its FTS index row.' });
+  }
+
+  // An item with no open assertion is not a cosmetic gap: `updateKnowledgeItemWithCommit`
+  // refuses every content edit on one, so the item is readable and permanently unwritable.
+  // This check exists because a snapshot restore used to produce exactly that state across
+  // the whole store and then pass its own audit -- the audit only looked for dangling
+  // children, and an item whose history was cascaded away has no children to dangle.
+  const withoutAssertion = await db.all(sql`
+    SELECT id FROM knowledge_items
+    WHERE NOT EXISTS (
+      SELECT 1 FROM knowledge_assertions
+      WHERE knowledge_item_id = knowledge_items.id AND valid_to IS NULL
+    )
+    LIMIT 50
+  `);
+  for (const row of withoutAssertion) {
+    findings.push({
+      code: 'missing-assertion',
+      severity: 'error',
+      itemId: String(row.id),
+      detail: 'Knowledge item has no open assertion, so every content update on it will fail.',
+    });
   }
 
   const dangling = await db.all(sql`

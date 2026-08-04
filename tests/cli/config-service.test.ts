@@ -4,7 +4,7 @@ import path from 'node:path';
 import { DEFAULT_CONFIG, NEW_PROJECT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
 import { resolveVectorProfile } from '../../src/core/vector-profile.js';
 import { CONFIG_FIELDS } from '../../src/cli/config/schema.js';
-import { getConfigValue, resetConfigValue, setConfigValue, setConfigValues } from '../../src/cli/config/service.js';
+import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from '../../src/cli/config/service.js';
 import { CONFIG_UI_QUIT, CONFIG_UI_SAVE, ConfigFieldView, ConfigPrompts, modelChoices, presetChoices, runConfigUi } from '../../src/cli/config/ui.js';
 
 const ROOT = path.resolve('.knowl-config-service-test');
@@ -53,9 +53,9 @@ describe('preset defaults', () => {
     expect((DEFAULT_CONFIG.search?.vector as Record<string, unknown>).preset).toBeUndefined();
   });
 
-  it('defaults new projects to the English Granite preset', () => {
+  it('defaults new projects to the measured Arctic preset', () => {
     expect((NEW_PROJECT_CONFIG.search?.vector as Record<string, unknown>).preset)
-      .toBe('granite-small-en-r2');
+      .toBe('arctic-embed-m-v2');
   });
 
   it('does not add a preset to an existing repository on upgrade', async () => {
@@ -117,6 +117,99 @@ describe('config service', () => {
     const raw = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
     expect(raw.ai.apiKey).toBe('${OPENAI_API_KEY}');
     expect(await getConfigValue(ROOT, 'ai.apiKey')).toBe('********');
+  });
+
+  /**
+   * The variable is deliberately *set* here. With it unset, `${OPENAI_API_KEY}` resolves to
+   * `''` and every write looks safe whether or not this path reads the raw file -- so the
+   * check above passes even against the flattening K-10 fixed. A real value in the
+   * environment is what tells the two apart, and it has to stay out of the backup too:
+   * `config.json.backup` sits in the repository next to the file it copies.
+   */
+  it('leaves an env-referenced API key unresolved in both the file and the backup', async () => {
+    const previous = process.env.OPENAI_API_KEY;
+    process.env.OPENAI_API_KEY = 'sk-live-must-never-be-written';
+    try {
+      await writeConfig({
+        ...DEFAULT_CONFIG,
+        ai: { provider: 'openai', model: 'gpt-4o-mini', apiKey: '${OPENAI_API_KEY}' },
+      });
+      await setConfigValue(ROOT, 'search.vector.enabled', 'false');
+      await resetConfigValue(ROOT, 'search.vector.cacheDir');
+
+      const file = await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8');
+      const backup = await fs.readFile(path.join(ROOT, '.knowl', 'config.json.backup'), 'utf8');
+      expect(file).not.toContain('sk-live-must-never-be-written');
+      expect(backup).not.toContain('sk-live-must-never-be-written');
+      expect(JSON.parse(file).ai.apiKey).toBe('${OPENAI_API_KEY}');
+    } finally {
+      if (previous === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = previous;
+    }
+  });
+
+  /**
+   * Resetting a key that has no default deletes it rather than writing one, which is the
+   * only way `ai.apiKey` is ever removed. Nothing else exercised that branch.
+   */
+  it('resets a key with no default by deleting it, leaving its siblings intact', async () => {
+    await writeConfig({
+      ...DEFAULT_CONFIG,
+      ai: { provider: 'openai', model: 'gpt-4o-mini', baseUrl: 'https://example.test', apiKey: 'sk-literal' },
+    });
+
+    await resetConfigValue(ROOT, 'ai.apiKey');
+
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect('apiKey' in saved.ai).toBe(false);
+    expect(saved.ai).toEqual({ provider: 'openai', model: 'gpt-4o-mini', baseUrl: 'https://example.test' });
+    expect(saved.search).toEqual(DEFAULT_CONFIG.search);
+  });
+
+  it('resetting a key whose parent object is absent writes nothing new', async () => {
+    await writeConfig();
+
+    await resetConfigValue(ROOT, 'ai.apiKey');
+
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect(saved).toEqual(DEFAULT_CONFIG);
+    expect('ai' in saved).toBe(false);
+  });
+
+  it('resets everything to the new-project config, after backing up what was there', async () => {
+    await writeConfig({
+      ...DEFAULT_CONFIG,
+      ai: { provider: 'openai', model: 'gpt-4o-mini' },
+      search: { vector: { enabled: false } },
+    });
+
+    await resetAllConfig(ROOT);
+
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect(saved).toEqual(NEW_PROJECT_CONFIG);
+    const backup = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json.backup'), 'utf8'));
+    expect(backup.ai).toEqual({ provider: 'openai', model: 'gpt-4o-mini' });
+  });
+
+  /**
+   * The file on disk is edited as an opaque record, not re-serialised from a parsed
+   * `ProjectConfig`: a config missing required keys is left missing them, and keys this
+   * build has never heard of survive the round trip instead of being dropped.
+   */
+  it('edits a config that is not a complete ProjectConfig without completing or dropping it', async () => {
+    await fs.mkdir(path.join(ROOT, '.knowl'), { recursive: true });
+    await fs.writeFile(path.join(ROOT, '.knowl', 'config.json'), JSON.stringify({
+      search: { vector: { enabled: true } },
+      keyFromANewerBuild: { kept: true },
+    }, null, 2), 'utf8');
+
+    await setConfigValue(ROOT, 'search.vector.enabled', 'false');
+
+    const saved = JSON.parse(await fs.readFile(path.join(ROOT, '.knowl', 'config.json'), 'utf8'));
+    expect(saved).toEqual({
+      search: { vector: { enabled: false } },
+      keyFromANewerBuild: { kept: true },
+    });
   });
 });
 

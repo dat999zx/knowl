@@ -28,7 +28,7 @@
     "access": "public"
   },
   "scripts": {
-    "build": "tsup src/index.ts --format esm --clean --dts",
+    "build": "tsup",
     "bench:embeddings": "npm run build && node scripts/benchmark-embedding-models.mjs",
     "benchmark:build": "tsup benchmarks/accuracy/src/cli.ts --format esm --out-dir benchmarks/accuracy/dist --clean",
     "benchmark:generate": "npm run benchmark:build && node benchmarks/accuracy/dist/cli.js generate",

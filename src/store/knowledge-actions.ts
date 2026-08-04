@@ -1,6 +1,6 @@
 import { ProjectConfig, CommitChange, EvidenceInput, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import * as repo from './repository.js';
-import { crossRepoOverlapForWrite, findLikelyDuplicateKnowledgeItem, resolveDuplicate } from './knowledge-writer.js';
+import { crossRepoOverlapForWrite, findLikelyDuplicateKnowledgeItem, heldPayloadFor, resolveDuplicate } from './knowledge-writer.js';
 import type { CrossRepoOverlap } from '../workspace/cross-repo-overlap.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
@@ -52,8 +52,13 @@ export async function recordDecisionDirect(
   // Reconciled by the same rule as every other write path. This used to retire any
   // fuzzy match unconditionally, which silently clobbered decisions that merely shared
   // vocabulary with the new one.
+  //
+  // The held payload is what lets `resolveDuplicate` compare evidence and skill steps at all:
+  // omit it and those two fields are not compared, so a decision arriving with new evidence
+  // read as "already held verbatim" and was dropped -- with the evidence being the only thing
+  // the write was for. Every other write path already passes it.
   const resolution = existing
-    ? resolveDuplicate({ category: 'decision', ...input }, existing)
+    ? resolveDuplicate({ category: 'decision', ...input }, existing, await heldPayloadFor(input, existing))
     : null;
   if (existing && resolution === 'no-op' && !input.supersedes) {
     return { action: 'duplicate', item: existing };
@@ -183,6 +188,18 @@ export async function updateKnowledgeItemWithCommit(
   if ((updates.status === 'deprecated' || updates.status === 'rejected') && beforeItem.status === 'active') {
     const { flagCorrectionSiblingsBestEffort } = await import('./blast-radius.js');
     await flagCorrectionSiblingsBestEffort(projectId, id, `"${beforeItem.title}" (${updates.status})`);
+  }
+
+  // Re-embed when the embedded text changed. Every insert path already does this; update did
+  // not, and the FTS row is refreshed by trigger, so the two indexes silently disagreed: the
+  // stored vector still described the OLD wording. Semantic score outweighs the lexical term
+  // by more than an order of magnitude, so a corrected item stayed retrievable for the claim
+  // it no longer makes and was effectively invisible for the one it now makes -- until
+  // somebody happened to run `knowl reindex --vectors`. Correcting a fact in place is the
+  // workflow the guidance asks for over storing a duplicate, which is exactly why it has to
+  // leave retrieval consistent.
+  if (updates.title !== undefined || updates.content !== undefined || updates.reasoning !== undefined) {
+    await indexKnowledgeItemsBestEffort(projectId, [updated]);
   }
 
   return updated;

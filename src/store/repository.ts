@@ -22,7 +22,7 @@ import {
 import { DatabaseError, KnowledgeConflictError } from '../core/errors.js';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, hashKnowledgeLifecycle, normalizeAffectedPaths } from './freshness.js';
 import { resolveWriteDefaults } from './write-ownership.js';
-import { KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
+import { assertConfidenceInRange, KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 
 export const LOCAL_PROJECT_ID = 'local';
 
@@ -90,9 +90,10 @@ export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSe
     tier: (row.tier || 'asserted') as KnowledgeTier,
     tierSince: (row.tierSince ?? null) as string | null,
     provenance: (row.provenance ?? null) as KnowledgeProvenance | null,
-    alternatives: row.alternatives as string[] | null,
-    tags: row.tags as string[] | null,
-    affectedPaths: row.affectedPaths as string[] | null,
+    // alternatives, tags, affectedPaths and conflictScope used to be restated as casts here.
+    // The columns carry `$type` now, so `...row` already has them right -- and a fifth JSON
+    // column added later arrives typed instead of silently `unknown`, which is how
+    // conflictScope was missed.
   };
 }
 
@@ -129,6 +130,13 @@ export async function createKnowledgeItem(
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<KnowledgeItem> {
   validateKnowledgeWrite(item, validationOptions);
+  // The last door before the row, so the invariant is stated here rather than at each caller.
+  // `knowledge-writer` checks it earlier as well -- deliberately, so a batch is refused before
+  // a transaction the caller was never told about is opened -- but merge, synthesis,
+  // session-handoff, work-loop and the CLI fixture path all arrive here directly. Import does
+  // not: it writes raw SQL precisely because a dump is foreign data that may predate any guard
+  // this build has, and refusing it would make someone's export unloadable.
+  assertConfidenceInRange(item.confidence, item.title);
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
   const id = generateId();
@@ -294,6 +302,10 @@ export async function updateKnowledgeItem(
   dbConnection?: DbConnection,
   validationOptions?: KnowledgeWriteValidationOptions,
 ): Promise<KnowledgeItem> {
+  // An update does not rewrite `knowledge_items.confidence`, but it does record a fresh
+  // `knowledge_assertions` row carrying `updates.confidence` -- the same column, one table
+  // over, and the one temporal queries read.
+  assertConfidenceInRange(updates.confidence, updates.title ?? id);
   const conn = dbConnection || getDb();
   const now = new Date().toISOString();
 
@@ -312,11 +324,18 @@ export async function updateKnowledgeItem(
     const affectedPaths = updates.affectedPaths !== undefined
       ? normalizeAffectedPaths(updates.affectedPaths)
       : current[0].affectedPaths as string[] | null;
+    // `!== undefined`, not `??`. The nullish form cannot tell "not mentioned" from "cleared":
+    // an update setting `reasoning: null` wrote NULL to the row and then hashed the OLD
+    // reasoning, so `content_hash` fingerprinted a row that no longer existed. Import
+    // classifies an item as `identical` on that hash and skips it outright, and drift compares
+    // against it, so both trust the previous value for as long as nothing else touches the row.
+    // Every field the hash covers is read the same way, including the two the column types
+    // happen to make non-nullable, so the rule does not have to be re-derived per field.
     const merged = {
-      title: updates.title ?? current[0].title,
-      content: updates.content ?? current[0].content,
-      reasoning: updates.reasoning ?? current[0].reasoning,
-      source: updates.source ?? current[0].source,
+      title: updates.title !== undefined ? updates.title : current[0].title,
+      content: updates.content !== undefined ? updates.content : current[0].content,
+      reasoning: updates.reasoning !== undefined ? updates.reasoning : current[0].reasoning,
+      source: updates.source !== undefined ? updates.source : current[0].source,
       affectedPaths,
     };
     // Only what this update actually writes is scanned. The stored fields were validated
@@ -515,6 +534,16 @@ export async function createKnowledgeCommit(
     createdAt: now,
   };
 
+  // Which items this commit touched, written down while it is still known rather than
+  // recovered later by substring match over the JSON that encodes it (K-48). One row per
+  // item, deduplicated: a commit legitimately carries several changes to the same item.
+  const touched = new Map<string, string>();
+  for (const change of changes) {
+    if (typeof change?.itemId === 'string' && !touched.has(change.itemId)) {
+      touched.set(change.itemId, change.action ?? 'unknown');
+    }
+  }
+
   try {
     await conn.insert(schema.knowledgeCommits).values({
       id,
@@ -522,6 +551,11 @@ export async function createKnowledgeCommit(
       changes: newCommit.changes,
       createdAt: now,
     });
+    if (touched.size > 0) {
+      await conn.insert(schema.knowledgeCommitItems).values(
+        [...touched].map(([itemId, action]) => ({ commitId: id, itemId, action })),
+      );
+    }
     return newCommit;
   } catch (error: any) {
     throw new DatabaseError(`Failed to create commit: ${error.message}`);

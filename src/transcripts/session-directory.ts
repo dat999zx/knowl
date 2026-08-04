@@ -1,6 +1,6 @@
 import { getClient } from '../store/database.js';
 import { resolveStorage } from '../store/storage-roles.js';
-import { openTranscriptDb, TranscriptIndexMissingError } from './database.js';
+import { openTranscriptDb, readTranscriptIndexState, TranscriptIndexMissingError } from './database.js';
 import { deriveSessionStatuses, type SessionStatus } from './session-status.js';
 
 export type SessionEntry = {
@@ -170,7 +170,15 @@ export async function listSessionDirectory(input: {
     return { sessions: [], indexComplete: false };
   }
 
-  const indexComplete = rows.every(row => Number(row.complete ?? 0) === 1);
+  // Two questions, and the rows can only answer one of them. "Is every file I know about caught
+  // up" says nothing about a file the pass never reached -- it has no row here at all, so a
+  // listing missing whole sessions passed this test. What the last pass reported about itself is
+  // the other half, and a pass that has never reported (or an index older than the record)
+  // proves nothing either way.
+  const passState = await readTranscriptIndexState(client);
+  const indexComplete = passState !== null
+    && passState.complete
+    && rows.every(row => Number(row.complete ?? 0) === 1);
   const sessionIds = new Set(rows.map(row => String(row.session_id)));
 
   const [statuses, cards, promoted] = await Promise.all([

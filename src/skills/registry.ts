@@ -55,6 +55,7 @@ export interface SkillPackage {
 
 export interface SkillRunAttempt {
   entrypoint: string;
+  command: string;
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -64,6 +65,7 @@ export interface SkillRunResult {
   name: string;
   requestedEntrypoint: string;
   usedEntrypoint: string;
+  command: string;
   exitCode: number;
   stdout: string;
   stderr: string;
@@ -71,6 +73,24 @@ export interface SkillRunResult {
 }
 
 const SAFE_SKILL_NAME = /^[a-z0-9][a-z0-9_-]*$/;
+
+/**
+ * Windows re-parses the command line of a batch file *after* Node has quoted it for MSVCRT,
+ * under rules that do not honour `\"` — so no argv quoting can make `cmd.exe /d /c run.cmd
+ * <args>` safe (BatBadBut / CVE-2024-24576). Node itself has refused to spawn `.bat`/`.cmd`
+ * without an explicit shell since April 2024 for this reason. There is no escape to write
+ * here; the fix is to not run them.
+ */
+const UNRUNNABLE_SCRIPT_EXTENSIONS = new Set(['.cmd', '.bat']);
+
+function assertRunnableScriptPath(scriptPath: string): void {
+  const ext = path.extname(scriptPath).toLowerCase();
+  if (UNRUNNABLE_SCRIPT_EXTENSIONS.has(ext)) {
+    throw new Error(
+      `Skill entrypoint "${scriptPath}" is a ${ext} batch script, which cannot receive arguments safely on Windows (CVE-2024-24576). Use .ps1, .js or .sh instead.`
+    );
+  }
+}
 
 export function getSkillsDir(projectRoot: string): string {
   return path.join(projectRoot, '.knowl', 'skills');
@@ -127,7 +147,7 @@ function normalizeEntrypoints(entrypoints?: Record<string, SkillEntrypoint>): Re
         type: 'script',
         path: normalizeSkillFilePath(entrypoint.path),
         args: entrypoint.args || [],
-        autoRun: entrypoint.autoRun ?? true,
+        autoRun: entrypoint.autoRun ?? false,
       };
     } else if (entrypoint.type === 'shell') {
       if (!entrypoint.command.trim()) {
@@ -136,7 +156,7 @@ function normalizeEntrypoints(entrypoints?: Record<string, SkillEntrypoint>): Re
       normalized[name] = {
         type: 'shell',
         command: entrypoint.command,
-        autoRun: entrypoint.autoRun ?? true,
+        autoRun: entrypoint.autoRun ?? false,
       };
     } else {
       throw new Error(`Invalid skill entrypoint type for "${name}"`);
@@ -165,6 +185,7 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
   }
   for (const entrypoint of Object.values(manifest.entrypoints)) {
     if (entrypoint.type === 'script') {
+      assertRunnableScriptPath(entrypoint.path);
       resolveSkillFile(projectRoot, input.name, entrypoint.path);
     }
   }
@@ -231,15 +252,8 @@ export async function readSkillPackage(projectRoot: string, name: string): Promi
   return { manifest, markdown, path: skillDir };
 }
 
-function quoteShellArg(arg: string): string {
-  return `"${arg.replace(/"/g, '\\"')}"`;
-}
-
-function runShell(projectRoot: string, command: string, args: string[], env: NodeJS.ProcessEnv) {
-  const commandText = args.length > 0
-    ? `${command} ${args.map(quoteShellArg).join(' ')}`
-    : command;
-  return spawnSync(commandText, {
+function runShell(projectRoot: string, command: string, env: NodeJS.ProcessEnv) {
+  return spawnSync(command, {
     cwd: projectRoot,
     env,
     shell: true,
@@ -248,13 +262,8 @@ function runShell(projectRoot: string, command: string, args: string[], env: Nod
 }
 
 function scriptCommand(scriptPath: string, args: string[]): { command: string; args: string[] } {
+  assertRunnableScriptPath(scriptPath);
   const ext = path.extname(scriptPath).toLowerCase();
-  if (process.platform === 'win32' && (ext === '.cmd' || ext === '.bat')) {
-    return {
-      command: process.env.ComSpec || 'cmd.exe',
-      args: ['/d', '/c', scriptPath, ...args],
-    };
-  }
   if (ext === '.ps1') {
     return {
       command: process.platform === 'win32' ? 'powershell.exe' : 'pwsh',
@@ -272,16 +281,18 @@ function scriptCommand(scriptPath: string, args: string[]): { command: string; a
 
 function runScript(projectRoot: string, scriptPath: string, args: string[], env: NodeJS.ProcessEnv) {
   const command = scriptCommand(scriptPath, args);
-  return spawnSync(command.command, command.args, {
+  const child = spawnSync(command.command, command.args, {
     cwd: projectRoot,
     env,
     encoding: 'utf-8',
   });
+  return { child, commandText: [command.command, ...command.args].join(' ') };
 }
 
-function childToAttempt(entrypoint: string, child: ReturnType<typeof spawnSync>): SkillRunAttempt {
+function childToAttempt(entrypoint: string, commandText: string, child: ReturnType<typeof spawnSync>): SkillRunAttempt {
   return {
     entrypoint,
+    command: commandText,
     exitCode: child.status ?? 1,
     stdout: child.stdout?.toString() || '',
     stderr: `${child.stderr?.toString() || ''}${child.error ? child.error.message : ''}`,
@@ -302,8 +313,16 @@ export async function runSkillPackage(
     if (!entrypoint) {
       throw new Error(`Skill "${name}" does not define entrypoint "${nameToRun}"`);
     }
-    if (entrypoint.autoRun === false) {
+    if (entrypoint.autoRun !== true) {
       throw new Error(`Skill "${name}" entrypoint "${nameToRun}" does not allow auto-run`);
+    }
+    // A shell entrypoint is a command *string*, so arguments could only be appended by
+    // quoting them into it — and no quoting is correct for both cmd.exe and POSIX shells.
+    // Refuse instead of appending something that looks escaped and is not.
+    if (entrypoint.type === 'shell' && args.length > 0) {
+      throw new Error(
+        `Skill "${name}" entrypoint "${nameToRun}" is a shell command and cannot take arguments safely. Pass values through the KNOWL_* environment, or use a script entrypoint.`
+      );
     }
 
     const env = {
@@ -312,15 +331,15 @@ export async function runSkillPackage(
       KNOWL_SKILL_NAME: skill.manifest.name,
       KNOWL_SKILL_DIR: skill.path,
     };
-    const child = entrypoint.type === 'shell'
-      ? runShell(projectRoot, entrypoint.command, args, env)
+    const { child, commandText } = entrypoint.type === 'shell'
+      ? { child: runShell(projectRoot, entrypoint.command, env), commandText: entrypoint.command }
       : runScript(
           projectRoot,
           resolveSkillFile(projectRoot, skill.manifest.name, entrypoint.path),
           [...(entrypoint.args || []), ...args],
           env
         );
-    const attempt = childToAttempt(nameToRun, child);
+    const attempt = childToAttempt(nameToRun, commandText, child);
     attempts.push(attempt);
     return attempt;
   }
@@ -334,6 +353,7 @@ export async function runSkillPackage(
     name: skill.manifest.name,
     requestedEntrypoint: entrypointName,
     usedEntrypoint: attempt.entrypoint,
+    command: attempt.command,
     exitCode: attempt.exitCode,
     stdout: attempt.stdout,
     stderr: attempt.stderr,

@@ -95,6 +95,31 @@ describe('knowl query', () => {
     }
   });
 
+  // `knowl query` printed a bare ordering, so a human could not tell a confident answer from
+  // the least-bad row in the store -- the same gap knowl_query had before K-35. It reaches the
+  // CLI through the same explanation, and the bulky contribution terms stay off the page.
+  it('prints the ranker score and never the whole explanation', async () => {
+    await seedStaleThenFresh(SOLO);
+    await initDb(SOLO);
+    try {
+      const result = await runCliQuery({ projectRoot: SOLO, projectId: 'local', query: 'rollout order region' });
+      expect(result.items.length).toBeGreaterThan(0);
+      for (const item of result.items) {
+        expect(typeof item.score).toBe('number');
+        expect(item.score).toBeGreaterThanOrEqual(0);
+        expect(item.score).toBeLessThanOrEqual(1);
+        // Three decimals, matching the MCP surface rather than inventing a second convention.
+        expect(String(item.score)).toMatch(/^\d+(\.\d{1,3})?$/);
+        expect(item).not.toHaveProperty('explanation');
+      }
+      // Ordered by the number that is printed, so the page explains its own order.
+      expect([...result.items].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)).map(item => item.title))
+        .toEqual(result.items.map(item => item.title));
+    } finally {
+      await closeDb();
+    }
+  });
+
   it('ranks the same whether or not the repo is linked to a workspace', async () => {
     // The inconsistency this fixes: the workspace branch went through the shared ranker while
     // the solo branch did not, so the same command answered differently depending on whether

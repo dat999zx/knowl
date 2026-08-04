@@ -1,6 +1,7 @@
 import { isKnowledgeCategory, KNOWLEDGE_CATEGORIES, type KnowledgeCategory } from '../core/types.js';
 import { closeDb, getClient, initDb } from '../store/database.js';
 import { hashKnowledgeLifecycle } from '../store/freshness.js';
+import { isImportedOrigin } from '../store/portability.js';
 import { createKnowledgeCommit } from '../store/repository.js';
 
 export type PromoteTarget = { id: string; title: string; category: string };
@@ -54,8 +55,13 @@ export async function promoteItems(input: {
 
     // Counted separately so the caller can say "1 item belongs to web" rather than silently
     // returning fewer rows than the user asked for. An unowned item is not foreign: NULL
-    // means nobody has claimed it, and claiming it here would be wrong only if some other
-    // repo could have written it, which it cannot -- this database is this repo's.
+    // means nobody has claimed it, and nothing else can have written it.
+    //
+    // That last clause used to be justified by "this database is this repo's", which was not
+    // true -- import wrote into it, from files that named no author, and NULL was what those
+    // rows got. It is true now because it is enforced upstream: every imported row is stamped
+    // with its origin, or with `import:unknown` when the file cannot say. NULL means this
+    // repo wrote it, and an `import:` owner is counted foreign here like any other.
     const foreign = await client.execute({
       sql: `SELECT COUNT(*) AS n FROM knowledge_items
             WHERE ${selector.clause} AND status = 'active'
@@ -74,7 +80,7 @@ export async function promoteItems(input: {
     // from the results has its own explanation.
     if (byId) {
       const known = await client.execute({
-        sql: `SELECT id FROM knowledge_items WHERE id IN (${byId.map(() => '?').join(', ')})`,
+        sql: `SELECT id, origin_repo FROM knowledge_items WHERE id IN (${byId.map(() => '?').join(', ')})`,
         args: [...byId],
       });
       const present = new Set(known.rows.map(row => String(row.id)));
@@ -85,12 +91,36 @@ export async function promoteItems(input: {
           'Ids must be given in full -- a truncated id from a listing matches nothing.',
         );
       }
+
+      // Imported rows are excluded by the selector below, so without this the command
+      // returns an empty result for an id the caller typed in full and watched resolve --
+      // the same "matched nothing means two different things" failure the category check
+      // above exists to prevent. Unlike a peer repo's item there is no repo to go and run
+      // this from, so the refusal has to say what would actually help.
+      const imported = known.rows.filter(row => isImportedOrigin(row.origin_repo === null ? null : String(row.origin_repo)));
+      if (imported.length > 0) {
+        throw new Error(
+          `Item ${imported.map(row => `"${row.id}"`).join(', ')} arrived here by import, from ` +
+          `${imported.map(row => String(row.origin_repo).replace(/^import:/, '')).join(', ')}. ` +
+          'Publishing it would share another store\'s knowledge under this repo\'s name, and there ' +
+          'is no demote. Promote it from the repo that wrote it. If that repo is this one on another ' +
+          'machine, link both to this workspace and re-export: an export names its own workspace ' +
+          'since format version 3, and one that does is imported with its ownership intact.',
+        );
+      }
     }
 
     // Ownership is stamped at write time now, so a NULL owner means the row predates that
-    // and predates the join backfill. Claiming it here is still right for the same reason
-    // the backfill claims: this database is this repo's, so nothing else could have written
-    // it. Applying the promotion below stamps it for good.
+    // and predates the join backfill. Claiming it here is right because NULL is now a
+    // statement rather than an absence: writes stamp the owner, and imports stamp an
+    // `import:` origin, so the only rows left holding NULL are ones this repo wrote before
+    // either rule existed. Applying the promotion below stamps it for good.
+    //
+    // The exception this cannot see: a row imported by a build older than format version 3
+    // was written NULL and nothing recorded that it arrived by import -- import writes no
+    // commit trail -- so in a database that predates this fix it is indistinguishable from
+    // a row written here. Nothing downstream can recover that; only an export that named
+    // its author could have.
     const rows = await client.execute({
       sql: `SELECT id, title, category, status, freshness, superseded_by_id FROM knowledge_items
             WHERE ${selector.clause} AND status = 'active'
