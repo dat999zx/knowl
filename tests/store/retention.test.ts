@@ -355,6 +355,20 @@ async function writeModel(cacheDir: string, model: string, weightBytes = 64): Pr
   await fs.writeFile(path.join(dir, 'onnx', 'model_quantized.onnx'), Buffer.alloc(weightBytes, 7));
 }
 
+async function listAllFiles(dir: string): Promise<string[]> {
+  const out: string[] = [];
+  const walk = async (current: string) => {
+    let entries;
+    try { entries = await fs.readdir(current, { withFileTypes: true }); } catch { return; }
+    for (const entry of entries) {
+      const next = path.join(current, entry.name);
+      if (entry.isDirectory()) await walk(next); else out.push(next);
+    }
+  };
+  await walk(dir);
+  return out;
+}
+
 const weightsPath = (cacheDir: string, model: string) =>
   path.join(cacheDir, ...model.split('/'), 'onnx', 'model_quantized.onnx');
 
@@ -538,6 +552,110 @@ describe('K-42: the model cache', () => {
       expect(report.pruned).toEqual([]);
     });
 
+
+    it('never leaves a model that exists but has lost its weights', async () => {
+      // `fs.rm(recursive)` is not atomic, and on Windows it does not even stop when it
+      // fails: measured, it rejects with EBUSY on a locked file while sibling deletions
+      // carry on in the background for hundreds of milliseconds afterwards. A prune that
+      // dies partway through a model directory therefore leaves the directory present and
+      // the weights gone -- and `resolveModelCache` decides a model is cached by asking
+      // whether that directory EXISTS. The model would read as present and fail to load.
+      //
+      // So the directory leaves the cache's namespace in one atomic rename, and only the
+      // renamed copy is deleted. Whether that delete succeeds decides how much disk is
+      // reclaimed, never whether the cache is coherent.
+      await writeModel(SHARED, MINILM);
+      await ageModel(SHARED, MINILM, MODEL_CACHE_HORIZON_DAYS + 1);
+
+      const report = await pruneModelCache(SHARED, [ARCTIC], Date.now(), MODEL_CACHE_HORIZON_DAYS, {
+        removeTree: async () => { throw new Error('EBUSY'); },
+      });
+
+      // Gone from where a resolver looks, even though the delete failed.
+      expect(fsSync.existsSync(path.join(SHARED, ...MINILM.split('/')))).toBe(false);
+      expect(report.pruned).toEqual([path.join(SHARED, ...MINILM.split('/'))]);
+    });
+
+    it('collects the leftovers of a prune that could not finish', async () => {
+      await writeModel(SHARED, MINILM);
+      await ageModel(SHARED, MINILM, MODEL_CACHE_HORIZON_DAYS + 1);
+      await pruneModelCache(SHARED, [ARCTIC], Date.now(), MODEL_CACHE_HORIZON_DAYS, {
+        removeTree: async () => { throw new Error('EBUSY'); },
+      });
+      const stranded = await listAllFiles(SHARED);
+      expect(stranded.length).toBeGreaterThan(0);
+
+      await pruneModelCache(SHARED, [ARCTIC]);
+
+      expect(await listAllFiles(SHARED)).toEqual([]);
+    });
+
+    it('stays inside the cache it was given, even through a link out of it', async () => {
+      // The one way a directory walk reaches somewhere it was never pointed at. Nothing
+      // above the cache root is ever a candidate, and a link is removed as a link.
+      const outside = path.join(MODELS_ROOT, 'not-the-cache');
+      await fs.mkdir(outside, { recursive: true });
+      await fs.writeFile(path.join(outside, 'precious.bin'), Buffer.alloc(16));
+      await fs.mkdir(path.join(SHARED, 'Xenova'), { recursive: true });
+      let linked = true;
+      try {
+        await fs.symlink(outside, path.join(SHARED, 'Xenova', 'escape'), 'junction');
+      } catch {
+        linked = false; // unprivileged Windows without developer mode
+      }
+      await writeModel(SHARED, ARCTIC);
+
+      await pruneModelCache(SHARED, [ARCTIC], Date.now() + 400 * 86_400_000);
+
+      expect(fsSync.existsSync(path.join(outside, 'precious.bin'))).toBe(true);
+      expect(linked).toBe(true);
+    });
+
+    it('reads no ambient state, so two caches pruned at once cannot reach each other', async () => {
+      // `pruneModelCache` takes its cache and its keep set as arguments and consults no
+      // environment: KNOWL_HOME moving under it -- which is exactly what a suite does
+      // between tests -- can never redirect a prune that is already running.
+      const other = path.join(MODELS_ROOT, 'other-home', 'models');
+      await fs.mkdir(other, { recursive: true });
+      await writeModel(SHARED, ARCTIC);
+      await writeModel(SHARED, MINILM);
+      await writeModel(other, ARCTIC);
+      await writeModel(other, MINILM);
+      for (const cache of [SHARED, other]) {
+        await ageModel(cache, ARCTIC, MODEL_CACHE_HORIZON_DAYS + 1);
+        await ageModel(cache, MINILM, MODEL_CACHE_HORIZON_DAYS + 1);
+      }
+
+      process.env.KNOWL_HOME = path.join(MODELS_ROOT, 'a-third-home-entirely');
+      const [mine, theirs] = await Promise.all([
+        pruneModelCache(SHARED, [ARCTIC]),
+        pruneModelCache(other, [MINILM]),
+      ]);
+      delete process.env.KNOWL_HOME;
+
+      // Each honoured its own keep set, and neither touched the other's cache.
+      expect(hasModel(SHARED, ARCTIC)).toBe(true);
+      expect(hasModel(SHARED, MINILM)).toBe(false);
+      expect(hasModel(other, MINILM)).toBe(true);
+      expect(hasModel(other, ARCTIC)).toBe(false);
+      expect(mine.pruned).toEqual([path.join(SHARED, ...MINILM.split('/'))]);
+      expect(theirs.pruned).toEqual([path.join(other, ...ARCTIC.split('/'))]);
+    });
+
+    it('leaves a model another process is still downloading', async () => {
+      // Two upgrades can overlap, and the shared cache is written by every repo's processes.
+      // A model directory that exists but holds only an in-flight file is the shape of a
+      // download in progress -- and its file is by definition new, so the horizon covers it.
+      const onnx = path.join(SHARED, ...MINILM.split('/'), 'onnx');
+      await fs.mkdir(onnx, { recursive: true });
+      await fs.writeFile(path.join(onnx, 'model_quantized.onnx.tmp.4242.a1b2'), Buffer.alloc(32));
+
+      const report = await pruneModelCache(SHARED, [ARCTIC]);
+
+      expect(fsSync.existsSync(onnx)).toBe(true);
+      expect(report.pruned).toEqual([]);
+    });
+
     it('touches nothing it did not put there', async () => {
       await writeModel(SHARED, ARCTIC);
       const stranger = path.join(SHARED, 'notes.txt');
@@ -557,13 +675,26 @@ describe('K-42: the model cache', () => {
   describe('through `knowl upgrade`', () => {
     // The command that already visits every repository on the machine is the one that pays
     // for the migration, exactly as it does for snapshots and commit payloads.
-    const UPGRADE_ROOT = path.resolve('.knowl-models-upgrade-test');
-    const UPGRADE_HOME = path.join(UPGRADE_ROOT, 'home');
-    const UPGRADE_REPO = path.join(UPGRADE_ROOT, 'repo');
+    //
+    // A fresh root per test, rather than one root deleted and rebuilt between them.
+    // `fs.rm(recursive)` over a tree holding an open libSQL database rejects with EBUSY --
+    // and does not stop. Measured on this machine: 200 files elsewhere in the tree are still
+    // present at the moment of rejection and all gone 400 ms later, deleted in the
+    // background after the caller has moved on. The rejection was swallowed by a `.catch`,
+    // the next test began writing its fixture, and that still-running delete removed the
+    // directory between its `mkdir` and its last `writeFile`. Which is a race no amount of
+    // retrying at the call site closes: a unique root removes it by construction, and global
+    // teardown collects what is left, which is precisely what it is for.
+    let fixtureSequence = 0;
+    let UPGRADE_ROOT = '';
+    let UPGRADE_HOME = '';
+    let UPGRADE_REPO = '';
 
     beforeEach(async () => {
       await closeDb();
-      await fs.rm(UPGRADE_ROOT, { recursive: true, force: true }).catch(() => {});
+      UPGRADE_ROOT = path.resolve(`.knowl-models-upgrade-test-${++fixtureSequence}`);
+      UPGRADE_HOME = path.join(UPGRADE_ROOT, 'home');
+      UPGRADE_REPO = path.join(UPGRADE_ROOT, 'repo');
       await fs.mkdir(path.join(UPGRADE_REPO, '.knowl'), { recursive: true });
       await saveConfig(UPGRADE_REPO, {
         ...DEFAULT_CONFIG,

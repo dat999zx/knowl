@@ -112,6 +112,25 @@ const PARTIAL_SUFFIX = '.knowl-partial';
  */
 const PARTIAL_MAX_AGE_MS = 60 * 60 * 1000;
 
+/**
+ * Suffix for a model that has left the cache and is being deleted.
+ *
+ * `fs.rm(recursive)` is not atomic, and on Windows it does not even stop when it fails.
+ * Measured: given a tree holding a libSQL database another process has open, `fs.rm` rejects
+ * with EBUSY while 200 files elsewhere in the tree are still untouched -- and all 200 are
+ * gone 400 ms later, deleted in the background, after the caller has already moved on.
+ *
+ * That makes a half-deleted model directory a real state, and a dangerous one here:
+ * `resolveModelCache` decides a model is cached by asking whether its directory EXISTS, so a
+ * model that lost its weights mid-prune reads as present and then fails to load.
+ *
+ * So the directory leaves the cache's namespace in one `rename`, which IS atomic, and only
+ * the renamed copy is deleted. Whether that delete finishes decides how much disk comes
+ * back; it can no longer decide whether the cache is coherent. A leftover is collected by
+ * the next prune.
+ */
+const PRUNING_SUFFIX = '.knowl-pruning';
+
 // --- files -------------------------------------------------------------------------------
 
 /**
@@ -398,6 +417,11 @@ export async function adoptLegacyModelCache(
 
 export type ModelPrune = { pruned: string[]; bytesFreed: number };
 
+export type ModelPruneOptions = {
+  /** Seam for testing the half-deleted-model path, which is the one that must not exist. */
+  removeTree?: (target: string) => Promise<void>;
+};
+
 /**
  * Remove cached models that no repository on this machine names.
  *
@@ -422,7 +446,11 @@ export async function pruneModelCache(
   keepModels: string[],
   now = Date.now(),
   horizonDays = MODEL_CACHE_HORIZON_DAYS,
+  options: ModelPruneOptions = {},
 ): Promise<ModelPrune> {
+  const removeTree = options.removeTree ?? (async (target: string) => {
+    await fs.rm(target, { recursive: true, force: true });
+  });
   const report: ModelPrune = { pruned: [], bytesFreed: 0 };
   if (keepModels.length === 0) return report;
 
@@ -450,6 +478,14 @@ export async function pruneModelCache(
 
     for (const model of models) {
       if (!model.isDirectory()) continue;
+
+      // A model an earlier prune took out of the namespace but could not finish deleting.
+      // Not a model, not a candidate, just disk to give back.
+      if (model.name.endsWith(PRUNING_SUFFIX)) {
+        await removeTree(path.join(cacheDir, org.name, model.name)).catch(() => {});
+        continue;
+      }
+
       const relative = path.join(org.name, model.name);
       if (keep.has(relative)) continue;
 
@@ -470,12 +506,24 @@ export async function pruneModelCache(
       }
       if (newest === 0 || newest > cutoff) continue;
 
+      // Out of the namespace first, in one atomic step, so no reader can ever see a model
+      // directory that exists without its weights.
+      const condemned = `${dir}.${process.pid}${PRUNING_SUFFIX}`;
       try {
-        await fs.rm(dir, { recursive: true, force: true });
-        report.pruned.push(dir);
+        await fs.rename(dir, condemned);
+      } catch {
+        // Could not take it out of the way -- something holds it. Leave it whole.
+        continue;
+      }
+      report.pruned.push(dir);
+
+      try {
+        await removeTree(condemned);
+        // Counted where the space actually comes back. A rename that outlives its delete has
+        // pruned the model from the cache but not yet returned the disk.
         report.bytesFreed += bytes;
       } catch {
-        // Locked or in use by something that does hold it. Next upgrade.
+        // Left for the next prune to collect, under a name that is not a model.
       }
     }
 
