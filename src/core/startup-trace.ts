@@ -59,6 +59,43 @@ export function startupLogPath(): string {
 }
 
 /**
+ * The ceiling this log is allowed to reach on disk.
+ *
+ * There is one record per boot, one boot per connected session, on every machine, forever --
+ * so without a cap this only grows, and `knowl diagnose-startup` reads it back in full. At
+ * roughly 400 bytes a record, 4 MB is on the order of ten thousand boots, far more history
+ * than any startup question needs. A diagnostic that becomes a disk-space problem gets
+ * deleted, and a deleted diagnostic diagnoses nothing.
+ */
+export const MAX_STARTUP_LOG_BYTES = 4 * 1024 * 1024;
+
+/** Keep this much after a trim, so trimming is occasional rather than once per append. */
+const TRIM_TARGET_BYTES = Math.floor(MAX_STARTUP_LOG_BYTES / 2);
+
+/**
+ * Drop the oldest records once the log outgrows its ceiling.
+ *
+ * Rewrites in place rather than rotating to a `.1` file: two files double the ceiling and
+ * give `diagnose-startup` a second place to look, for history nobody asks for. The cut lands
+ * on a newline, because half a JSON record is a line no reader can parse.
+ */
+export function trimStartupLog(file: string): void {
+  try {
+    if (!fs.existsSync(file)) return;
+    if (fs.statSync(file).size <= MAX_STARTUP_LOG_BYTES) return;
+
+    const contents = fs.readFileSync(file, 'utf8');
+    const cut = contents.length - TRIM_TARGET_BYTES;
+    const boundary = contents.indexOf('\n', Math.max(0, cut));
+    // No newline after the cut means one enormous trailing record; keeping it whole is
+    // better than writing a fragment, and the next append will try again.
+    fs.writeFileSync(file, boundary === -1 ? contents : contents.slice(boundary + 1));
+  } catch {
+    // Same rule as append: a diagnostic must never be the reason a server fails to start.
+  }
+}
+
+/**
  * Append one record. Synchronous on purpose: this is called from watchdogs and exit handlers,
  * where an async write may never flush before the process dies -- which is precisely the
  * record worth keeping.
@@ -66,7 +103,9 @@ export function startupLogPath(): string {
 function append(record: Record<string, unknown>): void {
   try {
     fs.mkdirSync(diagnosticsDir(), { recursive: true });
-    fs.appendFileSync(startupLogPath(), JSON.stringify(record) + '\n');
+    const file = startupLogPath();
+    fs.appendFileSync(file, JSON.stringify(record) + '\n');
+    trimStartupLog(file);
   } catch {
     // A diagnostic must never be the reason a server fails to start.
   }
@@ -147,26 +186,93 @@ export function beginStartupTrace(context: { projectRoot?: string | null; versio
     timers.push(timer);
   }
 
+  installProcessHooks(process as unknown as ProcessHooks, append);
+}
+
+/** The slice of `process` these hooks touch, so a test can hand over a fake instead. */
+export interface ProcessHooks {
+  pid: number;
+  once(event: string, listener: (...args: any[]) => void): unknown;
+  removeListener(event: string, listener: (...args: any[]) => void): unknown;
+  exit(code?: number): never;
+  kill(pid: number, signal?: string): boolean;
+}
+
+/** Conventional shell encoding of "died on signal N", so an exit code still says which. */
+const SIGNAL_EXIT_CODES: Record<string, number> = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
+
+/**
+ * Record how the process died, and then let it die exactly as it would have.
+ *
+ * The hard rule here is that observing must not change the thing observed. Two ways this got
+ * that wrong are worth naming, because both look harmless:
+ *
+ * - **Listening for `unhandledRejection` suppresses Node's default**, which since v15 is to
+ *   crash. Recording and returning silently converts a fatal bug anywhere in the process into
+ *   a logged one, so the trace would quietly keep alive a server it was only meant to watch.
+ *   It is re-thrown after recording.
+ * - **`process.exit(0)` on a signal reports success for a kill.** Distinguishing a host kill
+ *   from a clean exit is this module's entire purpose, and an exit code of 0 tells the host,
+ *   a supervisor and CI the opposite of what happened. The listener removes itself and
+ *   re-raises the signal, so the parent sees a real signal death; if the platform will not
+ *   re-raise, it falls back to the conventional 128+n code.
+ */
+export function installProcessHooks(
+  target: ProcessHooks,
+  record: (entry: Record<string, unknown>) => void,
+): void {
   // How the process actually died. "Killed by the host at the deadline" and "crashed during
   // bootstrap" look identical from the outside, and they need opposite fixes.
-  process.once('uncaughtException', (error) => {
-    append({ event: 'crash', at: new Date().toISOString(), kind: 'uncaughtException', message: String(error?.message ?? error), ...snapshot() });
+  target.once('uncaughtException', (error: any) => {
+    record({ event: 'crash', at: new Date().toISOString(), kind: 'uncaughtException', message: String(error?.message ?? error), ...snapshot() });
     throw error;
   });
-  process.once('unhandledRejection', (reason) => {
-    append({ event: 'crash', at: new Date().toISOString(), kind: 'unhandledRejection', message: String(reason), ...snapshot() });
+
+  target.once('unhandledRejection', (reason: unknown) => {
+    record({ event: 'crash', at: new Date().toISOString(), kind: 'unhandledRejection', message: String(reason), ...snapshot() });
+    throw reason;
   });
+
   for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
-    process.once(signal, () => {
-      append({ event: 'signal', at: new Date().toISOString(), signal, ...snapshot() });
-      process.exit(0);
-    });
+    const onSignal = () => {
+      record({ event: 'signal', at: new Date().toISOString(), signal, ...snapshot() });
+      // Removed first, or re-raising re-enters this listener instead of reaching the default.
+      target.removeListener(signal, onSignal);
+      try {
+        target.kill(target.pid, signal);
+      } catch {
+        target.exit(SIGNAL_EXIT_CODES[signal] ?? 1);
+      }
+    };
+    target.once(signal, onSignal);
   }
-  process.once('exit', (code) => {
+
+  target.once('exit', (code: number) => {
     if (!finished) {
-      append({ event: 'exit-before-ready', at: new Date().toISOString(), code, ...snapshot() });
+      record({ event: 'exit-before-ready', at: new Date().toISOString(), code, ...snapshot() });
     }
   });
+}
+
+/**
+ * The `[knowl serve]` line, before and after the root is known.
+ *
+ * Two lines rather than one because the database open moved off the handshake: the first
+ * prints immediately and proves the process is alive and talking, and the root it cannot
+ * know yet arrives on the second. Losing the root entirely was not an option -- it is how
+ * you tell which repository a serve process in a host log belongs to, and a log full of
+ * anonymous processes is worse than the stall this was meant to diagnose.
+ */
+export function serveBanner(state: { pid: number; projectRoot: string | null; readyMs?: number }): string {
+  return [
+    '[knowl serve]',
+    `pid=${state.pid}`,
+    state.projectRoot ? `projectRoot=${state.projectRoot}` : 'projectRoot=pending',
+    state.readyMs === undefined ? null : `ready=${state.readyMs}ms`,
+    state.projectRoot
+      ? null
+      : 'note=host-owned stdio process; one serve process per connected host session; hooks use agent-hook and do not spawn serve',
+  ].filter(Boolean).join(' ');
 }
 
 /** Time one named startup phase, and make it the phase a watchdog would report. */

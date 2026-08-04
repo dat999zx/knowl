@@ -11,7 +11,7 @@ import {
   KNOWL_MCP_TOOL_NAMES,
   mcpServerInstructions,
 } from '../core/knowl-guidance.js';
-import { beginStartupTrace, finishStartupTrace, tracePhase } from '../core/startup-trace.js';
+import { beginStartupTrace, finishStartupTrace, serveBanner, tracePhase } from '../core/startup-trace.js';
 
 export { KNOWL_MCP_TOOL_NAMES };
 
@@ -136,21 +136,20 @@ export async function startMcpServer(): Promise<void> {
   });
 
   const transport = new StdioServerTransport();
+  const connectedAt = Date.now();
   await tracePhase('connect', () => server.connect(transport));
 
   // Printed after the handshake rather than after initialization: this line is the host log's
   // proof that the process is alive and talking, and it used to be withheld until the slowest
   // part of startup had finished -- which is why a stalled boot left no evidence but a banner.
-  process.stderr.write(
-    [
-      '[knowl serve]',
-      `pid=${process.pid}`,
-      'projectRoot=pending',
-      'note=host-owned stdio process; one serve process per connected host session; hooks use agent-hook and do not spawn serve',
-    ].join(' ') + '\n'
-  );
+  process.stderr.write(serveBanner({ pid: process.pid, projectRoot: null }) + '\n');
 
   void ready.then(() => {
+    // The root the first line could not know yet. Without it every serve process in a host
+    // log is anonymous, and "which repository is this one?" is the first question asked of it.
+    process.stderr.write(
+      serveBanner({ pid: process.pid, projectRoot, readyMs: Date.now() - connectedAt }) + '\n',
+    );
     finishStartupTrace({
       ok: !initError,
       initError,
