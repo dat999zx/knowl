@@ -4,6 +4,7 @@ import { ProjectConfig } from '../core/types.js';
 import { KnowledgeEmbedder } from '../store/vector-index.js';
 import { fingerprintProfile, resolveVectorProfile, type VectorPooling } from '../core/vector-profile.js';
 import { noteModelLoad } from '../core/startup-trace.js';
+import { knowlHome } from '../workspace/paths.js';
 
 type TransformersPipeline = (texts: string[], options: { pooling: VectorPooling; normalize: boolean }) => Promise<{
   data: Float32Array | number[];
@@ -222,6 +223,49 @@ export function isVectorSearchEnabled(config: ProjectConfig): boolean {
   return config.search?.vector?.enabled === true;
 }
 
+/**
+ * Where this model's weights are, and where a download would put them.
+ *
+ * K-42: `.knowl/models` is a PER-REPO cache of model weights that are identical everywhere.
+ * Measured across this machine: 2,495 MB in one repo, and two other repos holding
+ * byte-identical 336 MB copies of the same eight files. Weights are not project state --
+ * nothing about them varies by repository -- so they belong beside the other machine-local
+ * Knowl state under `knowlHome()`, the way workspaces and the repo registry already do.
+ *
+ * Resolved rather than switched, deliberately. Pointing the constant at the shared location
+ * would orphan every existing tree -- 2.5 GB in one repo -- and make the next query
+ * re-download a model that is already on disk two directories away. Preferring whichever
+ * copy EXISTS costs one `access` per provider build, adopts the shared cache for anything
+ * fetched from now on, and leaves an existing repo cache working exactly as it did until
+ * somebody deletes it, at which point it is refetched once into the shared location.
+ *
+ * An explicit `search.vector.cacheDir` still outranks both: a repo that has deliberately
+ * placed its weights somewhere is not second-guessed.
+ */
+export async function resolveModelCache(
+  config: ProjectConfig,
+  projectRoot: string,
+): Promise<{ dir: string; present: boolean }> {
+  const vector = resolveVectorProfile(config);
+  const configured = (config.search?.vector as Record<string, unknown> | undefined)?.cacheDir;
+  const holdsModel = async (dir: string) =>
+    fsPromises.access(path.join(dir, ...vector.model.split('/'))).then(() => true, () => false);
+
+  if (typeof configured === 'string' && configured) {
+    return { dir: configured, present: await holdsModel(configured) };
+  }
+
+  const shared = path.join(knowlHome(), 'models');
+  if (await holdsModel(shared)) return { dir: shared, present: true };
+
+  const legacy = path.join(projectRoot, '.knowl', 'models');
+  if (await holdsModel(legacy)) return { dir: legacy, present: true };
+
+  // Nowhere yet, so a fetch should land in the shared cache rather than start a new
+  // per-repo copy of something every repo on this machine will want.
+  return { dir: shared, present: false };
+}
+
 export function getVectorSearchConfig(config: ProjectConfig) {
   const profile = resolveVectorProfile(config);
   return {
@@ -247,15 +291,13 @@ export async function createLocalEmbeddingProvider(
     throw new Error(`Unsupported vector provider: ${vector.provider}`);
   }
 
-  const cacheDir = vector.cacheDir || path.join(projectRoot, '.knowl', 'models');
+  // `cached` falls out of the same resolution: the directory chosen is the one holding the
+  // weights whenever any of them does, so a caller can say "loading" rather than
+  // "downloading". Same helper write-time embedding uses before deciding it can embed.
+  const { dir: cacheDir, present: cached } = await resolveModelCache(config, projectRoot);
   const pipelineKey = `${vector.model}:${vector.dtype}:${vector.pooling}:${cacheDir}`;
 
   if (!localPipeline || localPipelineKey !== pipelineKey) {
-    // Whether the weights are already on disk, so a caller can say "loading" rather than
-    // "downloading". Same location write-time embedding checks before deciding it can embed.
-    const cached = await fsPromises.access(path.join(cacheDir, ...vector.model.split('/')))
-      .then(() => true)
-      .catch(() => false);
     options.onFirstLoad?.({ model: vector.model, cacheDir, cached });
     // How long building the pipeline actually costs, recorded rather than assumed. The model
     // was blamed for stalls it cannot cause -- serve never loads one during startup -- and the

@@ -69,14 +69,13 @@ async function resolveEmbedder(): Promise<KnowledgeEmbedder | null> {
     if (!embeddings.isVectorSearchEnabled(config)) {
       key = `${root}|vector-search-disabled`;
     } else {
-      const vector = embeddings.getVectorSearchConfig(config);
-      const cacheDir = vector.cacheDir || path.join(root, '.knowl', 'models');
       // Only proceed when the model is already on disk — never trigger a download. Re-read
       // every time rather than remembered: "the weights arrived" is precisely the event a
       // cached `null` must not survive, and an `access` on a path is far cheaper than the
-      // write it precedes.
-      const present = await fs.access(path.join(cacheDir, ...vector.model.split('/'))).then(() => true, () => false);
-      key = `${root}|${fingerprintProfile(resolveVectorProfile(config))}|${cacheDir}|${present ? 'present' : 'absent'}`;
+      // write it precedes. `resolveModelCache` also answers WHERE, since the weights may be
+      // in the shared machine cache or in this repo's legacy one (K-42).
+      const { dir, present } = await embeddings.resolveModelCache(config, root);
+      key = `${root}|${fingerprintProfile(resolveVectorProfile(config))}|${dir}|${present ? 'present' : 'absent'}`;
       if (present) build = () => embeddings.createLocalEmbeddingProvider(config, root);
     }
   } catch {
