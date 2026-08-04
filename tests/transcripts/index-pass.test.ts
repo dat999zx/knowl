@@ -1,10 +1,14 @@
+import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/database.js';
 import { runIndexPass } from '../../src/transcripts/index-pass.js';
 import { encodeProjectDir } from '../../src/transcripts/paths.js';
+
+const execFileAsync = promisify(execFile);
 
 let dir: string;
 let projectsDir: string;
@@ -116,6 +120,49 @@ describe('runIndexPass', () => {
     expect(result.removed).toBe(0);
     expect(await countMessages()).toBe(1);
   });
+
+  // K-11. The root set comes from `git worktree list`; a missing binary, a busy antivirus or a
+  // sleeping network drive shrinks it to the project root alone. Every worktree session then
+  // looks deleted, and the sweep drops its rows *and its vectors*. Re-indexing is cheap;
+  // re-embedding an archive is not, and nothing was actually stale.
+  it('keeps a worktree session when git cannot answer for the root set', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-repo-'));
+    const worktree = path.join(repo, '..', `${path.basename(repo)}-wt`);
+    const emptyPath = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-nogit-'));
+    const git = (...args: string[]) =>
+      execFileAsync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: repo });
+
+    await git('init');
+    await git('commit', '--allow-empty', '-m', 'root');
+    await git('worktree', 'add', worktree, '-b', 'side');
+
+    const archive = path.join(dir, 'wt-projects');
+    for (const [root, session] of [[repo, 'main-session'], [worktree, 'worktree-session']] as const) {
+      const encoded = path.join(archive, encodeProjectDir(path.resolve(root)));
+      await fs.mkdir(encoded, { recursive: true });
+      await fs.writeFile(path.join(encoded, `${session}.jsonl`), line('user', `content of ${session}`));
+    }
+
+    const first = await runIndexPass({ projectRoot: repo, dbPath, projectsDir: archive });
+    expect(first.indexed).toBe(2); // both roots discovered while git works
+
+    const savedPath = process.env.PATH;
+    let second;
+    try {
+      process.env.PATH = emptyPath; // git becomes unresolvable: the transient failure
+      second = await runIndexPass({ projectRoot: repo, dbPath, projectsDir: archive });
+    } finally {
+      process.env.PATH = savedPath;
+    }
+
+    expect(second.removed).toBe(0);
+    expect(await countMessages()).toBe(2);
+
+    await fs.rm(emptyPath, { recursive: true, force: true });
+    await git('worktree', 'remove', '--force', worktree).catch(() => {});
+    await fs.rm(repo, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(worktree, { recursive: true, force: true }).catch(() => {});
+  }, 30_000);
 
   it('mirrors every message into the FTS index under its own rowid', async () => {
     await fs.writeFile(sessionFile('a'), line('user', 'embedding crash investigation'));

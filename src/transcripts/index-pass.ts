@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import type { Client } from '@libsql/client';
 import { openTranscriptDb, withWriteRetry } from './database.js';
 import { NAME_KIND, readOpeningAsk, streamProseFrom, type ProseChunk } from './parse.js';
-import { defaultProjectsDir, discoverTranscriptFiles, type TranscriptFile } from './paths.js';
+import { defaultProjectsDir, scanTranscriptArchive, type TranscriptFile } from './paths.js';
 
 /** Whether the transcript archive can be listed at all, as opposed to being empty. */
 async function readableDir(target: string): Promise<boolean> {
@@ -297,7 +297,8 @@ export async function runIndexPass(input: {
   // connection when it hits SQLITE_BUSY_SNAPSHOT, so any handle captured up here would be a
   // closed one for the rest of the pass. Every operation re-acquires through the helper.
   await openTranscriptDb(input.dbPath);
-  const files = await discoverTranscriptFiles(input.projectRoot, { projectsDir: input.projectsDir });
+  const scan = await scanTranscriptArchive(input.projectRoot, { projectsDir: input.projectsDir });
+  const files = scan.files;
   const onDisk = new Set(files.map(file => file.path));
 
   const result: IndexPassResult = { indexed: 0, rebuilt: 0, removed: 0, filesTouched: 0, complete: true };
@@ -312,8 +313,14 @@ export async function runIndexPass(input: {
   // deletion destroys the entire index, including a backfill that may have taken hours. Keeping
   // stale rows costs one wasted file read per dead pointer, and the next pass that can see the
   // archive reclaims them.
+  //
+  // Gated on `scan.degraded` for the same reason one level up. The root set is whatever `git
+  // worktree list` said, and a git that could not run at all shrinks it to the project root --
+  // at which point every worktree's sessions look deleted and the sweep drops their rows *and
+  // their vectors*. Re-indexing is cheap; re-embedding an archive is not, and nothing was
+  // stale. A definitive "not a checkout" is not degraded: it misses no roots.
   const archiveReadable = await readableDir(input.projectsDir ?? defaultProjectsDir());
-  if (archiveReadable) {
+  if (archiveReadable && !scan.degraded) {
     const known = await withWriteRetry(input.dbPath, async client =>
       (await client.execute('SELECT path FROM transcript_files')).rows.map(row => String(row.path)));
 
