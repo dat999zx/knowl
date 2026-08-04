@@ -104,6 +104,20 @@ const config = {
   concurrency: Number(process.env.KNOWL_MUTATION_CONCURRENCY ?? 4),
   timeoutMS: 20_000,
   timeoutFactor: 2,
+  /**
+   * The dry run's own budget, separate from a mutant's. Stryker defaults it to 5 minutes and
+   * that default is a trap here, because the dry run is where a bad TEST SET announces itself
+   * and five wasted minutes is the announcement.
+   *
+   * MEASURED: the seven-file agent-query set runs in 4.6s under plain vitest and did not
+   * finish the dry run in 300s under Stryker. The runner shares one process across files with
+   * no isolation, and three of those files open libSQL fixtures and then `fs.rm` them --
+   * which on Windows retries against the -shm handle the previous file still holds. One
+   * DB-backed file at a time is fine (the shipped knowledge-validation slices dry-ran in 1-2s);
+   * several together are not. Keep the budget short so that failure is cheap, and split the
+   * set instead of raising it.
+   */
+  dryRunTimeoutMinutes: Number(process.env.KNOWL_MUTATION_DRY_RUN_MINUTES ?? 2),
   // A slice that scores zero is a result, not a failure of the run.
   thresholds: { high: 100, low: 0, break: null },
   // MUST stay false with `inPlace`. `disableTypeChecks: true` prepends `// @ts-nocheck` to
