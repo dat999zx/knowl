@@ -3,7 +3,7 @@ import path from 'node:path';
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
 import {
   createLocalEmbeddingProvider, EMBEDDING_LIMITS, estimateTokens, getVectorSearchConfig, planEmbeddingBatches,
-  resetLocalEmbeddingPipeline,
+  queryPrefixFor, resetLocalEmbeddingPipeline,
 } from '../../src/ai/embeddings.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
@@ -308,5 +308,83 @@ describe('local embedder batching', () => {
     // ...and the caller still gets one vector per input, in the order it asked.
     expect(vectors).toHaveLength(texts.length);
     expect(vectors.map(vector => vector[0])).toEqual(texts.map(text => Math.min(text.length, 8_000)));
+  });
+});
+
+/**
+ * The asymmetry is worth more than the model choice, and nothing was guarding it.
+ *
+ * `docs/evals/model-and-dtype-2026-08-04.md` re-ran the shipped preset against
+ * `semantic-suite.json` with the query prefix and without it, changing nothing else:
+ * MRR 0.8873 -> 0.8462 and Recall@3 0.9455 -> 0.9000, with the moderate tier taking most of
+ * it (MRR 0.7310 -> 0.5992). That is 4.5 cases in 110 -- larger than the gap between arctic
+ * and every other model in that table, and larger than the gap between q8 and fp32.
+ *
+ * Before this block every `embedQuery` in the suite was a stub returning a fixed vector, so
+ * the one line that applies the prefix had no coverage at all: deleting it left 1,725 tests
+ * green and silently gave back a bigger regression than switching models could have caused.
+ */
+describe('query prefix', () => {
+  /** Capture exactly what reaches the pipeline, for one provider, across both entry points. */
+  async function provider(vector: Record<string, unknown>) {
+    resetLocalEmbeddingPipeline();
+    const seen: string[] = [];
+    const embedder = await createLocalEmbeddingProvider(config(vector), '/tmp/knowl-prefix-test', {
+      loadPipeline: async () => (async (texts: string[]) => {
+        seen.push(...texts);
+        return { data: new Float32Array(texts.length * 2).fill(0.5), dims: [texts.length, 2] };
+      }) as any,
+    });
+    return { embedder, seen };
+  }
+
+  it('prepends the arctic query prefix to a query and never to a document', async () => {
+    const { embedder, seen } = await provider({ preset: 'arctic-embed-m-v2' });
+
+    await embedder.embedQuery('where does the batch budget come from');
+    await embedder.embed(['where does the batch budget come from']);
+
+    // Asymmetric by design: arctic's own config_sentence_transformers.json declares
+    // `"prompts": {"query": "query: "}` and no document prompt. Prefixing both sides would
+    // put queries and documents back on the same footing and undo the gain.
+    expect(seen).toEqual([
+      'query: where does the batch budget come from',
+      'where does the batch budget come from',
+    ]);
+  });
+
+  it('leaves a model the table has never heard of unprefixed', async () => {
+    const { embedder, seen } = await provider({ preset: 'custom', model: 'someone/brand-new-embedder', pooling: 'cls' });
+
+    await embedder.embedQuery('a query');
+
+    // Inventing a prefix for an unknown model is worse than none: an untrained instruction is
+    // just noise prepended to every query.
+    expect(seen).toEqual(['a query']);
+  });
+
+  it('lets a config state a prefix the table does not know', async () => {
+    const { embedder, seen } = await provider({
+      preset: 'custom', model: 'someone/brand-new-embedder', pooling: 'cls', queryPrefix: 'search_query: ',
+    });
+
+    await embedder.embedQuery('a query');
+
+    expect(seen).toEqual(['search_query: a query']);
+  });
+
+  it('maps each family to the prefix its own card documents', () => {
+    // Each of these is the string from that model's card or config, not a guess. A regex that
+    // stops matching is a silent recall loss, so the mapping is pinned rather than described.
+    expect(queryPrefixFor('Snowflake/snowflake-arctic-embed-m-v2.0')).toBe('query: ');
+    expect(queryPrefixFor('Snowflake/snowflake-arctic-embed-l-v2.0')).toBe('query: ');
+    expect(queryPrefixFor('Snowflake/snowflake-arctic-embed-m-v1.5'))
+      .toBe('Represent this sentence for searching relevant passages: ');
+    expect(queryPrefixFor('intfloat/multilingual-e5-small')).toBe('query: ');
+    expect(queryPrefixFor('nomic-ai/modernbert-embed-base')).toBe('search_query: ');
+    expect(queryPrefixFor('Xenova/bge-small-en-v1.5'))
+      .toBe('Represent this sentence for searching relevant passages: ');
+    expect(queryPrefixFor('onnx-community/granite-embedding-small-english-r2-ONNX')).toBe('');
+    expect(queryPrefixFor('')).toBe('');
   });
 });

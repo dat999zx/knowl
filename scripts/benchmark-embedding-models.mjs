@@ -21,7 +21,12 @@ const CLI = path.join(ROOT, 'dist', 'index.js');
 
 // Kept in step with PRESET_IDS in src/core/vector-profile.ts. A stale entry here fails
 // loudly rather than silently skipping: `config set` rejects an unknown preset id.
-const ALL_PRESETS = ['granite-small-en-r2', 'granite-97m-multilingual', 'bge-small-en', 'minilm-l6-en'];
+//
+// `arctic-embed-m-v2` was missing until 2026-08-04, which made this script unable to measure
+// the preset it actually ships -- every table it printed compared four alternatives to each
+// other while the default sat outside the comparison. It is first because it is DEFAULT_PRESET_ID:
+// the incumbent belongs in its own bake-off.
+const ALL_PRESETS = ['arctic-embed-m-v2', 'granite-small-en-r2', 'granite-97m-multilingual', 'bge-small-en', 'minilm-l6-en'];
 
 /**
  * One model cache for every run, outside the throwaway roots.
