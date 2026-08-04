@@ -14,7 +14,7 @@ const MAX_RETAINED_ARRAY_ITEMS = 50;
 const ROOT_FIELDS = new Set([
   'session_id', 'sessionId', 'thread_id', 'turn_id', 'turnId', 'conversation_id', 'generation_id', 'cwd', 'workspace_roots',
   'title', 'query', 'agent', 'type', 'status', 'summary', 'command', 'exit_code', 'exitCode', 'passed',
-  'message', 'code', 'text', 'changedPaths', 'changed_paths', 'commit', 'file_path', 'filePath', 'path',
+  'message', 'code', 'text', 'changedPaths', 'changed_paths', 'commit', 'file_path', 'filePath', 'path', 'notebook_path',
   'tool_name', 'toolName', 'error', 'error_code', 'error_message', 'tool_input', 'toolInput', 'tool_response', 'toolResponse',
   // Claude subagent identity: without these the agent-scoped binding degrades to the
   // shared main-thread row and SubagentStart/Stop cannot resolve an agent at all.
@@ -31,8 +31,8 @@ const KNOWL_WRITE_ARGS = ['title', 'id', 'supersedeId', 'supersedes', 'atoms'];
 // by MAX_RETAINED_STRING like every other retained field, and compared in memory only.
 const TOOL_DISCRIMINATORS = ['pattern', 'glob', 'query', 'url'];
 const NESTED_FIELDS: Record<string, Set<string>> = {
-  tool_input: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', ...TOOL_DISCRIMINATORS, ...KNOWL_WRITE_ARGS]),
-  toolInput: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', ...TOOL_DISCRIMINATORS, ...KNOWL_WRITE_ARGS]),
+  tool_input: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', 'notebook_path', ...TOOL_DISCRIMINATORS, ...KNOWL_WRITE_ARGS]),
+  toolInput: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', 'notebook_path', ...TOOL_DISCRIMINATORS, ...KNOWL_WRITE_ARGS]),
   tool_response: new Set(['exit_code', 'exitCode']),
   toolResponse: new Set(['exit_code', 'exitCode']),
   error: new Set(['code', 'type', 'message', 'error']),

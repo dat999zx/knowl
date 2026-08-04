@@ -121,7 +121,11 @@ function changedPaths(projectRoot: string, raw: Record<string, unknown>): string
     ? raw.changed_paths
     : Array.isArray(raw.changedPaths)
       ? raw.changedPaths
-      : [raw.file_path, raw.filePath, raw.path];
+      // `notebook_path` is the name Claude Code gives NotebookEdit's target, and it is the only
+      // write tool that does not use `file_path`. Without it a notebook edit normalises to an
+      // event with no changed path at all, so the file is never re-indexed and nothing that
+      // depends on knowing it changed can fire -- silently, and only for notebooks.
+      : [raw.file_path, raw.filePath, raw.path, raw.notebook_path];
   return values
     .map(value => relativePath(projectRoot, value))
     .filter((value): value is string => Boolean(value))
