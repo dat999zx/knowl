@@ -1168,7 +1168,7 @@ export function registerTools(
         // gate resolved through the task's tag queries an id under which no read exists. The
         // loose repair (any recent session) is the one thing this must not do: it would block
         // one agent's finish over another agent's stale read. The write gate
-        // (`store/write-gate.ts`) is the chokepoint instead, and it needs no such join because
+        // (`session/write-gate.ts`) is the chokepoint instead, and it needs no such join because
         // it runs inside the session that holds the read. Plan §15.
         const result = await finishWorkLoop(projectId!, taskId, summary);
         return {

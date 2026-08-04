@@ -3,19 +3,17 @@
 Plan for handling the case where one actor's in-progress code change invalidates another
 agent's unfinished work. Written 2026-08-05.
 
-> **What is in this branch, and what is not.** This document describes the whole arc, including
-> the part that is *not* here. This branch is **detection only**: the read-set, certain-tier
-> findings, the card stanza and `knowl_impact`. It is off by default and it refuses nothing —
-> every path through it is advisory, and every failure path allows the turn to proceed.
+> **What is in this branch.** The **write gate** of §7.5 — the `PreToolUse` refusal — on top of
+> the detection layer. This is the first thing in knowl that can stop a user's tool call from
+> happening, so the two sections to read before the code are §7.5's four non-optional properties
+> and §10's coverage ceiling, which names four open bugs in the host's own hook implementation
+> by number.
 >
-> The **write gate** of §7.5 — the `PreToolUse` refusal that is the mechanism the evidence
-> actually supports — is deliberately proposed **separately**, so that accepting detection does
-> not commit anyone to accepting enforcement. Two reasons it is split rather than bundled: its
-> precision is not yet measured against §9's ≥95% bar, and §10 records four open bugs in the
-> host's own hook implementation that bound what a refusal can currently guarantee. Detection is
-> unaffected by all four.
->
-> Read §7.5 and §10 as design, not as shipped behaviour.
+> It is off by default (`impact.enabled`), fails open on every failure mode, and refuses at most
+> once per stale read so it can never trap an agent. §9.1 carries the precision measurement the
+> gate's bar is stated in terms of — **100% over 46 adjudicated scenarios**, against a ≥95% bar —
+> and §10 says plainly what that number does *not* establish, which is prevalence in real
+> sessions.
 
 **This is v2. It contradicts v1 (same path, earlier today) on its central design choice.** v1
 proposed *detect → notify the stale agent*. A full prior-art pass found that notification is
