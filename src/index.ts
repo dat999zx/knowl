@@ -1022,12 +1022,12 @@ program
   });
 
 /**
- * Rebuild every stored vector under the repository's current profile.
+ * Bring stored vectors up to date under the repository's current profile.
  *
  * Shared by `knowl reindex --vectors` and the offer made after a config change, so the
  * two cannot report different things about the same operation.
  */
-async function rebuildVectorEmbeddings(root: string): Promise<void> {
+async function rebuildVectorEmbeddings(root: string, options: { force?: boolean } = {}): Promise<void> {
   const config = await loadConfig(root);
   if (!isVectorSearchEnabled(config)) {
     throw new Error('Vector search is not enabled. Set search.vector.enabled true before running vector reindex.');
@@ -1048,11 +1048,16 @@ async function rebuildVectorEmbeddings(root: string): Promise<void> {
           : `Downloading local embedding model ${model} (first run)...`,
       ),
     });
-    const result = await reindexKnowledgeEmbeddings(project.id, embedder);
+    const result = await reindexKnowledgeEmbeddings(project.id, embedder, { force: options.force });
     const perStatus = Object.entries(result.byStatus)
       .map(([status, count]) => `${count} ${status}`)
       .join(', ');
     console.log(`Indexed ${result.indexed} vector embedding(s)${perStatus ? ` (${perStatus})` : ''}.`);
+    // Named rather than left as silence, so a run that embeds nothing reads as "already
+    // current" instead of "did not work" -- the common outcome now that runs are incremental.
+    if (result.skipped > 0) {
+      console.log(`Skipped ${result.skipped} already up to date. Use --force to rebuild them anyway.`);
+    }
     if (result.purged > 0) console.log(`Purged ${result.purged} embedding(s) from a previous model.`);
   } finally {
     await closeDb();
@@ -1215,6 +1220,7 @@ program
   .option('--vectors', 'Rebuild optional vector embeddings')
   .option('--transcripts', 'Build or update the optional session transcript index')
   .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', parseFloat)
+  .option('--force', 'With --vectors, re-embed every item instead of only the stale ones')
   .action(async (options) => {
     try {
       if (!options.vectors && !options.transcripts) {
@@ -1222,7 +1228,7 @@ program
       }
 
       const root = await findProjectRoot(process.cwd());
-      if (options.vectors) await rebuildVectorEmbeddings(root);
+      if (options.vectors) await rebuildVectorEmbeddings(root, { force: options.force });
 
       if (options.transcripts) {
         const result = await rebuildTranscriptIndex(root, { budgetMinutes: options.budget });

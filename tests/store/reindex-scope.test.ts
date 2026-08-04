@@ -12,13 +12,17 @@ let testRoot = '';
 let testIndex = 0;
 const PROFILE = { provider: 'local', model: 'a/b', dtype: 'q8', pooling: 'cls' } as const;
 
-function stubEmbedder() {
+function stubEmbedder(overrides: { model?: string; calls?: string[][] } = {}) {
+  const model = overrides.model ?? 'a/b';
   return {
     provider: 'local',
-    model: 'a/b',
+    model,
     pooling: 'cls' as const,
-    profileFingerprint: fingerprintProfile(PROFILE),
-    embed: async (texts: string[]) => texts.map(() => [1, 0, 0]),
+    profileFingerprint: fingerprintProfile({ ...PROFILE, model }),
+    embed: async (texts: string[]) => {
+      overrides.calls?.push(texts);
+      return texts.map(() => [1, 0, 0]);
+    },
   };
 }
 
@@ -117,6 +121,58 @@ describe('reindex scope', () => {
     const result = await reindexKnowledgeEmbeddings(projectId, stubEmbedder());
     expect(result.indexed).toBe(10_050);
   }, 120_000);
+
+  it('skips items already embedded under the current profile', async () => {
+    await seedItemsWithStatuses(['active', 'superseded', 'archived']);
+    await reindexKnowledgeEmbeddings(projectId, stubEmbedder());
+
+    const calls: string[][] = [];
+    const result = await reindexKnowledgeEmbeddings(projectId, stubEmbedder({ calls }));
+
+    expect(result.indexed).toBe(0);
+    expect(result.skipped).toBe(3);
+    // The point of the change: no forward pass runs at all for an up-to-date store.
+    expect(calls).toEqual([]);
+  });
+
+  it('re-embeds every item when the embedding model changed', async () => {
+    await seedItemsWithStatuses(['active', 'superseded', 'archived']);
+    await reindexKnowledgeEmbeddings(projectId, stubEmbedder());
+
+    const result = await reindexKnowledgeEmbeddings(projectId, stubEmbedder({ model: 'different/model' }));
+
+    expect(result.indexed).toBe(3);
+    expect(result.skipped).toBe(0);
+  });
+
+  it('re-embeds an item edited since it was embedded', async () => {
+    await seedItemsWithStatuses(['active', 'active', 'active']);
+    await reindexKnowledgeEmbeddings(projectId, stubEmbedder());
+
+    // Written directly, with a timestamp comfortably later than the embedding's: going
+    // through the API can land in the same millisecond, which would make this pass or
+    // fail on machine speed rather than on the predicate under test.
+    const rows = await getClient().execute('SELECT id FROM knowledge_items ORDER BY id LIMIT 1');
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET content = ?, updated_at = ? WHERE id = ?',
+      args: ['edited body', new Date(Date.now() + 60_000).toISOString(), String(rows.rows[0].id)],
+    });
+
+    const result = await reindexKnowledgeEmbeddings(projectId, stubEmbedder());
+
+    expect(result.indexed).toBe(1);
+    expect(result.skipped).toBe(2);
+  });
+
+  it('rebuilds everything when forced, even with nothing stale', async () => {
+    await seedItemsWithStatuses(['active', 'active']);
+    await reindexKnowledgeEmbeddings(projectId, stubEmbedder());
+
+    const result = await reindexKnowledgeEmbeddings(projectId, stubEmbedder(), { force: true });
+
+    expect(result.indexed).toBe(2);
+    expect(result.skipped).toBe(0);
+  });
 
   it('purges rows left over from a previous profile', async () => {
     await seedItemsWithStatuses(['active']);
