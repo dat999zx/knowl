@@ -347,6 +347,106 @@ describe('host hook normalization', () => {
     expect(nonKnowl.knowlChangeKeys).toBeUndefined();
   });
 
+  // The tool name was computed to pick the shell branch and then dropped, which made a
+  // Read and an Edit normalise to byte-identical events. These pin that it survives on
+  // every branch, because a read-set that cannot tell a read from a write records the
+  // opposite of what happened.
+  describe('tool name', () => {
+    const postToolUse = (raw: Record<string, unknown>) =>
+      normalizeHostHook('claude', 'PostToolUse', { session_id: 'session-tool-name', cwd: ROOT, tool_response: {}, ...raw });
+
+    it('keeps the tool name on a read, which is otherwise identical to a write', () => {
+      const read = postToolUse({ tool_name: 'Read', tool_input: { file_path: path.join(ROOT, 'src', 'auth.ts') } });
+      const write = postToolUse({ tool_name: 'Write', tool_input: { file_path: path.join(ROOT, 'src', 'auth.ts') } });
+
+      expect(read.toolName).toBe('Read');
+      expect(write.toolName).toBe('Write');
+      // The whole point: everything else about the two events matches, so the name is the
+      // only thing that can tell "this session read src/auth.ts" from "it rewrote it".
+      expect(read.payload).toEqual({ changedPaths: ['src/auth.ts'] });
+      expect(write.payload).toEqual(read.payload);
+      expect(read.type).toBe('checkpoint');
+    });
+
+    it('keeps the tool name on an edit', () => {
+      const edit = postToolUse({ tool_name: 'Edit', tool_input: { file_path: path.join(ROOT, 'src', 'auth.ts') } });
+
+      expect(edit).toMatchObject({
+        toolName: 'Edit',
+        type: 'checkpoint',
+        payload: { changedPaths: ['src/auth.ts'] },
+      });
+    });
+
+    it('keeps the tool name on a search that reports no path', () => {
+      const grep = postToolUse({ tool_name: 'Grep', tool_input: { pattern: 'createSession' } });
+
+      expect(grep).toMatchObject({
+        toolName: 'Grep',
+        type: 'checkpoint',
+        payload: { summary: 'Grep completed' },
+      });
+    });
+
+    it('keeps the tool name on a search whose path argument is a directory', () => {
+      // `path` is allowlisted inside tool_input, so a scoped Grep emits what looks exactly
+      // like a changed file but is a directory. Nothing here rejects it -- the name is what
+      // finally lets a consumer refuse to treat it as one.
+      const grep = postToolUse({ tool_name: 'Grep', tool_input: { pattern: 'createSession', path: path.join(ROOT, 'src') } });
+
+      expect(grep).toMatchObject({
+        toolName: 'Grep',
+        payload: { changedPaths: ['src'] },
+      });
+    });
+
+    it('keeps the tool name on the shell branch', () => {
+      // Shell takes a different return path in toolEvent, so it needs its own assertion:
+      // a `cat`/`sed` through Bash reads files too, and the branch that skips captureKey
+      // is exactly the one likely to be forgotten.
+      const bash = postToolUse({ tool_name: 'Bash', tool_input: { command: 'npm test' } });
+
+      expect(bash).toMatchObject({
+        toolName: 'Bash',
+        type: 'command',
+        payload: { command: 'npm test', exitCode: 0 },
+      });
+    });
+
+    it('omits the tool name when the host sent none, changing nothing else', () => {
+      const anonymous = postToolUse({ tool_input: { file_path: path.join(ROOT, 'src', 'auth.ts') } });
+
+      // Absent, not empty: `''` would be a tool named nothing rather than an unnamed host.
+      expect(anonymous).not.toHaveProperty('toolName');
+      expect(anonymous.toolName).toBeUndefined();
+      expect(anonymous).toMatchObject({
+        host: 'claude',
+        event: 'session-event',
+        type: 'checkpoint',
+        externalSessionId: 'session-tool-name',
+        projectRoot: ROOT,
+        knowlTool: false,
+        payload: { changedPaths: ['src/auth.ts'] },
+      });
+      expect(anonymous.knowlToolName).toBeUndefined();
+      expect(anonymous.knowlChangeKeys).toBeUndefined();
+    });
+
+    it('leaves every neighbouring field on a tool event as it was', () => {
+      const grep = postToolUse({ tool_name: 'Grep', tool_input: { pattern: 'createSession' } });
+      const store = postToolUse({ tool_name: 'mcp__knowl__knowl_store', tool_input: { title: 'An atom' } });
+
+      expect(grep.knowlTool).toBe(false);
+      expect(grep.captureKey).toBe('Grep:{"pattern":"createSession"}');
+      // The raw, host-prefixed name and the bare Knowl name are different values and both
+      // are needed: one identifies the tool, the other matches the MCP server's own record.
+      expect(store.toolName).toBe('mcp__knowl__knowl_store');
+      expect(store.knowlToolName).toBe('knowl_store');
+      expect(store.knowlTool).toBe(true);
+      expect(store.knowlChangeKeys).toEqual({ ids: [], titles: ['An atom'] });
+    });
+  });
+
   // Normalization alone cannot prove the feature works: the CLI first strips the hook
   // payload through readLifecyclePayload's allowlist. Testing normalization on
   // hand-built payloads is exactly how the missing agent_id/tool_input fields went
@@ -399,6 +499,26 @@ describe('host hook normalization', () => {
     it('leaves the tool name unset for a non-Knowl tool', async () => {
       const result = await chain({ tool_name: 'Grep', tool_input: { pattern: 'knowl' } });
       expect(result.knowlToolName).toBeUndefined();
+    });
+
+    const namedTools: Array<[string, Record<string, unknown>]> = [
+      ['Read', { file_path: path.join(ROOT, 'src', 'auth.ts') }],
+      ['Edit', { file_path: path.join(ROOT, 'src', 'auth.ts') }],
+      ['Grep', { pattern: 'createSession' }],
+      ['Bash', { command: 'npm test' }],
+    ];
+
+    it.each(namedTools)('carries the %s tool name through the stdin allowlist', async (tool, toolInput) => {
+      const result = await chain({ tool_name: tool, tool_input: toolInput });
+
+      expect(result.toolName).toBe(tool);
+    });
+
+    it('drops nothing when the host names no tool', async () => {
+      const result = await chain({ tool_input: { file_path: path.join(ROOT, 'src', 'auth.ts') } });
+
+      expect(result.toolName).toBeUndefined();
+      expect(result.payload).toEqual({ changedPaths: ['src/auth.ts'] });
     });
   });
 });
