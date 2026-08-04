@@ -1,5 +1,3 @@
-import fsPromises from 'node:fs/promises';
-import path from 'node:path';
 import { KnowledgeItem } from '../core/types.js';
 import { queryKnowledgeForAgent, type RankOptions } from './agent-query.js';
 import { queryKnowledgeBase } from './queries.js';
@@ -52,18 +50,24 @@ const PINNED_BUDGET_SHARE = 0.5;
  * Never downloads. This is the same rule write-time indexing applies for the same reason: a
  * context call must not stall on a multi-megabyte fetch, and `knowl reindex --vectors` remains
  * the explicit opt-in that puts the model on disk.
+ *
+ * The "is it on disk" question goes to `resolveModelCache`, which is the same call
+ * `write-embedding.ts` makes, rather than to a local `access` on `<root>/.knowl/models`. That
+ * hand-rolled copy predated K-42 and only knew the per-repo cache: once the machine's weights
+ * moved to `~/.knowl/models`, it reported them absent and silently put `knowl_context` back on
+ * the lexical-only path -- the exact condition K-31 was about, on what is now the default
+ * layout. There is one right answer to where the weights are and only one place that knows it.
  */
 async function resolveVector(root: string, query: string): Promise<RankOptions['vector'] | undefined> {
   try {
-    const [{ loadConfig }, { createLocalEmbeddingProvider, isVectorSearchEnabled, getVectorSearchConfig }] = await Promise.all([
+    const [{ loadConfig }, { createLocalEmbeddingProvider, isVectorSearchEnabled, resolveModelCache }] = await Promise.all([
       import('../core/config.js'),
       import('../ai/embeddings.js'),
     ]);
     const config = await loadConfig(root);
     if (!isVectorSearchEnabled(config)) return undefined;
-    const vector = getVectorSearchConfig(config);
-    const cacheDir = vector.cacheDir || path.join(root, '.knowl', 'models');
-    await fsPromises.access(path.join(cacheDir, ...vector.model.split('/')));
+    const { present } = await resolveModelCache(config, root);
+    if (!present) return undefined;
     const embedder = await createLocalEmbeddingProvider(config, root);
     return {
       enabled: true,

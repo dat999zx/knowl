@@ -37,6 +37,20 @@ describe('token budget', () => {
     expect(compactKnowledgeItem(item, { namespace: 'organization' }).namespace).toBe('organization');
   });
 
+  it('carries the calibrated score, rounded to three decimals', () => {
+    expect(compactKnowledgeItem(item, { score: 0.5730000000000001 }).score).toBe(0.573);
+    // A response with no calibrated number stays byte-identical to what it was.
+    expect(compactKnowledgeItem(item)).not.toHaveProperty('score');
+  });
+
+  it('keeps a zero score, which is the one value a truthiness test would drop', () => {
+    // "The store found nothing worth reading" is the single most useful thing this field can
+    // say, and `extras.score ? ...` is exactly the check that would silence it.
+    expect(compactKnowledgeItem(item, { score: 0 })).toHaveProperty('score', 0);
+    // Non-finite is not a score. NaN would serialize to null and read as "no opinion".
+    expect(compactKnowledgeItem(item, { score: Number.NaN })).not.toHaveProperty('score');
+  });
+
   it('survives the MCP serialization boundary, which is where provenance actually died', async () => {
     // compactItemResponse -> compactMcpJson is the path every knowl_query result takes.
     // Asserting on the in-memory object would pass even with the field stripped downstream.

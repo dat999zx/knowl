@@ -434,8 +434,20 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
       // lexical ordering was worth 0.0158 -- the presence of a signal outweighing what the
       // signal said. The ordering now spans the entire lexical weight and presence adds
       // nothing on top of it.
+      //
+      // `best === 0` is the corpus whose lexical magnitude carries no information at all, and
+      // it is a third case rather than the second. Position is unknowable there -- there is no
+      // best to divide by -- but coverage is measured on the item and the query alone, so it
+      // is as true in that corpus as in any other, and falling back to it is what keeps the
+      // whole corpus from scoring a flat zero and being ordered by a tie-break. This is the
+      // recorded cross-repo residual, and it needs nothing the peer discarded: SQLite clamps
+      // IDF to 1e-6 once a term appears in half a corpus, so a three-row peer where every row
+      // matches scores ~3.7e-6 -- six orders of magnitude below a large repo's, and still
+      // positive, so `raw / best` already recovers it in full (tests/store/small-peer-lexical).
+      // Exactly zero is unreachable from either engine today; it is closed as a cliff, not as
+      // a live defect.
       const coverage = Math.min(Math.max(result.lexicalCoverage ?? 1, 0), 1);
-      const lexical = raw !== undefined && best > 0 ? Math.min(raw / best, 1) * coverage : 0;
+      const lexical = raw === undefined ? 0 : (best > 0 ? Math.min(raw / best, 1) * coverage : coverage);
       const semantic = Math.min(Math.max(result.vectorScore ?? 0, 0), 1);
       const relevance = usingVector ? alpha * semantic + (1 - alpha) * lexical : lexical;
 

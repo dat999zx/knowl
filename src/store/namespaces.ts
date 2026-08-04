@@ -67,7 +67,7 @@ export async function queryLayeredKnowledge(
   surface = 'namespace_query',
   filters: LayeredFilters = {},
 ): Promise<NamespacedKnowledgeItem[]> {
-  const results: NamespacedKnowledgeItem[] = [];
+  const ranked: NamespacedKnowledgeItem[][] = [];
   const seen = new Set<string>();
   for (const descriptor of namespacePrecedence(descriptors)) {
     try {
@@ -79,16 +79,53 @@ export async function queryLayeredKnowledge(
         status: filters.status,
         tags: filters.tags,
       }));
+      const kept: NamespacedKnowledgeItem[] = [];
       for (const item of items) {
         const key = item.contentHash ?? `${item.title}\n${item.content}`;
         if (!seen.has(key)) {
           seen.add(key);
-          results.push({ ...item, namespace: descriptor.namespace });
+          kept.push({ ...item, namespace: descriptor.namespace });
         }
       }
+      ranked.push(kept);
     } catch (error) {
       if (!descriptor.optional) throw error;
     }
   }
-  return results.slice(0, limit);
+  return interleaveByPrecedence(ranked, limit);
+}
+
+/**
+ * One page assembled from several namespaces, taking each namespace's best answer in turn.
+ *
+ * Precedence decides *order*, never whether a namespace is represented at all. This used to
+ * ask every namespace for the whole `limit`, concatenate in precedence order and slice: a
+ * session store holding `limit` loosely-matching notes consumed the entire budget and the
+ * project store -- where durable knowledge lives -- returned nothing at all. At the default
+ * limit of 3 that takes three session notes to reach, which is one ordinary session.
+ *
+ * Round-robin rather than merging by score, because these scores are not comparable. Each
+ * namespace is a separate database and the layered path is lexical-only, so `scoreCandidates`
+ * normalises every store's lexical evidence against that store's own best hit -- every
+ * namespace's top answer is 1.0 by construction, exactly the corpus-relativity the cross-repo
+ * note in agent-query.ts documents. Interleaving is what remains true when the numbers cannot
+ * be compared: the highest-precedence namespace still leads, and each one keeps its own order.
+ *
+ * A namespace that runs out is skipped rather than reserving an empty slot, so a page is
+ * short only when there is genuinely nothing more to put in it.
+ */
+function interleaveByPrecedence(
+  ranked: NamespacedKnowledgeItem[][],
+  limit: number,
+): NamespacedKnowledgeItem[] {
+  const results: NamespacedKnowledgeItem[] = [];
+  const depth = Math.max(0, ...ranked.map(items => items.length));
+  for (let round = 0; round < depth && results.length < limit; round += 1) {
+    for (const items of ranked) {
+      if (round >= items.length) continue;
+      results.push(items[round]);
+      if (results.length >= limit) break;
+    }
+  }
+  return results;
 }
