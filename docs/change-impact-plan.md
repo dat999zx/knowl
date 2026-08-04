@@ -1,7 +1,21 @@
 # Live change impact — detection, and why detection alone is worthless
 
 Plan for handling the case where one actor's in-progress code change invalidates another
-agent's unfinished work. Written 2026-08-05 against `fork/mainline-2.16`.
+agent's unfinished work. Written 2026-08-05.
+
+> **What is in this branch, and what is not.** This document describes the whole arc, including
+> the part that is *not* here. This branch is **detection only**: the read-set, certain-tier
+> findings, the card stanza and `knowl_impact`. It is off by default and it refuses nothing —
+> every path through it is advisory, and every failure path allows the turn to proceed.
+>
+> The **write gate** of §7.5 — the `PreToolUse` refusal that is the mechanism the evidence
+> actually supports — is deliberately proposed **separately**, so that accepting detection does
+> not commit anyone to accepting enforcement. Two reasons it is split rather than bundled: its
+> precision is not yet measured against §9's ≥95% bar, and §10 records four open bugs in the
+> host's own hook implementation that bound what a refusal can currently guarantee. Detection is
+> unaffected by all four.
+>
+> Read §7.5 and §10 as design, not as shipped behaviour.
 
 **This is v2. It contradicts v1 (same path, earlier today) on its central design choice.** v1
 proposed *detect → notify the stale agent*. A full prior-art pass found that notification is
