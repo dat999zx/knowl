@@ -136,11 +136,16 @@ describe('K-30 -- the floor judges relevance, not standing', () => {
     expect(judged(0.34, { freshness: 'stale' })).toHaveLength(1);
   });
 
+  // AMENDED, deliberately. This asserted length 1 above the bar and length 0 below it -- the
+  // floor deleting. The floor now reports (docs/evals/floor-sweep.md): the row comes back
+  // either way and carries `abstained` below the bar. What K-30 is about is untouched and is
+  // still exactly what is asserted -- the VERDICT must depend on the cosine alone and not on
+  // how the item is dressed, at the same threshold for every dressing.
   it('requires the same cosine of every candidate however it is dressed', () => {
     // The 36% spread in required cosine, closed. At the floor exactly, everything answers.
     for (const dressing of [BEST_DRESSED, WORST_DRESSED, { freshness: 'needs_review' as const }]) {
-      expect(judged(MIN_VECTOR_RELEVANCE, dressing)).toHaveLength(1);
-      expect(judged(MIN_VECTOR_RELEVANCE - 0.001, dressing)).toHaveLength(0);
+      expect(judged(MIN_VECTOR_RELEVANCE, dressing)[0].explanation.abstained).toBeUndefined();
+      expect(judged(MIN_VECTOR_RELEVANCE - 0.001, dressing)[0].explanation.abstained).toBe(true);
     }
   });
 
@@ -149,11 +154,17 @@ describe('K-30 -- the floor judges relevance, not standing', () => {
     const fresh = judged(0.31, { freshness: 'fresh' });
     const flagged = judged(0.31, { freshness: 'needs_review' });
     expect(flagged).toHaveLength(fresh.length);
+    expect(flagged[0].explanation.abstained).toBe(fresh[0].explanation.abstained);
   });
 });
 
 describe('K-36 -- an unindexed store cannot answer a question the indexed one abstained on', () => {
-  it('keeps a just-written local item when its own store reached the verdict', () => {
+  // AMENDED, deliberately: the old assertions here were the RETURNED set, which encoded
+  // deletion. The floor now labels instead of deleting, so the identical rule shows up as which
+  // row is left UNLABELLED. All three cases assert the same distinction they always did --
+  // exemption follows "did this row's store take part", not "was this row judged" -- and lane
+  // 3's K-36 hazard is what the labels now prevent rather than what deletion prevented.
+  it('leaves a just-written local item unlabelled when its own store reached the verdict', () => {
     // The exemption exists for this: written since the last index, invisible to vector,
     // returned lexically. Its own store had judged candidates, so the verdict was informed.
     const scored = scoreCandidates(
@@ -163,27 +174,36 @@ describe('K-36 -- an unindexed store cannot answer a question the indexed one ab
       ],
       { limit: 10, usingVector: true },
     );
-    expect(scored.map(row => row.item.id)).toEqual(['unindexed']);
+    const byId = new Map(scored.map(row => [row.item.id, row]));
+    expect([...byId.keys()].sort()).toEqual(['distant', 'unindexed']);
+    // The one row on an abstained page that may still be the answer.
+    expect(byId.get('unindexed').explanation.abstained).toBeUndefined();
+    expect(byId.get('distant').explanation.abstained).toBe(true);
   });
 
-  it('drops the peer in the exact shape lane 3 probed', () => {
-    // Their numbers: a local item at cosine 0.18, embedded, alone returns [] -- the floor
-    // deletes it correctly. Add one peer row at bm25Rank 1 with no embedding and the peer row
-    // becomes the ONLY result, scored 0.0742, a quarter of the 0.30 floor, and unmarked.
+  it('labels the peer in the exact shape lane 3 probed', () => {
+    // Their numbers: a local item at cosine 0.18, embedded, alone abstains -- correctly. Add
+    // one peer row at bm25Rank 1 with no embedding and the peer row used to become the ONLY
+    // result, scored 0.0742, a quarter of the 0.30 floor, and unmarked. "Unmarked" is the whole
+    // hazard, and it is what is now impossible: a store that judged nothing is labelled, never
+    // exempted -- on this page it is less trustworthy than the rows that were judged, not more.
     const local = { item: item('local'), repo: 'mine', embedded: true, vectorRank: 1, vectorScore: 0.18 };
-    expect(scoreCandidates([{ ...local }], { limit: 10, usingVector: true })).toEqual([]);
+    const alone = scoreCandidates([{ ...local }], { limit: 10, usingVector: true });
+    expect(alone.map(row => row.explanation.abstained)).toEqual([true]);
 
     const union = scoreCandidates(
       [{ ...local }, { item: item('peer'), repo: 'theirs', embedded: false, bm25Rank: 1 }],
       { limit: 10, usingVector: true },
     );
-    expect(union).toEqual([]);
+    expect(union).toHaveLength(2);
+    expect(union.every(row => row.explanation.abstained === true)).toBe(true);
   });
 
-  it('drops a peer that contributed nothing the floor could judge', () => {
+  it('labels a peer that contributed nothing the floor could judge', () => {
     // K-36, lane 3. The local store is indexed and says it does not know. The peer has no
-    // embeddings at all, so every one of its rows escapes the floor and an off-topic peer
-    // item becomes the only thing returned.
+    // embeddings at all, so every one of its rows escapes the floor -- and an off-topic peer
+    // item used to become the only thing returned. It comes back now, and it is labelled, so it
+    // can no longer read as the answer the indexed store had just said it did not have.
     const scored = scoreCandidates(
       [
         { item: item('local-distant'), repo: 'mine', embedded: true, vectorRank: 1, vectorScore: 0.06 },
@@ -191,7 +211,8 @@ describe('K-36 -- an unindexed store cannot answer a question the indexed one ab
       ],
       { limit: 10, usingVector: true },
     );
-    expect(scored).toEqual([]);
+    expect(scored).toHaveLength(2);
+    expect(scored.every(row => row.explanation.abstained === true)).toBe(true);
   });
 
   it('still turns itself off when nothing anywhere is embedded', () => {

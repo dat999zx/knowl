@@ -111,9 +111,27 @@ const IDENTIFIER_MISS_PRIOR = 0.98;
  *
  * Measured 2026-08-01 over 20 queries against a 424-item store: on-topic and near-miss
  * queries score 0.401-0.614, off-topic queries 0.170-0.223, and nothing falls between.
- * 0.30 leaves roughly 0.08 above the worst junk and 0.10 below the weakest legitimate
- * query -- the larger margin deliberately protects real answers, because silencing one is
- * worse than admitting a weak one.
+ *
+ * **Re-measured 2026-08-04, and the margins were optimistic** (docs/evals/floor-sweep.md). On a
+ * copy of the same store, 483 items and 22 queries instead of 20: junk tops out at 0.2678 and
+ * legitimate answers bottom out at 0.3137. The gap is real but a third as wide as recorded --
+ * 0.30 sits 0.032 above the worst junk and **0.014** below the weakest real answer, not 0.10.
+ *
+ * **And it does not transfer.** On `docs/evals/semantic-suite.json` the two distributions
+ * overlap outright: gold answers score 0.087-0.277, inside and below this store's junk band.
+ * While the floor still deleted, 0.30 blanked 23 of 110 answerable queries there and took
+ * Recall@10 from 0.9818 to 0.7909, concentrated in the moderate and extreme paraphrase tiers.
+ * Not the embeddings: re-embedding each blanked gold alone (K-71, worth up to 5.4e-2) lifted 0
+ * of 13 over the bar. A fixed absolute cosine is the wrong shape for the job -- the same class
+ * of error as K-28 and K-70, one level down.
+ *
+ * So the number is no longer load-bearing. **The floor reports; it does not delete** -- see
+ * `scoreCandidates` -- because silencing a real answer is worse than admitting a weak one, and
+ * a false abstention is indistinguishable at the call site from "the store does not know".
+ * 0.30 stays because it is the best value for the corpus that ships (0.25 mislabels half as
+ * often on both synthetic suites at identical off-topic abstention, but would let this store's
+ * 0.2678 junk query through unlabelled). Re-sweep rather than re-guess: `scoreCandidates` takes
+ * `minRelevance`, so the sweep is a parameter and not a patch.
  *
  * It is judged on the cosine itself, before fusion and before any prior. That is the rule
  * Azure ships verbatim -- "filtering occurs before fusing results from different recall sets"
@@ -380,6 +398,13 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     usingVector: boolean;
     /** The sweep knob. Production callers omit it and get FUSION_ALPHA. */
     alpha?: number;
+    /**
+     * The other sweep knob. Production callers omit it and get MIN_VECTOR_RELEVANCE.
+     *
+     * Alpha had one from the day it was measured and the floor did not, which is why the
+     * alpha sweep could report `empty` in every row and never vary the thing that causes it.
+     */
+    minRelevance?: number;
   },
 ): ScoredCandidate[] {
   const limit = options.limit;
@@ -477,6 +502,8 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     .sort((left, right) => right.score - left.score);
 
   let selected: Array<typeof scored[number] & { diversity: number }>;
+  // Item ids the floor's verdict covers. Empty when the query is answerable.
+  let abstained = new Set<string>();
   if (usingVector) {
     // The floor decides whether the query is answerable at all, then leaves the ranking alone.
     //
@@ -488,23 +515,48 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     // `which test runner` -> test-vitest (0.233) and `jwt ttl configured value` (0.262), all
     // three on queries whose top result scored 0.37-0.39. Recall@10 fell 0.994 -> 0.987.
     //
-    // What changed is *what* it judges: the raw cosine, not the fused-and-dressed score. A
-    // prior can no longer decide whether the store answers, only where the answer sits.
+    // What it judges is the raw cosine, not the fused-and-dressed score. A prior cannot decide
+    // whether the store answers, only where the answer sits.
+    //
+    // **What it no longer does is delete.** The verdict is reported and the ranking stands.
+    // A fixed absolute cosine does not transfer between corpora, so the constant cannot be
+    // right everywhere at once, and the failure is silent and one-directional: a false
+    // abstention is indistinguishable from "the store does not know", and the caller goes and
+    // re-derives what memory already had. Measured (docs/evals/floor-sweep.md): on the real
+    // 483-item store this was tuned on, off-topic queries top out at 0.2678 and legitimate ones
+    // bottom out at 0.3137 -- 0.30 is in the gap, but only 0.014 below the weakest real answer,
+    // not the 0.10 the old note claimed from a smaller query set. On `semantic-suite.json` the
+    // distributions OVERLAP: gold answers score 0.087-0.277 and 0.30 blanked 23 of 110
+    // answerable queries, Recall@10 0.9818 -> 0.7909, concentrated in the moderate and extreme
+    // tiers -- the half-remembered phrasings vector search exists for. Not the embeddings
+    // either: re-embedding each blanked gold alone (K-71, up to 5.4e-2) lifted 0 of 13 over it.
+    //
+    // This file's own rule already said which way to err -- silencing a real answer is worse
+    // than admitting a weak one -- and deletion was breaking it. Every result now carries a
+    // calibrated score, so a weak answer arrives visibly weak, and silence was never the richer
+    // signal: it could not be told apart from an empty store or a missing index.
     const judged = scored.filter(candidate => floorApplies(candidate.result));
     const bestCosine = judged.reduce((best, candidate) => Math.max(best, candidate.semantic), 0);
-    const answerable = judged.length === 0 || bestCosine >= MIN_VECTOR_RELEVANCE;
-    // When unanswerable, candidates the floor could not judge still stand -- but only from a
-    // store that took part in the verdict. On a partly indexed store a just-written item is
-    // invisible to vector and must not be suppressed by a verdict reached without it. A store
-    // with no embeddings at all took part in nothing, and letting its rows through here is how
-    // an off-topic peer item became the only answer to a question the indexed store had just
-    // said it could not answer.
-    const corporaThatJudged = new Set(judged.map(candidate => corpusOf(candidate.result)));
-    const floored = answerable
-      ? scored
-      : scored.filter(candidate => !floorApplies(candidate.result)
-        && corporaThatJudged.has(corpusOf(candidate.result)));
-    selected = floored.slice(0, limit).map(candidate => ({ ...candidate, diversity: 0 }));
+    const answerable = judged.length === 0 || bestCosine >= (options.minRelevance ?? MIN_VECTOR_RELEVANCE);
+    // Exactly the set the destructive floor used to KEEP is the set left unlabelled; everything
+    // it used to delete is returned and labelled. The rule is unchanged, only its consequence:
+    //
+    // - Judged and under the bar -> labelled. This is what the floor is about.
+    // - Unjudged, from a store that DID take part -> exempt. Written since the last index and
+    //   invisible to vector, so the verdict was reached without ever seeing it (K-36's local
+    //   half). This is the one row on an abstained page that may still be the answer.
+    // - From a store that judged NOTHING -> labelled. A peer with no embeddings at all took
+    //   part in nothing, and leaving it as the only unlabelled row on the page is how an
+    //   off-topic peer item became the answer to a question the indexed store had just said it
+    //   could not answer (K-36). Exempting it would be reading the exemption backwards: it is
+    //   less trustworthy here than the rows that were judged, not more.
+    if (!answerable) {
+      const corporaThatJudged = new Set(judged.map(candidate => corpusOf(candidate.result)));
+      abstained = new Set(scored
+        .filter(candidate => floorApplies(candidate.result) || !corporaThatJudged.has(corpusOf(candidate.result)))
+        .map(candidate => candidate.result.item.id));
+    }
+    selected = scored.slice(0, limit).map(candidate => ({ ...candidate, diversity: 0 }));
   } else {
     // Maximal Marginal Relevance, on the path that has no semantic ranking to trust. The
     // vector path deliberately has none: de-duplication scrambles legitimately
@@ -543,6 +595,8 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
       finalScore: score,
       bm25Rank: result.bm25Rank,
       vectorRank: result.vectorRank,
+      // Present only when true: an answered query is the common case and pays nothing.
+      ...(abstained.has(result.item.id) ? { abstained: true } : {}),
       contributions: { ...contributions, diversity },
       reason: `relevance=${contributions.relevance.toFixed(3)} `
         + `(semantic=${contributions.semantic.toFixed(3)}, lexical=${contributions.lexical.toFixed(3)}, `

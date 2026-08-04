@@ -1272,6 +1272,16 @@ export function registerTools(
             text: `SCOPE: ${explain ? '`explain`' : 'vector search'} limits this query to the project namespace, so ${skippedNamespaces.join(' and ')} knowledge was NOT searched. A miss here does not mean the knowledge is absent; re-run without it for full scope.`,
           });
         }
+        // The floor's verdict, in words. It used to be delivered by returning nothing at all,
+        // which the caller could not tell apart from an empty store or a missing index -- and
+        // which deleted the answer on every query where the verdict was wrong. The rows now
+        // stand and the verdict rides beside them, so a caller can act on it or overrule it.
+        if (resolvedItems.some(item => (item.explanation as { abstained?: boolean } | undefined)?.abstained)) {
+          blocks.push({
+            type: 'text',
+            text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `score` and judge. If none of them answers the question, treat this as a miss and go to the files.',
+          });
+        }
         return { content: blocks };
       }
 

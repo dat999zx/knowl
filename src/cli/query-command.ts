@@ -17,9 +17,31 @@ import { resolveWorkspace } from '../workspace/resolve.js';
 export const CLI_QUERY_LIMIT = 20;
 
 export type CliQueryResult = {
-  items: Array<KnowledgeItem & { repo?: string }>;
+  items: Array<KnowledgeItem & { repo?: string; score?: number; abstained?: boolean }>;
   skipped: FederatedResult['skipped'];
 };
+
+/**
+ * The ranker's own numbers, put on the item the way `knowl_query` puts them on its response.
+ *
+ * `knowl query` printed a bare ordering, so a human reading it could not tell a confident
+ * answer from the least-bad row in the store -- the same gap the MCP surface had. Three
+ * decimals for the same reason: the digits past that are noise.
+ *
+ * The full `explanation` is deliberately not printed. It is a dozen contribution terms per
+ * item, and the two numbers a reader acts on are these. `--as-of` carries neither, because
+ * historical reconstruction does not run through the ranker at all.
+ */
+function withRankerVerdict<T extends { explanation?: { finalScore?: number; abstained?: boolean } }>(
+  entry: T,
+): Omit<T, 'explanation'> & { score?: number; abstained?: boolean } {
+  const { explanation, ...item } = entry;
+  return {
+    ...item,
+    ...(typeof explanation?.finalScore === 'number' ? { score: Number(explanation.finalScore.toFixed(3)) } : {}),
+    ...(explanation?.abstained ? { abstained: true } : {}),
+  };
+}
 
 /**
  * What `knowl query` returns.
@@ -74,9 +96,9 @@ export async function runCliQuery(input: {
     const federated = await queryFederated({
       workspace: active, query: input.query ?? '', limit, vector,
     });
-    return { items: federated.items, skipped: federated.skipped };
+    return { items: federated.items.map(withRankerVerdict), skipped: federated.skipped };
   }
 
   const ranked = await rankKnowledge(input.projectId, { query: input.query, limit, vector });
-  return { items: ranked.map(({ explanation, ...item }) => item), skipped: [] };
+  return { items: ranked.map(withRankerVerdict), skipped: [] };
 }

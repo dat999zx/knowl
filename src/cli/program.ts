@@ -454,6 +454,11 @@ program.command('query').argument('[query]').description('Search project memory 
     });
 
     console.log(JSON.stringify(items, null, 2));
+    // The floor's verdict, said out loud. Results below it are printed rather than withheld,
+    // so without this line a weak page looks exactly like a strong one.
+    if (items.some((item: { abstained?: boolean }) => item.abstained)) {
+      console.error('Note: every result scored below the relevance floor — this store probably does not hold the answer. Read "score" and judge.');
+    }
     for (const skip of skipped) {
       console.error(`Note: linked repo "${skip.repo}" was not searched (${skip.reason}).`);
     }

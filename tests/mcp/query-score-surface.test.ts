@@ -173,4 +173,27 @@ describe('knowl_query surfaces the calibrated score without being asked', () => 
     const text = String((await call('knowl_query', { query: 'vector index rebuild schedule', limit: 3 })).content[0].text);
     expect(text).not.toMatch(/"score":\d\.\d{5,}/);
   });
+
+  // The floor's verdict has to arrive as words, not as an empty array. Returning nothing was
+  // indistinguishable from an empty store or a missing index, and it deleted the answer on
+  // every query where the verdict was wrong -- 23 of 110 on semantic-suite.json, measured in
+  // docs/evals/floor-sweep.md.
+  it('states an abstention in words and still returns the rows', async () => {
+    // One word borrowed from each of the three fixtures, so every cosine is about 0.17 -- well
+    // under the 0.30 floor, and deterministic under the bag-of-words embedder rather than a
+    // conditional that could quietly assert nothing.
+    const result = await call('knowl_query', { query: 'canary tax nightly', limit: 3 });
+    const blocks = (result.content as Array<{ text: string }>).map(block => block.text);
+    const items = JSON.parse(blocks[0]);
+
+    expect(items.length).toBeGreaterThan(0);
+    expect(items[0].score).toBeLessThan(0.3);
+    expect(blocks.some(text => text.startsWith('NO CONFIDENT MATCH'))).toBe(true);
+  });
+
+  it('says nothing about abstention when the query is answered', async () => {
+    const result = await call('knowl_query', { query: 'vector index rebuild schedule', limit: 3 });
+    const blocks = (result.content as Array<{ text: string }>).map(block => block.text);
+    expect(blocks.some(text => text.startsWith('NO CONFIDENT MATCH'))).toBe(false);
+  });
 });
