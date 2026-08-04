@@ -40,6 +40,17 @@ const KNOWL_ARTIFACTS = new Set([
   'CLAUDE.md',
 ]);
 
+/**
+ * A libSQL database and its sidecars.
+ *
+ * Some suites never build a repository at all -- `.knowl-pool-test`, `.knowl-bootstrap-test`
+ * and `.knowl-schema-version-test` hold nothing but bare `*.db` files -- and the first
+ * version of this predicate left all three behind on a full run. They are also the suites
+ * whose files Windows is most likely to still be holding, which is the case the sweep exists
+ * for in the first place.
+ */
+const DATABASE_FILE = /\.db(-shm|-wal)?$/;
+
 const MARKER_DEPTH = 2;
 
 /** True when the directory holds something only Knowl writes, or holds nothing at all. */
@@ -57,6 +68,7 @@ async function isKnowlScratch(dir: string, depth = MARKER_DEPTH): Promise<boolea
 
   for (const entry of entries) {
     if (KNOWL_ARTIFACTS.has(entry.name)) return true;
+    if (entry.isFile() && DATABASE_FILE.test(entry.name)) return true;
   }
   if (depth <= 0) return false;
 

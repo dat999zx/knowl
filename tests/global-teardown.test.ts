@@ -82,6 +82,19 @@ describe('global teardown sweep', () => {
       expect(await exists('.knowl-cli-fixture')).toBe(false);
     });
 
+    it('removes a fixture that is nothing but loose databases', async () => {
+      // `.knowl-pool-test`, `.knowl-bootstrap-test` and `.knowl-schema-version-test` build no
+      // repository at all -- just bare libSQL files. A first pass at this predicate left all
+      // three behind on a full run, which is how they got into this test.
+      await makeFile('.knowl-pool-test/a.db', 'sqlite');
+      await makeFile('.knowl-pool-test/a.db-shm', '');
+      await makeFile('.knowl-pool-test/a.db-wal', '');
+
+      await sweepScratchDirectories(BASE);
+
+      expect(await exists('.knowl-pool-test')).toBe(false);
+    });
+
     it('removes an empty leftover', async () => {
       await makeDir('.knowl-empty');
 
