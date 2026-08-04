@@ -1,6 +1,7 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_PRESET_ID, VECTOR_PRESETS, fingerprintProfile, resolveVectorProfile,
+  DEFAULT_PRESET_ID, PRESET_IDS, VECTOR_PRESETS, fingerprintProfile, resolveVectorProfile,
 } from '../../src/core/vector-profile.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
@@ -100,5 +101,31 @@ describe('fingerprintProfile', () => {
   it('changes when pooling alone changes', () => {
     const base = { provider: 'local', model: 'a/b', dtype: 'q8', pooling: 'cls' } as const;
     expect(fingerprintProfile(base)).not.toBe(fingerprintProfile({ ...base, pooling: 'mean' }));
+  });
+});
+
+/**
+ * `scripts/benchmark-embedding-models.mjs` carries its own copy of the preset list, with a
+ * comment saying it is "kept in step with PRESET_IDS". It was not: `arctic-embed-m-v2` was
+ * added to the table as DEFAULT_PRESET_ID and never to the script, so for as long as arctic
+ * has been the default, `npm run bench:embeddings` compared four alternatives to each other
+ * and left the shipped model out of its own bake-off.
+ *
+ * A comment asking to be kept in step is how it drifted. This makes the drift fail.
+ */
+describe('bench:embeddings preset list', () => {
+  it('covers every real preset, so the bake-off cannot omit the one that ships', async () => {
+    const source = await readFile(
+      new URL('../../scripts/benchmark-embedding-models.mjs', import.meta.url), 'utf-8',
+    );
+    const declared = source.match(/const ALL_PRESETS = \[(.*?)\];/s);
+    expect(declared, 'ALL_PRESETS not found -- the script was restructured').not.toBeNull();
+
+    const inScript = [...declared![1].matchAll(/'([^']+)'/g)].map(match => match[1]);
+    expect([...inScript].sort()).toEqual(Object.keys(VECTOR_PRESETS).sort());
+    // 'custom' names no model and cannot be benchmarked, which is why the comparison is
+    // against VECTOR_PRESETS rather than PRESET_IDS.
+    expect(PRESET_IDS.filter(id => id !== 'custom').sort()).toEqual([...inScript].sort());
+    expect(inScript).toContain(DEFAULT_PRESET_ID);
   });
 });
