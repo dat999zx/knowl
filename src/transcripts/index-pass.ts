@@ -649,10 +649,16 @@ export async function runIndexPass(input: {
   // Failure is swallowed rather than failing a pass that indexed correctly. A null offset is a
   // correct pointer that reads by scanning, so the cost of not filling it is time, and the next
   // pass tries again; letting it throw would turn a slow read into a failed catch-up.
-  if (result.complete && !(input.deadline !== undefined && Date.now() >= input.deadline)) {
+  // Called whenever the index is caught up, not only when budget is left — under load the
+  // indexing above consumes the whole budget every pass, and gating on the clock here meant
+  // the backfill was never even invoked: starved forever, one honest no-op at a time (the
+  // K-65 shape, at the call site instead of the loop). The backfill inherits the pass's own
+  // `budgeted` verdict, so a budget that was real when THIS pass started buys it one batch;
+  // a pass invoked with an already-spent deadline still backfills nothing, exactly as before.
+  if (result.complete) {
     try {
       result.offsetsFilled =
-        (await fillMissingByteOffsets({ dbPath: input.dbPath, deadline: input.deadline })).filled;
+        (await fillMissingByteOffsets({ dbPath: input.dbPath, deadline: input.deadline, budgetWasReal: budgeted })).filled;
     } catch {
       // Left for the next pass.
     }

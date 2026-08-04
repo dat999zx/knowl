@@ -108,6 +108,7 @@ async function fillOneFile(
   dbPath: string,
   filePath: string,
   deadline?: number,
+  guaranteeFirstBatch = false,
 ): Promise<{ filled: number; complete: boolean }> {
   const resume = await withWriteRetry(dbPath, client => offsetResumePoint(client, filePath));
   if (!resume) return { filled: 0, complete: true };
@@ -143,7 +144,9 @@ async function fillOneFile(
     filled += await commitOffsets(dbPath, filePath, batch);
     batch = [];
     // Between committed batches, so stopping is always at a point the resume point can find.
-    if (expired(deadline)) return { filled, complete: false };
+    // The first-batch guarantee is spent the moment anything commits: from here the deadline
+    // is exact again.
+    if (expired(deadline) && !(guaranteeFirstBatch && filled === 0)) return { filled, complete: false };
   }
 
   if (batch.length > 0) filled += await commitOffsets(dbPath, filePath, batch);
@@ -160,17 +163,32 @@ async function fillOneFile(
 export async function fillMissingByteOffsets(input: {
   dbPath: string;
   deadline?: number;
+  /** Whether the deadline was real when the OWNING PASS started, not when this call is made. */
+  budgetWasReal?: boolean;
 }): Promise<{ filled: number; complete: boolean }> {
   let filled = 0;
   let cursor = '';
 
+  // The same guarantee `runIndexPass` carries (index-pass.ts, K-65): a budget that was real
+  // when the pass started buys at least one batch of work here, even though indexing has
+  // usually consumed it by the time this runs. Without this, the expiry test below ran BEFORE
+  // the first file, so on a busy machine the backfill was starved forever -- 0 rows, pass
+  // after pass, each one reporting an honest `complete: false` and doing nothing. The verdict
+  // is the CALLER'S, taken at pass start: computed here it would read "already spent" under
+  // exactly the load that causes the starvation. A deadline already in the past when the pass
+  // began is still obeyed exactly. The overrun is bounded to one WRITE_BATCH (~200 rows,
+  // ~110 ms), the same bound the index pass accepts and for the same reason: enrichment that
+  // never starts is worse than a bounded overrun on a path whose partial results are always
+  // correct.
+  const budgeted = input.budgetWasReal === true;
+
   for (;;) {
-    if (expired(input.deadline)) return { filled, complete: false };
+    if (expired(input.deadline) && !(budgeted && filled === 0)) return { filled, complete: false };
 
     const next = await nextPathNeedingOffsets(input.dbPath, cursor);
     if (next === null) return { filled, complete: true };
 
-    const outcome = await fillOneFile(input.dbPath, next, input.deadline);
+    const outcome = await fillOneFile(input.dbPath, next, input.deadline, budgeted && filled === 0);
     filled += outcome.filled;
     if (!outcome.complete) return { filled, complete: false };
     cursor = next;
