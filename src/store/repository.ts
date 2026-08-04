@@ -312,11 +312,18 @@ export async function updateKnowledgeItem(
     const affectedPaths = updates.affectedPaths !== undefined
       ? normalizeAffectedPaths(updates.affectedPaths)
       : current[0].affectedPaths as string[] | null;
+    // `!== undefined`, not `??`. The nullish form cannot tell "not mentioned" from "cleared":
+    // an update setting `reasoning: null` wrote NULL to the row and then hashed the OLD
+    // reasoning, so `content_hash` fingerprinted a row that no longer existed. Import
+    // classifies an item as `identical` on that hash and skips it outright, and drift compares
+    // against it, so both trust the previous value for as long as nothing else touches the row.
+    // Every field the hash covers is read the same way, including the two the column types
+    // happen to make non-nullable, so the rule does not have to be re-derived per field.
     const merged = {
-      title: updates.title ?? current[0].title,
-      content: updates.content ?? current[0].content,
-      reasoning: updates.reasoning ?? current[0].reasoning,
-      source: updates.source ?? current[0].source,
+      title: updates.title !== undefined ? updates.title : current[0].title,
+      content: updates.content !== undefined ? updates.content : current[0].content,
+      reasoning: updates.reasoning !== undefined ? updates.reasoning : current[0].reasoning,
+      source: updates.source !== undefined ? updates.source : current[0].source,
       affectedPaths,
     };
     // Only what this update actually writes is scanned. The stored fields were validated
