@@ -6,7 +6,7 @@ import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import {
-  queryKnowledgeForAgent, rankKnowledge, scoreCandidates, type Candidate,
+  queryKnowledgeForAgent, rankKnowledge, scoreCandidates, selectCandidates, type Candidate,
 } from '../../src/store/agent-query.js';
 import { openPeerStore } from '../../src/store/store-handle.js';
 import { resetWriteOwnershipCache } from '../../src/store/write-ownership.js';
@@ -113,6 +113,30 @@ describe('rankKnowledge', () => {
 
       expect(ranked.map(item => item.title)).toEqual(['Peer uses cassandra']);
       expect((await fs.readFile(peerDb())).equals(before)).toBe(true);
+    } finally {
+      await closeDb();
+    }
+  });
+
+  it('gathers more candidates than the page it is asked for', async () => {
+    // `Math.max(limit * 3, 10)` -> `Math.min(...)` survived the whole suite, and so did
+    // `limit * 3` -> `limit / 3`. Both cap the pool at ten however many rows the caller wants,
+    // which is not a page-size change but a FUSION change: rank 11 upwards never reaches
+    // scoring, so the semantic half can no longer lift a row the lexical engine ranked low --
+    // the entire point of gathering three times the page. Every existing case asks for the
+    // default 3, where 3*3 and 10 both round to 10 and the mutants are invisible.
+    await initDb(MINE);
+    try {
+      const projectId = (await repo.getProjectByRootPath(MINE))!.id;
+      for (let index = 0; index < 20; index += 1) {
+        await repo.createKnowledgeItem(projectId, {
+          category: 'fact',
+          title: `Postgres note ${index}`,
+          content: `Note number ${index} about the postgres deployment.`,
+        });
+      }
+      const candidates = await selectCandidates('local', { query: 'postgres', limit: 10 });
+      expect(candidates.length).toBeGreaterThan(10);
     } finally {
       await closeDb();
     }

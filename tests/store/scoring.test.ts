@@ -414,6 +414,128 @@ describe('near-duplicate demotion replaces the MMR penalty', () => {
   });
 });
 
+/**
+ * Five invariants this file states in prose and did not check, found by mutation testing.
+ *
+ * Each case below is a mutant that survived the ENTIRE in-process suite -- confirmed one at a
+ * time in a fresh process, not merely against a narrow slice -- so for each one there was some
+ * way to break the documented behaviour that 1,829 passing tests agreed with.
+ */
+describe('what the scorer promises in prose and did not assert', () => {
+  it('discounts for a LOW confidence and cannot be lifted by an out-of-range one', () => {
+    // Two mutants, one line apart, both alive:
+    //
+    //   `CONFIDENCE_PRIOR_FLOOR + (1 - CONFIDENCE_PRIOR_FLOOR) * confidence` -> `-`
+    //   `Math.min(Math.max(confidence ?? 1, 0), 1)`                          -> `Math.max(...)`
+    //
+    // The first inverts the prior: a confidence of 0 would outrank an otherwise identical 1.
+    // The second is the clamp whose own comment says why it is there -- "a model emitting a
+    // percent scale would otherwise be a permanent multiplier on every query" -- and a comment
+    // is not a test. An out-of-range confidence is reachable: `assertConfidenceInRange` refuses
+    // one at the write boundary today, and tests/store/confidence-bounds.test.ts asserts that an
+    // export written BEFORE that guard still imports ("imports an item whose confidence the
+    // repository would now refuse"). Such a row is exactly what the clamp is for.
+    const scored = scoreCandidates(
+      [
+        { item: item('sure', { confidence: 1 }), embedded: true, vectorRank: 1, vectorScore: 0.5 },
+        { item: item('unsure', { confidence: 0 }), embedded: true, vectorRank: 2, vectorScore: 0.5 },
+        { item: item('percent', { confidence: 50 }), embedded: true, vectorRank: 3, vectorScore: 0.5 },
+      ],
+      { limit: 10, usingVector: true },
+    );
+    const row = (id: string) => scored.find(entry => entry.item.id === id)!;
+
+    // Direction: more confidence is worth more, never less.
+    expect(row('sure').score).toBeGreaterThan(row('unsure').score);
+    // Ceiling: a prior only ever discounts, so no row's score exceeds its own relevance -- and
+    // the percent-scale row does not buy its way past a correctly-scored one.
+    for (const entry of scored) {
+      expect(entry.score).toBeLessThanOrEqual(entry.explanation.contributions.relevance);
+    }
+    expect(row('percent').score).toBeLessThanOrEqual(row('sure').score);
+  });
+
+  it('renormalises alpha onto the semantic half when no lexical evidence exists at all', () => {
+    // `const anyLexical = corpusBest.size > 0` -> `true` survived. The file says alpha
+    // "renormalises over the signals that exist"; with the mutant a store whose query matched
+    // nothing lexically still reserves 20% of relevance for the lexical half and reports every
+    // score at 80% of its cosine. It reorders nothing -- which is exactly why no test caught it
+    // -- but the score is this file's product (K-35: comparable across queries, not a rank), so
+    // a silent 20% haircut is a calibration defect rather than a cosmetic one.
+    const [only] = scoreCandidates(
+      [{ item: item('vector-only'), embedded: true, vectorRank: 1, vectorScore: 0.62 }],
+      { limit: 10, usingVector: true },
+    );
+    expect(only.explanation.contributions.relevance).toBeCloseTo(0.62, 10);
+    expect(only.explanation.contributions.semantic).toBeCloseTo(0.62, 10);
+  });
+
+  it('measures near-duplicate overlap on what two items SHARE, not on how much one holds', () => {
+    // `[...left].filter(token => right.has(token)).length / union.size` -> `[...left].length / union.size`
+    // survived. That turns the duplicate detector into a containment test: a long note whose
+    // vocabulary happens to include a short note's scores |long| / |long union short| = 1.0 and
+    // is demoted off the page as "the same note written twice", however little it has in common.
+    // NEAR_DUPLICATE_OVERLAP's whole justification is that 0.9 identifies an atom written twice
+    // rather than a topical neighbour; one-sided containment is not that measurement.
+    const bodied = (id: string, body: string, lexicalScore: number) => ({
+      item: item(id, { title: body, content: body }),
+      bm25Rank: 1,
+      lexicalScore,
+      lexicalCoverage: 1,
+    });
+    const scored = scoreCandidates(
+      [
+        bodied('short', 'backup schedule', 10),
+        bodied('long', 'backup schedule and retention and restore drill and offsite copy rotation', 5),
+        bodied('unrelated', 'fonts baloo nunito typeface weights', 1),
+      ],
+      { limit: 2, usingVector: false, query: 'backup schedule' },
+    );
+
+    // Two of the nine tokens are shared, so these are neighbours and both belong on the page.
+    expect(scored.map(row => row.item.id)).toEqual(['short', 'long']);
+    expect(scored[1].explanation.contributions.diversity).toBeCloseTo(2 / 9, 10);
+  });
+
+  it('applies the identifier prior only to identifier-shaped queries, and only against a miss', () => {
+    // Two survivors in `identifierQuery` and its use:
+    //
+    //   `!identifier || containsIdentifier(item, identifier)` -> `&&`
+    //   `!/[./#:_-]/.test(identifier)`                        -> drop the `!`
+    //
+    // The first makes the prior fire on every row of an identifier query, so it discriminates
+    // nothing; the second inverts the gate, so prose queries become identifier queries and
+    // identifiers stop being ones. Both are invisible to a test that only reads `score`,
+    // because a prior applied uniformly moves every row by the same factor. `exactIdentifier`
+    // is reported per row precisely so the question "did this discriminate" can be asked.
+    const rows = (query: string) => {
+      const scored = scoreCandidates(
+        [
+          { item: item('hit', { title: 'src/store/agent-query.ts', content: 'x.y ranking' }), bm25Rank: 1, lexicalScore: 10 },
+          { item: item('miss', { title: 'unrelated note', content: 'about fonts' }), bm25Rank: 2, lexicalScore: 9 },
+        ],
+        { limit: 10, usingVector: false, query },
+      );
+      return new Map(scored.map(row => [row.item.id, row.explanation.contributions.exactIdentifier]));
+    };
+
+    // An identifier query: the row carrying it keeps its full prior and the row without it pays.
+    const identifier = rows('src/store/agent-query.ts');
+    expect(identifier.get('hit')).toBe(1);
+    expect(identifier.get('miss')).toBeLessThan(1);
+
+    // Three characters is the shortest thing that counts as one (`length < 3` rejects two).
+    const shortest = rows('x.y');
+    expect(shortest.get('hit')).toBe(1);
+    expect(shortest.get('miss')).toBeLessThan(1);
+
+    // Ordinary prose is not an identifier, so nothing is discounted for failing to contain it
+    // verbatim -- which would be a substring test standing in for a lexical one.
+    const prose = rows('agent query ranking');
+    expect([...prose.values()]).toEqual([1, 1]);
+  });
+});
+
 describe('K-28 -- the text term is BM25 done worse', () => {
   const ROOT = path.resolve('./.knowl-scoring-k28');
 

@@ -33,6 +33,21 @@ describe('abstention requires a calibrated floor', () => {
     expect(scored.every(row => row.explanation.abstained === undefined)).toBe(true);
   });
 
+  it('never abstains on a number that is not a threshold', () => {
+    // `typeof x === 'number' && Number.isFinite(x)` -> `||` survived the whole suite, so the
+    // `Number.isFinite` half was doing nothing any test could see. `NaN` is a number and
+    // compares false against everything, so under the mutant `bestCosine >= floor` is false for
+    // every query and the store abstains on all of them -- the loudest possible version of the
+    // failure this file exists to prevent, reached by a threshold nobody ever set.
+    for (const notAThreshold of [Number.NaN, Number.POSITIVE_INFINITY]) {
+      const scored = scoreCandidates(
+        [{ item: item('a'), embedded: true, vectorRank: 1, vectorScore: 0.62 }],
+        { limit: 10, usingVector: true, minRelevance: notAThreshold },
+      );
+      expect(scored.every(row => row.explanation.abstained === undefined)).toBe(true);
+    }
+  });
+
   it('abstains once a floor is supplied and the best cosine is under it', () => {
     const scored = scoreCandidates(weak, { limit: 10, usingVector: true, minRelevance: 0.30 });
 

@@ -25,6 +25,9 @@ Thumbs.db
 
 # Temp
 .tmp/
+# Stryker's vitest runner drops a setup shim per runner process in the project root and does
+# not always collect them (`stryker-setup-0.js`, `-1.js`, ...). They are scratch, not source.
+stryker-setup-*.js
 .npm-cache
 benchmarks/accuracy/results/
 
