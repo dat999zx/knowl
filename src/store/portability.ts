@@ -27,9 +27,41 @@ async function skillFiles(root: string, directory: string, base = directory): Pr
   return files;
 }
 
+/** Who wrote an export, as far as the writing store can prove it. */
+export type ExportOrigin = { workspace: string; repo: string };
+
+/**
+ * The exporter's workspace identity, or null when it has none to give.
+ *
+ * `origin_repo` is a name, and a name only means something inside the workspace that issued
+ * it. Without this, "server" in the file and "server" in the reading repo were the same
+ * string and therefore the same owner -- which is how a stranger's export came to be treated
+ * as the importer's own knowledge. An unlinked repo genuinely has no identity to declare, and
+ * says so rather than guessing.
+ *
+ * Imported lazily so the store layer keeps no static dependency on the workspace layer, the
+ * same reason `write-ownership` resolves it that way.
+ */
+async function exportOrigin(projectRoot?: string): Promise<ExportOrigin | null> {
+  if (!projectRoot) return null;
+  try {
+    const { resolveWorkspace } = await import('../workspace/resolve.js');
+    const active = await resolveWorkspace(projectRoot);
+    return active ? { workspace: active.name, repo: active.repo } : null;
+  } catch {
+    return null; // a broken workspace makes the export anonymous, never unwritable
+  }
+}
+
 export async function exportKnowledge(projectId: string, outputPath: string, projectRoot?: string) {
   const items = (await listKnowledgeItems()).sort((a, b) => a.id.localeCompare(b.id));
-  const records: unknown[] = [{ type: 'header', format: 'knowl-jsonl', version: EXPORT_FORMAT_VERSION, namespace: 'project' }];
+  const records: unknown[] = [{
+    type: 'header', format: 'knowl-jsonl', version: EXPORT_FORMAT_VERSION, namespace: 'project',
+    // Always emitted, null included: "this build knows about origin and there is none" is a
+    // different fact from "this build predates origin", and only the first is safe to read as
+    // an anonymous export rather than as an unknown one.
+    origin: await exportOrigin(projectRoot),
+  }];
   const seenEvidence = new Set<string>();
   for (const item of items) {
     records.push({ type: 'item', item });
@@ -83,9 +115,89 @@ export type ImportResult = {
  * a round trip silently reset ownership to NULL and visibility to 'repo'. A reader that
  * accepted an unknown version would do the same thing to whatever the next version adds, which
  * is why the upper bound is enforced rather than assumed.
+ *
+ * Version 3 adds the header's `origin`: which workspace and repo wrote the file. Versions 1
+ * and 2 carried owner names with nothing to say whose namespace those names belonged to, so
+ * an imported row was indistinguishable from one this repo wrote itself -- and `join` claimed
+ * it, `promote` published it, and there is no demote. A version-2 file is still read, but its
+ * items are attributed to an unknown origin rather than to the importer.
  */
-export const EXPORT_FORMAT_VERSION = 2;
+export const EXPORT_FORMAT_VERSION = 3;
 const MIN_READABLE_FORMAT_VERSION = 1;
+
+/**
+ * Ownership marker for a row that arrived from a store this one cannot identify as itself.
+ *
+ * A repo name is `^[a-z0-9][a-z0-9-]*$`, so the colon makes this value unequal to every
+ * possible repo name. That is what makes the whole workspace layer correct without changing
+ * it: `backfillOriginRepo` claims `origin_repo IS NULL`, `promoteItems` selects `IS NULL OR
+ * = me` and counts everything else as foreign, and `assertOwnedItem` refuses a non-null owner
+ * that is not this repo. Each of those already does the right thing with a value that is
+ * neither NULL nor a local name.
+ */
+const IMPORTED_ORIGIN_PREFIX = 'import:';
+
+/** A version-1 or version-2 file, which names no exporter. Not NULL, because NULL means mine. */
+export const UNKNOWN_IMPORT_ORIGIN = `${IMPORTED_ORIGIN_PREFIX}unknown`;
+
+/** True for an owner stamped by import: a name no repo can hold and no repo can act on. */
+export function isImportedOrigin(originRepo: string | null | undefined): boolean {
+  return typeof originRepo === 'string' && originRepo.startsWith(IMPORTED_ORIGIN_PREFIX);
+}
+
+/**
+ * The owner to stamp on every item in this file, or null when the file may be trusted verbatim.
+ *
+ * Trust is exactly one thing: the file declares a workspace and it is this repo's workspace.
+ * Then its owner names are drawn from the same manifest as this repo's, so "server" means the
+ * same repo on both sides -- the one-repo-two-machines case that promotion convergence depends
+ * on. Anything else, including two unlinked repos and two repos in different workspaces, is a
+ * separate namespace where an owner name carries no meaning that can be honoured here.
+ */
+async function importedOriginStamp(header: any, formatVersion: number, projectRoot?: string): Promise<string | null> {
+  const origin = formatVersion >= 3 && header.origin && typeof header.origin === 'object' ? header.origin : null;
+  const workspace = typeof origin?.workspace === 'string' ? origin.workspace : null;
+  const repo = typeof origin?.repo === 'string' ? origin.repo : null;
+
+  if (workspace && projectRoot) {
+    try {
+      const { resolveWorkspace } = await import('../workspace/resolve.js');
+      const active = await resolveWorkspace(projectRoot);
+      if (active?.name === workspace) return null;
+    } catch {
+      // Unreadable workspace means unproven sameness, and the safe answer to unproven is to
+      // attribute the file elsewhere: a wrong stamp is recoverable, a false claim is not.
+    }
+  }
+  return workspace && repo ? `${IMPORTED_ORIGIN_PREFIX}${workspace}/${repo}` : UNKNOWN_IMPORT_ORIGIN;
+}
+
+/**
+ * Ownership and visibility for one incoming item from an untrusted file.
+ *
+ * A foreign file may update content -- that is what divergence policy is for -- but it may
+ * never say who owns a row or who may read it. So a row already here keeps the owner and
+ * visibility it already had, and a row arriving for the first time is stamped with the
+ * exporter's identity and stays private. Importing a stranger's `visibility = 'workspace'`
+ * verbatim published it to this repo's peers on import, with no join, no promote and no flag:
+ * peers read a repo's database filtered on visibility alone.
+ *
+ * The lifecycle hash is recomputed because it fingerprints these two fields. Left as the
+ * file's, the row would carry a hash of values it does not hold, and the next import of the
+ * same file would read that disagreement as a metadata divergence forever.
+ */
+function attributeImported(
+  item: any,
+  local: { originRepo: string | null; visibility: string } | undefined,
+  stamp: string | null,
+): any {
+  if (!stamp) return item;
+  const originRepo = local ? local.originRepo : stamp;
+  const visibility = local ? local.visibility : 'repo';
+  if ((item.originRepo ?? null) === originRepo && (item.visibility ?? 'repo') === visibility) return item;
+  const attributed = { ...item, originRepo, visibility };
+  return { ...attributed, lifecycleHash: hashKnowledgeLifecycle(attributed) };
+}
 
 /**
  * Columns import writes, paired with how each is read off an exported item.
@@ -169,6 +281,7 @@ export async function importKnowledge(
   const skills = records.filter(record => record.type === 'skill_package');
   const tombstones = records.filter(record => record.type === 'tombstone').map(record => record.tombstone);
   const policy: DivergencePolicy = options.onDivergence ?? DEFAULT_DIVERGENCE_POLICY;
+  const stamp = await importedOriginStamp(header, formatVersion, options.projectRoot);
   const client = getClient();
 
   const plan: Array<{ item: any; action: 'insert' | 'update' | 'metadata' | 'identical' | 'keep-local' }> = [];
@@ -190,8 +303,8 @@ export async function importKnowledge(
     localTombstones.set(String(row.id), String(row.deleted_at));
   }
 
-  for (const item of items) {
-    validateKnowledgeWrite({ title: item.title, content: item.content, reasoning: item.reasoning, source: item.source, affectedPaths: item.affectedPaths });
+  for (const incoming of items) {
+    validateKnowledgeWrite({ title: incoming.title, content: incoming.content, reasoning: incoming.reasoning, source: incoming.source, affectedPaths: incoming.affectedPaths });
     // The lifecycle fields come along so `classifyIncomingItem` can derive a fingerprint for
     // a row whose `lifecycle_hash` is NULL -- which is every row written before the column
     // was added, since it is not backfilled.
@@ -199,7 +312,7 @@ export async function importKnowledge(
       sql: `SELECT id, content_hash, lifecycle_hash, updated_at, version,
                    status, freshness, superseded_by_id, origin_repo, visibility
             FROM knowledge_items WHERE id = ?`,
-      args: [item.id],
+      args: [incoming.id],
     })).rows[0];
 
     const local = existing
@@ -216,6 +329,11 @@ export async function importKnowledge(
         visibility: String(existing.visibility),
       }
       : undefined;
+
+    // Attributed before it is classified, so one object carries the owner, the visibility and
+    // the lifecycle hash that will actually be written. Classifying the file's version and
+    // writing a different one is how a row ends up permanently metadata-divergent with itself.
+    const item = attributeImported(incoming, local, stamp);
 
     const classification = classifyIncomingItem(item, local);
     if (classification === 'new') {
