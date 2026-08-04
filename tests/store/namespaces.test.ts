@@ -90,6 +90,57 @@ describe('namespaces', () => {
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});
   });
 
+  // Precedence decides ORDER, never whether a namespace is represented at all. The layered
+  // path asked every namespace for the full `limit` and then sliced the concatenation, so a
+  // session store holding `limit` loosely-matching notes consumed the whole budget and the
+  // project store -- the one holding durable knowledge -- returned nothing.
+  it('does not let the session namespace starve the project store', async () => {
+    const root = path.resolve('.knowl-namespace-starvation-test');
+    await fs.rm(root, { recursive: true, force: true });
+    await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
+    const descriptors = namespaces.defaultNamespaces(root);
+    const project = descriptors.find(item => item.namespace === 'project')!;
+    const session = descriptors.find(item => item.namespace === 'session')!;
+
+    for (const step of [1, 2, 3]) {
+      await namespaces.withNamespaceDatabase(session, () => createKnowledgeItem('local', {
+        category: 'state', title: `Session deploy step ${step}`,
+        content: `Deploy step ${step} ran during this session.`, tags: ['deploy'],
+      }));
+    }
+    await namespaces.withNamespaceDatabase(project, () => createKnowledgeItem('local', {
+      category: 'fact', title: 'Deploy target',
+      content: 'Deploy pushes to the staging cluster.', tags: ['deploy'],
+    }));
+
+    const items = await namespaces.queryLayeredKnowledge(root, 'deploy', descriptors, 3, 'test');
+    expect(items.length).toBe(3);
+    // The durable answer is present at all...
+    expect(items.map(item => item.namespace)).toContain('project');
+    // ...and precedence is still honoured: the session store's best answer leads.
+    expect(items[0].namespace).toBe('session');
+
+    // A namespace that cannot fill its share does not shrink the page: one session note and
+    // three project notes still return three items.
+    const lopsided = path.resolve('.knowl-namespace-lopsided-test');
+    await fs.rm(lopsided, { recursive: true, force: true });
+    await fs.mkdir(path.join(lopsided, '.knowl'), { recursive: true });
+    const other = namespaces.defaultNamespaces(lopsided);
+    await namespaces.withNamespaceDatabase(other.find(item => item.namespace === 'session')!, () => createKnowledgeItem('local', {
+      category: 'state', title: 'Session release note', content: 'Release ran during this session.', tags: ['release'],
+    }));
+    for (const step of [1, 2, 3]) {
+      await namespaces.withNamespaceDatabase(other.find(item => item.namespace === 'project')!, () => createKnowledgeItem('local', {
+        category: 'fact', title: `Release fact ${step}`, content: `Release detail ${step} about the release process.`, tags: ['release'],
+      }));
+    }
+    expect((await namespaces.queryLayeredKnowledge(lopsided, 'release', other, 3, 'test')).length).toBe(3);
+
+    await closeDb();
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(lopsided, { recursive: true, force: true }).catch(() => {});
+  });
+
   it('adds only configured organization/global paths outside the project', () => {
     const configured = (namespaces as any).configuredNamespaces;
     expect(configured).toBeTypeOf('function');

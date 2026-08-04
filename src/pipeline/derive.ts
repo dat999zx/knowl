@@ -1,9 +1,9 @@
 import { eq, and } from 'drizzle-orm';
-import { getDb, DbConnection } from '../store/database.js';
+import { withClientTransaction, DbConnection } from '../store/database.js';
 import * as schema from '../store/schema.js';
 import * as repo from '../store/repository.js';
 import { deriveTruth } from '../ai/provider.js';
-import { KnowledgeItem, CommitChange, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
+import { KnowledgeItem, CommitChange } from '../core/types.js';
 
 export interface DeriveResult {
   derivedTruthsCount: number;
@@ -49,12 +49,11 @@ export async function runDeriveTruth(
     return { derivedTruthsCount: 0, stateChangesCount: 0 };
   }
 
-  const conn = dbConnection || getDb();
   let stateChangesCount = 0;
   let commitId: string | undefined;
 
   // Run in a transaction to guarantee consistency
-  await conn.transaction(async (tx) => {
+  const apply = async (tx: DbConnection) => {
     // 1. Fetch current active state items
     const existingRows = await tx
       .select()
@@ -66,13 +65,12 @@ export async function runDeriveTruth(
         )
       );
 
-    const existingStateItems = existingRows.map(row => ({
-      ...row,
-      category: row.category as KnowledgeCategory,
-      status: row.status as KnowledgeStatus,
-      alternatives: row.alternatives as string[] | null,
-      tags: row.tags as string[] | null,
-    }));
+    // The repository's own mapper rather than a partial hand-rolled cast. The local copy
+    // narrowed four fields and left the rest as the raw column types, so `affectedPaths` and
+    // `freshness` arrived as `unknown`/`string` in a commit change typed
+    // `Partial<KnowledgeItem>` -- and a second field would have been missed the same way each
+    // time a column was added.
+    const existingStateItems = existingRows.map(repo.mapRowToKnowledgeItem);
 
     const changes: CommitChange[] = [];
 
@@ -131,7 +129,19 @@ export async function runDeriveTruth(
       );
       commitId = commit.id;
     }
-  });
+  };
+
+  // A connection handed in means an outer transaction is already open on this client, and its
+  // statements are already inside it. `withClientTransaction` refuses to nest -- under a
+  // promise-chain queue an inner call would wait on the transaction waiting on it -- and
+  // Drizzle's wrapper does not refuse: it issued a second BEGIN on the same connection and the
+  // handed-down case died on "cannot start a transaction within a transaction".
+  if (dbConnection) {
+    await apply(dbConnection);
+  } else {
+    // Client-level, not db.transaction: see withClientTransaction for the measurement.
+    await withClientTransaction(apply);
+  }
 
   return {
     derivedTruthsCount: allDerivedTruths.length,

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { and, desc, eq, gte, isNull, lte, or } from 'drizzle-orm';
 import { KnowledgeAssertion } from '../core/types.js';
-import { getDb } from './database.js';
+import { getDb, withClientTransaction } from './database.js';
 import * as schema from './schema.js';
 
 const id = () => crypto.randomUUID().replace(/-/g, '').slice(0, 16);
@@ -22,8 +22,8 @@ export async function createCurrentAssertion(input: { knowledgeItemId: string; c
 }
 
 export async function replaceCurrentAssertion(input: { knowledgeItemId: string; content: string; confidence: number; sourceEvidenceId?: string | null }) {
-  const db = getDb();
-  return db.transaction(async tx => {
+  // Client-level, not db.transaction: see withClientTransaction for the measurement.
+  return withClientTransaction(async tx => {
     const current = await tx.select().from(schema.knowledgeAssertions).where(and(eq(schema.knowledgeAssertions.knowledgeItemId, input.knowledgeItemId), isNull(schema.knowledgeAssertions.validTo))).limit(1);
     if (!current[0]) throw new Error('Knowledge item has no open assertion.');
     const now = new Date().toISOString();

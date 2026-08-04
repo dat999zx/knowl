@@ -1,6 +1,6 @@
 import { ProjectConfig, CommitChange, EvidenceInput, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import * as repo from './repository.js';
-import { crossRepoOverlapForWrite, findLikelyDuplicateKnowledgeItem, resolveDuplicate } from './knowledge-writer.js';
+import { crossRepoOverlapForWrite, findLikelyDuplicateKnowledgeItem, heldPayloadFor, resolveDuplicate } from './knowledge-writer.js';
 import type { CrossRepoOverlap } from '../workspace/cross-repo-overlap.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
@@ -52,8 +52,13 @@ export async function recordDecisionDirect(
   // Reconciled by the same rule as every other write path. This used to retire any
   // fuzzy match unconditionally, which silently clobbered decisions that merely shared
   // vocabulary with the new one.
+  //
+  // The held payload is what lets `resolveDuplicate` compare evidence and skill steps at all:
+  // omit it and those two fields are not compared, so a decision arriving with new evidence
+  // read as "already held verbatim" and was dropped -- with the evidence being the only thing
+  // the write was for. Every other write path already passes it.
   const resolution = existing
-    ? resolveDuplicate({ category: 'decision', ...input }, existing)
+    ? resolveDuplicate({ category: 'decision', ...input }, existing, await heldPayloadFor(input, existing))
     : null;
   if (existing && resolution === 'no-op' && !input.supersedes) {
     return { action: 'duplicate', item: existing };

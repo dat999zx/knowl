@@ -17,7 +17,7 @@ import { getRecentContext } from '../store/recent-context.js';
 import { storeKnowledgeItemDeduped, storeKnowledgeAtomsDeduped } from '../store/knowledge-writer.js';
 import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
 import { isVectorSearchEnabled, createLocalEmbeddingProvider } from '../ai/embeddings.js';
-import { queryKnowledgeForAgent, queryKnowledgeForAgentExplained } from '../store/agent-query.js';
+import { queryKnowledgeForAgentExplained } from '../store/agent-query.js';
 import { previewKnowledgeGc, applyKnowledgeGc } from '../store/gc.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop } from '../store/work-loop.js';
 import { formatInitError } from './init-error.js';
@@ -377,7 +377,7 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
         },
         {
           name: 'knowl_query',
-          description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. Query with 2-6 keywords. Skip only for directly relevant active lifecycle context, a same-request query, or relevant memory returned by knowl_task_start. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests.',
+          description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. Query with 2-6 keywords. Skip only for directly relevant active lifecycle context, a same-request query, or relevant memory returned by knowl_task_start. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests. Results carry `score` (0-1) when semantic search is available: it is the relevance the ranker ordered by and it is comparable across queries, so a low top score means the best available match is weak rather than that it is the answer.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -1155,9 +1155,10 @@ export function registerTools(
             status: status as KnowledgeStatus,
             tags,
           })
-          : explain
-          ? await queryKnowledgeForAgentExplained(projectId!, queryOptions)
-          : await queryKnowledgeForAgent(projectId!, queryOptions);
+          // Explained on both branches now. `explain` decides what is REPORTED, never what is
+          // computed: the ranker produced a score either way, and the non-explain path threw
+          // it away one line before the response was built.
+          : await queryKnowledgeForAgentExplained(projectId!, queryOptions);
 
         // Only the layered path spans namespaces. Vector search and explain both fall
         // through to the ambient project database, so knowledge in other namespaces is
@@ -1208,8 +1209,27 @@ export function registerTools(
         })));
         // The repo label goes through compactItemResponse's provenance argument: the compact
         // shape is an allowlist, so a field attached to the item alone is dropped here.
+        //
+        // `score` goes the same way, and it is NOT gated on `explain`: the agent reading this
+        // is deciding whether to trust memory or go read the files, and a rank cannot separate
+        // "this is the answer" from "this is the best of a bad lot".
+        //
+        // It is gated on the semantic half being present, which is the condition under which
+        // the number means anything across queries. Cosine is absolute and carries 0.8 of the
+        // fused relevance; a lexical-only ranking divides each candidate by its own corpus's
+        // best hit, so its top result scores near 1 whatever it is and the number would say
+        // "rank 1" in more digits. That is also why the layered namespace path publishes none:
+        // each namespace is scored against its own corpus, so two 1.0s from two stores are not
+        // comparable to each other, and two numbers that invite a comparison they cannot
+        // support are worse than no number. Absent means "no calibrated evidence", not zero.
+        const scored = Boolean(vector?.enabled && vector.embedding);
         const compact = (item: any) => ({
-          ...compactItemResponse(item, item.repo ? { repo: item.repo } : undefined),
+          ...compactItemResponse(item, {
+            ...(item.repo ? { repo: item.repo } : {}),
+            ...(scored && typeof item.explanation?.finalScore === 'number'
+              ? { score: item.explanation.finalScore }
+              : {}),
+          }),
           ...(explain && item.explanation ? { explanation: item.explanation } : {}),
         });
         // Evidence and staleness resolve against THIS repo's filesystem and database, so a

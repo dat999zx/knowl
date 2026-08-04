@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import type { Client } from '@libsql/client';
 import { openTranscriptDb, withWriteRetry } from './database.js';
-import { NAME_KIND, readOpeningAsk, streamProseFrom, type ProseChunk } from './parse.js';
+import { NAME_KIND, readOpeningAsk, streamProseFrom, type ProseChunk, type ProseMessage } from './parse.js';
 import { defaultProjectsDir, scanTranscriptArchive, type TranscriptFile } from './paths.js';
 
 /** Whether the transcript archive can be listed at all, as opposed to being empty. */
@@ -208,17 +208,52 @@ const NAMING_UPSERT = `
               name_kind = MAX(transcript_files.name_kind, excluded.name_kind),
               opening = COALESCE(transcript_files.opening, excluded.opening)`;
 
+/** What a batch did: rows written, and rows that were already there when it wrote them. */
+type BatchOutcome = {
+  written: number;
+  /**
+   * Lines whose row already existed -- an index whose watermark sits behind its own rows.
+   *
+   * Only ever produced by a broken index, so it is also the signal that this file is being
+   * repaired rather than indexed. See `indexOneFile`.
+   */
+  repaired: number;
+};
+
 async function commitBatch(
   dbPath: string,
   file: TranscriptFile,
   size: number,
   batch: ProseChunk[],
   naming: SessionNamingState,
-): Promise<number> {
+): Promise<BatchOutcome> {
   // Read outside the transaction: it touches the file, not the database, and holding a write
   // lock across a file read would starve a live session for no reason.
   const anchor = await anchorAt(file.path, batch[batch.length - 1].bytesConsumed);
   return withWriteRetry(dbPath, async client => commitBatchOn(client, file, size, batch, naming, anchor));
+}
+
+/**
+ * Whether the row already stored for a line still describes the message now on that line.
+ *
+ * The text itself cannot be compared: the FTS table is contentless, so nothing in the database
+ * holds a body to compare against. Role, length and timestamp are what a row does keep, and the
+ * combination is enough to tell an unchanged line from a rewritten one. The accepted limit is
+ * the same shape as the anchor's: a rewrite that puts a message of the same role, the same
+ * length and the same timestamp on the same line reads as unchanged.
+ */
+function describesSameMessage(row: Record<string, unknown>, message: ProseMessage): boolean {
+  const ts = row.ts === null || row.ts === undefined ? null : String(row.ts);
+  return String(row.role) === message.role
+    && Number(row.chars) === message.text.length
+    && ts === message.timestamp;
+}
+
+/** Remove one message and everything keyed to its id. */
+async function deleteMessage(client: Client, id: number): Promise<void> {
+  await client.execute({ sql: 'DELETE FROM transcript_fts WHERE rowid = ?', args: [id] });
+  await client.execute({ sql: 'DELETE FROM transcript_vectors WHERE message_id = ?', args: [id] });
+  await client.execute({ sql: 'DELETE FROM transcript_messages WHERE id = ?', args: [id] });
 }
 
 async function commitBatchOn(
@@ -228,8 +263,9 @@ async function commitBatchOn(
   batch: ProseChunk[],
   naming: SessionNamingState,
   anchor: string | null,
-): Promise<number> {
+): Promise<BatchOutcome> {
   const watermark = batch[batch.length - 1];
+  const outcome: BatchOutcome = { written: 0, repaired: 0 };
 
   await client.execute('BEGIN IMMEDIATE');
   try {
@@ -246,22 +282,75 @@ async function commitBatchOn(
     if (already >= watermark.linesConsumed) {
       // Another writer covered this batch entirely.
       await client.execute('COMMIT');
-      return 0;
+      return outcome;
     }
 
     const fresh = batch.filter(chunk => chunk.message.line > already);
 
     for (const { message, byteOffset } of fresh) {
+      const args = [
+        file.path, file.sessionId, file.parentSessionId, message.line,
+        message.role, message.text.length, message.timestamp, byteOffset,
+      ];
+
+      // `DO NOTHING ... RETURNING` rather than a plain insert, and the returned row rather than
+      // `rowsAffected`: an empty result is the only signal that the line was already there.
+      //
+      // A row past the watermark is an invariant violation -- the two move together or neither
+      // does -- but a violation the pass has to be able to walk back into rather than throw at.
+      // Something has already put an index into that state and shipped: the `opening` migration
+      // zeroed every watermark and left the rows, so the next pass replayed committed lines into
+      // UNIQUE(path, line) and threw, on that pass and every later one, with no way out that did
+      // not involve deleting the index by hand. Migrating the migration cannot reach an index it
+      // has already run on. This can.
       const inserted = await client.execute({
         sql: `INSERT INTO transcript_messages (path, session_id, parent_session_id, line, role, chars, ts, byte_offset)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [file.path, file.sessionId, file.parentSessionId, message.line, message.role, message.text.length, message.timestamp, byteOffset],
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(path, line) DO NOTHING
+              RETURNING id`,
+        args,
       });
+
+      let id = inserted.rows.length > 0 ? Number(inserted.rows[0].id) : null;
+
+      if (id === null) {
+        outcome.repaired++;
+        const existing = (await client.execute({
+          sql: 'SELECT id, role, chars, ts, byte_offset FROM transcript_messages WHERE path = ? AND line = ?',
+          args: [file.path, message.line],
+        })).rows[0];
+
+        if (describesSameMessage(existing, message)) {
+          // Already indexed, and still true. Keeping the row keeps its id, and with the id the
+          // FTS entry and the embedding -- which is the whole difference between repairing an
+          // index and re-embedding an archive. The byte offset is backfilled because a row
+          // written before that column had nowhere to put one.
+          await client.execute({
+            sql: 'UPDATE transcript_messages SET byte_offset = ? WHERE id = ? AND byte_offset IS NULL',
+            args: [byteOffset, Number(existing.id)],
+          });
+          continue;
+        }
+
+        // The line now holds something else. A stranded index has no watermark left to detect a
+        // rewrite with, so this is where one is caught: the stale row would otherwise resolve
+        // every hit on it to the wrong body.
+        await deleteMessage(client, Number(existing.id));
+        // Plain insert: the conflict was just removed, so a second one is a real bug and has to
+        // surface as one rather than be swallowed by another DO NOTHING.
+        id = Number((await client.execute({
+          sql: `INSERT INTO transcript_messages (path, session_id, parent_session_id, line, role, chars, ts, byte_offset)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          args,
+        })).lastInsertRowid);
+      }
+
       // The FTS rowid is the message id, which is how a hit maps back to a pointer.
       await client.execute({
         sql: 'INSERT INTO transcript_fts(rowid, body) VALUES (?, ?)',
-        args: [Number(inserted.lastInsertRowid), message.text],
+        args: [id, message.text],
       });
+      outcome.written++;
     }
 
     await client.execute({
@@ -281,11 +370,37 @@ async function commitBatchOn(
     });
 
     await client.execute('COMMIT');
-    return fresh.length;
+    return outcome;
   } catch (error) {
     await client.execute('ROLLBACK').catch(() => {});
     throw error;
   }
+}
+
+/**
+ * Drop rows for lines the file no longer has, after a repaired file was read end to end.
+ *
+ * Guarded against a concurrent writer twice over: only rows past what *this* stream read, and
+ * only past the stored watermark, so a second pass that got further keeps everything it wrote.
+ * Deleting a row another writer's watermark still vouches for is the K-57 failure -- rows gone
+ * from behind a high watermark, with nothing left to say they were ever there.
+ */
+async function dropRowsPastWatermark(dbPath: string, filePath: string, linesRead: number): Promise<void> {
+  await withWriteRetry(dbPath, async client => {
+    await client.execute('BEGIN IMMEDIATE');
+    try {
+      const orphans = `SELECT id FROM transcript_messages
+                       WHERE path = ?1 AND line > ?2
+                         AND line > COALESCE((SELECT lines_indexed FROM transcript_files WHERE path = ?1), 0)`;
+      const ids = (await client.execute({ sql: orphans, args: [filePath, linesRead] }))
+        .rows.map(row => Number(row.id));
+      for (const id of ids) await deleteMessage(client, id);
+      await client.execute('COMMIT');
+    } catch (error) {
+      await client.execute('ROLLBACK').catch(() => {});
+      throw error;
+    }
+  });
 }
 
 async function indexOneFile(
@@ -313,6 +428,8 @@ async function indexOneFile(
     : { displayName: state.displayName, nameKind: state.nameKind, opening: state.opening };
 
   let indexed = 0;
+  /** Lines this pass found already indexed. Non-zero only when repairing a stranded index. */
+  let repaired = 0;
   let batch: ProseChunk[] = [];
   const iterator = streamProseFrom(file.path, from.bytes, from.lines, seen => {
     // `>=` so a later rename at the same rank wins; `>` alone would pin the first one.
@@ -327,8 +444,18 @@ async function indexOneFile(
 
     if (next.done) {
       if (batch.length > 0) {
-        indexed += await commitBatch(dbPath, file, size, batch, naming);
+        const outcome = await commitBatch(dbPath, file, size, batch, naming);
+        indexed += outcome.written;
+        repaired += outcome.repaired;
       }
+
+      // A repaired file has been read from its first byte to its last, so any row left past the
+      // end of it is a pointer to a line that is not there -- the tail of an index stranded
+      // while the transcript was rewritten shorter. Dropped *before* the watermark moves: if
+      // this is interrupted the watermark stays behind and the next pass repairs it again,
+      // whereas dropping after would let an interruption hide the orphans behind a caught-up
+      // watermark, where nothing would look at them again.
+      if (repaired > 0) await dropRowsPastWatermark(dbPath, file.path, next.value.linesConsumed);
       // Trailing non-prose lines advanced the stream without yielding, so the final watermark
       // can be past the last committed batch. Recording it stops the next pass re-reading them.
       // Guarded against going backwards: a concurrent writer may already be further ahead.
@@ -357,14 +484,21 @@ async function indexOneFile(
     // The opening ask is the session's first real user prose, which this stream already sees.
     // `readOpeningAsk` returns null for an injected turn, so the search moves to the next one
     // rather than describing the session by boilerplate it did not write.
-    if (naming.opening === null && next.value.message.role === 'user') {
+    //
+    // Only from the start of the file. A stream resuming mid-transcript -- an index from before
+    // this column, a file picked up after a deadline -- would otherwise record whatever it
+    // happened to land on as the session's first ask, which is not a stale answer but a false
+    // one. Null says "not known", and the directory can say so.
+    if (from.bytes === 0 && naming.opening === null && next.value.message.role === 'user') {
       naming.opening = readOpeningAsk(next.value.message.text)?.slice(0, 300) ?? null;
     }
 
     batch.push(next.value);
     if (batch.length < WRITE_BATCH) continue;
 
-    indexed += await commitBatch(dbPath, file, size, batch, naming);
+    const outcome = await commitBatch(dbPath, file, size, batch, naming);
+    indexed += outcome.written;
+    repaired += outcome.repaired;
     batch = [];
 
     // Checked between committed batches, so stopping here is always at a consistent point.
