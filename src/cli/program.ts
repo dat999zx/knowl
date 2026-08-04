@@ -72,6 +72,7 @@ import { listActiveConflictKeys } from '../store/conflicts.js';
 import { composeContext } from '../store/context-composer.js';
 import { indexCode, listCodeSymbols } from '../code/symbol-index.js';
 import { exportKnowledge, importKnowledge } from '../store/portability.js';
+import { importOwnershipNotice } from './import-ownership-notice.js';
 import { synthesizeKnowledge } from '../store/synthesis.js';
 import { startViewer } from '../viewer/server.js';
 import { createAgentReminderOutput } from './agents/reminder.js';
@@ -800,6 +801,13 @@ program.command('export').argument('<path>').description('Write portable JSONL m
 
 program.command('import').argument('<path>').description('Load portable JSONL memory from a file').option('--dry-run')
   .option('--on-divergence <policy>', `How to resolve items that differ locally: ${DIVERGENCE_POLICIES.join(', ')}`, DEFAULT_DIVERGENCE_POLICY)
+  .option(
+    '--mine',
+    'Assert this export came from this same repo, so its items are owned here rather than ' +
+    'marked as imported. Nothing in the file can prove that, which is why it takes a person: ' +
+    'use it for your own backup or a second machine you cannot link and re-export from. It ' +
+    'claims authorship only -- the items stay private until you promote them.',
+  )
   .action(async (inputPath, options) => {
     try {
       if (!DIVERGENCE_POLICIES.includes(options.onDivergence)) {
@@ -807,7 +815,14 @@ program.command('import').argument('<path>').description('Load portable JSONL me
       }
       const root = await findProjectRoot(process.cwd());
       await initDb(root);
-      console.log(JSON.stringify(await importKnowledge(path.resolve(inputPath), { dryRun: options.dryRun, projectRoot: root, onDivergence: options.onDivergence }), null, 2));
+      const result = await importKnowledge(path.resolve(inputPath), {
+        dryRun: options.dryRun, projectRoot: root, onDivergence: options.onDivergence, claimAsMine: options.mine,
+      });
+      console.log(JSON.stringify(result, null, 2));
+      // The counts alone never say whose knowledge this now is, and for `attributed` that is
+      // the difference between "imported 40 items" and "imported 40 items that this repo can
+      // never share". Printed to stderr so a script parsing stdout is unaffected.
+      for (const line of importOwnershipNotice(result.ownership)) console.error(line);
       await closeDb();
     } catch (error: any) {
       await closeDb().catch(() => {});
