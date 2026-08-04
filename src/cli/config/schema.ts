@@ -21,9 +21,10 @@ export type ConfigKey =
   | 'memory.organization.enabled'
   | 'memory.organization.path'
   | 'memory.global.enabled'
-  | 'memory.global.path';
+  | 'memory.global.path'
+  | 'impact.enabled';
 
-export type ConfigCategory = 'Search' | 'Security' | 'AI provider' | 'Memory namespaces';
+export type ConfigCategory = 'Search' | 'Security' | 'AI provider' | 'Memory namespaces' | 'Change impact';
 
 /**
  * How a value should be asked for. Without this the UI had only `parse`, so every field
@@ -200,6 +201,16 @@ export const CONFIG_FIELDS: ConfigField[] = [
     key: 'memory.global.path', category: 'Memory namespaces', type: 'string', parse: String,
     label: 'Personal global memory path',
     description: 'Folder holding your personal namespace database.',
+  },
+  {
+    // `defaultValue: false` lives here and nowhere else. The same literal in DEFAULT_CONFIG
+    // would be merged into every config on the machine by `upgradeConfigDefaults`, writing
+    // the key into repositories that never asked about it; here it only tells the editor
+    // what "unset" means and what `config reset` restores.
+    key: 'impact.enabled', category: 'Change impact', type: 'boolean',
+    parse: booleanValue, defaultValue: false,
+    label: 'Change impact detection',
+    description: 'Record which code each session read, and flag work whose code changed underneath it. While on, a task finish reports unresolved changes instead of closing clean.',
   },
 ];
 

@@ -269,6 +269,24 @@ export interface ProjectConfig {
     global?: { enabled?: boolean; path?: string };
   };
   /**
+   * Live change-impact detection: what a session read, whether that code moved underneath
+   * it, and a gate that declines to record a clean finish while a certain-tier finding is
+   * unresolved. Off by default for two separate reasons.
+   *
+   * It is advisory machinery that spends context: findings reach the agent through the
+   * shared change card, and tool-side noise is the channel a wrong finding damages most, so
+   * a repository that never asked for it must pay nothing -- not a card line, not a capture
+   * write, not a held-open task finish.
+   *
+   * Deliberately absent from DEFAULT_CONFIG for the same reason `search.transcripts` is:
+   * `upgradeConfigDefaults` merges that object into every config on the machine, so a
+   * default written there would switch the subsystem on in every repository the user has
+   * ever initialized, at once, with nothing in any of them recording that it happened.
+   */
+  impact?: {
+    enabled?: boolean;
+  };
+  /**
    * This repo's half of workspace membership. The other half is the workspace manifest
    * listing this repo; either alone is not membership, which is what makes linkage
    * un-forgeable by a cloned repository.
