@@ -36,6 +36,15 @@ type PeerVerdict = {
 
 async function ownerFromPeers(itemId: string, workspace: ActiveWorkspace): Promise<PeerVerdict> {
   const unverified: string[] = [];
+  // Members with no path at all never become peers: `resolveWorkspace` drops them before it
+  // even computes `present`. They are the extreme case of not checked out here -- listed in a
+  // manifest copied off another machine and never cloned -- and on such a machine they are
+  // precisely the repos likeliest to own an id this one has never seen. Read from the
+  // manifest rather than by widening `peers`, whose consumers all assume a usable root.
+  for (const entry of workspace.manifest.repos) {
+    if (entry.name === workspace.repo || entry.path) continue;
+    unverified.push(entry.name);
+  }
   for (const peer of workspace.peers) {
     // Not checked out here. Nothing on this machine can say whether it holds the item, and
     // that is precisely the peer most likely to own an id this repo has never seen.

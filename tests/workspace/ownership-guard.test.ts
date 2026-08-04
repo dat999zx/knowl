@@ -124,6 +124,18 @@ describe('the ownership guard', () => {
       await expect(guard('an-id-that-might-be-bs')).rejects.toThrow(/"b"/);
     });
 
+    it('refuses an unknown id while a member repo has no checkout on this machine at all', async () => {
+      // A manifest copied off another machine lists every member; only the ones joined here
+      // carry a path. `resolveWorkspace` drops the pathless ones before it computes `present`,
+      // so they are not even in `peers` -- the literal "2 of 5 repos on a laptop" case.
+      const manifest = await readManifest(workspaceManifestPath('ws'));
+      manifest.repos.push({ name: 'elsewhere' } as never);
+      await writeManifest(workspaceManifestPath('ws'), manifest);
+
+      await expect(guard('an-id-that-might-be-bs')).rejects.toThrow(UnverifiedOwnerError);
+      await expect(guard('an-id-that-might-be-bs')).rejects.toThrow(/"elsewhere"/);
+    });
+
     it('refuses an unknown id while a peer database cannot be read', async () => {
       await fs.mkdir(path.join(B, '.knowl'), { recursive: true });
       const client = createClient({ url: `file:${resolveStorage(B).knowledge}` });
