@@ -79,13 +79,38 @@ Verify one worktree runs vitest before dispatching agents into the other six.
 6. **Report what you could not verify.** A finding downgraded to "seems fine" is more useful than
    a fix that was never exercised.
 
-## Known-flaky tests — do not chase these
+## ~~Known-flaky tests — do not chase these~~ — WRONG. They were the defect.
 
-`tests/transcripts/backfill.test.ts > keeps what it indexed when the budget runs out` and
-`tests/transcripts/index-pass.test.ts > resumes after a crash mid-file` are wall-clock
-assertions that fail only inside the full parallel run on a loaded machine. Both pass 3/3 in
-isolation and both fail on unmodified `main`. The two `upgrade-all` tests exceed the 30s
-default timeout and were measured *slower* before this branch's changes.
+**Corrected 2026-08-04. Read this before ever writing a "known-flaky" note again.**
+
+This section used to say that `tests/transcripts/backfill.test.ts > keeps what it indexed when
+the budget runs out` and `tests/transcripts/index-pass.test.ts > resumes after a crash mid-file`
+were wall-clock assertions that failed only under load, passed 3/3 in isolation, and should be
+left alone. Every clause of that was wrong in a way that mattered:
+
+- They did **not** pass 3/3 in isolation. Re-measured under load: 2/3 and 1/3.
+- The failure was not a timing wobble. `expect(stopped.indexed).toBeGreaterThan(0)` returned
+  **0** — a catch-up pass that indexed *nothing at all* and reported a clean incomplete result.
+- That is K-65 exactly, observed from the other side: the deadline is only checked between
+  batches, so set-up (opening the DB, migrating, walking the archive) can consume the whole
+  budget before the file loop is reached. In production that means every hook pays the cost
+  and the index never warms up.
+
+Lane 4 fixed the mechanism — a pass given a real budget always attempts one file, while a
+deadline already in the past is still obeyed exactly — and **both tests now pass 3/3 under the
+same load that failed them**, with no assertion relaxed. Reverting that one condition
+reproduces the original 2/3 and 1/3 pattern.
+
+The full suite on the integrated mainline is now **1503/1503 green**, including both.
+
+The lesson is the reusable part: *"known-flaky, do not chase"* is an instruction to stop
+looking, and it was written into the plan handed to every lane. It nearly cost the audit its
+best-evidenced finding. A test that fails intermittently is a hypothesis about production, not
+noise to route around — and the cheapest way to find out is to read what the assertion actually
+says before excusing it.
+
+The two `upgrade-all` tests do genuinely exceed the 30s default timeout (one takes 27.6s
+alone); they pass in isolation and were measured *slower* before this branch's changes.
 
 ## Review protocol before anything merges
 
