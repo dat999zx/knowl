@@ -5,20 +5,22 @@ import { createHash } from 'node:crypto';
 import { createClient, type Client } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapSchema } from '../../src/store/bootstrap.js';
-import { KNOWL_SCHEMA_VERSION, readSchemaVersion, SchemaTooNewError } from '../../src/store/schema-version.js';
+import {
+  KNOWL_MIGRATION_LEVEL, KNOWL_SCHEMA_VERSION, readMigrationLevel, readSchemaVersion, SchemaTooNewError,
+} from '../../src/store/schema-version.js';
 
 /**
- * The schema a fresh bootstrap produces, pinned per version.
+ * The schema a fresh bootstrap produces, pinned per migration level.
  *
- * `KNOWL_SCHEMA_VERSION` now gates whether migrations run at all, so a schema change that
- * does not bump it is a migration every existing database will skip forever -- silently, and
- * only on other people's machines. That is not a thing to remember; it is a thing to enforce.
+ * `KNOWL_MIGRATION_LEVEL` gates whether migrations run at all, so a schema change that does
+ * not bump it is a migration every existing database will skip forever -- silently, and only
+ * on other people's machines. That is not a thing to remember; it is a thing to enforce.
  *
- * Keyed by version rather than a single value on purpose: changing the DDL under an existing
- * version fails here, and the natural way to make it pass is to add the next entry.
+ * Keyed by level rather than a single value on purpose: changing the DDL under an existing
+ * level fails here, and the natural way to make it pass is to add the next entry.
  */
 const SCHEMA_PINS: Record<number, string> = {
-  2: '9e6779b05c8176eb9023e305699b85f9',
+  1: '9e6779b05c8176eb9023e305699b85f9',
 };
 
 let root: string;
@@ -52,30 +54,61 @@ afterEach(async () => {
 });
 
 describe('schema version gate', () => {
-  it('pins the schema a fresh bootstrap produces to this version', async () => {
+  it('pins the schema a fresh bootstrap produces to this migration level', async () => {
     await bootstrapSchema(client);
     const actual = await schemaFingerprint(client);
-    const pinned = SCHEMA_PINS[KNOWL_SCHEMA_VERSION];
+    const pinned = SCHEMA_PINS[KNOWL_MIGRATION_LEVEL];
 
     expect(
       pinned,
-      `No pin recorded for schema version ${KNOWL_SCHEMA_VERSION}. Add one to SCHEMA_PINS: ${actual}`,
+      `No pin recorded for migration level ${KNOWL_MIGRATION_LEVEL}. Add one to SCHEMA_PINS: ${actual}`,
     ).toBeDefined();
 
     expect(
       actual,
-      `The schema changed but KNOWL_SCHEMA_VERSION is still ${KNOWL_SCHEMA_VERSION}.\n` +
-      `Because that number now gates whether migrations run, every existing database would\n` +
-      `skip this change permanently. Bump KNOWL_SCHEMA_VERSION and add SCHEMA_PINS[${KNOWL_SCHEMA_VERSION + 1}] = '${actual}'.`,
+      `The schema changed but KNOWL_MIGRATION_LEVEL is still ${KNOWL_MIGRATION_LEVEL}.\n` +
+      `Because that number gates whether migrations run, every existing database would\n` +
+      `skip this change permanently. Bump KNOWL_MIGRATION_LEVEL and add SCHEMA_PINS[${KNOWL_MIGRATION_LEVEL + 1}] = '${actual}'.`,
     ).toBe(pinned);
   });
 
-  it('stamps the version on a fresh database', async () => {
+  it('stamps both numbers on a fresh database', async () => {
     await bootstrapSchema(client);
     expect(await readSchemaVersion(client)).toBe(KNOWL_SCHEMA_VERSION);
+    expect(await readMigrationLevel(client)).toBe(KNOWL_MIGRATION_LEVEL);
   });
 
-  it('does no schema work at all when the version is already current', async () => {
+  /**
+   * The reason the gate is a second number rather than `user_version`.
+   *
+   * `assertSchemaSupported` refuses any database whose `user_version` exceeds the build's
+   * own, so raising it locks out every Knowl already installed -- and under a rule that says
+   * "bump on every additive change", that would be every release. An additive column does not
+   * make a database unreadable by an older build, so it must not be announced as if it did.
+   */
+  it('leaves a database an older build can still open', async () => {
+    await bootstrapSchema(client);
+
+    // 1 is the compatibility floor every published Knowl understands. This must not move
+    // without a change that genuinely breaks older readers -- a table rebuild, a primary key
+    // change, or a column an older writer would leave NULL where a newer reader requires one.
+    expect(await readSchemaVersion(client)).toBeLessThanOrEqual(1);
+  });
+
+  it('re-runs a migration the level requires even when the compatibility version is current', async () => {
+    await bootstrapSchema(client);
+    // Only the gate is rewound; user_version stays exactly where a current build left it.
+    await client.execute('PRAGMA application_id = 0');
+    await client.execute('ALTER TABLE knowledge_items DROP COLUMN lifecycle_hash');
+
+    await bootstrapSchema(client);
+
+    const columns = await client.execute('PRAGMA table_info(knowledge_items)');
+    expect(columns.rows.map(r => r.name)).toContain('lifecycle_hash');
+    expect(await readMigrationLevel(client)).toBe(KNOWL_MIGRATION_LEVEL);
+  });
+
+  it('does no schema work at all when the migration level is already current', async () => {
     await bootstrapSchema(client);
     const before = await cookie(client);
 
@@ -85,16 +118,21 @@ describe('schema version gate', () => {
     expect(await cookie(client)).toBe(before);
   });
 
-  it('re-runs when the stored version is older, and re-stamps', async () => {
+  /**
+   * A database last touched by a Knowl that predates the gate carries level 0, and its
+   * `user_version` is already 1 -- so a gate keyed on `user_version` would call it current
+   * and skip every migration this build adds. It is the upgrade path, not an edge case.
+   */
+  it('migrates a database stamped by a build that predates the gate', async () => {
     await bootstrapSchema(client);
-    await client.execute('PRAGMA user_version = 0');
+    await client.execute('PRAGMA application_id = 0');
     await client.execute('ALTER TABLE knowledge_items DROP COLUMN lifecycle_hash');
+    await client.execute(`PRAGMA user_version = ${KNOWL_SCHEMA_VERSION}`);
 
     await bootstrapSchema(client);
 
     const columns = await client.execute('PRAGMA table_info(knowledge_items)');
     expect(columns.rows.map(r => r.name)).toContain('lifecycle_hash');
-    expect(await readSchemaVersion(client)).toBe(KNOWL_SCHEMA_VERSION);
   });
 
   it('refuses a database written by a newer Knowl instead of treating it as current', async () => {
@@ -109,7 +147,7 @@ describe('schema version gate', () => {
     const before = await schemaFingerprint(client);
 
     // Force the migration path to run again, then break it: a table the DDL will collide with.
-    await client.execute('PRAGMA user_version = 0');
+    await client.execute('PRAGMA application_id = 0');
     await client.execute('CREATE TABLE knowledge_assertions_wrecked AS SELECT 1 AS x');
     await client.execute('ALTER TABLE knowledge_assertions RENAME TO knowledge_assertions_wrecked2');
     await client.execute('CREATE TABLE knowledge_assertions (nope INTEGER)');
@@ -117,8 +155,8 @@ describe('schema version gate', () => {
     // Whatever the outcome, a half-applied migration must not be left behind: either the
     // whole transaction commits or none of it does.
     await bootstrapSchema(client).catch(() => {});
-    const version = await readSchemaVersion(client);
-    if (version !== KNOWL_SCHEMA_VERSION) {
+    const level = await readMigrationLevel(client);
+    if (level !== KNOWL_MIGRATION_LEVEL) {
       // Rolled back: the wrecked state is exactly as the test left it, nothing half-migrated.
       expect(await schemaFingerprint(client)).not.toBe(before);
     }
