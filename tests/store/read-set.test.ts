@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { closeDb, getClient, initDb } from '../../src/store/database.js';
+import { closeDb, getClient, initDb, withClientTransaction } from '../../src/store/database.js';
 import {
   READ_SET_CHUNK,
   activeReadSetForSession,
@@ -223,9 +223,27 @@ describe('work read-set store', () => {
     expect(READ_SET_CHUNK).toBe(200);
 
     const locators = Array.from({ length: total }, (_, index) => `file://src/bulk/f${index}.ts`);
-    for (const locator of locators) {
-      await recordRead({ sessionId: 'sess-bulk', locator, observedHash: `h-${locator}` });
-    }
+    // Seeded in one transaction rather than 250 calls to `recordRead`.
+    //
+    // What is under test is how `activeReadersOf` chunks its query, not how fast rows go in, and
+    // a bare `execute` is its own implicit transaction -- so the loop was paying one fsync per
+    // row and the test's runtime became a function of the `synchronous` pragma. It passed at
+    // NORMAL and timed out at FULL, which made a chunking assertion silently dependent on an
+    // unrelated engine setting. The insert matches `recordRead`'s own shape; the dedupe and
+    // locator-rejection rules it enforces have their own tests above.
+    // `getClient()` rather than the connection the helper hands over: a SQLite transaction
+    // belongs to the connection, so statements issued on the base client between its BEGIN and
+    // COMMIT are inside it -- which is what `withClientTransaction` documents about itself.
+    await withClientTransaction(async () => {
+      const client = getClient();
+      for (const [index, locator] of locators.entries()) {
+        await client.execute({
+          sql: `INSERT INTO work_read_sets (id, session_id, agent_id, task_id, locator, observed_hash, tool_name, read_at, released_at)
+                VALUES (?, 'sess-bulk', NULL, NULL, ?, ?, 'Read', ?, NULL)`,
+          args: [`readbulk${String(index).padStart(4, '0')}`, locator, `h-${locator}`, new Date().toISOString()],
+        });
+      }
+    });
     // One locator nobody read, and one duplicate: neither may change the count.
     const asked = [...locators, 'file://src/bulk/absent.ts', locators[0]];
 
