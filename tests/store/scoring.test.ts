@@ -166,6 +166,20 @@ describe('K-36 -- an unindexed store cannot answer a question the indexed one ab
     expect(scored.map(row => row.item.id)).toEqual(['unindexed']);
   });
 
+  it('drops the peer in the exact shape lane 3 probed', () => {
+    // Their numbers: a local item at cosine 0.18, embedded, alone returns [] -- the floor
+    // deletes it correctly. Add one peer row at bm25Rank 1 with no embedding and the peer row
+    // becomes the ONLY result, scored 0.0742, a quarter of the 0.30 floor, and unmarked.
+    const local = { item: item('local'), repo: 'mine', embedded: true, vectorRank: 1, vectorScore: 0.18 };
+    expect(scoreCandidates([{ ...local }], { limit: 10, usingVector: true })).toEqual([]);
+
+    const union = scoreCandidates(
+      [{ ...local }, { item: item('peer'), repo: 'theirs', embedded: false, bm25Rank: 1 }],
+      { limit: 10, usingVector: true },
+    );
+    expect(union).toEqual([]);
+  });
+
   it('drops a peer that contributed nothing the floor could judge', () => {
     // K-36, lane 3. The local store is indexed and says it does not know. The peer has no
     // embeddings at all, so every one of its rows escapes the floor and an off-topic peer
