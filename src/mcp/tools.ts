@@ -12,7 +12,7 @@ import { runPipeline } from '../pipeline/pipeline.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { formatHierarchyToMarkdown, formatRecentContextToMarkdown } from '../core/format.js';
 import { compactMcpJson, compactItemResponse, compactAssertionResponse, boundedEvidence } from './response-format.js';
-import { DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, truncateText } from '../core/token-budget.js';
+import { DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, truncateText, uncalibratedScore, type UncalibratedScore } from '../core/token-budget.js';
 import { getRecentContext } from '../store/recent-context.js';
 import { storeKnowledgeItemDeduped, storeKnowledgeAtomsDeduped } from '../store/knowledge-writer.js';
 import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
@@ -380,7 +380,7 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
         },
         {
           name: 'knowl_query',
-          description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. Use every word that names the subject and none that does not: one more on-subject term retrieves better, one off-subject term retrieves worse, so never pad a query to reach a length and never drop a real term to stay under one. Skip only for directly relevant active lifecycle context, a same-request query, or relevant memory returned by knowl_task_start. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests -- and on a miss, re-run once with different words first, because a first-pass miss is usually vocabulary rather than absence. `content` is cut at 600 characters and marked `truncated` when it was; `affectedPaths` names the files the item depends on, so open those rather than searching for them. Results carry `score` (0-1) when semantic search is available: it is the relevance the ranker ordered by and it is comparable across queries, so a low top score means the best available match is weak rather than that it is the answer.',
+          description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. Use every word that names the subject and none that does not: one more on-subject term retrieves better, one off-subject term retrieves worse, so never pad a query to reach a length and never drop a real term to stay under one. Skip only for directly relevant active lifecycle context, a same-request query, or relevant memory returned by knowl_task_start. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests -- and on a miss, re-run once with different words first, because a first-pass miss is usually vocabulary rather than absence. `content` is cut at 600 characters and marked `truncated` when it was; `affectedPaths` names the files the item depends on, so open those rather than searching for them. Results carry `score` (0-1) when semantic search is available: it is the relevance the ranker ordered by and it is comparable across queries, so a low top score means the best available match is weak rather than that it is the answer. When no calibrated number exists, `score` is the string `uncalibrated (<reason>)`: the ranker has an order but no opinion on strength, so do not read position as confidence -- judge the content itself.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -1217,25 +1217,41 @@ export function registerTools(
         // is deciding whether to trust memory or go read the files, and a rank cannot separate
         // "this is the answer" from "this is the best of a bad lot".
         //
-        // It is gated on the semantic half being present, which is the condition under which
-        // the number means anything across queries. Cosine is absolute and carries 0.8 of the
-        // fused relevance; a lexical-only ranking divides each candidate by its own corpus's
-        // best hit, so its top result scores near 1 whatever it is and the number would say
-        // "rank 1" in more digits. That is also why the layered namespace path publishes none:
-        // each namespace is scored against its own corpus, so two 1.0s from two stores are not
-        // comparable to each other, and two numbers that invite a comparison they cannot
-        // support are worse than no number. Absent means "no calibrated evidence", not zero.
+        // A *number* is published only when the semantic half is present, which is the
+        // condition under which it means anything across queries. Cosine is absolute and
+        // carries 0.8 of the fused relevance; a lexical-only ranking divides each candidate by
+        // its own corpus's best hit, so its top result scores near 1 whatever it is and the
+        // number would say "rank 1" in more digits. That is also why the layered namespace
+        // path publishes none: each namespace is scored against its own corpus, so two 1.0s
+        // from two stores are not comparable to each other, and two numbers that invite a
+        // comparison they cannot support are worse than no number.
+        //
+        // But withholding used to be silence, and 907 of 924 archived results were that
+        // silence (docs/evals/agent-surface.md §10) -- indistinguishable from the field having
+        // been forgotten. So the gate now speaks: where no calibrated number exists, `score`
+        // is the string `uncalibrated (<reason>)`, the ranker's explicit "no opinion on
+        // strength, only an order". Per-row reasons (`lexical-only`, `not embedded`) come up
+        // from the ranker as `explanation.uncalibrated`; the layered reason is this caller's,
+        // because only it knows it interleaved per-namespace rankings -- and only when
+        // federation did not replace that result, which it does whenever a workspace is active.
         const scored = Boolean(vector?.enabled && vector.embedding);
+        const scoreOf = (item: any): number | UncalibratedScore | undefined => {
+          if (layered && !active) return uncalibratedScore('layered namespaces');
+          const explanation = item.explanation as
+            | { finalScore?: number; uncalibrated?: 'lexical-only' | 'not embedded' }
+            | undefined;
+          if (explanation?.uncalibrated) return uncalibratedScore(explanation.uncalibrated);
+          return scored && typeof explanation?.finalScore === 'number' ? explanation.finalScore : undefined;
+        };
         // Evidence and staleness resolve against THIS repo's filesystem and database, so a
         // foreign item would be judged against the wrong checkout -- reporting "stale" for a
         // file that is simply somewhere else. Omitting it beats answering wrongly.
         const isForeign = (item: any) => Boolean(active) && item.repo && item.repo !== active!.repo;
         const compact = (item: any) => {
+          const score = scoreOf(item);
           const { affectedPaths, ...rest } = compactItemResponse(item, {
             ...(item.repo ? { repo: item.repo } : {}),
-            ...(scored && typeof item.explanation?.finalScore === 'number'
-              ? { score: item.explanation.finalScore }
-              : {}),
+            ...(score === undefined ? {} : { score }),
           });
           return {
             ...rest,

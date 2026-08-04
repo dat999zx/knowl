@@ -156,6 +156,32 @@ describe('an index whose rows predate the byte_offset column', () => {
 describe('the backfill inside a budget', () => {
   const many = (n: number) => Array.from({ length: n }, (_, i) => line('user', `message ${i}`));
 
+  // K-65's shape, third appearance: the expiry test ran BEFORE the first file, so a budget
+  // eaten by scheduling before the loop was reached filled zero rows — pass after pass, each
+  // reporting an honest `complete: false` and doing nothing. On a busy machine the backfill
+  // was starved forever. A budget real at call time now buys exactly one batch, the same
+  // bounded overrun the index pass accepts. This test is deterministic under ANY load: +1 ms
+  // is always gone by the time the loop starts (the backfill opens the DB and queries the
+  // partial index first), so before the guarantee it filled 0 and failed, and with it it
+  // fills one WRITE_BATCH regardless of scheduling.
+  it('a budget that was real at call time buys one batch, however late it arrives', async () => {
+    const lines = many(1_200);
+    await fs.writeFile(sessionFile('a'), lines.join(''));
+    await pass();
+    await regressToNoOffsets();
+    await openTranscriptDb(dbPath);
+
+    const first = await pass(Date.now() + 1);
+    const filled = (await storedOffsets()).filter(o => o !== null).length;
+    expect(first.offsetsFilled).toBeGreaterThan(0);
+    expect(filled).toBeGreaterThan(0);
+    expect(filled).toBeLessThan(1_200);
+
+    // Still a prefix — the guarantee changes when work stops, never what resuming means.
+    const partial = await storedOffsets();
+    expect(partial.slice(0, filled).every(o => o !== null)).toBe(true);
+  }, 30_000);
+
   it('stops at the deadline and finishes on later passes, filling each row once', async () => {
     const lines = many(1_200);
     await fs.writeFile(sessionFile('a'), lines.join(''));
@@ -163,8 +189,12 @@ describe('the backfill inside a budget', () => {
     await regressToNoOffsets();
     await openTranscriptDb(dbPath);
 
-    // Tight enough to stop partway, real enough to do some work.
-    const first = await pass(Date.now() + 40);
+    // A real-but-instantly-spent budget: the one-batch guarantee makes the partial fill
+    // DETERMINISTIC. This used to be `Date.now() + 40`, which asserted a timing coincidence —
+    // under load it filled 0 (the lower bound failed, 2/5 in full runs), and on a quiet
+    // machine it filled all 1,200 inside the window (the upper bound failed). Both bounds
+    // were scheduling accidents. Now the stop is expressed in work: exactly one batch.
+    const first = await pass(Date.now() + 1);
     const partial = await storedOffsets();
     const filledFirst = partial.filter(o => o !== null).length;
     expect(first.offsetsFilled).toBeGreaterThan(0);

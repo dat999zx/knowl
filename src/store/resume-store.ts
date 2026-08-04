@@ -21,6 +21,10 @@ const SCHEMA_STATEMENTS = [
   // rather than fail the open. Same reasoning as the transcript database.
   'PRAGMA busy_timeout = 10000;',
   'PRAGMA journal_mode = WAL;',
+  // Same choice and reasoning as the knowledge database -- see `BASE_STATEMENTS` in
+  // `./bootstrap.ts`. A resume key is re-mintable and this file is tiny, so the durability
+  // this trades away is worth even less here than it is there.
+  'PRAGMA synchronous = NORMAL;',
   `CREATE TABLE IF NOT EXISTS resume_points (
     key TEXT PRIMARY KEY,
     project_dir TEXT NOT NULL,
