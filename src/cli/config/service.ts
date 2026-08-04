@@ -4,7 +4,17 @@ import { NEW_PROJECT_CONFIG, saveConfig } from '../../core/config.js';
 import { ProjectConfig } from '../../core/types.js';
 import { getConfigField } from './schema.js';
 
-type ConfigRecord = Record<string, unknown>;
+/**
+ * The config exactly as it sits on disk.
+ *
+ * `Partial`, because nothing here validates the file against `ProjectConfig` -- a config
+ * written by an older build, or by hand, may be missing keys this one calls required.
+ * `Record<string, unknown>` on top, because keys this build has never heard of have to
+ * survive being edited: every write is a keyed edit of the parsed file, not a
+ * re-serialisation of a `ProjectConfig`, so anything it does not recognise is carried
+ * through untouched rather than dropped.
+ */
+type ConfigRecord = Partial<ProjectConfig> & Record<string, unknown>;
 
 function getAtPath(config: ConfigRecord, key: string): unknown {
   return key.split('.').reduce<unknown>((value, segment) => {
@@ -28,7 +38,7 @@ function deleteAtPath(config: ConfigRecord, key: string) {
   const parts = key.split('.');
   let current: ConfigRecord | undefined = config;
   for (const part of parts.slice(0, -1)) {
-    const next = current?.[part];
+    const next: unknown = current?.[part];
     current = next && typeof next === 'object' && !Array.isArray(next) ? next as ConfigRecord : undefined;
   }
   if (current) delete current[parts.at(-1)!];
@@ -47,6 +57,12 @@ async function backupConfig(root: string) {
   await fs.copyFile(source, `${source}.backup`);
 }
 
+/**
+ * `saveConfig` asks for a whole `ProjectConfig`; what it does with one is read `ai.apiKey`
+ * optionally and serialise the rest. So an incomplete record is safe to hand it, and has to
+ * be: filling in the missing keys here would turn every `knowl config set` into a silent
+ * upgrade of the file, which is `upgradeConfigDefaults`'s job and no one else's.
+ */
 async function saveRawConfig(root: string, config: ConfigRecord) {
   await saveConfig(root, config as ProjectConfig);
 }
@@ -101,5 +117,6 @@ export async function resetConfigValue(root: string, key: string): Promise<void>
 
 export async function resetAllConfig(root: string): Promise<void> {
   await backupConfig(root);
-  await saveRawConfig(root, structuredClone(NEW_PROJECT_CONFIG) as ConfigRecord);
+  // Already a ProjectConfig; there is no on-disk record to preserve here, only to replace.
+  await saveConfig(root, structuredClone(NEW_PROJECT_CONFIG));
 }

@@ -21,9 +21,13 @@ export async function getMemorySession(id: string): Promise<MemorySession> {
 
 export async function startMemorySession(input: { title: string; query?: string; agent?: string; ttlHours?: number }): Promise<MemorySession> {
   validateKnowledgeWrite({ title: input.title, content: input.query });
-  const now = new Date().toISOString(); const session: MemorySession = { id: id(), agent: input.agent ?? null, title: input.title, query: input.query ?? null, status: 'active', startedAt: now, lastHeartbeatAt: now, finishedAt: null, baselineCommit: null, expiresAt: plusHours(now, input.ttlHours ?? SESSION_TTL_HOURS) };
+  // Both columns are nullable and both inputs optional; absent becomes null once, here, so
+  // what is bound is a value the driver accepts -- it refuses undefined rather than
+  // storing NULL for it.
+  const agent = input.agent ?? null; const query = input.query ?? null;
+  const now = new Date().toISOString(); const session: MemorySession = { id: id(), agent, title: input.title, query, status: 'active', startedAt: now, lastHeartbeatAt: now, finishedAt: null, baselineCommit: null, expiresAt: plusHours(now, input.ttlHours ?? SESSION_TTL_HOURS) };
   const client = getClient();
-  await client.execute({ sql: 'INSERT INTO memory_sessions (id, agent, title, query, status, started_at, last_heartbeat_at, finished_at, baseline_commit, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [session.id, session.agent, session.title, session.query, session.status, session.startedAt, session.lastHeartbeatAt, null, null, session.expiresAt] });
+  await client.execute({ sql: 'INSERT INTO memory_sessions (id, agent, title, query, status, started_at, last_heartbeat_at, finished_at, baseline_commit, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', args: [session.id, agent, session.title, query, session.status, session.startedAt, session.lastHeartbeatAt, null, null, session.expiresAt] });
   await appendMemorySessionEvent(session.id, 'start', { title: input.title, agent: input.agent });
   return session;
 }
