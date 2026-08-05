@@ -375,3 +375,19 @@ export async function releaseReadSetBestEffort(sessionId: string, taskId?: strin
     return null;
   }
 }
+
+/**
+ * Retention must never fail the session it runs at the start of.
+ *
+ * Same shape as `recordReadBestEffort`, and for a sharper reason: this is called from the
+ * `session-start` branch, which is the one path whose failure a user actually notices -- it is
+ * what returns their bootstrap context. A store mid-snapshot, or one on a schema older than the
+ * read-set, must cost a deferred sweep and not a session that would not start.
+ */
+export async function sweepReadSetsBestEffort(olderThanIso: string): Promise<number> {
+  try {
+    return await sweepReadSets(olderThanIso);
+  } catch {
+    return 0;
+  }
+}

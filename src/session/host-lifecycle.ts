@@ -8,7 +8,7 @@ import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
 import { loadConfig } from '../core/config.js';
 import { isImpactEnabled } from '../store/impact-config.js';
 import { detectCertainImpactBestEffort, openFindingsForSession } from '../store/impact.js';
-import { recordReadBestEffort, releaseReadSetBestEffort, repoRelativePath } from '../store/read-set.js';
+import { recordReadBestEffort, releaseReadSetBestEffort, repoRelativePath, sweepReadSetsBestEffort } from '../store/read-set.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';
 import {
   ChangeSummary,
@@ -102,6 +102,22 @@ const IMPACT_MAX_SYMBOLS_PER_READ = 200;
  * paths would otherwise index and hash all of them inside one agent's tool call.
  */
 const IMPACT_MAX_PATHS = 50;
+
+/**
+ * How long a *released* read-set row is kept before the sweep collects it.
+ *
+ * Matches `SESSION_TTL_HOURS` deliberately: a released row's only remaining job is to be the
+ * evidence a finding was justified, and a finding cannot be adjudicated after the session that
+ * held the read is gone. Keeping rows materially longer than sessions collects storage for a
+ * denominator nobody can still add to; keeping them shorter would delete the evidence before the
+ * finding it justified was resolved.
+ *
+ * Unreleased rows are never touched at any age -- see `sweepReadSets`. A session open for a week
+ * is the case this subsystem exists for, not garbage.
+ */
+const READ_SET_RETENTION_HOURS = 7 * 24;
+
+const plusHoursIso = (hours: number): string => new Date(Date.now() + hours * 3_600_000).toISOString();
 
 export type HostLifecycleResult = {
   accepted: boolean;
@@ -577,6 +593,10 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
   if (input.event === 'session-start') {
     const recovered = await recoverAbandonedSessions();
     const purgedEventCount = await purgeExpiredSessionEvents();
+    // Beside the session-event purge because it is the same kind of debt and wants the same
+    // schedule: rows written per tool call, pruned once per session rather than on the hot path.
+    // A read-set with nothing collecting it grows for as long as the repository is used.
+    await sweepReadSetsBestEffort(plusHoursIso(-READ_SET_RETENTION_HOURS));
     await closeInactiveHostSessionBindings();
     // Detection only: names what moved and the command to review it, mutating nothing.
     const drift = await runAutoDriftCheckBestEffort(projectId, input.projectRoot);

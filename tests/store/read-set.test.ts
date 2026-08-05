@@ -10,6 +10,7 @@ import {
   recordRead,
   releaseReadSet,
   sweepReadSets,
+  sweepReadSetsBestEffort,
 } from '../../src/store/read-set.js';
 
 /**
@@ -327,5 +328,46 @@ describe('work read-set store', () => {
     await sweepReadSets('2099-01-01T00:00:00.000Z');
     expect((await rowsFor('sess-gc')).map(row => String(row.locator))).toEqual(['file://src/gc-live.ts']);
     expect(await activeReadSetForSession('sess-gc')).toHaveLength(1);
+  });
+
+  describe('retention', () => {
+    /**
+     * The sweep had no caller before this. Asserted at the lifecycle boundary rather than by
+     * calling `sweepReadSets` directly, because "the function works" was already true and was not
+     * the bug -- nothing invoked it, so `work_read_sets` grew for as long as a repository was used.
+     */
+    it('collects released rows older than the window and spares everything else', async () => {
+      const old = new Date(Date.now() - 30 * 24 * 3_600_000).toISOString();
+      const recent = new Date(Date.now() - 3_600_000).toISOString();
+
+      await recordRead({ sessionId: 'sess-sweep', locator: 'file://src/old.ts', observedHash: 'h-old' });
+      await recordRead({ sessionId: 'sess-sweep', locator: 'file://src/recent.ts', observedHash: 'h-recent' });
+      await recordRead({ sessionId: 'sess-sweep', locator: 'file://src/live.ts', observedHash: 'h-live' });
+      const client = getClient();
+      await client.execute({ sql: 'UPDATE work_read_sets SET released_at = ? WHERE locator = ?', args: [old, 'file://src/old.ts'] });
+      await client.execute({ sql: 'UPDATE work_read_sets SET released_at = ? WHERE locator = ?', args: [recent, 'file://src/recent.ts'] });
+
+      const cutoff = new Date(Date.now() - 7 * 24 * 3_600_000).toISOString();
+      const before = Number((await client.execute({ sql: "SELECT COUNT(*) AS n FROM work_read_sets WHERE session_id = 'sess-sweep'" })).rows[0].n);
+      expect(before).toBe(3);
+      await sweepReadSetsBestEffort(cutoff);
+
+      // Scoped to this session: the suite shares one store, so asserting the whole table would
+      // be asserting every other test's rows.
+      const left = await client.execute({ sql: 'SELECT locator FROM work_read_sets WHERE session_id = ? ORDER BY locator', args: ['sess-sweep'] });
+      expect(left.rows.map(row => String(row.locator))).toEqual(['file://src/live.ts', 'file://src/recent.ts']);
+    });
+
+    it('never collects a live row, however old the read', async () => {
+      // The case the whole subsystem exists for: a session open for a week still holds its beliefs.
+      await recordRead({ sessionId: 'sess-longlived', locator: 'file://src/ancient.ts', observedHash: 'h' });
+      await getClient().execute({
+        sql: "UPDATE work_read_sets SET read_at = ? WHERE locator = 'file://src/ancient.ts'",
+        args: [new Date(Date.now() - 365 * 24 * 3_600_000).toISOString()],
+      });
+
+      await sweepReadSetsBestEffort(new Date().toISOString());
+      expect(await activeReadSetForSession('sess-longlived')).toHaveLength(1);
+    });
   });
 });
