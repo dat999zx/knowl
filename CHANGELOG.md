@@ -3,6 +3,39 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 3.0.2
+
+### Fixed
+
+- **Critical: `snapshot restore` could delete every knowledge item and report success.** The
+  pre-restore snapshot prunes the snapshot directory to its retention limit and protected only
+  the file it had just written, so restoring anything older than the second-newest snapshot
+  deleted the source. `ATTACH` then created an empty database in its place, the restore emitted
+  a bare `DELETE FROM knowledge_items`, the cascade took assertions, evidence links, access,
+  skill rows and embeddings with it, and the integrity audit affirmed the empty store was
+  healthy. Restore now refuses an attachment holding no `knowledge_items`, protects the source
+  from the prune, and verifies the exact bytes it attaches by staging them outside the snapshot
+  directory first.
+- Restore now rewrites the full transitive dependency closure. `knowledge_commit_items` — the
+  index that makes blast-radius lookup an equality search — was cascaded away and never
+  refilled. `evidence` rows were left at present-day values while the links pointing at them
+  were rolled back.
+- Which tables restore owns is now an explicit registry (`src/store/snapshot-tables.ts`) with a
+  test that fails when a table in the schema is unclassified.
+- Imported skill packages install as atomic whole-directory swaps into a base Knowl verified is
+  a real directory. Previously, files were renamed one at a time after the database committed —
+  so a partial install was possible, an import merged into an existing package instead of
+  replacing it, and a symlink or Windows junction under `.knowl/skills` was followed, landing
+  files outside the tree despite passing the lexical containment check.
+- A failed skill entrypoint no longer chains automatically into `fallback`; callers opt in.
+- `package-lock.json` records the right version again, and CI now fails on drift.
+
+### Changed
+
+- `npm publish` produces provenance attestation, which the release workflow already had the
+  OIDC permission for.
+- README's snapshot section describes what restore actually does.
+
 ## 3.0.1
 
 ### Fixed

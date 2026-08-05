@@ -728,10 +728,21 @@ knowl audit
 knowl doctor
 ```
 
-Snapshot creation uses SQLite `VACUUM INTO` and writes a checksum manifest. Restore requires
-`--confirm`, validates the manifest when one is present, and creates a pre-restore snapshot.
-The restored subset is items, knowledge commits, skill rows, and embeddings. Assertions,
-evidence and links, access telemetry, sessions, code indexes, and tombstones are not restored.
+Snapshot creation uses SQLite `VACUUM INTO` and writes a checksum manifest. The manifest is
+**required** on restore, not optional: restore verifies its schema version, byte size and
+SHA-256, copies the snapshot out of the snapshot directory, and re-verifies the copy it is
+about to read — then checks that copy's own SQLite `integrity_check` and `user_version` before
+any destructive statement runs. Restore also takes a pre-restore snapshot first, and refuses to
+delete the snapshot it was asked to restore from.
+
+Restore is a **partial** operation, and which half is which is a decision recorded in
+`src/store/snapshot-tables.ts` rather than a side effect of the schema. Restored: knowledge
+items, assertions, evidence and its links, access telemetry, knowledge commits and the
+commit-to-item index, skill rows, and embeddings. Preserved at their current values: memory
+sessions and their events, host bindings, tombstones, MCP call watermarks, the code index, and
+the drift watermark — each describes the machine and working tree you are on now, not the
+knowledge. Full-text search indexes rebuild themselves as rows land. A test fails if any table
+in the schema is missing from that registry, so restore behaviour cannot drift by accident.
 
 A restore runs an audit after committing the restored data. An audit failure is diagnostic and
 does not roll back that commit. `knowl audit` itself is read-only and performs a limited set of
