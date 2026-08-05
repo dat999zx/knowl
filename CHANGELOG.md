@@ -3,6 +3,36 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 3.0.1
+
+### Fixed
+
+- **Imported skill packages can no longer write outside `.knowl/skills`.** Both sides of the
+  containment check were derived from the untrusted skill name, so a traversal name satisfied it.
+  Names and paths are now anchored to a fixed base, contents are staged before the transaction
+  opens, and files are installed by rename after it commits rather than written inside it.
+- **A skill package's directory name is now its only identity.** A manifest could declare a
+  different name and entrypoint resolution followed the manifest, so a package inspected through
+  `knowl skill read` as one skill could execute another's files.
+- **Namespace switches no longer misroute concurrent writes.** The database handle was a set of
+  process-global variables, so a project write issued while a session-namespace switch was open
+  was executed against the session database — silently. The handle is now scoped to the async
+  context; nothing else changes for callers.
+- **The viewer survives a malformed URL and requires a token.** An async route handler with no
+  error boundary turned `GET /api/evidence/%` into an unhandled rejection, which this process is
+  configured to die on. Routes now answer 400, and every request needs the per-launch token
+  carried by the printed URL. Responses also send CSP, `X-Content-Type-Options`,
+  `Referrer-Policy`, and validate the `Host` header.
+- **Snapshot restore verifies before it destroys.** A missing manifest was silently accepted, and
+  the recorded `schemaVersion` and `byteSize` were written but never read. The manifest is now
+  required and fully checked, the snapshot's own `integrity_check` and `user_version` are
+  preflighted through the existing attachment, and `schemaVersion` records the real constant.
+
+### Documentation
+
+- Corrected the version branding, default embedding model, MCP tool count, `reindex --vectors`
+  behaviour, snapshot guarantee, and transcript retention wording in the README.
+
 ## 3.0.0 — 2026-08-04
 
 Almost all of this release is [@William-Sommers](https://github.com/William-Sommers)'

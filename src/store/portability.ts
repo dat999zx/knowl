@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeSkillFilePath, validateSkillName } from '../skills/registry.js';
 import { createKnowledgeCommit, listKnowledgeItems } from './repository.js';
 import { listAssertions } from './assertions.js';
 import { getClient } from './database.js';
@@ -308,6 +309,39 @@ const LIFECYCLE_FIELDS = ITEM_FIELDS.filter(([column]) => [
   'version', 'updated_at',
 ].includes(column));
 
+type SkillInstall = { target: string; content: string };
+
+/**
+ * Every path anchored to one fixed base the record cannot influence.
+ *
+ * The previous check derived the containment root from the same untrusted `skill.name` as the
+ * target, so both moved together and `../../escape` satisfied it. The name is now validated
+ * with the same rule package creation uses -- no dots, no separators -- which makes traversal
+ * unrepresentable rather than merely detected, and the base is computed once outside the loop.
+ */
+function planSkillInstalls(projectRoot: string, skills: any[]): SkillInstall[] {
+  const base = path.resolve(projectRoot, '.knowl', 'skills');
+  const installs: SkillInstall[] = [];
+  for (const skill of skills) {
+    validateSkillName(skill.name);
+    const skillDir = path.resolve(base, skill.name);
+    if (path.dirname(skillDir) !== base) throw new Error(`Invalid imported skill name "${skill.name}".`);
+    for (const file of skill.files ?? []) {
+      if (typeof file?.content !== 'string') {
+        throw new Error(`Invalid imported skill file content for "${file?.path}".`);
+      }
+      const normalized = normalizeSkillFilePath(file.path);
+      const target = path.resolve(skillDir, ...normalized.split('/'));
+      const relative = path.relative(skillDir, target);
+      if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw new Error(`Invalid imported skill file path "${file.path}".`);
+      }
+      installs.push({ target, content: file.content });
+    }
+  }
+  return installs;
+}
+
 export async function importKnowledge(
   inputPath: string,
   options: {
@@ -455,6 +489,17 @@ export async function importKnowledge(
     };
   }
   if (!options.projectRoot && skills.length > 0) throw new Error('Skill package import requires a project root.');
+  // Planned before anything is written, so a malformed package cannot leave a half-written
+  // filesystem behind a rolled-back database.
+  const skillInstalls = options.projectRoot ? planSkillInstalls(options.projectRoot, skills) : [];
+  const staging = skillInstalls.length > 0
+    ? await fs.mkdtemp(path.join(path.resolve(options.projectRoot!, '.knowl'), 'import-skills-'))
+    : null;
+  if (staging) {
+    for (const [index, install] of skillInstalls.entries()) {
+      await fs.writeFile(path.join(staging, String(index)), install.content, 'utf8');
+    }
+  }
   const written: KnowledgeItem[] = [];
   /**
    * What to record in `knowledge_commits`, in the shape `promote` uses: ids and titles, never
@@ -537,14 +582,6 @@ export async function importKnowledge(
       });
     }
 
-    for (const skill of skills) for (const file of skill.files) {
-      const target = path.resolve(options.projectRoot!, '.knowl', 'skills', skill.name, file.path);
-      const root = path.resolve(options.projectRoot!, '.knowl', 'skills', skill.name);
-      if (!target.startsWith(`${root}${path.sep}`)) throw new Error('Invalid imported skill file path.');
-      await fs.mkdir(path.dirname(target), { recursive: true });
-      await fs.writeFile(target, file.content, 'utf8');
-    }
-
     // Inside the transaction, not after it. Drizzle wraps this same client, so the insert
     // joins the open transaction and a rolled-back import announces nothing -- the opposite
     // of the vector index below, which is best-effort precisely because it can be redone.
@@ -560,8 +597,24 @@ export async function importKnowledge(
     }
     await client.execute('COMMIT;');
   } catch (error) {
-    await client.execute('ROLLBACK;');
+    await client.execute('ROLLBACK;').catch(() => {});
+    if (staging) await fs.rm(staging, { recursive: true, force: true }).catch(() => {});
     throw error;
+  }
+
+  // After COMMIT, and by rename rather than write: the contents were staged before the
+  // transaction opened, so the only work left is the cheapest step that can still fail. It is
+  // not swallowed -- the database is already committed by this point, and an import that
+  // silently omitted its skill files would look like a success.
+  if (staging) {
+    try {
+      for (const [index, install] of skillInstalls.entries()) {
+        await fs.mkdir(path.dirname(install.target), { recursive: true });
+        await fs.rename(path.join(staging, String(index)), install.target);
+      }
+    } finally {
+      await fs.rm(staging, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   // Every other write path indexes on write. Import wrote raw SQL and skipped this, so

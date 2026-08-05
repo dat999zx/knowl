@@ -6,6 +6,7 @@ import { auditKnowledgeStore } from './integrity.js';
 import { getClient, withClientTransaction } from './database.js';
 import { pruneSnapshots, SNAPSHOT_KEEP } from './retention.js';
 import { resolveStorage } from './storage-roles.js';
+import { KNOWL_SCHEMA_VERSION } from './schema-version.js';
 
 export type SnapshotManifest = {
   schemaVersion: number;
@@ -46,7 +47,9 @@ export async function createSnapshot(projectRoot: string): Promise<Snapshot> {
 
   const stat = await fs.stat(snapshotPath);
   const manifest: SnapshotManifest = {
-    schemaVersion: 1,
+    // The real constant, not a literal. A manifest that records "1" forever cannot be checked
+    // for compatibility once the schema moves.
+    schemaVersion: KNOWL_SCHEMA_VERSION,
     createdAt,
     byteSize: stat.size,
     sha256: await sha256(snapshotPath),
@@ -167,6 +170,43 @@ export class SnapshotRestoreAuditError extends Error {
   }
 }
 
+/**
+ * Verify the manifest before anything destructive happens.
+ *
+ * A checksum proves the bytes are intact, not who wrote them: whoever produces a snapshot can
+ * compute a valid checksum for it. This is an integrity check against corruption and truncated
+ * copies, and it does not claim more. What it must not do is pass silently -- the manifest was
+ * previously optional, so a snapshot with none was restored with no verification at all, which
+ * is the one situation where the previous state is already gone.
+ */
+async function verifySnapshotManifest(source: string): Promise<SnapshotManifest> {
+  const manifestPath = `${source}.manifest.json`;
+  let manifest: SnapshotManifest;
+  try {
+    manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as SnapshotManifest;
+  } catch (error: any) {
+    throw new Error(error.code === 'ENOENT'
+      ? `Snapshot manifest "${manifestPath}" was not found. Restore requires the manifest written beside the snapshot.`
+      : `Snapshot manifest "${manifestPath}" is unreadable: ${error.message}`);
+  }
+
+  if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion > KNOWL_SCHEMA_VERSION) {
+    throw new Error(
+      `Snapshot was written with schema version ${manifest.schemaVersion}; this build reads up to ` +
+      `${KNOWL_SCHEMA_VERSION}. Upgrade Knowl before restoring it.`,
+    );
+  }
+
+  const stat = await fs.stat(source);
+  if (stat.size !== manifest.byteSize) {
+    throw new Error(`Snapshot size ${stat.size} does not match its manifest size ${manifest.byteSize}.`);
+  }
+  if (manifest.sha256 !== await sha256(source)) {
+    throw new Error('Snapshot checksum does not match its manifest.');
+  }
+  return manifest;
+}
+
 export async function restoreSnapshot(
   projectRoot: string,
   snapshotPath: string,
@@ -179,19 +219,27 @@ export async function restoreSnapshot(
   if (source === destination) throw new Error('Snapshot restore refuses the live database path.');
   await fs.access(source).catch(() => { throw new Error('Snapshot file was not found.'); });
 
-  const manifestPath = `${source}.manifest.json`;
-  try {
-    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as SnapshotManifest;
-    if (manifest.sha256 !== await sha256(source)) throw new Error('Snapshot checksum does not match its manifest.');
-  } catch (error: any) {
-    if (error.code !== 'ENOENT') throw error;
-  }
+  await verifySnapshotManifest(source);
 
   const preRestore = await createSnapshot(root);
   const client = getClient();
   // ATTACH cannot run inside a transaction, so it stays outside the wrapper on both sides.
   await client.execute(`ATTACH DATABASE '${quoteSqlPath(source)}' AS snapshot_restore`);
   try {
+    // Asked of the attachment rather than a second connection: opening the snapshot separately
+    // would create WAL sidecars beside a file this function is only supposed to read.
+    const integrity = await client.execute('PRAGMA snapshot_restore.integrity_check');
+    const verdict = String(integrity.rows[0]?.integrity_check ?? '');
+    if (verdict !== 'ok') throw new Error(`Snapshot failed SQLite integrity_check: ${verdict}`);
+
+    const stamped = Number((await client.execute('PRAGMA snapshot_restore.user_version')).rows[0]?.user_version ?? 0);
+    if (stamped > KNOWL_SCHEMA_VERSION) {
+      throw new Error(
+        `Snapshot database is stamped with schema version ${stamped}; this build reads up to ` +
+        `${KNOWL_SCHEMA_VERSION}. Upgrade Knowl before restoring it.`,
+      );
+    }
+
     // Through the shared wrapper rather than a raw BEGIN. A transaction belongs to the
     // connection and this process holds exactly one, so an unserialised BEGIN here could
     // interleave with any other writer into `BEGIN; BEGIN;` -- which SQLite refuses with

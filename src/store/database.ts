@@ -11,11 +11,29 @@ import { acquireClient, releaseAll, releaseClient } from './connection-pool.js';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type DbConnection = LibSQLDatabase<typeof schema> | Parameters<Parameters<LibSQLDatabase<typeof schema>['transaction']>[0]>[0];
 
-let dbInstance: LibSQLDatabase<typeof schema> | null = null;
-let clientInstance: Client | null = null;
-let projectRootInstance: string | null = null;
-let configRootInstance: string | null = null;
-let databasePathInstance: string | null = null;
+type DbContext = {
+  db: LibSQLDatabase<typeof schema>;
+  client: Client;
+  projectRoot: string;
+  configRoot: string;
+  databasePath: string;
+};
+
+/**
+ * Which database the *current* async operation is using.
+ *
+ * `withDbPath` used to swap five process-global variables for the duration of a callback. Two
+ * MCP requests overlapping a namespace switch is not hypothetical -- the stdio server does not
+ * serialize requests, and a project write issued during an open switch landed in the session
+ * database, silently, with no error anywhere. A scoped store gives each async chain its own
+ * handle, so no call site has to thread one through.
+ */
+const scopedContext = new AsyncLocalStorage<DbContext>();
+let globalContext: DbContext | null = null;
+
+function activeContext(): DbContext | null {
+  return scopedContext.getStore() ?? globalContext;
+}
 
 export type InitDbOptions = {
   /**
@@ -65,55 +83,54 @@ export async function initDbPath(dbPath: string, options: InitDbOptions = {}): P
     const client = await acquireClient(dbPath, {
       profileFingerprint: await currentProfileFingerprint(configRoot),
     });
-    clientInstance = client;
-
-    dbInstance = drizzle(client, { schema });
-    projectRootInstance = path.resolve(configRoot);
-    configRootInstance = path.resolve(configRoot);
-    databasePathInstance = path.resolve(dbPath);
-    return dbInstance;
+    globalContext = {
+      db: drizzle(client, { schema }),
+      client,
+      projectRoot: path.resolve(configRoot),
+      configRoot: path.resolve(configRoot),
+      databasePath: path.resolve(dbPath),
+    };
+    return globalContext.db;
   } catch (error: any) {
     throw new DatabaseError(`Failed to initialize database at "${dbPath}": ${error.message}`);
   }
 }
 
 /**
- * Run `run` against a different database, then put the previous one back.
+ * Run `run` against a different database, without disturbing anyone else's.
  *
  * This is a swap of the *active handle*, not a shutdown, and it used to be written as one:
  * `closeDb` on the way in and again on the way out, each of which releases the entire pool and
- * WAL-checkpoints every writable client in it. A hop to the session namespace therefore closed
- * the project connection, and coming back reopened and re-bootstrapped it -- so a layered query
- * over two namespaces paid four opens, and the pool was empty again at the end of every one.
- * `queryLayeredKnowledge` walks every namespace on every agent query, inside a long-lived MCP
- * server, so this was the pool being defeated on each hop rather than in some edge case.
+ * WAL-checkpoints every writable client in it. `queryLayeredKnowledge` walks every namespace on
+ * every agent query, inside a long-lived MCP server, so that was the pool being defeated on each
+ * hop rather than in some edge case.
  *
- * Both databases stay pooled afterwards: the next hop is then free. Nothing is left holding a
- * file that `closeDb` would not have released anyway -- it is still the teardown primitive, and
- * still releases everything.
+ * The swap is now scoped rather than global. Reassigning the module handle made the switch
+ * visible to every concurrent operation in the process, so a write issued against the project
+ * during a session-namespace hop was executed against the session database. Both databases stay
+ * pooled afterwards: the next hop is then free.
  */
 export async function withDbPath<T>(dbPath: string, run: () => Promise<T>): Promise<T> {
-  const previousPath = databasePathInstance;
-  const previousConfigRoot = configRootInstance;
+  const previous = activeContext();
   // The swapped-in database keeps the caller's config root. A namespace store lives outside
   // the `<root>/.knowl/` layout, so deriving one from its path would point at nothing.
-  await initDbPath(dbPath, previousConfigRoot ? { configRoot: previousConfigRoot } : {});
+  const configRoot = previous ? previous.configRoot : path.dirname(path.dirname(dbPath));
+  const client = await acquireClient(dbPath, {
+    profileFingerprint: await currentProfileFingerprint(configRoot),
+  });
+  const context: DbContext = {
+    db: drizzle(client, { schema }),
+    client,
+    projectRoot: path.resolve(configRoot),
+    configRoot: path.resolve(configRoot),
+    databasePath: path.resolve(dbPath),
+  };
   try {
-    return await run();
+    return await scopedContext.run(context, run);
   } finally {
-    if (previousPath) {
-      // Pooled, so this is a handle swap rather than an open.
-      await initDbPath(previousPath, previousConfigRoot ? { configRoot: previousConfigRoot } : {});
-    } else {
-      // Nothing was open before, so leaving this one open would be a handle the caller never
-      // asked for. Only this database is released; whatever else the pool holds is not ours.
-      await releaseClient(dbPath);
-      clientInstance = null;
-      dbInstance = null;
-      projectRootInstance = null;
-      configRootInstance = null;
-      databasePathInstance = null;
-    }
+    // Nothing was open before, so leaving this one pooled would be a handle the caller never
+    // asked for. Only this database is released; whatever else the pool holds is not ours.
+    if (!previous) await releaseClient(dbPath);
   }
 }
 
@@ -131,6 +148,13 @@ export async function withDbPath<T>(dbPath: string, run: () => Promise<T>): Prom
  * of it, and hands the baton on in `finally` so a thrown transaction cannot strand the rest.
  * `getClient`/`getDb` resolve *after* the wait, so a queued caller transacts against whatever
  * connection is open when its turn comes rather than one captured before a namespace swap.
+ *
+ * The queue is process-wide even though handles are now scoped per async context. Two
+ * transactions on genuinely different connections therefore wait on each other unnecessarily.
+ * That is deliberate: the cost is serialization the local CLI and a single MCP server never
+ * notice, and the alternative -- a queue per connection -- has to be right about which
+ * connection a queued caller will resolve *after* its wait, which is exactly the reasoning
+ * that produced the misrouting bug this scoping fixes.
  */
 const transactionScope = new AsyncLocalStorage<true>();
 let transactionQueue: Promise<unknown> = Promise.resolve();
@@ -207,24 +231,21 @@ export async function withClientTransaction<T>(run: (conn: DbConnection) => Prom
  * Gets the current database instance. Throws if not initialized.
  */
 export function getDb(): LibSQLDatabase<typeof schema> {
-  if (!dbInstance) {
-    throw new DatabaseError('Database has not been initialized. Run initDb() first.');
-  }
-  return dbInstance;
+  const context = activeContext();
+  if (!context) throw new DatabaseError('Database has not been initialized. Run initDb() first.');
+  return context.db;
 }
 
 export function getClient(): Client {
-  if (!clientInstance) {
-    throw new DatabaseError('Database has not been initialized. Run initDb() first.');
-  }
-  return clientInstance;
+  const context = activeContext();
+  if (!context) throw new DatabaseError('Database has not been initialized. Run initDb() first.');
+  return context.client;
 }
 
 export function getProjectRoot(): string {
-  if (!projectRootInstance) {
-    throw new DatabaseError('Project root has not been initialized. Run initDb() first.');
-  }
-  return projectRootInstance;
+  const context = activeContext();
+  if (!context) throw new DatabaseError('Project root has not been initialized. Run initDb() first.');
+  return context.projectRoot;
 }
 
 /**
@@ -235,25 +256,20 @@ export function getProjectRoot(): string {
  * working in.
  */
 export function getConfigRoot(): string {
-  if (!configRootInstance) {
-    throw new DatabaseError('Config root has not been initialized. Run initDb() first.');
-  }
-  return configRootInstance;
+  const context = activeContext();
+  if (!context) throw new DatabaseError('Config root has not been initialized. Run initDb() first.');
+  return context.configRoot;
 }
 
 /**
  * Closes the database connection.
  */
 export async function closeDb(): Promise<void> {
-  if (clientInstance) {
+  if (globalContext) {
     // Release the whole pool, not just the active handle. Tests and CLI commands delete
     // their project directory after closing, and a client still holding the file would
     // keep the WAL sidecars open.
     await releaseAll();
-    clientInstance = null;
-    dbInstance = null;
-    projectRootInstance = null;
-    configRootInstance = null;
-    databasePathInstance = null;
+    globalContext = null;
   }
 }
