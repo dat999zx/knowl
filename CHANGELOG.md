@@ -3,6 +3,44 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 3.0.3 — 2026-08-05
+
+Documentation and packaging only. No runtime behaviour changes.
+
+### Documentation
+
+- **The README is a tour again, not a manual.** It had reached 1,199 lines / 8,211 words, with
+  whole sections written at release-note depth — import divergence policies, snapshot table
+  partitioning, reconciliation thresholds, tombstone monotonicity. All correct, all verified, and
+  all the wrong altitude for someone deciding whether to install this. The README is now 360 lines
+  and still covers every area, including a Features section that names every shipped capability
+  with the command that runs it.
+- **`docs/reference.md` is the complete manual.** It is the previous README preserved whole: the
+  prose is byte-identical, and only the header and relative paths changed. Nothing verified was
+  deleted, and the README links into it by section anchor wherever a reader wants more.
+- Positioning is stated on Knowl's own terms — typed rather than free text, governed rather than
+  append-only, local rather than a service. No competing product is named or linked.
+- Two capabilities the README had never documented are now listed: secret-safe writes, and
+  promotion at session end.
+- Three claims corrected: `custom` is the bring-your-own embedding path rather than a fifth preset;
+  it is *retrieval* that keeps your query local, which `knowl ask` does not; and vector ranking is
+  the agent/MCP path, while a single-repository CLI query is lexical.
+- The hero banner carries the real logo instead of an invented glyph, cut out of its tile and
+  embedded so the file stays self-contained.
+- A contributor licence agreement, contributing guide, and CLA bot.
+
+### Changed
+
+- The npm package description and keywords now describe what Knowl is for, and cover the terms
+  people actually search: `project-memory`, `agent-memory`, `claude-code`, `codex`, `cursor`.
+
+### Tests
+
+- The guidance test guards `docs/reference.md` for the canonical MCP tool table, and additionally
+  fails if a README link points at a reference anchor that no longer exists — so renaming a section
+  breaks the build rather than the front door.
+- Loose scratch databases are swept from the repository root.
+
 ## 3.0.2
 
 ### Fixed
