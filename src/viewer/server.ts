@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import http from 'node:http';
 import { initDb, closeDb } from '../store/database.js';
 import { listKnowledgeItems } from '../store/repository.js';
@@ -9,10 +10,29 @@ import { queryKnowledgeForAgentExplained } from '../store/agent-query.js';
 import { listEvidenceForItem } from '../store/evidence-repository.js';
 import { VIEWER_HTML } from './ui.js';
 
-export type ViewerServer = { url: string; close: () => Promise<void> };
+export type ViewerServer = {
+  /** Origin only, no trailing slash and no query: callers concatenate paths onto it. */
+  url: string;
+  token: string;
+  /** What a human opens. The token is in the URL so a copied link authenticates. */
+  browseUrl: string;
+  close: () => Promise<void>;
+};
+
+const SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'no-referrer',
+  'content-security-policy':
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+    "img-src data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+};
 
 function json(response: http.ServerResponse, value: unknown, status = 200) {
-  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+  response.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
+    ...SECURITY_HEADERS,
+  });
   response.end(JSON.stringify(value));
 }
 
@@ -87,11 +107,43 @@ async function buildGraph(): Promise<{ nodes: GraphNode[]; links: GraphLink[] }>
   return { nodes, links: [...links.values()] };
 }
 
+/** `decodeURIComponent` throws on a malformed escape; that has to be a 400, not a dead process. */
+function segment(pathname: string, prefix: string): string {
+  return decodeURIComponent(pathname.slice(prefix.length));
+}
+
+function tokenMatches(presented: string, expected: string): boolean {
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
 export async function startViewer(projectRoot: string, options: { port?: number } = {}): Promise<ViewerServer> {
   await initDb(projectRoot);
-  const server = http.createServer(async (request, response) => {
-    if (request.method !== 'GET') { response.writeHead(405, { allow: 'GET' }); response.end(); return; }
-    const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+  // A fresh secret per launch. Binding to 127.0.0.1 keeps other machines out; it does not keep
+  // out a page the user is already viewing, which can reach loopback ports from their browser.
+  const token = crypto.randomBytes(24).toString('base64url');
+
+  async function route(request: http.IncomingMessage, response: http.ServerResponse): Promise<void> {
+    if (request.method !== 'GET') { response.writeHead(405, { allow: 'GET', ...SECURITY_HEADERS }); response.end(); return; }
+
+    const bound = server.address();
+    const port = bound && typeof bound !== 'string' ? bound.port : 0;
+    const host = request.headers.host ?? '';
+    // A browser sends the hostname it dialled. Only the loopback literals are ours; a name that
+    // merely resolves to 127.0.0.1 belongs to whoever controls that name.
+    if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}` && host !== `[::1]:${port}`) {
+      json(response, { error: 'Unexpected Host header.' }, 400);
+      return;
+    }
+
+    const url = new URL(request.url ?? '/', `http://127.0.0.1:${port}`);
+    const cookie = /(?:^|;\s*)knowl_viewer=([^;]+)/.exec(request.headers.cookie ?? '')?.[1];
+    if (!tokenMatches(url.searchParams.get('token') ?? cookie ?? '', token)) {
+      json(response, { error: 'Missing or invalid viewer token.' }, 401);
+      return;
+    }
+
     const pathname = url.pathname;
     if (pathname === '/api/graph') return json(response, await buildGraph());
     if (pathname === '/api/brain') return json(response, await listKnowledgeItems());
@@ -101,13 +153,43 @@ export async function startViewer(projectRoot: string, options: { port?: number 
     if (pathname === '/api/access') return json(response, await getKnowledgeAccessReport());
     if (pathname === '/api/skills') return json(response, await listSkillPackages(projectRoot));
     if (pathname === '/api/retrieval') return json(response, await queryKnowledgeForAgentExplained('local', { query: url.searchParams.get('q') ?? '', limit: 10, surface: 'viewer' }));
-    if (pathname.startsWith('/api/evidence/')) return json(response, await listEvidenceForItem(decodeURIComponent(pathname.slice('/api/evidence/'.length))));
-    if (pathname.startsWith('/api/timeline/')) return json(response, await listAssertions(decodeURIComponent(pathname.slice('/api/timeline/'.length))));
-    if (pathname === '/') { response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' }); response.end(VIEWER_HTML); return; }
-    response.writeHead(404); response.end();
+    if (pathname.startsWith('/api/evidence/')) return json(response, await listEvidenceForItem(segment(pathname, '/api/evidence/')));
+    if (pathname.startsWith('/api/timeline/')) return json(response, await listAssertions(segment(pathname, '/api/timeline/')));
+    if (pathname === '/') {
+      response.writeHead(200, {
+        'content-type': 'text/html; charset=utf-8',
+        'cache-control': 'no-store',
+        // The page then reaches the API on its own, without the token in every URL it builds.
+        'set-cookie': `knowl_viewer=${token}; Path=/; HttpOnly; SameSite=Strict`,
+        ...SECURITY_HEADERS,
+      });
+      response.end(VIEWER_HTML);
+      return;
+    }
+    json(response, { error: 'Not found.' }, 404);
+  }
+
+  const server = http.createServer((request, response) => {
+    // Node does not convert a rejected listener promise into a 500 -- it raises
+    // `unhandledRejection`, which this process is configured to die on. One malformed
+    // percent-escape in a URL was enough to take the viewer down.
+    void route(request, response).catch(error => {
+      const status = error instanceof URIError ? 400 : 500;
+      if (!response.headersSent) {
+        response.writeHead(status, { 'content-type': 'application/json; charset=utf-8', ...SECURITY_HEADERS });
+      }
+      response.end(JSON.stringify({ error: status === 400 ? 'Malformed request.' : 'Internal viewer error.' }));
+    });
   });
+
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(options.port ?? 0, '127.0.0.1', resolve); });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('Viewer failed to bind a local port.');
-  return { url: `http://127.0.0.1:${address.port}`, close: async () => { await new Promise<void>(resolve => server.close(() => resolve())); await closeDb(); } };
+  const url = `http://127.0.0.1:${address.port}`;
+  return {
+    url,
+    token,
+    browseUrl: `${url}/?token=${token}`,
+    close: async () => { await new Promise<void>(resolve => server.close(() => resolve())); await closeDb(); },
+  };
 }
