@@ -19,6 +19,18 @@ const HOME = path.resolve('./.knowl-semantic-home');
 const WEB = path.resolve('./.knowl-semantic-web');
 const SERVER = path.resolve('./.knowl-semantic-server');
 
+// The repo's own cache, as `workspace-query.test.ts` and `write-embedding.test.ts` already do.
+// Left unset, `resolveModelCache` lands on `knowlHome()/models` -- and `knowlHome()` here is
+// the throwaway HOME above, which `afterAll` deletes. So every run fetched the weights again
+// from huggingface.co, which is a rate limiter this suite has no business depending on: a 429
+// there fails the build for reasons that have nothing to do with the change under test.
+// A stable path inside the repo is one CI can cache and a developer already has warm.
+const MODEL_CACHE = path.resolve('./.knowl/models');
+const CONFIG = {
+  ...DEFAULT_CONFIG,
+  search: { ...DEFAULT_CONFIG.search, vector: { ...DEFAULT_CONFIG.search?.vector, cacheDir: MODEL_CACHE } },
+};
+
 /**
  * The case recorded in docs/evals/cross-repo-baseline.json as a known weakness.
  *
@@ -32,7 +44,7 @@ const SERVER_ANSWER = 'Access tokens issued by the server expire after fifteen m
 
 async function seed(root: string, name: string, title: string, content: string, visibility: string) {
   await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
-  await saveConfig(root, { ...DEFAULT_CONFIG });
+  await saveConfig(root, CONFIG);
   await initDb(root);
   await getClient().execute('DELETE FROM knowledge_commits');
   await getClient().execute('DELETE FROM knowledge_items');
@@ -44,14 +56,14 @@ async function seed(root: string, name: string, title: string, content: string, 
   });
   // The suite disables write-time embedding, so build the index explicitly -- this test
   // exists precisely to exercise the path the rest of the suite cannot.
-  const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, root);
+  const embedder = await createLocalEmbeddingProvider(CONFIG, root);
   await reindexKnowledgeEmbeddings('local', embedder);
   await closeDb();
 }
 
 /** The vector config a caller hands federation: identity plus the query embedding. */
 async function vectorConfig(query: string) {
-  const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, WEB);
+  const embedder = await createLocalEmbeddingProvider(CONFIG, WEB);
   const [embedding] = await embedder.embed([query]);
   // The fingerprint, not provider/model: those stopped being the eligibility filter when
   // dtype and pooling joined the identity. Passing the old pair left the query with no
