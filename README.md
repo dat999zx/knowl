@@ -36,7 +36,7 @@ Agents access the same governed memory through the `knowl` CLI or the Model Cont
 to files, commits, tests, commands, URLs, users, agents, or indexed symbols. Core storage and
 retrieval do not require an external AI provider.
 
-Knowl 2.5 can also link related repositories into a workspace. Each repository keeps its own
+Knowl can also link related repositories into a workspace. Each repository keeps its own
 database and ownership boundary; only explicitly promoted knowledge is visible to peers.
 
 A normal workflow queries memory first, verifies misses or stale results against repository
@@ -178,8 +178,9 @@ a bounded lexical fallback.
 
 ### Current retrieval
 
-Agent retrieval through MCP `knowl_query` is vector-primary by default with a local MiniLM q8
-model. Its project candidate set is reranked with bounded BM25 lexical results plus
+Agent retrieval through MCP `knowl_query` is vector-primary by default, using the repository's
+configured local embedding profile. New repositories default to Granite Small English R2. Its
+project candidate set is reranked with bounded BM25 lexical results plus
 exact-identifier, freshness, status, confidence, and recency adjustments. Normal MCP queries
 return active items unless another status is requested. Exact filenames, item IDs, and
 `symbol://` locators receive lexical support even when semantic similarity is weak.
@@ -345,8 +346,10 @@ executable `.knowl/skills` package. Failed terminal events create a handoff for 
 host session.
 
 Hooks run as separate, short-lived `knowl agent-hook` processes. They normalize host events and
-never start, stop, or supervise the long-lived stdio `knowl serve` process. Bounded lifecycle
-capture does not retain raw prompts, transcripts, stdout, stderr, or environment variables.
+never start, stop, or supervise the long-lived stdio `knowl serve` process. Lifecycle capture
+itself stores no raw prompts, transcripts, stdout, stderr, or environment variables. When
+transcript indexing is explicitly enabled, the separate transcript index reads supported host
+transcript files already present on the machine; it does not create them.
 
 ### Leaving work for later
 
@@ -493,7 +496,7 @@ retrieved within the last 21 days.
 
 ## Workspaces
 
-Knowl 2.5 workspaces provide linked federation across related repositories without merging their
+Knowl workspaces provide linked federation across related repositories without merging their
 databases.
 
 ```bash
@@ -749,9 +752,10 @@ knowl view
 knowl view --port 4312
 ```
 
-The server has no authentication and accepts GET requests only. It exposes full local atom
-content across all statuses, so loopback binding is the privacy boundary; do not expose it
-through a public proxy or tunnel.
+The viewer binds to `127.0.0.1`, answers only `GET`, and mints a fresh access token per launch.
+The printed URL carries that token; knowing the port is not enough to read anything. It exposes
+full local atom content across all statuses, so loopback binding is still the privacy boundary;
+do not expose it through a public proxy or tunnel.
 
 The graph connects atoms through shared tags and category-derived links. It is a synthetic
 navigation graph, not a causal graph and not the evidence graph. Search, category filters, stale
@@ -1047,10 +1051,10 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 | --- | --- |
 | `knowl export <path>` | Write portable, manifest-verified JSONL |
 | `knowl import <path> [--dry-run] [--on-divergence newer\|skip\|theirs\|fail]` | Import JSONL with an explicit divergence policy |
-| `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Create or restore a verified SQLite snapshot |
+| `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Create a checksummed SQLite snapshot, or restore one after verifying its manifest, size, checksum, and SQLite integrity |
 | `knowl config` / `get <key>` / `set <key> <value>` / `reset [key]` | Edit configuration interactively or from scripts |
 | `knowl config set-model <model>` | Verify, download and select a custom embedding model |
-| `knowl reindex --vectors` | Prepare the local model, re-embed every item, and drop rows from a previous model |
+| `knowl reindex --vectors` | Prepare the local model and embed items that have no current vector; `--force` re-embeds every item |
 | `knowl reindex --transcripts [--budget <minutes>]` | Build or update the optional session transcript index; resumable, so a budget is a stopping point rather than a rollback |
 | `knowl resume [key]` | Resume a parked workstream from its key, or list what is parked here |
 | `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access] [--tombstone-days N]` | Preview or apply duplicate, archive, compression, and tombstone maintenance |
@@ -1071,7 +1075,8 @@ Run `knowl serve` to expose Knowl over stdio MCP. The recommended agent flow is:
 
 ### Tools
 
-Knowl exposes exactly 24 MCP tools:
+Knowl exposes the core tools below. Two transcript search tools and a session listing tool are
+registered in addition when transcript indexing is enabled for the repository.
 
 | Tool | Purpose |
 | --- | --- |
