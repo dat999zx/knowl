@@ -101,13 +101,13 @@ export function skillSourcePath(name: string): string {
   return `.knowl/skills/${name}/SKILL.md`;
 }
 
-function validateSkillName(name: string): void {
+export function validateSkillName(name: string): void {
   if (!SAFE_SKILL_NAME.test(name)) {
     throw new Error(`Invalid skill name "${name}". Use lowercase letters, numbers, underscores, and hyphens.`);
   }
 }
 
-function normalizeSkillFilePath(filePath: string): string {
+export function normalizeSkillFilePath(filePath: string): string {
   if (!filePath || filePath.includes('\0') || path.isAbsolute(filePath) || path.win32.isAbsolute(filePath)) {
     throw new Error(`Invalid skill file path "${filePath}"`);
   }
