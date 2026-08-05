@@ -102,6 +102,22 @@ describe('global teardown sweep', () => {
 
       expect(await exists('.knowl-empty')).toBe(false);
     });
+
+    it('removes a loose database parked beside the repository', async () => {
+      // `tests/store/namespace-concurrency.test.ts` opens its namespace database as a bare
+      // file next to the repository rather than inside a fixture directory. Windows holds the
+      // handle past that suite's own removal -- measured, EBUSY on all three -- and the sweep
+      // only ever looked at directories, so the files survived every single run.
+      await makeFile('.knowl-namespace-session.db', 'sqlite');
+      await makeFile('.knowl-namespace-session.db-shm', '');
+      await makeFile('.knowl-namespace-session.db-wal', '');
+
+      await sweepScratchDirectories(BASE);
+
+      expect(await exists('.knowl-namespace-session.db')).toBe(false);
+      expect(await exists('.knowl-namespace-session.db-shm')).toBe(false);
+      expect(await exists('.knowl-namespace-session.db-wal')).toBe(false);
+    });
   });
 
   describe('what it must not touch', () => {
@@ -138,6 +154,19 @@ describe('global teardown sweep', () => {
 
       expect(await exists('.knowl-bench')).toBe(true);
       expect(await exists('.knowl-repo-fixture')).toBe(false);
+    });
+
+    it('leaves a loose file that shares the prefix but is not a database', async () => {
+      // A file has no contents this sweep can reason about, so name and extension are the
+      // whole evidence. Both have to match, or a person's notes go the way of `.knowl-bench`.
+      await makeFile('.knowl-notes.md', '# mine');
+      await makeFile('.knowl-backup.db.txt', 'not a database');
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await sweepScratchDirectories(BASE);
+
+      expect(await exists('.knowl-notes.md')).toBe(true);
+      expect(await exists('.knowl-backup.db.txt')).toBe(true);
     });
 
     it('ignores anything not carrying the prefix at all', async () => {
