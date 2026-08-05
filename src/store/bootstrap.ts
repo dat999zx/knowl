@@ -3,6 +3,7 @@ import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from 
 import {
   assertSchemaSupported, isMigrationCurrent, stampMigrationLevel, stampSchemaVersion,
 } from './schema-version.js';
+import { synchronousPragma } from '../core/sqlite-sync.js';
 
 /**
  * Per-CONNECTION setup, and deliberately outside the version gate below.
@@ -14,48 +15,23 @@ import {
  * nothing. It stays because libsql does not default to WAL, and the version gate's cheap
  * lock-free read depends on being in WAL.
  */
-const BASE_STATEMENTS = [
-  // Must come first: journal_mode = WAL (and everything after it) takes locks, and a
-  // connection's default busy_timeout is 0. Applied last, a concurrent writer at that
-  // instant fails this whole bootstrap with SQLITE_BUSY instead of waiting for it.
-  //
-  // Matches the pool's own timeout rather than undercutting it: at 5000 this silently halved
-  // the 10000 `acquireClient` had set moments earlier, for the life of the connection.
-  'PRAGMA busy_timeout = 10000;',
-  'PRAGMA foreign_keys = ON;',
-  'PRAGMA journal_mode = WAL;',
-  // Chosen, not inherited. libSQL leaves `synchronous` at SQLite's default of FULL (measured:
-  // a fresh @libsql/client 0.14.0 handle reports `synchronous=2`), which fsyncs the WAL on
-  // every single commit. Because a bare `execute` is its own implicit transaction, that is one
-  // fsync per un-batched write -- and un-batched writes are the common shape here: one
-  // `knowl_store`, one hook capture, one session event.
-  //
-  // MEASURED on this schema (Windows 11, node 24.13, @libsql/client 0.14.0, interleaved A/B,
-  // medians over 15 rounds): un-batched writes cost 3.488 ms/row at FULL against 0.832 at
-  // NORMAL -- 4.19x. NORMAL matched synchronous=OFF (0.867 ms/row) to within noise, which is
-  // what identifies the fsync as the whole of the gap rather than a part of it. Batched writes
-  // barely move (0.350 -> 0.241 ms/row): one commit already amortises one fsync over the batch.
-  //
-  // It is BETTER under contention, not merely faster alone -- the case that decides it, since
-  // `serve`, the hooks and the CLI all hold this one file. Six concurrent processes doing
-  // un-batched writes: 173 -> 337 writes/s, median latency 2.607 -> 0.051 ms, p95 6.161 ->
-  // 0.198 ms, zero SQLITE_BUSY either way. A writer that does not fsync holds the write lock
-  // for less time, so it gets out of everyone else's way sooner.
-  //
-  // THE TRADE, in what a user loses. SQLite's documentation is unambiguous that this is not a
-  // corruption risk: "WAL mode is safe from corruption with synchronous=NORMAL... A transaction
-  // committed in WAL mode with synchronous=NORMAL might roll back following a power loss or
-  // system crash. Transactions are durable across application crashes regardless of the
-  // synchronous setting or journal mode." (pragma.html#pragma_synchronous). So a crashed agent,
-  // a killed `serve`, a closed laptop lid, `Ctrl-C` -- none of those lose anything. What is at
-  // risk is only the handful of atoms written in the seconds before a power cut or an OS crash,
-  // and the database still opens cleanly afterwards. For project memory that is re-derivable
-  // from the transcripts on disk beside it, losing the last few seconds of an unplanned power
-  // loss is a smaller harm than paying 4x on every write that a session ever makes.
-  //
-  // Connection state, not file state: it does not persist, so every connection sets it.
-  'PRAGMA synchronous = NORMAL;',
-];
+function baseStatements(): string[] {
+  return [
+    // Must come first: journal_mode = WAL (and everything after it) takes locks, and a
+    // connection's default busy_timeout is 0. Applied last, a concurrent writer at that
+    // instant fails this whole bootstrap with SQLITE_BUSY instead of waiting for it.
+    //
+    // Matches the pool's own timeout rather than undercutting it: at 5000 this silently halved
+    // the 10000 `acquireClient` had set moments earlier, for the life of the connection.
+    'PRAGMA busy_timeout = 10000;',
+    'PRAGMA foreign_keys = ON;',
+    'PRAGMA journal_mode = WAL;',
+    // Chosen, not inherited -- libSQL leaves this at SQLite's default of FULL. See
+    // `synchronousPragma` for the measurements, the durability trade, and the override.
+    // A function rather than a const array so the value is read per open, not at import.
+    synchronousPragma(),
+  ];
+}
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS knowledge_items (
@@ -780,7 +756,7 @@ export async function bootstrapSchema(
 ): Promise<void> {
   // Connection state, not file state -- every connection needs these however current the
   // schema is, so they sit outside the gate. All three are free when nothing changes.
-  await executeAll(client, BASE_STATEMENTS);
+  await executeAll(client, baseStatements());
 
   // Before any migration touches the file. Running migrateLegacyProjectSchema against a
   // database written by a newer Knowl is the case this exists to prevent.

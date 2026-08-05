@@ -1,10 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createClient } from '@libsql/client';
 
 import { acquireClient, releaseAll } from '../../src/store/connection-pool.js';
 import { openTranscriptDb, closeTranscriptDbs } from '../../src/transcripts/database.js';
+import { openResumeDb, closeResumeDb } from '../../src/store/resume-store.js';
 
 const ROOT = path.resolve('./.knowl-pragma-test');
 
@@ -134,5 +135,75 @@ describe('database engine configuration', () => {
     expect(await readPragma(client, 'mmap_size')).toBe(0);
     expect(await readPragma(client, 'cache_size')).toBe(-2000);
     expect(await readPragma(client, 'temp_store')).toBe(0);
+  });
+});
+
+/**
+ * The escape hatch, exercised on every database it applies to.
+ *
+ * NORMAL is the default and the right one, but it is a durability policy and a policy applied
+ * everywhere with no way out is not a decision anyone gets to make. These pin that the way out
+ * exists, reaches all three files, and fails loudly rather than quietly.
+ */
+describe('KNOWL_SQLITE_SYNCHRONOUS reaches every database', () => {
+  const savedSync = process.env.KNOWL_SQLITE_SYNCHRONOUS;
+  const savedHome = process.env.KNOWL_HOME;
+
+  // Its own root lifecycle: the describe above removes ROOT in its afterAll, which runs before
+  // this block starts.
+  beforeAll(async () => {
+    await fs.mkdir(ROOT, { recursive: true });
+  });
+
+  afterAll(async () => {
+    await releaseAll();
+    await closeTranscriptDbs().catch(() => {});
+    await closeResumeDb().catch(() => {});
+    await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
+  });
+
+  afterEach(async () => {
+    if (savedSync === undefined) delete process.env.KNOWL_SQLITE_SYNCHRONOUS;
+    else process.env.KNOWL_SQLITE_SYNCHRONOUS = savedSync;
+    if (savedHome === undefined) delete process.env.KNOWL_HOME;
+    else process.env.KNOWL_HOME = savedHome;
+    await releaseAll();
+    await closeTranscriptDbs().catch(() => {});
+    await closeResumeDb().catch(() => {});
+  });
+
+  // Each case opens its OWN file. The connection pool caches by path, so re-acquiring one
+  // already opened would hand back a client still carrying the previous case's pragma.
+  it('gives the knowledge database FULL when asked', async () => {
+    process.env.KNOWL_SQLITE_SYNCHRONOUS = 'FULL';
+    const client = await acquireClient(path.join(ROOT, 'sync-full.db'));
+    expect(await readPragma(client, 'synchronous')).toBe(2);
+  });
+
+  it('gives the transcript index FULL when asked', async () => {
+    process.env.KNOWL_SQLITE_SYNCHRONOUS = 'FULL';
+    const client = await openTranscriptDb(path.join(ROOT, 'sync-full-transcripts.db'));
+    expect(await readPragma(client, 'synchronous')).toBe(2);
+  });
+
+  it('gives the resume store FULL when asked', async () => {
+    process.env.KNOWL_HOME = path.join(ROOT, 'home-full');
+    process.env.KNOWL_SQLITE_SYNCHRONOUS = 'FULL';
+    const client = await openResumeDb();
+    expect(await readPragma(client, 'synchronous')).toBe(2);
+  });
+
+  it('still defaults to NORMAL with the variable unset', async () => {
+    delete process.env.KNOWL_SQLITE_SYNCHRONOUS;
+    const client = await acquireClient(path.join(ROOT, 'sync-default.db'));
+    expect(await readPragma(client, 'synchronous')).toBe(1);
+  });
+
+  it('refuses to open a database at all on an unrecognised value', async () => {
+    // Not a fallback to NORMAL. Handing NORMAL to somebody who asked for FULL is the failure
+    // the variable exists to prevent, so a typo has to stop the command.
+    process.env.KNOWL_SQLITE_SYNCHRONOUS = 'sorta';
+    await expect(acquireClient(path.join(ROOT, 'sync-bad.db')))
+      .rejects.toThrow(/must be NORMAL or FULL/);
   });
 });

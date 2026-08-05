@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createClient, type Client } from '@libsql/client';
 import { knowlHome } from '../workspace/paths.js';
+import { synchronousPragma } from '../core/sqlite-sync.js';
 
 /**
  * Where parked workstreams live: one database under the Knowl home, not inside any repo.
@@ -16,23 +17,24 @@ export function resumeDbPath(): string {
   return path.join(knowlHome(), 'resume.db');
 }
 
-const SCHEMA_STATEMENTS = [
-  // Every Knowl process on this machine may open this file, so a concurrent writer must wait
-  // rather than fail the open. Same reasoning as the transcript database.
-  'PRAGMA busy_timeout = 10000;',
-  'PRAGMA journal_mode = WAL;',
-  // Same choice and reasoning as the knowledge database -- see `BASE_STATEMENTS` in
-  // `./bootstrap.ts`. A resume key is re-mintable and this file is tiny, so the durability
-  // this trades away is worth even less here than it is there.
-  'PRAGMA synchronous = NORMAL;',
-  `CREATE TABLE IF NOT EXISTS resume_points (
-    key TEXT PRIMARY KEY,
-    project_dir TEXT NOT NULL,
-    brief TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  );`,
-  `CREATE INDEX IF NOT EXISTS idx_resume_points_project ON resume_points(project_dir, created_at);`,
-];
+function schemaStatements(): string[] {
+  return [
+    // Every Knowl process on this machine may open this file, so a concurrent writer must wait
+    // rather than fail the open. Same reasoning as the transcript database.
+    'PRAGMA busy_timeout = 10000;',
+    'PRAGMA journal_mode = WAL;',
+    // See `synchronousPragma`. A resume key is re-mintable and this file is tiny, so the
+    // durability this trades away is worth even less here than it is in the knowledge store.
+    synchronousPragma(),
+    `CREATE TABLE IF NOT EXISTS resume_points (
+      key TEXT PRIMARY KEY,
+      project_dir TEXT NOT NULL,
+      brief TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );`,
+    `CREATE INDEX IF NOT EXISTS idx_resume_points_project ON resume_points(project_dir, created_at);`,
+  ];
+}
 
 const clients = new Map<string, Client>();
 
@@ -45,7 +47,7 @@ export async function openResumeDb(): Promise<Client> {
   await fs.mkdir(path.dirname(resolved), { recursive: true });
   const client = createClient({ url: `file:${resolved}` });
   try {
-    for (const statement of SCHEMA_STATEMENTS) await client.execute(statement);
+    for (const statement of schemaStatements()) await client.execute(statement);
   } catch (error) {
     // An un-closed client on a failed open keeps whatever lock its partial bootstrap took.
     await client.close();
