@@ -7,7 +7,7 @@ import { startMemorySession, appendMemorySessionEvent } from '../../src/store/se
 import { createEvidence, linkKnowledgeEvidence } from '../../src/store/evidence-repository.js';
 import { createMcpServer } from '../../src/mcp/server.js';
 import { ProjectConfig } from '../../src/core/types.js';
-import { DEFAULT_CONTEXT_MAX_CHARS, MAX_PREVIEW_CHARS } from '../../src/core/token-budget.js';
+import { DEFAULT_CONTEXT_MAX_CHARS, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS } from '../../src/core/token-budget.js';
 import {
   KNOWL_MCP_SERVER_INSTRUCTIONS,
   KNOWL_MCP_TOOL_NAMES,
@@ -313,6 +313,10 @@ describe('MCP Server Layer', () => {
     expect(queryTool.inputSchema.properties.query.description).toContain('Length is not the variable');
     expect(queryTool.inputSchema.properties.category.description).toContain('Omit unless you are certain');
     expect(queryTool.inputSchema.properties.limit.description).toContain('defaults to 3');
+    // Read from the constant, never restated. This sentence is doctrine an agent acts on, and
+    // the ceiling has already moved once while a literal beside it did not.
+    expect(queryTool.description).toContain(`cut at ${MAX_ITEM_CONTENT_CHARS} characters`);
+    expect(queryTool.description).not.toContain('cut at 600 characters');
     expect(stateTool.description).toContain('broad project-memory summaries');
 
     const storeTool = res.result.tools.find((t: any) => t.name === 'knowl_store');
