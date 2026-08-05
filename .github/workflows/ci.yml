@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Check lockfile version
+        run: npm run check:lockfile
+
       - name: Build
         run: npm run build
 
