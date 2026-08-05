@@ -25,6 +25,27 @@ jobs:
           node-version: 22
           cache: npm
 
+      # The suite loads a real embedding model, so without this every run re-downloads it from
+      # huggingface.co and a rate limit there fails the build for reasons unrelated to the change
+      # under test. Observed on 2026-08-05: `Error (429) ... Xenova/all-MiniLM-L6-v2/config.json`
+      # took down `workspace-query`, `cross-repo-semantic` and `cross-repo-eval` on a PR that
+      # touched none of them.
+      #
+      # `~/.knowl/models` is where `resolveModelCache` puts weights by default -- shared per
+      # machine rather than per repo, because nothing about them varies by repository.
+      #
+      # Keyed on the files that name the models, so adding or switching one fetches once and then
+      # caches. `restore-keys` matters more than the exact key here: on a miss it still restores
+      # the newest previous cache, so a profile change re-downloads only what actually changed
+      # instead of everything.
+      - name: Cache embedding models
+        uses: actions/cache@v4
+        with:
+          path: ~/.knowl/models
+          key: knowl-models-${{ runner.os }}-${{ hashFiles('src/core/vector-profile.ts', 'src/core/config.ts') }}
+          restore-keys: |
+            knowl-models-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci
 
