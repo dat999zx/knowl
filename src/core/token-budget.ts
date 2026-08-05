@@ -4,6 +4,31 @@ export const DEFAULT_CONTEXT_MAX_CHARS = 3_000;
 export const DEFAULT_CONTEXT_TOKEN_BUDGET = 1_200;
 export const DEFAULT_RESULT_LIMIT = 3;
 export const MAX_ITEM_CONTENT_CHARS = 600;
+/**
+ * The compact item's title, and the resource markdown's heading.
+ *
+ * Its own ceiling because it is its own thing: a title is an identifier rather than prose, and
+ * it must not inherit whatever the content ceiling becomes. It shared that ceiling only by
+ * accident of both being truncated in the same function.
+ */
+export const MAX_TITLE_CHARS = 600;
+/**
+ * Per-item ceiling for the markdown formatters in `./format.ts`.
+ *
+ * Those two call sites already bound the WHOLE response at `DEFAULT_CONTEXT_MAX_CHARS`, so this
+ * must stay well under it. Raising it to the item-content ceiling would let one item consume
+ * two thirds of `knowl_recent` and `knowl_state`.
+ */
+export const MAX_SUMMARY_ITEM_CHARS = 600;
+/**
+ * A bounded sample of something retrievable in full elsewhere: an evidence excerpt, a timeline
+ * assertion, a skill's markdown, a skill run's stdout and stderr, a decision's reasoning.
+ *
+ * None of these is the fact an agent reasons from, and each has its own way back to the whole:
+ * evidence carries a locator, a skill has a package on disk, a subprocess can be re-run. They
+ * must not move when the item-content ceiling moves.
+ */
+export const MAX_PREVIEW_CHARS = 600;
 export const MAX_TAGS = 4;
 export const MAX_TAG_CHARS = 48;
 export const MAX_EVIDENCE_ITEMS = 5;
@@ -125,7 +150,7 @@ export function compactKnowledgeItem(item: KnowledgeItem, extras: CompactProvena
   return {
     id: item.id,
     category: item.category as KnowledgeCategory,
-    title: truncateText(item.title, MAX_ITEM_CONTENT_CHARS),
+    title: truncateText(item.title, MAX_TITLE_CHARS),
     content: truncateText(item.content, MAX_ITEM_CONTENT_CHARS),
     freshness: item.freshness as KnowledgeFreshness,
     confidence: item.confidence,

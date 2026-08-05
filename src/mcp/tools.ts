@@ -12,7 +12,7 @@ import { runPipeline } from '../pipeline/pipeline.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { formatHierarchyToMarkdown, formatRecentContextToMarkdown } from '../core/format.js';
 import { compactMcpJson, compactItemResponse, compactAssertionResponse, boundedEvidence } from './response-format.js';
-import { DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, truncateText, uncalibratedScore, type UncalibratedScore } from '../core/token-budget.js';
+import { DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS, truncateText, uncalibratedScore, type UncalibratedScore } from '../core/token-budget.js';
 import { getRecentContext } from '../store/recent-context.js';
 import { storeKnowledgeItemDeduped, storeKnowledgeAtomsDeduped } from '../store/knowledge-writer.js';
 import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
@@ -1510,7 +1510,7 @@ export function registerTools(
         const { name: skillName } = args as any;
         const skill = await readSkillPackage(projectRoot!, skillName);
         return {
-          content: [{ type: 'text', text: compactMcpJson({ manifest: skill.manifest, markdown: truncateText(skill.markdown, MAX_ITEM_CONTENT_CHARS), truncated: skill.markdown.length > MAX_ITEM_CONTENT_CHARS }) }],
+          content: [{ type: 'text', text: compactMcpJson({ manifest: skill.manifest, markdown: truncateText(skill.markdown, MAX_PREVIEW_CHARS), truncated: skill.markdown.length > MAX_PREVIEW_CHARS }) }],
         };
       }
 
@@ -1534,7 +1534,7 @@ export function registerTools(
         const { name: skillName, entrypoint, args: runtimeArgs } = args as any;
         const result = await runSkillPackage(projectRoot!, skillName, entrypoint || 'default', runtimeArgs || []);
         await recordSkillRun(projectId!, skillName, result.exitCode === 0);
-        return { content: [{ type: 'text', text: compactMcpJson({ ...result, stdout: truncateText(result.stdout, MAX_ITEM_CONTENT_CHARS), stderr: truncateText(result.stderr, MAX_ITEM_CONTENT_CHARS), attempts: result.attempts.map(attempt => ({ entrypoint: attempt.entrypoint, exitCode: attempt.exitCode })) }) }] };
+        return { content: [{ type: 'text', text: compactMcpJson({ ...result, stdout: truncateText(result.stdout, MAX_PREVIEW_CHARS), stderr: truncateText(result.stderr, MAX_PREVIEW_CHARS), attempts: result.attempts.map(attempt => ({ entrypoint: attempt.entrypoint, exitCode: attempt.exitCode })) }) }] };
       }
 
       else if (name === 'knowl_handoff') {

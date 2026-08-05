@@ -4,7 +4,7 @@ import { KnowledgeCategory } from '../core/types.js';
 import { getRecentContext } from '../store/recent-context.js';
 import { formatRecentContextToMarkdown, formatHierarchyToMarkdown } from '../core/format.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
-import { DEFAULT_CONTEXT_MAX_CHARS, DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, truncateText } from '../core/token-budget.js';
+import { DEFAULT_CONTEXT_MAX_CHARS, DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS, MAX_TITLE_CHARS, truncateText } from '../core/token-budget.js';
 import { formatInitError } from './init-error.js';
 import { sanitizeToolErrorMessage } from './tool-schema.js';
 
@@ -98,10 +98,10 @@ export function registerResources(
           md += `No active items recorded in this category.`;
         } else {
           for (const item of items.slice(0, DEFAULT_RESULT_LIMIT)) {
-            md += `## ${truncateText(item.title, MAX_ITEM_CONTENT_CHARS)} (ID: ${item.id})\n\n${truncateText(item.content, MAX_ITEM_CONTENT_CHARS)}\n\n`;
-            if (item.reasoning) md += `**Reasoning:** ${truncateText(item.reasoning, MAX_ITEM_CONTENT_CHARS)}\n\n`;
+            md += `## ${truncateText(item.title, MAX_TITLE_CHARS)} (ID: ${item.id})\n\n${truncateText(item.content, MAX_ITEM_CONTENT_CHARS)}\n\n`;
+            if (item.reasoning) md += `**Reasoning:** ${truncateText(item.reasoning, MAX_PREVIEW_CHARS)}\n\n`;
             if (item.alternatives && item.alternatives.length > 0) {
-              md += `**Alternatives:** ${truncateText(item.alternatives.join(', '), MAX_ITEM_CONTENT_CHARS)}\n\n`;
+              md += `**Alternatives:** ${truncateText(item.alternatives.join(', '), MAX_PREVIEW_CHARS)}\n\n`;
             }
             md += `---\n\n`;
           }
