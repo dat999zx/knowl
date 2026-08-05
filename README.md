@@ -1187,6 +1187,12 @@ Knowl keeps project data under `.knowl/`, which `knowl init` adds to `.gitignore
 Workspace manifests live outside member repositories because their checkout paths are
 machine-local. Portable JSONL exports and snapshots are created only when requested.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, the checks to run before a pull request, and
+the conventions this codebase follows. Contributors are asked to agree to the
+[Contributor License Agreement](CLA.md) once, on their first pull request.
+
 ## License
 
 Knowl is licensed under the [Apache License 2.0](LICENSE). Apache-2.0 does not grant trademark

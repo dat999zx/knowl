@@ -1,0 +1,45 @@
+name: CLA
+
+# Asks first-time contributors to agree to CLA.md, and records who has.
+#
+# `pull_request_target` rather than `pull_request` because a pull request from a fork gets a
+# read-only token, and this job has to write a comment, set a status, and commit a signature.
+# That trade is only safe because this job never checks out or runs the contributor's code --
+# it reads event metadata and comments. Do not add a checkout step to this file.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, synchronize, closed]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned by commit SHA, not by tag: a tag can be moved to point at different code after
+      # review, and this job holds write permissions on the repository.
+      # SHA is contributor-assistant/github-action v2.6.1.
+      - name: Check CLA signature
+        if: >-
+          github.event_name == 'pull_request_target'
+          || github.event.comment.body == 'recheck'
+          || github.event.comment.body == 'I have read the Knowl Contributor License Agreement and I agree to it.'
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Must match the sentence quoted in CLA.md exactly. If you reword one, reword both.
+          custom-pr-sign-comment: 'I have read the Knowl Contributor License Agreement and I agree to it.'
+          path-to-document: https://github.com/dat999zx/knowl/blob/main/CLA.md
+          # Signatures live on their own branch so main's history stays about the software.
+          branch: cla-signatures
+          path-to-signatures: signatures/version1/cla.json
+          # The maintainer agreed in CLA.md itself; bots author nothing they could own.
+          allowlist: dat999zx,dependabot[bot],renovate[bot],github-actions[bot]
