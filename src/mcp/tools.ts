@@ -751,7 +751,7 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
         },
         {
           name: 'knowl_skill_run',
-          description: 'Run a trusted matching learned-skill entrypoint after inspecting the package with knowl_skill_read. Only an entrypoint whose author set `autoRun: true` will run; that is not the default.',
+          description: 'Run an approved learned-skill entrypoint. A skill must be approved by the user with `knowl skill approve <name>` before it will run, and any edit to the package revokes that approval. Only an entrypoint whose author set `autoRun: true` will run; that is not the default. If the call is refused, relay the approval command to the user rather than trying to work around it.',
           inputSchema: {
             type: 'object',
             properties: {

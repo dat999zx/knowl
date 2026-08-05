@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { assertSkillApproved } from './trust.js';
 
 export type SkillEntrypoint =
   | {
@@ -264,13 +265,48 @@ export async function readSkillPackage(projectRoot: string, name: string): Promi
   return { manifest, markdown, path: skillDir };
 }
 
-function runShell(projectRoot: string, command: string, env: NodeJS.ProcessEnv) {
-  return spawnSync(command, {
+/**
+ * Ceilings on one skill run. A learned skill is agent-authored and agent-triggered, so an
+ * accidental infinite loop or a gigabyte of stdout is an ordinary outcome, not an attack.
+ */
+const MAX_SKILL_RUNTIME_MS = 120_000;
+const MAX_SKILL_OUTPUT_BYTES = 8 * 1024 * 1024;
+
+function spawnLimits(projectRoot: string, env: NodeJS.ProcessEnv) {
+  return {
     cwd: projectRoot,
     env,
-    shell: true,
-    encoding: 'utf-8',
-  });
+    encoding: 'utf-8' as const,
+    timeout: MAX_SKILL_RUNTIME_MS,
+    maxBuffer: MAX_SKILL_OUTPUT_BYTES,
+  };
+}
+
+/**
+ * Variables a child process needs to function, and nothing else.
+ *
+ * Inheriting `process.env` handed every skill run the host's model-provider keys, cloud
+ * credentials, GitHub tokens and SSH-agent socket. A learned skill is agent-authored; the
+ * default has to be that it sees none of that.
+ */
+const ENV_ALLOWLIST = [
+  'PATH', 'Path', 'PATHEXT', 'HOME', 'USERPROFILE', 'SystemRoot', 'SystemDrive', 'windir',
+  'ComSpec', 'TMPDIR', 'TEMP', 'TMP', 'LANG', 'LC_ALL', 'SHELL', 'TZ', 'NUMBER_OF_PROCESSORS',
+];
+
+export function skillEnvironment(projectRoot: string, skill: SkillPackage): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const key of ENV_ALLOWLIST) {
+    if (process.env[key] !== undefined) env[key] = process.env[key];
+  }
+  env.KNOWL_PROJECT_ROOT = projectRoot;
+  env.KNOWL_SKILL_NAME = skill.manifest.name;
+  env.KNOWL_SKILL_DIR = skill.path;
+  return env;
+}
+
+function runShell(projectRoot: string, command: string, env: NodeJS.ProcessEnv) {
+  return spawnSync(command, { ...spawnLimits(projectRoot, env), shell: true });
 }
 
 function scriptCommand(scriptPath: string, args: string[]): { command: string; args: string[] } {
@@ -293,11 +329,7 @@ function scriptCommand(scriptPath: string, args: string[]): { command: string; a
 
 function runScript(projectRoot: string, scriptPath: string, args: string[], env: NodeJS.ProcessEnv) {
   const command = scriptCommand(scriptPath, args);
-  const child = spawnSync(command.command, command.args, {
-    cwd: projectRoot,
-    env,
-    encoding: 'utf-8',
-  });
+  const child = spawnSync(command.command, command.args, spawnLimits(projectRoot, env));
   return { child, commandText: [command.command, ...command.args].join(' ') };
 }
 
@@ -338,12 +370,11 @@ export async function runSkillPackage(
       );
     }
 
-    const env = {
-      ...process.env,
-      KNOWL_PROJECT_ROOT: projectRoot,
-      KNOWL_SKILL_NAME: skill.manifest.name,
-      KNOWL_SKILL_DIR: skill.path,
-    };
+    // A human approved these exact bytes for this entrypoint, or nothing runs. Checked here
+    // rather than at the call sites because this is the only path that spawns a process.
+    await assertSkillApproved(projectRoot, name, nameToRun);
+
+    const env = skillEnvironment(projectRoot, skill);
     const { child, commandText } = entrypoint.type === 'shell'
       ? { child: runShell(projectRoot, entrypoint.command, env), commandText: entrypoint.command }
       : runScript(

@@ -7,6 +7,7 @@ import {
   readSkillPackage,
   runSkillPackage,
 } from '../../src/skills/registry.js';
+import { approveSkill } from '../../src/skills/trust.js';
 
 const TEST_ROOT = path.resolve('./.knowl-skill-registry-test');
 
@@ -54,6 +55,11 @@ describe('Skill Registry', () => {
     expect(read.manifest.entrypoints.default?.type).toBe('script');
     expect(read.markdown).toContain('# Run App');
     await expect(fs.access(path.join(TEST_ROOT, '.knowl', 'skills', 'run_app', 'run.js'))).resolves.toBeUndefined();
+
+    // Execution now requires a human-pinned approval of these exact bytes. Approved here, at
+    // the end of creation, so the later run tests exercise what they mean to rather than the
+    // trust refusal.
+    await approveSkill(TEST_ROOT, 'run_app', { approvedBy: 'test' });
   });
 
   it('runs the default script entrypoint', async () => {
@@ -93,6 +99,8 @@ describe('Skill Registry', () => {
         },
       },
     });
+
+    await approveSkill(TEST_ROOT, 'fallback_skill', { approvedBy: 'test' });
 
     const result = await runSkillPackage(TEST_ROOT, 'fallback_skill', 'default', [], { allowFallback: true });
     expect(result.exitCode).toBe(0);
@@ -177,6 +185,10 @@ describe('Skill Registry', () => {
         'utf-8'
       );
 
+      // Approved, so the refusal under test is the .cmd guard rather than the trust check --
+      // the extension is resolved inside runScript, downstream of approval.
+      await approveSkill(TEST_ROOT, 'legacy_batch', { approvedBy: 'test' });
+
       await expect(runSkillPackage(TEST_ROOT, 'legacy_batch')).rejects.toThrow(/\.cmd/);
 
       // Still readable, so the author can see what needs repairing.
@@ -199,6 +211,8 @@ describe('Skill Registry', () => {
           default: { type: 'script', path: 'run.js', autoRun: true },
         },
       });
+
+      await approveSkill(TEST_ROOT, 'echo_args', { approvedBy: 'test' });
 
       const payload = 'x" & echo INJECTED & echo ';
       const result = await runSkillPackage(TEST_ROOT, 'echo_args', 'default', [payload, '%CD%']);
@@ -228,6 +242,10 @@ describe('Skill Registry', () => {
         },
       },
     });
+
+    // The argument refusal is upstream of the trust check, so it holds either way; approval is
+    // what lets the second call actually run.
+    await approveSkill(TEST_ROOT, 'shell_args', { approvedBy: 'test' });
 
     await expect(runSkillPackage(TEST_ROOT, 'shell_args', 'default', ['anything'])).rejects.toThrow(/KNOWL_/);
 

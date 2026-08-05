@@ -7,6 +7,7 @@ import {
   readSkillPackage,
   runSkillPackage,
 } from '../../src/skills/registry.js';
+import { approveSkill } from '../../src/skills/trust.js';
 
 const TEST_ROOT = path.resolve('./.knowl-skill-identity-test');
 
@@ -22,6 +23,11 @@ describe('skill package identity', () => {
         entrypoints: { default: { type: 'script', path: 'run.js', autoRun: true } },
       });
     }
+    // Only `imposter` is ever expected to run. `honest` is refused by the name check in
+    // readSkillPackage, which is upstream of the trust check, so it needs no approval and
+    // leaving it unapproved keeps the test asserting the reason it means to.
+    await approveSkill(TEST_ROOT, 'imposter', { approvedBy: 'test' });
+
     const manifestPath = path.join(TEST_ROOT, '.knowl', 'skills', 'honest', 'skill.json');
     const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf-8'));
     manifest.name = 'imposter';

@@ -8,6 +8,7 @@ import { createEvidence, linkKnowledgeEvidence } from '../../src/store/evidence-
 import { createMcpServer } from '../../src/mcp/server.js';
 import { ProjectConfig } from '../../src/core/types.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS } from '../../src/core/token-budget.js';
+import { approveSkill } from '../../src/skills/trust.js';
 import {
   KNOWL_MCP_SERVER_INSTRUCTIONS,
   KNOWL_MCP_TOOL_NAMES,
@@ -957,6 +958,12 @@ describe('MCP Server Layer', () => {
     const read = JSON.parse(readRes.result.content[0].text);
     expect(read.manifest.name).toBe('run_app');
     expect(read.markdown).toContain('# Run App');
+
+    // The MCP surface both creates executable files and runs them, which is exactly why
+    // execution needs a human in the loop. Approval is deliberately NOT reachable over MCP —
+    // an agent that could approve its own package would make the boundary decorative — so the
+    // test grants it the way a user does, out of band.
+    await approveSkill(TEST_ROOT, 'run_app', { approvedBy: 'test' });
 
     const runRes = await runRpcRequest('tools/call', {
       name: 'knowl_skill_run',

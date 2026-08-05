@@ -54,6 +54,7 @@ import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } 
 import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince } from '../store/drift.js';
 import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage, SkillEntrypoint } from '../skills/registry.js';
+import { approveSkill, listTrust, revokeSkill } from '../skills/trust.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
 import { createSnapshot, restoreSnapshot } from '../store/snapshots.js';
 import { isEvidenceStale, listEvidenceForItem, resolveSymbolEvidence } from '../store/evidence-repository.js';
@@ -2007,6 +2008,65 @@ skillCommand
         // Ignore close errors while reporting the root cause.
       }
       console.error(`Error running skill: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+skillCommand
+  .command('approve')
+  .description('Approve a skill package for execution, pinned to its current contents')
+  .argument('<name>', 'Skill package name')
+  .option('--entrypoint <name...>', 'Approve only these entrypoints (defaults to all)')
+  .action(async (name, options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const record = await approveSkill(root, name, {
+        approvedBy: `cli:${process.env.USER ?? process.env.USERNAME ?? 'unknown'}`,
+        allowedEntrypoints: options.entrypoint,
+      });
+      console.log(`Approved skill "${name}".`);
+      console.log(`Hash: ${record.approvedHash}`);
+      console.log(`Entrypoints: ${record.allowedEntrypoints.join(', ')}`);
+      console.log('Any change to the package revokes this approval.');
+    } catch (error: any) {
+      console.error(`Error approving skill: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+skillCommand
+  .command('revoke')
+  .description('Withdraw approval for a skill package')
+  .argument('<name>', 'Skill package name')
+  .action(async name => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const removed = await revokeSkill(root, name);
+      console.log(removed ? `Revoked skill "${name}".` : `Skill "${name}" was not approved.`);
+    } catch (error: any) {
+      console.error(`Error revoking skill: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+skillCommand
+  .command('trust')
+  .description('List approved skill packages')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const trust = await listTrust(root);
+      const names = Object.keys(trust).sort();
+      if (names.length === 0) {
+        console.log('No skill package is approved for execution.');
+        return;
+      }
+      for (const name of names) {
+        const record = trust[name];
+        console.log(`${name}\t${record.approvedHash}\t${record.approvedAt}\t${record.allowedEntrypoints.join(',')}`);
+      }
+    } catch (error: any) {
+      console.error(`Error listing skill trust: ${error.message}`);
       process.exit(1);
     }
   });

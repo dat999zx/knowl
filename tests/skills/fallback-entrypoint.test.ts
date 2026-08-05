@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createSkillPackage, runSkillPackage } from '../../src/skills/registry.js';
+import { approveSkill } from '../../src/skills/trust.js';
 
 const TEST_ROOT = path.resolve('./.knowl-fallback-test');
 
@@ -21,6 +22,10 @@ describe('fallback entrypoints', () => {
         fallback: { type: 'script', path: 'mark.js', autoRun: true },
       },
     });
+    // Both tests remove the `ran` marker before running, so the package is always back to its
+    // approved bytes at the moment of the check. `mark.js` writes inside KNOWL_SKILL_DIR, which
+    // does change the hash -- a skill that edits its own package invalidates its own approval.
+    await approveSkill(TEST_ROOT, 'two-doors', { approvedBy: 'test' });
   });
 
   afterAll(async () => {
