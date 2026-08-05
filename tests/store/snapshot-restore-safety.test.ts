@@ -75,4 +75,29 @@ describe('snapshot restore safety', () => {
     expect((await fs.stat(oldest.path)).size).toBeGreaterThan(0);
     await expect(fs.stat(oldest.manifestPath)).resolves.toBeTruthy();
   });
+
+  it('attaches the bytes it verified, not the path it verified', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const snapshot = await createSnapshot(TEST_ROOT);
+    const expected = await itemCount();
+    await repo.createKnowledgeItem(project!.id, { category: 'fact', title: 'Later', content: 'Added after.' });
+
+    // Stand in for anything that can touch the file between check and use: another process,
+    // a sync client, an operator. Replaced *after* creation, so the manifest still describes
+    // the original bytes.
+    const decoy = path.join(TEST_ROOT, '.knowl', 'decoy.db');
+    await fs.writeFile(decoy, '');
+    const original = await fs.readFile(snapshot.path);
+
+    const swap = (async () => {
+      await new Promise(resolve => setTimeout(resolve, 5));
+      await fs.writeFile(snapshot.path, await fs.readFile(decoy));
+    })();
+
+    await Promise.allSettled([restoreSnapshot(TEST_ROOT, snapshot.path, { confirm: true }), swap]);
+
+    // Whatever happened, the store is never left empty by a file swapped mid-restore.
+    expect(await itemCount()).toBeGreaterThan(0);
+    await fs.writeFile(snapshot.path, original);
+  });
 });

@@ -188,7 +188,7 @@ export class SnapshotRestoreAuditError extends Error {
 }
 
 /**
- * Verify the manifest before anything destructive happens.
+ * Read and range-check the sidecar manifest. Says nothing about the bytes.
  *
  * A checksum proves the bytes are intact, not who wrote them: whoever produces a snapshot can
  * compute a valid checksum for it. This is an integrity check against corruption and truncated
@@ -196,7 +196,7 @@ export class SnapshotRestoreAuditError extends Error {
  * previously optional, so a snapshot with none was restored with no verification at all, which
  * is the one situation where the previous state is already gone.
  */
-async function verifySnapshotManifest(source: string): Promise<SnapshotManifest> {
+async function readSnapshotManifest(source: string): Promise<SnapshotManifest> {
   const manifestPath = `${source}.manifest.json`;
   let manifest: SnapshotManifest;
   try {
@@ -213,15 +213,26 @@ async function verifySnapshotManifest(source: string): Promise<SnapshotManifest>
       `${KNOWL_SCHEMA_VERSION}. Upgrade Knowl before restoring it.`,
     );
   }
+  return manifest;
+}
 
-  const stat = await fs.stat(source);
+/**
+ * Prove one specific file matches a manifest.
+ *
+ * Separate from reading the manifest so the caller can verify the copy it is about to attach
+ * rather than the path it read the manifest from. Those were the same call, and the gap
+ * between them -- a VACUUM, a stat, a hash, a write and a directory prune -- was wide enough
+ * that a pruned source became an empty ATTACH and a restore deleted a store it could not
+ * refill.
+ */
+async function verifySnapshotBytes(file: string, manifest: SnapshotManifest): Promise<void> {
+  const stat = await fs.stat(file);
   if (stat.size !== manifest.byteSize) {
     throw new Error(`Snapshot size ${stat.size} does not match its manifest size ${manifest.byteSize}.`);
   }
-  if (manifest.sha256 !== await sha256(source)) {
+  if (manifest.sha256 !== await sha256(file)) {
     throw new Error('Snapshot checksum does not match its manifest.');
   }
-  return manifest;
 }
 
 export async function restoreSnapshot(
@@ -236,46 +247,63 @@ export async function restoreSnapshot(
   if (source === destination) throw new Error('Snapshot restore refuses the live database path.');
   await fs.access(source).catch(() => { throw new Error('Snapshot file was not found.'); });
 
-  await verifySnapshotManifest(source);
+  const manifest = await readSnapshotManifest(source);
 
-  // The source is named as protected because this prune runs between the manifest check above
-  // and the ATTACH below. Without it, restoring anything but the two newest snapshots deleted
-  // the very file being restored.
-  const preRestore = await createSnapshot(root, { protect: [source] });
-  const client = getClient();
-  // ATTACH cannot run inside a transaction, so it stays outside the wrapper on both sides.
-  await client.execute(`ATTACH DATABASE '${quoteSqlPath(source)}' AS snapshot_restore`);
+  // Copied out of the snapshot directory before anything else runs, and everything after this
+  // point reads the copy. `.knowl/` rather than `.knowl/snapshots/`, so the pre-restore
+  // prune -- which matches on `.db` -- cannot see it. This is also why the WAL sidecars the
+  // attachment creates land beside a throwaway file instead of beside a snapshot Knowl is
+  // only supposed to read.
+  const staged = path.join(path.dirname(destination), `.restore-${crypto.randomUUID().slice(0, 8)}.db`);
+  await fs.copyFile(source, staged);
+
   try {
-    // Asked of the attachment rather than a second connection: opening the snapshot separately
-    // would create WAL sidecars beside a file this function is only supposed to read.
-    const integrity = await client.execute('PRAGMA snapshot_restore.integrity_check');
-    const verdict = String(integrity.rows[0]?.integrity_check ?? '');
-    if (verdict !== 'ok') throw new Error(`Snapshot failed SQLite integrity_check: ${verdict}`);
+    await verifySnapshotBytes(staged, manifest);
 
-    const stamped = Number((await client.execute('PRAGMA snapshot_restore.user_version')).rows[0]?.user_version ?? 0);
-    if (stamped > KNOWL_SCHEMA_VERSION) {
-      throw new Error(
-        `Snapshot database is stamped with schema version ${stamped}; this build reads up to ` +
-        `${KNOWL_SCHEMA_VERSION}. Upgrade Knowl before restoring it.`,
-      );
+    // The source is named as protected because this prune runs inside the restore. Without
+    // it, restoring anything but the two newest snapshots deleted the very file being
+    // restored -- and before the copy above, that deletion reached the file ATTACH was about
+    // to open.
+    const preRestore = await createSnapshot(root, { protect: [source] });
+    const client = getClient();
+    // ATTACH cannot run inside a transaction, so it stays outside the wrapper on both sides.
+    await client.execute(`ATTACH DATABASE '${quoteSqlPath(staged)}' AS snapshot_restore`);
+    try {
+      const integrity = await client.execute('PRAGMA snapshot_restore.integrity_check');
+      const verdict = String(integrity.rows[0]?.integrity_check ?? '');
+      if (verdict !== 'ok') throw new Error(`Snapshot failed SQLite integrity_check: ${verdict}`);
+
+      const stamped = Number((await client.execute('PRAGMA snapshot_restore.user_version')).rows[0]?.user_version ?? 0);
+      if (stamped > KNOWL_SCHEMA_VERSION) {
+        throw new Error(
+          `Snapshot database is stamped with schema version ${stamped}; this build reads up to ` +
+          `${KNOWL_SCHEMA_VERSION}. Upgrade Knowl before restoring it.`,
+        );
+      }
+
+      // Through the shared wrapper rather than a raw BEGIN. A transaction belongs to the
+      // connection and this process holds exactly one, so an unserialised BEGIN here could
+      // interleave with any other writer into `BEGIN; BEGIN;` -- which SQLite refuses with
+      // SQLITE_ERROR, not SQLITE_BUSY, so nothing retries it. Restore is the worst possible
+      // place for a half-applied transaction.
+      await withClientTransaction(async () => {
+        for (const statement of await restoreStatements(client)) {
+          await client.execute(statement);
+        }
+      });
+    } finally {
+      await client.execute('DETACH DATABASE snapshot_restore');
     }
 
-    // Through the shared wrapper rather than a raw BEGIN. A transaction belongs to the
-    // connection and this process holds exactly one, so an unserialised BEGIN here could
-    // interleave with any other writer into `BEGIN; BEGIN;` -- which SQLite refuses with
-    // SQLITE_ERROR, not SQLITE_BUSY, so nothing retries it. Restore is the worst possible
-    // place for a half-applied transaction.
-    await withClientTransaction(async () => {
-      for (const statement of await restoreStatements(client)) {
-        await client.execute(statement);
-      }
-    });
+    const report = await auditKnowledgeStore();
+    if (report.findings.some(finding => finding.severity === 'error')) {
+      throw new SnapshotRestoreAuditError(preRestore.path, report.findings);
+    }
+    return { preRestore, findings: report.findings };
   } finally {
-    await client.execute('DETACH DATABASE snapshot_restore');
+    // Sidecars too: the attachment may have written them beside the copy.
+    for (const suffix of ['', '-wal', '-shm']) {
+      await fs.rm(`${staged}${suffix}`, { force: true }).catch(() => {});
+    }
   }
-  const report = await auditKnowledgeStore();
-  if (report.findings.some(finding => finding.severity === 'error')) {
-    throw new SnapshotRestoreAuditError(preRestore.path, report.findings);
-  }
-  return { preRestore, findings: report.findings };
 }
