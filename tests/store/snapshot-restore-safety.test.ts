@@ -54,4 +54,25 @@ describe('snapshot restore safety', () => {
     await expect(restoreSnapshot(TEST_ROOT, missing, { confirm: true })).rejects.toThrow();
     expect(await itemCount()).toBe(before);
   });
+
+  it('restores the oldest snapshot and leaves it on disk', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const oldest = await createSnapshot(TEST_ROOT);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await createSnapshot(TEST_ROOT);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    await createSnapshot(TEST_ROOT);
+
+    const expected = await itemCount();
+    // Written after every snapshot, so a correct restore removes it.
+    await repo.createKnowledgeItem(project!.id, { category: 'fact', title: 'Later', content: 'Added after.' });
+    expect(await itemCount()).toBe(expected + 1);
+
+    await restoreSnapshot(TEST_ROOT, oldest.path, { confirm: true });
+
+    expect(await itemCount()).toBe(expected);
+    // The file the operator restored from is still there, with its manifest.
+    expect((await fs.stat(oldest.path)).size).toBeGreaterThan(0);
+    await expect(fs.stat(oldest.manifestPath)).resolves.toBeTruthy();
+  });
 });

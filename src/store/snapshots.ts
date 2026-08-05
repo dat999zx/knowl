@@ -35,7 +35,10 @@ function quoteSqlPath(filePath: string): string {
   return filePath.replace(/'/g, "''");
 }
 
-export async function createSnapshot(projectRoot: string): Promise<Snapshot> {
+export async function createSnapshot(
+  projectRoot: string,
+  options: { protect?: string[] } = {},
+): Promise<Snapshot> {
   const root = path.resolve(projectRoot);
   const snapshotDir = path.join(root, '.knowl', 'snapshots');
   await fs.mkdir(snapshotDir, { recursive: true });
@@ -61,7 +64,7 @@ export async function createSnapshot(projectRoot: string): Promise<Snapshot> {
   // ones became redundant -- and because `upgrade --all` snapshots every repository on the
   // machine, so without this the growth is on a schedule. Returned, never silent: the caller
   // prints what went, so nobody discovers it from a directory listing.
-  const pruned = await pruneSnapshots(snapshotDir, SNAPSHOT_KEEP, snapshotPath);
+  const pruned = await pruneSnapshots(snapshotDir, SNAPSHOT_KEEP, [snapshotPath, ...(options.protect ?? [])]);
 
   return { path: snapshotPath, manifestPath, manifest, pruned };
 }
@@ -235,7 +238,10 @@ export async function restoreSnapshot(
 
   await verifySnapshotManifest(source);
 
-  const preRestore = await createSnapshot(root);
+  // The source is named as protected because this prune runs between the manifest check above
+  // and the ATTACH below. Without it, restoring anything but the two newest snapshots deleted
+  // the very file being restored.
+  const preRestore = await createSnapshot(root, { protect: [source] });
   const client = getClient();
   // ATTACH cannot run inside a transaction, so it stays outside the wrapper on both sides.
   await client.execute(`ATTACH DATABASE '${quoteSqlPath(source)}' AS snapshot_restore`);

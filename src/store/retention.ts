@@ -170,13 +170,16 @@ export function sweepDebounceClaims(
  * Keep the newest `keep` snapshots and their manifests; return what was removed.
  *
  * Ordered by modification time rather than by name so a snapshot restored or copied in from
- * elsewhere is placed by when it arrived. `protect` is the snapshot being written right now,
- * named explicitly rather than trusted to sort first.
+ * elsewhere is placed by when it arrived. `protect` names snapshots this prune must not take:
+ * the one being written right now, and -- during a restore -- the one being restored from.
+ * Naming the second is not politeness. The prune runs between the restore's manifest check and
+ * its ATTACH, so deleting the source there left ATTACH to create an empty database in its place
+ * and the restore to delete a store it could not refill.
  */
 export async function pruneSnapshots(
   snapshotDir: string,
   keep = SNAPSHOT_KEEP,
-  protect?: string,
+  protect?: string | string[],
 ): Promise<string[]> {
   let names: string[];
   try {
@@ -185,13 +188,20 @@ export async function pruneSnapshots(
     return [];
   }
 
-  const protectedPath = protect ? path.resolve(protect) : null;
+  const protectedPaths = new Set(
+    (protect === undefined ? [] : Array.isArray(protect) ? protect : [protect]).map(one => path.resolve(one)),
+  );
+
+  // Counted rather than taken from the set's size: a protected path can name a snapshot
+  // outside this directory -- `snapshot restore` accepts any path -- and one that is not here
+  // is not occupying a slot here.
+  let protectedHere = 0;
   const snapshots: Array<{ file: string; mtimeMs: number; name: string }> = [];
   for (const name of names) {
     // Shape, not everything in the directory: a file a human parked here is not ours.
     if (!name.endsWith('.db')) continue;
     const file = path.join(snapshotDir, name);
-    if (protectedPath && path.resolve(file) === protectedPath) continue;
+    if (protectedPaths.has(path.resolve(file))) { protectedHere += 1; continue; }
     try {
       snapshots.push({ file, name, mtimeMs: (await fs.stat(file)).mtimeMs });
     } catch {
@@ -202,8 +212,9 @@ export async function pruneSnapshots(
   snapshots.sort((a, b) => b.mtimeMs - a.mtimeMs || b.name.localeCompare(a.name));
 
   const removed: string[] = [];
-  // `protect` occupies one of the kept slots, because it is a snapshot too.
-  for (const stale of snapshots.slice(Math.max(keep - (protectedPath ? 1 : 0), 0))) {
+  // Every protected snapshot in this directory occupies one of the kept slots, because it is
+  // a snapshot too.
+  for (const stale of snapshots.slice(Math.max(keep - protectedHere, 0))) {
     try {
       await fs.rm(stale.file, { force: true });
       // A manifest never outlives its snapshot: an orphan manifest is a checksum for a file
