@@ -309,37 +309,123 @@ const LIFECYCLE_FIELDS = ITEM_FIELDS.filter(([column]) => [
   'version', 'updated_at',
 ].includes(column));
 
-type SkillInstall = { target: string; content: string };
+type SkillPackagePlan = { name: string; files: Array<{ relative: string; content: string }> };
 
 /**
- * Every path anchored to one fixed base the record cannot influence.
+ * Validate every incoming package as a whole, before anything is written.
  *
- * The previous check derived the containment root from the same untrusted `skill.name` as the
- * target, so both moved together and `../../escape` satisfied it. The name is now validated
- * with the same rule package creation uses -- no dots, no separators -- which makes traversal
- * unrepresentable rather than merely detected, and the base is computed once outside the loop.
+ * Grouped by package rather than flattened to files because installation is a package-level
+ * operation: a skill is its directory, and half of one is not a skill. Names are validated with
+ * the same rule package creation uses -- no dots, no separators -- which makes traversal
+ * unrepresentable rather than merely detected.
+ *
+ * Note what this does *not* do: it computes no absolute target. Lexical containment was the
+ * previous defence and it is not one. `path.resolve` reasons about strings; `mkdir` and
+ * `rename` reason about the filesystem, and a junction under `.knowl/skills` satisfies the
+ * first and defeats the second. Containment is established in `installSkillPackages`, by
+ * writing only into directories Knowl created itself.
  */
-function planSkillInstalls(projectRoot: string, skills: any[]): SkillInstall[] {
-  const base = path.resolve(projectRoot, '.knowl', 'skills');
-  const installs: SkillInstall[] = [];
+function planSkillPackages(skills: any[]): SkillPackagePlan[] {
+  const plans: SkillPackagePlan[] = [];
+  const seen = new Set<string>();
   for (const skill of skills) {
     validateSkillName(skill.name);
-    const skillDir = path.resolve(base, skill.name);
-    if (path.dirname(skillDir) !== base) throw new Error(`Invalid imported skill name "${skill.name}".`);
+    if (seen.has(skill.name)) throw new Error(`Duplicate imported skill package "${skill.name}".`);
+    seen.add(skill.name);
+
+    const files: SkillPackagePlan['files'] = [];
     for (const file of skill.files ?? []) {
       if (typeof file?.content !== 'string') {
         throw new Error(`Invalid imported skill file content for "${file?.path}".`);
       }
-      const normalized = normalizeSkillFilePath(file.path);
-      const target = path.resolve(skillDir, ...normalized.split('/'));
-      const relative = path.relative(skillDir, target);
-      if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) {
-        throw new Error(`Invalid imported skill file path "${file.path}".`);
+      files.push({ relative: normalizeSkillFilePath(file.path), content: file.content });
+    }
+    plans.push({ name: skill.name, files });
+  }
+  return plans;
+}
+
+/** True for a POSIX symlink and for a Windows directory junction; both are followed by rename. */
+async function isReparsePoint(target: string): Promise<boolean> {
+  try {
+    return (await fs.lstat(target)).isSymbolicLink();
+  } catch (error: any) {
+    if (error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+/**
+ * Install each package as one directory swap, inside a base Knowl proved is a real directory.
+ *
+ * Three defects share this fix.
+ *
+ * Containment was lexical: every path resolved under `.knowl/skills/<name>` as a *string*,
+ * and then `mkdir` and `rename` followed a junction sitting at that name and wrote outside the
+ * tree. Reproduced on Windows, where a junction needs no elevation. So nothing is written into
+ * a path the import can influence: files go into a staging directory `mkdtemp` created
+ * directly under the verified base, which means Knowl created every ancestor and imported data
+ * had no opportunity to insert a link into the chain.
+ *
+ * Installation was not atomic: N renames after `COMMIT`, so file 2 failing left file 1
+ * installed and the database committed. A package now lands in one rename, or not at all.
+ *
+ * Installation was a merge, not a replacement: only incoming files were written, so a package
+ * imported over an existing one kept whatever the old one had and the new one lacks --
+ * including scripts the old manifest referenced. The whole directory is now replaced.
+ *
+ * The swap is backup-then-rename rather than a single rename because renaming onto a non-empty
+ * directory fails: EPERM on Windows, ENOTEMPTY on POSIX. Measured, not assumed.
+ */
+async function installSkillPackages(projectRoot: string, packages: SkillPackagePlan[]): Promise<void> {
+  if (packages.length === 0) return;
+  const base = path.resolve(projectRoot, '.knowl', 'skills');
+  await fs.mkdir(base, { recursive: true });
+  if (await isReparsePoint(base)) {
+    throw new Error(
+      `"${base}" is a symlink, junction, or reparse point. Knowl will not install imported skills ` +
+      'through one, because every path under it resolves somewhere it cannot vouch for.',
+    );
+  }
+
+  for (const plan of packages) {
+    const destination = path.join(base, plan.name);
+    if (await isReparsePoint(destination)) {
+      throw new Error(
+        `Skill package directory "${destination}" is a symlink, junction, or reparse point. ` +
+        'Refusing to install through it: the files would land outside .knowl/skills. ' +
+        'Remove or replace it with a real directory and import again.',
+      );
+    }
+
+    const staging = await fs.mkdtemp(path.join(base, '.import-'));
+    const backup = `${destination}.knowl-replacing`;
+    let swapped = false;
+    try {
+      for (const file of plan.files) {
+        const target = path.join(staging, ...file.relative.split('/'));
+        await fs.mkdir(path.dirname(target), { recursive: true });
+        await fs.writeFile(target, file.content, 'utf8');
       }
-      installs.push({ target, content: file.content });
+
+      // Renaming onto a non-empty directory fails on every platform, so the live package moves
+      // aside first. Between these two renames the package is momentarily absent; the backup
+      // is what a crash there leaves behind, under a name no skill can hold.
+      await fs.rm(backup, { recursive: true, force: true });
+      const existed = await fs.stat(destination).then(() => true, () => false);
+      if (existed) await fs.rename(destination, backup);
+      try {
+        await fs.rename(staging, destination);
+        swapped = true;
+      } catch (error) {
+        if (existed) await fs.rename(backup, destination).catch(() => {});
+        throw error;
+      }
+      await fs.rm(backup, { recursive: true, force: true }).catch(() => {});
+    } finally {
+      if (!swapped) await fs.rm(staging, { recursive: true, force: true }).catch(() => {});
     }
   }
-  return installs;
 }
 
 export async function importKnowledge(
@@ -490,16 +576,9 @@ export async function importKnowledge(
   }
   if (!options.projectRoot && skills.length > 0) throw new Error('Skill package import requires a project root.');
   // Planned before anything is written, so a malformed package cannot leave a half-written
-  // filesystem behind a rolled-back database.
-  const skillInstalls = options.projectRoot ? planSkillInstalls(options.projectRoot, skills) : [];
-  const staging = skillInstalls.length > 0
-    ? await fs.mkdtemp(path.join(path.resolve(options.projectRoot!, '.knowl'), 'import-skills-'))
-    : null;
-  if (staging) {
-    for (const [index, install] of skillInstalls.entries()) {
-      await fs.writeFile(path.join(staging, String(index)), install.content, 'utf8');
-    }
-  }
+  // filesystem behind a rolled-back database. Content stays in memory rather than staged:
+  // staging now happens per package, inside the verified base, at install time.
+  const skillPackages = options.projectRoot ? planSkillPackages(skills) : [];
   const written: KnowledgeItem[] = [];
   /**
    * What to record in `knowledge_commits`, in the shape `promote` uses: ids and titles, never
@@ -598,24 +677,15 @@ export async function importKnowledge(
     await client.execute('COMMIT;');
   } catch (error) {
     await client.execute('ROLLBACK;').catch(() => {});
-    if (staging) await fs.rm(staging, { recursive: true, force: true }).catch(() => {});
     throw error;
   }
 
-  // After COMMIT, and by rename rather than write: the contents were staged before the
-  // transaction opened, so the only work left is the cheapest step that can still fail. It is
-  // not swallowed -- the database is already committed by this point, and an import that
-  // silently omitted its skill files would look like a success.
-  if (staging) {
-    try {
-      for (const [index, install] of skillInstalls.entries()) {
-        await fs.mkdir(path.dirname(install.target), { recursive: true });
-        await fs.rename(path.join(staging, String(index)), install.target);
-      }
-    } finally {
-      await fs.rm(staging, { recursive: true, force: true }).catch(() => {});
-    }
-  }
+  // After COMMIT: the database is already durable by this point, so a failure here is
+  // reported rather than swallowed -- an import that silently omitted its skill files would
+  // look like a success. Each package lands as one directory swap, so a failure on the third
+  // package leaves the first two installed whole and the third untouched, rather than leaving
+  // one package half-written.
+  await installSkillPackages(options.projectRoot!, skillPackages);
 
   // Every other write path indexes on write. Import wrote raw SQL and skipped this, so
   // imported knowledge was invisible to vector search -- the primary retrieval path --
