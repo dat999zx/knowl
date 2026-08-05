@@ -70,33 +70,62 @@ export async function createSnapshot(
 }
 
 /**
- * Every table a restore has to rewrite, derived rather than listed.
+ * Tables the knowledge graph owns that nothing in it points *at*.
  *
- * The previous list was hand-written and named five tables. `DELETE FROM knowledge_items`
- * cascades into eight, so `knowledge_assertions`, `knowledge_evidence`, `knowledge_access`
- * and `drift_state` were emptied and never refilled. The assertion loss is not cosmetic:
- * `updateKnowledgeItemWithCommit` refuses any content edit on an item with no open assertion,
- * so a restored store looked intact and then rejected every write to it -- and the audit that
- * runs immediately afterwards did not check assertions, so it reported success. A recovery
- * path that quietly destroys history is worse than no recovery path, because it is used
- * exactly when the previous state is already gone.
+ * The dependent walk below finds children. It cannot find parents, because a foreign key runs
+ * one way: `knowledge_evidence.evidence_id` and `knowledge_assertions.source_evidence_id` both
+ * reference `evidence`, and neither tells `evidence` about it. So a restore rebuilt the links
+ * and left the rows they point at at their current values -- snapshot-era assertions attached
+ * to present-day evidence, and evidence edited since the snapshot not rolled back at all.
  *
- * So the set is computed from the schema: `knowledge_items` plus everything declaring a
- * foreign key into it, plus the standalone tables the restore owns. A table added later
- * joins this automatically instead of waiting to be noticed.
+ * `knowledge_commits` is here for the same reason from the other direction: it has no foreign
+ * key into items, but restoring items without their commits leaves the audit trail describing
+ * a store that no longer exists.
  */
-async function tablesReferencingItems(client: Client): Promise<string[]> {
-  const tables = await client.execute(
+const RESTORE_ROOTS = ['knowledge_items', 'evidence', 'knowledge_commits'] as const;
+
+/**
+ * Every table a restore has to rewrite, derived rather than listed, and derived *transitively*.
+ *
+ * The previous walk stopped one foreign key from `knowledge_items`, which missed everything
+ * that depends on a dependent. `knowledge_commit_items` references `knowledge_commits`, so
+ * deleting commits cascaded it away and nothing put it back -- and that table is what makes
+ * blast radius an equality search rather than a leading-wildcard scan (see
+ * `compactKnowledgeCommits`). A successful restore silently degraded it.
+ *
+ * Returned parents-first so foreign keys resolve as rows land; callers delete in reverse.
+ */
+async function restoreClosure(client: Client, present: Set<string>): Promise<string[]> {
+  const tables = (await client.execute(
     `SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
-  );
-  const dependents: string[] = [];
-  for (const row of tables.rows) {
-    const name = String(row.name);
-    if (name === 'knowledge_items') continue;
+  )).rows.map(row => String(row.name));
+
+  const references = new Map<string, string[]>();
+  for (const name of tables) {
     const fks = await client.execute(`PRAGMA foreign_key_list(${name})`);
-    if (fks.rows.some(fk => String(fk.table) === 'knowledge_items')) dependents.push(name);
+    references.set(name, [...new Set(fks.rows.map(fk => String(fk.table)))]);
   }
-  return dependents;
+
+  // Breadth-first from the roots, so a table joins the moment anything already in the set is
+  // its parent. Ordered by insertion, which is parents-before-children by construction.
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const queue = RESTORE_ROOTS.filter(root => present.has(root));
+  for (const root of queue) { seen.add(root); ordered.push(root); }
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const parent = ordered[index];
+    for (const name of tables) {
+      if (seen.has(name) || !present.has(name)) continue;
+      if (!(references.get(name) ?? []).includes(parent)) continue;
+      seen.add(name);
+      ordered.push(name);
+    }
+  }
+
+  // FTS shadow tables are maintained by the triggers `bootstrap` defines, so they rebuild
+  // themselves as rows land. Writing them directly would fight those triggers.
+  return ordered.filter(name => !name.startsWith('knowledge_items_fts'));
 }
 
 /**
@@ -136,20 +165,15 @@ async function restoreStatements(client: Client): Promise<string[]> {
     );
   }
 
-  const dependents = (await tablesReferencingItems(client)).filter(table => present.has(table));
-  // `knowledge_commits` has no foreign key into items but is part of the same history, and
-  // restoring items without their commits leaves the audit trail describing a store that no
-  // longer exists.
-  const standalone = ['knowledge_commits'].filter(table => present.has(table));
-
+  const ordered = await restoreClosure(client, present);
   const statements: string[] = [];
-  // Children first, then the parent: relying on the cascade to clear dependents is what hid
-  // the original defect, and an explicit delete says which tables this function owns.
-  for (const table of [...dependents, ...standalone]) statements.push(`DELETE FROM ${table}`);
-  statements.push('DELETE FROM knowledge_items');
 
-  // Parent first on the way back in, so foreign keys resolve as rows land.
-  for (const table of ['knowledge_items', ...standalone, ...dependents]) {
+  // Children first, then parents: relying on the cascade to clear dependents is what hid the
+  // original defect, and an explicit delete says which tables this function owns.
+  for (const table of [...ordered].reverse()) statements.push(`DELETE FROM ${table}`);
+
+  // Parents first on the way back in, so foreign keys resolve as rows land.
+  for (const table of ordered) {
     const columns = await sharedColumns(client, table);
     if (!columns.length) continue;
     const list = columns.join(', ');

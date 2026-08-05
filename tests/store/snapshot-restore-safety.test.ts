@@ -100,4 +100,47 @@ describe('snapshot restore safety', () => {
     expect(await itemCount()).toBeGreaterThan(0);
     await fs.writeFile(snapshot.path, original);
   });
+
+  it('restores the commit-to-item index and the evidence rows, not just their links', async () => {
+    const client = getClient();
+    const project = await repo.getProjectByRootPath(TEST_ROOT);
+    const item = await repo.createKnowledgeItem(project!.id, {
+      category: 'fact', title: 'Anchored', content: 'Has evidence.',
+    });
+    // knowledge_commit_items is populated by createKnowledgeCommit, not createKnowledgeItem
+    // itself -- the item alone leaves no row for this test to lose and recover.
+    await repo.createKnowledgeCommit(project!.id, 'Anchor item', [{ itemId: item.id, action: 'insert' }]);
+    await client.execute({
+      sql: 'INSERT INTO evidence (id, type, locator, observed_at) VALUES (?, ?, ?, ?)',
+      args: ['ev-restore-1', 'file', 'src/x.ts', new Date().toISOString()],
+    });
+    await client.execute({
+      sql: 'INSERT INTO knowledge_evidence (knowledge_item_id, evidence_id, relationship) VALUES (?, ?, ?)',
+      args: [item.id, 'ev-restore-1', 'supports'],
+    });
+
+    const count = async (table: string) =>
+      Number((await client.execute(`SELECT count(*) AS n FROM ${table}`)).rows[0]?.n ?? 0);
+
+    const expectedCommitItems = await count('knowledge_commit_items');
+    const expectedEvidence = await count('evidence');
+    expect(expectedCommitItems).toBeGreaterThan(0);
+
+    const snapshot = await createSnapshot(TEST_ROOT);
+
+    // Move both tables away from their snapshot-era values.
+    await client.execute({
+      sql: 'INSERT INTO evidence (id, type, locator, observed_at) VALUES (?, ?, ?, ?)',
+      args: ['ev-restore-2', 'file', 'src/y.ts', new Date().toISOString()],
+    });
+    const later = await repo.createKnowledgeItem(project!.id, { category: 'fact', title: 'Later', content: 'After.' });
+    await repo.createKnowledgeCommit(project!.id, 'Add later item', [{ itemId: later.id, action: 'insert' }]);
+    expect(await count('evidence')).toBe(expectedEvidence + 1);
+    expect(await count('knowledge_commit_items')).toBeGreaterThan(expectedCommitItems);
+
+    await restoreSnapshot(TEST_ROOT, snapshot.path, { confirm: true });
+
+    expect(await count('knowledge_commit_items')).toBe(expectedCommitItems);
+    expect(await count('evidence')).toBe(expectedEvidence);
+  });
 });
