@@ -25,13 +25,13 @@ which parts of a restore are deliberately not restored.
 | --- | --- |
 | [Overview](#overview) · [Quick start](#quick-start) | What Knowl is and how to install it |
 | [Core knowledge model](#core-knowledge-model) | [Atom categories](#atom-categories) · [Metadata, history, ownership](#metadata-history-and-ownership) · [Governed writes](#governed-writes-and-current-truth) |
-| [Retrieval and context](#retrieval-and-context) | [Current retrieval](#current-retrieval) · [Embedding models](#choosing-an-embedding-model) · [Historical queries](#historical-retrieval-and-assertions) · [Context packs](#bounded-context-packs) |
+| [Retrieval and context](#retrieval-and-context) | [Current retrieval](#current-retrieval) · [What a result carries](#what-a-result-carries) · [Embedding models](#choosing-an-embedding-model) · [Historical queries](#historical-retrieval-and-assertions) · [Context packs](#bounded-context-packs) |
 | [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-optional-off-by-default) · [Host behavior](#host-and-subagent-behavior) |
 | [Evidence, code, drift](#evidence-code-intelligence-and-drift) | [Evidence and symbols](#evidence-and-symbols) · [PR drift and feedback](#pull-request-drift-and-retrieval-feedback) |
 | [Workspaces](#workspaces) | [Federation and ownership](#federation-and-ownership) · [Ownership stamping](#ownership) |
 | [Learned skills and synthesis](#learned-skills-and-synthesis) | [File-backed skills](#file-backed-skills) · [Deterministic synthesis](#deterministic-synthesis) |
 | [Portability and maintenance](#portability-and-maintenance) | [Export and import](#jsonl-export-and-import) · [Garbage collection](#garbage-collection) · [Snapshots, audit, doctor](#snapshots-audit-and-doctor) |
-| [Local viewer](#local-viewer) · [Architecture](#architecture-and-security-boundaries) | Inspector, component diagram, security boundaries |
+| [Local viewer](#local-viewer) · [Architecture](#architecture-and-security-boundaries) | Inspector, component diagram, security boundaries, [write durability](#write-durability) |
 | [Agent setup](#agent-setup) · [Benchmarks](#benchmarks) | Host integration, and every evaluation suite with reproduction commands |
 | [CLI reference](#cli-reference) · [MCP tools](#mcp-tools-and-resources) | Every shipped command, tool, and resource |
 | [Optional AI](#optional-ai) · [Local data](#local-data) | Provider configuration and on-disk layout |
@@ -200,6 +200,28 @@ In a single repository, the public `knowl query` CLI uses a project-local FTS/BM
 path. A current query in a linked workspace also fans out to peers; when vectors are enabled, it
 attempts a query embedding and local vectors for federated semantic ranking, then falls back to
 lexical results if embedding preparation fails. Historical `--as-of` queries remain local.
+
+### What a result carries
+
+Each `knowl_query` result is compacted before it is returned:
+
+- **`content`** — up to 2,000 characters of the stored fact, with **`truncated: true`** present
+  only when it was cut. Around 91% of items on a typical store arrive whole. The ceiling was 600
+  until 3.1.0, which returned roughly half of every fact with nothing saying so.
+- **`affectedPaths`** — up to six repository-relative files the item depends on, each up to 120
+  characters. Withheld for an item owned by another repo in a workspace: its paths are relative
+  to a checkout that is not yours, and linked repos are often fork siblings where the same path
+  exists in both and means something different.
+- **`score`** — the ranker's fused relevance in [0,1] when a calibrated one exists, or the
+  string `uncalibrated (<reason>)` when it does not. A string means the ranker has an order but
+  no opinion on strength, so judge the content rather than the position. Reasons are
+  `lexical-only` (no semantic half ran), `not embedded` (vector ran but never saw this row), and
+  `layered namespaces` (each namespace scored against its own corpus, so the numbers are not
+  comparable to each other).
+
+Titles are capped separately at 200 characters, and previews of things retrievable in full
+elsewhere — evidence excerpts, timeline assertions, skill markdown, `knowl_skill_run` output —
+stay at 600.
 
 ```bash
 # Current CLI query; single-repository candidates are lexical.
@@ -877,6 +899,23 @@ pass size validation and, by default, secret and sensitive-path checks. The data
 are local; workspace manifests hold external machine paths; the unauthenticated viewer is
 loopback-only.
 
+### Write durability
+
+All three SQLite databases — the knowledge store, the transcript index, and the resume store —
+run in WAL with `synchronous = NORMAL`.
+
+NORMAL does not fsync on every commit. An application crash, a killed `knowl serve`, `Ctrl-C`, or
+a closed laptop lid still lose nothing: SQLite's documentation is explicit that "transactions are
+durable across application crashes regardless of the synchronous setting or journal mode", and
+that "WAL mode is safe from corruption with `synchronous=NORMAL`". Only a power cut or an OS
+crash can drop the last seconds of writes, and the file still opens cleanly afterwards. Measured
+against FULL on this schema, NORMAL is 4.19× on un-batched writes — the common shape here, since
+one `knowl_store` or one hook capture is a single write — and better under contention.
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `KNOWL_SQLITE_SYNCHRONOUS` | `NORMAL` | `NORMAL` or `FULL`. Set `FULL` to fsync every commit, buying durability across power loss at roughly 4× the per-write cost. `OFF` is refused: it can corrupt the database on power loss and measured no faster than NORMAL. An unrecognised value stops the command rather than silently falling back. |
+
 ## Agent setup
 
 `knowl init` detects Codex, Claude Code, Cursor, Gemini CLI, and Claude Desktop. Run it
@@ -1090,7 +1129,9 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 Run `knowl serve` to expose Knowl over stdio MCP. The recommended agent flow is:
 
 1. Use lifecycle bootstrap context when available; otherwise use `knowl_recent`.
-2. Call `knowl_query` with two to six focused keywords before inspecting repository files.
+2. Call `knowl_query` before inspecting repository files, using the words that name the subject.
+   Another on-subject term retrieves better and an off-subject one retrieves worse, so do not pad
+   a query to reach a length and do not trim a real term to shorten it.
 3. Verify misses, conflicts, or stale results against the repository.
 4. Store verified durable findings and update contradicted memory promptly.
 5. Use manual task tools only when verified lifecycle hooks are unavailable.

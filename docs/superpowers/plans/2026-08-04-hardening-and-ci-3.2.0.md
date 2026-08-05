@@ -1,4 +1,4 @@
-# Knowl 3.1.0 Hardening, Generated Docs, and CI Gates Implementation Plan
+# Knowl 3.2.0 Hardening, Generated Docs, and CI Gates Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -1478,16 +1478,16 @@ Commander governs every CLI surface, and the generated CLI reference comes from 
 
 Zod 3 → 4 is a migration, not an upgrade: error shapes and several APIs changed, and Zod types reach MCP input validation. Do not bundle it. Write the scope into `docs/dependency-review-2026-08.md` — which modules import it (`grep -rln "from 'zod'" src/`), what each uses it for, what the migration touches — and leave it for its own branch.
 
-- [ ] **Step 6: Release 3.1.0**
+- [ ] **Step 6: Release 3.2.0**
 
 Run: `npm test && npm run build && npm run lint && npm run typecheck && npm run docs:check`
 Expected: all exit 0.
 
-Set `"version": "3.1.0"` in `package.json` and add a `CHANGELOG.md` entry covering: hash-pinned skill approval with a filtered environment and run ceilings; import ceilings and streaming; atomic config writes with owner-only permissions; restricted and redacted startup diagnostics; generated README sections; and the CI matrix with CodeQL, audit, and Dependabot. State plainly under a **Breaking** heading that **existing skill packages will not run until approved once with `knowl skill approve <name>`**, and that a skill no longer inherits the parent environment.
+Set `"version": "3.2.0"` in `package.json` and add a `CHANGELOG.md` entry covering: hash-pinned skill approval with a filtered environment and run ceilings; import ceilings and streaming; atomic config writes with owner-only permissions; restricted and redacted startup diagnostics; generated README sections; and the CI matrix with CodeQL, audit, and Dependabot. State plainly under a **Breaking** heading that **existing skill packages will not run until approved once with `knowl skill approve <name>`**, and that a skill no longer inherits the parent environment.
 
 ```bash
 git add package.json package-lock.json CHANGELOG.md docs/dependency-review-2026-08.md
-git commit -m "chore(release): 3.1.0"
+git commit -m "chore(release): 3.2.0"
 ```
 
 ---
