@@ -1,3 +1,12 @@
 {
-   "signedContributors": []
+  "signedContributors": [
+    {
+      "name": "William-Sommers",
+      "id": 246827463,
+      "comment_id": 5192304649,
+      "created_at": "2026-08-05T13:24:54Z",
+      "repoId": 1279171235,
+      "pullRequestNo": 19
+    }
+  ]
 }
