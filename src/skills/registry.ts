@@ -315,7 +315,8 @@ export async function runSkillPackage(
   projectRoot: string,
   name: string,
   entrypointName = 'default',
-  args: string[] = []
+  args: string[] = [],
+  options: { allowFallback?: boolean } = {}
 ): Promise<SkillRunResult> {
   const skill = await readSkillPackage(projectRoot, name);
   const attempts: SkillRunAttempt[] = [];
@@ -357,7 +358,16 @@ export async function runSkillPackage(
   }
 
   let attempt = await runNamed(entrypointName);
-  if (attempt.exitCode !== 0 && entrypointName !== 'fallback' && skill.manifest.entrypoints.fallback) {
+  // Opt-in, not automatic. A failed entrypoint used to chain straight into `fallback`, so a
+  // caller who asked for one execution got two and the second was never named in the request.
+  // A package that wants its fallback run can be asked for it; it should not be able to arrange
+  // its own second attempt by failing the first.
+  if (
+    options.allowFallback
+    && attempt.exitCode !== 0
+    && entrypointName !== 'fallback'
+    && skill.manifest.entrypoints.fallback
+  ) {
     attempt = await runNamed('fallback');
   }
 
