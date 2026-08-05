@@ -3,15 +3,39 @@ import { KnowledgeCategory, KnowledgeFreshness, KnowledgeItem } from './types.js
 export const DEFAULT_CONTEXT_MAX_CHARS = 3_000;
 export const DEFAULT_CONTEXT_TOKEN_BUDGET = 1_200;
 export const DEFAULT_RESULT_LIMIT = 3;
-export const MAX_ITEM_CONTENT_CHARS = 600;
+/**
+ * How much of a stored fact a caller receives.
+ *
+ * 600 was returning **half of every fact, severed mid-sentence**. Measured on this repository's
+ * own store (556 active items): p50 558, but p75 1,448 and p90 1,988, so 48.7% of items were
+ * cut -- and because `truncateText` is called here with the empty marker, a caller could not
+ * tell a short complete atom from the opening third of a long one while the doctrine told it to
+ * answer from memory rather than read files.
+ *
+ * Cost of the alternatives on the same corpus, at `DEFAULT_RESULT_LIMIT`:
+ *
+ * | ceiling | items whole | mean chars/query | worst case |
+ * | --- | --- | --- | --- |
+ * | 600 | 51.3% | 1,331 | 1,800 |
+ * | 1,500 | 76.6% | 2,311 | 4,500 |
+ * | 2,000 | 90.6% | 2,552 | 6,000 |
+ * | 3,000 | 99.1% | 2,665 | 9,000 |
+ *
+ * 3,000 costs only 113 more mean characters and buys another 8.5 points, but its worst case is
+ * 9,000 and the value is tuned to this store's longest item (3,779) rather than to a principle.
+ * 2,000 is the choice that survives not knowing the corpus.
+ */
+export const MAX_ITEM_CONTENT_CHARS = 2000;
 /**
  * The compact item's title, and the resource markdown's heading.
  *
  * Its own ceiling because it is its own thing: a title is an identifier rather than prose, and
  * it must not inherit whatever the content ceiling becomes. It shared that ceiling only by
- * accident of both being truncated in the same function.
+ * accident of both being truncated in the same function. Measured on this repository's store:
+ * p50 62, p90 100, p99 120, longest 133 -- so 200 never fires on real data, and exists to stop
+ * a pathological title from claiming the content ceiling's new headroom.
  */
-export const MAX_TITLE_CHARS = 600;
+export const MAX_TITLE_CHARS = 200;
 /**
  * Per-item ceiling for the markdown formatters in `./format.ts`.
  *

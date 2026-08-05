@@ -3,7 +3,9 @@ import { KnowledgeItem } from '../../src/core/types.js';
 import {
   compactKnowledgeItem, estimateTokens, truncateText,
   MAX_AFFECTED_PATHS, MAX_ITEM_CONTENT_CHARS, MAX_PATH_CHARS,
+  MAX_PREVIEW_CHARS, MAX_SUMMARY_ITEM_CHARS, MAX_TITLE_CHARS,
 } from '../../src/core/token-budget.js';
+import { formatRecentContextToMarkdown } from '../../src/core/format.js';
 
 const item: KnowledgeItem = {
   id: 'item-1', category: 'decision', status: 'active', title: 'Use SQLite', content: 'Local storage.',
@@ -30,7 +32,7 @@ describe('token budget', () => {
    * the heading "verbose provenance". Those two are prose; this is a pointer list -- median 3
    * entries, 29 characters each, measured over the three real stores on this machine. Grouping
    * them cost the response the only field that says where to look, which matters most for the
-   * 84-94% of items whose content arrives truncated.
+   * items whose content still arrives truncated.
    */
   it('carries affectedPaths, which is a pointer list rather than prose', () => {
     expect(compactKnowledgeItem(item).affectedPaths).toEqual(['src/store.ts']);
@@ -49,9 +51,8 @@ describe('token budget', () => {
 
   /**
    * The cut itself is old; the silence about it is what this pins. `truncateText` is called
-   * with the empty marker, so a caller reading 600 characters of a 2,000-character atom sees
-   * no ellipsis and no flag, and cannot tell a short complete fact from the opening third of
-   * a long one.
+   * with the empty marker, so a caller reading a prefix of a longer atom sees no ellipsis and
+   * no flag, and cannot tell a short complete fact from the opening of a long one.
    */
   it('flags a truncated content body, and stays silent when nothing was cut', () => {
     expect(compactKnowledgeItem(item)).not.toHaveProperty('truncated');
@@ -114,5 +115,52 @@ describe('token budget', () => {
     // rest of it lives.
     expect(serialized[0].truncated).toBe(true);
     expect(serialized[0].affectedPaths).toEqual(['src/store.ts']);
+  });
+});
+
+/**
+ * One number used to stand in for four unrelated policies. These pin them apart.
+ *
+ * The values are asserted as literals rather than against each other on purpose: the whole
+ * point of the split is that raising one must never drag the others, and an assertion written
+ * as `toBe(MAX_ITEM_CONTENT_CHARS)` would have moved with it and caught nothing.
+ */
+describe('truncation ceilings', () => {
+  it('returns 2000 characters of content whole and flags anything longer', () => {
+    expect(MAX_ITEM_CONTENT_CHARS).toBe(2000);
+
+    const exact = compactKnowledgeItem({ ...item, content: 'x'.repeat(2000) });
+    expect(exact.content).toHaveLength(2000);
+    expect(exact).not.toHaveProperty('truncated');
+
+    const over = compactKnowledgeItem({ ...item, content: 'x'.repeat(2001) });
+    expect(over.content).toHaveLength(2000);
+    expect(over.truncated).toBe(true);
+  });
+
+  it('caps a title at 200 without flagging it', () => {
+    expect(MAX_TITLE_CHARS).toBe(200);
+
+    const long = compactKnowledgeItem({ ...item, title: 'y'.repeat(300), content: 'short' });
+    expect(long.title).toHaveLength(200);
+    // No flag: 200 is four times the longest title measured on the real store (133), so a cut
+    // title is a data problem rather than a budget one, and a flag nobody can act on is noise.
+    expect(long).not.toHaveProperty('truncated');
+  });
+
+  it('leaves the summary and preview ceilings where they were', () => {
+    expect(MAX_SUMMARY_ITEM_CHARS).toBe(600);
+    expect(MAX_PREVIEW_CHARS).toBe(600);
+  });
+
+  it('does not widen the recent-context formatter when the item ceiling moves', () => {
+    // The failure the split exists to prevent. This formatter bounds the WHOLE response at
+    // DEFAULT_CONTEXT_MAX_CHARS, so one item taking the item ceiling would eat two thirds of
+    // knowl_recent and knowl_state.
+    const long: KnowledgeItem = { ...item, content: 'x'.repeat(MAX_ITEM_CONTENT_CHARS + 500) };
+    const md = formatRecentContextToMarkdown({ items: [long], commits: [] });
+
+    expect(md).toContain('x'.repeat(MAX_SUMMARY_ITEM_CHARS));
+    expect(md).not.toContain('x'.repeat(MAX_SUMMARY_ITEM_CHARS + 1));
   });
 });

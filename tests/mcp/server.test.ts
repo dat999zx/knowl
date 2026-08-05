@@ -7,7 +7,7 @@ import { startMemorySession, appendMemorySessionEvent } from '../../src/store/se
 import { createEvidence, linkKnowledgeEvidence } from '../../src/store/evidence-repository.js';
 import { createMcpServer } from '../../src/mcp/server.js';
 import { ProjectConfig } from '../../src/core/types.js';
-import { DEFAULT_CONTEXT_MAX_CHARS } from '../../src/core/token-budget.js';
+import { DEFAULT_CONTEXT_MAX_CHARS, MAX_PREVIEW_CHARS } from '../../src/core/token-budget.js';
 import {
   KNOWL_MCP_SERVER_INSTRUCTIONS,
   KNOWL_MCP_TOOL_NAMES,
@@ -647,7 +647,10 @@ describe('MCP Server Layer', () => {
     const res = await runRpcRequest('tools/call', { name: 'knowl_timeline', arguments: { itemId: item.id } });
     const payload = JSON.parse(res.result.content[0].text);
 
-    expect(payload[0].content.length).toBeLessThanOrEqual(600);
+    // A timeline payload is ASSERTION content, shaped by response-format.ts, so its ceiling is
+    // the preview one and not the item one. Pointing this at MAX_ITEM_CONTENT_CHARS would make
+    // it pass while testing nothing: the seeded item is exactly 2,000 characters.
+    expect(payload[0].content.length).toBeLessThanOrEqual(MAX_PREVIEW_CHARS);
     expect(res.result.content[0].text.length).toBeLessThan(1_000);
   });
 
@@ -666,7 +669,7 @@ describe('MCP Server Layer', () => {
     const payload = JSON.parse(res.result.content[0].text);
 
     expect(res.result.content[0].text.length).toBeLessThan(2_000);
-    expect(payload[0].excerpt.length).toBeLessThanOrEqual(600);
+    expect(payload[0].excerpt.length).toBeLessThanOrEqual(MAX_PREVIEW_CHARS);
     expect(payload[0]).not.toHaveProperty('metadata');
   });
 

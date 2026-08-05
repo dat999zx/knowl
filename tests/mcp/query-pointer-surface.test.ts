@@ -13,7 +13,7 @@ import type { ProjectConfig } from '../../src/core/types.js';
  * What a memory read hands back when it cannot hand back everything.
  *
  * Measured on the three real stores on this machine (710 active items): 84-94% of them are
- * longer than the 600-character ceiling, so the typical result is roughly a third of the atom,
+ * longer than the content ceiling as it then stood, so the typical result was roughly a third of the atom,
  * cut with the empty marker -- no ellipsis, no flag. Over the same machine's transcript
  * archive, 356 archived cases had an agent query memory and then open a file within three
  * tool calls; the file it opened was named in the query result 17.1% of the time. It could not
@@ -74,8 +74,10 @@ describe('a truncated memory read says so, and says where the rest is', () => {
     await repo.createKnowledgeItem(projectId, {
       category: 'architecture',
       title: 'Checkout ledger reconciliation',
-      // Comfortably past the ceiling, the way a real atom is.
-      content: `Checkout ledger reconciliation runs after settlement. ${'Detail sentence about the reconciliation pass. '.repeat(40)}`,
+      // Sized off the ceiling rather than a literal. A hardcoded repeat count silently stops
+      // testing anything the moment the ceiling moves past it: at 40 this was 1,893 characters,
+      // which cleared 600 and did not clear 2,000.
+      content: `Checkout ledger reconciliation runs after settlement. ${'Detail sentence about the reconciliation pass. '.repeat(Math.ceil((MAX_ITEM_CONTENT_CHARS * 1.5) / 46))}`,
       affectedPaths: ['src/billing/reconcile.ts', 'src/billing/ledger.ts'],
     });
     await repo.createKnowledgeItem(projectId, {
