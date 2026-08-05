@@ -7,6 +7,7 @@ import { getClient, withClientTransaction } from './database.js';
 import { pruneSnapshots, SNAPSHOT_KEEP } from './retention.js';
 import { resolveStorage } from './storage-roles.js';
 import { KNOWL_SCHEMA_VERSION } from './schema-version.js';
+import { classifySnapshotTable } from './snapshot-tables.js';
 
 export type SnapshotManifest = {
   schemaVersion: number;
@@ -125,7 +126,17 @@ async function restoreClosure(client: Client, present: Set<string>): Promise<str
 
   // FTS shadow tables are maintained by the triggers `bootstrap` defines, so they rebuild
   // themselves as rows land. Writing them directly would fight those triggers.
-  return ordered.filter(name => !name.startsWith('knowledge_items_fts'));
+  const derived = ordered.filter(name => !name.startsWith('knowledge_items_fts'));
+  // The registry is the contract; the walk is an implementation of it. When they disagree,
+  // one of them is a bug and the operator should not find out during a recovery.
+  const disagreement = derived.filter(name => classifySnapshotTable(name) !== 'restored');
+  if (disagreement.length > 0) {
+    throw new Error(
+      `Restore would rewrite ${disagreement.join(', ')}, which SNAPSHOT_TABLE_POLICY does not mark ` +
+      'as restored. Reconcile src/store/snapshot-tables.ts with the schema before restoring.',
+    );
+  }
+  return derived;
 }
 
 /**
