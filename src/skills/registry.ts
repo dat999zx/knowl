@@ -204,9 +204,21 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
   return { manifest, markdown, path: skillDir };
 }
 
-async function readManifest(skillDir: string): Promise<SkillManifest> {
+/**
+ * The directory name is the identity. A manifest claiming a different one is rejected rather
+ * than trusted, because entrypoint resolution followed the manifest: a package inspected as
+ * `foo` could execute the files of `bar`, so `knowl skill read` and `knowl_skill_run` could
+ * disagree about what the agent had just approved.
+ */
+async function readManifest(skillDir: string, expectedName: string): Promise<SkillManifest> {
   const manifest = JSON.parse(await fs.readFile(path.join(skillDir, 'skill.json'), 'utf-8')) as SkillManifest;
   validateSkillName(manifest.name);
+  if (manifest.name !== expectedName) {
+    throw new Error(
+      `Skill package in "${expectedName}" declares the name "${manifest.name}". The directory name ` +
+      'is the identity Knowl runs; rename one so the two agree.',
+    );
+  }
   manifest.entrypoints = normalizeEntrypoints(manifest.entrypoints);
   manifest.triggers = manifest.triggers || [];
   return manifest;
@@ -229,7 +241,7 @@ export async function listSkillPackages(projectRoot: string): Promise<SkillSumma
     const stat = await fs.stat(skillDir).catch(() => null);
     if (!stat?.isDirectory()) continue;
     try {
-      const manifest = await readManifest(skillDir);
+      const manifest = await readManifest(skillDir, entry);
       summaries.push({
         name: manifest.name,
         purpose: manifest.purpose,
@@ -247,7 +259,7 @@ export async function listSkillPackages(projectRoot: string): Promise<SkillSumma
 
 export async function readSkillPackage(projectRoot: string, name: string): Promise<SkillPackage> {
   const skillDir = getSkillPackageDir(projectRoot, name);
-  const manifest = await readManifest(skillDir);
+  const manifest = await readManifest(skillDir, name);
   const markdown = await fs.readFile(path.join(skillDir, 'SKILL.md'), 'utf-8');
   return { manifest, markdown, path: skillDir };
 }
@@ -335,7 +347,7 @@ export async function runSkillPackage(
       ? { child: runShell(projectRoot, entrypoint.command, env), commandText: entrypoint.command }
       : runScript(
           projectRoot,
-          resolveSkillFile(projectRoot, skill.manifest.name, entrypoint.path),
+          resolveSkillFile(projectRoot, name, entrypoint.path),
           [...(entrypoint.args || []), ...args],
           env
         );
