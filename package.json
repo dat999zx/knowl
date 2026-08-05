@@ -1,7 +1,7 @@
 {
   "name": "@dat999zx/knowl",
-  "version": "3.0.0",
-  "description": "A Knowledge Operating System for AI Agents",
+  "version": "3.0.3",
+  "description": "Governed project memory for AI coding agents. Local-first, typed knowledge atoms over MCP, with stale decisions retired instead of accumulated.",
   "main": "dist/index.js",
   "type": "module",
   "repository": {
@@ -25,10 +25,12 @@
     "knowl": "dist/index.js"
   },
   "publishConfig": {
-    "access": "public"
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "tsup",
+    "check:lockfile": "node scripts/check-lockfile-version.mjs",
     "bench:embeddings": "npm run build && node scripts/benchmark-embedding-models.mjs",
     "benchmark:build": "tsup benchmarks/accuracy/src/cli.ts --format esm --out-dir benchmarks/accuracy/dist --clean",
     "benchmark:generate": "npm run benchmark:build && node benchmarks/accuracy/dist/cli.js generate",
@@ -48,9 +50,17 @@
   },
   "keywords": [
     "mcp",
+    "model-context-protocol",
+    "ai-memory",
+    "agent-memory",
+    "project-memory",
     "knowledge",
     "agent",
     "memory",
+    "local-first",
+    "claude-code",
+    "codex",
+    "cursor",
     "sqlite"
   ],
   "author": "",

@@ -3,6 +3,107 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 3.0.3 — 2026-08-05
+
+Documentation and packaging only. No runtime behaviour changes.
+
+### Documentation
+
+- **The README is a tour again, not a manual.** It had reached 1,199 lines / 8,211 words, with
+  whole sections written at release-note depth — import divergence policies, snapshot table
+  partitioning, reconciliation thresholds, tombstone monotonicity. All correct, all verified, and
+  all the wrong altitude for someone deciding whether to install this. The README is now 360 lines
+  and still covers every area, including a Features section that names every shipped capability
+  with the command that runs it.
+- **`docs/reference.md` is the complete manual.** It is the previous README preserved whole: the
+  prose is byte-identical, and only the header and relative paths changed. Nothing verified was
+  deleted, and the README links into it by section anchor wherever a reader wants more.
+- Positioning is stated on Knowl's own terms — typed rather than free text, governed rather than
+  append-only, local rather than a service. No competing product is named or linked.
+- Two capabilities the README had never documented are now listed: secret-safe writes, and
+  promotion at session end.
+- Three claims corrected: `custom` is the bring-your-own embedding path rather than a fifth preset;
+  it is *retrieval* that keeps your query local, which `knowl ask` does not; and vector ranking is
+  the agent/MCP path, while a single-repository CLI query is lexical.
+- The hero banner carries the real logo instead of an invented glyph, cut out of its tile and
+  embedded so the file stays self-contained.
+- A contributor licence agreement, contributing guide, and CLA bot.
+
+### Changed
+
+- The npm package description and keywords now describe what Knowl is for, and cover the terms
+  people actually search: `project-memory`, `agent-memory`, `claude-code`, `codex`, `cursor`.
+
+### Tests
+
+- The guidance test guards `docs/reference.md` for the canonical MCP tool table, and additionally
+  fails if a README link points at a reference anchor that no longer exists — so renaming a section
+  breaks the build rather than the front door.
+- Loose scratch databases are swept from the repository root.
+
+## 3.0.2
+
+### Fixed
+
+- **Critical: `snapshot restore` could delete every knowledge item and report success.** The
+  pre-restore snapshot prunes the snapshot directory to its retention limit and protected only
+  the file it had just written, so restoring anything older than the second-newest snapshot
+  deleted the source. `ATTACH` then created an empty database in its place, the restore emitted
+  a bare `DELETE FROM knowledge_items`, the cascade took assertions, evidence links, access,
+  skill rows and embeddings with it, and the integrity audit affirmed the empty store was
+  healthy. Restore now refuses an attachment holding no `knowledge_items`, protects the source
+  from the prune, and verifies the exact bytes it attaches by staging them outside the snapshot
+  directory first.
+- Restore now rewrites the full transitive dependency closure. `knowledge_commit_items` — the
+  index that makes blast-radius lookup an equality search — was cascaded away and never
+  refilled. `evidence` rows were left at present-day values while the links pointing at them
+  were rolled back.
+- Which tables restore owns is now an explicit registry (`src/store/snapshot-tables.ts`) with a
+  test that fails when a table in the schema is unclassified.
+- Imported skill packages install as atomic whole-directory swaps into a base Knowl verified is
+  a real directory. Previously, files were renamed one at a time after the database committed —
+  so a partial install was possible, an import merged into an existing package instead of
+  replacing it, and a symlink or Windows junction under `.knowl/skills` was followed, landing
+  files outside the tree despite passing the lexical containment check.
+- A failed skill entrypoint no longer chains automatically into `fallback`; callers opt in.
+- `package-lock.json` records the right version again, and CI now fails on drift.
+
+### Changed
+
+- `npm publish` produces provenance attestation, which the release workflow already had the
+  OIDC permission for.
+- README's snapshot section describes what restore actually does.
+
+## 3.0.1
+
+### Fixed
+
+- **Imported skill packages can no longer write outside `.knowl/skills`.** Both sides of the
+  containment check were derived from the untrusted skill name, so a traversal name satisfied it.
+  Names and paths are now anchored to a fixed base, contents are staged before the transaction
+  opens, and files are installed by rename after it commits rather than written inside it.
+- **A skill package's directory name is now its only identity.** A manifest could declare a
+  different name and entrypoint resolution followed the manifest, so a package inspected through
+  `knowl skill read` as one skill could execute another's files.
+- **Namespace switches no longer misroute concurrent writes.** The database handle was a set of
+  process-global variables, so a project write issued while a session-namespace switch was open
+  was executed against the session database — silently. The handle is now scoped to the async
+  context; nothing else changes for callers.
+- **The viewer survives a malformed URL and requires a token.** An async route handler with no
+  error boundary turned `GET /api/evidence/%` into an unhandled rejection, which this process is
+  configured to die on. Routes now answer 400, and every request needs the per-launch token
+  carried by the printed URL. Responses also send CSP, `X-Content-Type-Options`,
+  `Referrer-Policy`, and validate the `Host` header.
+- **Snapshot restore verifies before it destroys.** A missing manifest was silently accepted, and
+  the recorded `schemaVersion` and `byteSize` were written but never read. The manifest is now
+  required and fully checked, the snapshot's own `integrity_check` and `user_version` are
+  preflighted through the existing attachment, and `schemaVersion` records the real constant.
+
+### Documentation
+
+- Corrected the version branding, default embedding model, MCP tool count, `reindex --vectors`
+  behaviour, snapshot guarantee, and transcript retention wording in the README.
+
 ## 3.0.0 — 2026-08-04
 
 Almost all of this release is [@William-Sommers](https://github.com/William-Sommers)'

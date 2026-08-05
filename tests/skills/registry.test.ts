@@ -94,7 +94,7 @@ describe('Skill Registry', () => {
       },
     });
 
-    const result = await runSkillPackage(TEST_ROOT, 'fallback_skill');
+    const result = await runSkillPackage(TEST_ROOT, 'fallback_skill', 'default', [], { allowFallback: true });
     expect(result.exitCode).toBe(0);
     expect(result.usedEntrypoint).toBe('fallback');
     expect(result.stdout).toContain('fallback-ok');

@@ -83,22 +83,49 @@ export type SweepReport = { removed: number; locked: number; spared: string[] };
 
 export async function sweepScratchDirectories(root: string): Promise<SweepReport> {
   const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
-  const candidates = entries.filter(entry => entry.isDirectory() && entry.name.startsWith('.knowl-'));
+  const candidates = entries.filter(entry => entry.name.startsWith('.knowl-'));
 
   let removed = 0;
   let locked = 0;
   const spared: string[] = [];
 
   for (const entry of candidates) {
-    const dir = path.join(root, entry.name);
-    if (!(await isKnowlScratch(dir))) {
+    const target = path.join(root, entry.name);
+
+    // A bare database parked beside the repository rather than inside a fixture directory.
+    // `tests/store/namespace-concurrency.test.ts` opens its namespace database that way, and
+    // Windows holds the handle past that suite's own removal -- measured, EBUSY on the file
+    // and both sidecars. This sweep only looked at directories, so those three survived every
+    // run and accumulated in the repository root.
+    //
+    // The evidence here is weaker than for a directory, and deliberately narrower to
+    // compensate: a file has no contents this can reason about, so the name and the extension
+    // are all there is, and BOTH have to match -- the `.knowl-` prefix and the libSQL file
+    // shape. `.knowl-notes.md` is a person's file and stays.
+    if (entry.isFile()) {
+      if (!DATABASE_FILE.test(entry.name)) {
+        spared.push(entry.name);
+        continue;
+      }
+      try {
+        await fs.rm(target, { force: true });
+        removed += 1;
+      } catch {
+        locked += 1;
+      }
+      continue;
+    }
+
+    if (!entry.isDirectory()) continue;
+
+    if (!(await isKnowlScratch(target))) {
       spared.push(entry.name);
       continue;
     }
     // Still best-effort: a directory a straggling handle keeps alive is left for the next
     // run to collect, which is strictly better than failing the suite over housekeeping.
     try {
-      await fs.rm(dir, { recursive: true, force: true });
+      await fs.rm(target, { recursive: true, force: true });
       removed += 1;
     } catch {
       locked += 1;
@@ -106,7 +133,7 @@ export async function sweepScratchDirectories(root: string): Promise<SweepReport
   }
 
   if (locked > 0) {
-    console.warn(`[knowl-tests] ${locked} scratch director(ies) still locked; left for the next run.`);
+    console.warn(`[knowl-tests] ${locked} scratch fixture(s) still locked; left for the next run.`);
   }
   if (spared.length > 0) {
     // Said out loud in both directions. Silence is what turned the old deletion into a

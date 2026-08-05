@@ -6,6 +6,8 @@ import { auditKnowledgeStore } from './integrity.js';
 import { getClient, withClientTransaction } from './database.js';
 import { pruneSnapshots, SNAPSHOT_KEEP } from './retention.js';
 import { resolveStorage } from './storage-roles.js';
+import { KNOWL_SCHEMA_VERSION } from './schema-version.js';
+import { classifySnapshotTable } from './snapshot-tables.js';
 
 export type SnapshotManifest = {
   schemaVersion: number;
@@ -34,7 +36,10 @@ function quoteSqlPath(filePath: string): string {
   return filePath.replace(/'/g, "''");
 }
 
-export async function createSnapshot(projectRoot: string): Promise<Snapshot> {
+export async function createSnapshot(
+  projectRoot: string,
+  options: { protect?: string[] } = {},
+): Promise<Snapshot> {
   const root = path.resolve(projectRoot);
   const snapshotDir = path.join(root, '.knowl', 'snapshots');
   await fs.mkdir(snapshotDir, { recursive: true });
@@ -46,7 +51,9 @@ export async function createSnapshot(projectRoot: string): Promise<Snapshot> {
 
   const stat = await fs.stat(snapshotPath);
   const manifest: SnapshotManifest = {
-    schemaVersion: 1,
+    // The real constant, not a literal. A manifest that records "1" forever cannot be checked
+    // for compatibility once the schema moves.
+    schemaVersion: KNOWL_SCHEMA_VERSION,
     createdAt,
     byteSize: stat.size,
     sha256: await sha256(snapshotPath),
@@ -58,39 +65,78 @@ export async function createSnapshot(projectRoot: string): Promise<Snapshot> {
   // ones became redundant -- and because `upgrade --all` snapshots every repository on the
   // machine, so without this the growth is on a schedule. Returned, never silent: the caller
   // prints what went, so nobody discovers it from a directory listing.
-  const pruned = await pruneSnapshots(snapshotDir, SNAPSHOT_KEEP, snapshotPath);
+  const pruned = await pruneSnapshots(snapshotDir, SNAPSHOT_KEEP, [snapshotPath, ...(options.protect ?? [])]);
 
   return { path: snapshotPath, manifestPath, manifest, pruned };
 }
 
 /**
- * Every table a restore has to rewrite, derived rather than listed.
+ * Tables the knowledge graph owns that nothing in it points *at*.
  *
- * The previous list was hand-written and named five tables. `DELETE FROM knowledge_items`
- * cascades into eight, so `knowledge_assertions`, `knowledge_evidence`, `knowledge_access`
- * and `drift_state` were emptied and never refilled. The assertion loss is not cosmetic:
- * `updateKnowledgeItemWithCommit` refuses any content edit on an item with no open assertion,
- * so a restored store looked intact and then rejected every write to it -- and the audit that
- * runs immediately afterwards did not check assertions, so it reported success. A recovery
- * path that quietly destroys history is worse than no recovery path, because it is used
- * exactly when the previous state is already gone.
+ * The dependent walk below finds children. It cannot find parents, because a foreign key runs
+ * one way: `knowledge_evidence.evidence_id` and `knowledge_assertions.source_evidence_id` both
+ * reference `evidence`, and neither tells `evidence` about it. So a restore rebuilt the links
+ * and left the rows they point at at their current values -- snapshot-era assertions attached
+ * to present-day evidence, and evidence edited since the snapshot not rolled back at all.
  *
- * So the set is computed from the schema: `knowledge_items` plus everything declaring a
- * foreign key into it, plus the standalone tables the restore owns. A table added later
- * joins this automatically instead of waiting to be noticed.
+ * `knowledge_commits` is here for the same reason from the other direction: it has no foreign
+ * key into items, but restoring items without their commits leaves the audit trail describing
+ * a store that no longer exists.
  */
-async function tablesReferencingItems(client: Client): Promise<string[]> {
-  const tables = await client.execute(
+const RESTORE_ROOTS = ['knowledge_items', 'evidence', 'knowledge_commits'] as const;
+
+/**
+ * Every table a restore has to rewrite, derived rather than listed, and derived *transitively*.
+ *
+ * The previous walk stopped one foreign key from `knowledge_items`, which missed everything
+ * that depends on a dependent. `knowledge_commit_items` references `knowledge_commits`, so
+ * deleting commits cascaded it away and nothing put it back -- and that table is what makes
+ * blast radius an equality search rather than a leading-wildcard scan (see
+ * `compactKnowledgeCommits`). A successful restore silently degraded it.
+ *
+ * Returned parents-first so foreign keys resolve as rows land; callers delete in reverse.
+ */
+async function restoreClosure(client: Client, present: Set<string>): Promise<string[]> {
+  const tables = (await client.execute(
     `SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
-  );
-  const dependents: string[] = [];
-  for (const row of tables.rows) {
-    const name = String(row.name);
-    if (name === 'knowledge_items') continue;
+  )).rows.map(row => String(row.name));
+
+  const references = new Map<string, string[]>();
+  for (const name of tables) {
     const fks = await client.execute(`PRAGMA foreign_key_list(${name})`);
-    if (fks.rows.some(fk => String(fk.table) === 'knowledge_items')) dependents.push(name);
+    references.set(name, [...new Set(fks.rows.map(fk => String(fk.table)))]);
   }
-  return dependents;
+
+  // Breadth-first from the roots, so a table joins the moment anything already in the set is
+  // its parent. Ordered by insertion, which is parents-before-children by construction.
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  const queue = RESTORE_ROOTS.filter(root => present.has(root));
+  for (const root of queue) { seen.add(root); ordered.push(root); }
+
+  for (let index = 0; index < ordered.length; index += 1) {
+    const parent = ordered[index];
+    for (const name of tables) {
+      if (seen.has(name) || !present.has(name)) continue;
+      if (!(references.get(name) ?? []).includes(parent)) continue;
+      seen.add(name);
+      ordered.push(name);
+    }
+  }
+
+  // FTS shadow tables are maintained by the triggers `bootstrap` defines, so they rebuild
+  // themselves as rows land. Writing them directly would fight those triggers.
+  const derived = ordered.filter(name => !name.startsWith('knowledge_items_fts'));
+  // The registry is the contract; the walk is an implementation of it. When they disagree,
+  // one of them is a bug and the operator should not find out during a recovery.
+  const disagreement = derived.filter(name => classifySnapshotTable(name) !== 'restored');
+  if (disagreement.length > 0) {
+    throw new Error(
+      `Restore would rewrite ${disagreement.join(', ')}, which SNAPSHOT_TABLE_POLICY does not mark ` +
+      'as restored. Reconcile src/store/snapshot-tables.ts with the schema before restoring.',
+    );
+  }
+  return derived;
 }
 
 /**
@@ -116,20 +162,29 @@ async function restoreStatements(client: Client): Promise<string[]> {
     )).rows.map(row => String(row.name)),
   );
 
-  const dependents = (await tablesReferencingItems(client)).filter(table => present.has(table));
-  // `knowledge_commits` has no foreign key into items but is part of the same history, and
-  // restoring items without their commits leaves the audit trail describing a store that no
-  // longer exists.
-  const standalone = ['knowledge_commits'].filter(table => present.has(table));
+  // ATTACH *creates* a missing database rather than failing, so an attachment can be a
+  // perfectly valid empty file. Every table lookup below then finds nothing, the INSERT loop
+  // skips every table for want of shared columns, and the statement list degrades to a bare
+  // `DELETE FROM knowledge_items` -- which cascades through assertions, evidence links,
+  // access, skill rows and embeddings and leaves a store the post-restore audit calls healthy.
+  // A restore that inserts nothing is not a restore.
+  if (!present.has('knowledge_items')) {
+    throw new Error(
+      'The attached snapshot holds no knowledge_items table, so there is nothing to restore. ' +
+      'Refusing: continuing would delete the live store and insert nothing. ' +
+      'The snapshot file was verified and then moved, removed, or replaced before it could be read.',
+    );
+  }
 
+  const ordered = await restoreClosure(client, present);
   const statements: string[] = [];
-  // Children first, then the parent: relying on the cascade to clear dependents is what hid
-  // the original defect, and an explicit delete says which tables this function owns.
-  for (const table of [...dependents, ...standalone]) statements.push(`DELETE FROM ${table}`);
-  statements.push('DELETE FROM knowledge_items');
 
-  // Parent first on the way back in, so foreign keys resolve as rows land.
-  for (const table of ['knowledge_items', ...standalone, ...dependents]) {
+  // Children first, then parents: relying on the cascade to clear dependents is what hid the
+  // original defect, and an explicit delete says which tables this function owns.
+  for (const table of [...ordered].reverse()) statements.push(`DELETE FROM ${table}`);
+
+  // Parents first on the way back in, so foreign keys resolve as rows land.
+  for (const table of ordered) {
     const columns = await sharedColumns(client, table);
     if (!columns.length) continue;
     const list = columns.join(', ');
@@ -167,6 +222,54 @@ export class SnapshotRestoreAuditError extends Error {
   }
 }
 
+/**
+ * Read and range-check the sidecar manifest. Says nothing about the bytes.
+ *
+ * A checksum proves the bytes are intact, not who wrote them: whoever produces a snapshot can
+ * compute a valid checksum for it. This is an integrity check against corruption and truncated
+ * copies, and it does not claim more. What it must not do is pass silently -- the manifest was
+ * previously optional, so a snapshot with none was restored with no verification at all, which
+ * is the one situation where the previous state is already gone.
+ */
+async function readSnapshotManifest(source: string): Promise<SnapshotManifest> {
+  const manifestPath = `${source}.manifest.json`;
+  let manifest: SnapshotManifest;
+  try {
+    manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as SnapshotManifest;
+  } catch (error: any) {
+    throw new Error(error.code === 'ENOENT'
+      ? `Snapshot manifest "${manifestPath}" was not found. Restore requires the manifest written beside the snapshot.`
+      : `Snapshot manifest "${manifestPath}" is unreadable: ${error.message}`);
+  }
+
+  if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion > KNOWL_SCHEMA_VERSION) {
+    throw new Error(
+      `Snapshot was written with schema version ${manifest.schemaVersion}; this build reads up to ` +
+      `${KNOWL_SCHEMA_VERSION}. Upgrade Knowl before restoring it.`,
+    );
+  }
+  return manifest;
+}
+
+/**
+ * Prove one specific file matches a manifest.
+ *
+ * Separate from reading the manifest so the caller can verify the copy it is about to attach
+ * rather than the path it read the manifest from. Those were the same call, and the gap
+ * between them -- a VACUUM, a stat, a hash, a write and a directory prune -- was wide enough
+ * that a pruned source became an empty ATTACH and a restore deleted a store it could not
+ * refill.
+ */
+async function verifySnapshotBytes(file: string, manifest: SnapshotManifest): Promise<void> {
+  const stat = await fs.stat(file);
+  if (stat.size !== manifest.byteSize) {
+    throw new Error(`Snapshot size ${stat.size} does not match its manifest size ${manifest.byteSize}.`);
+  }
+  if (manifest.sha256 !== await sha256(file)) {
+    throw new Error('Snapshot checksum does not match its manifest.');
+  }
+}
+
 export async function restoreSnapshot(
   projectRoot: string,
   snapshotPath: string,
@@ -179,35 +282,63 @@ export async function restoreSnapshot(
   if (source === destination) throw new Error('Snapshot restore refuses the live database path.');
   await fs.access(source).catch(() => { throw new Error('Snapshot file was not found.'); });
 
-  const manifestPath = `${source}.manifest.json`;
-  try {
-    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8')) as SnapshotManifest;
-    if (manifest.sha256 !== await sha256(source)) throw new Error('Snapshot checksum does not match its manifest.');
-  } catch (error: any) {
-    if (error.code !== 'ENOENT') throw error;
-  }
+  const manifest = await readSnapshotManifest(source);
 
-  const preRestore = await createSnapshot(root);
-  const client = getClient();
-  // ATTACH cannot run inside a transaction, so it stays outside the wrapper on both sides.
-  await client.execute(`ATTACH DATABASE '${quoteSqlPath(source)}' AS snapshot_restore`);
+  // Copied out of the snapshot directory before anything else runs, and everything after this
+  // point reads the copy. `.knowl/` rather than `.knowl/snapshots/`, so the pre-restore
+  // prune -- which matches on `.db` -- cannot see it. This is also why the WAL sidecars the
+  // attachment creates land beside a throwaway file instead of beside a snapshot Knowl is
+  // only supposed to read.
+  const staged = path.join(path.dirname(destination), `.restore-${crypto.randomUUID().slice(0, 8)}.db`);
+  await fs.copyFile(source, staged);
+
   try {
-    // Through the shared wrapper rather than a raw BEGIN. A transaction belongs to the
-    // connection and this process holds exactly one, so an unserialised BEGIN here could
-    // interleave with any other writer into `BEGIN; BEGIN;` -- which SQLite refuses with
-    // SQLITE_ERROR, not SQLITE_BUSY, so nothing retries it. Restore is the worst possible
-    // place for a half-applied transaction.
-    await withClientTransaction(async () => {
-      for (const statement of await restoreStatements(client)) {
-        await client.execute(statement);
+    await verifySnapshotBytes(staged, manifest);
+
+    // The source is named as protected because this prune runs inside the restore. Without
+    // it, restoring anything but the two newest snapshots deleted the very file being
+    // restored -- and before the copy above, that deletion reached the file ATTACH was about
+    // to open.
+    const preRestore = await createSnapshot(root, { protect: [source] });
+    const client = getClient();
+    // ATTACH cannot run inside a transaction, so it stays outside the wrapper on both sides.
+    await client.execute(`ATTACH DATABASE '${quoteSqlPath(staged)}' AS snapshot_restore`);
+    try {
+      const integrity = await client.execute('PRAGMA snapshot_restore.integrity_check');
+      const verdict = String(integrity.rows[0]?.integrity_check ?? '');
+      if (verdict !== 'ok') throw new Error(`Snapshot failed SQLite integrity_check: ${verdict}`);
+
+      const stamped = Number((await client.execute('PRAGMA snapshot_restore.user_version')).rows[0]?.user_version ?? 0);
+      if (stamped > KNOWL_SCHEMA_VERSION) {
+        throw new Error(
+          `Snapshot database is stamped with schema version ${stamped}; this build reads up to ` +
+          `${KNOWL_SCHEMA_VERSION}. Upgrade Knowl before restoring it.`,
+        );
       }
-    });
+
+      // Through the shared wrapper rather than a raw BEGIN. A transaction belongs to the
+      // connection and this process holds exactly one, so an unserialised BEGIN here could
+      // interleave with any other writer into `BEGIN; BEGIN;` -- which SQLite refuses with
+      // SQLITE_ERROR, not SQLITE_BUSY, so nothing retries it. Restore is the worst possible
+      // place for a half-applied transaction.
+      await withClientTransaction(async () => {
+        for (const statement of await restoreStatements(client)) {
+          await client.execute(statement);
+        }
+      });
+    } finally {
+      await client.execute('DETACH DATABASE snapshot_restore');
+    }
+
+    const report = await auditKnowledgeStore();
+    if (report.findings.some(finding => finding.severity === 'error')) {
+      throw new SnapshotRestoreAuditError(preRestore.path, report.findings);
+    }
+    return { preRestore, findings: report.findings };
   } finally {
-    await client.execute('DETACH DATABASE snapshot_restore');
+    // Sidecars too: the attachment may have written them beside the copy.
+    for (const suffix of ['', '-wal', '-shm']) {
+      await fs.rm(`${staged}${suffix}`, { force: true }).catch(() => {});
+    }
   }
-  const report = await auditKnowledgeStore();
-  if (report.findings.some(finding => finding.severity === 'error')) {
-    throw new SnapshotRestoreAuditError(preRestore.path, report.findings);
-  }
-  return { preRestore, findings: report.findings };
 }
