@@ -1127,6 +1127,10 @@ export function registerTools(
           // look hot and shield them from collection.
           // Wrapped rather than passed point-free: compactItemResponse now takes provenance
           // as its second argument, and map would hand it the array index.
+          // No provenance argument, so the foreign-repo guard further down never runs here and
+          // `affectedPaths` always ships. Safe only because `queryKnowledgeBase` resolves
+          // against one project id, so this branch cannot return a foreign item. Pinned by
+          // tests/mcp/query-pointer-surface.test.ts — federate this path and that test fails.
           return { content: [{ type: 'text', text: compactMcpJson(items.map(item => compactItemResponse(item))) }] };
         }
         let vector;

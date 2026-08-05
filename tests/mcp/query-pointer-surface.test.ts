@@ -142,4 +142,29 @@ describe('a truncated memory read says so, and says where the rest is', () => {
     const description = (store!.inputSchema as any).properties.affectedPaths.description;
     expect(description).toMatch(/returned with the item|every query that returns this item/i);
   });
+
+  /**
+   * The as-of branch shapes its results with `compactItemResponse(item)` and NO provenance
+   * argument, so the `isForeign` guard that withholds another repo's `affectedPaths` never runs
+   * on this path. That is correct only because the branch resolves through
+   * `queryKnowledgeBase(projectId, ...)` against one project id, and therefore cannot return a
+   * foreign item at all.
+   *
+   * Pinned because it is correct by construction rather than by code. Federating the
+   * time-travel path later would hand a reader paths relative to a checkout that is not theirs
+   * -- and the repos most likely to be linked are fork siblings, where the same path exists in
+   * both and means different things.
+   */
+  it('returns affectedPaths on the as-of branch, which is single-repo by construction', async () => {
+    const items = jsonOf(await call('knowl_query', {
+      query: 'checkout ledger reconciliation settlement',
+      limit: 3,
+      asOf: new Date(Date.now() + 60_000).toISOString(),
+    }));
+
+    const hit = items.find((item: any) => item.title === 'Checkout ledger reconciliation');
+    expect(hit, 'the seeded item should be retrievable at a future asOf').toBeTruthy();
+    expect(hit.affectedPaths).toEqual(['src/billing/reconcile.ts', 'src/billing/ledger.ts']);
+    expect(hit).not.toHaveProperty('repo');
+  });
 });
