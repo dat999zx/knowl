@@ -119,6 +119,20 @@ async function restoreStatements(client: Client): Promise<string[]> {
     )).rows.map(row => String(row.name)),
   );
 
+  // ATTACH *creates* a missing database rather than failing, so an attachment can be a
+  // perfectly valid empty file. Every table lookup below then finds nothing, the INSERT loop
+  // skips every table for want of shared columns, and the statement list degrades to a bare
+  // `DELETE FROM knowledge_items` -- which cascades through assertions, evidence links,
+  // access, skill rows and embeddings and leaves a store the post-restore audit calls healthy.
+  // A restore that inserts nothing is not a restore.
+  if (!present.has('knowledge_items')) {
+    throw new Error(
+      'The attached snapshot holds no knowledge_items table, so there is nothing to restore. ' +
+      'Refusing: continuing would delete the live store and insert nothing. ' +
+      'The snapshot file was verified and then moved, removed, or replaced before it could be read.',
+    );
+  }
+
   const dependents = (await tablesReferencingItems(client)).filter(table => present.has(table));
   // `knowledge_commits` has no foreign key into items but is part of the same history, and
   // restoring items without their commits leaves the audit trail describing a store that no
