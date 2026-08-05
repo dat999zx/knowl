@@ -142,16 +142,32 @@ describe('canonical Knowl agent guidance', () => {
     ).toBe(KNOWL_MCP_SERVER_INSTRUCTIONS);
   });
 
-  it('documents every canonical MCP tool in the README table', async () => {
-    const readme = await fs.readFile(path.resolve('README.md'), 'utf8');
-    const documentedTools = [...readme.matchAll(/^\| \`(knowl_[a-z_]+)\` \|/gm)]
+  it('documents every canonical MCP tool in the full reference', async () => {
+    const reference = await fs.readFile(path.resolve('docs/reference.md'), 'utf8');
+    const documentedTools = [...reference.matchAll(/^\| \`(knowl_[a-z_]+)\` \|/gm)]
       .map(match => match[1]);
     expect(documentedTools).toEqual([...KNOWL_MCP_TOOL_NAMES]);
     expect(new Set(documentedTools).size).toBe(27);
-    expect(readme).toContain('KNOWL.md');
-    expect(readme).toContain('GEMINI.md');
-    expect(readme).toContain('agent-reminder claude --json');
-    expect(readme).toContain('previewed maintenance after explicit approval');
+    expect(reference).toContain('KNOWL.md');
+    expect(reference).toContain('GEMINI.md');
+    expect(reference).toContain('agent-reminder claude --json');
+    expect(reference).toContain('previewed maintenance after explicit approval');
+  });
+
+  it('keeps the README delegating to the full reference it summarizes', async () => {
+    const readme = await fs.readFile(path.resolve('README.md'), 'utf8');
+    const reference = await fs.readFile(path.resolve('docs/reference.md'), 'utf8');
+    // The README links deep into the reference; a renamed section there must not
+    // silently leave the front door pointing at an anchor that no longer exists.
+    const slugs = new Set(
+      [...reference.matchAll(/^#{1,6}\s+(.+)$/gm)].map(match =>
+        match[1].toLowerCase().trim().replace(/`/g, '').replace(/[^\w\s-]/g, '').replace(/\s+/g, '-'),
+      ),
+    );
+    const anchors = [...readme.matchAll(/docs\/reference\.md#([a-z0-9-]+)/g)].map(match => match[1]);
+    expect(anchors.length).toBeGreaterThan(10);
+    expect(anchors.filter(anchor => !slugs.has(anchor))).toEqual([]);
+    expect(readme).toContain('](docs/reference.md)');
   });
 });
 
