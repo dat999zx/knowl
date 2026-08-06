@@ -45,7 +45,7 @@ describe('resume points', () => {
         goal: 'Ship the parser', nextAction: 'Wire the CLI flag',
       });
 
-      expect(point.key).toMatch(/^[a-z]\d[a-z]\d[a-z]\d$/);
+      expect(point.key).toMatch(/^[a-z]\d[a-z]\d[a-z]\d[a-z]\d$/);
       expect(point.goal).toBe('Ship the parser');
 
       const read = await readResumePoint(point.key);

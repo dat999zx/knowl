@@ -60,4 +60,17 @@ describe('work loop session capture', () => {
       verificationStatus: 'tests-passing',
     });
   });
+
+  it('finishes exactly once: a second finish and a post-finish checkpoint are refused', async () => {
+    const project = await repo.createProject(TEST_ROOT, 'Work loop finish-once');
+    const started = await startWorkLoop(project.id, 'Finish once', 'finish-once');
+    await finishWorkLoop(project.id, started.taskId, 'done');
+
+    // The description says "exactly once"; the layer used to mint a second completion item
+    // against a terminal memory session, so two different finishes existed for one task.
+    await expect(finishWorkLoop(project.id, started.taskId, 'done again'))
+      .rejects.toThrow(/already finished/i);
+    await expect(checkpointWorkLoop(project.id, started.taskId, 'zombie checkpoint'))
+      .rejects.toThrow(/already finished/i);
+  });
 });

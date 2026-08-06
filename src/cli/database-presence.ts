@@ -102,8 +102,15 @@ export function assertKnowledgeDatabasePresent(root: string): void {
  * Commands that create or repair a store are exempt by name rather than by inspection:
  * `init` writes the database, and `upgrade` is the documented way to accept an empty one.
  * `doctor` has to be able to run precisely when something is wrong.
+ *
+ * `snapshot` is exempt because the error above names `knowl snapshot restore` as the first
+ * recovery to try, and the guard was refusing it -- the one command the message prescribes was
+ * the one it blocked. That left the operator with `upgrade` (which accepts the empty store the
+ * guard exists to prevent) or `doctor`, and doctor used to rebuild the database and certify it.
+ * Being exempt only skips this presence check; `snapshot restore` still verifies its source and
+ * refuses an attachment with no `knowledge_items` of its own.
  */
-const EXEMPT_COMMANDS = new Set(['init', 'upgrade', 'doctor', 'config', 'diagnose-startup']);
+const EXEMPT_COMMANDS = new Set(['init', 'upgrade', 'doctor', 'config', 'diagnose-startup', 'snapshot']);
 
 export function assertDatabasePresentForCommand(commandName: string, cwd = process.cwd()): void {
   if (EXEMPT_COMMANDS.has(commandName)) return;

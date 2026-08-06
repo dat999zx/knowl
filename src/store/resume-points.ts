@@ -82,7 +82,17 @@ export async function readResumePoint(rawKey: string): Promise<ResumePoint | nul
     args: [key],
   })).rows;
 
-  return rows[0] ? toPoint(rows[0] as Record<string, unknown>) : null;
+  // A wrong key costs a quarter second. Lookups answered in ~1 ms with no limit made the
+  // machine-wide keyspace enumerable in minutes from any directory -- 50 misses were measured
+  // in 47 ms -- and a hit hands over another repo's goal, blocker and artifact paths. A human
+  // mistyping feels nothing at 250 ms; an enumeration of the 8-character space now costs years
+  // instead of an afternoon. On a hit there is no delay at all.
+  if (!rows[0]) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return null;
+  }
+
+  return toPoint(rows[0] as Record<string, unknown>);
 }
 
 /**

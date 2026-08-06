@@ -58,7 +58,7 @@ import { approveSkill, listTrust, revokeSkill } from '../skills/trust.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
 import { createSnapshot, restoreSnapshot } from '../store/snapshots.js';
 import { isEvidenceStale, listEvidenceForItem, resolveSymbolEvidence } from '../store/evidence-repository.js';
-import { queryKnowledgeForAgent } from '../store/agent-query.js';
+import { rankKnowledge } from '../store/agent-query.js';
 import { evaluateRetrieval, RetrievalEvaluationCase } from '../store/retrieval-evaluation.js';
 import { getKnowledgeAccessReport } from '../store/access-feedback.js';
 import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions, startMemorySession } from '../store/session-repository.js';
@@ -311,6 +311,26 @@ program
           `${knowlDir} is this machine's Knowl home, not a project. Run "knowl init" inside a repository.`
         );
       }
+      // Existence is tested on `cwd` only, and `findProjectRoot` -- which walks ancestors --
+      // was never consulted on the create path. So `knowl init` in a subpackage of an
+      // initialized repository printed "Successfully initialized" and built a second store
+      // inside it. Every later command run under that subtree then resolved to the shadow:
+      // writes landed there, queries from the subtree returned nothing, and nothing anywhere
+      // reported the split. Re-running init at the *root* already detects and upgrades; this
+      // is that same question asked one directory further up.
+      const enclosing = await findProjectRoot(cwd).catch(() => null);
+      if (enclosing && path.resolve(enclosing) !== path.resolve(cwd)) {
+        throw new Error(
+          `${cwd} is inside the Knowl repository at ${enclosing}.\n` +
+          'Initializing here would create a second store, and every command run below this ' +
+          'directory would then read and write that one instead of the repository\'s -- ' +
+          'silently, because both are valid.\n' +
+          `  - to use the existing memory: run knowl commands from anywhere under ${enclosing}\n` +
+          `  - to upgrade that repository: cd ${enclosing} && knowl init\n` +
+          '  - if this really is a separate project, move it outside that repository first',
+        );
+      }
+
       const isExisting = await isProjectRoot(cwd);
 
       if (isExisting) {
@@ -474,20 +494,79 @@ program.command('timeline').argument('<itemId>').description('Show the recorded 
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listAssertions(itemId), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading timeline: ${error.message}`); process.exit(1); }
 });
 
+/**
+ * How a `--json` command reports failure: an envelope on stdout, still exit 1.
+ *
+ * These flags exist for agent host hooks, and a hook parses stdout. Every failure used to be
+ * a plain-text line on stderr with stdout left empty, so the machine contract held on success
+ * and vanished exactly when the caller most needed to know what happened -- `JSON.parse('')`
+ * in the hook, on top of whatever went wrong here. One case (`agent-event session-event`)
+ * already returned a structured `{"accepted":false,...}`, proving the envelope was the intent;
+ * this makes it the rule.
+ */
+function reportCommandFailure(json: boolean | undefined, label: string, error: { message?: unknown }): never {
+  const message = `${label}: ${String(error?.message ?? error)}`;
+  // stderr always carries the human line -- that is where a person and the existing tests look.
+  // Under --json, stdout ALSO gets a parseable envelope, because these commands are host hooks
+  // and a hook parses stdout; before, failure left it empty and the hook got `JSON.parse('')`.
+  // Both streams, not one or the other: the message is identical and safe to repeat (the secret
+  // scanner has already stripped any secret from it before it reaches here).
+  console.error(message);
+  if (json) console.log(JSON.stringify({ error: { message } }));
+  process.exit(1);
+}
+
+/**
+ * A numeric option is either a number or a refusal -- never `NaN`.
+ *
+ * `Number(options.limit)` on a typo produced `NaN`, which flowed straight into a bound
+ * parameter: `knowl query x --limit abc` printed the raw FTS statement and `params: ...,NaN`.
+ * The `gc` flags were worse than noisy -- every comparison against `NaN` is false, so a
+ * mistyped `--stale-days` made `knowl gc --apply` a silent no-op that reported success.
+ * `context --token-budget` already validated; this is that rule applied everywhere else.
+ */
+function numericOption(raw: unknown, flag: string, { min = 1 }: { min?: number } = {}): number | undefined {
+  if (raw === undefined) return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < min) {
+    throw new Error(`${flag} must be a number >= ${min}; received "${String(raw)}".`);
+  }
+  return value;
+}
+
+/**
+ * An unparseable `--as-of` used to mean "now", which is the one answer it must never give.
+ *
+ * Assertion validity is compared as SQLite *strings*, so `'banana'` sorts above every ISO
+ * timestamp and matched every row -- the feature whose entire purpose is "what did we believe
+ * on date X" answered with today's state and said nothing. An empty string fell off the
+ * temporal path altogether and silently took the ranker branch instead, returning a different
+ * shape and a different count.
+ */
+function timestampOption(raw: unknown, flag: string): string | undefined {
+  if (raw === undefined) return undefined;
+  const text = String(raw).trim();
+  if (!text || Number.isNaN(Date.parse(text))) {
+    throw new Error(`${flag} must be an ISO-8601 timestamp; received "${String(raw)}".`);
+  }
+  return text;
+}
+
 program.command('query').argument('[query]').description('Search project memory by keywords').option('--as-of <timestamp>').option('--limit <count>').action(async (query, options) => {
   try {
     const root = await findProjectRoot(process.cwd());
     await initDb(root);
     const project = await repo.getProjectByRootPath(root);
     if (!project) throw new Error('Project not found in database.');
-    const limit = options.limit === undefined ? undefined : Number(options.limit);
+    const limit = numericOption(options.limit, '--limit');
+    const asOf = timestampOption(options.asOf, '--as-of');
 
     // One engine, whether or not this repo is linked and whether an agent or a human asked.
     // The ranking used to differ on both axes: this command read queryKnowledgeBase directly
     // while knowl_query used the shared ranker, and the workspace branch used the ranker while
     // the solo branch did not -- the same command disagreeing with itself.
     const { items, skipped } = await runCliQuery({
-      projectRoot: root, projectId: project.id, query, limit, asOf: options.asOf,
+      projectRoot: root, projectId: project.id, query, limit, asOf,
     });
 
     console.log(JSON.stringify(items, null, 2));
@@ -508,7 +587,23 @@ program.command('conflicts').description('List knowledge items that contradict e
 });
 
 program.command('supersede').argument('<itemId>').argument('<replacementId>').description('Retire one item and point it at its replacement').action(async (itemId, replacementId) => {
-  try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await repo.supersedeKnowledgeItem(itemId, replacementId), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error superseding knowledge: ${error.message}`); process.exit(1); }
+  try {
+    const root = await findProjectRoot(process.cwd());
+    await initDb(root);
+    // Only the first id was ever checked -- `supersedeKnowledgeItem` verifies the item being
+    // retired and takes the replacement on trust. So `supersede <id> <id>` pointed an item at
+    // itself, and a typo'd replacement stored a dangling `superseded_by_id`. Both retire the
+    // item out of every query, and `knowl audit` reports neither: integrity only walks
+    // dependent tables keyed by `knowledge_item_id` and never looks at `superseded_by_id`.
+    if (itemId === replacementId) {
+      throw new Error('An item cannot supersede itself; name the replacement that takes its place.');
+    }
+    if (!(await repo.getKnowledgeItem(replacementId))) {
+      throw new Error(`No knowledge item "${replacementId}" to supersede with. Nothing was retired.`);
+    }
+    console.log(JSON.stringify(await repo.supersedeKnowledgeItem(itemId, replacementId), null, 2));
+    await closeDb();
+  } catch (error: any) { console.error(`Error superseding knowledge: ${error.message}`); process.exit(1); }
 });
 
 program.command('context').description('Print a token-budgeted context pack for an agent').option('--query <query>').option('--task <task>').requiredOption('--token-budget <budget>').action(async options => {
@@ -869,6 +964,17 @@ program.command('import').argument('<path>').description('Load portable JSONL me
       // never share". Printed to stderr so a script parsing stdout is unaffected.
       for (const line of importOwnershipNotice(result.ownership)) console.error(line);
       await closeDb();
+      // An import that refused to apply must not report success. `--on-divergence fail` is the
+      // safe policy, and it printed `applied: false, conflicts: 1` and exited 0 -- so
+      // `knowl import x --on-divergence fail && echo synced` said synced on a refused merge.
+      // Only a *thrown* error reached the catch below; a declined result returned normally.
+      if (result.applied === false && !options.dryRun) {
+        console.error(
+          `Import did not apply${result.conflicts ? ` (${result.conflicts} conflict(s))` : ''}. ` +
+          'Re-run with a different --on-divergence policy, or reconcile the source.',
+        );
+        process.exitCode = 1;
+      }
     } catch (error: any) {
       await closeDb().catch(() => {});
       console.error(`Error importing knowledge: ${error.message}`);
@@ -1389,7 +1495,11 @@ program
         const config = await loadConfig(root);
         if (!isVectorSearchEnabled(config)) throw new Error('Vector search is not enabled. Set search.vector.enabled true to run --vector.');
         embedder = await createLocalEmbeddingProvider(config, root);
-        await reindexKnowledgeEmbeddings(project.id, embedder);
+        // No reindex. An "evaluate" command was rewriting the live embedding table before
+        // measuring it, which both mutates the store the user asked it to observe and makes
+        // the numbers describe a state the store was not in. Measure what retrieval would
+        // actually return today; if coverage is the problem, that is the user's call to fix.
+        console.error('Note: evaluates the store as it stands. If embedding coverage is incomplete, run `knowl reindex --vectors` first.');
       }
 
       const evaluation = await evaluateRetrieval(cases, async (testCase) => {
@@ -1402,13 +1512,18 @@ program
             relevanceFloor: embedder.relevanceFloor,
           }
           : undefined;
-        const items = await queryKnowledgeForAgent(project.id, {
+        // rankKnowledge, not queryKnowledgeForAgent: the latter records a knowledge_access row
+        // per returned item, and access rows feed GC liveness and tier confirmation -- so every
+        // benchmark run was promoting whichever items it returned and shielding them from GC.
+        // A measurement that mutates its subject is the defect the doctor check already had.
+        const items = (await rankKnowledge(project.id, {
           query: testCase.query,
           status: 'active',
-          surface: 'cli_eval',
           limit: testCase.limit,
           vector: vectorOption,
-        });
+          // The explanation is dropped rather than ignored: `contextChars` below measures the
+          // serialized result, so carrying it would inflate the very number being reported.
+        })).map(({ explanation: _explanation, ...item }) => item);
         return {
           itemIds: items.map(item => item.id),
           staleItemIds: items.filter(item => item.freshness !== 'fresh').map(item => item.id),
@@ -1446,8 +1561,7 @@ program
       await closeDb();
       if (fixtureRoot) await fs.rm(fixtureRoot, { recursive: true, force: true }).catch(() => {});
     } catch (error: any) {
-      console.error(`Error evaluating retrieval: ${error.message}`);
-      process.exit(1);
+      reportCommandFailure(options.json, 'Error evaluating retrieval', error);
     }
   });
 
@@ -1510,7 +1624,7 @@ program
       // already the corrected one. A registry line is dropped only when the filesystem
       // positively says it is not a repository, and a sweep must not shrink in silence:
       // these are the paths `upgrade --all` and `doctor --fix` will stop acting on.
-      const { forgotten } = await readKnownRepos();
+      const { forgotten } = await readKnownRepos({ persist: !options.dryRun });
       for (const stale of forgotten) {
         console.log(`Forgot ${stale} -- recorded as a Knowl repository, but no longer one.`);
       }
@@ -1565,11 +1679,11 @@ program
       if (!project) throw new Error('Project not found in database.');
 
       const gcOptions = {
-        staleStateDays: options.staleDays !== undefined ? Number(options.staleDays) : undefined,
-        compressArchivedDays: options.compressDays !== undefined ? Number(options.compressDays) : undefined,
-        minCompressBytes: options.minBytes !== undefined ? Number(options.minBytes) : undefined,
+        staleStateDays: numericOption(options.staleDays, '--stale-days', { min: 0 }),
+        compressArchivedDays: numericOption(options.compressDays, '--compress-days', { min: 0 }),
+        minCompressBytes: numericOption(options.minBytes, '--min-bytes', { min: 0 }),
         ignoreAccess: Boolean(options.ignoreAccess),
-        tombstoneDays: options.tombstoneDays !== undefined ? Number(options.tombstoneDays) : undefined,
+        tombstoneDays: numericOption(options.tombstoneDays, '--tombstone-days', { min: 0 }),
       };
       const result = options.apply
         ? await applyKnowledgeGc(project.id, gcOptions)
@@ -1622,16 +1736,16 @@ program
 // --- 12. SESSION COMMAND ---
 const sessionCommand = program.command('session').description('Capture bounded temporary session memory');
 sessionCommand.command('start').argument('<title>').option('-q, --query <query>').option('--agent <agent>').option('--json').action(async (title, options) => {
-  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await startMemorySession({ title, query: options.query, agent: options.agent }); console.log(options.json ? JSON.stringify(result) : `Session started: ${result.id}`); await closeDb(); } catch (error: any) { console.error(`Error starting session: ${error.message}`); process.exit(1); }
+  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await startMemorySession({ title, query: options.query, agent: options.agent }); console.log(options.json ? JSON.stringify(result) : `Session started: ${result.id}`); await closeDb(); } catch (error: any) { reportCommandFailure(options.json, 'Error starting session', error); }
 });
 sessionCommand.command('event').argument('<id>').argument('<type>').option('--exit-code <code>').option('--summary <summary>').option('--command <command>').option('--json').action(async (id, type, options) => {
-  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await captureMemorySessionEvent(id, type, { exitCode: options.exitCode === undefined ? undefined : Number(options.exitCode), summary: options.summary, command: options.command }); console.log(options.json ? JSON.stringify(result) : `Session event recorded: ${result.id}`); await closeDb(); } catch (error: any) { console.error(`Error recording session event: ${error.message}`); process.exit(1); }
+  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await captureMemorySessionEvent(id, type, { exitCode: options.exitCode === undefined ? undefined : Number(options.exitCode), summary: options.summary, command: options.command }); console.log(options.json ? JSON.stringify(result) : `Session event recorded: ${result.id}`); await closeDb(); } catch (error: any) { reportCommandFailure(options.json, 'Error recording session event', error); }
 });
 sessionCommand.command('finish').argument('<id>').requiredOption('--status <status>', 'finished or failed').option('--summary <summary>').option('--json').action(async (id, options) => {
-  try { if (options.status !== 'finished' && options.status !== 'failed') throw new Error('Status must be finished or failed.'); const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await finishMemorySession(id, options.status, options.summary); const project = await repo.getProjectByRootPath(root); const promotion = project ? await finalizeMemorySession(project.id, id) : null; console.log(options.json ? JSON.stringify({ ...result, promotion }) : `Session ${result.status}: ${result.id}`); await closeDb(); } catch (error: any) { console.error(`Error finishing session: ${error.message}`); process.exit(1); }
+  try { if (options.status !== 'finished' && options.status !== 'failed') throw new Error('Status must be finished or failed.'); const root = await findProjectRoot(process.cwd()); await initDb(root); const result = await finishMemorySession(id, options.status, options.summary); const project = await repo.getProjectByRootPath(root); const promotion = project ? await finalizeMemorySession(project.id, id) : null; console.log(options.json ? JSON.stringify({ ...result, promotion }) : `Session ${result.status}: ${result.id}`); await closeDb(); } catch (error: any) { reportCommandFailure(options.json, 'Error finishing session', error); }
 });
 sessionCommand.command('recover').option('--json').action(async (options) => {
-  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const recovered = await recoverAbandonedSessions(); const purgedEventCount = await purgeExpiredSessionEvents(); const result = { recoveredCount: recovered.length, purgedEventCount }; console.log(options.json ? JSON.stringify(result) : `Recovered: ${result.recoveredCount}; purged events: ${result.purgedEventCount}`); await closeDb(); } catch (error: any) { console.error(`Error recovering sessions: ${error.message}`); process.exit(1); }
+  try { const root = await findProjectRoot(process.cwd()); await initDb(root); const recovered = await recoverAbandonedSessions(); const purgedEventCount = await purgeExpiredSessionEvents(); const result = { recoveredCount: recovered.length, purgedEventCount }; console.log(options.json ? JSON.stringify(result) : `Recovered: ${result.recoveredCount}; purged events: ${result.purgedEventCount}`); await closeDb(); } catch (error: any) { reportCommandFailure(options.json, 'Error recovering sessions', error); }
 });
 
 // --- 13. AGENT LIFECYCLE COMMAND ---
@@ -1695,9 +1809,8 @@ program
         await closeDb().catch(() => {});
         return;
       }
-      console.error(`Error handling agent lifecycle event: ${error.message}`);
       await closeDb().catch(() => {});
-      process.exit(1);
+      reportCommandFailure(options.json, 'Error handling agent lifecycle event', error);
     }
   });
 
@@ -2207,11 +2320,20 @@ snapshotCommand
   .description('Restore a snapshot after creating a pre-restore snapshot')
   .argument('<path>', 'Snapshot database path')
   .requiredOption('--confirm', 'Confirm the destructive restore operation')
+  .option(
+    '--accept-origin-mismatch',
+    'Restore a snapshot whose recorded origin is a different path than this repository. ' +
+    'For a repo that moved or was renamed since the snapshot; restoring another project\'s ' +
+    'snapshot replaces this one\'s memory with it.',
+  )
   .action(async (snapshotPath, options) => {
     try {
       const root = await findProjectRoot(process.cwd());
       await initDb(root);
-      const result = await restoreSnapshot(root, snapshotPath, { confirm: options.confirm });
+      const result = await restoreSnapshot(root, snapshotPath, {
+        confirm: options.confirm,
+        acceptOriginMismatch: options.acceptOriginMismatch,
+      });
       await closeDb();
       console.log('Snapshot restored.');
       console.log(`Pre-restore snapshot: ${result.preRestore.path}`);

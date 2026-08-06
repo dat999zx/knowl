@@ -22,6 +22,7 @@ import {
   updateKnowledgeItem,
 } from '../../src/store/repository.js';
 import * as portability from '../../src/store/portability.js';
+import { hashKnowledgeContent } from '../../src/store/freshness.js';
 import { createEvidence, linkKnowledgeEvidence, listEvidenceForItem } from '../../src/store/evidence-repository.js';
 
 const ROOT = path.resolve('.knowl-portability-test');
@@ -202,15 +203,23 @@ describe('portability', () => {
 
     const stream = (await fs.readFile(first, 'utf8')).split('\n').filter(Boolean);
     const records = stream.slice(0, -1).map(line => JSON.parse(line));
+    // Real hashes, not placeholders. A peer that edits an item recomputes its content hash --
+    // that is what makes divergence detectable at all -- and `importKnowledge` now refuses a
+    // file whose items misdescribe themselves, because divergence is decided on that field and
+    // a stale hash silently discarded the real content. Verified against the 689 hashed items
+    // in a live store: every one matches its own body, so a hand-written hash here was the
+    // fixture being unrealistic rather than the guard being strict.
+    const peerSharedHash = hashKnowledgeContent({ title: 'Round trip fact', content: 'Peer content.' });
+    const peerOnlyHash = hashKnowledgeContent({ title: 'Peer only', content: 'From the peer.' });
     for (const record of records) {
       if (record.type === 'item' && record.item.id === shared.id) {
         record.item.content = 'Peer content.';
-        record.item.contentHash = 'peer-hash';
+        record.item.contentHash = peerSharedHash;
         record.item.updatedAt = '2030-01-01T00:00:00.000Z';
         record.item.version = record.item.version + 1;
       }
     }
-    records.push({ type: 'item', item: { ...shared, id: 'peer-only-item', title: 'Peer only', content: 'From the peer.', contentHash: 'peer-only-hash', updatedAt: '2030-01-01T00:00:00.000Z' } });
+    records.push({ type: 'item', item: { ...shared, id: 'peer-only-item', title: 'Peer only', content: 'From the peer.', reasoning: null, source: null, affectedPaths: [], contentHash: peerOnlyHash, updatedAt: '2030-01-01T00:00:00.000Z' } });
     const joined = `${records.map(record => JSON.stringify(record)).join('\n')}\n`;
     const sha = createHash('sha256').update(joined).digest('hex');
     const second = path.join(TARGET, 'rt-2.jsonl');
@@ -221,7 +230,7 @@ describe('portability', () => {
     expect(result.applied).toBe(true);
     expect(result.inserted).toBe(1);
     expect(result.updated).toBe(1);
-    expect((await getKnowledgeItem(shared.id))!.contentHash).toBe('peer-hash');
+    expect((await getKnowledgeItem(shared.id))!.contentHash).toBe(peerSharedHash);
     expect(await getKnowledgeItem('peer-only-item')).not.toBeNull();
 
     const repeat = await portability.importKnowledge(second, { projectRoot: TARGET, onDivergence: 'newer' });

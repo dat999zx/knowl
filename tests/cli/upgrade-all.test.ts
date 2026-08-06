@@ -79,13 +79,20 @@ describe('upgrade --all sweep', () => {
     await expect(fs.readdir(path.join(A, '.knowl', 'snapshots'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('reports a repository not ready when a finding has no automatic repair', async () => {
-    // A repo with no knowledge in it warns, and no automatic action can resolve that. A
-    // sweep that called it READY would be lying about the one thing it exists to report.
+  it('reports an empty repository ready, and still reports what is missing from it', async () => {
+    // Reversed deliberately. This used to assert NOT READY, on the reasoning that a sweep
+    // calling an empty repo READY would hide the one thing it exists to report. But the
+    // finding is reported either way -- it is in `warnings` and in `unfixable`, and the
+    // report prints both under the repository -- so the verdict was not carrying it. What
+    // the verdict did instead was tell someone who had just run `knowl init` that their
+    // install was broken, and put a permanent NOT READY beside every new repo in the sweep
+    // table until it happened to acquire knowledge. NOT READY has to mean broken, or the
+    // rows that are genuinely broken stop standing out.
     const results = await sweepRepos([A], {});
 
-    expect(results[0].ready).toBe(false);
-    expect(results[0].unfixable.join(' ')).toMatch(/no active items/i);
+    expect(results[0].ready).toBe(true);
+    expect(results[0].unfixable.join(' ')).toMatch(/no knowledge stored yet/i);
+    expect(results[0].warnings.join(' ')).toMatch(/no knowledge stored yet/i);
   });
 
   it('sweeps every discovered repository from the command line', { timeout: 120_000 }, async () => {
@@ -105,10 +112,13 @@ describe('upgrade --all sweep', () => {
     expect(swept.stdout).toContain('KNOWL SWEEP');
     expect(swept.stdout).toContain(A);
     expect(swept.stdout).toContain(B);
-    // Both repos are empty of knowledge, which doctor warns about and nothing can auto-fix,
-    // so the sweep must report them not ready and exit non-zero.
-    expect(swept.stdout).toMatch(/0 of 2 repositories ready/);
-    expect(swept.status).toBe(1);
+    // Both repos are empty of knowledge. That is a WARN -- reported per repository in the
+    // table below each row -- not a breakage, so the sweep counts them ready and exits 0.
+    // This used to assert "0 of 2", which meant a machine full of healthy new repositories
+    // reported zero ready and left nothing to distinguish the one that was actually broken.
+    expect(swept.stdout).toMatch(/2 of 2 repositories ready/);
+    expect(swept.stdout).toMatch(/no knowledge stored yet/i);
+    expect(swept.status).toBe(0);
   });
 
   it('lists what a sweep would visit without touching anything', { timeout: 120_000 }, async () => {

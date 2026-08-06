@@ -58,6 +58,12 @@ async function requireWorkLoopTask(taskId: string): Promise<KnowledgeItem> {
   return task;
 }
 
+/** Whether a `finish` step has already been recorded for this task. */
+async function taskAlreadyFinished(taskId: string): Promise<boolean> {
+  const items = await repo.listKnowledgeItems();
+  return items.some(item => item.tags?.includes(`task:${taskId}`) && item.tags?.includes('finish'));
+}
+
 function stringList(value: unknown, maxItems = 20, maxLength = 500): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const values = value
@@ -155,6 +161,17 @@ async function recordWorkLoopStep(
   taskStateInput: WorkLoopTaskState = {},
 ): Promise<WorkLoopStepResult> {
   const task = await requireWorkLoopTask(taskId);
+  // Finish once. The session layer already enforces a terminal state -- a second finish logs
+  // "Cannot append an event to a terminal memory session" -- but the work-loop layer ignored
+  // that and wrote a fresh `finish` item anyway, minting two different completions for one
+  // task against a description that says "exactly once". A checkpoint after finish is the same
+  // contradiction. Refuse both, naming the earlier finish.
+  if (await taskAlreadyFinished(taskId)) {
+    throw new Error(
+      `Work loop ${taskId} is already finished; it cannot be ${stepTag === 'finish' ? 'finished again' : 'checkpointed after finishing'}. ` +
+      'Start a new work loop for further steps.',
+    );
+  }
   const now = new Date().toISOString();
   const taskState = normalizeTaskState(taskStateInput);
   const item = await repo.createKnowledgeItem(projectId, {

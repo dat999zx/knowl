@@ -342,7 +342,7 @@ async function persistPendingHandoff(
   projectId: string,
   handoff: PendingHandoff,
   options: { merge: boolean },
-): Promise<{ itemId: string; handoff: PendingHandoff }> {
+): Promise<{ itemId: string; handoff: PendingHandoff; replacedPrevious: boolean }> {
   const host = handoff.host;
   // Normalized here because `findActivePendingHandoff` looks the slot up normalized. Passing
   // the raw spelling survived a create, which normalizes for us, but an update wrote it
@@ -371,14 +371,17 @@ async function persistPendingHandoff(
     await repo.createKnowledgeCommit(projectId, `Update pending session handoff (${host}/${merged.kind})`, [
       { itemId: updated.id, action: 'update', before: existing.handoff as any, after: updated },
     ]);
-    return { itemId: updated.id, handoff: merged };
+    // A merge extends the same session's baton; anything else overwrote a different active
+    // handoff whose contents are now gone. The caller reports which, so parking again does not
+    // silently discard a baton the schema comment itself calls "the destruction of the real one".
+    return { itemId: updated.id, handoff: merged, replacedPrevious: merged !== existing.handoff };
   }
 
   const created = await repo.createKnowledgeItem(projectId, { category: 'state', ...write(handoff) });
   await repo.createKnowledgeCommit(projectId, `Record pending session handoff (${host}/${handoff.kind})`, [
     { itemId: created.id, action: 'insert', after: created },
   ]);
-  return { itemId: created.id, handoff };
+  return { itemId: created.id, handoff, replacedPrevious: false };
 }
 
 export async function recordPendingSessionHandoff(
@@ -446,7 +449,7 @@ export async function recordDeliberateHandoff(
     sessionTitle?: string;
     taskState: HandoffTaskState;
   },
-): Promise<{ itemId: string; handoff: PendingHandoff }> {
+): Promise<{ itemId: string; handoff: PendingHandoff; replacedPrevious: boolean }> {
   const handoff: PendingHandoff = {
     kind: 'handoff',
     urgency: HANDOFF_URGENCY,

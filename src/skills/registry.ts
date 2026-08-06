@@ -169,6 +169,16 @@ function normalizeEntrypoints(entrypoints?: Record<string, SkillEntrypoint>): Re
 export async function createSkillPackage(projectRoot: string, input: CreateSkillPackageInput): Promise<SkillPackage> {
   validateSkillName(input.name);
   const skillDir = getSkillPackageDir(projectRoot, input.name);
+  // Create means create. `mkdir -p` + `writeFile` silently overwrote an existing package --
+  // a second create of the same name replaced its SKILL.md and entrypoints, reported
+  // "Successfully created", and did not bump the version, so a working skill could vanish
+  // with no trace. Refuse instead; editing an existing skill is its own operation.
+  if (await fs.access(path.join(skillDir, 'skill.json')).then(() => true, () => false)) {
+    throw new Error(
+      `A skill named "${input.name}" already exists. Creating would overwrite it. ` +
+      `Delete it first, or choose another name.`,
+    );
+  }
   const now = new Date().toISOString();
   const manifest: SkillManifest = {
     name: input.name,

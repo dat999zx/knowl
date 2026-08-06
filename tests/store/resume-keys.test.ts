@@ -5,7 +5,7 @@ describe('mintResumeKey', () => {
   it('mints a key a person can retype: short, lowercase, no lookalike characters', () => {
     for (let i = 0; i < 200; i++) {
       const key = mintResumeKey();
-      expect(key).toHaveLength(6);
+      expect(key).toHaveLength(8);
       expect(key).toBe(key.toLowerCase());
       expect(key).not.toMatch(/[l1i0o5s2z]/);
     }
@@ -15,13 +15,13 @@ describe('mintResumeKey', () => {
     for (let i = 0; i < 500; i++) {
       const key = mintResumeKey();
       // Digits in the even positions make a pronounceable English word structurally impossible.
-      expect(key).toMatch(/^[a-z]\d[a-z]\d[a-z]\d$/);
+      expect(key).toMatch(/^[a-z]\d[a-z]\d[a-z]\d[a-z]\d$/);
     }
   });
 
   it('draws from the whole keyspace rather than a degenerate corner of it', () => {
-    // Measured, not assumed: the keyspace is 18^3 * 6^3 = 1,259,712, so 2,000 independent
-    // draws collide about 80% of the time by the birthday bound -- typically once or twice.
+    // Measured, not assumed: the keyspace is 18^4 * 6^4 = 136,048,896, so 2,000 independent
+    // draws collide rarely by the birthday bound; the margin below still absorbs a couple.
     // Asserting 2,000 distinct would be a test that fails four runs in five.
     //
     // Uniqueness of *stored* keys is a different guarantee, and a real one: createResumePoint
@@ -31,15 +31,15 @@ describe('mintResumeKey', () => {
   });
 
   it('uses every position, so no character is effectively fixed', () => {
-    const seen = Array.from({ length: 6 }, () => new Set<string>());
+    const seen = Array.from({ length: 8 }, () => new Set<string>());
     for (let i = 0; i < 500; i++) {
       const key = mintResumeKey();
-      for (let position = 0; position < 6; position++) seen[position].add(key[position]);
+      for (let position = 0; position < 8; position++) seen[position].add(key[position]);
     }
     // 18 letters in the even positions, 6 digits in the odd ones. A generator that pinned a
     // position would still satisfy the shape regex above; this is what catches it.
-    for (const position of [0, 2, 4]) expect(seen[position].size).toBe(18);
-    for (const position of [1, 3, 5]) expect(seen[position].size).toBe(6);
+    for (const position of [0, 2, 4, 6]) expect(seen[position].size).toBe(18);
+    for (const position of [1, 3, 5, 7]) expect(seen[position].size).toBe(6);
   });
 });
 
