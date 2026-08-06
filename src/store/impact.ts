@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { CodeSymbol } from '../core/types.js';
-import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
 import { getClient } from './database.js';
 import { normalizePathForKnowledge } from './freshness.js';
 import { activeReadersOf, normalizeLocator } from './read-set.js';
@@ -263,6 +262,18 @@ export async function detectCertainImpact(
     changedPaths.map(changed => repoRelative(root, changed)).filter((value): value is string => value !== null)
   ));
   if (relativePaths.length === 0) return [];
+
+  // Deferred, because `code` sits ABOVE `store` in the layering (`tests/architecture/
+  // module-boundaries.test.ts`) and a static import here is an upward edge. Deferring is one of
+  // the three fixes that test names, and it is the honest one here rather than a dodge: this
+  // whole subsystem is off by default, and the import sits past the early return above, so the
+  // symbol indexer loads only on a run that has changed paths to compare -- not on every process
+  // that touches the store.
+  //
+  // The alternative is to move this module to its real layer, which would need a new layer
+  // between `code` and `session` since both `session` and `mcp` consume it. That is a change to
+  // the architecture declaration rather than to this file, so it is the maintainer's call.
+  const { indexFile, listCodeSymbols } = await import('../code/symbol-index.js');
 
   // Keyed by the read-set's canonical locator form, not by the index's raw one, and looked up
   // later by the locator a read-set row hands back. The two spellings agree today; keying by the
