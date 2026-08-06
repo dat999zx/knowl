@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import readline from 'node:readline';
 import { normalizeSkillFilePath, validateSkillName } from '../skills/registry.js';
 import { createKnowledgeCommit, listKnowledgeItems } from './repository.js';
 import { listAssertions } from './assertions.js';
@@ -333,8 +335,18 @@ function planSkillPackages(skills: any[]): SkillPackagePlan[] {
     if (seen.has(skill.name)) throw new Error(`Duplicate imported skill package "${skill.name}".`);
     seen.add(skill.name);
 
+    // Counted before anything is normalised or written. `incoming` rather than `files` because
+    // the plan below already owns that name for what it will install.
+    const incoming = skill.files ?? [];
+    if (incoming.length > IMPORT_LIMITS.maxSkillFiles) {
+      throw new Error(
+        `Imported skill "${skill.name}" declares ${incoming.length} files, more than the limit of `
+        + `${IMPORT_LIMITS.maxSkillFiles}.`,
+      );
+    }
+
     const files: SkillPackagePlan['files'] = [];
-    for (const file of skill.files ?? []) {
+    for (const file of incoming) {
       if (typeof file?.content !== 'string') {
         throw new Error(`Invalid imported skill file content for "${file?.path}".`);
       }
@@ -428,6 +440,69 @@ async function installSkillPackages(projectRoot: string, packages: SkillPackageP
   }
 }
 
+/**
+ * Ceilings on one import.
+ *
+ * The reader loaded the whole file, split it, and parsed every line before any validation ran,
+ * so an oversized export exhausted memory before it could be rejected. These bounds are
+ * generous for a real repository and fatal for a hostile one.
+ */
+export const IMPORT_LIMITS = {
+  maxBytes: 268_435_456,
+  maxRecords: 500_000,
+  maxRecordBytes: 4_194_304,
+  maxSkillFiles: 200,
+};
+
+/**
+ * Stream the JSONL body, accumulating the checksum as lines arrive.
+ *
+ * One line is held back at all times, because the last line is the manifest and is excluded
+ * from the hashed body. `stream-json` is not the tool here despite being a dependency -- it
+ * parses one large JSON document, and this format is one JSON value per line.
+ */
+async function readImportRecords(inputPath: string): Promise<any[]> {
+  const stat = await fs.stat(inputPath);
+  if (stat.size > IMPORT_LIMITS.maxBytes) {
+    throw new Error(`Import stream is ${stat.size} bytes, over the ${IMPORT_LIMITS.maxBytes}-byte import limit.`);
+  }
+
+  const hash = crypto.createHash('sha256');
+  const records: any[] = [];
+  let held: string | null = null;
+
+  const consume = (line: string) => {
+    if (line.length > IMPORT_LIMITS.maxRecordBytes) {
+      throw new Error(`Import record is over the ${IMPORT_LIMITS.maxRecordBytes}-byte record limit.`);
+    }
+    if (records.length >= IMPORT_LIMITS.maxRecords) {
+      throw new Error(`Import stream holds more than ${IMPORT_LIMITS.maxRecords} records.`);
+    }
+    hash.update(`${line}\n`);
+    records.push(JSON.parse(line));
+  };
+
+  const input = createReadStream(inputPath, { encoding: 'utf8' });
+  const reader = readline.createInterface({ input, crlfDelay: Infinity });
+  try {
+    for await (const line of reader) {
+      if (!line) continue;
+      if (held !== null) consume(held);
+      held = line;
+    }
+  } finally {
+    reader.close();
+    input.destroy();
+  }
+
+  if (held === null || records.length < 1) throw new Error('Invalid Knowl JSONL stream.');
+  const manifest = JSON.parse(held);
+  if (manifest.type !== 'manifest' || manifest.sha256 !== hash.digest('hex')) {
+    throw new Error('JSONL manifest checksum mismatch.');
+  }
+  return records;
+}
+
 export async function importKnowledge(
   inputPath: string,
   options: {
@@ -444,13 +519,7 @@ export async function importKnowledge(
     claimAsMine?: boolean;
   } = {},
 ): Promise<ImportResult> {
-  const source = await fs.readFile(inputPath, 'utf8');
-  const lines = source.split('\n').filter(Boolean);
-  if (lines.length < 2) throw new Error('Invalid Knowl JSONL stream.');
-  const manifest = JSON.parse(lines.at(-1)!);
-  const body = `${lines.slice(0, -1).join('\n')}\n`;
-  if (manifest.type !== 'manifest' || manifest.sha256 !== crypto.createHash('sha256').update(body).digest('hex')) throw new Error('JSONL manifest checksum mismatch.');
-  const records = lines.slice(0, -1).map(line => JSON.parse(line));
+  const records = await readImportRecords(inputPath);
   const header = records.shift();
   if (header?.type !== 'header' || header.format !== 'knowl-jsonl') throw new Error('Unsupported Knowl JSONL format.');
   const formatVersion = Number(header.version);

@@ -1110,7 +1110,7 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 
 | Command | Description |
 | --- | --- |
-| `knowl export <path>` | Write portable, manifest-verified JSONL |
+| `knowl export <path>` | Write portable, checksum-verified JSONL |
 | `knowl import <path> [--dry-run] [--on-divergence newer\|skip\|theirs\|fail]` | Import JSONL with an explicit divergence policy |
 | `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Create a checksummed SQLite snapshot, or restore one after verifying its manifest, size, checksum, and SQLite integrity |
 | `knowl config` / `get <key>` / `set <key> <value>` / `reset [key]` | Edit configuration interactively or from scripts |
