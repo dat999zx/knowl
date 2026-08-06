@@ -2,13 +2,30 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { CodeSymbol } from '../core/types.js';
-import { getClient } from './database.js';
-import { normalizePathForKnowledge } from './freshness.js';
-import { activeReadersOf, normalizeLocator } from './read-set.js';
+import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
+import { getClient } from '../store/database.js';
+import { normalizePathForKnowledge } from '../store/freshness.js';
+import { activeReadersOf, normalizeLocator } from '../store/read-set.js';
 
 /**
  * Certain-tier change impact: something moved, and a session that provably read it has not been
  * told and cannot know.
+ *
+ * **Why this is in `session/` and not `store/`.** Detection re-indexes the files it was handed,
+ * so it imports `code/symbol-index.js` — and `code` sits *above* `store` in the layer graph
+ * (`tests/architecture/module-boundaries.test.ts`), which makes `store -> code` an upward edge and
+ * a test failure. The storage half genuinely is store-layer and stays there as `store/read-set.ts`,
+ * which imports nothing above itself; what lives here is the part that needs a parser. Pushing
+ * `indexFile` down into `store/` to keep this module there would drag tree-sitter under the
+ * persistence layer to satisfy a directory name.
+ *
+ * `session/` is enough, and **no new layer is needed**: `code` is layer 2, `session` is layer 3 and
+ * `mcp` is layer 4, so this module reaches down into `code` and `store` while both of its consumers
+ * — `session/host-lifecycle.ts` beside it and `mcp/tools.ts` above it — still reach down into it.
+ * Two consumers in different layers do not need a shared layer beneath them, only a module below
+ * the lower of the two. That is why the earlier `await import('../code/symbol-index.js')` is gone:
+ * the deferral existed solely to hide an upward edge that no longer exists, and it was buying
+ * module-load laziness for a subsystem already gated behind `impact.enabled`.
  *
  * The tier names a precision claim, not a confidence adjective. A finding is emitted only when
  * both halves are demonstrable from stored state: a session recorded a read of *this exact
@@ -70,6 +87,8 @@ export interface ImpactFinding {
   tier: ImpactTier;
   pathJson: string | null;
   detectedAt: string;
+  /** When the card last rendered this finding; NULL until it has. Never an adjudication. */
+  deliveredAt: string | null;
   resolution: ImpactResolution | null;
   resolvedAt: string | null;
 }
@@ -203,11 +222,18 @@ async function hasOpenFinding(causeLocator: string, affectedId: string): Promise
   return rows.rows.length > 0;
 }
 
+/**
+ * `OR IGNORE` against `idx_impact_findings_unique_open`, which is the half of the duplicate-notice
+ * fix that `hasOpenFinding` cannot do alone: that check and this insert are not atomic across
+ * processes, so two hooks firing on the same file in the same instant both pass the check. The
+ * index makes the loser a no-op instead of a second notice; ignoring is right rather than raising
+ * because losing the race means the finding already exists, which is the outcome we wanted.
+ */
 async function insertFinding(finding: ImpactFinding): Promise<ImpactFinding> {
   await getClient().execute({
-    sql: `INSERT INTO impact_findings
-            (id, cause_locator, cause_session, affected_kind, affected_id, tier, path_json, detected_at, resolution, resolved_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
+    sql: `INSERT OR IGNORE INTO impact_findings
+            (id, cause_locator, cause_session, affected_kind, affected_id, tier, path_json, detected_at, delivered_at, resolution, resolved_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
     args: [
       finding.id,
       finding.causeLocator,
@@ -232,6 +258,7 @@ function rowToFinding(row: Record<string, unknown>): ImpactFinding {
     tier: String(row.tier) as ImpactTier,
     pathJson: row.path_json === null || row.path_json === undefined ? null : String(row.path_json),
     detectedAt: String(row.detected_at),
+    deliveredAt: row.delivered_at === null || row.delivered_at === undefined ? null : String(row.delivered_at),
     resolution: row.resolution === null || row.resolution === undefined ? null : String(row.resolution) as ImpactResolution,
     resolvedAt: row.resolved_at === null || row.resolved_at === undefined ? null : String(row.resolved_at),
   };
@@ -262,18 +289,6 @@ export async function detectCertainImpact(
     changedPaths.map(changed => repoRelative(root, changed)).filter((value): value is string => value !== null)
   ));
   if (relativePaths.length === 0) return [];
-
-  // Deferred, because `code` sits ABOVE `store` in the layering (`tests/architecture/
-  // module-boundaries.test.ts`) and a static import here is an upward edge. Deferring is one of
-  // the three fixes that test names, and it is the honest one here rather than a dodge: this
-  // whole subsystem is off by default, and the import sits past the early return above, so the
-  // symbol indexer loads only on a run that has changed paths to compare -- not on every process
-  // that touches the store.
-  //
-  // The alternative is to move this module to its real layer, which would need a new layer
-  // between `code` and `session` since both `session` and `mcp` consume it. That is a change to
-  // the architecture declaration rather than to this file, so it is the maintainer's call.
-  const { indexFile, listCodeSymbols } = await import('../code/symbol-index.js');
 
   // Keyed by the read-set's canonical locator form, not by the index's raw one, and looked up
   // later by the locator a read-set row hands back. The two spellings agree today; keying by the
@@ -348,12 +363,11 @@ export async function detectCertainImpact(
     // at ~20.8% accuracy cost. A resolved finding does not suppress: re-detection after the agent
     // dismissed one means the locator moved again.
     //
-    // Check-then-insert, so it is not atomic against a second detector running in another process
-    // -- two hooks firing on the same file in the same instant can each see no open finding and
-    // each insert one. The closing move is a partial unique index on
-    // (cause_locator, affected_id) WHERE resolution IS NULL, which belongs in `SCHEMA_STATEMENTS`
-    // and is not this module's to add. Left as a known duplicate-notice window rather than papered
-    // over with a lock this subsystem has no reason to hold.
+    // This check is the fast path, not the guarantee -- it is check-then-insert and two detectors
+    // in separate processes can both pass it on the same instant. The guarantee is the partial
+    // unique index on (cause_locator, affected_id) WHERE resolution IS NULL, which `insertFinding`
+    // leans on with `INSERT OR IGNORE`. Keeping the check as well means the common case never
+    // reaches the constraint at all, and the returned list stays free of rows the insert dropped.
     if (await hasOpenFinding(entry.locator, entry.id)) continue;
 
     const pathPayload: CertainImpactPath = {
@@ -373,6 +387,7 @@ export async function detectCertainImpact(
       tier: 'certain',
       pathJson: JSON.stringify(pathPayload),
       detectedAt,
+      deliveredAt: null,
       resolution: null,
       resolvedAt: null,
     }));
@@ -398,18 +413,53 @@ export async function detectCertainImpact(
  * the session has re-read that locator and the stale belief is gone. Filtering here would make
  * that the gate's only behaviour and silently delete the pull tool's.
  */
-export async function openFindingsForSession(sessionId: string, tier?: ImpactTier): Promise<ImpactFinding[]> {
+export async function openFindingsForSession(
+  sessionId: string,
+  tier?: ImpactTier,
+  /**
+   * Restrict to findings the card has never shown. Only the card passes this. The gate and the
+   * pull tool must not, because an undelivered filter would hide from them exactly the findings
+   * the agent has already been warned about and not yet acted on -- which are the ones that most
+   * need gating.
+   */
+  undeliveredOnly = false,
+): Promise<ImpactFinding[]> {
   const rows = await getClient().execute({
     sql: `SELECT f.id, f.cause_locator, f.cause_session, f.affected_kind, f.affected_id, f.tier,
-                 f.path_json, f.detected_at, f.resolution, f.resolved_at
+                 f.path_json, f.detected_at, f.delivered_at, f.resolution, f.resolved_at
           FROM impact_findings f
           JOIN work_read_sets w ON w.id = f.affected_id
           WHERE f.resolution IS NULL AND f.affected_kind = 'work' AND w.session_id = ?
             ${tier ? 'AND f.tier = ?' : ''}
+            ${undeliveredOnly ? 'AND f.delivered_at IS NULL' : ''}
           ORDER BY f.detected_at, f.id`,
     args: tier ? [sessionId, tier] : [sessionId],
   });
   return rows.rows.map(row => rowToFinding(row as unknown as Record<string, unknown>));
+}
+
+/**
+ * Stamp findings as shown, so the card stops repeating them.
+ *
+ * Separate from `resolveFinding` on purpose, and this is the whole reason the column exists. The
+ * card used to re-render every open finding on every tool event until somebody adjudicated it, and
+ * the only lever available to quiet it was `resolution` -- which is the adjudication the ≥95%
+ * precision number is computed from, so spending `dismissed` to silence a repeat would corrupt the
+ * measurement this phase exists to produce. Delivery is a fact about the card; resolution is a fact
+ * about the finding. Stamping this leaves `resolution` NULL, so the finding stays open for the gate
+ * and stays in the denominator.
+ *
+ * `delivered_at IS NULL` in the predicate keeps the first delivery time rather than the latest, so
+ * the column answers "when was this agent first told", which is the question worth asking of it.
+ */
+export async function markFindingsDelivered(ids: string[]): Promise<void> {
+  const wanted = [...new Set((ids ?? []).filter(id => typeof id === 'string' && id.length > 0))];
+  if (wanted.length === 0) return;
+  await getClient().execute({
+    sql: `UPDATE impact_findings SET delivered_at = ?
+          WHERE delivered_at IS NULL AND id IN (${wanted.map(() => '?').join(', ')})`,
+    args: [new Date().toISOString(), ...wanted],
+  });
 }
 
 /**

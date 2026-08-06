@@ -30,7 +30,7 @@ import { flagCorrectionSiblingsBestEffort } from '../store/blast-radius.js';
 import { applyFeedbackToTierBestEffort } from '../store/tier.js';
 import { finishMemorySession, listActiveMemorySessions } from '../store/session-repository.js';
 import { isImpactEnabled } from '../store/impact-config.js';
-import { openFindingsForSession, resolveFinding, type ImpactFinding, type ImpactTier } from '../store/impact.js';
+import { openFindingsForSession, resolveFinding, type ImpactFinding, type ImpactTier } from '../session/impact.js';
 import { activeReadSetForSession } from '../store/read-set.js';
 import { formatPendingHandoffContext, recordDeliberateHandoff } from '../session/session-handoff.js';
 import { createResumePoint, formatResumeBrief, listResumePoints, readResumePoint } from '../session/resume-points.js';

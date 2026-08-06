@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, getClient, initDb, withClientTransaction } from '../../src/store/database.js';
@@ -8,6 +9,7 @@ import {
   activeReadersOf,
   normalizeLocator,
   recordRead,
+  recordReads,
   releaseReadSet,
   sweepReadSets,
   sweepReadSetsBestEffort,
@@ -22,7 +24,7 @@ import {
  * false positives on the one tier allowed to interrupt an agent, which is the tier this table
  * exists to serve.
  */
-const ROOT = path.resolve('./.knowl-read-set-test');
+const ROOT = path.join(os.tmpdir(), 'knowl-read-set-test');
 
 const rowsFor = async (sessionId: string) =>
   (await getClient().execute({
@@ -48,7 +50,6 @@ describe('work read-set store', () => {
     await recordRead({
       sessionId: 'sess-record',
       agentId: '__agent__:lane-d',
-      taskId: 'task-1',
       locator: 'symbol://src/auth/session.ts#createSession',
       observedHash: 'h-sig-1',
       toolName: 'Read',
@@ -59,7 +60,6 @@ describe('work read-set store', () => {
     expect(entry).toMatchObject({
       sessionId: 'sess-record',
       agentId: '__agent__:lane-d',
-      taskId: 'task-1',
       locator: 'symbol://src/auth/session.ts#createSession',
       observedHash: 'h-sig-1',
       toolName: 'Read',
@@ -69,18 +69,17 @@ describe('work read-set store', () => {
     expect(Date.parse(entry.readAt)).not.toBeNaN();
   });
 
-  /** The optional columns are absent, not empty strings: `releaseReadSet(s, '')` must match nothing. */
-  it('stores omitted and blank agent, task and tool as NULL', async () => {
+  /** The optional columns are absent, not empty strings, so a blank one never matches a lookup. */
+  it('stores omitted and blank agent and tool as NULL', async () => {
     await recordRead({
       sessionId: 'sess-nulls',
-      taskId: '   ',
+      agentId: '   ',
       locator: 'file://src/plain.ts',
       observedHash: 'h-plain',
     });
 
     const [entry] = await activeReadSetForSession('sess-nulls');
     expect(entry.agentId).toBeNull();
-    expect(entry.taskId).toBeNull();
     expect(entry.toolName).toBeNull();
   });
 
@@ -239,8 +238,8 @@ describe('work read-set store', () => {
       const client = getClient();
       for (const [index, locator] of locators.entries()) {
         await client.execute({
-          sql: `INSERT INTO work_read_sets (id, session_id, agent_id, task_id, locator, observed_hash, tool_name, read_at, released_at)
-                VALUES (?, 'sess-bulk', NULL, NULL, ?, ?, 'Read', ?, NULL)`,
+          sql: `INSERT INTO work_read_sets (id, session_id, agent_id, locator, observed_hash, tool_name, read_at, released_at)
+                VALUES (?, 'sess-bulk', NULL, ?, ?, 'Read', ?, NULL)`,
           args: [`readbulk${String(index).padStart(4, '0')}`, locator, `h-${locator}`, new Date().toISOString()],
         });
       }
@@ -259,8 +258,8 @@ describe('work read-set store', () => {
   });
 
   it('releases a whole session and reports how many rows it took', async () => {
-    await recordRead({ sessionId: 'sess-rel', taskId: 'task-a', locator: 'file://src/rel1.ts', observedHash: 'h1' });
-    await recordRead({ sessionId: 'sess-rel', taskId: 'task-b', locator: 'file://src/rel2.ts', observedHash: 'h2' });
+    await recordRead({ sessionId: 'sess-rel', locator: 'file://src/rel1.ts', observedHash: 'h1' });
+    await recordRead({ sessionId: 'sess-rel', locator: 'file://src/rel2.ts', observedHash: 'h2' });
 
     expect(await releaseReadSet('sess-rel')).toBe(2);
     expect(await activeReadSetForSession('sess-rel')).toEqual([]);
@@ -272,22 +271,63 @@ describe('work read-set store', () => {
   });
 
   /**
-   * `knowl_task_finish` ends one task inside a session that keeps running. Releasing the whole
-   * session there would drop the reads the session still relies on and silently disarm the
-   * detector for the rest of it.
+   * The capture path hands over one whole `Read` at a time -- up to 200 symbol observations from a
+   * single file -- so the batch is the real call shape and the single-observation `recordRead` is
+   * the special case. 250 crosses both boundaries that matter: `READ_SET_CHUNK` (200) for the
+   * SELECT and the UPDATE, and `READ_SET_INSERT_CHUNK` (100) for the multi-row INSERT, which is
+   * where an unchunked version would hit SQLite's bind-parameter ceiling as a hard error.
    */
-  it('releases only the named task and leaves the rest of the session live', async () => {
-    await recordRead({ sessionId: 'sess-task', taskId: 'task-done', locator: 'file://src/t1.ts', observedHash: 'h1' });
-    await recordRead({ sessionId: 'sess-task', taskId: 'task-open', locator: 'file://src/t2.ts', observedHash: 'h2' });
-    await recordRead({ sessionId: 'sess-task', locator: 'file://src/t3.ts', observedHash: 'h3' });
+  it('records a whole read in one batch, across every chunk boundary', async () => {
+    const observations = Array.from({ length: 250 }, (_, index) => ({
+      sessionId: 'sess-batch',
+      locator: `symbol://src/batch/mod.ts#fn${String(index).padStart(4, '0')}`,
+      observedHash: `h-${index}`,
+      toolName: 'Read',
+    }));
 
-    expect(await releaseReadSet('sess-task', 'task-done')).toBe(1);
+    await recordReads(observations);
+    expect(await activeReadSetForSession('sess-batch')).toHaveLength(250);
 
-    const live = await activeReadSetForSession('sess-task');
-    expect(live.map(entry => entry.locator).sort()).toEqual(['file://src/t2.ts', 'file://src/t3.ts']);
-    // A task id nobody carries releases nothing, rather than everything.
-    expect(await releaseReadSet('sess-task', 'task-missing')).toBe(0);
-    expect(await activeReadSetForSession('sess-task')).toHaveLength(2);
+    // Re-reading the same file unchanged learns nothing and must add nothing, which is what keeps
+    // the table growing with distinct observations rather than with tool calls.
+    await recordReads(observations);
+    expect(await activeReadSetForSession('sess-batch')).toHaveLength(250);
+    expect(await countFor('sess-batch')).toBe(250);
+
+    // One symbol moved. The new belief is live, the old one is retired in the same pass, and the
+    // rest of the batch is untouched -- so the session holds exactly one row per locator.
+    await recordReads([{ ...observations[0], observedHash: 'h-0-changed' }]);
+    const live = await activeReadSetForSession('sess-batch');
+    expect(live).toHaveLength(250);
+    expect(live.filter(entry => entry.locator === observations[0].locator).map(entry => entry.observedHash))
+      .toEqual(['h-0-changed']);
+    // Retired, not deleted: 250 originals plus the one replacement.
+    expect(await countFor('sess-batch')).toBe(251);
+  });
+
+  /** A batch is one tool call, so two hashes for one locator means the file moved mid-read. */
+  it('keeps the last observation when one batch names a locator twice', async () => {
+    await recordReads([
+      { sessionId: 'sess-dup', locator: 'file://src/dup.ts', observedHash: 'first' },
+      { sessionId: 'sess-dup', locator: 'file://src/dup.ts', observedHash: 'second' },
+    ]);
+
+    expect((await activeReadSetForSession('sess-dup')).map(entry => entry.observedHash)).toEqual(['second']);
+  });
+
+  /** Callers are on the capture path and hand over whatever a tool named; a mixed batch must not
+   * file one session's reads under another's name. */
+  it('groups a mixed batch by session rather than assuming one', async () => {
+    await recordReads([
+      { sessionId: 'sess-mix-a', locator: 'file://src/mix1.ts', observedHash: 'h1' },
+      { sessionId: 'sess-mix-b', locator: 'file://src/mix2.ts', observedHash: 'h2' },
+      { sessionId: 'sess-mix-a', locator: 'file://src/mix3.ts', observedHash: 'h3' },
+    ]);
+
+    expect((await activeReadSetForSession('sess-mix-a')).map(entry => entry.locator).sort())
+      .toEqual(['file://src/mix1.ts', 'file://src/mix3.ts']);
+    expect((await activeReadSetForSession('sess-mix-b')).map(entry => entry.locator))
+      .toEqual(['file://src/mix2.ts']);
   });
 
   /**

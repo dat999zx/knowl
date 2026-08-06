@@ -303,6 +303,5 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
 }
 
 export function normalizeHostHook(host: string, eventName: string, raw: Record<string, unknown>): NormalizedHostHook {
-  const normalized = normalizeHostHookUnchecked(host, eventName, raw);
-  return validateNormalizedHostHook(normalized);
+  return validateNormalizedHostHook(normalizeHostHookUnchecked(host, eventName, raw));
 }

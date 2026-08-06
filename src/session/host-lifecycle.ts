@@ -7,8 +7,11 @@ import { hostProfile } from './hosts/index.js';
 import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
 import { loadConfig } from '../core/config.js';
 import { isImpactEnabled } from '../store/impact-config.js';
-import { detectCertainImpactBestEffort, openFindingsForSession } from '../store/impact.js';
-import { recordReadBestEffort, releaseReadSetBestEffort, repoRelativePath, sweepReadSetsBestEffort } from '../store/read-set.js';
+import { detectCertainImpactBestEffort, markFindingsDelivered, openFindingsForSession } from './impact.js';
+import {
+  recordReadsBestEffort, releaseReadSetBestEffort, repoRelativePath, sweepReadSetsBestEffort,
+  type ReadObservation,
+} from '../store/read-set.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';
 import {
   ChangeSummary,
@@ -59,10 +62,10 @@ const KNOWL_REMINDER_DRIFT = 12;
  *
  * A read-set row asserts "this session saw this text and holds a belief about it", and the
  * certain tier spends that assertion by interrupting the agent and gating its task finish. So the
- * set is the tools that return *contents*: `Read`, and `NotebookRead` for the same reason (it is
- * listed even though `changedPaths` reads `file_path`/`path` and the host names that field
- * `notebook_path`, so it may never fire -- an unfired name costs nothing, a missing one is a
- * silent hole nobody re-derives).
+ * set is the tools that return *contents*: `Read`, and `NotebookRead`, whose target the host names
+ * `notebook_path` rather than `file_path` -- which is why that key had to be added to `changedPaths`
+ * and to the stdin allowlist in the same change, or this entry would have named a tool whose paths
+ * never arrive.
  *
  * `Grep` and `Glob` are read-ish and are excluded. Their `path` argument is usually a directory,
  * which `normalizeLocator` already refuses -- but the case that decides this is the one where it
@@ -420,14 +423,23 @@ function impactChangedPaths(payload: Record<string, unknown>): string[] {
  * staleness the reader does not hold -- a manufactured false positive on the tier that may
  * interrupt. When the content has not moved, `indexFile` stops before the parse and the write.
  *
- * Locators are handed over verbatim for `recordRead` to normalise, so the canonical form is
+ * Locators are handed over verbatim for `recordReads` to normalise, so the canonical form is
  * decided in exactly one place (`normalizeLocator`); a second spelling of the same rule here is
  * not a bug anyone sees, it is a detector that quietly never fires.
  *
+ * **Collected across every path, then written once.** A 200-symbol file used to cost three
+ * statements per symbol, so a single `Read` spent ~600 sequential round trips before the agent got
+ * its result -- on the per-tool-call path, which is the one place this subsystem promised to be
+ * cheap. `recordReads` turns the same work into one SELECT, one UPDATE and a handful of multi-row
+ * INSERTs, and into a single SELECT when the re-read learned nothing.
+ *
  * One failed path does not cost the others: a file deleted between the tool call and this line is
- * ordinary traffic on a path that observes rather than acts.
+ * ordinary traffic on a path that observes rather than acts, and its `continue` still leaves every
+ * other path's observations in the batch.
  */
 async function recordToolReads(input: NormalizedHostHook, sessionId: string, paths: string[]): Promise<void> {
+  const observations: ReadObservation[] = [];
+
   for (const changed of paths) {
     try {
       // Shared with the write gate rather than copied: `listCodeSymbols` is a `WHERE file_path = ?`
@@ -437,23 +449,23 @@ async function recordToolReads(input: NormalizedHostHook, sessionId: string, pat
       if (relativePath === null) continue;
       await indexFile(input.projectRoot, relativePath);
 
-      const observations: { locator: string; observedHash: string }[] = [];
+      const observed: { locator: string; observedHash: string }[] = [];
       const symbols = await listCodeSymbols(relativePath);
       if (symbols.length > 0 && symbols.length <= IMPACT_MAX_SYMBOLS_PER_READ) {
         // A symbol the extractor gave no signature has no hash to compare against later, so a row
-        // for it would be a belief nothing could ever falsify; `recordRead` drops it regardless.
+        // for it would be a belief nothing could ever falsify; `recordReads` drops it regardless.
         for (const symbol of symbols) {
-          if (symbol.signatureHash) observations.push({ locator: symbol.locator, observedHash: symbol.signatureHash });
+          if (symbol.signatureHash) observed.push({ locator: symbol.locator, observedHash: symbol.signatureHash });
         }
       } else {
         const hash = await impactFileHash(input.projectRoot, relativePath);
-        if (hash !== null) observations.push({ locator: `file://${relativePath}`, observedHash: hash });
+        if (hash !== null) observed.push({ locator: `file://${relativePath}`, observedHash: hash });
       }
 
-      for (const observation of observations) {
-        await recordReadBestEffort({
+      for (const observation of observed) {
+        observations.push({
           sessionId,
-          // Recorded for provenance only: belief is session-scoped by `recordRead`'s own dedupe
+          // Recorded for provenance only: belief is session-scoped by `recordReads`' own dedupe
           // key, so a subagent and its parent share one belief per locator by design.
           agentId: input.agentId ?? null,
           locator: observation.locator,
@@ -465,6 +477,8 @@ async function recordToolReads(input: NormalizedHostHook, sessionId: string, pat
       // Observation is advisory; a tool call must never fail because we could not describe it.
     }
   }
+
+  await recordReadsBestEffort(observations);
 }
 
 /**
@@ -479,17 +493,21 @@ async function recordToolReads(input: NormalizedHostHook, sessionId: string, pat
  * (`impact.ts:79`). Parsing is guarded -- a row written by a different version, or truncated, must
  * degrade to a locator with no was/now pair rather than throw inside a hook.
  *
- * **Known repeat window:** an open finding renders again on the next tool event, and the one after
- * it, until it is resolved. Closing that needs a `delivered_at` column on `impact_findings`, which
- * belongs to `bootstrap.ts` and not to this lane. The available shortcut is worse than the
- * problem: `resolution` is the adjudication the ≥95% precision number is computed from (plan §9),
- * so spending `dismissed` to quiet a card would corrupt the one measurement this phase exists to
- * produce. Left visible rather than papered over, and bounded meanwhile by the plan's own
- * division of labour -- the gate is the mechanism, the card is the courtesy.
+ * **Shown once, not once per tool call.** `undeliveredOnly` is what makes that true: an open
+ * finding used to re-render on every subsequent tool event until somebody adjudicated it, which
+ * spends the tool-side channel this subsystem's own argument says is expensive. The findings are
+ * stamped `delivered_at` immediately after they are turned into entries, and `resolution` is left
+ * alone -- delivery is a fact about the card, adjudication is a fact about the finding, and using
+ * `dismissed` to quiet a repeat would have corrupted the ≥95% precision number (plan §9). The
+ * finding stays open for the gate and stays in the denominator; it just stops shouting.
+ *
+ * Stamped after rendering rather than before, so a throw between the two leaves the finding
+ * undelivered and it is shown next time. Repeating a card is a smaller failure than swallowing one.
  */
 async function openImpactCardEntries(sessionId: string): Promise<ImpactCardEntry[]> {
-  const findings = await openFindingsForSession(sessionId, 'certain');
-  return findings.map(finding => {
+  const findings = await openFindingsForSession(sessionId, 'certain', true);
+  if (findings.length === 0) return [];
+  const entries = findings.map(finding => {
     // No initializer: both the try and the catch assign it, so a `{}` here would be dead and
     // would hide a path where neither ran.
     let payload: Record<string, unknown>;
@@ -505,6 +523,8 @@ async function openImpactCardEntries(sessionId: string): Promise<ImpactCardEntry
       nowSignature: asText(payload.currentSignature),
     };
   });
+  await markFindingsDelivered(findings.map(finding => finding.id));
+  return entries;
 }
 
 /**
@@ -587,11 +607,6 @@ async function finalizeFailedStop(projectId: string, input: NormalizedHostHook, 
 }
 
 export async function handleHostLifecycleEvent(projectId: string, input: NormalizedHostHook): Promise<HostLifecycleResult> {
-  // First, and claimed before anything else can mistake it for a session boundary: every event
-  // this function does not recognise falls through to the session-stop handler at the bottom, and
-  // this one fires ahead of every tool call. It captures nothing, advances no watermark and
-  // finishes nothing -- the tool has not run yet, and the only question here is whether it should.
-
   if (input.event === 'session-start') {
     const recovered = await recoverAbandonedSessions();
     const purgedEventCount = await purgeExpiredSessionEvents();

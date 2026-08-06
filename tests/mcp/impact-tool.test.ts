@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
@@ -7,7 +8,7 @@ import { createMcpServer } from '../../src/mcp/server.js';
 import { knowlToolDefinitions } from '../../src/mcp/tools.js';
 import { startWorkLoop } from '../../src/store/work-loop.js';
 import { activeReadSetForSession, recordRead, releaseReadSet } from '../../src/store/read-set.js';
-import type { ImpactTier } from '../../src/store/impact.js';
+import type { ImpactTier } from '../../src/session/impact.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
 /**
@@ -23,7 +24,7 @@ import type { ProjectConfig } from '../../src/core/types.js';
  * for it exactly nothing.
  */
 
-const TEST_ROOT = path.resolve('./.knowl-impact-tool');
+const TEST_ROOT = path.join(os.tmpdir(), 'knowl-impact-tool-test');
 
 const baseConfig = (): ProjectConfig => ({
   version: 1,

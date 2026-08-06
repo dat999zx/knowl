@@ -32,7 +32,6 @@ export interface ReadSetEntry {
   id: string;
   sessionId: string;
   agentId: string | null;
-  taskId: string | null;
   locator: string;
   observedHash: string;
   toolName: string | null;
@@ -44,7 +43,6 @@ export interface ReadSetEntry {
 export type ReadObservation = {
   sessionId: string;
   agentId?: string | null;
-  taskId?: string | null;
   locator: string;
   observedHash: string;
   toolName?: string | null;
@@ -58,7 +56,14 @@ export type ReadObservation = {
  */
 export const READ_SET_CHUNK = 200;
 
-const COLUMNS = 'id, session_id, agent_id, task_id, locator, observed_hash, tool_name, read_at, released_at';
+/**
+ * Rows per multi-row `INSERT`. Lower than `READ_SET_CHUNK` because the ceiling here is counted in
+ * *parameters*, not rows: each row binds 7 of them, and SQLite's default `SQLITE_MAX_VARIABLE_NUMBER`
+ * is 999. 100 rows is 700 binds, which leaves room without needing to know which build is underneath.
+ */
+const READ_SET_INSERT_CHUNK = 100;
+
+const COLUMNS = 'id, session_id, agent_id, locator, observed_hash, tool_name, read_at, released_at';
 
 const newId = (): string => crypto.randomUUID().replace(/-/g, '').substring(0, 16);
 
@@ -68,10 +73,10 @@ const text = (value: unknown): string | null =>
 /**
  * Empty and whitespace-only are the same thing as absent everywhere in this table.
  *
- * Returns the value unchanged rather than trimmed, deliberately. `releaseReadSet` searches by the
- * caller's own `task_id` and the detector compares against the stored `observed_hash`, and neither
- * goes through here -- so a stored value that had been quietly trimmed on the way in would simply
- * stop matching the argument it is looked up by. Blankness is the only judgment made here.
+ * Returns the value unchanged rather than trimmed, deliberately. The detector compares against the
+ * stored `observed_hash` without going through here -- so a stored value that had been quietly
+ * trimmed on the way in would simply stop matching the argument it is looked up by. Blankness is
+ * the only judgment made here.
  */
 const orNull = (value: string | null | undefined): string | null =>
   value !== null && value !== undefined && value.trim().length > 0 ? value : null;
@@ -80,7 +85,6 @@ const toEntry = (row: Record<string, unknown>): ReadSetEntry => ({
   id: String(row.id),
   sessionId: String(row.session_id),
   agentId: text(row.agent_id),
-  taskId: text(row.task_id),
   locator: String(row.locator),
   observedHash: String(row.observed_hash),
   toolName: text(row.tool_name),
@@ -219,43 +223,109 @@ function normalizeFilePath(raw: string): string | null {
  * `released_at IS NULL` would otherwise retire the row just written.
  */
 export async function recordRead(input: ReadObservation): Promise<void> {
-  const locator = normalizeLocator(input.locator);
-  const sessionId = orNull(input.sessionId);
-  const observedHash = orNull(input.observedHash);
-  // An empty hash is worse than a missing row: it is NOT NULL-satisfying, so the column's
-  // guarantee holds while every empty-hash read compares equal to every other one.
-  if (locator === null || sessionId === null || observedHash === null) return;
+  await recordReads([input]);
+}
+
+/** Fixed-size slices, so every `IN (...)` and every multi-row `VALUES` stays under the bind ceiling. */
+function chunked<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let index = 0; index < items.length; index += size) out.push(items.slice(index, index + size));
+  return out;
+}
+
+/**
+ * Record a whole read at once: one round trip per operation, not per symbol.
+ *
+ * **This is the shape the capture path needs, and `recordRead` is now the special case of it.**
+ * One `Read` of a 200-symbol file produced 200 observations, and a per-observation `recordRead`
+ * spent three sequential statements on each of them -- a SELECT to dedupe, an UPDATE to retire the
+ * previous belief, an INSERT -- so a single tool call cost ~600 round trips before the agent got
+ * its result back, and a *re-read* of an unchanged file still cost 200. That is the shape the plan
+ * itself rules out ("per tool call over a table that only grows"), and the cost was invisible in
+ * tests because a fixture file has three symbols, not two hundred.
+ *
+ * Batched, the same read is one SELECT, one UPDATE and `ceil(n/100)` INSERTs -- four statements for
+ * that 200-symbol file, and exactly one for a re-read that learned nothing. The semantics below are
+ * unchanged from the per-row version; only the number of round trips moved.
+ *
+ * Grouped by session rather than assuming one, because a silent cross-session mix would write every
+ * row under whichever session happened to be first -- a wrong owner is worse than a slow loop.
+ *
+ * Within one batch the *last* observation of a locator wins. A batch is one tool call, so two
+ * hashes for one locator means the file changed while it was being read; the later read is the one
+ * the agent actually holds.
+ */
+export async function recordReads(inputs: ReadObservation[]): Promise<void> {
+  // Normalised and grouped before a single statement runs. Bad input is dropped rather than
+  // thrown on: this is the capture path, and one unusable locator must not cost the other 199.
+  const bySession = new Map<string, Map<string, ReadObservation & { locator: string }>>();
+  for (const input of inputs ?? []) {
+    const locator = normalizeLocator(input.locator);
+    const sessionId = orNull(input.sessionId);
+    const observedHash = orNull(input.observedHash);
+    // An empty hash is worse than a missing row: it is NOT NULL-satisfying, so the column's
+    // guarantee holds while every empty-hash read compares equal to every other one.
+    if (locator === null || sessionId === null || observedHash === null) continue;
+
+    let group = bySession.get(sessionId);
+    if (!group) bySession.set(sessionId, group = new Map());
+    group.set(locator, { ...input, locator, observedHash });
+  }
 
   const client = getClient();
-  const existing = await client.execute({
-    sql: `SELECT id FROM work_read_sets
-          WHERE session_id = ? AND locator = ? AND observed_hash = ? AND released_at IS NULL
-          LIMIT 1`,
-    args: [sessionId, locator, observedHash],
-  });
-  if (existing.rows.length > 0) return;
+  for (const [sessionId, group] of bySession) {
+    const observations = [...group.values()];
+    const locators = observations.map(observation => observation.locator);
 
-  const readAt = new Date().toISOString();
-  // No hash predicate needed: the check above proved no unreleased row carries this hash, so
-  // whatever is still live for this session and locator is by construction an older observation.
-  await client.execute({
-    sql: 'UPDATE work_read_sets SET released_at = ? WHERE session_id = ? AND locator = ? AND released_at IS NULL',
-    args: [readAt, sessionId, locator],
-  });
-  await client.execute({
-    sql: `INSERT INTO work_read_sets (${COLUMNS})
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-    args: [
-      newId(),
-      sessionId,
-      orNull(input.agentId),
-      orNull(input.taskId),
-      locator,
-      observedHash,
-      orNull(input.toolName),
-      readAt,
-    ],
-  });
+    // What this session already holds for these locators. One row per locator by the invariant
+    // below; a duplicate could only come from a pre-existing store and is released along with the
+    // rest by the UPDATE, so reading either copy converges to the same end state.
+    const live = new Map<string, string>();
+    for (const chunk of chunked(locators, READ_SET_CHUNK)) {
+      const rows = await client.execute({
+        sql: `SELECT locator, observed_hash FROM work_read_sets
+              WHERE session_id = ? AND released_at IS NULL AND locator IN (${chunk.map(() => '?').join(', ')})`,
+        args: [sessionId, ...chunk],
+      });
+      for (const row of rows.rows) live.set(String(row.locator), String(row.observed_hash));
+    }
+
+    // Unchanged beliefs are dropped here, which is what keeps the table growing with distinct
+    // observations rather than with tool calls; a locator whose live hash differs is a new
+    // observation, and its predecessor has to be retired in the same pass.
+    const fresh = observations.filter(observation => live.get(observation.locator) !== observation.observedHash);
+    if (fresh.length === 0) continue;
+    const superseded = fresh.filter(observation => live.has(observation.locator)).map(observation => observation.locator);
+
+    const readAt = new Date().toISOString();
+    // Release before insert, as the per-row version did and for the same reason: a release
+    // predicated on `released_at IS NULL` would otherwise retire the rows just written. No hash
+    // predicate is needed -- the partition above proved these locators' live rows carry an older
+    // hash than the one about to be stored.
+    for (const chunk of chunked(superseded, READ_SET_CHUNK)) {
+      await client.execute({
+        sql: `UPDATE work_read_sets SET released_at = ?
+              WHERE session_id = ? AND released_at IS NULL AND locator IN (${chunk.map(() => '?').join(', ')})`,
+        args: [readAt, sessionId, ...chunk],
+      });
+    }
+
+    for (const chunk of chunked(fresh, READ_SET_INSERT_CHUNK)) {
+      await client.execute({
+        sql: `INSERT INTO work_read_sets (${COLUMNS})
+              VALUES ${chunk.map(() => '(?, ?, ?, ?, ?, ?, ?, NULL)').join(', ')}`,
+        args: chunk.flatMap(observation => [
+          newId(),
+          sessionId,
+          orNull(observation.agentId),
+          observation.locator,
+          observation.observedHash,
+          orNull(observation.toolName),
+          readAt,
+        ]),
+      });
+    }
+  }
 }
 
 /**
@@ -305,28 +375,26 @@ export async function activeReadSetForSession(sessionId: string): Promise<ReadSe
 /**
  * Mark a session's live reads finished, and return how many there were.
  *
- * With a `taskId`, only that task's rows: `knowl_task_finish` ends one task inside a session that
- * keeps running, and releasing the whole session there would drop the reads the session is still
- * relying on for its next task -- silently disarming the detector for the rest of the session.
+ * Whole-session only, deliberately. An earlier draft took an optional `taskId` and released just
+ * that task's rows, on the reasoning that `knowl_task_finish` ends one task inside a session that
+ * keeps running -- but nothing on the capture path knows a task id. `recordToolReads` runs from a
+ * hook event, which carries a session and an agent and no task, so every row was written with
+ * `task_id` NULL and the task-scoped UPDATE could only ever match zero rows. A parameter that
+ * cannot be supplied is not a narrower release, it is a release that silently does nothing.
+ *
+ * The column went with it. When a task id can actually reach this table -- which is the write
+ * gate's problem, not this one's -- it comes back as a column and a level bump together, rather
+ * than sitting here as schema that documents behaviour the code cannot perform.
  *
  * Sets `released_at`, never deletes. The row is the evidence a finding was justified and the
- * denominator the precision number is computed against; deleting it at task-finish would mean the
+ * denominator the precision number is computed against; deleting it at session-stop would mean the
  * system could only ever measure findings whose sessions were still open.
  */
-export async function releaseReadSet(sessionId: string, taskId?: string): Promise<number> {
-  const releasedAt = new Date().toISOString();
-  const result = await getClient().execute(
-    taskId === undefined
-      ? {
-        sql: 'UPDATE work_read_sets SET released_at = ? WHERE session_id = ? AND released_at IS NULL',
-        args: [releasedAt, sessionId],
-      }
-      : {
-        sql: `UPDATE work_read_sets SET released_at = ?
-              WHERE session_id = ? AND task_id = ? AND released_at IS NULL`,
-        args: [releasedAt, sessionId, taskId],
-      },
-  );
+export async function releaseReadSet(sessionId: string): Promise<number> {
+  const result = await getClient().execute({
+    sql: 'UPDATE work_read_sets SET released_at = ? WHERE session_id = ? AND released_at IS NULL',
+    args: [new Date().toISOString(), sessionId],
+  });
   return Number(result.rowsAffected ?? 0);
 }
 
@@ -360,17 +428,22 @@ export async function sweepReadSets(olderThanIso: string): Promise<number> {
  * and the wrapper is what the lifecycle path calls.
  */
 export async function recordReadBestEffort(input: ReadObservation): Promise<void> {
+  await recordReadsBestEffort([input]);
+}
+
+/** The batch the capture path actually calls. Same contract: a lost observation, never a throw. */
+export async function recordReadsBestEffort(inputs: ReadObservation[]): Promise<void> {
   try {
-    await recordRead(input);
+    await recordReads(inputs);
   } catch {
     // An observation lost is one missed detection; an exception here is a broken tool call.
   }
 }
 
 /** Releasing is bookkeeping at a boundary the caller owns; `null` distinguishes "failed" from 0. */
-export async function releaseReadSetBestEffort(sessionId: string, taskId?: string): Promise<number | null> {
+export async function releaseReadSetBestEffort(sessionId: string): Promise<number | null> {
   try {
-    return await releaseReadSet(sessionId, taskId);
+    return await releaseReadSet(sessionId);
   } catch {
     return null;
   }

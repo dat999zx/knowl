@@ -11,8 +11,7 @@ import {
   detectCertainImpactBestEffort,
   openFindingsForSession,
   resolveFinding,
-} from '../../src/store/impact.js';
-import { listWorkingTreeChanges } from '../../src/store/working-tree.js';
+} from '../../src/session/impact.js';
 
 /**
  * The certain tier, tested as a *precision* claim rather than a feature.
@@ -23,10 +22,8 @@ import { listWorkingTreeChanges } from '../../src/store/working-tree.js';
  * false positive here does not merely waste context, it takes away someone's ability to save a
  * file. So "did not fire" is the behaviour under test at least as often as "fired".
  *
- * A real git repository per test, not a mock. `indexFile` shells out to `git check-ignore`,
- * `listWorkingTreeChanges` shells out to `git status`, and the escaping and rename behaviour of
- * that output is exactly what the parser exists to survive -- a stubbed `spawnSync` would test
- * the fixture's idea of git rather than git.
+ * A real git repository per test, not a mock. `indexFile` shells out to `git check-ignore`, so a
+ * stubbed `spawnSync` would test the fixture's idea of git rather than git.
  */
 
 const SOURCE = 'src/session.ts';
@@ -94,8 +91,8 @@ async function seedRead(input: {
   releasedAt?: string;
 }): Promise<string> {
   await getClient().execute({
-    sql: `INSERT INTO work_read_sets (id, session_id, agent_id, task_id, locator, observed_hash, tool_name, read_at, released_at)
-          VALUES (?, ?, NULL, NULL, ?, ?, 'Read', ?, ?)`,
+    sql: `INSERT INTO work_read_sets (id, session_id, agent_id, locator, observed_hash, tool_name, read_at, released_at)
+          VALUES (?, ?, NULL, ?, ?, 'Read', ?, ?)`,
     args: [input.id, input.sessionId, input.locator, input.observedHash, AT, input.releasedAt ?? null],
   });
   return input.id;
@@ -107,7 +104,7 @@ async function countFindings(): Promise<number> {
 }
 
 beforeEach(async () => {
-  testRoot = path.resolve(`./.knowl-test-impact-${testIndex++}`);
+  testRoot = path.join(os.tmpdir(), `knowl-impact-test-${testIndex++}`);
   await fs.rm(testRoot, { recursive: true, force: true }).catch(() => {});
   await fs.mkdir(path.join(testRoot, '.knowl'), { recursive: true });
 
@@ -382,55 +379,5 @@ describe('open findings for a session', () => {
     });
 
     expect((await openFindingsForSession('sess-reader')).map(finding => finding.id)).toEqual([id]);
-  });
-});
-
-describe('working tree changes', () => {
-  it('reports modifications, deletions, untracked files and both sides of a rename', async () => {
-    await write(SOURCE, V2_SIGNATURE_CHANGED);
-    await fs.rm(path.join(testRoot, 'src/doomed.ts'));
-    git(testRoot, 'mv', 'src/old name.ts', 'src/new name.ts');
-    await write('src/ünïcode.ts', 'export function accented(): number { return 1; }\n');
-    await write('src/fresh/added.ts', 'export const added = 1;\n');
-
-    const changes = await listWorkingTreeChanges(testRoot);
-
-    // Both rename paths: an agent holding `file://src/old name.ts` is stale *because* the file
-    // moved, so reporting only the destination would leave every reader of the source unwarned.
-    // The spaced and non-ASCII names are here because default porcelain output would return them
-    // C-escaped and double-quoted -- a form that matches no locator.
-    expect(changes.sort()).toEqual([
-      'src/doomed.ts',
-      'src/fresh/added.ts',
-      'src/new name.ts',
-      'src/old name.ts',
-      'src/session.ts',
-      'src/ünïcode.ts',
-    ]);
-    // `--untracked-files=all` expands the new directory into its files; the bare directory is not
-    // a locator and must not appear.
-    expect(changes).not.toContain('src/fresh/');
-  });
-
-  it('returns nothing for a clean tree', async () => {
-    expect(await listWorkingTreeChanges(testRoot)).toEqual([]);
-  });
-
-  it('returns nothing, and does not throw, outside a git repository', async () => {
-    // Must live outside this checkout. `git status` walks UP to the enclosing repository, so a
-    // fixture under the repo root is not "outside a git repo" at all -- it reports knowl's own
-    // working tree, and the test passes or fails on whether this checkout happens to be clean.
-    const outside = path.join(os.tmpdir(), 'knowl-test-impact-not-a-repo');
-    await fs.rm(outside, { recursive: true, force: true }).catch(() => {});
-    await fs.mkdir(outside, { recursive: true });
-    try {
-      expect(await listWorkingTreeChanges(outside)).toEqual([]);
-    } finally {
-      await fs.rm(outside, { recursive: true, force: true }).catch(() => {});
-    }
-  });
-
-  it('returns nothing, and does not throw, for a directory that does not exist', async () => {
-    expect(await listWorkingTreeChanges(path.join(testRoot, 'no', 'such', 'place'))).toEqual([]);
   });
 });

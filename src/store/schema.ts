@@ -1,4 +1,5 @@
-import { index, primaryKey, sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
+import { index, primaryKey, sqliteTable, text, integer, real, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const knowledgeItems = sqliteTable('knowledge_items', {
   id: text('id').primaryKey(),
@@ -212,7 +213,6 @@ export const workReadSets = sqliteTable('work_read_sets', {
   sessionId: text('session_id').notNull(),
   /** `__agent__:<id>` when the read came from a sub-agent; NULL for the main session. */
   agentId: text('agent_id'),
-  taskId: text('task_id'),
   /** 'symbol://path#Name' | 'file://path'. Directory locators are rejected at insert. */
   locator: text('locator').notNull(),
   /** `signature_hash` or content hash AS OF THE READ. The whole mechanism, hence NOT NULL. */
@@ -240,10 +240,13 @@ export const impactFindings = sqliteTable('impact_findings', {
   /** The edge chain justifying the finding; NULL at the certain tier, which has no chain. */
   pathJson: text('path_json'),
   detectedAt: text('detected_at').notNull(),
+  /** When the card last showed this finding. NULL until then; see `bootstrap.ts` for why. */
+  deliveredAt: text('delivered_at'),
   /** NULL means open. 'repaired' | 'dismissed' | 'expired' | 'false_positive' once adjudicated. */
   resolution: text('resolution'),
   resolvedAt: text('resolved_at'),
 }, (table) => [
   index('idx_impact_findings_open').on(table.resolution, table.tier, table.affectedKind, table.affectedId),
   index('idx_impact_findings_affected').on(table.affectedKind, table.affectedId, table.resolution),
+  uniqueIndex('idx_impact_findings_unique_open').on(table.causeLocator, table.affectedId).where(sql`resolution IS NULL`),
 ]);

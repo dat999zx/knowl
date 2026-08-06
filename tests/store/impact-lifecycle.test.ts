@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -124,7 +125,7 @@ const readSetRows = async () => (await getClient().execute(
 )).rows;
 
 const findingRows = async () => (await getClient().execute(
-  'SELECT id, cause_locator, cause_session, affected_id, tier FROM impact_findings ORDER BY id',
+  'SELECT id, cause_locator, cause_session, affected_id, tier, delivered_at, resolution, resolved_at FROM impact_findings ORDER BY id',
 )).rows;
 
 const knowledgeChange = (title: string) => repo.createKnowledgeCommit(projectId, `Sibling: ${title}`, [
@@ -134,7 +135,7 @@ const knowledgeChange = (title: string) => repo.createKnowledgeCommit(projectId,
 beforeEach(async () => {
   // Not a `.knowl-test-impact-*` name: `tests/store/impact.test.ts` owns that prefix, and two
   // suites sharing one prefix is how a future cleanup sweep deletes the other's live database.
-  testRoot = path.resolve(`./.knowl-lifecycle-impact-${testIndex++}`);
+  testRoot = path.join(os.tmpdir(), `knowl-impact-lifecycle-${testIndex++}`);
   await fs.rm(testRoot, { recursive: true, force: true }).catch(() => {});
   await fs.mkdir(path.join(testRoot, '.knowl'), { recursive: true });
 
@@ -272,6 +273,30 @@ describe('change impact on the hook path', () => {
     expect(delivered).toContain('now: ');
     expect(delivered).toContain('Organization');
     expect(reader.sessionId).not.toBe(writer.sessionId);
+  });
+
+  /**
+   * The repeat window, closed. An open finding used to re-render on every subsequent tool event
+   * until somebody adjudicated it, which spends the tool-side channel this subsystem's own
+   * argument calls expensive. `delivered_at` is what stops it -- and the thing worth pinning is
+   * that stopping the card did *not* close the finding: `resolution` stays NULL, so the finding is
+   * still open for the gate and still in the denominator the precision number is computed from.
+   * Quieting a card by spending `dismissed` would have corrupted that measurement.
+   */
+  it('shows a finding once, and leaves it open and unadjudicated after showing it', async () => {
+    await toolEvent('session-a', 'Read', [SOURCE]);
+    await write(SOURCE, V2_SIGNATURE_CHANGED);
+    await toolEvent('session-b', 'Edit', [SOURCE]);
+
+    expect(card(await idleEvent('session-a'))).toContain('CODE IMPACT');
+    // Every event after the first: silent.
+    expect(card(await idleEvent('session-a'))).not.toContain('CODE IMPACT');
+    expect(card(await idleEvent('session-a'))).not.toContain('CODE IMPACT');
+
+    const [finding] = await findingRows();
+    expect(finding.delivered_at).not.toBeNull();
+    expect(finding.resolution).toBeNull();
+    expect(finding.resolved_at).toBeNull();
   });
 
   it('never reports a session against its own write', async () => {

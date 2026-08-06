@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootstrapSchema } from '../../src/store/bootstrap.js';
@@ -14,7 +15,7 @@ import { KNOWL_MIGRATION_LEVEL, readMigrationLevel } from '../../src/store/schem
  * detector assumes it is not, and an index whose column order does not match the query the gate
  * runs -- neither of which any behavioural test would catch until the code above them existed.
  */
-const ROOT = path.resolve('./.knowl-impact-schema-test');
+const ROOT = path.join(os.tmpdir(), 'knowl-impact-schema-test');
 
 const AT = '2026-08-05T00:00:00.000Z';
 
@@ -79,7 +80,6 @@ describe('change-impact schema', () => {
       { name: 'id', type: 'TEXT', notnull: 0, pk: 1 },
       { name: 'session_id', type: 'TEXT', notnull: 1, pk: 0 },
       { name: 'agent_id', type: 'TEXT', notnull: 0, pk: 0 },
-      { name: 'task_id', type: 'TEXT', notnull: 0, pk: 0 },
       { name: 'locator', type: 'TEXT', notnull: 1, pk: 0 },
       { name: 'observed_hash', type: 'TEXT', notnull: 1, pk: 0 },
       { name: 'tool_name', type: 'TEXT', notnull: 0, pk: 0 },
@@ -98,6 +98,7 @@ describe('change-impact schema', () => {
       { name: 'tier', type: 'TEXT', notnull: 1, pk: 0 },
       { name: 'path_json', type: 'TEXT', notnull: 0, pk: 0 },
       { name: 'detected_at', type: 'TEXT', notnull: 1, pk: 0 },
+      { name: 'delivered_at', type: 'TEXT', notnull: 0, pk: 0 },
       { name: 'resolution', type: 'TEXT', notnull: 0, pk: 0 },
       { name: 'resolved_at', type: 'TEXT', notnull: 0, pk: 0 },
     ]);
@@ -132,9 +133,9 @@ describe('change-impact schema', () => {
    */
   it('leaves a new read-set row live and a new finding open', async () => {
     await getClient().execute({
-      sql: `INSERT INTO work_read_sets (id, session_id, agent_id, task_id, locator, observed_hash, tool_name, read_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      args: ['read-1', 'sess-a', '__agent__:lane-a', 'task-1', 'symbol://src/a.ts#createSession', 'h1', 'Read', AT],
+      sql: `INSERT INTO work_read_sets (id, session_id, agent_id, locator, observed_hash, tool_name, read_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      args: ['read-1', 'sess-a', '__agent__:lane-a', 'symbol://src/a.ts#createSession', 'h1', 'Read', AT],
     });
     await getClient().execute({
       sql: `INSERT INTO impact_findings (id, cause_locator, cause_session, affected_kind, affected_id, tier, detected_at)
@@ -169,6 +170,7 @@ describe('change-impact schema', () => {
     expect(await indexesOf('impact_findings')).toEqual([
       'idx_impact_findings_affected',
       'idx_impact_findings_open',
+      'idx_impact_findings_unique_open',
     ]);
     // `resolution` leads because open-ness is the prefix the gate and the pull tool share; a
     // tier-first order would leave a tier-less pull to a scan.
@@ -178,6 +180,35 @@ describe('change-impact schema', () => {
     expect(await indexColumns('idx_impact_findings_affected')).toEqual([
       'affected_kind', 'affected_id', 'resolution',
     ]);
+  });
+
+  /**
+   * The guarantee behind `detectCertainImpact`'s check-then-insert. That check is not atomic
+   * across processes -- two hooks firing on the same file in the same instant both pass it -- and
+   * the cost of losing that race is not a wasted row but the same notice pushed into the same
+   * agent's context twice. Partial, so a pair may legitimately be found again once the first was
+   * adjudicated: that is a re-detection, not a duplicate.
+   */
+  it('permits only one open finding per cause and affected target, but allows re-detection', async () => {
+    const insert = (id: string) => getClient().execute({
+      sql: `INSERT INTO impact_findings (id, cause_locator, affected_kind, affected_id, tier, detected_at)
+            VALUES (?, 'symbol://src/a.ts#dup', 'work', 'read-dup', 'certain', ?)`,
+      args: [id, AT],
+    });
+
+    await insert('dup-1');
+    await expect(insert('dup-2')).rejects.toThrow(/UNIQUE/i);
+
+    // Adjudicating the first frees the pair, because the constraint only holds while one is open.
+    await getClient().execute({
+      sql: "UPDATE impact_findings SET resolution = 'dismissed', resolved_at = ? WHERE id = 'dup-1'",
+      args: [AT],
+    });
+    await expect(insert('dup-3')).resolves.toBeDefined();
+
+    // This suite shares one database across its cases and the last one counts rows, so a fixture
+    // left behind here would fail a test that has nothing to do with uniqueness.
+    await getClient().execute("DELETE FROM impact_findings WHERE affected_id = 'read-dup'");
   });
 
   /**

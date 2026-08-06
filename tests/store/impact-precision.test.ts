@@ -1,11 +1,12 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { indexFile, listCodeSymbols } from '../../src/code/symbol-index.js';
-import { detectCertainImpact } from '../../src/store/impact.js';
+import { detectCertainImpact } from '../../src/session/impact.js';
 
 /**
  * The measurement, not another feature test: what fraction of certain-tier findings are ones a
@@ -524,8 +525,8 @@ async function runScenario(scenario: Scenario): Promise<{ fired: boolean; skippe
   if (!observedHash) return { fired: false, skipped: true };
 
   await getClient().execute({
-    sql: `INSERT INTO work_read_sets (id, session_id, agent_id, task_id, locator, observed_hash, tool_name, read_at, released_at)
-          VALUES (?, 'reader-session', NULL, NULL, ?, ?, 'Read', ?, NULL)`,
+    sql: `INSERT INTO work_read_sets (id, session_id, agent_id, locator, observed_hash, tool_name, read_at, released_at)
+          VALUES (?, 'reader-session', NULL, ?, ?, 'Read', ?, NULL)`,
     args: [`read-${testIndex}`, locator, observedHash, new Date().toISOString()],
   });
 
@@ -535,7 +536,7 @@ async function runScenario(scenario: Scenario): Promise<{ fired: boolean; skippe
 }
 
 beforeEach(async () => {
-  testRoot = path.resolve(`./.knowl-test-precision-${testIndex++}`);
+  testRoot = path.join(os.tmpdir(), `knowl-impact-precision-${testIndex++}`);
   await fs.rm(testRoot, { recursive: true, force: true }).catch(() => {});
   await fs.mkdir(path.join(testRoot, '.knowl'), { recursive: true });
   git(testRoot, 'init', '-q', '.');

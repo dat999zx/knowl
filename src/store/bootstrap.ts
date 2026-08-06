@@ -238,7 +238,6 @@ const SCHEMA_STATEMENTS = [
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
     agent_id TEXT,
-    task_id TEXT,
     locator TEXT NOT NULL,
     observed_hash TEXT NOT NULL,
     tool_name TEXT,
@@ -276,6 +275,14 @@ const SCHEMA_STATEMENTS = [
    * `path_json` holds the edge chain that justified the finding, and is nullable because the
    * certain tier has no chain: the session read that exact locator and there is nothing to
    * explain.
+   *
+   * `delivered_at` is what stops the card repeating. Without it the mid-turn stanza re-renders
+   * every open finding on every tool event until somebody adjudicates it, and the only column that
+   * could have quieted it is `resolution` -- which is the adjudication the precision number is
+   * computed from, so spending `dismissed` to silence a card would corrupt the one measurement
+   * this phase exists to produce. Delivery and adjudication are different facts and now have
+   * different columns: the card stamps this one and stops showing the finding, while `resolution`
+   * stays NULL and the finding stays open for the gate and for the denominator.
    */
   `CREATE TABLE IF NOT EXISTS impact_findings (
     id TEXT PRIMARY KEY,
@@ -286,6 +293,7 @@ const SCHEMA_STATEMENTS = [
     tier TEXT NOT NULL,
     path_json TEXT,
     detected_at TEXT NOT NULL,
+    delivered_at TEXT,
     resolution TEXT,
     resolved_at TEXT
   );`,
@@ -346,6 +354,15 @@ const SCHEMA_STATEMENTS = [
   // is measured at ~20.8% mean accuracy cost, so this lookup happens before every insert and
   // must not be a scan.
   `CREATE INDEX IF NOT EXISTS idx_impact_findings_affected ON impact_findings(affected_kind, affected_id, resolution);`,
+  // The closing move on the duplicate-notice window `detectCertainImpact` opens. Detection checks
+  // for an open finding and then inserts, which is not atomic across processes: two hooks firing on
+  // the same file in the same instant each see nothing open and each insert, and the cost is not a
+  // wasted row but the same notice pushed into the same agent's context twice. Partial, on
+  // `resolution IS NULL`, because the constraint is only wanted while a finding is open -- the same
+  // pair may legitimately be found again after the first was adjudicated, which is a re-detection
+  // and not a duplicate. `INSERT OR IGNORE` at the call site turns the losing race into a no-op
+  // rather than an exception inside a best-effort path.
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_impact_findings_unique_open ON impact_findings(cause_locator, affected_id) WHERE resolution IS NULL;`,
 
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
