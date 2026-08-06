@@ -134,6 +134,36 @@ over files the host already wrote.
 
 ## Connecting an agent
 
+<table>
+<tr>
+<td align="center" width="20%">
+<a href="https://claude.com/product/claude-code"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="48" height="48" /></a><br/>
+<strong>Claude Code</strong><br/>
+<sub>MCP · lifecycle · subagents</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex" width="48" height="48" /></a><br/>
+<strong>Codex</strong><br/>
+<sub>MCP · lifecycle · subagents</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://cursor.com"><img src="https://github.com/getcursor.png?size=120" alt="Cursor" width="48" height="48" /></a><br/>
+<strong>Cursor</strong><br/>
+<sub>MCP · lifecycle</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://github.com/google-gemini/gemini-cli"><img src="https://github.com/google-gemini.png?size=120" alt="Gemini CLI" width="48" height="48" /></a><br/>
+<strong>Gemini CLI</strong><br/>
+<sub>MCP · manual loop</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://claude.ai/download"><img src="https://github.com/anthropics.png?size=120" alt="Claude Desktop" width="48" height="48" /></a><br/>
+<strong>Claude Desktop</strong><br/>
+<sub>MCP · manual loop</sub>
+</td>
+</tr>
+</table>
+
 `knowl serve` exposes the store over stdio MCP; `knowl init` registers it for you. The workflow the
 installed guidance asks agents to follow is short:
 
@@ -149,6 +179,10 @@ installed guidance asks agents to follow is short:
 | Cursor | Yes | Yes | No | Finalizes per turn |
 | Gemini CLI | Yes | No | No | MCP plus the manual work loop |
 | Claude Desktop | Yes | No | No | MCP plus the manual work loop |
+
+<div align="center">
+<img src="docs/assets/lifecycle.svg" alt="Session lifecycle: bootstrap injects relevant memory, capture records bounded events, checkpoints record milestones, finalization distills durable candidates" width="88%" />
+</div>
 
 Where hooks are available, they own the session lifecycle: bootstrap context, capture, checkpoints,
 and finalization happen without the agent being asked. Where they are not, `knowl task run`,
