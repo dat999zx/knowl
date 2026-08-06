@@ -57,7 +57,13 @@ for (const [id, [file, body]] of Object.entries(regions)) {
   const current = edits.get(file) ?? fs.readFileSync(file, 'utf8');
   const pattern = new RegExp(`${open}[\\s\\S]*?${close}`);
   if (!pattern.test(current)) throw new Error(`${path.basename(file)} is missing the ${open} region.`);
-  edits.set(file, current.replace(pattern, `${open}\n${body}\n${close}`));
+  // Match the file's own line endings. A checkout with core.autocrlf holds CRLF, so injecting an
+  // LF-joined block leaves the file mixed and makes the staleness comparison below differ on every
+  // run -- reporting stale docs on Windows no matter what the content actually says.
+  // The replacement is a function so a `$` in the generated body is never read as `$&` or `$1`.
+  const eol = current.includes('\r\n') ? '\r\n' : '\n';
+  const block = `${open}\n${body}\n${close}`.replaceAll('\n', eol);
+  edits.set(file, current.replace(pattern, () => block));
 }
 
 /**
