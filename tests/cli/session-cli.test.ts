@@ -1,9 +1,10 @@
 import { execSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-const TEST_DIR = path.resolve('./.knowl-session-cli-test');
+const TEST_DIR = path.join(os.tmpdir(), 'knowl-session-cli-test');
 const CLI_PATH = path.resolve('./dist/index.js');
 
 describe('session CLI', () => {

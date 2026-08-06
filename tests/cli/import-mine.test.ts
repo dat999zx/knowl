@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { createClient } from '@libsql/client';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
 /**
@@ -28,8 +29,10 @@ const TITLE = 'Deploys are blue-green';
  * half-finished init to complete, not a repository to upgrade). Two runs at once simply
  * share the database and one of them gets SQLITE_BUSY.
  *
- * `mkdtemp` removes the shared name that both need. The `.knowl-` prefix is kept so global
- * teardown still collects whatever a locked file leaves behind.
+ * `mkdtemp` removes the shared name that both need, and the fixtures sit under `os.tmpdir()`
+ * rather than the repository: global setup points that at this run's own root, so whatever a
+ * locked file leaves behind is collected with the root, and `knowl init` is never asked to
+ * create a store inside the Knowl repository -- which the nested-store guard refuses outright.
  */
 let A = '';
 let B = '';
@@ -54,9 +57,9 @@ async function ownershipIn(root: string) {
 
 describe('knowl import --mine', () => {
   beforeEach(async () => {
-    A = await fs.mkdtemp(path.resolve('./.knowl-import-mine-a'));
-    B = await fs.mkdtemp(path.resolve('./.knowl-import-mine-b'));
-    HOME = await fs.mkdtemp(path.resolve('./.knowl-import-mine-home'));
+    A = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-import-mine-a'));
+    B = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-import-mine-b'));
+    HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-import-mine-home'));
     // Inside the scratch home, so the one removal covers it and no run can name it either.
     DUMP = path.join(HOME, 'export.jsonl');
     knowl(A, ['init']);

@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
-const ROOT = path.resolve('.knowl-onboarding-cli-test');
+const ROOT = path.join(os.tmpdir(), 'knowl-onboarding-cli-test');
 const CLI_PATH = path.resolve('./dist/index.js');
 
 function run(...args: string[]) {

@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER } from '../../src/core/knowl-guidance.js';
 
-const TEST_DIR = path.resolve('./.knowl-claude-continuation-reminder-test');
+const TEST_DIR = path.join(os.tmpdir(), 'knowl-claude-continuation-reminder-test');
 const CLI_PATH = path.resolve('./dist/index.js');
 
 function run(args: string[], input?: string): string {

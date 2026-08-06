@@ -6,7 +6,11 @@ export default defineConfig({
     // Benchmark harness lives under benchmarks/ with its own vitest project (`npm run
     // test:bench`). Excluding it keeps `npm test` scoped to the product, so research tooling can
     // never slow down or destabilise the suite that gates releases.
-    exclude: ['**/node_modules/**', '**/dist/**', 'benchmarks/**'],
+    // `.claude/**` holds agent worktrees. A worktree is a second checkout of this repository, so
+    // its `tests/` glob matches too and every suite runs twice -- once against the working tree
+    // and once against whatever revision that worktree is parked on. That doubles the runtime and
+    // reports failures for code the developer has not touched.
+    exclude: ['**/node_modules/**', '**/dist/**', 'benchmarks/**', '**/.claude/**'],
     // Several suites are true integration tests that spawn `node dist/index.js`
     // per assertion. Process start-up costs 1-3s on Windows, so vitest's 5s
     // default makes them flake even when the code is correct.
