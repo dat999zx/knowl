@@ -41,4 +41,44 @@ describe('symbol index', () => {
     const edges = await getClient().execute({ sql: 'SELECT * FROM code_symbol_edges WHERE from_locator LIKE ?', args: ['symbol://src/auth.ts#%'] });
     expect(edges.rows).toEqual([]);
   });
+
+  // An import symbol is named after its module specifier, so a second import of the same module
+  // produces a second row under a locator the primary key already holds. This aborted the whole
+  // pass with SQLITE_CONSTRAINT_PRIMARYKEY, and ten files in this repo's own `src/` had the shape.
+  it('keeps one symbol per locator when a file names the same thing twice', async () => {
+    await fs.writeFile(path.join(ROOT, 'src', 'dupes.ts'), [
+      'import type { Profile } from "./profile.js";',
+      'import { loadProfile } from "./profile.js";',
+      // A TypeScript overload set: three declarations, one name.
+      'export function pick(value: string): string;',
+      'export function pick(value: number): number;',
+      'export function pick(value: any): any { return value; }',
+      'export const use = () => loadProfile() as Profile;',
+    ].join('\n') + '\n');
+
+    await expect(indexCode(ROOT)).resolves.toBeUndefined();
+
+    const locators = (await listCodeSymbols('src/dupes.ts')).map(symbol => symbol.locator);
+    expect(locators).toContain('symbol://src/dupes.ts#import:./profile.js');
+    expect(locators).toContain('symbol://src/dupes.ts#pick');
+    expect(new Set(locators).size).toBe(locators.length);
+  });
+
+  // tree-sitter's node binding copies a string argument into one 32 KB buffer and throws a bare
+  // `Invalid argument` past it, so the six largest files in this repo were the six the index could
+  // not see -- and the throw abandoned every file the walk had not reached yet.
+  it('indexes a file past the 32 KB parser buffer', async () => {
+    const filler = Array.from({ length: 2_000 }, (_, i) => `export function big${i}() { return ${i}; }`).join('\n');
+    expect(filler.length).toBeGreaterThan(32 * 1024);
+    await fs.writeFile(path.join(ROOT, 'src', 'big.ts'), `${filler}\n`);
+
+    await expect(indexCode(ROOT)).resolves.toBeUndefined();
+
+    const locators = (await listCodeSymbols('src/big.ts')).map(symbol => symbol.locator);
+    // Both ends: a buffer that stopped early would still hold the first symbol.
+    expect(locators).toContain('symbol://src/big.ts#big0');
+    expect(locators).toContain('symbol://src/big.ts#big1999');
+    // And the pass did not abandon the files it had already reached.
+    expect(await listCodeSymbols('src/dupes.ts')).not.toEqual([]);
+  });
 });
