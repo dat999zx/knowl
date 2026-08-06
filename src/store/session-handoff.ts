@@ -364,9 +364,8 @@ async function persistPendingHandoff(
   const existing = await findActivePendingHandoff(host);
   if (existing) {
     // One active handoff per host. Only repeated failures from the same host session merge.
-    const merged = options.merge && existing.handoff.externalSessionId === handoff.externalSessionId
-      ? mergeHandoff(existing.handoff, handoff)
-      : handoff;
+    const extendsExisting = options.merge && existing.handoff.externalSessionId === handoff.externalSessionId;
+    const merged = extendsExisting ? mergeHandoff(existing.handoff, handoff) : handoff;
     const updated = await repo.updateKnowledgeItem(existing.id, write(merged));
     await repo.createKnowledgeCommit(projectId, `Update pending session handoff (${host}/${merged.kind})`, [
       { itemId: updated.id, action: 'update', before: existing.handoff as any, after: updated },
@@ -374,7 +373,13 @@ async function persistPendingHandoff(
     // A merge extends the same session's baton; anything else overwrote a different active
     // handoff whose contents are now gone. The caller reports which, so parking again does not
     // silently discard a baton the schema comment itself calls "the destruction of the real one".
-    return { itemId: updated.id, handoff: merged, replacedPrevious: merged !== existing.handoff };
+    //
+    // Read off the branch that decided it, not off object identity: `mergeHandoff` always
+    // allocates, so `merged !== existing.handoff` reported a replacement for every merge too --
+    // wrong the moment any caller passes `merge: true` and surfaces this. Today only
+    // `recordDeliberateHandoff` reads it, and it never merges, so the identity test happened to
+    // agree with the intent. Latent agreement is not the same as saying what you mean.
+    return { itemId: updated.id, handoff: merged, replacedPrevious: !extendsExisting };
   }
 
   const created = await repo.createKnowledgeItem(projectId, { category: 'state', ...write(handoff) });

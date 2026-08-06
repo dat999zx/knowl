@@ -28,12 +28,12 @@ const pick = (alphabet: string) => alphabet[randomInt(alphabet.length)];
 /**
  * A key the user keeps.
  *
- * Letter-digit alternating, six characters. The shape is not cosmetic: a key is pasted back
- * into a prompt, and a six-character key from a full alphabet can legitimately spell `budget`
- * or `delete`. A key that reads as an instruction is one a model may act on instead of look up.
+ * Letter-digit alternating, eight characters. The shape is not cosmetic: a key is pasted back
+ * into a prompt, and a key from a full alphabet can legitimately spell `budget` or `delete`.
+ * A key that reads as an instruction is one a model may act on instead of look up.
  * Alternating positions makes a pronounceable word structurally impossible.
  *
- * 18 letters x 6 digits per pair, three pairs: about 1.26 million keys. Collisions are handled
+ * 18 letters x 6 digits per pair, four pairs: about 136 million keys. Collisions are handled
  * by the caller retrying on a unique-constraint violation, not by making the key longer.
  */
 export function mintResumeKey(): string {

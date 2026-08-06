@@ -153,8 +153,11 @@ const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
   [...knowlToolDefinitions(null), ...TRANSCRIPT_TOOL_DEFINITIONS].map(tool => [tool.name, tool.inputSchema]),
 );
 
+/** What a shortened result keeps of its body: enough to judge relevance, not to answer from. */
+const QUERY_EXCERPT_CHARS = 240;
+
 /**
- * Drop lowest-ranked results until the serialized array fits the response ceiling.
+ * Shrink the lowest-ranked results until the serialized array fits the response ceiling.
  *
  * `MAX_RESPONSE_CHARS` is declared as the ceiling for this half of the surface and was wired
  * into `boundContextResponse` only -- so `knowl_context` was bounded and `knowl_query`, the
@@ -163,21 +166,45 @@ const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
  * `MAX_ITEM_CONTENT_CHARS` from 600 to 2,000 tripled that floor on the one path nothing
  * watched.
  *
- * Results arrive ranked, so the tail is the cheapest thing to give up. At least one result is
- * always kept: a single oversized atom should come back truncated-but-present rather than as
- * an empty array that reads like a miss. The omitted count is returned rather than folded into
- * the payload, because the first block must stay a bare JSON array for callers that parse it.
+ * Bodies go before results do. Dropping a result hides that the item exists at all, which is
+ * indistinguishable from a retrieval miss; shortening one costs the body and keeps the id,
+ * title and score -- and `knowl_query { id }` now reads any of them whole, so the information
+ * is deferred rather than lost. Measured against dropping: a `limit: 25` query over 2 KB atoms
+ * returned 5 of 25, where shortening returns all 25 with the weakest bodies excerpted.
+ *
+ * Results arrive ranked, so the tail gives up its body first. Dropping remains the last
+ * resort, for when every body is already an excerpt and the count itself is the cost. At least
+ * one result is always kept: a single oversized atom should come back truncated-but-present
+ * rather than as an empty array that reads like a miss. The counts are returned rather than
+ * folded into the payload, because the first block must stay a bare JSON array for callers
+ * that parse it.
  */
-function boundQueryPayload(payload: unknown[]): { text: string; omitted: number } {
-  const kept = [...payload];
+function boundQueryPayload(payload: unknown[]): { text: string; shortened: number; omitted: number } {
+  const kept = payload.map(entry => ({ value: entry as Record<string, unknown>, shortened: false }));
+  const serialize = () => compactMcpJson(kept.map(entry => entry.value));
+  let text = serialize();
+  if (text.length <= MAX_RESPONSE_CHARS) return { text, shortened: 0, omitted: 0 };
+
+  for (let index = kept.length - 1; index >= 0 && text.length > MAX_RESPONSE_CHARS; index--) {
+    const content = kept[index].value.content;
+    if (typeof content !== 'string' || content.length <= QUERY_EXCERPT_CHARS) continue;
+    // `truncated` is the same flag a content-ceiling cut sets, so the instruction the tool
+    // description already gives -- call again with `id` to read the rest -- covers this too.
+    kept[index] = {
+      value: { ...kept[index].value, content: truncateText(content, QUERY_EXCERPT_CHARS), truncated: true },
+      shortened: true,
+    };
+    text = serialize();
+  }
+
   let omitted = 0;
-  let text = compactMcpJson(kept);
   while (text.length > MAX_RESPONSE_CHARS && kept.length > 1) {
     kept.pop();
     omitted += 1;
-    text = compactMcpJson(kept);
+    text = serialize();
   }
-  return { text, omitted };
+
+  return { text, shortened: kept.filter(entry => entry.shortened).length, omitted };
 }
 
 /**
@@ -676,12 +703,18 @@ export function registerTools(
           : resolvedItems.map(compact);
         // The notice is a separate block so the first block stays a bare JSON array for
         // every existing caller.
-        const { text: payloadText, omitted: omittedResults } = boundQueryPayload(payload);
+        const { text: payloadText, shortened, omitted: omittedResults } = boundQueryPayload(payload);
         const blocks: { type: 'text'; text: string }[] = [{ type: 'text', text: payloadText }];
-        if (omittedResults > 0) {
+        if (shortened > 0 || omittedResults > 0) {
+          const what = [
+            shortened > 0 ? `the content of ${shortened} lower-ranked result(s) was cut to an excerpt` : '',
+            omittedResults > 0 ? `${omittedResults} lower-ranked result(s) were dropped entirely` : '',
+          ].filter(Boolean).join(', and ');
           blocks.push({
             type: 'text',
-            text: `RESPONSE BOUNDED: ${omittedResults} lower-ranked result(s) omitted to keep this response under ${MAX_RESPONSE_CHARS} characters. They were the weakest matches, not a scoping failure — narrow the query or lower \`limit\` if you need to see them.`,
+            text: `RESPONSE BOUNDED: ${what}, to keep this response under ${MAX_RESPONSE_CHARS} characters. `
+              + 'These were the weakest matches, not a scoping failure. Read any result whole with '
+              + '`knowl_query` and its `id`; narrow the query or lower `limit` to see more of them at once.',
           });
         }
         if (skippedRepos.length) {

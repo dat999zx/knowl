@@ -21,9 +21,11 @@ export type ResumePoint = ResumeBrief & {
 /**
  * Retries on a key collision rather than lengthening every key.
  *
- * Collisions are expected, not exceptional: the keyspace is 1,259,712 and 2,000 independent
- * draws collide about 80% of the time. What matters is that a *stored* key is unique, which the
- * primary key enforces and this retry absorbs.
+ * Collisions are rare at the current keyspace of 136,048,896 -- they were expected at the
+ * 1,259,712 of six-character keys, where 2,000 independent draws collided about 80% of the
+ * time -- but the retry stays either way. What matters is that a *stored* key is unique, which
+ * the primary key enforces and this absorbs, and that guarantee must not depend on how long
+ * the key happens to be this year.
  */
 const MINT_ATTEMPTS = 5;
 

@@ -101,10 +101,14 @@ const program = new Command();
  * than the check.
  */
 program.hook('preAction', (_thisCommand, actionCommand) => {
-  let top = actionCommand;
-  while (top.parent && top.parent.parent) top = top.parent;
+  // The full path, top-level first, because exemption has to be able to name a single
+  // subcommand: `snapshot restore` must run when the database is gone -- the guard's own
+  // message prescribes it -- while `snapshot create` must not, since it opens the database
+  // and opening one creates it. Collapsing to the top-level name exempted the whole group.
+  const names: string[] = [];
+  for (let node = actionCommand; node?.parent; node = node.parent) names.unshift(node.name());
   try {
-    assertDatabasePresentForCommand(top.name());
+    assertDatabasePresentForCommand(names.join(' '));
   } catch (error: any) {
     console.error(error.message);
     process.exit(1);
@@ -948,6 +952,13 @@ program.command('import').argument('<path>').description('Load portable JSONL me
     'use it for your own backup or a second machine you cannot link and re-export from. It ' +
     'claims authorship only -- the items stay private until you promote them.',
   )
+  .option(
+    '--repair-content-hash',
+    'Import a file whose items carry a contentHash that does not describe their own content, ' +
+    'by recomputing it from the content. Import refuses such a file by default, because ' +
+    'divergence is decided on that field and a stale hash silently discards the real body. ' +
+    'For an export written by an older writer, which cannot be re-exported to fix.',
+  )
   .action(async (inputPath, options) => {
     try {
       if (!DIVERGENCE_POLICIES.includes(options.onDivergence)) {
@@ -957,12 +968,21 @@ program.command('import').argument('<path>').description('Load portable JSONL me
       await initDb(root);
       const result = await importKnowledge(path.resolve(inputPath), {
         dryRun: options.dryRun, projectRoot: root, onDivergence: options.onDivergence, claimAsMine: options.mine,
+        repairContentHash: options.repairContentHash,
       });
       console.log(JSON.stringify(result, null, 2));
       // The counts alone never say whose knowledge this now is, and for `attributed` that is
       // the difference between "imported 40 items" and "imported 40 items that this repo can
       // never share". Printed to stderr so a script parsing stdout is unaffected.
       for (const line of importOwnershipNotice(result.ownership)) console.error(line);
+      // Named for the same reason as the ownership notice: the file was accepted on different
+      // terms than it asked for, and nothing in the counts says so.
+      if (result.hashRepaired) {
+        console.error(
+          `Recomputed contentHash for ${result.hashRepaired} item(s) whose stated hash did not ` +
+          'describe their content; divergence for those was decided on the content itself.',
+        );
+      }
       await closeDb();
       // An import that refused to apply must not report success. `--on-divergence fail` is the
       // safe policy, and it printed `applied: false, conflicts: 1` and exited 0 -- so

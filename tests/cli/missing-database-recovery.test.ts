@@ -69,6 +69,28 @@ describe('a knowledge database that has gone missing', () => {
     await expect(fs.access(path.join(repo, '.knowl', 'knowl.db'))).rejects.toThrow();
   });
 
+  it('is not silently recreated by the backup command either', async () => {
+    // The exemption that lets `snapshot restore` run has to name the subcommand, not the group.
+    // `snapshot create` opens the database, and opening a libSQL `file:` URL creates it -- so a
+    // group-wide exemption let the BACKUP command rebuild an empty store, snapshot that empty
+    // store, report "KNOWL SNAPSHOT CREATED", and leave the guard unable to fire again. Worse
+    // than the `doctor` case it mirrors: create prunes to SNAPSHOT_KEEP, so three of these
+    // evict the real snapshots -- exactly the material the recovery needs.
+    const created = run(['snapshot', 'create'], repo, home);
+    const snapshot = (created.stdout.match(/^Snapshot:\s*(.+)$/m) ?? [])[1]?.trim();
+    expect(snapshot).toBeTruthy();
+
+    await removeDatabase();
+
+    const result = run(['snapshot', 'create'], repo, home);
+
+    expect(result.stdout + result.stderr).toMatch(/database is missing/i);
+    expect(result.status).toBe(1);
+    await expect(fs.access(path.join(repo, '.knowl', 'knowl.db'))).rejects.toThrow();
+    // The real snapshot is still there to restore from, not pruned to make room for an empty one.
+    await expect(fs.access(snapshot!)).resolves.toBeUndefined();
+  });
+
   it('can be restored by the command the error message prescribes', async () => {
     const created = run(['snapshot', 'create'], repo, home);
     const snapshot = (created.stdout.match(/^Snapshot:\s*(.+)$/m) ?? [])[1]?.trim();

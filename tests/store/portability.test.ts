@@ -238,6 +238,56 @@ describe('portability', () => {
     expect(repeat.inserted).toBe(0);
   });
 
+  it('refuses a file whose items misdescribe themselves, and imports it on recomputed hashes when told to', async () => {
+    // The guard is right that a stale hash silently discards the real content -- divergence is
+    // decided on that field and never on the body. It was also the only answer, which leaves an
+    // export written by an older writer permanently un-importable with nowhere to fix it. The
+    // override recomputes rather than waives: every later comparison then runs against a hash
+    // that genuinely describes the body it arrived with.
+    const item = await createKnowledgeItem('local', {
+      category: 'fact', title: 'Misdescribed fact', content: 'The content the hash was taken from.',
+    });
+    const exportPath = path.join(TARGET, 'misdescribed-1.jsonl');
+    await portability.exportKnowledge('local', exportPath, TARGET);
+
+    const stream = (await fs.readFile(exportPath, 'utf8')).split('\n').filter(Boolean);
+    const records = stream.slice(0, -1).map(line => JSON.parse(line));
+    for (const record of records) {
+      // The body moves on; the hash is left describing the body it used to have.
+      if (record.type === 'item' && record.item.id === item.id) {
+        record.item.content = 'A body the stated hash knows nothing about.';
+        record.item.updatedAt = '2030-01-01T00:00:00.000Z';
+        record.item.version = record.item.version + 1;
+      }
+    }
+    const joined = `${records.map(record => JSON.stringify(record)).join('\n')}\n`;
+    const misdescribedPath = path.join(TARGET, 'misdescribed-2.jsonl');
+    await fs.writeFile(
+      misdescribedPath,
+      `${joined}${JSON.stringify({ type: 'manifest', sha256: createHash('sha256').update(joined).digest('hex') })}\n`,
+      'utf8',
+    );
+
+    // The bytes are intact -- the manifest checksum passes -- so only the recompute catches it.
+    await expect(portability.importKnowledge(misdescribedPath, { projectRoot: TARGET, onDivergence: 'newer' }))
+      .rejects.toThrow(/--repair-content-hash/);
+    expect((await getKnowledgeItem(item.id))!.content).toBe('The content the hash was taken from.');
+
+    const repaired = await portability.importKnowledge(misdescribedPath, {
+      projectRoot: TARGET, onDivergence: 'newer', repairContentHash: true,
+    });
+
+    expect(repaired.applied).toBe(true);
+    expect(repaired.hashRepaired).toBe(1);
+    const stored = (await getKnowledgeItem(item.id))!;
+    expect(stored.content).toBe('A body the stated hash knows nothing about.');
+    // The stored hash describes the stored body, so a re-import of the same file is a no-op
+    // rather than a permanent divergence.
+    expect(stored.contentHash).toBe(hashKnowledgeContent({
+      title: 'Misdescribed fact', content: 'A body the stated hash knows nothing about.',
+    }));
+  });
+
   it('re-indexes an item adopted from the peer, not just fresh inserts', async () => {
     // An adopted divergent item has different content, so its stored embedding is now
     // wrong. Indexing only inserts would leave vector search matching the old text.

@@ -1,5 +1,6 @@
 import type { KnowledgeItem } from '../core/types.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
+import { getClient } from './database.js';
 import * as repo from './repository.js';
 import { captureMemorySessionEvent } from './session-capture.js';
 import { finishMemorySession, startMemorySession } from './session-repository.js';
@@ -58,10 +59,23 @@ async function requireWorkLoopTask(taskId: string): Promise<KnowledgeItem> {
   return task;
 }
 
-/** Whether a `finish` step has already been recorded for this task. */
+/**
+ * Whether a `finish` step has already been recorded for this task.
+ *
+ * An existence check rather than a scan. This runs on every checkpoint and every finish, and
+ * `listKnowledgeItems` reads and maps every row in the store to answer it -- the same cost
+ * `listActiveSkillItems` exists to avoid on the mid-turn skill lookup. Tag matching follows
+ * the store's own idiom (`search.ts`, `vector.ts`): tags serialize as a JSON array, so the
+ * quoted needle cannot match a longer tag that merely starts with the same characters.
+ */
 async function taskAlreadyFinished(taskId: string): Promise<boolean> {
-  const items = await repo.listKnowledgeItems();
-  return items.some(item => item.tags?.includes(`task:${taskId}`) && item.tags?.includes('finish'));
+  const rows = (await getClient().execute({
+    sql: `SELECT 1 FROM knowledge_items
+      WHERE tags LIKE ? AND tags LIKE '%"finish"%'
+      LIMIT 1`,
+    args: [`%"task:${taskId}"%`],
+  })).rows;
+  return rows.length > 0;
 }
 
 function stringList(value: unknown, maxItems = 20, maxLength = 500): string[] | undefined {
