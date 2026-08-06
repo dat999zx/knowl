@@ -2,11 +2,13 @@ name: CodeQL
 
 # Static analysis on the default branch and on every pull request, plus a weekly run so a
 # newly published query finds an old bug without waiting for someone to touch the file.
+# Main and weekly, not every pull request. CodeQL takes minutes and the findings it produces
+# are rarely branch-specific; catching them on main and on a schedule is the same coverage for
+# a fraction of the runs.
 on:
   push:
     branches:
       - main
-  pull_request:
   schedule:
     - cron: '0 6 * * 1'
   workflow_dispatch:

@@ -21,12 +21,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Windows is the primary development host and was never covered; macOS catches the
-        # POSIX-but-not-Linux differences in path, permission and shell handling. Both have
-        # already caught real defects here -- a snapshot regex that matched only a drive
-        # letter, and mode assertions that are no-ops off POSIX.
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        node: [22, 24]
+        # Explicit legs, not a cross product. The OS axis earns its place: Windows is the
+        # primary development host and was never covered, and the first run that included
+        # anything but ubuntu found a real path bug on all four non-Linux legs.
+        #
+        # The NODE axis did not. Across two full runs, 22 and 24 agreed on every leg without
+        # exception -- twelve jobs, no unique signal. It is kept on ubuntu alone, where it is
+        # the cheapest runner, to catch a genuine version regression before it reaches a user.
+        include:
+          - { os: ubuntu-latest, node: 22 }   # the declared engines floor
+          - { os: ubuntu-latest, node: 24 }   # current release line
+          - { os: windows-latest, node: 22 }
+          - { os: macos-latest, node: 22 }
     steps:
       - uses: actions/checkout@v4
 
@@ -94,8 +100,11 @@ jobs:
           path: .knowl/models
           key: ${{ steps.model-cache.outputs.cache-primary-key }}
 
-  quality:
-    name: lint, types, and docs
+  checks:
+    # One job, not three. Lint, types, docs, audit and the tarball smoke test are all ubuntu,
+    # all cheap, and all shared the same `npm ci` -- three separate jobs paid that setup cost
+    # three times for well under a minute of work each. A failing step still names itself.
+    name: lint, types, docs, audit, package
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -106,45 +115,21 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run lint
-      # Needs the bundle: the docs check asks `knowl --help` what commands exist, and reads
-      # the built CLI rather than the source so it sees what a user sees.
       - run: npm run build
       - name: Generated documentation is current
         run: npm run docs:check
 
-  audit:
-    name: dependency audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
       # Production dependencies only: a dev-only advisory never reaches a user's install.
       #
       # Blocking at CRITICAL rather than HIGH, on evidence. The one high advisory today is
       # adm-zip's 4GB allocation on a crafted archive, reached through onnxruntime-node ->
       # @huggingface/transformers, and it has NO FIX AVAILABLE. A gate that cannot pass gets
-      # switched off, and then nothing is gated -- so the blocking floor is set where it can
-      # actually be met, and everything at high or above is reported beside it.
+      # switched off, and then nothing is gated.
       - run: npm run audit:prod
       - name: High-severity advisories (reported, not blocking)
         run: npm run audit:report
         continue-on-error: true
 
-  package:
-    name: tarball smoke test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
       # What `npm publish` would actually ship, installed the way a user installs it. Catches
       # a missing `files` entry or a dependency that only resolved from the repo checkout --
       # neither of which any test in the suite can see.
