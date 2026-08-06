@@ -3,10 +3,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
-import { renderChangeCard } from '../../src/cli/agents/change-card.js';
+import { renderChangeCard } from '../../src/session/change-card.js';
 import { listCodeSymbols } from '../../src/code/symbol-index.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
-import { handleHostLifecycleEvent, type HostLifecycleResult } from '../../src/store/host-lifecycle.js';
+import { handleHostLifecycleEvent, type HostLifecycleResult } from '../../src/session/host-lifecycle.js';
 import * as repo from '../../src/store/repository.js';
 
 /**
