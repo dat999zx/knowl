@@ -305,7 +305,10 @@ loopback binding is the privacy boundary: do not put it behind a public proxy or
 
 ### Everything else
 
-**27 MCP tools** (plus three more when transcript search is on) and two resource URIs · the
+<!-- generated:tool-count -->
+**27 MCP tools** (plus 3 more when transcript search is on)
+<!-- /generated:tool-count -->
+and two resource URIs · the
 **complete CLI**, from `knowl status` to `knowl audit` · a **read-only integrity audit** ·
 **retrieval evaluation** you can run yourself against the checked-in governance and 500-case
 regression suites with `knowl eval retrieval`.

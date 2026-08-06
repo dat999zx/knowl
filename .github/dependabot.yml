@@ -1,0 +1,33 @@
+version: 2
+
+# Weekly rather than daily, and grouped rather than one PR per package. This repository has a
+# single maintainer and a suite that takes minutes; a stream of individual bumps gets ignored,
+# and an ignored update mechanism is the same as not having one.
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Dev tooling moves fastest and carries the least risk -- it never reaches a user's
+      # install. One PR a week for all of it.
+      dev-dependencies:
+        dependency-type: development
+        update-types: [minor, patch]
+      # Runtime patches are safe enough to batch. A runtime MAJOR stays on its own PR, because
+      # @libsql/client or the MCP SDK changing shape deserves its own review and its own
+      # verification run.
+      production-patches:
+        dependency-type: production
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ['*']

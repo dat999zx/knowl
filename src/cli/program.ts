@@ -6,7 +6,7 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from '../core/version-check.js';
-import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from '../core/config.js';
+import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, hasAiConfigured } from '../core/config.js';
 import {
   installKnowlProjectGuidance,
   KnowlProjectGuidanceInstallResult,
@@ -54,6 +54,7 @@ import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } 
 import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince } from '../store/drift.js';
 import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage, SkillEntrypoint } from '../skills/registry.js';
+import { approveSkill, listTrust, revokeSkill } from '../skills/trust.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
 import { createSnapshot, restoreSnapshot } from '../store/snapshots.js';
 import { isEvidenceStale, listEvidenceForItem, resolveSymbolEvidence } from '../store/evidence-repository.js';
@@ -81,7 +82,9 @@ import { closeTranscriptDbs } from '../transcripts/database.js';
 import { applyTranscriptConfigTransition, describeTranscriptTeardown } from '../transcripts/teardown.js';
 
 // Load environment variables (.env file)
-dotenv.config();
+// See the note in src/index.ts: dotenv 17 writes a banner to stdout unless told not to, and
+// stdout here is a machine-readable channel.
+dotenv.config({ quiet: true });
 
 const program = new Command();
 
@@ -793,6 +796,10 @@ workspaceCommand
 workspaceCommand
   .command('promote')
   .description('Share existing knowledge with the other repos in this workspace')
+  // Same reason as `config`: a stray positional here is almost always a category list that
+  // cmd.exe split on its commas, and the action explains exactly that. Commander's generic
+  // arity error would replace the one message that tells a Windows user what went wrong.
+  .allowExcessArguments()
   .option('--category <list>', 'Comma-separated categories, e.g. decision,constraint,architecture')
   .option('--id <id...>', 'Specific item ids')
   .option('--apply', 'Actually promote; without this it is a dry run')
@@ -1149,7 +1156,11 @@ async function rebuildVectorEmbeddings(root: string, options: { force?: boolean 
 // --- 7. CONFIG COMMAND ---
 const configCommand = program
   .command('config')
-  .description('Interactively view or edit repository configuration');
+  .description('Interactively view or edit repository configuration')
+  // Commander 14 rejects excess arguments before the action runs. Left alone, `knowl config
+  // ai.model gpt-4o` would answer "too many arguments for 'config'" instead of naming the
+  // subcommand syntax the user was reaching for, which is the whole point of the check below.
+  .allowExcessArguments();
 
 configCommand.action(async () => {
   try {
@@ -2011,6 +2022,65 @@ skillCommand
     }
   });
 
+skillCommand
+  .command('approve')
+  .description('Approve a skill package for execution, pinned to its current contents')
+  .argument('<name>', 'Skill package name')
+  .option('--entrypoint <name...>', 'Approve only these entrypoints (defaults to all)')
+  .action(async (name, options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const record = await approveSkill(root, name, {
+        approvedBy: `cli:${process.env.USER ?? process.env.USERNAME ?? 'unknown'}`,
+        allowedEntrypoints: options.entrypoint,
+      });
+      console.log(`Approved skill "${name}".`);
+      console.log(`Hash: ${record.approvedHash}`);
+      console.log(`Entrypoints: ${record.allowedEntrypoints.join(', ')}`);
+      console.log('Any change to the package revokes this approval.');
+    } catch (error: any) {
+      console.error(`Error approving skill: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+skillCommand
+  .command('revoke')
+  .description('Withdraw approval for a skill package')
+  .argument('<name>', 'Skill package name')
+  .action(async name => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const removed = await revokeSkill(root, name);
+      console.log(removed ? `Revoked skill "${name}".` : `Skill "${name}" was not approved.`);
+    } catch (error: any) {
+      console.error(`Error revoking skill: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+skillCommand
+  .command('trust')
+  .description('List approved skill packages')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const trust = await listTrust(root);
+      const names = Object.keys(trust).sort();
+      if (names.length === 0) {
+        console.log('No skill package is approved for execution.');
+        return;
+      }
+      for (const name of names) {
+        const record = trust[name];
+        console.log(`${name}\t${record.approvedHash}\t${record.approvedAt}\t${record.allowedEntrypoints.join(',')}`);
+      }
+    } catch (error: any) {
+      console.error(`Error listing skill trust: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 const evidenceCommand = program
   .command('evidence')
   .description('Inspect provenance evidence linked to knowledge');
@@ -2223,7 +2293,15 @@ program
   .command('diagnose-startup')
   .description('Report why `knowl serve` startups were slow: per-phase timings, SQLite contention, stalls and host kills')
   .option('--since <hours>', 'How far back to look', '48')
+  .option('--clear', 'Delete the machine-wide startup diagnostics log')
   .action(async (options) => {
+    if (options.clear) {
+      const { clearStartupLog, startupLogPath } = await import('../core/startup-trace.js');
+      const file = startupLogPath();
+      clearStartupLog();
+      console.log(`Cleared ${file}`);
+      return;
+    }
     const { formatStartupReport } = await import('./startup-report.js');
     const hours = Number(options.since);
     if (!Number.isFinite(hours) || hours <= 0) {

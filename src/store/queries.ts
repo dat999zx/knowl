@@ -223,7 +223,7 @@ export async function queryKnowledgeCandidates(
     const baseQuery = db
       .select()
       .from(schema.knowledgeItems);
-    let results = conditions.length > 0
+    const results = conditions.length > 0
       ? await baseQuery.where(and(...conditions))
       : await baseQuery;
 

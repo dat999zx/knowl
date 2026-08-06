@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { fingerprintProfile } from '../../src/core/vector-profile.js';

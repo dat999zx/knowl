@@ -53,6 +53,22 @@ describe('CLI learned skills', () => {
     expect(readOutput).toContain('# Run App');
     expect(readOutput).toContain('"name": "run_app"');
 
+    // Running is gated on a human approving these exact bytes, so the CLI flow has to include
+    // it. Exercised through the real command rather than the module, because that command is
+    // the whole interface a user has to this decision.
+    const approveOutput = execSync(`node "${CLI_PATH}" skill approve run_app`, {
+      cwd: TEST_DIR,
+      encoding: 'utf-8',
+    });
+    expect(approveOutput).toContain('Approved skill "run_app"');
+    expect(approveOutput).toMatch(/Hash: sha256:[0-9a-f]{64}/);
+
+    const trustOutput = execSync(`node "${CLI_PATH}" skill trust`, {
+      cwd: TEST_DIR,
+      encoding: 'utf-8',
+    });
+    expect(trustOutput).toContain('run_app');
+
     const runOutput = execSync(`node "${CLI_PATH}" skill run run_app`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',

@@ -238,15 +238,19 @@ knowl config set search.vector.enabled false
 pooling together, because pooling is not discoverable at runtime and the wrong value produces
 plausible-looking vectors that rank badly with no error.
 
+<!-- generated:embedding-presets -->
 | Preset | Model | Size (q8) | Context | Languages |
 | --- | --- | --- | --- | --- |
+| `arctic-embed-m-v2` | `Snowflake/snowflake-arctic-embed-m-v2.0` | ~305MB | 8k | English + multilingual |
 | `granite-small-en-r2` *(default)* | `onnx-community/granite-embedding-small-english-r2-ONNX` | ~52MB | 8k | English |
-| `granite-97m-multilingual` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | ~98MB | 32k | 200+ |
+| `granite-97m-multilingual` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | ~98MB | 32k | 200+ languages |
 | `bge-small-en` | `Xenova/bge-small-en-v1.5` | ~34MB | 512 | English |
 | `minilm-l6-en` | `Xenova/all-MiniLM-L6-v2` | ~23MB | 512 | English |
 | `custom` | whatever you name | varies | varies | varies |
+<!-- /generated:embedding-presets -->
 
-Every preset emits 384-dimension vectors, so switching never changes the stored vector width.
+Every preset except `arctic-embed-m-v2` emits 384-dimension vectors; arctic is 768. Switching
+between the 384-dimension presets never changes the stored vector width.
 
 ```bash
 knowl config                                          # interactive picker
@@ -787,6 +791,28 @@ stale sessions, retrieval, the MCP inventory, agents and lifecycle registration,
 coverage, and workspace health. Warnings mean the project is not reported ready; they should not
 be treated as an all-clear.
 
+### Startup diagnostics
+
+`knowl diagnose-startup` reports why `knowl serve` startups were slow: per-phase timings, SQLite
+contention, stalls and host kills.
+
+```bash
+knowl diagnose-startup
+knowl diagnose-startup --since 12
+knowl diagnose-startup --clear
+```
+
+The log lives under the Knowl home rather than in any repository, because the question it
+answers spans every project on the machine. Each record holds a boot id, PID, elapsed and
+per-phase timings, Node version, hostname, load average, free memory, and a 16-character hash of
+the project root — never the path itself, and never environment variables or command-line
+arguments. On a shared host the path would have told every local account which projects you work
+on and when; the hash still answers "was this the same project?" and "were several servers
+stalling together?".
+
+The file is capped at 4MB, created owner-only (`0600`, in a `0700` directory), and removable
+with `--clear`. Set `KNOWL_DISABLE_STARTUP_TRACE=1` to turn it off entirely.
+
 ## Local viewer
 
 `knowl view` starts a browser inspector on `127.0.0.1`:
@@ -1110,7 +1136,7 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 
 | Command | Description |
 | --- | --- |
-| `knowl export <path>` | Write portable, manifest-verified JSONL |
+| `knowl export <path>` | Write portable, checksum-verified JSONL |
 | `knowl import <path> [--dry-run] [--on-divergence newer\|skip\|theirs\|fail]` | Import JSONL with an explicit divergence policy |
 | `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Create a checksummed SQLite snapshot, or restore one after verifying its manifest, size, checksum, and SQLite integrity |
 | `knowl config` / `get <key>` / `set <key> <value>` / `reset [key]` | Edit configuration interactively or from scripts |
@@ -1226,6 +1252,12 @@ knowl config set ai.apiKey '${CUSTOM_API_KEY}'
 
 Environment-variable placeholders are resolved at runtime. Ollama can run without an API key.
 Deterministic `knowl synthesize` does not use this configuration.
+
+`ai.apiKey` may be set literally, and `.knowl/config.json` is written owner-readable (`0600`) on
+POSIX systems and replaced atomically, so an interrupted write cannot leave a half file that
+`loadConfig` refuses to parse. Prefer an environment reference — the `'${VAR}'` form above — or
+the provider variables `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`, so the credential never lands
+in a file inside the repository directory at all.
 
 ## Local data
 

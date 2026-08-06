@@ -23,7 +23,10 @@ import dotenv from 'dotenv';
  * `dotenv` stays here rather than in either branch: it is a few kilobytes, and a `.env` that
  * applied to some commands and not others would be a worse surprise than the cost.
  */
-dotenv.config();
+// `quiet` is not optional decoration. dotenv 17 prints "injected env (N) from .env" plus a
+// rotating tip to STDOUT on every call, which lands in front of the JSON that `--json`
+// commands emit and makes it unparseable -- caught by four CLI suites on the upgrade.
+dotenv.config({ quiet: true });
 
 const command = process.argv[2];
 const wantsHelp = process.argv.includes('--help') || process.argv.includes('-h');

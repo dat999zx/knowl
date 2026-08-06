@@ -1,6 +1,6 @@
 {
   "name": "@dat999zx/knowl",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "description": "Governed project memory for AI coding agents. Local-first, typed knowledge atoms over MCP, with stale decisions retired instead of accumulated.",
   "main": "dist/index.js",
   "type": "module",
@@ -46,7 +46,13 @@
     "test:bench": "vitest run --config benchmarks/vitest.config.ts",
     "typecheck:bench": "tsc -p benchmarks/tsconfig.json",
     "bench:cr:build": "tsup benchmarks/memoryagentbench/cli.ts --format esm --outDir .benchmark-dist",
-    "bench:cr": "npm run bench:cr:build --silent && node .benchmark-dist/cli.js"
+    "bench:cr": "npm run bench:cr:build --silent && node .benchmark-dist/cli.js",
+    "docs:generate": "tsx scripts/generate-docs.ts",
+    "docs:check": "tsx scripts/generate-docs.ts --check",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "audit:prod": "npm audit --omit=dev --audit-level=critical",
+    "audit:report": "npm audit --omit=dev --audit-level=high"
   },
   "keywords": [
     "mcp",
@@ -70,11 +76,11 @@
     "@ai-sdk/openai": "^4.0.11",
     "@clack/prompts": "^1.7.0",
     "@huggingface/transformers": "^4.2.0",
-    "@libsql/client": "^0.14.0",
-    "@modelcontextprotocol/sdk": "^1.4.1",
+    "@libsql/client": "^0.17.4",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "ai": "^7.0.22",
-    "commander": "^12.1.0",
-    "dotenv": "^16.4.7",
+    "commander": "^14.0.3",
+    "dotenv": "^17.4.2",
     "drizzle-orm": "^0.45.2",
     "picocolors": "^1.1.1",
     "smol-toml": "^1.7.0",
@@ -85,10 +91,14 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.7",
     "drizzle-kit": "^0.31.10",
+    "eslint": "^10.8.0",
     "tsup": "^8.3.5",
+    "tsx": "^4.23.8",
     "typescript": "^5.7.3",
+    "typescript-eslint": "^8.66.0",
     "vitest": "^3.0.2"
   }
 }

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { ProjectConfig } from './types.js';
 import { ConfigError, ProjectNotFoundError } from './errors.js';
 import { DEFAULT_PRESET_ID } from './vector-profile.js';
+import { writeFileAtomic } from './atomic-write.js';
 
 export const DEFAULT_CONFIG: ProjectConfig = {
   version: 1,
@@ -201,7 +202,9 @@ export async function saveConfig(projectRoot: string, config: ProjectConfig): Pr
 
   try {
     await fs.mkdir(configDir, { recursive: true });
-    await fs.writeFile(configPath, JSON.stringify(normalized, null, 2), 'utf8');
+    // 0600: this file can still hold a literal `ai.apiKey`, and its mode should not depend on
+    // the user's umask. A no-op on Windows, where ACLs govern instead.
+    await writeFileAtomic(configPath, JSON.stringify(normalized, null, 2), { mode: 0o600 });
   } catch (error: any) {
     throw new ConfigError(`Failed to save config to "${configPath}": ${error.message}`);
   }

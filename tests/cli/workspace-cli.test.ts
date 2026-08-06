@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { closeDb, getClient, initDb } from '../../src/store/database.js';
+import { closeDb, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';

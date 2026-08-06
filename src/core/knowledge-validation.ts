@@ -52,7 +52,7 @@ function isSensitivePath(path: string): boolean {
 }
 const CREDENTIAL_URL = /\b[a-z][a-z\d+.-]*:\/\/[^\s/:@]+:[^\s@/]+@/i;
 const PEM_BLOCK = /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/i;
-const NAMED_SECRET = /\b(?:bearer|api[_-]?key|access[_-]?token|secret|password)\s*(?:=|:)?\s*[A-Za-z0-9._~+\/-]{16,}/i;
+const NAMED_SECRET = /\b(?:bearer|api[_-]?key|access[_-]?token|secret|password)\s*(?:=|:)?\s*[A-Za-z0-9._~+/-]{16,}/i;
 const KNOWN_TOKEN = /\b(?:sk-[A-Za-z0-9_-]{16,}|AKIA[A-Z0-9]{16}|gh[pousr]_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{10,})\b/;
 const HIGH_ENTROPY_TOKEN = /\b(?=[A-Za-z0-9_-]{32,}\b)(?=[A-Za-z0-9_-]*[a-z])(?=[A-Za-z0-9_-]*[A-Z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]+\b/;
 const GENERIC_SECRET_INDICATORS = new Set([

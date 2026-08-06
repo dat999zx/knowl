@@ -1,6 +1,6 @@
 import { queryKnowledgeBase } from '../store/queries.js';
 import { compareKnowledge } from '../ai/provider.js';
-import { KnowledgeAtom, KnowledgeItem, KnowledgeCategory } from '../core/types.js';
+import { KnowledgeAtom } from '../core/types.js';
 
 export interface VerifiedAtomAction {
   atom: KnowledgeAtom;

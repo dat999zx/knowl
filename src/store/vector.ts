@@ -1,8 +1,8 @@
 import { Client } from '@libsql/client';
-import { and, eq, SQL } from 'drizzle-orm';
+import { and, SQL } from 'drizzle-orm';
 import { KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
-import { getClient, getDb, withClientTransaction } from './database.js';
+import { getClient, withClientTransaction } from './database.js';
 import { getKnowledgeItems } from './repository.js';
 import { localStore, type StoreHandle } from './store-handle.js';
 import * as schema from './schema.js';

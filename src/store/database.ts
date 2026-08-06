@@ -8,7 +8,6 @@ import { resolveStorage } from './storage-roles.js';
 import { acquireClient, releaseAll, releaseClient } from './connection-pool.js';
 
 /** Shared type for database connection or transaction context. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export type DbConnection = LibSQLDatabase<typeof schema> | Parameters<Parameters<LibSQLDatabase<typeof schema>['transaction']>[0]>[0];
 
 type DbContext = {
