@@ -14,7 +14,9 @@ export default defineConfig({
     hookTimeout: 30_000,
     // Suites delete their own fixtures, but on Windows libSQL holds the -shm sidecar until
     // the owning process lets go, so those removals routinely fail and are swallowed. This
-    // sweeps up once, after every worker is done with its files.
+    // sweeps up once, after every worker is done with its files. It also gives the run its own
+    // `os.tmpdir()`, so the fixtures built there are one directory to collect rather than
+    // thousands scattered through a shared `%TEMP%`.
     globalSetup: ['./tests/global-teardown.ts'],
     // These suites are dominated by child-process spawns rather than CPU work, so
     // extra workers buy little and instead starve vitest's own worker RPC on a

@@ -25,7 +25,7 @@ const selected = (process.env.KNOWL_MUTATION_TESTS ?? '')
   .map((entry) => entry.trim())
   .filter((entry) => entry.length > 0);
 
-export default mergeConfig(
+const config = mergeConfig(
   base,
   defineConfig({
     test: {
@@ -59,6 +59,13 @@ export default mergeConfig(
       // `.knowl-test-home`. Measured: it is what makes runner processes die and restart
       // (~40s each), not the mutants. Housekeeping is not a correctness gate; a mutation run
       // leaves its scratch behind and the next `npm test` collects it.
+      //
+      // The temporary-directory half is kept, via an entry point that carries only that half.
+      // It gives each run its own `os.tmpdir()`, which no concurrent run can see, let alone
+      // delete from -- and a mutation job is where the alternative costs most, leaking a run's
+      // worth of `mkdtemp` fixtures per mutant.
+      //
+      // Set below the merge, not here. See the assignment for why here does not work.
       globalSetup: [],
       // One vitest worker per Stryker runner, but ONLY under Stryker. Stryker already runs
       // several runners at once, so vitest's own 4-way fan-out multiplies into ~12 processes
@@ -81,3 +88,19 @@ export default mergeConfig(
     },
   }),
 );
+
+/**
+ * Replaced after the merge, because `mergeConfig` concatenates arrays rather than overriding
+ * them.
+ *
+ * `globalSetup: []` above merges to `[...base, ...[]]`, which is the base's list unchanged --
+ * so the repository sweep this file has always documented itself as disabling has in fact been
+ * running under every mutation job, deleting the concurrent runners' live fixtures exactly as
+ * the comment above warns. Found 2026-08-06 by watching setup run twice: the base entry and
+ * this one, the second minting its run root inside the first's redirected `os.tmpdir()`.
+ *
+ * Assignment is the only way to take something out of a merged array.
+ */
+if (config.test) config.test.globalSetup = ['./tests/global-temp-setup.ts'];
+
+export default config;
