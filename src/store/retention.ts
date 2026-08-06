@@ -315,16 +315,19 @@ async function adoptOne(
   try {
     await copyFile(source, partial);
 
-    // Length is the cheap end of "did all of it arrive". A short copy is what a full disk
-    // looks like, and a 300 MB model that is silently 200 MB fails much later and much worse.
-    const [from, to] = await Promise.all([fs.stat(source), fs.stat(partial)]);
-    if (from.size !== to.size) throw new Error(`short copy: ${to.size} of ${from.size} bytes`);
-
-    // Flushed before the rename, not after. Rename is atomic with respect to other
-    // processes, not with respect to power loss: without this the directory entry can reach
-    // the disk while the contents have not, which is a model that exists and is empty.
+    // Opened once, then measured and flushed through the descriptor. Stat-by-path followed by
+    // open-by-path is two lookups of the same name, so the size that was checked and the bytes
+    // that get flushed and renamed are not guaranteed to be the same file.
     const handle = await fs.open(partial, 'r+');
     try {
+      // Length is the cheap end of "did all of it arrive". A short copy is what a full disk
+      // looks like, and a 300 MB model that is silently 200 MB fails much later and much worse.
+      const [from, to] = await Promise.all([fs.stat(source), handle.stat()]);
+      if (from.size !== to.size) throw new Error(`short copy: ${to.size} of ${from.size} bytes`);
+
+      // Flushed before the rename, not after. Rename is atomic with respect to other
+      // processes, not with respect to power loss: without this the directory entry can reach
+      // the disk while the contents have not, which is a model that exists and is empty.
       await handle.sync();
     } finally {
       await handle.close();

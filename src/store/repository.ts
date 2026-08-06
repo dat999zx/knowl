@@ -137,7 +137,6 @@ export async function createKnowledgeItem(
   // not: it writes raw SQL precisely because a dump is foreign data that may predate any guard
   // this build has, and refusing it would make someone's export unloadable.
   assertConfidenceInRange(item.confidence, item.title);
-  const conn = dbConnection || getDb();
   const now = new Date().toISOString();
   const id = generateId();
   const affectedPaths = normalizeAffectedPaths(item.affectedPaths);
@@ -306,7 +305,6 @@ export async function updateKnowledgeItem(
   // `knowledge_assertions` row carrying `updates.confidence` -- the same column, one table
   // over, and the one temporal queries read.
   assertConfidenceInRange(updates.confidence, updates.title ?? id);
-  const conn = dbConnection || getDb();
   const now = new Date().toISOString();
 
   const operation = async (exec: any) => {

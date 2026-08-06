@@ -6,7 +6,6 @@ import type {
 } from '../../core/host-hook-types.js';
 import { isSessionEventType } from './lifecycle.js';
 import { hostProfile, isHookHost } from '../../session/hosts/index.js';
-import { AgentName } from './types.js';
 
 /**
  * The hook types are declared in `core/host-hook-types.ts` and re-exported here.
@@ -36,12 +35,6 @@ const stringValue = (value: unknown, max = MAX_STRING): string | undefined =>
 
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-
-function requireString(raw: Record<string, unknown>, key: string): string {
-  const value = stringValue(raw[key]);
-  if (!value) throw new IncompleteHostHookPayloadError(`Host hook payload requires ${key}.`);
-  return value;
-}
 
 function requireProjectRoot(raw: Record<string, unknown>): string {
   const cwd = stringValue(raw.cwd);

@@ -31,6 +31,7 @@ describe('chooseThreshold', () => {
 
     const { threshold, agreement } = chooseThreshold(scored);
 
+    expect(threshold).toBeCloseTo(0.575, 10);
     expect(agreement).toBeCloseTo(0.8, 10);
   });
 

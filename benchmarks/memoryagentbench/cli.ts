@@ -8,11 +8,29 @@
 import { Command } from 'commander';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { z } from 'zod';
 import { findProjectRoot } from '../../src/core/config.js';
 import { runConflictResolution } from './runner.js';
 
 const SPLIT_URL =
   'https://datasets-server.huggingface.co/rows?dataset=ai-hyz%2FMemoryAgentBench&config=default&split=Conflict_Resolution';
+
+// The response is a third-party dataset server, so nothing from it reaches disk unchecked --
+// `fetch` writes a file the `run` subcommand later parses as trusted input. Shape first, then
+// the derived id: it names the instance and is one edit away from naming a path, so it is
+// constrained to a charset that cannot traverse or hide a separator.
+const RowSchema = z.object({
+  context: z.string(),
+  questions: z.array(z.string()),
+  answers: z.array(z.string()),
+  metadata: z.object({ qa_pair_ids: z.array(z.string()).optional() }).partial().optional(),
+});
+
+const SplitResponseSchema = z.object({
+  rows: z.array(z.object({ row: RowSchema })),
+});
+
+const SAFE_ID = /^[A-Za-z0-9._-]+$/;
 
 const program = new Command()
   .name('bench:cr')
@@ -26,12 +44,12 @@ program
   .action(async (options) => {
     const response = await fetch(`${SPLIT_URL}&offset=${Number(options.row)}&length=1`);
     if (!response.ok) throw new Error(`Download failed: ${response.status} ${response.statusText}`);
-    const payload = (await response.json()) as { rows: Array<{ row: Record<string, unknown> }> };
-    const row = payload.rows?.[0]?.row;
+    const payload = SplitResponseSchema.parse(await response.json());
+    const row = payload.rows[0]?.row;
     if (!row) throw new Error('No row returned.');
 
-    const metadata = (row.metadata ?? {}) as { qa_pair_ids?: string[] };
-    const id = metadata.qa_pair_ids?.[0]?.replace(/_no\d+$/, '') ?? `row-${options.row}`;
+    const candidate = row.metadata?.qa_pair_ids?.[0]?.replace(/_no\d+$/, '');
+    const id = candidate && SAFE_ID.test(candidate) ? candidate : `row-${Number(options.row)}`;
     const instance = { id, context: row.context, questions: row.questions, answers: row.answers };
 
     const outPath = path.resolve(options.out);
@@ -39,7 +57,7 @@ program
     await fs.writeFile(outPath, JSON.stringify(instance, null, 2), 'utf-8');
 
     console.log(`Wrote ${id} to ${options.out}`);
-    console.log(`  context ${String(row.context).length} chars · ${(row.questions as string[]).length} questions`);
+    console.log(`  context ${row.context.length} chars · ${row.questions.length} questions`);
   });
 
 program

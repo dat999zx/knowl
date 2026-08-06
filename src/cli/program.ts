@@ -1,9 +1,9 @@
 import { Command } from 'commander';
-import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
+import { spawnWorkLoopCommand } from './windows-spawn.js';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from '../core/version-check.js';
 import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, hasAiConfigured } from '../core/config.js';
@@ -148,52 +148,6 @@ function printPrCheckResult(result: DriftCheckResult) {
 
 function formatCommand(command: string, args: string[]) {
   return [command, ...args].join(' ');
-}
-
-function hasPathSeparator(command: string) {
-  return command.includes('/') || command.includes('\\');
-}
-
-function resolveWindowsCommand(command: string) {
-  const ext = path.extname(command);
-  if (ext) return command;
-
-  const pathEntries = (process.env.Path || process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  const pathExts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
-  const searchDirs = hasPathSeparator(command) ? [''] : [process.cwd(), ...pathEntries];
-
-  for (const dir of searchDirs) {
-    for (const pathExt of pathExts) {
-      const candidate = dir ? path.join(dir, `${command}${pathExt}`) : `${command}${pathExt}`;
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-
-  return command;
-}
-
-function isWindowsBatchCommand(command: string) {
-  const resolved = resolveWindowsCommand(command);
-  const ext = path.extname(resolved).toLowerCase();
-  return ext === '.cmd' || ext === '.bat';
-}
-
-function spawnWorkLoopCommand(command: string, args: string[]) {
-  const spawnOptions = {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: 'inherit' as const,
-  };
-
-  if (process.platform !== 'win32') {
-    return spawnSync(command, args, spawnOptions);
-  }
-
-  if (isWindowsBatchCommand(command)) {
-    return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', command, ...args], spawnOptions);
-  }
-
-  return spawnSync(command, args, spawnOptions);
 }
 
 function collectOption(value: string, previous: string[]) {
@@ -367,7 +321,7 @@ program
 
       // Bootstrap SQLite database
       await initDb(cwd);
-      const project = await repo.createProject(cwd, name);
+      await repo.createProject(cwd, name);
       await closeDb();
       // Recorded here as well as in `upgrade`, so a repository is reachable by a machine-wide
       // sweep from the moment it exists rather than only after its first upgrade.

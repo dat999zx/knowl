@@ -73,7 +73,6 @@ export async function initDb(projectRoot: string): Promise<LibSQLDatabase<typeof
 }
 
 export async function initDbPath(dbPath: string, options: InitDbOptions = {}): Promise<LibSQLDatabase<typeof schema>> {
-  const fileUrl = `file:${dbPath}`;
   const configRoot = options.configRoot ?? path.dirname(path.dirname(dbPath));
 
   try {
