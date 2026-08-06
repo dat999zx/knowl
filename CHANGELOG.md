@@ -3,6 +3,76 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 3.1.0 — 2026-08-05
+
+Retrieval quality, what a memory read actually hands back, and the storage engine. Includes the
+community improvement round in [#16](https://github.com/dat999zx/knowl/pull/16) by
+[@William-Sommers](https://github.com/William-Sommers), measured throughout.
+
+### Agents receive whole facts
+
+- **`knowl_query` returns 2,000 characters of an item, up from 600.** Measured on a real 556-item
+  store, 600 cut 48.7% of items — with the empty truncation marker, so a caller could not tell a
+  short complete atom from the opening third of a long one while doctrine told it to answer from
+  memory rather than read files. 2,000 returns 90.6% whole for about 305 extra tokens on a
+  three-result query.
+- **`truncated: true`** is present when content was cut, and absent otherwise.
+- **`affectedPaths` is returned with every result.** It was built, stored on roughly half of all
+  items, and never left the compact allowlist. Across 356 archived cases where an agent queried
+  memory and then opened a file within three tool calls, the result had named that file 17.1% of
+  the time; it could not have been higher.
+- **`score` says "no opinion" instead of saying nothing.** Where no calibrated relevance exists it
+  is now the string `uncalibrated (lexical-only | not embedded | layered namespaces)` rather than
+  an absent field, which was indistinguishable from the ranker having forgotten.
+- **The "2–6 keywords" rule is gone.** A ground-truth ablation on the shipped suites showed
+  truncating over-length queries to six words cost 4.7 and 7.2 points of hit@1, while on-subject
+  extension reached 100%. Count was the wrong variable; guidance now names relevance.
+
+### Retrieval
+
+- **MMR replaced by near-duplicate demotion on both paths.** On a topical query the second-best
+  answer necessarily shares vocabulary with the best, so MMR was billing relevance as redundancy.
+  Recall@10 on the paraphrase suite went 0.845 → 0.964, and every metric of every shipped suite
+  improved. Confirmed on a data-disjoint instrument: `benchmark:accuracy` Recall@5 0.710 → 0.748.
+- **The lexical tokeniser handles non-Latin scripts.** An ASCII-only character class made every
+  accented or non-Latin letter a separator, so a Vietnamese query naming a stored item returned
+  nothing at all.
+
+### Storage engine
+
+- **`synchronous = NORMAL` on all three databases**, chosen rather than inherited. Un-batched
+  writes — one `knowl_store`, one hook capture — cost 3.488 ms/row at FULL against 0.832 at
+  NORMAL, and six contending processes went 173 → 337 writes/s. An application crash, a killed
+  `knowl serve`, `Ctrl-C` or a closed lid still lose nothing; only a power cut can drop the last
+  seconds, and the file stays clean.
+- **`KNOWL_SQLITE_SYNCHRONOUS`** overrides it. `FULL` restores fsync-per-commit. `OFF` is refused:
+  it can corrupt on power loss and measured no faster than NORMAL. An unrecognised value stops the
+  command rather than silently falling back.
+- **Transcript embedding is reproducible.** A message's vector no longer depends on which others
+  shared its forward pass, which the catch-up deadline had been deciding — two indexes of the same
+  archive disagreed on 651 of 956 messages, and the ranker returned a different top-5 for 42.8% of
+  real queries. Measured free on real messages.
+- The embedding reindex commits once per pass rather than once per row: 88,549 ms → 2,220 ms.
+
+### Fixes
+
+- `knowl init` reads `.knowl/config.json` as the project marker, so a half-finished init can be
+  finished instead of failing identically on every retry.
+- The transcript byte-offset backfill is no longer starved on exactly the busy machines that need
+  it — it checked its deadline before touching the first file.
+- A feedback confirmation recorded in the same millisecond as a tier boundary is no longer dropped.
+- A schema-locked repository reports the version stamp rather than advising `knowl init`.
+- The MemoryAgentBench runner, dead since the embedding-profile guard landed.
+
+### Internal
+
+- `MAX_ITEM_CONTENT_CHARS` reached fourteen truncation sites across five files and is now four
+  constants with one policy each. Two would have broken quietly when it moved: the markdown
+  formatters cap items inside a whole-response budget, and `knowl_skill_run` truncated subprocess
+  output with it.
+- 100+ tests added, many from a targeted mutation sweep that found the secret-scanning fix itself
+  had a comment and no test. `npm run test:mutation` runs a slice; it is not wired into CI.
+
 ## 3.0.3 — 2026-08-05
 
 Documentation and packaging only. No runtime behaviour changes.

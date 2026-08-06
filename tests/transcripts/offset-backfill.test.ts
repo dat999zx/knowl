@@ -5,7 +5,7 @@ import { createClient } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/database.js';
 import { runIndexPass } from '../../src/transcripts/index-pass.js';
-import { offsetResumePoint } from '../../src/transcripts/offset-backfill.js';
+import { fillMissingByteOffsets, offsetResumePoint } from '../../src/transcripts/offset-backfill.js';
 import { encodeProjectDir } from '../../src/transcripts/paths.js';
 import { readMessagesFor } from '../../src/transcripts/read.js';
 
@@ -156,6 +156,85 @@ describe('an index whose rows predate the byte_offset column', () => {
 describe('the backfill inside a budget', () => {
   const many = (n: number) => Array.from({ length: n }, (_, i) => line('user', `message ${i}`));
 
+  // K-65's shape, third appearance: the expiry test ran BEFORE the first file, so a budget
+  // eaten by scheduling before the loop was reached filled zero rows — pass after pass, each
+  // reporting an honest `complete: false` and doing nothing. On a busy machine the backfill
+  // was starved forever. A budget real at the OWNING PASS's start now buys exactly one batch,
+  // the same bounded overrun the index pass accepts.
+  //
+  // Asserted on `budgetWasReal` rather than through a clock. The first version of this test
+  // passed `Date.now() + 1` to `runIndexPass` and claimed to be deterministic under any load.
+  // It was not, and it failed roughly one full-suite run in five. `runIndexPass` computes
+  // `budgeted = deadline > startedAt` where `startedAt` is its own first statement, so the
+  // guarantee only arms if under 1 ms elapses between the caller reading the clock and the pass
+  // reading it — one descheduling gap is enough to turn it off. Widening the deadline cannot
+  // fix that: measured, the budgeted pass here is the SECOND one, the file is already indexed,
+  // and it reaches the backfill in 4 ms, so the deadline also has to be spent by then. A window
+  // of 1–4 ms has no safe constant in it. The guarantee is a semantic one, so it is pinned as
+  // one, and the wiring through `runIndexPass` is pinned separately below.
+  it('a budget real at the pass start buys exactly one batch, however late it arrives', async () => {
+    const lines = many(1_200);
+    await fs.writeFile(sessionFile('a'), lines.join(''));
+    await pass();
+    await regressToNoOffsets();
+    await openTranscriptDb(dbPath);
+
+    // Already spent, by a margin no scheduling delay can close either way.
+    const outcome = await fillMissingByteOffsets({
+      dbPath,
+      deadline: Date.now() - 10_000,
+      budgetWasReal: true,
+    });
+
+    // Exactly one WRITE_BATCH: enough that the backfill is never starved, bounded so an
+    // expired budget still stops the pass.
+    expect(outcome.filled).toBe(200);
+    expect(outcome.complete).toBe(false);
+
+    const filled = (await storedOffsets()).filter(o => o !== null).length;
+    expect(filled).toBe(200);
+
+    // Still a prefix — the guarantee changes when work stops, never what resuming means.
+    const partial = await storedOffsets();
+    expect(partial.slice(0, filled).every(o => o !== null)).toBe(true);
+  }, 30_000);
+
+  it('buys nothing when the budget was already spent before the pass began', async () => {
+    const lines = many(1_200);
+    await fs.writeFile(sessionFile('a'), lines.join(''));
+    await pass();
+    await regressToNoOffsets();
+    await openTranscriptDb(dbPath);
+
+    // The other half of the same rule, and the reason the verdict belongs to the caller: a
+    // deadline that had already expired when the pass started is obeyed exactly.
+    const outcome = await fillMissingByteOffsets({
+      dbPath,
+      deadline: Date.now() - 10_000,
+      budgetWasReal: false,
+    });
+
+    expect(outcome.filled).toBe(0);
+    expect(outcome.complete).toBe(false);
+    expect((await storedOffsets()).filter(o => o !== null)).toHaveLength(0);
+  }, 30_000);
+
+  it('hands the pass-start verdict down, so an already-spent budget backfills nothing', async () => {
+    const lines = many(1_200);
+    await fs.writeFile(sessionFile('a'), lines.join(''));
+    await pass();
+    await regressToNoOffsets();
+    await openTranscriptDb(dbPath);
+
+    // The wiring, through the real `runIndexPass`, with no race in either direction: a deadline
+    // ten seconds in the past is expired at `startedAt` on any machine, so `budgeted` is false
+    // and the guarantee must not arm.
+    const result = await pass(Date.now() - 10_000);
+
+    expect(result.offsetsFilled ?? 0).toBe(0);
+    expect((await storedOffsets()).filter(o => o !== null)).toHaveLength(0);
+  }, 30_000);
+
   it('stops at the deadline and finishes on later passes, filling each row once', async () => {
     const lines = many(1_200);
     await fs.writeFile(sessionFile('a'), lines.join(''));
@@ -163,8 +242,12 @@ describe('the backfill inside a budget', () => {
     await regressToNoOffsets();
     await openTranscriptDb(dbPath);
 
-    // Tight enough to stop partway, real enough to do some work.
-    const first = await pass(Date.now() + 40);
+    // A real-but-instantly-spent budget: the one-batch guarantee makes the partial fill
+    // DETERMINISTIC. This used to be `Date.now() + 40`, which asserted a timing coincidence —
+    // under load it filled 0 (the lower bound failed, 2/5 in full runs), and on a quiet
+    // machine it filled all 1,200 inside the window (the upper bound failed). Both bounds
+    // were scheduling accidents. Now the stop is expressed in work: exactly one batch.
+    const first = await pass(Date.now() + 1);
     const partial = await storedOffsets();
     const filledFirst = partial.filter(o => o !== null).length;
     expect(first.offsetsFilled).toBeGreaterThan(0);

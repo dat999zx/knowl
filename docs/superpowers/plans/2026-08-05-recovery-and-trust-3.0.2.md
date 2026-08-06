@@ -43,7 +43,7 @@ wrong produces a fix that appears to work and does not.
 
 ## Out of scope — already planned elsewhere
 
-[2026-08-04-hardening-and-ci-3.1.0.md](2026-08-04-hardening-and-ci-3.1.0.md) already covers
+[2026-08-04-hardening-and-ci-3.2.0.md](2026-08-04-hardening-and-ci-3.2.0.md) already covers
 hash-pinned skill approval with an environment allowlist and `timeout`/`maxBuffer` ceilings
 (Task 1), bounded streaming JSONL import (Task 2), atomic owner-only config and diagnostics
 writes (Task 3), generated README sections (Task 4), and CI gates (Task 5). The external
@@ -1785,7 +1785,7 @@ Do not push the tag until a human has reviewed the diff. The tag triggers publis
 **Deliberately not here, with the reason:**
 
 - §5 skill approval model, §6 streaming import, §10 config writes, §11 diagnostics, §13 CI
-  matrix — all owned by `2026-08-04-hardening-and-ci-3.1.0.md`.
+  matrix — all owned by `2026-08-04-hardening-and-ci-3.2.0.md`.
 - K-NEW-3 `spawnSync` timeout — owned by that plan's Task 1. Pull forward as a standalone
   one-liner if 3.1.0 slips more than a few weeks, because a hung skill freezes the whole
   server.

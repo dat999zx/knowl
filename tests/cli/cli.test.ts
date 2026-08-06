@@ -278,7 +278,7 @@ describe('CLI Integration', () => {
     const knowlContent = await fs.readFile(path.join(AGENTS_REFRESH_TEST_DIR, 'KNOWL.md'), 'utf-8');
     expect(managedSection(content)).toBe(managedSection(knowlContent));
     expect(content).toContain('For every project-specific request');
-    expect(content).toContain('call `knowl_query` with 2-6 concise keywords');
+    expect(content).toContain('call `knowl_query` before repository files or commands');
     expect(content).toContain('### Lifecycle modes');
     expect(content).toContain('### Complete MCP tool routing');
     expect(content).toContain('knowl_feedback');

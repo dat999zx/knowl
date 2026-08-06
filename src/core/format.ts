@@ -1,5 +1,5 @@
 import { KnowledgeCommit, KnowledgeItem } from './types.js';
-import { DEFAULT_CONTEXT_MAX_CHARS, MAX_ITEM_CONTENT_CHARS, truncateText } from './token-budget.js';
+import { DEFAULT_CONTEXT_MAX_CHARS, MAX_SUMMARY_ITEM_CHARS, truncateText } from './token-budget.js';
 import { renderSkillsSection, selectSurfacedSkills } from './skill-surface.js';
 
 /**
@@ -13,7 +13,7 @@ export function formatHierarchyToMarkdown(hierarchy: {
   archive: KnowledgeItem[];
 }, options: { maxChars?: number; maxItemChars?: number } = {}): string {
   const maxChars = options.maxChars ?? DEFAULT_CONTEXT_MAX_CHARS;
-  const maxItemChars = options.maxItemChars ?? MAX_ITEM_CONTENT_CHARS;
+  const maxItemChars = options.maxItemChars ?? MAX_SUMMARY_ITEM_CHARS;
   const itemText = (value: string) => truncateText(value, maxItemChars);
   let md = `# KNOWL — PROJECT BRAIN STATE\n\n`;
 
@@ -138,7 +138,7 @@ export function formatRecentContextToMarkdown(context: {
   skills?: KnowledgeItem[];
 }, options: { maxChars?: number; maxItemChars?: number; includeTags?: boolean; includeCommitDetails?: boolean; workspace?: WorkspaceContext } = {}): string {
   const maxChars = options.maxChars ?? DEFAULT_CONTEXT_MAX_CHARS;
-  const maxItemChars = options.maxItemChars ?? MAX_ITEM_CONTENT_CHARS;
+  const maxItemChars = options.maxItemChars ?? MAX_SUMMARY_ITEM_CHARS;
   let md = '# KNOWL - RECENT SESSION CONTEXT\n\n';
 
   // Absent produces byte-identical output, the same rule formatWorkspaceBlock already holds

@@ -8,7 +8,7 @@ export const KNOWL_MCP_TOOL_GROUPS = [
   {
     label: 'Focused retrieval',
     tools: ['knowl_query'],
-    routing: 'Default first call for a specific project request and again when switching areas. Use 2-6 keywords and omit category unless certain.',
+    routing: 'Default first call for a specific project request and again when switching areas. Use the words that name the subject, without padding, and omit category unless certain.',
   },
   {
     label: 'Context views',
@@ -59,7 +59,7 @@ export const KNOWL_MCP_TOOL_NAMES = KNOWL_MCP_TOOL_GROUPS
 
 const REQUIRED_WORKFLOW = `### Required workflow
 
-1. For every project-specific request, call \`knowl_query\` with 2-6 concise keywords before repository files or commands.
+1. For every project-specific request, call \`knowl_query\` before repository files or commands, using the words that name the subject: another on-subject term retrieves better, an off-subject one retrieves worse, so do not pad the query and do not trim a real term to shorten it.
 2. Skip a new query only when directly relevant active lifecycle context, a same-request query, or manual \`knowl_task_start\` relevant memory already answers it.
 3. Use a relevant active hit immediately. Inspect files only after a miss, conflict, stale/low-confidence memory, or explicit verification request.
 4. Query again before switching to a distinct subtask or project area.
@@ -139,7 +139,7 @@ const TRANSCRIPT_ROUTE_LINE =
 function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: boolean } = {}): string {
   return [
     'KNOWL WORKFLOW - for project work.',
-    'Start: use a relevant active lifecycle hit; else call knowl_query with 2-6 keywords before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
+    'Start: use a relevant active lifecycle hit; else call knowl_query with the words that name the subject before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
     modeLine,
     'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
     'Route by what you need; the tool list names them:',
@@ -169,14 +169,14 @@ export function mcpServerInstructions(config: ProjectConfig | null): string {
   if (!config || !isTranscriptSearchEnabled(config)) return KNOWL_MCP_SERVER_INSTRUCTIONS;
   return renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE, { transcripts: true });
 }
-export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with 2-6 keywords before repository files or commands. Store or update verified durable findings. Claude hooks own lifecycle; do not start the manual task loop.';
+export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with the words that name the subject before repository files or commands. Store or update verified durable findings. Claude hooks own lifecycle; do not start the manual task loop.';
 
 // Short per-prompt reminder (UserPromptSubmit). The full tool routing lives in
 // KNOWL.md and the MCP initialize instructions, so the per-prompt card only needs
 // the core loop — keeping it ~1/3 the size of the operational card.
 export const KNOWL_CLAUDE_PROMPT_REMINDER = [
   'KNOWL — project memory is active.',
-  'For any project question or new subtask, call knowl_query (2-6 keywords) BEFORE reading files; use a relevant active hit directly and inspect files only on a miss, conflict, or stale/low-confidence result.',
+  'For any project question or new subtask, call knowl_query BEFORE reading files, using the words that name the subject and no padding; use a relevant active hit directly and inspect files only on a miss, conflict, or stale/low-confidence result.',
   'Store or update verified durable decisions, facts, state, and constraints as you go with knowl_store / knowl_decide / knowl_update; never store secrets or routine noise.',
   'Claude hooks own the lifecycle — do not call knowl_task_start/checkpoint/finish. Full tool routing is in KNOWL.md.',
 ].join(' ');
@@ -193,7 +193,7 @@ export const KNOWL_CLAUDE_PROMPT_REMINDER = [
  */
 export const KNOWL_SUBAGENT_BOOTSTRAP_CARD = [
   'KNOWL — project memory is active for this subagent.',
-  'Before reading repository files, call knowl_query with 2-6 keywords and use a relevant active hit directly; inspect files only on a miss, conflict, or stale result.',
+  'Before reading repository files, call knowl_query with the words that name the subject and use a relevant active hit directly; inspect files only on a miss, conflict, or stale result.',
   'Store verified durable findings with knowl_store or knowl_update before you return; never store secrets or routine noise.',
   'Do not call knowl_task_start/checkpoint/finish — the host session owns the lifecycle.',
   'If a result carries a repo field, that knowledge belongs to that repo and describes it, not necessarily this one.',

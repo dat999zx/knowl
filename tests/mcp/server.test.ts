@@ -7,7 +7,7 @@ import { startMemorySession, appendMemorySessionEvent } from '../../src/store/se
 import { createEvidence, linkKnowledgeEvidence } from '../../src/store/evidence-repository.js';
 import { createMcpServer } from '../../src/mcp/server.js';
 import { ProjectConfig } from '../../src/core/types.js';
-import { DEFAULT_CONTEXT_MAX_CHARS } from '../../src/core/token-budget.js';
+import { DEFAULT_CONTEXT_MAX_CHARS, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS } from '../../src/core/token-budget.js';
 import {
   KNOWL_MCP_SERVER_INSTRUCTIONS,
   KNOWL_MCP_TOOL_NAMES,
@@ -307,9 +307,16 @@ describe('MCP Server Layer', () => {
     expect(queryTool.description).toContain('before each new subtask');
     expect(queryTool.description).toContain('answer from Knowl without inspecting repository files');
     expect(queryTool.description).toContain('Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests');
-    expect(queryTool.inputSchema.properties.query.description).toContain('2-6 concise keywords');
+    // Was "2-6 concise keywords". A ground-truth ablation over this project's own suites
+    // refuted the numeric cap -- see tests/core/knowl-guidance.test.ts and docs/evals/agent-surface.md.
+    expect(queryTool.inputSchema.properties.query.description).toContain('not the whole sentence');
+    expect(queryTool.inputSchema.properties.query.description).toContain('Length is not the variable');
     expect(queryTool.inputSchema.properties.category.description).toContain('Omit unless you are certain');
     expect(queryTool.inputSchema.properties.limit.description).toContain('defaults to 3');
+    // Read from the constant, never restated. This sentence is doctrine an agent acts on, and
+    // the ceiling has already moved once while a literal beside it did not.
+    expect(queryTool.description).toContain(`cut at ${MAX_ITEM_CONTENT_CHARS} characters`);
+    expect(queryTool.description).not.toContain('cut at 600 characters');
     expect(stateTool.description).toContain('broad project-memory summaries');
 
     const storeTool = res.result.tools.find((t: any) => t.name === 'knowl_store');
@@ -644,7 +651,10 @@ describe('MCP Server Layer', () => {
     const res = await runRpcRequest('tools/call', { name: 'knowl_timeline', arguments: { itemId: item.id } });
     const payload = JSON.parse(res.result.content[0].text);
 
-    expect(payload[0].content.length).toBeLessThanOrEqual(600);
+    // A timeline payload is ASSERTION content, shaped by response-format.ts, so its ceiling is
+    // the preview one and not the item one. Pointing this at MAX_ITEM_CONTENT_CHARS would make
+    // it pass while testing nothing: the seeded item is exactly 2,000 characters.
+    expect(payload[0].content.length).toBeLessThanOrEqual(MAX_PREVIEW_CHARS);
     expect(res.result.content[0].text.length).toBeLessThan(1_000);
   });
 
@@ -663,7 +673,7 @@ describe('MCP Server Layer', () => {
     const payload = JSON.parse(res.result.content[0].text);
 
     expect(res.result.content[0].text.length).toBeLessThan(2_000);
-    expect(payload[0].excerpt.length).toBeLessThanOrEqual(600);
+    expect(payload[0].excerpt.length).toBeLessThanOrEqual(MAX_PREVIEW_CHARS);
     expect(payload[0]).not.toHaveProperty('metadata');
   });
 

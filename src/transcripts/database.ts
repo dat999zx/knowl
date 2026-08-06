@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createClient, type Client } from '@libsql/client';
+import { synchronousPragma } from '../core/sqlite-sync.js';
 
 /**
  * Schema for `.knowl/transcripts.db`.
@@ -163,12 +164,18 @@ export async function readTranscriptIndexState(client: Client): Promise<Transcri
   }
 }
 
-const BASE_STATEMENTS = [
-  // First, for the same reason as the knowledge database: journal_mode takes a lock, and a
-  // connection's default busy_timeout is 0, so a concurrent writer would fail the open outright.
-  'PRAGMA busy_timeout = 10000;',
-  'PRAGMA journal_mode = WAL;',
-];
+function baseStatements(): string[] {
+  return [
+    // First, for the same reason as the knowledge database: journal_mode takes a lock, and a
+    // connection's default busy_timeout is 0, so a concurrent writer would fail the open outright.
+    'PRAGMA busy_timeout = 10000;',
+    'PRAGMA journal_mode = WAL;',
+    // See `synchronousPragma` for the measurements, the durability trade, and the override. It
+    // matters at least as much here: an index pass writes a great many small rows, and this
+    // database is the one a backfill hammers while a live session writes beside it.
+    synchronousPragma(),
+  ];
+}
 
 const clients = new Map<string, Client>();
 
@@ -215,7 +222,7 @@ export async function openTranscriptDb(
       await client.execute('PRAGMA busy_timeout = 10000;');
       await client.execute('PRAGMA query_only = ON;');
     } else {
-      for (const statement of BASE_STATEMENTS) await client.execute(statement);
+      for (const statement of baseStatements()) await client.execute(statement);
       for (const statement of TRANSCRIPT_SCHEMA_STATEMENTS) await client.execute(statement);
       await addNamingColumns(client);
     }

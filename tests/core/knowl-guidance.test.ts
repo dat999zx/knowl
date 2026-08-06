@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
+  KNOWL_CLAUDE_CONTINUATION_REMINDER,
   KNOWL_CLAUDE_MODE_LINE,
   KNOWL_CLAUDE_OPERATIONAL_CARD,
+  KNOWL_CLAUDE_PROMPT_REMINDER,
   KNOWL_HOST_NEUTRAL_MODE_LINE,
   KNOWL_MCP_SERVER_INSTRUCTIONS,
   KNOWL_MCP_TOOL_GROUPS,
@@ -27,7 +29,7 @@ const EXPECTED_TOOLS = [
 
 const EXPECTED_CLAUDE_CARD = [
   'KNOWL WORKFLOW - for project work.',
-  'Start: use a relevant active lifecycle hit; else call knowl_query with 2-6 keywords before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
+  'Start: use a relevant active lifecycle hit; else call knowl_query with the words that name the subject before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
   'Mode: Claude hooks own lifecycle. Never call knowl_task_start, knowl_task_checkpoint, knowl_task_finish, or knowl_session_finish while active.',
   'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
   'Route by what you need; the tool list names them:',
@@ -125,14 +127,43 @@ describe('canonical Knowl agent guidance', () => {
     // (see 'does not grow when a tool is added'), so a new tool inside an existing group should
     // leave both numbers untouched. If adding a tool changes them, something re-introduced the
     // inventory the card stopped carrying.
-    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_718);
-    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_769);
+    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_737);
+    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_788);
     for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS]) {
       expect(card.length).toBeLessThan(2_000);
       expect(card.slice(0, 512)).toContain('knowl_query');
       expect(card.slice(0, 512)).toContain('own lifecycle');
       expect(Math.ceil(card.length / 4)).toBeLessThanOrEqual(500);
       expect(20 * Math.ceil(card.length / 4)).toBeLessThanOrEqual(10_000);
+    }
+  });
+
+  /**
+   * The guidance used to say "2-6 keywords" in six places. A ground-truth ablation over the
+   * project's own suites refuted it: truncating the suites' own over-length queries to six
+   * words cost 4.7pp hit@1 on retrieval-suite-v2 (n=63) and 7.2pp on retrieval-suite (n=97),
+   * while padding a compliant query with three off-subject words cost 24-37pp. Count is not
+   * the variable; on-subject-ness is, and a numeric cap taught agents to trim real terms.
+   * Measured against 921 real knowl_query calls in the local transcript archive, 26.6% were
+   * over the cap and the mean sat at 5.75 words -- the cap was binding on live behaviour.
+   *
+   * See docs/evals/agent-surface.md. Pinned because a plausible-sounding number is exactly the
+   * kind of thing that gets re-added by someone tightening prose.
+   */
+  it('never states a numeric keyword cap, in any surface that reaches an agent', () => {
+    const surfaces = [
+      KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS,
+      KNOWL_SUBAGENT_BOOTSTRAP_CARD, KNOWL_CLAUDE_PROMPT_REMINDER,
+      KNOWL_CLAUDE_CONTINUATION_REMINDER, renderFullKnowlGuidance(),
+    ];
+    for (const surface of surfaces) {
+      expect(surface).not.toMatch(/\d+\s*-\s*\d+\s+(concise\s+)?keywords/i);
+      expect(surface).not.toMatch(/keywords\)/i);
+    }
+    // And the replacement is actually present where the rule has to land.
+    expect(renderFullKnowlGuidance()).toMatch(/on-subject/);
+    for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_SUBAGENT_BOOTSTRAP_CARD]) {
+      expect(card).toMatch(/words that name the subject/);
     }
   });
 

@@ -88,9 +88,14 @@ describe('the floor reports rather than deletes', () => {
   });
 
   it('does not abstain on the lexical path, which has no absolute scale', () => {
+    // The floor is supplied here on purpose. Without it the case passes for the wrong reason --
+    // `floor === null` short-circuits `answerable` before the path is ever consulted -- and
+    // mutation testing showed it: `if (usingVector)` -> `if (true)` survived the whole suite.
+    // These rows are embedded, so under the mutant they are judged, their cosine is 0 by absence
+    // rather than by verdict, and a lexical query answers "the store does not know".
     const scored = scoreCandidates(
       [{ item: item('a'), embedded: true, bm25Rank: 1 }, { item: item('b'), embedded: true, bm25Rank: 2 }],
-      { limit: 10, usingVector: false },
+      { limit: 10, usingVector: false, minRelevance: FLOOR },
     );
 
     expect(scored).toHaveLength(2);

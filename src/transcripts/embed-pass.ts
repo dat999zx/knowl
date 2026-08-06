@@ -4,7 +4,14 @@ import { withWriteRetry } from './database.js';
 import { quantizeVector } from './quantize.js';
 import { readMessagesAt } from './read.js';
 
-/** Ceiling on messages per embedding call. The provider re-batches by text length underneath. */
+/**
+ * Ceiling on messages per embedding call.
+ *
+ * A work unit, not a batch shape. Each message gets a forward pass of its own (see
+ * `embedBatch`), so this bounds how much work one deadline check covers and how many rows one
+ * write transaction carries -- it no longer decides which messages are embedded together,
+ * because nothing does.
+ */
 const EMBED_BATCH = 32;
 
 /**
@@ -69,9 +76,14 @@ function affordableSlice(
  *
  * **The deadline is enforced before the work, not after it.** Embedding cost is driven by text
  * length, and a fixed batch count is therefore unbounded work: 32 messages of 8,000 characters
- * is minutes on the local model, against a hook budget of 1,500 ms. Each batch is sized to the
- * remaining budget at a learned characters-per-millisecond rate, and a batch that cannot be
+ * is minutes on the local model, against a hook budget of 1,500 ms. Each slice is sized to the
+ * remaining budget at a learned characters-per-millisecond rate, and a slice that cannot be
  * afforded is not started -- the rows stay pending for a run that has the time.
+ *
+ * **What that budget may decide, and what it may not.** It decides how much work a pass takes
+ * on. It does not decide what a vector is: every message is embedded in a forward pass of its
+ * own, so the same message gets the same vector on a busy pass and a quiet one, and a reindex
+ * reproduces what the hook wrote rather than quietly replacing it. See `embedBatch`.
  */
 export async function embedPendingMessages(input: {
   /**
@@ -185,7 +197,29 @@ async function embedBatch(
 ): Promise<number> {
   // Embedding happens outside the retry: it is the expensive part and it touches no database,
   // so a contended write must not pay for a second forward pass.
-  const vectors = await embedder.embed(targets.map(target => target.text));
+  //
+  // One message per forward pass. The q8 graph quantises activations per PASS -- arctic's
+  // `model_quantized.onnx` holds 48 `DynamicQuantizeLinear` nodes, and that operator derives a
+  // single scalar scale from `max(x)`/`min(x)` over the whole tensor, batch dimension included
+  // -- so without this a message's vector depends on which other messages shared its pass, and
+  // that was decided by whatever was left of the catch-up deadline. The same archive embedded
+  // by an unbudgeted `reindex --transcripts` and by a 1,500 ms hook disagreed on 651 of 956
+  // real messages, and the shipped ranker then returned a different top-5 MEMBERSHIP for 83 of
+  // 194 real queries (42.8%), a different top hit for 19 (9.8%). Store A ranked against itself
+  // over the same queries differed for none.
+  //
+  // Measured free on this path, contrary to the ~2.7x this file used to be excused by -- that
+  // figure came from synthetic items of ~45 tokens. Real messages are p50 169 characters but
+  // p90 1,980 and p99 10,005, and attention cost is superlinear in length, so the long tail is
+  // most of the wall clock and is already alone in its batch either way: 400 representative
+  // messages cost 575.1 s batched against 535.6 s one at a time (0.93x). Even on a queue of
+  // nothing but short messages -- where batching is designed to win -- the two are inside each
+  // other's spread: one 1,500 ms hook gets a mean 13.5 messages through one at a time against
+  // 16.0 batched, and one 1,000 ms search top-up 17.3 against 15.2, the other way round. A turn
+  // does not append thirteen messages, so K-65's budget is not what this trades against.
+  //
+  // See `EmbedOptions`. The atom path takes the same option for the same reason (K-71).
+  const vectors = await embedder.embed(targets.map(target => target.text), { maxBatch: 1 });
 
   return withWriteRetry(dbPath, async client => embedVectorBatch(client, embedder, targets, vectors));
 }

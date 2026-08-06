@@ -6,7 +6,7 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from '../core/version-check.js';
-import { NEW_PROJECT_CONFIG, findProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from '../core/config.js';
+import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from '../core/config.js';
 import {
   installKnowlProjectGuidance,
   KnowlProjectGuidanceInstallResult,
@@ -20,7 +20,7 @@ import { formatHierarchyToMarkdown } from '../core/format.js';
 import { formatStatusReport } from './status-report.js';
 import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory } from '../core/types.js';
 import { createManifest, isValidRepoName, readManifest, writeManifest } from '../workspace/manifest.js';
-import { listKnownWorkspaces, workspaceManifestPath } from '../workspace/paths.js';
+import { knowlHome, listKnownWorkspaces, workspaceManifestPath } from '../workspace/paths.js';
 import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from '../workspace/membership.js';
 import { embeddingIdentityFromConfig, formatEmbeddingIdentity } from '../store/embedding-identity.js';
 import { promoteItems } from '../workspace/promote.js';
@@ -287,13 +287,28 @@ program
 
     try {
       parseAgentNames(agents);
-      let isExisting = false;
-      try {
-        await fs.access(knowlDir);
-        isExisting = true;
-      } catch {
-        // Doesn't exist
+
+      // The marker is `.knowl/config.json`, not the `.knowl` directory -- the rule
+      // `isProjectRoot` already enforces everywhere else (K-51). Init was the last command
+      // asking only whether the directory existed, and that made a repository whose
+      // config.json is missing unrepairable: it routed to the upgrade path, which opens that
+      // file first, so the user got a bare `ENOENT ... .knowl/config.json` naming a file they
+      // never had -- identically on every re-run of the one command meant to fix it.
+      //
+      // A `.knowl` with no config.json is not exotic. An interrupted first init leaves one,
+      // and so does a partly-completed removal: on Windows `fs.rm(recursive)` rejects on a
+      // held libSQL file *after* unlinking that file's siblings, config.json among them.
+      // Finishing the initialization is what the person typing `knowl init` is asking for.
+      //
+      // Reading the marker this way is also what makes init willing to write into a `.knowl`
+      // it did not create, so the one directory that must never become a repository is now
+      // refused by name, rather than by the accident of that same ENOENT.
+      if (path.resolve(knowlDir) === knowlHome()) {
+        throw new Error(
+          `${knowlDir} is this machine's Knowl home, not a project. Run "knowl init" inside a repository.`
+        );
       }
+      const isExisting = await isProjectRoot(cwd);
 
       if (isExisting) {
         const result = await upgradeExistingRepository(cwd, name);

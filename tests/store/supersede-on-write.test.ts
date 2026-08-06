@@ -250,6 +250,119 @@ describe('supersede on write', () => {
     expect((await repo.getKnowledgeItem(result.itemIds[0]))!.affectedPaths).toEqual(['src/logging/ship.ts']);
   });
 
+  // Four decisions this module documents in prose and did not check. Each is a mutation that
+  // survived every test file able to observe this module -- confirmed one at a time in a fresh
+  // process -- so each names a way to break the documented rule that the suite agreed with.
+  it('retires the item the caller NAMED, not the unrelated neighbour the search turned up', async () => {
+    // `input.supersedes === duplicate.id` -> `!==` survived. Read it through
+    // `resolveSupersedeTarget`, which prefers the detected duplicate over the explicit id
+    // whenever the resolution qualifies: under the mutant, a write naming X reports
+    // 'supersede' against the *neighbour* Y the similarity search found, so Y is retired and X
+    // is left active -- the caller's instruction landing on someone else's record. Every
+    // existing case names an id whose title the duplicate search would have matched anyway,
+    // which is the one shape where the two cannot be told apart.
+    //
+    // Written on unmutated code this failed first for a different reason, and that is worth
+    // recording: when the detected duplicate IS a same-subject match, it outranks the explicit
+    // id today, so `supersedes: X` retires the duplicate and leaves X active. Not changed here
+    // -- this test pins the unrelated-neighbour case, where the explicit id does win.
+    const named = await storeKnowledgeItemDeduped(projectId, {
+      category: 'architecture', title: 'Ingest runs on a cron',
+      content: 'The nightly cron entry triggers the ingest job at 02:00.',
+    });
+    const neighbour = await storeKnowledgeItemDeduped(projectId, {
+      category: 'architecture', title: 'Search index build cadence',
+      content: 'The search index is rebuilt after every import run and takes four minutes.',
+    });
+    const replacement = await storeKnowledgeItemDeduped(projectId, {
+      category: 'architecture', title: 'Importer timing note',
+      content: 'The search index is rebuilt after every import run and takes nine minutes.',
+      supersedes: named.item.id,
+    });
+
+    // Unrelated titles, so this is a coexisting neighbour and not a correction of it.
+    expect(replacement.nearDuplicate?.id).toBe(neighbour.item.id);
+    expect((await repo.getKnowledgeItem(neighbour.item.id))!.status).toBe('active');
+    // ...and the named item is the one that was retired.
+    expect(replacement.superseded?.id).toBe(named.item.id);
+    expect((await repo.getKnowledgeItem(named.item.id))!.status).toBe('superseded');
+  });
+
+  it('a one-word title is too coarse to make two items the same subject', async () => {
+    // `if (smaller.size < 2) return false` -> disabled, survived. The rule is stated in the
+    // comment above sameSubjectTitle -- "A one-token title ('Auth') is too coarse to carry this
+    // and is excluded" -- and nothing tested it. Without it, the single token of a bare title is
+    // trivially contained in any richer title that mentions it, so a note called "Auth" retires
+    // the specific note it was filed beside.
+    const specific = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Auth token rotation', content: 'Auth tokens rotate every twelve hours in production.',
+    });
+    const bare = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Auth', content: 'Auth tokens rotate every twelve hours in production, per environment.',
+    });
+
+    expect(bare.action).toBe('inserted');
+    expect(bare.superseded).toBeUndefined();
+    expect((await repo.getKnowledgeItem(specific.item.id))!.status).toBe('active');
+  });
+
+  it('a write that newly declares an exclusive conflict key is not "already held"', async () => {
+    // `incoming.conflictExclusive !== true || held.conflictExclusive === true` -> `true`
+    // survived. Exclusivity is enforced inside createKnowledgeItem, so an incoming atom that is
+    // dropped as a verbatim no-op is an atom whose exclusivity was never registered -- the guard
+    // silently not applied, which is how it was already found to be off for the batch path.
+    // The key is held constant on both writes on purpose. Vary it too and `conflictKey` decides
+    // the no-op on its own, the exclusivity clause is never reached, and the mutant lives
+    // through a test that looks like it covers this -- which is what the first draft did.
+    const base = {
+      category: 'decision' as const,
+      title: 'Cache eviction policy',
+      content: 'The product cache evicts least-recently-used entries.',
+      conflictKey: 'cache.eviction.policy',
+    };
+    await storeKnowledgeItemDeduped(projectId, base);
+
+    const exclusive = await storeKnowledgeItemDeduped(projectId, { ...base, conflictExclusive: true });
+    expect(exclusive.action).toBe('inserted');
+    expect((await repo.getKnowledgeItem(exclusive.item.id))!.conflictExclusive).toBe(true);
+  });
+
+  it('compares a skill by its steps, and treats a reflowed restatement as the same text', async () => {
+    // Three survivors meet here:
+    //
+    //   the whole steps clause of `carriesNothingNew`            -> `true`
+    //   `duplicate.category === 'skill' ? getSkillSteps(...)`    -> `!==`
+    //   `normalizedIdentity`'s `.replace(/\s+/g, ' ').trim()`    -> removed
+    //
+    // The first drops a genuine revision of a procedure. The second never fetches a skill's held
+    // steps, so `held.steps` is always empty and an unchanged skill churns a new version on
+    // every re-store. The third makes "already held verbatim" byte-exact, so a restatement that
+    // differs only in whitespace supersedes rather than deduping. All three are the same
+    // question -- what counts as the same skill -- asked from different sides.
+    const steps = ['Read the ledger', 'Run the gauntlet', 'Deploy'];
+    const skill = {
+      category: 'skill' as const,
+      title: 'Release checklist',
+      content: 'File-backed learned skill package.\nPurpose: ship a release safely.',
+    };
+    const first = await storeKnowledgeItemDeduped(projectId, { ...skill, steps });
+
+    // Same steps, and content that differs only in how it is wrapped: nothing new.
+    const reflowed = await storeKnowledgeItemDeduped(projectId, {
+      ...skill, content: '  File-backed learned skill package.\n  Purpose: ship a release safely.  ', steps,
+    });
+    expect(reflowed.action).toBe('duplicate');
+    expect(reflowed.item.id).toBe(first.item.id);
+
+    // A changed procedure is a different skill, however identical the prose around it.
+    const revised = await storeKnowledgeItemDeduped(projectId, {
+      ...skill, steps: ['Read the ledger', 'Run the gauntlet', 'Tag', 'Deploy'],
+    });
+    expect(revised.action).toBe('inserted');
+    expect((await repo.getSkillSteps(revised.item.id)).map(step => step.instruction))
+      .toEqual(['Read the ledger', 'Run the gauntlet', 'Tag', 'Deploy']);
+  });
+
   it('an explicit supersedes id works in the batch path too', async () => {
     const original = await storeKnowledgeItemDeduped(projectId, {
       category: 'architecture', title: 'Transport layer', content: 'Clients talk to the server over REST.',

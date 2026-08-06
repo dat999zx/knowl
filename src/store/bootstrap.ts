@@ -3,6 +3,7 @@ import { DEFAULT_FRESHNESS, hashKnowledgeContent, normalizeAffectedPaths } from 
 import {
   assertSchemaSupported, isMigrationCurrent, stampMigrationLevel, stampSchemaVersion,
 } from './schema-version.js';
+import { synchronousPragma } from '../core/sqlite-sync.js';
 
 /**
  * Per-CONNECTION setup, and deliberately outside the version gate below.
@@ -14,17 +15,23 @@ import {
  * nothing. It stays because libsql does not default to WAL, and the version gate's cheap
  * lock-free read depends on being in WAL.
  */
-const BASE_STATEMENTS = [
-  // Must come first: journal_mode = WAL (and everything after it) takes locks, and a
-  // connection's default busy_timeout is 0. Applied last, a concurrent writer at that
-  // instant fails this whole bootstrap with SQLITE_BUSY instead of waiting for it.
-  //
-  // Matches the pool's own timeout rather than undercutting it: at 5000 this silently halved
-  // the 10000 `acquireClient` had set moments earlier, for the life of the connection.
-  'PRAGMA busy_timeout = 10000;',
-  'PRAGMA foreign_keys = ON;',
-  'PRAGMA journal_mode = WAL;',
-];
+function baseStatements(): string[] {
+  return [
+    // Must come first: journal_mode = WAL (and everything after it) takes locks, and a
+    // connection's default busy_timeout is 0. Applied last, a concurrent writer at that
+    // instant fails this whole bootstrap with SQLITE_BUSY instead of waiting for it.
+    //
+    // Matches the pool's own timeout rather than undercutting it: at 5000 this silently halved
+    // the 10000 `acquireClient` had set moments earlier, for the life of the connection.
+    'PRAGMA busy_timeout = 10000;',
+    'PRAGMA foreign_keys = ON;',
+    'PRAGMA journal_mode = WAL;',
+    // Chosen, not inherited -- libSQL leaves this at SQLite's default of FULL. See
+    // `synchronousPragma` for the measurements, the durability trade, and the override.
+    // A function rather than a const array so the value is read per open, not at import.
+    synchronousPragma(),
+  ];
+}
 
 const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS knowledge_items (
@@ -749,7 +756,7 @@ export async function bootstrapSchema(
 ): Promise<void> {
   // Connection state, not file state -- every connection needs these however current the
   // schema is, so they sit outside the gate. All three are free when nothing changes.
-  await executeAll(client, BASE_STATEMENTS);
+  await executeAll(client, baseStatements());
 
   // Before any migration touches the file. Running migrateLegacyProjectSchema against a
   // database written by a newer Knowl is the case this exists to prevent.

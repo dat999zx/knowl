@@ -17,14 +17,20 @@ const CLI = path.resolve('./dist/index.js');
 const TITLE = 'Deploys are blue-green';
 
 /**
- * A fresh directory set per test.
+ * A fresh directory set per test, at a path no other run can name.
  *
- * Windows keeps a handle on a closed SQLite file long enough that a `rm` in `beforeEach`
- * routinely fails and is swallowed, and the next `knowl init` then lands in a half-deleted
- * directory -- which surfaced here as an ENOENT on the config file it had just written.
- * Never reusing a path is what the suites that spawn databases already do.
+ * The counter this used to suffix only prevented reuse *within* one run: it resets to zero on
+ * every run, so `-b1` named the same directory in the next run and in any concurrent one.
+ * Both cost a failure, and both were seen. A run that ends while something still holds a
+ * libSQL file leaves `.knowl/` standing with its config.json already unlinked -- `fs.rm`
+ * recursive rejects only after deleting that file's siblings -- and the next run's `knowl
+ * init` opened it (fixed on the product side too: a `.knowl` with no config.json is now a
+ * half-finished init to complete, not a repository to upgrade). Two runs at once simply
+ * share the database and one of them gets SQLITE_BUSY.
+ *
+ * `mkdtemp` removes the shared name that both need. The `.knowl-` prefix is kept so global
+ * teardown still collects whatever a locked file leaves behind.
  */
-let index = 0;
 let A = '';
 let B = '';
 let HOME = '';
@@ -48,12 +54,11 @@ async function ownershipIn(root: string) {
 
 describe('knowl import --mine', () => {
   beforeEach(async () => {
-    index += 1;
-    A = path.resolve(`./.knowl-import-mine-a${index}`);
-    B = path.resolve(`./.knowl-import-mine-b${index}`);
-    HOME = path.resolve(`./.knowl-import-mine-home${index}`);
-    DUMP = path.resolve(`./.knowl-import-mine${index}.jsonl`);
-    for (const dir of [A, B, HOME]) await fs.mkdir(dir, { recursive: true });
+    A = await fs.mkdtemp(path.resolve('./.knowl-import-mine-a'));
+    B = await fs.mkdtemp(path.resolve('./.knowl-import-mine-b'));
+    HOME = await fs.mkdtemp(path.resolve('./.knowl-import-mine-home'));
+    // Inside the scratch home, so the one removal covers it and no run can name it either.
+    DUMP = path.join(HOME, 'export.jsonl');
     knowl(A, ['init']);
     knowl(A, ['decide', TITLE, 'Two identical fleets swap on release.']);
     knowl(A, ['export', DUMP]);
@@ -62,7 +67,6 @@ describe('knowl import --mine', () => {
 
   afterEach(async () => {
     for (const dir of [A, B, HOME]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
-    await fs.rm(DUMP, { force: true }).catch(() => {});
   });
 
   it('claims the file for this repo, where a plain import marks it imported', async () => {

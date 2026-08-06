@@ -147,8 +147,16 @@ export const EMBEDDING_LIMITS = {
  * enough. The shipped plan still batches 36 of the real corpus's 483 atoms, and swapping
  * those batched vectors for their embedded-alone counterparts changed the shipped ranker's
  * top ten for 13 of 120 real queries, and which items it returned at all for 4. The
- * knowledge path therefore asks for `maxBatch: 1` and takes exactness over nearness; the
- * transcript path, where batching is a measured 2.7x, does not.
+ * knowledge path therefore asks for `maxBatch: 1` and takes exactness over nearness.
+ *
+ * **So does the transcript path, and the 2.7x that used to excuse it was not its number.**
+ * That figure is from synthetic items of ~45 tokens. Real transcript messages are p50 169
+ * characters but p90 1,980 and p99 10,005, and since cost is superlinear in length the long
+ * tail is most of the wall clock and is already alone in its batch either way: 400
+ * representative messages cost 575.1 s batched against 535.6 s one at a time, i.e. **0.93x**.
+ * The exposure was also far worse there than on atoms -- 447 of 483 atoms are already alone,
+ * but 651 of 956 real messages moved, and the shipped transcript ranker returned a different
+ * top-5 membership for 42.8% of 194 real queries. Both paths now embed one text per pass.
  */
 export function planEmbeddingBatches(
   texts: string[],

@@ -242,6 +242,38 @@ describe('item-scoped tools and foreign items', () => {
     });
   });
 
+  /**
+   * `affectedPaths` reaches the agent now, and it is repository-relative. A peer's paths are
+   * relative to a checkout that is not this one, and the repos most likely to be linked are
+   * fork siblings where the same path exists in both and means different things -- so an
+   * unqualified foreign path invites a reader to open the wrong file and treat it as evidence.
+   * Same reasoning that already omits evidence and staleness for foreign items.
+   */
+  it('does not hand over a foreign item\'s file paths, which point into another checkout', async () => {
+    await initDb(B);
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET affected_paths = ? WHERE id = ?',
+      args: [JSON.stringify(['src/auth/token.ts']), foreignId],
+    });
+    await closeDb();
+
+    await initDb(A);
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET affected_paths = ? WHERE id = ?',
+      args: [JSON.stringify(['src/local/auth.ts']), localId],
+    });
+    const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth token expire', limit: 5 });
+    await closeDb();
+
+    const items = JSON.parse(result.content[0].text);
+    const foreign = items.find((item: any) => item.id === foreignId);
+    const local = items.find((item: any) => item.id === localId);
+    if (foreign) expect(foreign).not.toHaveProperty('affectedPaths');
+    // The local item's paths do resolve against this checkout, so they must still arrive --
+    // or the guard has simply turned the feature off.
+    expect(local?.affectedPaths).toEqual(['src/local/auth.ts']);
+  });
+
   it('local items are unaffected', async () => {
     await initDb(A);
     const result = await callTool(A, await loadConfig(A), 'knowl_update', { id: localId, content: 'Updated locally, which is allowed.' });
