@@ -43,8 +43,15 @@ const SRC = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src')
  * into `core/` and drag `WorkspaceManifest` and `EmbeddingIdentity` down with them, which
  * moves declarations away from the code that gives them meaning to satisfy a rule that runtime
  * does not care about.
+ *
+ * `export ... from` counts too. A re-export is a runtime edge exactly like an import -- the
+ * module is loaded either way -- and it is the form this refactor leans on, since each moved
+ * declaration leaves a re-export behind so no caller had to change. Matching only `import`
+ * would have left the one construct this branch added three of unchecked: verified by writing
+ * `export { renderChangeCard } from '../session/change-card.js'` into `store/portability.ts`
+ * and watching all four checks pass, where the same edge written as an `import` fails.
  */
-const VALUE_IMPORT = /^\s*import\s+(?!type\s)(?:[^'"]*?\s+from\s+)?['"](\.\.?\/[^'"]+)['"]/gm;
+const VALUE_IMPORT = /^\s*(?:import|export)\s+(?!type\s)(?:[^'"]*?\s+from\s+)?['"](\.\.?\/[^'"]+)['"]/gm;
 
 /** Static imports only. A dynamic `import()` is a deliberate deferral, not a static edge. */
 async function valueImportsOf(file: string): Promise<string[]> {
@@ -129,16 +136,39 @@ describe('module boundaries', () => {
     expect(escaping).toEqual([]);
   });
 
-  it('detects a violation when one is introduced', async () => {
-    // A guard that cannot fail is not a guard. This pins the detection itself, so a future
-    // change to the regex or the resolver cannot quietly turn the checks above into no-ops.
+  // A guard that cannot fail is not a guard. These pin the detection itself, so a future change
+  // to the regex or the resolver cannot quietly turn the checks above into no-ops. Both forms
+  // are probed because both load the module: matching only `import` left every `export ... from`
+  // edge invisible, which is the construct this refactor added three of.
+  it.each([
+    ['a static import', "import { appendKnowledgeCommit } from '../store/repository.js';\n"],
+    ['a re-export', "export { appendKnowledgeCommit } from '../store/repository.js';\n"],
+  ])('detects a violation introduced as %s', async (_label, source) => {
     const probe = path.join(SRC, 'core', '__boundary-probe__.ts');
-    await fs.writeFile(probe, "import { appendKnowledgeCommit } from '../store/repository.js';\n");
+    await fs.writeFile(probe, source);
 
     try {
       const found = (await edges()).filter(edge => edge.file.includes('__boundary-probe__'));
       expect(found).toHaveLength(1);
       expect(found[0]).toMatchObject({ from: 'core', to: 'store' });
+    } finally {
+      await fs.rm(probe, { force: true });
+    }
+  });
+
+  it('ignores a type-only edge in either form', async () => {
+    // The exemption is deliberate and load-bearing, so it is pinned too: widening the regex to
+    // catch re-exports must not have caught the type imports the rule intends to allow.
+    const probe = path.join(SRC, 'core', '__boundary-probe__.ts');
+    await fs.writeFile(probe, [
+      "import type { KnowledgeItem } from '../store/repository.js';",
+      "export type { KnowledgeItem } from '../store/repository.js';",
+      '',
+    ].join('\n'));
+
+    try {
+      const found = (await edges()).filter(edge => edge.file.includes('__boundary-probe__'));
+      expect(found).toEqual([]);
     } finally {
       await fs.rm(probe, { force: true });
     }
