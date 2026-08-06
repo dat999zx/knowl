@@ -11,7 +11,7 @@ import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { listEvidenceForItem } from './evidence-repository.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 import { listTombstones } from './tombstones.js';
-import { hashKnowledgeLifecycle } from './freshness.js';
+import { hashKnowledgeContent, hashKnowledgeLifecycle } from './freshness.js';
 import {
   classifyIncomingItem,
   DEFAULT_DIVERGENCE_POLICY,
@@ -117,6 +117,12 @@ export type ImportResult = {
    * dump would see only counts, and never learn that those rows are unpromotable here.
    */
   ownership: 'trusted' | 'claimed' | 'attributed';
+  /**
+   * Items whose stated `contentHash` did not describe their own body and were recomputed under
+   * `--repair-content-hash`. Reported because the file was accepted on different terms than it
+   * asked for: divergence was decided on the content rather than on what the file claimed.
+   */
+  hashRepaired?: number;
   /** Present only on a dry run: what the counts WOULD have been. */
   wouldApply?: { inserted: number; identical: number; updated: number; keptLocal: number };
 };
@@ -517,6 +523,14 @@ export async function importKnowledge(
      * knows. Claims authorship, not publication.
      */
     claimAsMine?: boolean;
+    /**
+     * Import a file whose items misdescribe themselves, by believing the content rather than
+     * the hash. The refusal below is right about the danger and wrong to be the only answer:
+     * a hash formula that predates this build, or an export written by an older writer, leaves
+     * a legitimate backup permanently un-importable with no way through. Recomputing is
+     * strictly safer than the behaviour this replaced, which trusted the stated hash outright.
+     */
+    repairContentHash?: boolean;
   } = {},
 ): Promise<ImportResult> {
   const records = await readImportRecords(inputPath);
@@ -531,6 +545,49 @@ export async function importKnowledge(
     );
   }
   const items = records.filter(record => record.type === 'item').map(record => record.item);
+
+  // The manifest checksum proves the bytes are the bytes the writer wrote. It says nothing
+  // about whether each item's own `contentHash` describes its own body -- and divergence is
+  // decided by comparing that field against the local row, never by looking at the content.
+  // So an item whose body was edited while its hash was left alone imported as "identical",
+  // and its real content was discarded in silence. Every policy behaved the same way, which
+  // means `--on-divergence fail`, the safe one, was exactly the one that could not protect
+  // you. Recompute and refuse: a file that misdescribes itself is not a file to merge from.
+  const misdescribed: Array<{ item: any; actual: string }> = [];
+  for (const item of items) {
+    if (typeof item?.contentHash !== 'string' || !item.contentHash) continue;
+    const actual = hashKnowledgeContent({
+      title: String(item.title ?? ''),
+      content: String(item.content ?? ''),
+      reasoning: item.reasoning ?? null,
+      source: item.source ?? null,
+      affectedPaths: item.affectedPaths ?? null,
+    });
+    if (item.contentHash !== actual) misdescribed.push({ item, actual });
+  }
+  if (misdescribed.length > 0 && !options.repairContentHash) {
+    const named = misdescribed.slice(0, 3).map(entry => String(entry.item.id)).join(', ');
+    throw new Error(
+      `${misdescribed.length} item(s) carry a contentHash that does not match their own content ` +
+      `(${named}${misdescribed.length > 3 ? ', ...' : ''}). The file's manifest checksum passed, so ` +
+      'the bytes are intact and the mismatch was written that way -- by a hand-edit, a partial ' +
+      'rewrite, or an older writer. Divergence is decided on that field, so importing this would ' +
+      'silently discard the real content. Re-export from the source repository, or re-run with ' +
+      '--repair-content-hash to decide divergence on the content itself.',
+    );
+  }
+  // Believing the content over the hash, not the hash over the content. The refusal above is
+  // the default because a file that misdescribes itself usually means something upstream is
+  // wrong and should be fixed there. But an export from an older writer is not repairable at
+  // the source, and leaving it permanently un-importable is its own kind of loss -- so the
+  // override recomputes rather than waives. Every downstream comparison then runs against a
+  // hash that genuinely describes the body it arrived with, which is strictly safer than the
+  // behaviour this whole guard replaced.
+  let hashRepaired = 0;
+  if (misdescribed.length > 0 && options.repairContentHash) {
+    for (const { item, actual } of misdescribed) item.contentHash = actual;
+    hashRepaired = misdescribed.length;
+  }
   const assertions = records.filter(record => record.type === 'assertion').map(record => record.assertion);
   const evidence = records.filter(record => record.type === 'evidence').map(record => record.evidence);
   const links = records.filter(record => record.type === 'knowledge_evidence').map(record => record.link);
@@ -640,6 +697,7 @@ export async function importKnowledge(
       inserted: 0, identical: 0, updated: 0, keptLocal: 0, deleted: 0,
       conflicts, blockedByTombstone, applied: false, ownership,
       divergent: options.dryRun ? divergent : [],
+      ...(hashRepaired ? { hashRepaired } : {}),
       ...(options.dryRun ? { wouldApply: counts } : {}),
     };
   }
@@ -662,7 +720,10 @@ export async function importKnowledge(
     after: { id: String(item.id), category: item.category, title: String(item.title ?? '') },
   });
   let deleted = 0;
-  await client.execute('BEGIN;');
+  // IMMEDIATE for the same reason as `withClientTransaction`: this block writes, and a deferred
+  // BEGIN would take its write lock on the first insert, which SQLite refuses with
+  // SQLITE_BUSY_SNAPSHOT rather than waiting whenever another process wrote in between.
+  await client.execute('BEGIN IMMEDIATE;');
   try {
     for (const entry of plan) {
       if (entry.action === 'insert') {
@@ -764,5 +825,8 @@ export async function importKnowledge(
   // and stays best-effort: a project without vectors enabled simply stays on BM25.
   await indexKnowledgeItemsBestEffort('local', written);
 
-  return { ...counts, deleted, conflicts: 0, blockedByTombstone, applied: true, divergent, ownership };
+  return {
+    ...counts, deleted, conflicts: 0, blockedByTombstone, applied: true, divergent, ownership,
+    ...(hashRepaired ? { hashRepaired } : {}),
+  };
 }

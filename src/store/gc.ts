@@ -255,6 +255,14 @@ function buildCandidates(
       daysSince(item.updatedAt, now) >= compressArchivedDays
     ) {
       const replacementContent = summarize(item);
+      // Compression that grows the item is not compression. `summarize` truncates on UTF-16
+      // *length* (>120 chars) while the gate above and the report below measure *bytes*, so any
+      // content averaging >=1.5 bytes/char -- CJK, emoji, accented Latin -- could clear the
+      // 180-byte gate, stay under the 120-char limit, and come back whole plus the 20-byte
+      // `Compressed summary: ` prefix. Measured 189 -> 209 bytes, applied, with the original
+      // content destroyed in exchange for the growth. Skipping leaves the item archived and
+      // intact, which is the correct outcome for something already small enough.
+      if (Buffer.byteLength(replacementContent, 'utf8') >= beforeBytes) continue;
       candidates.push({
         itemId: item.id,
         action: 'compress',

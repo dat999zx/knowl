@@ -1,5 +1,6 @@
 import type { KnowledgeItem } from '../core/types.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
+import { getClient } from './database.js';
 import * as repo from './repository.js';
 import { captureMemorySessionEvent } from './session-capture.js';
 import { finishMemorySession, startMemorySession } from './session-repository.js';
@@ -56,6 +57,25 @@ async function requireWorkLoopTask(taskId: string): Promise<KnowledgeItem> {
     throw new Error(`Work loop task not found: ${taskId}`);
   }
   return task;
+}
+
+/**
+ * Whether a `finish` step has already been recorded for this task.
+ *
+ * An existence check rather than a scan. This runs on every checkpoint and every finish, and
+ * `listKnowledgeItems` reads and maps every row in the store to answer it -- the same cost
+ * `listActiveSkillItems` exists to avoid on the mid-turn skill lookup. Tag matching follows
+ * the store's own idiom (`search.ts`, `vector.ts`): tags serialize as a JSON array, so the
+ * quoted needle cannot match a longer tag that merely starts with the same characters.
+ */
+async function taskAlreadyFinished(taskId: string): Promise<boolean> {
+  const rows = (await getClient().execute({
+    sql: `SELECT 1 FROM knowledge_items
+      WHERE tags LIKE ? AND tags LIKE '%"finish"%'
+      LIMIT 1`,
+    args: [`%"task:${taskId}"%`],
+  })).rows;
+  return rows.length > 0;
 }
 
 function stringList(value: unknown, maxItems = 20, maxLength = 500): string[] | undefined {
@@ -155,6 +175,17 @@ async function recordWorkLoopStep(
   taskStateInput: WorkLoopTaskState = {},
 ): Promise<WorkLoopStepResult> {
   const task = await requireWorkLoopTask(taskId);
+  // Finish once. The session layer already enforces a terminal state -- a second finish logs
+  // "Cannot append an event to a terminal memory session" -- but the work-loop layer ignored
+  // that and wrote a fresh `finish` item anyway, minting two different completions for one
+  // task against a description that says "exactly once". A checkpoint after finish is the same
+  // contradiction. Refuse both, naming the earlier finish.
+  if (await taskAlreadyFinished(taskId)) {
+    throw new Error(
+      `Work loop ${taskId} is already finished; it cannot be ${stepTag === 'finish' ? 'finished again' : 'checkpointed after finishing'}. ` +
+      'Start a new work loop for further steps.',
+    );
+  }
   const now = new Date().toISOString();
   const taskState = normalizeTaskState(taskStateInput);
   const item = await repo.createKnowledgeItem(projectId, {

@@ -14,6 +14,15 @@ export type SnapshotManifest = {
   createdAt: string;
   byteSize: number;
   sha256: string;
+  /**
+   * The repository this snapshot was taken from. The database itself carries no project
+   * identity (the projects table is gone), and every repo's snapshots sit at the identically
+   * shaped path `.knowl/snapshots/<timestamp>-<hex>.db` -- so nothing stopped repo B from
+   * restoring repo A's snapshot and adopting its entire memory, with the post-restore audit
+   * reporting clean. Absent on snapshots written before this field existed; restore treats
+   * that as unknown rather than wrong.
+   */
+  originRoot?: string;
 };
 
 export type Snapshot = {
@@ -57,6 +66,7 @@ export async function createSnapshot(
     createdAt,
     byteSize: stat.size,
     sha256: await sha256(snapshotPath),
+    originRoot: root,
   };
   const manifestPath = `${snapshotPath}.manifest.json`;
   await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
@@ -273,7 +283,7 @@ async function verifySnapshotBytes(file: string, manifest: SnapshotManifest): Pr
 export async function restoreSnapshot(
   projectRoot: string,
   snapshotPath: string,
-  options: { confirm?: boolean } = {},
+  options: { confirm?: boolean; acceptOriginMismatch?: boolean } = {},
 ): Promise<{ preRestore: Snapshot; findings: Awaited<ReturnType<typeof auditKnowledgeStore>>['findings'] }> {
   if (!options.confirm) throw new Error('Snapshot restore requires --confirm.');
   const root = path.resolve(projectRoot);
@@ -283,6 +293,25 @@ export async function restoreSnapshot(
   await fs.access(source).catch(() => { throw new Error('Snapshot file was not found.'); });
 
   const manifest = await readSnapshotManifest(source);
+
+  // Restoring another repository's snapshot replaces this repository's entire memory with the
+  // foreign one, and it used to succeed silently: the paths are identically shaped, so a
+  // tab-completion slip was all it took, and the post-restore audit reported the adopted store
+  // as clean. Compared case-insensitively because Windows paths are. A mismatch can also be
+  // legitimate -- the same repository moved or renamed since the snapshot -- which is what the
+  // override is for, and why the refusal names both paths instead of just saying no.
+  if (manifest.originRoot !== undefined && !options.acceptOriginMismatch) {
+    const sameRoot = path.resolve(manifest.originRoot).toLowerCase() === root.toLowerCase();
+    if (!sameRoot) {
+      throw new Error(
+        `This snapshot was taken from a different repository.\n` +
+        `  snapshot origin: ${manifest.originRoot}\n` +
+        `  restoring into:  ${root}\n` +
+        `Restoring it would replace this repository's memory with that one's. If this repo ` +
+        `simply moved since the snapshot was taken, re-run with --accept-origin-mismatch.`,
+      );
+    }
+  }
 
   // Copied out of the snapshot directory before anything else runs, and everything after this
   // point reads the copy. `.knowl/` rather than `.knowl/snapshots/`, so the pre-restore

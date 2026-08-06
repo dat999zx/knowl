@@ -1,5 +1,5 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { captureChangeWatermark, consumeChangeNotice } from './change-notice.js';
 import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
@@ -96,6 +96,40 @@ export function describeWriteReconciliation(result: {
  * its own declaration, and the two drifted: confidence documented as 0.0-1.0 and accepted
  * at 999, entrypoints documented as an object and accepted as an array.
  */
+/**
+ * The tools a caller reaches for most, first.
+ *
+ * Models bias toward tools listed earlier, and this list led with `knowl_ingest` purely because
+ * it was written first -- a tool that requires an AI provider, unconfigured on most installs, so
+ * the first thing the surface advertised was the one thing it usually cannot do. `knowl_query`,
+ * which the documented workflow says to call before anything else, sat seventh.
+ *
+ * Order is data rather than a sort key on the definitions, so it stays byte-stable across builds:
+ * a tool list whose order changes between runs breaks prompt-prefix caching for every client that
+ * holds the catalog in context. Anything unnamed keeps its existing relative position after the
+ * named ones, so adding a tool needs no change here.
+ */
+const SELECTION_ORDER = [
+  'knowl_query',
+  'knowl_store',
+  'knowl_update',
+  'knowl_recent',
+  'knowl_state',
+  'knowl_decide',
+  'knowl_context',
+];
+
+function orderForSelection(tools: ToolDefinition[]): ToolDefinition[] {
+  const rank = (tool: ToolDefinition) => {
+    const index = SELECTION_ORDER.indexOf(tool.name);
+    return index === -1 ? SELECTION_ORDER.length : index;
+  };
+  // Stable: equal ranks keep source order, so only the named few move.
+  return tools.map((tool, index) => ({ tool, index }))
+    .sort((a, b) => rank(a.tool) - rank(b.tool) || a.index - b.index)
+    .map(entry => entry.tool);
+}
+
 export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefinition[] {
   const tools: ToolDefinition[] = [
     ...CORE_TOOL_DEFINITIONS,
@@ -105,7 +139,7 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
     tools.push(...TRANSCRIPT_TOOL_DEFINITIONS);
   }
 
-  return tools;
+  return orderForSelection(tools);
 }
 
 /**
@@ -118,6 +152,60 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
 const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
   [...knowlToolDefinitions(null), ...TRANSCRIPT_TOOL_DEFINITIONS].map(tool => [tool.name, tool.inputSchema]),
 );
+
+/** What a shortened result keeps of its body: enough to judge relevance, not to answer from. */
+const QUERY_EXCERPT_CHARS = 240;
+
+/**
+ * Shrink the lowest-ranked results until the serialized array fits the response ceiling.
+ *
+ * `MAX_RESPONSE_CHARS` is declared as the ceiling for this half of the surface and was wired
+ * into `boundContextResponse` only -- so `knowl_context` was bounded and `knowl_query`, the
+ * most-called tool on the server, had none. Measured at 45,147 characters for a 25-result
+ * query over 2,000-character atoms, and 59,990 with `includeEvidence` and `explain`; raising
+ * `MAX_ITEM_CONTENT_CHARS` from 600 to 2,000 tripled that floor on the one path nothing
+ * watched.
+ *
+ * Bodies go before results do. Dropping a result hides that the item exists at all, which is
+ * indistinguishable from a retrieval miss; shortening one costs the body and keeps the id,
+ * title and score -- and `knowl_query { id }` now reads any of them whole, so the information
+ * is deferred rather than lost. Measured against dropping: a `limit: 25` query over 2 KB atoms
+ * returned 5 of 25, where shortening returns all 25 with the weakest bodies excerpted.
+ *
+ * Results arrive ranked, so the tail gives up its body first. Dropping remains the last
+ * resort, for when every body is already an excerpt and the count itself is the cost. At least
+ * one result is always kept: a single oversized atom should come back truncated-but-present
+ * rather than as an empty array that reads like a miss. The counts are returned rather than
+ * folded into the payload, because the first block must stay a bare JSON array for callers
+ * that parse it.
+ */
+function boundQueryPayload(payload: unknown[]): { text: string; shortened: number; omitted: number } {
+  const kept = payload.map(entry => ({ value: entry as Record<string, unknown>, shortened: false }));
+  const serialize = () => compactMcpJson(kept.map(entry => entry.value));
+  let text = serialize();
+  if (text.length <= MAX_RESPONSE_CHARS) return { text, shortened: 0, omitted: 0 };
+
+  for (let index = kept.length - 1; index >= 0 && text.length > MAX_RESPONSE_CHARS; index--) {
+    const content = kept[index].value.content;
+    if (typeof content !== 'string' || content.length <= QUERY_EXCERPT_CHARS) continue;
+    // `truncated` is the same flag a content-ceiling cut sets, so the instruction the tool
+    // description already gives -- call again with `id` to read the rest -- covers this too.
+    kept[index] = {
+      value: { ...kept[index].value, content: truncateText(content, QUERY_EXCERPT_CHARS), truncated: true },
+      shortened: true,
+    };
+    text = serialize();
+  }
+
+  let omitted = 0;
+  while (text.length > MAX_RESPONSE_CHARS && kept.length > 1) {
+    kept.pop();
+    omitted += 1;
+    text = serialize();
+  }
+
+  return { text, shortened: kept.filter(entry => entry.shortened).length, omitted };
+}
 
 /**
  * A context pack serialized under a hard character ceiling.
@@ -179,7 +267,13 @@ export function registerTools(
 
   // 2. Call tool
   const callTool = async (request: CallToolRequest): Promise<CallToolResult> => {
-    const { name, arguments: args } = request.params;
+    const { name } = request.params;
+    // `arguments` is optional in the protocol, and a conformant client omits it for a tool whose
+    // properties are all optional. `validateToolArguments` already reads undefined as `{}` -- but
+    // every handler destructures `args` directly, so the four zero-required tools (knowl_query,
+    // knowl_state, knowl_recent, knowl_resume) threw a raw `Cannot destructure property ... of
+    // undefined` onto the wire. Normalise once here rather than in fourteen handlers.
+    const args = request.params.arguments ?? {};
     await whenReady();
     const initError = getInitError();
     const projectId = getProjectId();
@@ -188,6 +282,11 @@ export function registerTools(
 
     if (initError) {
       return {
+        // `isError` is the only signal an agent has that a call did not do what it asked.
+        // Without it this banner -- "the server is up but this is not a Knowl project" --
+        // read as a successful write, so an agent stored nothing and carried on believing
+        // memory held it.
+        isError: true,
         content: [
           {
             type: 'text',
@@ -267,7 +366,7 @@ export function registerTools(
           throw new Error(`Invalid knowledge category: ${category}`);
         }
         try { await assertOwnedTargets([supersedes], projectRoot, config); }
-        catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
+        catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
 
         const store = () => storeKnowledgeItemDeduped(
           projectId!,
@@ -322,7 +421,7 @@ export function registerTools(
         // Every atom's retire target, before the first atom is written. A batch that fails
         // partway leaves the earlier atoms behind, so this cannot be checked per atom.
         try { await assertOwnedTargets(atoms.map((atom: any) => atom.supersedes), projectRoot, config); }
-        catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
+        catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
 
         const result = await storeKnowledgeAtomsDeduped(
           projectId!,
@@ -359,7 +458,7 @@ export function registerTools(
       else if (name === 'knowl_decide') {
         const { title, content, reasoning, alternatives, tags, supersedes } = args as any;
         try { await assertOwnedTargets([supersedes], projectRoot, config); }
-        catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
+        catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
         const result = await recordDecisionDirect(projectId!, {
           title,
           content,
@@ -381,7 +480,58 @@ export function registerTools(
       }
       
       else if (name === 'knowl_query') {
-        const { query, category, status, tags, limit, includeEvidence, explain, asOf, repos } = args as any;
+        const { id, query, category, status, tags, limit, includeEvidence, explain, asOf, repos } = args as any;
+        // Fetch-by-id: the second half of progressive disclosure. Truncation with no way to read
+        // the rest is not disclosure, it is loss with a warning label -- 262 of 639 atoms on a
+        // real store exceed the content ceiling and no tool could return them whole. A parameter
+        // rather than a 31st tool, deliberately: the tool list already costs ~6,700 tokens per
+        // session. This is also the first surface that returns `reasoning` and `alternatives` --
+        // `knowl_decide` REQUIRES reasoning and until now nothing could hand it back.
+        if (id) {
+          const { getKnowledgeItem } = await import('../store/repository.js');
+          const item = await getKnowledgeItem(String(id));
+          if (!item) {
+            return {
+              isError: true,
+              content: [{
+                type: 'text',
+                text: `No knowledge item "${id}" in this repo's store. If it belongs to a linked repo, run this from that repo -- fetch is local so a foreign atom's paths are never read against the wrong checkout.`,
+              }],
+            };
+          }
+          const full = {
+            id: item.id,
+            category: item.category,
+            title: item.title,
+            content: item.content,
+            ...(item.reasoning ? { reasoning: item.reasoning } : {}),
+            ...(item.alternatives?.length ? { alternatives: item.alternatives } : {}),
+            status: item.status,
+            freshness: item.freshness,
+            confidence: item.confidence,
+            ...(item.provenance ? { provenance: item.provenance } : {}),
+            ...(item.tags?.length ? { tags: item.tags } : {}),
+            ...(item.source ? { source: item.source } : {}),
+            ...(item.sourceCommit ? { sourceCommit: item.sourceCommit } : {}),
+            ...(item.affectedPaths?.length ? { affectedPaths: item.affectedPaths } : {}),
+            ...(item.conflictKey ? { conflictKey: item.conflictKey } : {}),
+            ...(item.supersededById ? { supersededById: item.supersededById } : {}),
+            createdAt: item.createdAt,
+            updatedAt: item.updatedAt,
+          };
+          const evidenceWithStale = async (itemId: string) => Promise.all(
+            (await listEvidenceForItem(itemId)).map(async evidence => ({
+              ...evidence,
+              stale: projectRoot ? await isEvidenceStale(evidence, projectRoot) : false,
+            })),
+          );
+          const payload = includeEvidence
+            ? [{ ...full, evidence: boundedEvidence(await evidenceWithStale(item.id)) }]
+            : [full];
+          // An array of one, not a bare object: every existing caller parses the first block as
+          // an array, and a fetch that changed the shape would break each of them.
+          return { content: [{ type: 'text', text: compactMcpJson(payload) }] };
+        }
         if (asOf) {
           // queryKnowledgeBase hard-filters on category, unlike every other query path,
           // which passes category: undefined and uses it only as a ranking boost. Without
@@ -553,7 +703,20 @@ export function registerTools(
           : resolvedItems.map(compact);
         // The notice is a separate block so the first block stays a bare JSON array for
         // every existing caller.
-        const blocks: { type: 'text'; text: string }[] = [{ type: 'text', text: compactMcpJson(payload) }];
+        const { text: payloadText, shortened, omitted: omittedResults } = boundQueryPayload(payload);
+        const blocks: { type: 'text'; text: string }[] = [{ type: 'text', text: payloadText }];
+        if (shortened > 0 || omittedResults > 0) {
+          const what = [
+            shortened > 0 ? `the content of ${shortened} lower-ranked result(s) was cut to an excerpt` : '',
+            omittedResults > 0 ? `${omittedResults} lower-ranked result(s) were dropped entirely` : '',
+          ].filter(Boolean).join(', and ');
+          blocks.push({
+            type: 'text',
+            text: `RESPONSE BOUNDED: ${what}, to keep this response under ${MAX_RESPONSE_CHARS} characters. `
+              + 'These were the weakest matches, not a scoping failure. Read any result whole with '
+              + '`knowl_query` and its `id`; narrow the query or lower `limit` to see more of them at once.',
+          });
+        }
         if (skippedRepos.length) {
           const described = skippedRepos.map(skip => `${skip.repo} (${skip.reason})`).join(', ');
           blocks.push({
@@ -598,15 +761,31 @@ export function registerTools(
       else if (name === 'knowl_timeline') {
         const { itemId } = args as any;
         const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
-        try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
+        try { await assertOwnedItem(itemId, owner); } catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
         const { listAssertions } = await import('../store/assertions.js');
-        return { content: [{ type: 'text', text: compactMcpJson((await listAssertions(itemId)).slice(0, 5).map(compactAssertionResponse)) }] };
+        // The bare array stays the first block -- callers and a test parse it as one. But a
+        // short complete history looked identical to the opening five of a long one, so a
+        // second block names the overflow, the way gc_preview reports its candidateCount.
+        const assertions = await listAssertions(itemId);
+        const timelineBlocks: { type: 'text'; text: string }[] = [
+          { type: 'text', text: compactMcpJson(assertions.slice(0, 5).map(compactAssertionResponse)) },
+        ];
+        if (assertions.length > 5) {
+          timelineBlocks.push({ type: 'text', text: `TIMELINE TRUNCATED: showing the 5 most recent of ${assertions.length} assertions.` });
+        }
+        return { content: timelineBlocks };
       }
 
       else if (name === 'knowl_conflicts') {
         const { listActiveConflictKeys } = await import('../store/conflicts.js');
         const items = await listActiveConflictKeys();
-        return { content: [{ type: 'text', text: compactMcpJson(items.slice(0, 3).map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness }))) }] };
+        const conflictBlocks: { type: 'text'; text: string }[] = [
+          { type: 'text', text: compactMcpJson(items.slice(0, 3).map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness }))) },
+        ];
+        if (items.length > 3) {
+          conflictBlocks.push({ type: 'text', text: `CONFLICTS TRUNCATED: showing 3 of ${items.length} conflicting items.` });
+        }
+        return { content: conflictBlocks };
       }
 
       else if (name === 'knowl_context') {
@@ -628,7 +807,7 @@ export function registerTools(
       else if (name === 'knowl_evidence_list') {
         const { itemId } = args as any;
         const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
-        try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
+        try { await assertOwnedItem(itemId, owner); } catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
         const evidence = await Promise.all((await listEvidenceForItem(itemId)).map(async item => ({
           ...item,
           stale: projectRoot ? await isEvidenceStale(item, projectRoot) : false,
@@ -639,7 +818,7 @@ export function registerTools(
       else if (name === 'knowl_feedback') {
         const { itemId, used, useful, causedCorrection } = args as any;
         const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
-        try { await assertOwnedItem(itemId, owner); } catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
+        try { await assertOwnedItem(itemId, owner); } catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
         const feedback = await recordKnowledgeFeedback({ itemId, used, useful, causedCorrection });
         // Standing is the deliberate consequence of feedback, applied here rather than
         // inside telemetry recording, which still never alters retrieval by itself.
@@ -676,7 +855,7 @@ export function registerTools(
         // and `supersedeId` reached `supersedeKnowledgeItem` with no ownership check at all
         // while the item named by `id` was guarded on the line above.
         try { await assertOwnedItem(id, owner); if (supersedeId) await assertOwnedItem(supersedeId, owner); }
-        catch (error) { return { content: [{ type: 'text', text: (error as Error).message }] }; }
+        catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
         // Checked BEFORE the update is written. It used to be resolved after, so an unknown
         // supersedeId threw once the update had already committed and the whole call was
         // reported as failed -- the agent believed nothing happened while memory had moved.
@@ -820,7 +999,7 @@ export function registerTools(
 
       else if (name === 'knowl_handoff') {
         const { goal, completed, nextAction, blocker, artifactRefs, verificationStatus, sessionId } = args as any;
-        const { handoff } = await recordDeliberateHandoff(projectId!, {
+        const { handoff, replacedPrevious } = await recordDeliberateHandoff(projectId!, {
           // The MCP layer is host-neutral and has no way to learn which host is calling, so a
           // baton parked here is filed under the host whose hooks deliver it on session start.
           host: 'claude',
@@ -838,7 +1017,10 @@ export function registerTools(
         return {
           content: [{
             type: 'text',
-            text: `Parked. The next session in this project will receive this once.\n\n${formatPendingHandoffContext(handoff)}`,
+            // One baton per project. Parking again overwrites, and the previous baton's goal, next
+            // action and blocker are gone -- the schema comment calls that "the destruction of
+            // the real one", so the response no longer stays silent about it.
+            text: `${replacedPrevious ? 'Replaced the previous unconsumed handoff for this project — its goal, next action and blocker are gone. ' : ''}Parked. The next session in this project will receive this once.\n\n${formatPendingHandoffContext(handoff)}`,
           }],
         };
       }
@@ -936,16 +1118,35 @@ export function registerTools(
         return { content: [{ type: 'text', text }] };
       }
 
-      throw new Error(`Unknown tool: ${name}`);
+      // A name the server does not serve is a malformed request, which the spec groups with
+      // unknown methods as a protocol error (-32602). Thrown as a plain Error it fell into the
+      // catch below and came back as `isError` on a SUCCESSFUL response. The ToolInputError
+      // branch beneath is the deliberate opposite case and stays: SEP-1303 asks for argument
+      // validation to surface as a tool execution error so the model can self-correct.
+      throw new McpError(ErrorCode.InvalidParams, `Unknown tool: ${name}`);
     } catch (error: any) {
+      if (error instanceof McpError) throw error;
       if (error instanceof ToolInputError) {
         // Refused, not executed. Named separately so the caller can tell "I sent this wrong"
         // from "the store failed", and so the message is the argument rather than a statement.
         return { isError: true, content: [{ type: 'text', text: `Invalid arguments for "${name}": ${error.message}` }] };
       }
-      const message = error instanceof KnowledgeValidationError
-        ? `${error.code}: ${error.message}`
-        : sanitizeToolErrorMessage(String(error?.message ?? error));
+      let message: string;
+      if (error instanceof KnowledgeValidationError) {
+        message = `${error.code}: ${error.message}`;
+      } else {
+        message = sanitizeToolErrorMessage(String(error?.message ?? error));
+        // Drizzle's message BEGINS with "Failed query:", so the sanitizer's keep-the-prefix
+        // rule kept nothing and a failed write carried zero diagnosis -- while the actual
+        // SQLite verdict sat unread in `error.cause`. Sanitized through the same gate, so
+        // statement text and bound parameters still never leave the process; what does is
+        // the one line saying WHY it failed.
+        const cause = (error as { cause?: { message?: unknown } })?.cause?.message;
+        if (cause) {
+          const causeText = sanitizeToolErrorMessage(String(cause));
+          if (causeText && !message.includes(causeText)) message += ` Cause: ${causeText}`;
+        }
+      }
       return {
         isError: true,
         content: [{ type: 'text', text: `Error executing tool "${name}": ${message}` }],

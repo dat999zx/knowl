@@ -270,4 +270,24 @@ describe('Skill Registry', () => {
     expect(read.manifest.entrypoints.default?.autoRun).toBe(false);
     await expect(runSkillPackage(TEST_ROOT, 'no_optin')).rejects.toThrow(/auto-run/);
   });
+
+  it('refuses to overwrite an existing package instead of silently replacing it', async () => {
+    await createSkillPackage(TEST_ROOT, {
+      name: 'overwrite_target',
+      purpose: 'Original purpose',
+      entrypoints: { default: { type: 'shell', command: 'echo original', autoRun: true } },
+    });
+
+    // A second create of the same name used to clobber SKILL.md and the entrypoints, report
+    // "Successfully created", and not bump the version -- a working skill gone with no trace.
+    await expect(createSkillPackage(TEST_ROOT, {
+      name: 'overwrite_target',
+      purpose: 'Replacement purpose',
+    })).rejects.toThrow(/already exists/i);
+
+    // The original survives the refusal intact.
+    const read = await readSkillPackage(TEST_ROOT, 'overwrite_target');
+    expect(read.manifest.purpose).toBe('Original purpose');
+    expect(read.manifest.entrypoints.default).toBeDefined();
+  });
 });

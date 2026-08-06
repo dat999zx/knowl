@@ -342,7 +342,7 @@ async function persistPendingHandoff(
   projectId: string,
   handoff: PendingHandoff,
   options: { merge: boolean },
-): Promise<{ itemId: string; handoff: PendingHandoff }> {
+): Promise<{ itemId: string; handoff: PendingHandoff; replacedPrevious: boolean }> {
   const host = handoff.host;
   // Normalized here because `findActivePendingHandoff` looks the slot up normalized. Passing
   // the raw spelling survived a create, which normalizes for us, but an update wrote it
@@ -364,21 +364,29 @@ async function persistPendingHandoff(
   const existing = await findActivePendingHandoff(host);
   if (existing) {
     // One active handoff per host. Only repeated failures from the same host session merge.
-    const merged = options.merge && existing.handoff.externalSessionId === handoff.externalSessionId
-      ? mergeHandoff(existing.handoff, handoff)
-      : handoff;
+    const extendsExisting = options.merge && existing.handoff.externalSessionId === handoff.externalSessionId;
+    const merged = extendsExisting ? mergeHandoff(existing.handoff, handoff) : handoff;
     const updated = await repo.updateKnowledgeItem(existing.id, write(merged));
     await repo.createKnowledgeCommit(projectId, `Update pending session handoff (${host}/${merged.kind})`, [
       { itemId: updated.id, action: 'update', before: existing.handoff as any, after: updated },
     ]);
-    return { itemId: updated.id, handoff: merged };
+    // A merge extends the same session's baton; anything else overwrote a different active
+    // handoff whose contents are now gone. The caller reports which, so parking again does not
+    // silently discard a baton the schema comment itself calls "the destruction of the real one".
+    //
+    // Read off the branch that decided it, not off object identity: `mergeHandoff` always
+    // allocates, so `merged !== existing.handoff` reported a replacement for every merge too --
+    // wrong the moment any caller passes `merge: true` and surfaces this. Today only
+    // `recordDeliberateHandoff` reads it, and it never merges, so the identity test happened to
+    // agree with the intent. Latent agreement is not the same as saying what you mean.
+    return { itemId: updated.id, handoff: merged, replacedPrevious: !extendsExisting };
   }
 
   const created = await repo.createKnowledgeItem(projectId, { category: 'state', ...write(handoff) });
   await repo.createKnowledgeCommit(projectId, `Record pending session handoff (${host}/${handoff.kind})`, [
     { itemId: created.id, action: 'insert', after: created },
   ]);
-  return { itemId: created.id, handoff };
+  return { itemId: created.id, handoff, replacedPrevious: false };
 }
 
 export async function recordPendingSessionHandoff(
@@ -446,7 +454,7 @@ export async function recordDeliberateHandoff(
     sessionTitle?: string;
     taskState: HandoffTaskState;
   },
-): Promise<{ itemId: string; handoff: PendingHandoff }> {
+): Promise<{ itemId: string; handoff: PendingHandoff; replacedPrevious: boolean }> {
   const handoff: PendingHandoff = {
     kind: 'handoff',
     urgency: HANDOFF_URGENCY,

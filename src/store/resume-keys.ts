@@ -12,19 +12,28 @@ const LETTERS = 'bcdfghjkmnpqrtvwxy';
 /** Digits with the same treatment: no `0`, `1`, `2` or `5`. */
 const DIGITS = '346789';
 
-const KEY_LENGTH = 6;
+/**
+ * Eight characters, up from six. Three pairs gave ~1.26 million keys, and the read path
+ * answers a wrong key in about a millisecond with no limit -- full enumeration of every
+ * parked workstream on the machine in ~20 minutes from any directory. Four pairs is ~136
+ * million, which together with the miss delay in `readResumePoint` moves enumeration from
+ * "a lunch break" to "not worth it" while staying transcribable. Keys already in people's
+ * hands stay six characters and keep resolving; only newly minted ones grow.
+ */
+const KEY_LENGTH = 8;
+const LEGACY_KEY_LENGTH = 6;
 
 const pick = (alphabet: string) => alphabet[randomInt(alphabet.length)];
 
 /**
  * A key the user keeps.
  *
- * Letter-digit alternating, six characters. The shape is not cosmetic: a key is pasted back
- * into a prompt, and a six-character key from a full alphabet can legitimately spell `budget`
- * or `delete`. A key that reads as an instruction is one a model may act on instead of look up.
+ * Letter-digit alternating, eight characters. The shape is not cosmetic: a key is pasted back
+ * into a prompt, and a key from a full alphabet can legitimately spell `budget` or `delete`.
+ * A key that reads as an instruction is one a model may act on instead of look up.
  * Alternating positions makes a pronounceable word structurally impossible.
  *
- * 18 letters x 6 digits per pair, three pairs: about 1.26 million keys. Collisions are handled
+ * 18 letters x 6 digits per pair, four pairs: about 136 million keys. Collisions are handled
  * by the caller retrying on a unique-constraint violation, not by making the key longer.
  */
 export function mintResumeKey(): string {
@@ -33,7 +42,7 @@ export function mintResumeKey(): string {
   return key;
 }
 
-const KEY_SHAPE = new RegExp(`^([${LETTERS}][${DIGITS}]){${KEY_LENGTH / 2}}$`);
+const KEY_SHAPE = new RegExp(`^([${LETTERS}][${DIGITS}]){${LEGACY_KEY_LENGTH / 2},${KEY_LENGTH / 2}}$`);
 
 /**
  * The key inside whatever the user pasted, or null.

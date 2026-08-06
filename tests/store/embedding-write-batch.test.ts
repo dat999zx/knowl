@@ -75,9 +75,9 @@ describe('embedding writes commit as a batch', () => {
     // The mechanism, not the clock: five rows, one BEGIN, one COMMIT. Every bare statement is
     // its own implicit commit, and this schema fsyncs the WAL on each one.
     expect(countOf(trace.seen, /INSERT INTO knowledge_embeddings/)).toBe(5);
-    expect(countOf(trace.seen, /^BEGIN$/)).toBe(1);
+    expect(countOf(trace.seen, /^BEGIN( IMMEDIATE)?$/)).toBe(1);
     expect(countOf(trace.seen, /^COMMIT$/)).toBe(1);
-    expect(trace.seen.indexOf('BEGIN')).toBeLessThan(trace.seen.findIndex(sql => /INSERT INTO knowledge_embeddings/.test(sql)));
+    expect(trace.seen.findIndex(sql => /^BEGIN( IMMEDIATE)?$/.test(sql))).toBeLessThan(trace.seen.findIndex(sql => /INSERT INTO knowledge_embeddings/.test(sql)));
 
     const stored = await getClient().execute('SELECT count(*) AS n FROM knowledge_embeddings');
     expect(Number((stored.rows[0] as any).n)).toBe(5);
@@ -94,7 +94,7 @@ describe('embedding writes commit as a batch', () => {
     // One statement is already atomic and already one fsync; a transaction around it would
     // only add round trips to the path every ordinary knowledge write takes.
     expect(countOf(trace.seen, /INSERT INTO knowledge_embeddings/)).toBe(1);
-    expect(countOf(trace.seen, /^BEGIN$/)).toBe(0);
+    expect(countOf(trace.seen, /^BEGIN( IMMEDIATE)?$/)).toBe(0);
   });
 
   it('writes nothing when any row in the batch has a bad dimension', async () => {
@@ -136,7 +136,7 @@ describe('embedding writes commit as a batch', () => {
     expect(result.indexed).toBe(ids.length);
     expect(countOf(trace.seen, /INSERT INTO knowledge_embeddings/)).toBe(ids.length);
     // One page of 500 covers all twelve, so exactly one transaction -- and crucially not twelve.
-    expect(countOf(trace.seen, /^BEGIN$/)).toBe(1);
+    expect(countOf(trace.seen, /^BEGIN( IMMEDIATE)?$/)).toBe(1);
     expect(countOf(trace.seen, /^COMMIT$/)).toBe(1);
   });
 

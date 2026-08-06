@@ -102,11 +102,38 @@ export function assertKnowledgeDatabasePresent(root: string): void {
  * Commands that create or repair a store are exempt by name rather than by inspection:
  * `init` writes the database, and `upgrade` is the documented way to accept an empty one.
  * `doctor` has to be able to run precisely when something is wrong.
+ *
+ * `snapshot restore` is exempt because the error above names it as the first recovery to try,
+ * and the guard was refusing it -- the one command the message prescribes was the one it
+ * blocked. That left the operator with `upgrade` (which accepts the empty store the guard
+ * exists to prevent) or `doctor`, and doctor used to rebuild the database and certify it.
+ * Being exempt only skips this presence check; `snapshot restore` still verifies its source
+ * and refuses an attachment with no `knowledge_items` of its own.
+ *
+ * The subcommand, not the group. `snapshot create` opens the database, and opening a libSQL
+ * `file:` URL creates it -- so exempting `snapshot` wholesale let the backup command rebuild
+ * an empty store, snapshot THAT, report success, and disarm this guard for good, which is
+ * precisely the defect the exemption was written to make recoverable. It is worse than the
+ * `doctor` case it mirrors: `createSnapshot` prunes to `SNAPSHOT_KEEP`, so three such calls
+ * evict the real snapshots -- the material the recovery needs.
  */
-const EXEMPT_COMMANDS = new Set(['init', 'upgrade', 'doctor', 'config', 'diagnose-startup']);
+const EXEMPT_COMMANDS = new Set([
+  'init',
+  'upgrade',
+  'doctor',
+  'config',
+  'diagnose-startup',
+  'snapshot restore',
+]);
 
-export function assertDatabasePresentForCommand(commandName: string, cwd = process.cwd()): void {
-  if (EXEMPT_COMMANDS.has(commandName)) return;
+/**
+ * `commandPath` is the command's full path, top-level first, space-joined: `status`,
+ * `snapshot restore`. An entry naming only a top-level command exempts that whole group; an
+ * entry naming a path exempts that one subcommand and leaves its siblings guarded.
+ */
+export function assertDatabasePresentForCommand(commandPath: string, cwd = process.cwd()): void {
+  if (EXEMPT_COMMANDS.has(commandPath)) return;
+  if (EXEMPT_COMMANDS.has(commandPath.split(' ')[0])) return;
   const root = findProjectRootSync(cwd);
   if (!root) return;
   assertKnowledgeDatabasePresent(root);

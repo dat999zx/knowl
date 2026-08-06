@@ -50,7 +50,10 @@ async function onlyItemId(): Promise<string> {
 }
 
 function coverageCheck(checks: Array<{ status: string; message: string; fix?: string }>) {
-  return checks.find(check => /active item\(s\)|invisible to semantic search/i.test(check.message))!;
+  // Anchored on the opening words, which only the vector coverage check uses. Matching
+  // "active item(s)" loosely used to be unambiguous; the lexical coverage check now reports a
+  // count in the same words and sits earlier in the list, so a loose match selected that one.
+  return checks.find(check => /^Vector search/i.test(check.message))!;
 }
 
 describe('doctor vector coverage', () => {
@@ -108,5 +111,152 @@ describe('doctor vector coverage', () => {
 
     expect(check.status).toBe('OK');
     expect(check.message).toMatch(/all 1 active item\(s\) embedded/);
+  });
+});
+
+describe('doctor retrieval self-test', () => {
+  afterEach(async () => {
+    await closeDb();
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+  });
+
+  /** A repository with a registered project and nothing in it. */
+  async function bareRepo(): Promise<string> {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-probe-'));
+    await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
+    await fs.writeFile(path.join(root, '.knowl', 'config.json'), JSON.stringify(DEFAULT_CONFIG), 'utf-8');
+    await initDb(root);
+    return (await repo.createProject(root, 'doctor-probe')).id;
+  }
+
+  /** Make this item unambiguously the newest, so the probe is known to target it. */
+  async function makeNewest(itemId: string): Promise<void> {
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET updated_at = ? WHERE id = ?',
+      args: ['2999-01-01T00:00:00.000Z', itemId],
+    });
+  }
+
+  function probeCheck(checks: Array<{ status: string; message: string; fix?: string }>) {
+    return checks.find(check => /retrieval self-test|no knowledge stored yet/i.test(check.message))!;
+  }
+
+  function coverageLine(checks: Array<{ status: string; message: string; fix?: string }>) {
+    return checks.find(check => /lexical index|FTS index/i.test(check.message))!;
+  }
+
+  it('catches the items the probe never looked at', async () => {
+    // The hole a single-item probe leaves, found by attacking a real store: deleting the FTS
+    // rows of 624 of its 625 items left the probe passing at "rank 1 of 1". Coverage is counted
+    // for every item precisely so one green query cannot stand in for the whole store.
+    const projectId = await bareRepo();
+    const stale = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'An older item that keyword search is about to lose',
+      content: 'Reachable until its index row goes.',
+    });
+    const newest = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Postgres connection pool exhausts during concurrent migrations',
+      content: 'Migrations open their own connections.',
+    });
+    await makeNewest(newest.id);
+    await getClient().execute({
+      sql: 'DELETE FROM knowledge_items_fts WHERE item_id = ?',
+      args: [stale.id],
+    });
+    await closeDb();
+
+    const result = await runDoctor(root);
+
+    // The probe is happy: it queried the item that still works.
+    expect(probeCheck(result.checks).status).toBe('OK');
+    // Coverage is not. This suite runs with embedding writes disabled, so the item it lost is
+    // in no index at all -- reachable by nothing, which is a failure rather than degradation.
+    expect(coverageLine(result.checks).status).toBe('FAIL');
+    expect(coverageLine(result.checks).message).toContain('1 of 2');
+    expect(result.ready).toBe(false);
+  });
+
+  it('reports READY on a repository with nothing stored yet', async () => {
+    // The bug this whole change came from: `knowl init` on a fresh repo printed "ready", then
+    // `knowl doctor` printed NOT READY on the same install, because the only non-OK line was
+    // an advisory "nothing stored yet" and the verdict gated on every check being OK.
+    await bareRepo();
+    await closeDb();
+
+    const result = await runDoctor(root);
+
+    expect(probeCheck(result.checks).status).toBe('WARN');
+    expect(result.ready).toBe(true);
+    expect(result.checks.some(check => check.status === 'FAIL')).toBe(false);
+  });
+
+  it('re-finds a stored item by its own title words', async () => {
+    const projectId = await bareRepo();
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Postgres connection pool exhausts during concurrent migrations',
+      content: 'Migrations open their own connections.',
+    });
+    await closeDb();
+
+    const result = await runDoctor(root);
+
+    expect(probeCheck(result.checks).status).toBe('OK');
+    expect(probeCheck(result.checks).message).toMatch(/came back at rank \d+ of \d+/);
+    expect(result.ready).toBe(true);
+  });
+
+  it('FAILS, and gates the verdict, when the index has lost the item', async () => {
+    // The failure the old check could not see: the item row is present and countable, so
+    // `COUNT(active) > 0` reports a healthy store, while search cannot reach it. Only the
+    // probed item's FTS row is deleted -- bootstrap backfills the index when it is entirely
+    // empty, so a total wipe would heal itself on the next `initDb` and prove nothing. A
+    // partial gap is also the real-world shape: `integrity.ts` looks for exactly it.
+    const projectId = await bareRepo();
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'An unrelated item keeping the index table populated',
+      content: 'Present so the backfill does not run.',
+    });
+    const target = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Postgres connection pool exhausts during concurrent migrations',
+      content: 'Migrations open their own connections.',
+    });
+    await makeNewest(target.id);
+    await getClient().execute({
+      sql: 'DELETE FROM knowledge_items_fts WHERE item_id = ?',
+      args: [target.id],
+    });
+    await closeDb();
+
+    const result = await runDoctor(root);
+
+    expect(probeCheck(result.checks).status).toBe('FAIL');
+    expect(probeCheck(result.checks).fix).toContain('knowl audit');
+    expect(result.ready).toBe(false);
+  });
+
+  it('records no knowledge_access rows: a diagnostic must not feed the ranking signal', async () => {
+    // The old check called `queryKnowledgeForAgent`, which writes a `knowledge_access` row per
+    // returned item tagged as a real agent query. Those rows are counted as tier confirmations
+    // (`tier.ts`) and as GC liveness (`getAccessSummary`), and `knowl-sync` runs doctor in every
+    // repository on the machine -- so merely diagnosing a store promoted whichever items
+    // happened to sort first.
+    const projectId = await bareRepo();
+    await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Postgres connection pool exhausts during concurrent migrations',
+      content: 'Migrations open their own connections.',
+    });
+    await closeDb();
+
+    await runDoctor(root);
+
+    await initDb(root);
+    const rows = await getClient().execute('SELECT COUNT(*) AS total FROM knowledge_access');
+    expect(Number((rows.rows[0] as any).total)).toBe(0);
   });
 });

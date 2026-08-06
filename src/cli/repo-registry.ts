@@ -106,7 +106,14 @@ export type KnownRepos = {
  * `assertKnowledgeDatabasePresent` reads this file to tell a moved database from a fresh
  * clone, and an empty registry silently disables that guard.
  */
-export async function readKnownRepos(): Promise<KnownRepos> {
+export async function readKnownRepos(options: { persist?: boolean } = {}): Promise<KnownRepos> {
+  // Self-healing is a *write*, and `upgrade --all --dry-run` called this before its own dry-run
+  // guard -- so a command that closes with "Dry run: nothing was changed" permanently dropped
+  // entries from the registry. That registry is what `upgrade --all` and `doctor --fix` act on,
+  // and a repo whose checkout is momentarily absent (mid-clone, mid-restore, renamed) classifies
+  // as forgotten, so an inspection could quietly narrow every future sweep. Callers that are
+  // only looking pass `persist: false` and still get the same classification back to report.
+  const { persist = true } = options;
   const registry = await readRegistry();
 
   const repos: string[] = [];
@@ -129,7 +136,7 @@ export async function readKnownRepos(): Promise<KnownRepos> {
     }
   }
 
-  if (forgotten.length > 0) {
+  if (forgotten.length > 0 && persist) {
     try {
       await writeRegistry([...new Set(keep)].sort());
     } catch {

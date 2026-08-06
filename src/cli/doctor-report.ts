@@ -8,11 +8,12 @@ import { vectorCoverageCheck } from './vector-coverage.js';
 import { isKnowlProjectGuidanceCurrent } from '../core/agents-guidance.js';
 import { closeDb, getDb, initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
-import { queryKnowledgeForAgent } from '../store/agent-query.js';
+import { runLexicalCoverage, runRetrievalProbe } from './retrieval-probe.js';
 import { KNOWL_MCP_TOOL_NAMES } from '../core/knowl-guidance.js';
 import { getVectorSearchConfig, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { fingerprintProfile, resolveVectorProfile } from '../core/vector-profile.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
+import { assertKnowledgeDatabasePresent } from './database-presence.js';
 import { createAgentRegistry } from './agents/registry.js';
 import type { DoctorRemedy } from './doctor-remedy.js';
 
@@ -81,6 +82,16 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       remedy: ignoresKnowl ? undefined : { kind: 'gitignore' },
     });
 
+    // `doctor` is exempt from the preAction missing-database guard so it can run precisely when
+    // something is wrong. That exemption was only ever meant to skip the *throw*, never to
+    // license the write: `initDb` opens a libSQL `file:` URL, and opening one CREATES it. So
+    // diagnosing a repository whose database had gone missing rebuilt an empty one, reported
+    // `[OK] Local project store ready`, and from then on the guard could never fire again --
+    // the file exists. `knowl-sync` runs doctor in every repository on this machine, which made
+    // routine maintenance the trigger that turned a recoverable move into a certified-healthy
+    // empty store. Ask the same question the guard asks, and let the catch below report it.
+    assertKnowledgeDatabasePresent(root);
+
     await initDb(root);
     dbOpen = true;
     const integrity = await auditKnowledgeStore(config.security);
@@ -91,7 +102,12 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     const integrityErrors = integrity.findings.filter(finding => finding.severity === 'error').length;
     const integrityWarnings = integrity.findings.length - integrityErrors;
     checks.push({
-      status: integrityErrors > 0 ? 'FAIL' : 'OK',
+      // A warning-only audit reports WARN rather than OK. It stamped [OK] and then printed a
+      // Fix line under it, which is a report contradicting itself, and one of the findings it
+      // hid this way is `missing-index-row` -- the exact condition the retrieval self-test
+      // below fails on. Safe to say out loud only now that WARN no longer decides the verdict:
+      // before, any integrity warning anywhere would have reported the whole repository broken.
+      status: integrityErrors > 0 ? 'FAIL' : integrityWarnings > 0 ? 'WARN' : 'OK',
       message: integrity.findings.length === 0
         ? 'Knowledge integrity audit passed'
         : `Knowledge integrity audit found ${integrityErrors} error(s) and ${integrityWarnings} warning(s)`,
@@ -129,23 +145,21 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       checks.push({ status: 'WARN', message: 'Database schema missing memory sessions; run knowl upgrade' });
     }
 
+    // Resolved once. Both coverage checks below filter on the profile that search actually uses,
+    // and a store where they disagreed about which profile that is would report a gap in one and
+    // full coverage in the other. Null means vector search is off, which the lexical check reads
+    // as "there is no semantic fallback".
+    const vectorFingerprint = isVectorSearchEnabled(config)
+      ? fingerprintProfile(resolveVectorProfile(config))
+      : null;
+
     const project = await getProjectByRootPath(root);
     if (!project) {
       checks.push({ status: 'FAIL', message: 'Project not registered in Knowl database' });
     } else {
       checks.push({ status: 'OK', message: 'Local project store ready' });
-
-      const queryResults = await queryKnowledgeForAgent(project.id, {
-        status: 'active',
-        limit: 3,
-      });
-      checks.push({
-        status: queryResults.length > 0 ? 'OK' : 'WARN',
-        message: queryResults.length > 0
-          ? `Agent query returned ${queryResults.length} item(s)`
-          : 'Agent query returned no active items; store durable project knowledge',
-        fix: queryResults.length > 0 ? undefined : 'store at least one durable fact, decision, constraint, architecture note, state item, or skill',
-      });
+      checks.push(await runLexicalCoverage(vectorFingerprint));
+      checks.push(await runRetrievalProbe(project.id));
     }
 
     const hasQuery = KNOWL_MCP_TOOL_NAMES.includes('knowl_query');
@@ -243,7 +257,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
       // duckprep store carried a NULL fingerprint, were invisible to every query, and doctor
       // reported `all 470 active item(s) embedded`. A check written to turn a silent
       // permanent gap into a visible one could not see the gap it was written for.
-      const fingerprint = fingerprintProfile(resolveVectorProfile(config));
+      const fingerprint = vectorFingerprint!;
       const counts = await (getDb() as any).all(sql`
         SELECT
           (SELECT COUNT(*) FROM knowledge_items WHERE status = 'active') AS active,
@@ -273,7 +287,14 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
   }
 
   return {
-    ready: checks.every(check => check.status === 'OK'),
+    // WARN is advisory by definition, so it must not decide the verdict. The old gate was
+    // `every(check => check.status === 'OK')`, which collapsed a three-level status into two
+    // outcomes and made a freshly initialized repository -- every check OK except "no knowledge
+    // stored yet" -- report NOT READY. `knowl init` printed "ready" and `knowl doctor` then
+    // called the same install broken, which is how this was found. Advisory findings are not
+    // lost: `formatDoctorReport` counts them on the verdict line and the sweep in
+    // `upgrade-all.ts` prints each one under its repository.
+    ready: checks.every(check => check.status !== 'FAIL'),
     checks,
   };
 }
@@ -288,8 +309,14 @@ export function formatDoctorReport(result: DoctorResult): string {
     }
   }
 
+  // Counted on the verdict line because READY must not read as spotless now that warnings no
+  // longer gate it: this is what carries an advisory finding to someone who reads only the last
+  // line, which for a long report is most people.
+  const warnings = result.checks.filter(check => check.status === 'WARN').length;
+  const advisory = warnings > 0 ? ` (${warnings} advisory warning${warnings === 1 ? '' : 's'})` : '';
+
   lines.push('');
-  lines.push(`Result: ${result.ready ? 'READY' : 'NOT READY'}`);
+  lines.push(`Result: ${result.ready ? 'READY' : 'NOT READY'}${advisory}`);
 
   return lines.join('\n');
 }

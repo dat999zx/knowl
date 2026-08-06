@@ -218,6 +218,11 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
             properties: {
               atoms: {
                 type: 'array',
+                // Every other array on this surface is capped -- tags/repos/completed at 20 --
+                // and this one, the one that writes the store, was unbounded. 400 atoms in a
+                // single call produced a 92,000-character response and one transaction that
+                // could retire other atoms from the same batch.
+                maxItems: 50,
                 items: {
                   type: 'object',
                   properties: {
@@ -304,10 +309,15 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           name: 'knowl_query',
           description: 'Use this first for specific project questions, before each new subtask, and when switching areas during multi-step work. Use every word that names the subject and none that does not: one more on-subject term retrieves better, one off-subject term retrieves worse, so never pad a query to reach a length and never drop a real term to stay under one. Skip only for directly relevant active lifecycle context, a same-request query, or relevant memory returned by knowl_task_start. If results contain a relevant active item, answer from Knowl without inspecting repository files. Inspect files only on miss, conflict, stale or low-confidence results, or explicit verification requests -- and on a miss, re-run once with different words first, because a first-pass miss is usually vocabulary rather than absence. `content` is cut at '
             + MAX_ITEM_CONTENT_CHARS
-            + ' characters and marked `truncated` when it was; `affectedPaths` names the files the item depends on, so open those rather than searching for them. Results carry `score` (0-1) when semantic search is available: it is the relevance the ranker ordered by and it is comparable across queries, so a low top score means the best available match is weak rather than that it is the answer. When no calibrated number exists, `score` is the string `uncalibrated (<reason>)`: the ranker has an order but no opinion on strength, so do not read position as confidence -- judge the content itself.',
+            + ' characters and marked `truncated` when it was; `affectedPaths` names the files the item depends on, so open those rather than searching for them. To read a truncated item in full, call again with `id` set to the id of that result. Results carry `score` (0-1) when semantic search is available: it is the relevance the ranker ordered by and it is comparable across queries, so a low top score means the best available match is weak rather than that it is the answer. When no calibrated number exists, `score` is the string `uncalibrated (<reason>)`: the ranker has an order but no opinion on strength, so do not read position as confidence -- judge the content itself.',
           inputSchema: {
             type: 'object',
             properties: {
+              id: {
+                type: 'string',
+                minLength: 1,
+                description: 'Fetch exactly this item, whole: full untruncated content plus the fields a search result omits (reasoning, alternatives, provenance, status, source, timestamps). Use it to read the rest of a result that came back `truncated`. When set, every other argument except includeEvidence is ignored.',
+              },
               query: {
                 type: 'string',
                 maxLength: 500,

@@ -1,5 +1,5 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import { ListResourcesRequestSchema, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode, ListResourcesRequestSchema, McpError, ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { KnowledgeCategory } from '../core/types.js';
 import { getRecentContext } from '../store/recent-context.js';
 import { formatRecentContextToMarkdown, formatHierarchyToMarkdown } from '../core/format.js';
@@ -118,8 +118,15 @@ export function registerResources(
         };
       }
 
-      throw new Error(`Resource not found: ${uri}`);
+      // The spec is explicit: a resource that does not exist MUST come back as -32602
+      // (Invalid params), and -32603 (Internal error) is reserved for the server having
+      // failed. Thrown as a plain Error this fell into the catch below, was re-wrapped, and
+      // the SDK mapped it to -32603 -- so knowl reported the caller's bad URI as its own
+      // fault, and a client could not tell "you asked for something that isn't here" from
+      // "this server is broken". McpError carries the code through the re-wrap untouched.
+      throw new McpError(ErrorCode.InvalidParams, `Resource not found: ${uri}`);
     } catch (error: any) {
+      if (error instanceof McpError) throw error;
       // The second place a raw driver message can reach a client. No resource URI carries a
       // caller-supplied field, so the missing-argument route into it does not exist here --
       // but "statement text and bound parameters never leave the process" is the rule, and a

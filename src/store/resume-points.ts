@@ -21,9 +21,11 @@ export type ResumePoint = ResumeBrief & {
 /**
  * Retries on a key collision rather than lengthening every key.
  *
- * Collisions are expected, not exceptional: the keyspace is 1,259,712 and 2,000 independent
- * draws collide about 80% of the time. What matters is that a *stored* key is unique, which the
- * primary key enforces and this retry absorbs.
+ * Collisions are rare at the current keyspace of 136,048,896 -- they were expected at the
+ * 1,259,712 of six-character keys, where 2,000 independent draws collided about 80% of the
+ * time -- but the retry stays either way. What matters is that a *stored* key is unique, which
+ * the primary key enforces and this absorbs, and that guarantee must not depend on how long
+ * the key happens to be this year.
  */
 const MINT_ATTEMPTS = 5;
 
@@ -82,7 +84,17 @@ export async function readResumePoint(rawKey: string): Promise<ResumePoint | nul
     args: [key],
   })).rows;
 
-  return rows[0] ? toPoint(rows[0] as Record<string, unknown>) : null;
+  // A wrong key costs a quarter second. Lookups answered in ~1 ms with no limit made the
+  // machine-wide keyspace enumerable in minutes from any directory -- 50 misses were measured
+  // in 47 ms -- and a hit hands over another repo's goal, blocker and artifact paths. A human
+  // mistyping feels nothing at 250 ms; an enumeration of the 8-character space now costs years
+  // instead of an afternoon. On a hit there is no delay at all.
+  if (!rows[0]) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return null;
+  }
+
+  return toPoint(rows[0] as Record<string, unknown>);
 }
 
 /**

@@ -333,9 +333,14 @@ describe('CLI Integration', () => {
       encoding: 'utf8',
       env: { ...process.env, KNOWL_NO_UPDATE_CHECK: '1' },
     });
-    expect(result.status).toBe(1);
+    // Exit 0: stale host instructions are a WARN, and a WARN is advisory. The repository is
+    // usable -- MCP still answers -- so the verdict stays READY and the finding is carried by
+    // the WARN line and its fix hint, which is what this test is actually about. Only FAIL
+    // exits non-zero now.
+    expect(result.status).toBe(0);
     expect(result.stdout).toContain('[WARN] claude native instructions missing or stale');
     expect(result.stdout).toContain('run `knowl init claude`');
+    expect(result.stdout).toContain('advisory warning');
     await fs.rm(root, { recursive: true, force: true });
   });
 
@@ -657,7 +662,10 @@ describe('CLI Integration', () => {
     expect(output).toContain('[OK] Config includes vector search defaults');
     expect(output).toContain('[OK] Database schema includes knowledge_embeddings');
     expect(output).toContain('[OK] .gitignore ignores .knowl/');
-    expect(output).toContain('[OK] Agent query returned');
+    // The check this replaced only counted rows. This one runs a real query and asserts the
+    // stored decision comes back from it, so the assertion covers the index and the ranker
+    // rather than the row count.
+    expect(output).toContain('[OK] Retrieval self-test passed: "Doctor Ready" came back at rank 1');
     expect(output).toContain('[OK] MCP tools expose knowl_query and hide knowl_ask');
     expect(output).toContain('[OK] MCP tools expose work-loop task tools');
     expect(output).toContain('[OK] codex lifecycle hooks configured');
@@ -685,9 +693,16 @@ describe('CLI Integration', () => {
     await fs.writeFile(path.join(staleDir, 'AGENTS.md'), '# Agent Instructions\n', 'utf-8');
     await fs.writeFile(path.join(staleDir, '.gitignore'), 'node_modules/\n', 'utf-8');
 
-    let output = '';
+    // No initializer: both the try and the catch assign it, so a placeholder here would be
+    // dead — and a `''` that can never survive is exactly the kind of default that hides a
+    // path where neither branch ran.
+    let output: string;
     try {
-      execSync(`node "${CLI_PATH}" doctor`, {
+      // Captured from the success path too. This used to read stdout only out of the thrown
+      // error, which silently assumed doctor exits non-zero here -- it did, because a WARN
+      // used to mean NOT READY. Both stale files are advisory, so it now exits 0 and the
+      // assertions below were reading an empty string.
+      output = execSync(`node "${CLI_PATH}" doctor`, {
         cwd: staleDir,
         encoding: 'utf-8',
         stdio: 'pipe',

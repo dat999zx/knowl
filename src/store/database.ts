@@ -210,7 +210,18 @@ export async function withClientTransaction<T>(run: (conn: DbConnection) => Prom
     return await transactionScope.run(true, async () => {
       const client = getClient();
       const db = getDb();
-      await client.execute('BEGIN');
+      // IMMEDIATE, never a bare (DEFERRED) BEGIN. Every caller of this helper writes, and a
+      // deferred transaction takes its write lock lazily -- on the first write, after reads have
+      // already run. SQLite answers that upgrade with SQLITE_BUSY_SNAPSHOT rather than waiting,
+      // because the reader's snapshot is already stale; no busy handler may wait it out, so
+      // `PRAGMA busy_timeout` does not apply and the retry in connection-pool.ts does not match
+      // it. The write simply failed. Measured across processes on one store: 20 concurrent
+      // writes lost 0 through one server, 10 through two, 14 through three.
+      //
+      // IMMEDIATE takes the write lock up front, which IS waitable, so contention becomes a
+      // wait bounded by busy_timeout instead of an error. `bootstrapSchema` already did this
+      // for the same reason (bootstrap.ts) -- the rule was stated there and not applied here.
+      await client.execute('BEGIN IMMEDIATE');
       try {
         const result = await run(db);
         await client.execute('COMMIT');

@@ -221,7 +221,7 @@ describe('MCP Server Layer', () => {
     const parked = await runRpcRequest('tools/call', {
       name: 'knowl_park', arguments: { goal: 'Ship the parser' },
     });
-    const key = /([a-z]\d[a-z]\d[a-z]\d)/.exec(JSON.stringify(parked.result))![1];
+    const key = /knowl resume (([a-z]\d){3,4})/.exec(JSON.stringify(parked.result))![1];
 
     const resumed = await runRpcRequest('tools/call', {
       name: 'knowl_resume', arguments: { key },
