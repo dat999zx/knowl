@@ -250,37 +250,53 @@ describe('runIndexPass', () => {
    * but ubuntu failed on all four non-Linux legs for exactly this. A symlink reproduces it on
    * Linux too, so the cheapest runner catches it next time.
    */
-  it('discovers worktrees through a symlinked project root', async () => {
-    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-symrepo-'));
-    const worktree = path.join(repo, '..', `${path.basename(repo)}-wt`);
-    const link = path.join(dir, 'linked-root');
+  /**
+   * Discovery through a path whose PARENT is a link, which is the shape every non-Linux CI
+   * runner has and Linux does not.
+   *
+   * `git worktree list` always answers canonically. macOS `os.tmpdir()` is `/var/folders/...`
+   * whose real path is `/private/var/folders/...`, and a Windows profile over eight characters
+   * appears as `RUNNER~1`. The archive, meanwhile, is named for the path the AGENT held. So the
+   * repo root is reachable by resolving, but its SIBLING worktree is not: no amount of
+   * canonicalising git's `/private/var/.../repo-wt` produces the `-var-...-repo-wt` directory
+   * that is actually on disk. Recovering it needs the inverse substitution.
+   *
+   * Junctioning the parent rather than the repo is what makes this reproduce off macOS: with
+   * only the repo linked, the sibling worktree path is identical in both forms and nothing is
+   * being tested.
+   */
+  it('indexes a sibling worktree when the project root is reached through a linked parent', async () => {
+    const realParent = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-parent-'));
+    const repo = path.join(realParent, 'repo');
+    const worktree = path.join(realParent, 'repo-wt');
+    await fs.mkdir(repo, { recursive: true });
+
     const git = (...args: string[]) =>
       execFileAsync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: repo });
-
     await git('init');
     await git('commit', '--allow-empty', '-m', 'root');
     await git('worktree', 'add', worktree, '-b', 'side');
-    // A junction on Windows: it needs no elevation and no developer mode, and `realpath`
-    // resolves it exactly as it resolves a POSIX symlink, so the case under test is the same
-    // one on all three platforms.
-    await fs.symlink(repo, link, process.platform === 'win32' ? 'junction' : 'dir');
 
-    // Archives keyed by the SYMLINKED root and by the worktree, which is how a host agent
-    // that was launched through the link would have written them.
-    const archive = path.join(dir, 'sym-projects');
-    for (const [root, session] of [[link, 'linked-session'], [worktree, 'worktree-session']] as const) {
+    // A junction on Windows: no elevation, no developer mode, and `realpath` resolves it
+    // exactly as it resolves a POSIX symlink.
+    const linkParent = path.join(dir, 'linked-parent');
+    await fs.symlink(realParent, linkParent, process.platform === 'win32' ? 'junction' : 'dir');
+
+    // Named the way an agent launched through the link would have named them.
+    const archive = path.join(dir, 'linked-projects');
+    const linkedRepo = path.join(linkParent, 'repo');
+    for (const [root, session] of [[linkedRepo, 'root-session'], [path.join(linkParent, 'repo-wt'), 'wt-session']] as const) {
       const encoded = path.join(archive, encodeProjectDir(path.resolve(root)));
       await fs.mkdir(encoded, { recursive: true });
-      await fs.writeFile(path.join(encoded, `${session}.jsonl`), line('user', `content of ${session}`));
+      await fs.writeFile(path.join(encoded, `${session}.jsonl`), line('user', session));
     }
 
-    const pass = await runIndexPass({ projectRoot: link, dbPath, projectsDir: archive });
+    const pass = await runIndexPass({ projectRoot: linkedRepo, dbPath, projectsDir: archive });
     expect(pass.indexed).toBe(2);
 
     await git('worktree', 'remove', '--force', worktree).catch(() => {});
-    await fs.rm(link, { force: true }).catch(() => {});
-    await fs.rm(repo, { recursive: true, force: true }).catch(() => {});
-    await fs.rm(worktree, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(linkParent, { force: true, recursive: true }).catch(() => {});
+    await fs.rm(realParent, { recursive: true, force: true }).catch(() => {});
   }, 30_000);
 
   it('mirrors every message into the FTS index under its own rowid', async () => {

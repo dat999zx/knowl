@@ -223,9 +223,56 @@ export async function scanTranscriptArchive(
   const rootSet = options.roots
     ? { roots: options.roots, degraded: false }
     : await resolveRepoRootSet(projectRoot);
+  // Both encodings of every root, because only one of them is in the archive and which one
+  // depends on how the host agent was launched.
+  //
+  // An archive directory is named for the path the AGENT had when it wrote the transcript; the
+  // roots here come partly from the caller and partly from `git worktree list`, which always
+  // answers canonically. Where a path has a symlink, a macOS `/var` -> `/private/var`, or a
+  // Windows 8.3 short name in it, those two forms differ and an exact match finds nothing --
+  // measured: every worktree session went unindexed on macOS and Windows while ubuntu, whose
+  // paths are already canonical, saw nothing wrong for months.
+  //
   // Case-folded because the drive letter's case is not stable across hosts: this archive holds
   // both `d--coding-knowl` and `D--coding-knowl-worktrees-pr-6`.
-  const wanted = new Set(rootSet.roots.map(root => encodeProjectDir(path.resolve(root)).toLowerCase()));
+  // Canonicalising is not enough on its own, and this is the subtle half. `realpath` only maps
+  // TOWARD the real path, but the archive is often named for the UN-canonical one: on macOS an
+  // agent launched in `/var/folders/X` writes `-var-folders-X`, while `git worktree list`
+  // reports its sibling worktree only as `/private/var/folders/X-wt`. No amount of resolving
+  // git's answer produces `-var-folders-X-wt`. What is needed is the inverse substitution, and
+  // the project root is what reveals it: knowing `/private/var` stands for `/var` here lets
+  // every canonical root be expressed the way the agent would have written it.
+  // Derived from the one pair we can see both halves of -- the project root as given and as
+  // resolved -- by taking their longest common tail. What is left in front is the substitution:
+  // `/private/var` stands for `/var` on macOS, `C:\Users\runneradmin` for `C:\Users\RUNNER~1`
+  // on Windows. A whole-path prefix would not do, because a worktree is a SIBLING of the repo
+  // rather than a child of it.
+  const givenRoot = path.resolve(projectRoot);
+  const realGivenRoot = await fs.realpath(givenRoot).catch(() => givenRoot);
+  let realHead = '';
+  let givenHead = '';
+  if (foldPath(realGivenRoot) !== foldPath(givenRoot)) {
+    let shared = 0;
+    while (
+      shared < realGivenRoot.length && shared < givenRoot.length
+      && foldPath(realGivenRoot[realGivenRoot.length - 1 - shared]) === foldPath(givenRoot[givenRoot.length - 1 - shared])
+    ) shared += 1;
+    realHead = realGivenRoot.slice(0, realGivenRoot.length - shared);
+    givenHead = givenRoot.slice(0, givenRoot.length - shared);
+  }
+  const uncanonicalise = (target: string): string | null => {
+    if (!realHead) return null;
+    if (!foldPath(target).startsWith(foldPath(realHead))) return null;
+    return givenHead + target.slice(realHead.length);
+  };
+
+  const wanted = new Set<string>();
+  for (const root of rootSet.roots) {
+    const resolvedRoot = path.resolve(root);
+    for (const form of [resolvedRoot, await fs.realpath(resolvedRoot).catch(() => null), uncanonicalise(resolvedRoot)]) {
+      if (form) wanted.add(encodeProjectDir(form).toLowerCase());
+    }
+  }
   const found: TranscriptFile[] = [];
   let degraded = rootSet.degraded;
 

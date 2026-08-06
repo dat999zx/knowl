@@ -3,6 +3,33 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 3.2.2 — 2026-08-06
+
+### Fixed
+
+- **Worktree transcripts really are indexed on macOS and Windows now.** 3.2.1 fixed the wrong
+  half. Making the root-set guard compare canonically was correct but not sufficient: the archive
+  directory is named for the path the *agent* held, and `git worktree list` always answers
+  canonically, so resolving git's answer only ever moves further from the name on disk. An agent
+  launched in `/var/folders/X` writes `-var-folders-X-wt`, and no amount of canonicalising
+  `/private/var/folders/X-wt` produces it.
+
+  Archive lookup now tries each root as given, resolved, **and** with the canonicalisation
+  undone — the substitution (`/private/var` for `/var`, `C:\Users\runneradmin` for
+  `C:\Users\RUNNER~1`) is derived from the one pair where both halves are visible, the project
+  root as supplied and as resolved.
+
+  Reproduced on Windows with a junctioned parent directory. The earlier test junctioned only the
+  repo, which leaves the *sibling* worktree path identical in both forms and therefore tests
+  nothing — which is why 3.2.1 looked verified and was not.
+
+### Changed
+
+- CI is 5 jobs instead of 9. Across two full runs the node axis produced no signal that the OS
+  axis did not — 22 and 24 agreed on every leg — so node 24 is kept on ubuntu alone. Lint, types,
+  docs, audit and the tarball smoke test were three ubuntu jobs each paying their own `npm ci`;
+  they are one job. CodeQL drops its per-PR run for main plus weekly.
+
 ## 3.2.1 — 2026-08-06
 
 ### Fixed
