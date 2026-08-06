@@ -1,17 +1,13 @@
 import fs from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
+import { knowlHome } from '../core/paths.js';
 
 /**
- * Root for machine-local Knowl state that is not tied to one project.
- *
- * A workspace lives here rather than inside any member repo: putting it in one would make
- * that repo special, break when it is deleted, and risk it being committed.
+ * `knowlHome` now lives in `core/paths.ts` — it is machine-local state, not a workspace idea.
+ * Re-exported here because callers that want a workspace path usually want the root too, and
+ * because it keeps existing imports working.
  */
-export function knowlHome(): string {
-  const override = process.env.KNOWL_HOME;
-  return override ? path.resolve(override) : path.join(os.homedir(), '.knowl');
-}
+export { knowlHome } from '../core/paths.js';
 
 export function workspacesRoot(): string {
   return path.join(knowlHome(), 'workspaces');

@@ -1,4 +1,4 @@
-import type { HookHost } from '../host-hook.js';
+import type { HookHost } from '../../core/host-hook-types.js';
 import type { HostProfile } from './profile.js';
 import { claudeProfile } from './claude.js';
 import { codexProfile } from './codex.js';

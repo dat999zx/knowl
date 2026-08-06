@@ -5,7 +5,7 @@ import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER } from '../../src/core/knowl-guidance.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { readCommitHead } from '../../src/store/change-watermark.js';
-import { handleHostLifecycleEvent } from '../../src/store/host-lifecycle.js';
+import { handleHostLifecycleEvent } from '../../src/session/host-lifecycle.js';
 import {
   bindHostSession,
   closeHostSessionBinding,
@@ -14,9 +14,9 @@ import {
   incrementHostSuccessfulToolCount,
   readHostSeenCommit,
   setHostSeenCommit,
-} from '../../src/store/host-session-bindings.js';
+} from '../../src/session/host-session-bindings.js';
 import * as repo from '../../src/store/repository.js';
-import { recordPendingSessionHandoff } from '../../src/store/session-handoff.js';
+import { recordPendingSessionHandoff } from '../../src/session/session-handoff.js';
 import { startMemorySession } from '../../src/store/session-repository.js';
 
 const ROOT = path.resolve('.knowl-host-lifecycle-test');

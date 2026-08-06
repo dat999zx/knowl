@@ -1,4 +1,4 @@
-import { formatResumeBrief, listResumePoints, readResumePoint } from '../store/resume-points.js';
+import { formatResumeBrief, listResumePoints, readResumePoint } from '../session/resume-points.js';
 
 export type ResumeCommandResult = {
   /** `unknown-key` is the only failure; the caller turns it into a non-zero exit. */

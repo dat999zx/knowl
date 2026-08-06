@@ -246,3 +246,16 @@ export function hasAiConfigured(config?: ProjectConfig): boolean {
   if (config.ai.provider === 'ollama') return true;
   return Boolean(config.ai.apiKey);
 }
+
+/**
+ * Whether transcript search is on for this repo.
+ *
+ * A three-line predicate over `ProjectConfig`, which is itself a core type — so it reads
+ * nothing the transcripts feature owns. It lived in `transcripts/config.ts` beside its first
+ * caller, which made `core/knowl-guidance.ts` import upward into a feature module. `core` is
+ * the bottom of the graph and must not depend on anything above it; `transcripts/config.ts`
+ * re-exports this so the feature's own callers are unchanged.
+ */
+export function isTranscriptSearchEnabled(config: ProjectConfig): boolean {
+  return config.search?.transcripts?.enabled === true;
+}

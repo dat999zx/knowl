@@ -1,9 +1,9 @@
-import { NormalizedHostHook } from '../cli/agents/host-hook.js';
+import { NormalizedHostHook } from '../core/host-hook-types.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
-import { normalizeConflictKey } from './conflicts.js';
-import * as repo from './repository.js';
-import { getClient } from './database.js';
-import { getMemorySession } from './session-repository.js';
+import { normalizeConflictKey } from '../store/conflicts.js';
+import * as repo from '../store/repository.js';
+import { getClient } from '../store/database.js';
+import { getMemorySession } from '../store/session-repository.js';
 
 export const PENDING_HANDOFF_TITLE = 'Pending session handoff';
 export const RATE_LIMIT_URGENCY = 'critical';

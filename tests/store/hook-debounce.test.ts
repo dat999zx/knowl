@@ -7,7 +7,7 @@ import {
   claimCapture,
   releaseCapture,
   shouldSkipDuplicateCapture,
-} from '../../src/store/hook-debounce.js';
+} from '../../src/session/hook-debounce.js';
 import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
 
 const ROOT = path.resolve('.knowl-hook-debounce-test');

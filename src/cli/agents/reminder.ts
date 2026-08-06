@@ -1,5 +1,5 @@
 import { KNOWL_CLAUDE_PROMPT_REMINDER } from '../../core/knowl-guidance.js';
-import { hostProfile, isHookHost, HostOutput } from './hosts/index.js';
+import { hostProfile, isHookHost, HostOutput } from '../../session/hosts/index.js';
 
 /**
  * Prompt-time guidance card for hosts that declare a prompt event. The envelope comes

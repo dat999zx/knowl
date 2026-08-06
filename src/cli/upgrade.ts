@@ -10,7 +10,7 @@ import { runStoreRetention, type ModelCacheRetention, type RetentionReport } fro
 import { resolveVectorProfile } from '../core/vector-profile.js';
 import { backfillOriginRepo } from '../workspace/membership.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
-import { knowlHome } from '../workspace/paths.js';
+import { knowlHome } from '../core/paths.js';
 import { listKnownRepos, recordKnownRepo } from './repo-registry.js';
 
 export type UpgradeResult = {

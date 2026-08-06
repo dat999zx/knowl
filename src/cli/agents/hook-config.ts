@@ -1,6 +1,6 @@
 import { readTextIfExists, MergeStatus, writeWithBackup } from './files.js';
 import { HookHost } from './host-hook.js';
-import { hostProfile } from './hosts/index.js';
+import { hostProfile } from '../../session/hosts/index.js';
 
 type NestedHook = { type: 'command'; command: string; timeout: number; statusMessage: string };
 type NestedEntry = { matcher: string; hooks: NestedHook[] };

@@ -13,7 +13,7 @@ import {
   HostSessionKey,
   readHostSeenCommit,
   setHostSeenCommit,
-} from '../../src/store/host-session-bindings.js';
+} from '../../src/session/host-session-bindings.js';
 import { finishMemorySession, startMemorySession } from '../../src/store/session-repository.js';
 import * as repo from '../../src/store/repository.js';
 

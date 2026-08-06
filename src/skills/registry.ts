@@ -2,6 +2,9 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { assertSkillApproved } from './trust.js';
+import {
+  SAFE_SKILL_NAME, normalizeSkillFilePath, validateSkillName,
+} from '../core/skill-paths.js';
 
 export type SkillEntrypoint =
   | {
@@ -73,7 +76,6 @@ export interface SkillRunResult {
   attempts: SkillRunAttempt[];
 }
 
-const SAFE_SKILL_NAME = /^[a-z0-9][a-z0-9_-]*$/;
 
 /**
  * Windows re-parses the command line of a batch file *after* Node has quoted it for MSVCRT,
@@ -102,24 +104,12 @@ export function skillSourcePath(name: string): string {
   return `.knowl/skills/${name}/SKILL.md`;
 }
 
-export function validateSkillName(name: string): void {
-  if (!SAFE_SKILL_NAME.test(name)) {
-    throw new Error(`Invalid skill name "${name}". Use lowercase letters, numbers, underscores, and hyphens.`);
-  }
-}
-
-export function normalizeSkillFilePath(filePath: string): string {
-  if (!filePath || filePath.includes('\0') || path.isAbsolute(filePath) || path.win32.isAbsolute(filePath)) {
-    throw new Error(`Invalid skill file path "${filePath}"`);
-  }
-
-  const normalized = path.posix.normalize(filePath.replace(/\\/g, '/'));
-  if (normalized === '.' || normalized === '..' || normalized.startsWith('../')) {
-    throw new Error(`Invalid skill file path "${filePath}"`);
-  }
-
-  return normalized;
-}
+/**
+ * Both validators live in `core/skill-paths.ts` — `store/portability.ts` applies the same rule
+ * when importing a bundle and cannot import upward into this feature to get it. Re-exported
+ * here so the registry stays the obvious place to look.
+ */
+export { normalizeSkillFilePath, validateSkillName } from '../core/skill-paths.js';
 
 function getSkillPackageDir(projectRoot: string, name: string): string {
   validateSkillName(name);

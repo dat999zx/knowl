@@ -3,7 +3,6 @@ import * as repo from './repository.js';
 import { crossRepoOverlapForWrite, findLikelyDuplicateKnowledgeItem, heldPayloadFor, resolveDuplicate } from './knowledge-writer.js';
 import type { CrossRepoOverlap } from '../workspace/cross-repo-overlap.js';
 import { hasAiConfigured } from '../core/config.js';
-import { initAI } from '../ai/provider.js';
 import { getCurrentGitCommit } from './drift.js';
 import { KnowledgeWriteValidationOptions } from '../core/types.js';
 import { attachEvidenceToKnowledge } from './evidence-repository.js';
@@ -95,8 +94,16 @@ export async function recordDecisionDirect(
 
   if (config && hasAiConfigured(config)) {
     try {
+      // Both imports are deferred. `runDeriveTruth` already was, because derivation is
+      // optional and its dependency tree is large; `initAI` sat statically beside it and was
+      // the one edge that made `store` depend on `ai` while `ai` depends on `store`. Loading
+      // it here instead costs nothing — this branch only runs when AI is configured, and it
+      // is already inside a best-effort try.
+      const [{ initAI }, { runDeriveTruth }] = await Promise.all([
+        import('../ai/provider.js'),
+        import('../pipeline/derive.js'),
+      ]);
       initAI(config.ai!);
-      const { runDeriveTruth } = await import('../pipeline/derive.js');
       await runDeriveTruth(projectId, [item]);
     } catch {
       // Best-effort

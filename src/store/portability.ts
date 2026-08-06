@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import readline from 'node:readline';
-import { normalizeSkillFilePath, validateSkillName } from '../skills/registry.js';
+import { normalizeSkillFilePath, validateSkillName } from '../core/skill-paths.js';
 import { createKnowledgeCommit, listKnowledgeItems } from './repository.js';
 import { listAssertions } from './assertions.js';
 import { getClient } from './database.js';

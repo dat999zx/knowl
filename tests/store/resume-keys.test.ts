@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mintResumeKey, normalizeResumeKey, resumeInstruction } from '../../src/store/resume-keys.js';
+import { mintResumeKey, normalizeResumeKey, resumeInstruction } from '../../src/session/resume-keys.js';
 
 describe('mintResumeKey', () => {
   it('mints a key a person can retype: short, lowercase, no lookalike characters', () => {

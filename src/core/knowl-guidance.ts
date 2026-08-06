@@ -1,5 +1,5 @@
 import type { ProjectConfig } from './types.js';
-import { isTranscriptSearchEnabled } from '../transcripts/config.js';
+import { isTranscriptSearchEnabled } from './config.js';
 
 export const KNOWL_GUIDANCE_START_MARKER = '<!-- KNOWL_PROJECT_MEMORY -->';
 export const KNOWL_GUIDANCE_END_MARKER = '<!-- /KNOWL_PROJECT_MEMORY -->';

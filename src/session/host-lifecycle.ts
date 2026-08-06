@@ -1,6 +1,6 @@
-import { NormalizedHostHook } from '../cli/agents/host-hook.js';
-import { renderChangeCard } from '../cli/agents/change-card.js';
-import { hostProfile } from '../cli/agents/hosts/index.js';
+import { NormalizedHostHook } from '../core/host-hook-types.js';
+import { renderChangeCard } from './change-card.js';
+import { hostProfile } from './hosts/index.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';
 import {
   ChangeSummary,
@@ -10,17 +10,17 @@ import {
   mergeChangeSummaries,
   readCommitHead,
   readPeerCommitHeads,
-} from './change-watermark.js';
-import { findRecentCallRanges, rangeBelongsToCaller, type CommitRange } from './mcp-call-commits.js';
+} from '../store/change-watermark.js';
+import { findRecentCallRanges, rangeBelongsToCaller, type CommitRange } from '../store/mcp-call-commits.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
-import { captureMemorySessionEvent } from './session-capture.js';
-import { finalizeMemorySession } from './session-finalizer.js';
-import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions } from './session-repository.js';
+import { captureMemorySessionEvent } from '../store/session-capture.js';
+import { finalizeMemorySession } from '../store/session-finalizer.js';
+import { finishMemorySession, purgeExpiredSessionEvents, recoverAbandonedSessions } from '../store/session-repository.js';
 import { claimCapture, releaseCapture } from './hook-debounce.js';
-import { countCommandRepeats, qualifiesForSkillCapture, renderSkillCaptureNudge } from './skill-capture.js';
-import { matchSkillForCommand, renderSkillUseNudge, type SurfacedSkill } from './skill-surface.js';
+import { countCommandRepeats, qualifiesForSkillCapture, renderSkillCaptureNudge } from '../store/skill-capture.js';
+import { matchSkillForCommand, renderSkillUseNudge, type SurfacedSkill } from '../store/skill-surface.js';
 import { toSurfacedSkills } from '../core/skill-surface.js';
-import { listActiveSkillItems } from './repository.js';
+import { listActiveSkillItems } from '../store/repository.js';
 import {
   closeHostSessionBinding,
   closeHostSessionBindings,
@@ -36,10 +36,10 @@ import {
   setHostSeenCommit,
   setHostSeenPeerCommits,
 } from './host-session-bindings.js';
-import { bootstrapAgentSession } from './context-bootstrap.js';
+import { bootstrapAgentSession } from '../store/context-bootstrap.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
-import { describeAutoDrift, runAutoDriftCheckBestEffort, type AutoDriftResult } from './drift-auto.js';
+import { describeAutoDrift, runAutoDriftCheckBestEffort, type AutoDriftResult } from '../store/drift-auto.js';
 
 // Emit the mid-turn continuation reminder after this many consecutive non-Knowl
 // tool calls; any Knowl tool call resets the counter to zero.
