@@ -1,60 +1,49 @@
-<svg width="900" height="360" viewBox="0 0 900 360" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Terminal demo: storing a decision to use JWTs, then storing a replacement decision to use session cookies, which retires the first one as superseded. A later query returns only the current decision, and notes that one superseded item remains queryable through knowl timeline.">
-  <style>
-    .m { font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace; font-size: 14px; }
-    .p  { fill: #6e7681; }
-    .c  { fill: #c9d1d9; }
-    .s  { fill: #a5d6ff; }
-    .ok { fill: #3fb950; }
-    .id { fill: #58a6ff; }
-    .mu { fill: #898781; }
-    .wa { fill: #eda100; }
-  </style>
-
+<svg width="900" height="360" viewBox="0 0 900 360" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace" font-size="14" role="img" aria-label="Terminal demo: storing a decision to use JWTs, then storing a replacement decision to use session cookies, which retires the first one as superseded at write time. A later query returns only the current decision, and notes that one superseded item remains queryable through knowl timeline.">
   <rect x="1" y="1" width="898" height="358" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
 
   <circle cx="30" cy="28" r="5.5" fill="#e06c62"/>
   <circle cx="50" cy="28" r="5.5" fill="#d9a441"/>
   <circle cx="70" cy="28" r="5.5" fill="#4ea75b"/>
-  <text x="94" y="33" class="m" fill="#6e7681" font-size="12.5">knowl — project memory</text>
+  <text x="94" y="33" font-size="12.5" fill="#6e7681">knowl — project memory</text>
   <line x1="1" y1="50" x2="899" y2="50" stroke="#2c313a"/>
 
   <!-- 1: store the first decision -->
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.043;0.054;0.893;0.964;1" dur="14s" repeatCount="indefinite"/>
-    <text x="32" y="88" class="m"><tspan class="p">$</tspan><tspan class="c" dx="10">knowl decide </tspan><tspan class="s">"Use JWTs" "Stateless auth via JWT."</tspan></text>
+    <text x="32" y="88"><tspan fill="#6e7681">$</tspan><tspan fill="#c9d1d9" dx="10">knowl decide </tspan><tspan fill="#a5d6ff">"Use JWTs" "Stateless auth via JWT."</tspan></text>
   </g>
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.121;0.132;0.893;0.964;1" dur="14s" repeatCount="indefinite"/>
-    <text x="52" y="118" class="m"><tspan class="ok">✓</tspan><tspan class="mu" dx="10">stored  decision · </tspan><tspan class="id">a3f9c1</tspan><tspan class="mu"> · </tspan><tspan class="ok">active</tspan></text>
+    <text x="52" y="118"><tspan fill="#3fb950">✓</tspan><tspan fill="#898781" dx="10">stored  decision · </tspan><tspan fill="#58a6ff">a3f9c1</tspan><tspan fill="#898781"> · </tspan><tspan fill="#3fb950">active</tspan></text>
   </g>
 
   <!-- 2: store its replacement -->
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.214;0.225;0.893;0.964;1" dur="14s" repeatCount="indefinite"/>
-    <text x="32" y="158" class="m"><tspan class="p">$</tspan><tspan class="c" dx="10">knowl decide </tspan><tspan class="s">"Use session cookies" "Server-side. Revocable."</tspan></text>
+    <text x="32" y="158"><tspan fill="#6e7681">$</tspan><tspan fill="#c9d1d9" dx="10">knowl decide </tspan><tspan fill="#a5d6ff">"Use session cookies" "Server-side. Revocable."</tspan></text>
   </g>
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.300;0.311;0.893;0.964;1" dur="14s" repeatCount="indefinite"/>
-    <text x="52" y="188" class="m"><tspan class="ok">✓</tspan><tspan class="mu" dx="10">stored  decision · </tspan><tspan class="id">7b2e04</tspan><tspan class="mu"> · </tspan><tspan class="ok">active</tspan></text>
+    <text x="52" y="188"><tspan fill="#3fb950">✓</tspan><tspan fill="#898781" dx="10">stored  decision · </tspan><tspan fill="#58a6ff">7b2e04</tspan><tspan fill="#898781"> · </tspan><tspan fill="#3fb950">active</tspan></text>
   </g>
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.350;0.361;0.893;0.964;1" dur="14s" repeatCount="indefinite"/>
-    <text x="52" y="216" class="m"><tspan class="wa">↳ superseded</tspan><tspan class="mu" dx="10">a3f9c1  </tspan><tspan class="mu">"Use JWTs"  — retired at write time</tspan></text>
+    <text x="52" y="216"><tspan fill="#eda100">↳ superseded</tspan><tspan fill="#898781" dx="10">a3f9c1  "Use JWTs"</tspan><tspan fill="#6e7681">  — retired at write time</tspan></text>
   </g>
 
   <!-- 3: query returns only what is current -->
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.443;0.454;0.893;0.964;1" dur="14s" repeatCount="indefinite"/>
-    <text x="32" y="256" class="m"><tspan class="p">$</tspan><tspan class="c" dx="10">knowl query </tspan><tspan class="s">"auth approach"</tspan></text>
+    <text x="32" y="256"><tspan fill="#6e7681">$</tspan><tspan fill="#c9d1d9" dx="10">knowl query </tspan><tspan fill="#a5d6ff">"auth approach"</tspan></text>
   </g>
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.529;0.539;0.893;0.964;1" dur="14s" repeatCount="indefinite"/>
     <circle cx="57" cy="282" r="4" fill="#3fb950"/>
-    <text x="72" y="286" class="m"><tspan class="c">Use session cookies</tspan><tspan class="ok" dx="24">active</tspan></text>
+    <text x="72" y="286"><tspan fill="#c9d1d9">Use session cookies</tspan><tspan fill="#3fb950" dx="24">active</tspan></text>
   </g>
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.571;0.582;0.893;0.964;1" dur="14s" repeatCount="indefinite"/>
-    <text x="72" y="312" class="m" font-size="13"><tspan class="p">1 superseded, still queryable · </tspan><tspan class="mu">knowl timeline 7b2e04</tspan></text>
+    <text x="72" y="312" font-size="13"><tspan fill="#6e7681">1 superseded, still queryable · </tspan><tspan fill="#898781">knowl timeline 7b2e04</tspan></text>
   </g>
 
   <!-- cursor -->
