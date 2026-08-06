@@ -152,11 +152,41 @@ surfaces a second problem any future candidate builder must handle: auto-capture
 `Resolved failure in <path>: <stack line>` atoms pair with each other on generic tokens and
 would flood a proposal list with noise.
 
-So if Phase D is ever revisited, the duplicate gate needs a different matcher — symmetric
-similarity, or embedding distance over titles using the workspace-pinned model — and that
-replacement has to be measured on these same seven pairs before anything is built on it.
 `sameSubjectTitle` itself is *not* at fault: it is the write-path duplicate check, where a
 false positive blocks a legitimate write, and containment is the right conservatism there.
+
+### A replacement matcher, measured
+
+Rather than leave "needs a different matcher" as a note, four candidates were measured against
+the seven pairs (which must match) and a hard-negative set (which must not). Recall alone
+cannot pick a matcher — `() => true` scores 7/7 — so the verdict is **separation**: the worst
+positive must beat the best negative.
+
+| matcher | worst positive | best negative | verdict |
+| --- | --- | --- | --- |
+| `sameSubjectTitle` (containment) | 0.000 | 0.000 | overlaps — 3 positives score zero |
+| Jaccard | 0.375 | 0.375 | overlaps, exactly ties |
+| Dice | 0.545 | 0.545 | overlaps, exactly ties |
+| **overlap coefficient, stopwords dropped** | **0.667** | **0.545** | **separates** |
+| title cosine (workspace-pinned model) | 0.628 | 0.715 | **overlaps — worse than tokens** |
+
+The embedding approach this document originally proposed is the one to *reject*: a negative pair
+scores 0.715, above the worst true pair at 0.628. Two unrelated SAT-domain rules read as similar
+to the model because they share a domain, which is precisely the distinction that matters here.
+
+**The overlap coefficient over stopword-stripped title tokens separates cleanly.** Swept at a
+0.60 cut with a 3-significant-token floor across all 165,085 duckprep × ducksat pairs:
+
+- 73 pairs fire; **47 are auto-captured `Resolved failure in <path>` atoms** — excluded by title
+  prefix, they are never knowledge anyone would promote.
+- 26 real subject pairs remain, of which **8 are promotion candidates** (private in one repo,
+  shared in the other).
+- All seven known pairs are in those eight, **including the two containment missed**, plus an
+  eighth (`SAT domain names use 'and'`) that the original Jaccard ≥ 0.30 sweep did not surface.
+
+So half two of the gate is **passed** by the replacement. Eight candidates out of 165,085 pairs
+is a list a person reviews in a minute, which is the shape the design asked for. Half one — real
+ledger volume — remains the open half, and the consolidator stays unbuilt until it fills.
 
 ## What this design does not do
 

@@ -63,18 +63,25 @@ checked end-to-end against a throwaway workspace.
 
 ## Phase D — consolidator — GATED SHUT, NOT BUILT
 
-Entry gate, measured 2026-08-07:
+Entry gate, measured 2026-08-07. **One half passed, one half open, so it stays unbuilt.**
 
-- ≥50 `federated_query` events: **0**. The ledger shipped today.
-- `sameSubjectTitle` over the seven known duplicate pairs: **4/7**, against a 5/7 bar.
+- **Half one — ≥50 `federated_query` events: 0.** The ledger shipped today. This is the half
+  that keeps the gate shut, and it can only be closed by using the workspace.
+- **Half two — the duplicate matcher: PASSED, with a replacement.** `sameSubjectTitle` scores
+  4/7 against a 5/7 bar, so it is rejected. But rather than stop at "needs a different matcher",
+  four candidates were measured on both a positive and a hard-negative set. The **overlap
+  coefficient over stopword-stripped title tokens** is the only one that separates them
+  (worst true pair 0.667, best false pair 0.545); notably **title cosine over the
+  workspace-pinned embedding model is worse than tokens** and is rejected on evidence.
 
-The design doc records the full table. The short version: containment is the wrong matcher for
-this job, the flagship "table styling" pair fails exactly as the review predicted, and so does
-the highest-similarity pair in the workspace. **Not building it is the success condition** — the
-gate exists so that a mechanism is built only when there is evidence it is needed and will work.
+  At a 0.60 cut with a 3-token floor over all 165,085 cross-repo pairs: 73 fire, 47 are
+  auto-captured `Resolved failure in …` atoms (excluded by prefix), 26 are real subject pairs,
+  and **8 are promotion candidates** — containing all seven known pairs plus one the original
+  sweep missed.
 
-Revisit requires: real ledger volume, and a replacement matcher measured on those same seven
-pairs.
+So if the ledger fills, the consolidator has a validated duplicate gate to build on and a
+candidate list of workable size. **Until then it is not built**, which is the point of the gate:
+a mechanism is built when there is evidence it is needed, not when it is designed.
 
 ## Verification
 
