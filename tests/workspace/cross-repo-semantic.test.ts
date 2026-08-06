@@ -5,7 +5,6 @@ import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { createKnowledgeItem } from '../../src/store/repository.js';
-import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
 import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
 import { queryFederated } from '../../src/workspace/federated-query.js';

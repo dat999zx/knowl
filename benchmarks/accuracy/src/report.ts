@@ -50,8 +50,11 @@ function formatMetric(metrics: Record<string, MetricSummary> | null, name: strin
   return value === null || value === undefined ? 'N/A' : value.toFixed(3);
 }
 
+// Backslashes go first, or the escape this adds gets escaped by the next pass: a value holding
+// `\|` would come out `\\|`, which Markdown reads as a literal backslash followed by a live
+// column separator -- one adapter name splits the row and the table stops lining up.
 function tableText(value: string): string {
-  return value.replace(/\|/gu, '\\|').replace(/\r?\n/gu, ' ');
+  return value.replace(/\\/gu, '\\\\').replace(/\|/gu, '\\|').replace(/\r?\n/gu, ' ');
 }
 
 function ndjson(rows: unknown[]): string {

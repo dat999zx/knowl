@@ -3,7 +3,6 @@ import { validateKnowledgeWrite } from '../../core/knowledge-validation.js';
 import { SessionEventType } from '../../core/types.js';
 import { isSessionEventType } from './lifecycle.js';
 import { hostProfile, isHookHost } from './hosts/index.js';
-import { AgentName } from './types.js';
 
 export type HookHost = 'codex' | 'claude' | 'cursor' | 'claude-desktop' | 'generic';
 export type NormalizedHookEventName =
@@ -74,12 +73,6 @@ const stringValue = (value: unknown, max = MAX_STRING): string | undefined =>
 
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
-
-function requireString(raw: Record<string, unknown>, key: string): string {
-  const value = stringValue(raw[key]);
-  if (!value) throw new IncompleteHostHookPayloadError(`Host hook payload requires ${key}.`);
-  return value;
-}
 
 function requireProjectRoot(raw: Record<string, unknown>): string {
   const cwd = stringValue(raw.cwd);

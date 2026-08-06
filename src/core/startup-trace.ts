@@ -79,21 +79,37 @@ const TRIM_TARGET_BYTES = Math.floor(MAX_STARTUP_LOG_BYTES / 2);
  * Rewrites in place rather than rotating to a `.1` file: two files double the ceiling and
  * give `diagnose-startup` a second place to look, for history nobody asks for. The cut lands
  * on a newline, because half a JSON record is a line no reader can parse.
+ *
+ * Everything after the open goes through the descriptor -- `fstat`, read, truncate, `fchmod` --
+ * so the bytes measured are the bytes rewritten. Checking a path and then acting on that path
+ * is two separate lookups, and on a machine-wide directory the file can be replaced between
+ * them: the size check would pass on one file and the truncating write land on another.
  */
 export function trimStartupLog(file: string): void {
+  let fd: number;
   try {
-    if (!fs.existsSync(file)) return;
-    if (fs.statSync(file).size <= MAX_STARTUP_LOG_BYTES) return;
+    fd = fs.openSync(file, 'r+');
+  } catch {
+    return; // No log yet, or not ours to read -- either way there is nothing to trim.
+  }
+  try {
+    if (fs.fstatSync(fd).size <= MAX_STARTUP_LOG_BYTES) return;
 
-    const contents = fs.readFileSync(file, 'utf8');
+    const contents = fs.readFileSync(fd, 'utf8');
     const cut = contents.length - TRIM_TARGET_BYTES;
     const boundary = contents.indexOf('\n', Math.max(0, cut));
     // No newline after the cut means one enormous trailing record; keeping it whole is
     // better than writing a fragment, and the next append will try again.
+    if (boundary === -1) return;
+
+    fs.ftruncateSync(fd, 0);
+    fs.writeSync(fd, contents.slice(boundary + 1), 0, 'utf8');
     // Mode preserved: a rewrite must not widen what `append` deliberately narrowed.
-    fs.writeFileSync(file, boundary === -1 ? contents : contents.slice(boundary + 1), { mode: 0o600 });
+    fs.fchmodSync(fd, 0o600);
   } catch {
     // Same rule as append: a diagnostic must never be the reason a server fails to start.
+  } finally {
+    try { fs.closeSync(fd); } catch { /* already gone */ }
   }
 }
 
@@ -104,15 +120,25 @@ export function trimStartupLog(file: string): void {
  *
  * The modes matter because this file is machine-wide rather than per-project: on a shared host
  * it would otherwise tell every local account which projects this user runs, and when.
+ *
+ * One `open('a', 0o600)` replaces the exists-then-create pair: it creates the file already
+ * narrowed when it is absent and appends when it is not, with no window between the two in
+ * which another account on the host could put its own file at that path and inherit the mode
+ * we were about to set. `fchmod` on the descriptor then narrows what umask widened -- and an
+ * older log left group-readable -- on the file actually written rather than on the name.
  */
 function append(record: Record<string, unknown>): void {
   try {
     fs.mkdirSync(diagnosticsDir(), { recursive: true, mode: 0o700 });
     fs.chmodSync(diagnosticsDir(), 0o700);
     const file = startupLogPath();
-    if (!fs.existsSync(file)) fs.writeFileSync(file, '', { mode: 0o600 });
-    fs.appendFileSync(file, JSON.stringify(record) + '\n');
-    fs.chmodSync(file, 0o600);
+    const fd = fs.openSync(file, 'a', 0o600);
+    try {
+      fs.writeSync(fd, JSON.stringify(record) + '\n');
+      fs.fchmodSync(fd, 0o600);
+    } finally {
+      fs.closeSync(fd);
+    }
     trimStartupLog(file);
   } catch {
     // A diagnostic must never be the reason a server fails to start.
