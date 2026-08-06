@@ -10,6 +10,20 @@ updates:
       interval: weekly
       day: monday
     open-pull-requests-limit: 5
+    # A compromised release is normally yanked within hours of publication, so the cheapest
+    # defence against a poisoned upstream is declining to be first to adopt it. The August 2026
+    # keyv/cacheable worm published its payload as major bumps -- keyv 6.0.0, flat-cache 6.1.24,
+    # file-entry-cache 11.1.6 -- and majors are exactly what a single maintainer reviews last,
+    # so those wait a month. GitHub applies a 3-day default since 2026-07-14; this is that idea
+    # taken seriously and weighted by how much a bump is able to change.
+    #
+    # Cooldown governs version updates only. A real security advisory still arrives immediately,
+    # which is the behaviour worth having: slow to take new code, fast to take a fix.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 7
+      semver-patch-days: 3
     groups:
       # Dev tooling moves fastest and carries the least risk -- it never reaches a user's
       # install. One PR a week for all of it.
@@ -28,6 +42,12 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    # Every `uses:` in this repository is pinned to a commit SHA, so Dependabot is the only
+    # thing that moves an action forward. That makes it the single point where a compromised
+    # action would enter, and the same waiting period applies for the same reason.
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
     groups:
       actions:
         patterns: ['*']
