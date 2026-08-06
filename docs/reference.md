@@ -238,15 +238,19 @@ knowl config set search.vector.enabled false
 pooling together, because pooling is not discoverable at runtime and the wrong value produces
 plausible-looking vectors that rank badly with no error.
 
+<!-- generated:embedding-presets -->
 | Preset | Model | Size (q8) | Context | Languages |
 | --- | --- | --- | --- | --- |
+| `arctic-embed-m-v2` | `Snowflake/snowflake-arctic-embed-m-v2.0` | ~305MB | 8k | English + multilingual |
 | `granite-small-en-r2` *(default)* | `onnx-community/granite-embedding-small-english-r2-ONNX` | ~52MB | 8k | English |
-| `granite-97m-multilingual` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | ~98MB | 32k | 200+ |
+| `granite-97m-multilingual` | `onnx-community/granite-embedding-97m-multilingual-r2-ONNX` | ~98MB | 32k | 200+ languages |
 | `bge-small-en` | `Xenova/bge-small-en-v1.5` | ~34MB | 512 | English |
 | `minilm-l6-en` | `Xenova/all-MiniLM-L6-v2` | ~23MB | 512 | English |
 | `custom` | whatever you name | varies | varies | varies |
+<!-- /generated:embedding-presets -->
 
-Every preset emits 384-dimension vectors, so switching never changes the stored vector width.
+Every preset except `arctic-embed-m-v2` emits 384-dimension vectors; arctic is 768. Switching
+between the 384-dimension presets never changes the stored vector width.
 
 ```bash
 knowl config                                          # interactive picker

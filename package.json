@@ -46,7 +46,9 @@
     "test:bench": "vitest run --config benchmarks/vitest.config.ts",
     "typecheck:bench": "tsc -p benchmarks/tsconfig.json",
     "bench:cr:build": "tsup benchmarks/memoryagentbench/cli.ts --format esm --outDir .benchmark-dist",
-    "bench:cr": "npm run bench:cr:build --silent && node .benchmark-dist/cli.js"
+    "bench:cr": "npm run bench:cr:build --silent && node .benchmark-dist/cli.js",
+    "docs:generate": "tsx scripts/generate-docs.ts",
+    "docs:check": "tsx scripts/generate-docs.ts --check"
   },
   "keywords": [
     "mcp",
@@ -88,6 +90,7 @@
     "@types/node": "^22.10.7",
     "drizzle-kit": "^0.31.10",
     "tsup": "^8.3.5",
+    "tsx": "^4.23.8",
     "typescript": "^5.7.3",
     "vitest": "^3.0.2"
   }

@@ -18,10 +18,17 @@ export type PresetId =
   | 'minilm-l6-en'
   | 'custom';
 
+/**
+ * `label`, `sizeMb`, `languages` and `contextTokens` are DOCUMENTATION, not runtime profile.
+ * `presetProfile` strips all four before anything reaches `fingerprintProfile` -- folding one
+ * in would change every stored embedding's fingerprint on upgrade and silently invalidate the
+ * whole index.
+ */
 export type PresetDefinition = VectorProfile & {
   label: string;
   sizeMb: number;
   languages: string;
+  contextTokens: number;
 };
 
 /**
@@ -54,6 +61,7 @@ export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinitio
     label: 'Snowflake Arctic Embed M v2.0 — most accurate, 768-dim',
     sizeMb: 305,
     languages: 'English + multilingual',
+    contextTokens: 8192,
   },
   'granite-small-en-r2': {
     provider: 'local',
@@ -63,6 +71,7 @@ export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinitio
     label: 'Granite Small English R2 — default, 8k context',
     sizeMb: 52,
     languages: 'English',
+    contextTokens: 8192,
   },
   'granite-97m-multilingual': {
     provider: 'local',
@@ -72,6 +81,7 @@ export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinitio
     label: 'Granite 97M Multilingual R2 — 200+ languages, 32k context',
     sizeMb: 98,
     languages: '200+ languages',
+    contextTokens: 32768,
   },
   'bge-small-en': {
     provider: 'local',
@@ -81,6 +91,7 @@ export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinitio
     label: 'BGE Small English v1.5 — smallest modern English option',
     sizeMb: 34,
     languages: 'English',
+    contextTokens: 512,
   },
   'minilm-l6-en': {
     provider: 'local',
@@ -90,6 +101,7 @@ export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinitio
     label: 'MiniLM L6 v2 — the historical default',
     sizeMb: 23,
     languages: 'English',
+    contextTokens: 512,
   },
 };
 
@@ -147,7 +159,12 @@ export function currentPresetId(config: ProjectConfig): PresetId | null {
 }
 
 function presetProfile(id: Exclude<PresetId, 'custom'>): VectorProfile {
-  const { label: _label, sizeMb: _sizeMb, languages: _languages, ...profile } = VECTOR_PRESETS[id];
+  // Every documentation field is stripped here. One left in would reach `fingerprintProfile`,
+  // change the fingerprint of every stored embedding, and invalidate the whole index on
+  // upgrade -- for a number that only ever appears in a table.
+  const {
+    label: _label, sizeMb: _sizeMb, languages: _languages, contextTokens: _contextTokens, ...profile
+  } = VECTOR_PRESETS[id];
   return profile;
 }
 
