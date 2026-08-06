@@ -115,6 +115,10 @@ Every atom has exactly one of seven categories:
 | `state` | Current progress, readiness, blockers, or operational status |
 | `skill` | A reusable procedure or learned workflow description |
 
+<div align="center">
+<img src="docs/assets/atom-anatomy.svg" alt="A decision atom with its governed fields: status, freshness, confidence, tags, source commit, affected paths, and evidence — one evidence locator shown gone stale" width="88%" />
+</div>
+
 Alongside the content, each atom keeps a status (`active`, `deprecated`, `rejected`, `archived`,
 `superseded`), a freshness flag, confidence, tags, source commit, affected paths, and optional
 **evidence** pointing at files, commits, tests, commands, URLs, or indexed code symbols. File and
