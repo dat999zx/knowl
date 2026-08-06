@@ -1,7 +1,7 @@
 import { withClientTransaction } from '../store/database.js';
 import * as repo from '../store/repository.js';
 import { VerifiedAtomAction } from './verify.js';
-import { CommitChange, KnowledgeItem } from '../core/types.js';
+import { CommitChange } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 
 export interface MergeOptions {

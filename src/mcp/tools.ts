@@ -37,10 +37,7 @@ import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withN
 import { isTranscriptSearchEnabled } from '../transcripts/config.js';
 import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
-import {
-  CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, type ToolDefinition,
-  MAX_CONTEXT_TOKEN_BUDGET, MAX_MARKDOWN_CHARS, MAX_QUERY_LIMIT, MIN_MARKDOWN_CHARS,
-} from './tool-definitions.js';
+import { CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
 
 /**
  * Ceilings for the handlers. The ones the SCHEMAS quote live beside the schemas, in

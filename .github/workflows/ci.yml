@@ -16,13 +16,23 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: test (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is the primary development host and was never covered; macOS catches the
+        # POSIX-but-not-Linux differences in path, permission and shell handling. Both have
+        # already caught real defects here -- a snapshot regex that matched only a drive
+        # letter, and mode assertions that are no-ops off POSIX.
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: [22, 24]
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ matrix.node }}
           cache: npm
 
       # Three suites load a real embedding model, so without this every run re-downloads it
@@ -55,8 +65,9 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .knowl/models
-          key: knowl-models-${{ runner.os }}-${{ hashFiles('src/core/vector-profile.ts', 'src/core/config.ts') }}
+          key: knowl-models-${{ runner.os }}-node${{ matrix.node }}-${{ hashFiles('src/core/vector-profile.ts', 'src/core/config.ts') }}
           restore-keys: |
+            knowl-models-${{ runner.os }}-node${{ matrix.node }}-
             knowl-models-${{ runner.os }}-
 
       - name: Install dependencies
@@ -82,3 +93,65 @@ jobs:
         with:
           path: .knowl/models
           key: ${{ steps.model-cache.outputs.cache-primary-key }}
+
+  quality:
+    name: lint, types, and docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      # Needs the bundle: the docs check asks `knowl --help` what commands exist, and reads
+      # the built CLI rather than the source so it sees what a user sees.
+      - run: npm run build
+      - name: Generated documentation is current
+        run: npm run docs:check
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Production dependencies only: a dev-only advisory never reaches a user's install.
+      #
+      # Blocking at CRITICAL rather than HIGH, on evidence. The one high advisory today is
+      # adm-zip's 4GB allocation on a crafted archive, reached through onnxruntime-node ->
+      # @huggingface/transformers, and it has NO FIX AVAILABLE. A gate that cannot pass gets
+      # switched off, and then nothing is gated -- so the blocking floor is set where it can
+      # actually be met, and everything at high or above is reported beside it.
+      - run: npm run audit:prod
+      - name: High-severity advisories (reported, not blocking)
+        run: npm run audit:report
+        continue-on-error: true
+
+  package:
+    name: tarball smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # What `npm publish` would actually ship, installed the way a user installs it. Catches
+      # a missing `files` entry or a dependency that only resolved from the repo checkout --
+      # neither of which any test in the suite can see.
+      - name: Pack and install the tarball
+        run: |
+          npm pack --silent
+          mkdir -p /tmp/smoke && cd /tmp/smoke && npm init -y >/dev/null
+          npm install --silent "$GITHUB_WORKSPACE"/dat999zx-knowl-*.tgz
+          ./node_modules/.bin/knowl --version
+          ./node_modules/.bin/knowl --help >/dev/null

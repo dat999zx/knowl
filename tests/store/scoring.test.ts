@@ -4,7 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
-import { rankKnowledge, scoreCandidates, type Candidate } from '../../src/store/agent-query.js';
+import { rankKnowledge, scoreCandidates } from '../../src/store/agent-query.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
 

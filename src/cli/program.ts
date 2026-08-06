@@ -6,7 +6,7 @@ import path from 'node:path';
 import dotenv from 'dotenv';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from '../core/version-check.js';
-import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, hasAiConfigured, upgradeConfigDefaults } from '../core/config.js';
+import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, hasAiConfigured } from '../core/config.js';
 import {
   installKnowlProjectGuidance,
   KnowlProjectGuidanceInstallResult,

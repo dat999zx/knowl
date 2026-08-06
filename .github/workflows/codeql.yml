@@ -1,0 +1,38 @@
+name: CodeQL
+
+# Static analysis on the default branch and on every pull request, plus a weekly run so a
+# newly published query finds an old bug without waiting for someone to touch the file.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          queries: security-and-quality
+
+      # No build step: this project is TypeScript compiled by tsup, and CodeQL analyses the
+      # sources directly for javascript-typescript. Building first would analyse the bundle
+      # and lose the file and line a finding belongs to.
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3

@@ -48,7 +48,11 @@
     "bench:cr:build": "tsup benchmarks/memoryagentbench/cli.ts --format esm --outDir .benchmark-dist",
     "bench:cr": "npm run bench:cr:build --silent && node .benchmark-dist/cli.js",
     "docs:generate": "tsx scripts/generate-docs.ts",
-    "docs:check": "tsx scripts/generate-docs.ts --check"
+    "docs:check": "tsx scripts/generate-docs.ts --check",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "audit:prod": "npm audit --omit=dev --audit-level=critical",
+    "audit:report": "npm audit --omit=dev --audit-level=high"
   },
   "keywords": [
     "mcp",
@@ -87,11 +91,14 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.7",
     "drizzle-kit": "^0.31.10",
+    "eslint": "^10.8.0",
     "tsup": "^8.3.5",
     "tsx": "^4.23.8",
     "typescript": "^5.7.3",
+    "typescript-eslint": "^8.66.0",
     "vitest": "^3.0.2"
   }
 }

@@ -1,5 +1,5 @@
 import { and, desc, eq, notLike } from 'drizzle-orm';
-import { KnowledgeCommit, KnowledgeItem, KnowledgeCategory, KnowledgeStatus } from '../core/types.js';
+import { KnowledgeCommit, KnowledgeItem } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 import { getDb } from './database.js';
 import * as schema from './schema.js';

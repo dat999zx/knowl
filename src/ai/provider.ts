@@ -93,7 +93,7 @@ export async function filterInput(input: string, config: ProjectConfig): Promise
       if (lowerInput.includes(pattern.toLowerCase())) {
         const words = input.split(/[\s:="']+/);
         // Look for any word that seems to be a token/key (at least 16 chars, alphanumeric/dashes)
-        const hasLongHash = words.some(w => /^[a-zA-Z0-9_\-]{16,}$/.test(w));
+        const hasLongHash = words.some(w => /^[a-zA-Z0-9_-]{16,}$/.test(w));
         if (hasLongHash) {
           return {
             pass: false,

@@ -175,7 +175,7 @@ describe('canonical Knowl agent guidance', () => {
 
   it('documents every canonical MCP tool in the full reference', async () => {
     const reference = await fs.readFile(path.resolve('docs/reference.md'), 'utf8');
-    const documentedTools = [...reference.matchAll(/^\| \`(knowl_[a-z_]+)\` \|/gm)]
+    const documentedTools = [...reference.matchAll(/^\| `(knowl_[a-z_]+)` \|/gm)]
       .map(match => match[1]);
     expect(documentedTools).toEqual([...KNOWL_MCP_TOOL_NAMES]);
     expect(new Set(documentedTools).size).toBe(27);

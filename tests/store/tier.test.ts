@@ -170,7 +170,7 @@ describe('evidence tier and provenance', () => {
   });
 
   it('ranks verified above asserted and observed above inferred, all else equal', () => {
-    const base = (id: string, overrides: Partial<KnowledgeItem>): { item: KnowledgeItem; bm25Rank: number } => ({
+    const base = (id: string, _overrides?: Partial<KnowledgeItem>): { item: KnowledgeItem; bm25Rank: number } => ({
       item: {
         id, category: 'fact', status: 'active', title: 'Same claim', content: 'Same content.',
         freshness: 'fresh', confidence: 1, tier: 'asserted', provenance: null,

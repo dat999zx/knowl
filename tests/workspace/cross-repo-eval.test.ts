@@ -187,7 +187,7 @@ describe('cross-repo retrieval', () => {
     }
 
     const evaluation = await scoreSuite(true);
-    // eslint-disable-next-line no-console
+     
     console.log(`SEMANTIC cross-repo MRR=${evaluation.metrics.mrr.toFixed(4)} R@3=${evaluation.metrics.recallAt3.toFixed(4)} forbidden=${evaluation.metrics.forbiddenHitCount} failed=[${evaluation.failedCaseIds.join(',')}]`);
 
     expect(evaluation.metrics.forbiddenHitCount).toBe(0);
