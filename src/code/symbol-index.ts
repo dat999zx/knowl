@@ -31,6 +31,23 @@ const nameOf = (node: SyntaxNode) => node.childForFieldName('name')?.text ?? nod
  */
 const EXCLUDED_DIRECTORIES = new Set(['.git', '.knowl', 'dist', 'node_modules']);
 
+/**
+ * How much source to hand tree-sitter per read.
+ *
+ * `Parser.parse` accepts a string, and handed one it copies the whole thing into a single
+ * fixed buffer whose default is 32 KB -- past that the native binding throws a bare
+ * `Error: Invalid argument` with no mention of size. `src/cli/program.ts` (110 KB),
+ * `src/mcp/tools.ts` (93 KB), `src/store/{agent-query,portability,bootstrap}.ts` and
+ * `src/transcripts/index-pass.ts` are all over it, so the six largest files in this repo were
+ * the six the index could not see, and `knowl code index` failed on the first one it reached.
+ *
+ * The callback form has no such ceiling: tree-sitter asks for the next slice and we answer one
+ * chunk at a time, so the buffer never has to hold more than this. A size rather than a guess
+ * at the file's own -- `{ bufferSize: text.length }` also works, but it makes the largest file
+ * in the repo decide the allocation.
+ */
+const PARSE_CHUNK_BYTES = 16 * 1024;
+
 function ignored(root: string, file: string): boolean {
   if (!existsSync(path.join(root, '.git'))) return false;
   const relative = path.relative(root, file).replace(/\\/g, '/');
@@ -114,7 +131,7 @@ function extractSymbols(filePath: string, text: string): { symbols: IndexedSymbo
   parser.setLanguage(language);
   const symbols: IndexedSymbol[] = [];
   const edges: CodeSymbolEdge[] = [];
-  const root = parser.parse(text).rootNode;
+  const root = parser.parse(offset => text.slice(offset, offset + PARSE_CHUNK_BYTES)).rootNode;
 
   for (const node of root.namedChildren) {
     if (node.type === 'import_statement') {
@@ -140,7 +157,35 @@ function extractSymbols(filePath: string, text: string): { symbols: IndexedSymbo
 
     collectDeclaration(symbols, filePath, node);
   }
-  return { symbols, edges };
+  return { symbols: firstPerLocator(symbols), edges };
+}
+
+/**
+ * One symbol per locator, keeping the first.
+ *
+ * `code_symbols.locator` is the primary key and the insert is a plain `INSERT`, so a file that
+ * yields the same locator twice aborted the whole index with
+ * `SQLITE_CONSTRAINT_PRIMARYKEY: UNIQUE constraint failed`. It is not a rare shape: an import
+ * symbol is named after its module specifier, so `import type { A } from './x.js'` beside
+ * `import { b } from './x.js'` is a collision, and ten files in this repo's own `src/` had one.
+ * TypeScript overload sets collide the same way -- every signature declares the same name.
+ *
+ * Dropped here rather than with `INSERT OR IGNORE` because the duplicate is not a database
+ * concern: two `import` statements for one module *are* one dependency, and the extractor is
+ * where that is known. Doing it in SQL would also silently keep whichever row happened to be
+ * inserted first, which is the same answer arrived at by accident.
+ *
+ * Edges need no matching pass: they address symbols by locator, so an edge that referred to a
+ * dropped duplicate refers to the survivor by construction, and the edge insert is already
+ * `INSERT OR IGNORE`.
+ */
+function firstPerLocator(symbols: IndexedSymbol[]): IndexedSymbol[] {
+  const seen = new Set<string>();
+  return symbols.filter(symbol => {
+    if (seen.has(symbol.locator)) return false;
+    seen.add(symbol.locator);
+    return true;
+  });
 }
 
 /** The rows for one file, with no transaction of its own: every caller is already inside one. */
@@ -173,9 +218,11 @@ async function replaceIndexedFileRows(filePath: string, contentHash: string, ext
  * Every statement above used to be its own implicit transaction. Indexing a file with 30 symbols
  * and 10 edges is 41 writes the first time and 73 on a re-index (the delete pass issues one
  * statement per symbol already stored), so recording one edit cost that many commits. At the
- * `synchronous = NORMAL` this schema runs, the measurement at `bootstrap.ts:33-37` puts un-batched
- * writes at 0.832 ms/row against 0.241 batched -- so a re-index sheds roughly 61 ms of commit
- * overhead for 18 ms, ~3.5x. The larger 132x figure recorded in `vector.ts:148` was measured at
+ * `synchronous = NORMAL` this schema runs -- see `synchronousPragma` in `src/core/sqlite-sync.ts`
+ * for the measurements -- un-batched writes cost 0.832 ms/row. Measured end to end on this path,
+ * 200 files and 12,200 symbols: a cold index went 3368 ms to 1452 ms and a full rewrite 6606 ms to
+ * 3322 ms, so call it **~2.2x**. A warm pass that writes nothing is unchanged, as it should be.
+ * The much larger 132x in `writeVectors` (`src/store/vector.ts`) was measured at
  * `synchronous = FULL`, where every commit also fsynced the WAL; quoting it for this path would
  * overstate the win, and the win does not need overstating.
  *
@@ -188,12 +235,12 @@ async function replaceIndexedFileRows(filePath: string, contentHash: string, ext
  * NOT one transaction around the whole repo pass, for two reasons. A transaction holds the single
  * write lock for its whole life, and a full pass interleaves tree-sitter parses and file reads
  * between its statements -- so a repo-wide transaction would lock out `serve`, the hooks and the
- * CLI for the length of the walk, against a 10 s `busy_timeout` (`bootstrap.ts:24`). And
+ * CLI for the length of the walk, against the 10 s `busy_timeout` set in `PRAGMA_STATEMENTS`. And
  * `withClientTransaction` serialises on one process-wide queue, so holding it for a pass stalls
  * every unrelated write behind it. The obvious objection -- that many small transactions hit the
  * driver ceiling -- does not apply here: that ceiling is on the *count of `db.transaction()`
  * calls* (800-1000), and this helper issues raw `BEGIN`/`COMMIT`, the shape measured clean at
- * 1200 in the table at `database.ts:143`.
+ * 1200 in the table on `withClientTransaction` itself.
  */
 async function deleteIndexedFile(filePath: string) {
   await withClientTransaction(() => deleteIndexedFileRows(filePath));
@@ -209,13 +256,40 @@ async function replaceIndexedFile(filePath: string, contentHash: string, extract
  * The single body both entry points run, so the incremental and full passes cannot disagree about
  * what "indexed" means -- the content-hash skip, the extraction and the replace exist once. What
  * `indexFile` adds on top is only the eligibility test that the walk performs for the full pass.
+ *
+ * Reading and parsing one file is the only part that can fail on the file rather than on the
+ * database, and neither caller wants that failure. `indexFile` is called from a write trigger and
+ * documents that it stays quiet, so a throw would surface as a failed hook; `indexCode` walks the
+ * whole repo, so a throw would abandon every file after the bad one -- which is exactly how the
+ * 32 KB parse ceiling hid as "the index is missing things" instead of showing up as an error.
+ * A file that cannot be read or parsed is skipped with its existing rows left alone, and said out
+ * loud on stderr rather than swallowed: an unindexed file is invisible by nature, and this review
+ * found the last two ways it can happen only by benchmarking.
  */
 async function indexEligibleFile(filePath: string, fullPath: string): Promise<void> {
-  const text = await fs.readFile(fullPath, 'utf8');
+  // The file can go between the caller's `stat` and this read, so ENOENT here is ordinary.
+  const text = await unlessBroken(filePath, () => fs.readFile(fullPath, 'utf8'));
+  if (text === null) return;
+
   const contentHash = hash(text);
   const existing = await getClient().execute({ sql: 'SELECT content_hash FROM code_files WHERE path = ?', args: [filePath] });
   if (String(existing.rows[0]?.content_hash ?? '') === contentHash) return;
-  await replaceIndexedFile(filePath, contentHash, extractSymbols(filePath, text));
+
+  // Extracted after the hash check, not before it: parsing is the expensive half, and a pass over
+  // an unchanged repo exists to not pay it.
+  const extracted = await unlessBroken(filePath, async () => extractSymbols(filePath, text));
+  if (extracted === null) return;
+  await replaceIndexedFile(filePath, contentHash, extracted);
+}
+
+/** `run()`, or `null` and a word on stderr if the file defeated it. */
+async function unlessBroken<T>(filePath: string, run: () => Promise<T>): Promise<T | null> {
+  try {
+    return await run();
+  } catch (error: any) {
+    console.warn(`[knowl] skipped ${filePath} while indexing code symbols: ${error?.message ?? error}`);
+    return null;
+  }
 }
 
 /** Drop a path from the index, without opening a write transaction for one it never held. */
