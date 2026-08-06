@@ -5,6 +5,20 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+### `knowl workspace demand` — what the repos actually ask each other for
+
+A workspace-level ledger recording every cross-repo query: which repo asked, which answered,
+the top result's score, and the query itself where it passes the repo's own secret validators
+(a fingerprint always, so demand stays countable even when the text is withheld). Lives beside
+the workspace manifest, not in any member repo, and is local to this machine.
+
+**Nothing acts on it.** It exists to answer, with data rather than intuition, whether there is
+enough cross-repo demand to justify proposing promotions at all — see the
+[design](docs/superpowers/specs/2026-08-07-demand-paged-scoping-design.md), which treats
+"the evidence says no, so do not build it" as a success condition. Writes are fire-and-forget
+and every failure is swallowed: a telemetry file that can fail a query is worse than no
+telemetry.
+
 ### Workspace reads tell the truth about what they found
 
 Groundwork for demand-paged scoping

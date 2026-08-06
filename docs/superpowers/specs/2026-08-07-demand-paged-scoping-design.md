@@ -118,6 +118,46 @@ Three read-side defects, each independently a bug:
    `knowl_transcript_search`, but only where `search.transcripts.enabled` is true: naming a tool
    the build does not expose is worse than saying nothing.
 
+## Phase D: the gate, measured 2026-08-07 — SHUT
+
+Both halves were checked before writing any consolidator code. Both fail, so **Phase D is not
+built**. That is the designed outcome, not a setback: a mechanism with no demand behind it is
+the thing this design objects to.
+
+**Half one — ledger volume.** The gate wants ≥50 `federated_query` events. The ledger shipped
+today; it holds none. Nothing to calibrate against yet.
+
+**Half two — does `sameSubjectTitle` find the known duplicates?** It is a *containment* test:
+the shorter title's significant tokens must be wholly inside the longer's. Measured over the
+seven pairs recorded in knowl atom `d9b78d5c049a4765`:
+
+| pair | verdict | why |
+| --- | --- | --- |
+| College Board questions off the public site | **MISS** | `Legal` only on one side, `copyright` only on the other |
+| never view rendered quiz screenshots | MATCH | |
+| wrap math lines for KaTeX | MATCH | |
+| **table styling** | **MISS** | `bold` phrased as `ask before bold` vs `which row/column is bold` |
+| no reflexive Playwright | MATCH | |
+| PDF ingestion archive rule | **MISS** | the duckprep copy's counterpart has drifted to a different rule |
+| account velocity flags | MATCH | |
+
+**4 of 7 — below the 5/7 bar.** The review's specific prediction is confirmed: the flagship
+"table styling" pair fails, and so does the highest-similarity pair in the whole workspace
+(Jaccard 0.82). Containment is the wrong shape for this job — two independently-written titles
+for one rule almost always each carry a word the other lacks, and one such word is enough to
+veto the match.
+
+Swept over all 32 title pairs at Jaccard ≥ 0.30, the matcher fires on 12. The sweep also
+surfaces a second problem any future candidate builder must handle: auto-captured
+`Resolved failure in <path>: <stack line>` atoms pair with each other on generic tokens and
+would flood a proposal list with noise.
+
+So if Phase D is ever revisited, the duplicate gate needs a different matcher — symmetric
+similarity, or embedding distance over titles using the workspace-pinned model — and that
+replacement has to be measured on these same seven pairs before anything is built on it.
+`sameSubjectTitle` itself is *not* at fault: it is the write-path duplicate check, where a
+false positive blocks a legitimate write, and containment is the right conservatism there.
+
 ## What this design does not do
 
 - **No auto-apply.** Revisit after ≥1 month of review-list use with zero bad proposals.

@@ -3,6 +3,7 @@ import { loadConfig } from '../core/config.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { resolveStorage } from '../store/storage-roles.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
+import { recordDemandEventBestEffort } from '../workspace/demand-ledger.js';
 import { catchUpTranscripts } from './catch-up.js';
 import { isTranscriptSearchEnabled, isTranscriptSharingEnabled } from './config.js';
 import { openTranscriptDb, TranscriptIndexMissingError } from './database.js';
@@ -181,6 +182,34 @@ export async function handleTranscriptSearch(input: {
   }
 
   lines.push('If you used any of this, store it with knowl_store so the next session does not have to dig for it again.');
+
+  // The other half of the demand signal, and the more interesting one.
+  //
+  // A knowledge query that misses and a transcript search that then hits is the exact shape of
+  // "this repo holds the answer and has not shared it": the fact is here, written down, and
+  // only reachable as prose in a past session. Recorded per serving repo rather than per hit,
+  // so one search returning six messages from one repo is one piece of evidence about that
+  // repo, not six.
+  //
+  // Foreign repos only. A local transcript hit says nothing about scoping -- the caller could
+  // already reach it.
+  if (workspace) {
+    const foreign = new Map<string, number>();
+    for (const hit of hits) {
+      if (!hit.repo || hit.repo === localRepo) continue;
+      foreign.set(hit.repo, (foreign.get(hit.repo) ?? 0) + 1);
+    }
+    for (const [repoName, count] of foreign) {
+      void recordDemandEventBestEffort(workspace.name, {
+        queryingRepo: workspace.repo,
+        kind: 'transcript_hit',
+        query,
+        servedRepo: repoName,
+        detail: { hits: count },
+      }, config);
+    }
+  }
+
   return truncate(lines.join('\n'), MAX_RESPONSE_CHARS);
 }
 

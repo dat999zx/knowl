@@ -6,6 +6,7 @@ import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, 
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem } from '../workspace/ownership.js';
 import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
+import { recordDemandEventBestEffort } from '../workspace/demand-ledger.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
 import { runPipeline } from '../pipeline/pipeline.js';
@@ -777,6 +778,43 @@ export function registerTools(
             text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `score` and judge. If none of them answers the question, treat this as a miss and go to the files.'
               + transcriptRoute,
           });
+        }
+        // What one repo actually asks the others for, recorded after the answer is built.
+        //
+        // Every workspace query, not only the weak ones. The obvious design logs "queries the
+        // workspace could not answer" and reads abstention as that signal -- but abstention is
+        // corpus-dependent and, measured on the real 483-item store, off-topic queries top out
+        // at ~0.29 against a 0.16 floor. A predicate that fires almost never would produce an
+        // empty ledger and the false conclusion that there is no cross-repo demand. So the
+        // score is recorded on every row and the threshold is chosen from the distribution
+        // afterwards, by `knowl workspace demand`.
+        //
+        // `void`, never awaited: this runs after the response is assembled, so the only thing a
+        // slow or failing ledger could still affect is whether the caller gets their answer.
+        if (active && query) {
+          const top = resolvedItems[0];
+          void recordDemandEventBestEffort(active.name, {
+            queryingRepo: active.repo,
+            kind: 'federated_query',
+            query,
+            topScore: (top?.explanation as { finalScore?: number } | undefined)?.finalScore ?? null,
+            servedRepo: top?.repo ?? null,
+            servedItemId: top?.id ?? null,
+            detail: {
+              results: resolvedItems.length,
+              // Per-repo contribution, so a repo that is asked constantly and answers nothing
+              // is distinguishable from one that is never reached at all.
+              contributed: resolvedItems.reduce<Record<string, number>>((counts, item) => {
+                const repoName = item.repo ?? active.repo;
+                counts[repoName] = (counts[repoName] ?? 0) + 1;
+                return counts;
+              }, {}),
+              ...(skippedRepos.length ? { skipped: skippedRepos.map(skip => skip.repo) } : {}),
+              ...(resolvedItems.some(item => (item.explanation as { abstained?: boolean } | undefined)?.abstained)
+                ? { abstained: true }
+                : {}),
+            },
+          }, config);
         }
         return { content: blocks };
       }

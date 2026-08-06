@@ -24,6 +24,7 @@ import { knowlHome, listKnownWorkspaces, workspaceManifestPath } from '../worksp
 import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from '../workspace/membership.js';
 import { embeddingIdentityFromConfig, formatEmbeddingIdentity } from '../store/embedding-identity.js';
 import { promoteItems } from '../workspace/promote.js';
+import { closeDemandDb, summarizeDemand } from '../workspace/demand-ledger.js';
 import { existingItemsNotice, visibilityGateNotice } from './workspace-visibility-notice.js';
 import { repoEntry, updateRepoSettings } from '../workspace/repo-settings.js';
 import { runCliQuery } from './query-command.js';
@@ -887,6 +888,62 @@ workspaceCommand
       if (!result.applied) console.log('Dry run. Re-run with --apply to promote.');
     } catch (error: any) {
       console.error(`Error promoting knowledge: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+workspaceCommand
+  .command('demand')
+  .description('What the repos in this workspace ask each other for')
+  .option('--limit <n>', 'How many distinct questions to list', '20')
+  .option('--json', 'Machine-readable output')
+  .action(async (options: { limit?: string; json?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const active = await resolveWorkspace(root, await loadConfig(root));
+      if (!active) throw new Error('This repo is not linked to a workspace.');
+
+      const limit = Math.max(1, Math.min(Number(options.limit) || 20, 200));
+      const summary = await summarizeDemand(active.name, limit);
+      await closeDemandDb();
+
+      if (options.json) {
+        console.log(JSON.stringify(summary, null, 2));
+        return;
+      }
+
+      if (summary.total === 0) {
+        console.log(`No demand recorded yet for workspace "${active.name}".`);
+        console.log('Every cross-repo query writes one row; this fills up as the workspace is used.');
+        return;
+      }
+
+      console.log(`Workspace "${active.name}": ${summary.total} event(s) recorded on this machine.`);
+      console.log(`  by kind: ${summary.byKind.map(row => `${row.kind}=${row.count}`).join(', ')}`);
+      console.log(`  asked by: ${summary.byQueryingRepo.map(row => `${row.repo}=${row.count}`).join(', ')}`);
+      console.log(`  answered by: ${summary.byServingRepo.length
+        ? summary.byServingRepo.map(row => `${row.repo}=${row.count}`).join(', ')
+        : '(nothing)'}`);
+
+      // The number the "weak query" predicate has to be chosen from. Printed rather than
+      // interpreted: nothing in this build acts on it yet, and that is the point of the phase.
+      const { scores } = summary;
+      if (scores.withScore > 0) {
+        const show = (value: number | null) => (value === null ? '-' : value.toFixed(3));
+        console.log(`  top-result score over ${scores.withScore} scored quer(ies): min ${show(scores.min)}, median ${show(scores.median)}, max ${show(scores.max)}`);
+      }
+
+      console.log('\nMost-repeated questions:');
+      for (const question of summary.topQuestions) {
+        // A question whose terms were withheld still counts. Saying so beats a blank line that
+        // reads as a bug -- the secret validators refused the text, deliberately.
+        const label = question.terms ?? `(terms withheld) ${question.fingerprint.slice(0, 12)}`;
+        const best = question.bestScore === null ? '' : ` best ${question.bestScore.toFixed(3)}`;
+        console.log(`  ${String(question.count).padStart(4)}x  ${label}${best}`);
+      }
+      console.log('\nThis ledger is local to this machine and is not synced between checkouts.');
+    } catch (error: any) {
+      console.error(`Error reading workspace demand: ${error.message}`);
       process.exit(1);
     }
   });
