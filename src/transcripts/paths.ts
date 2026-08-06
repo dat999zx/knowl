@@ -49,6 +49,19 @@ const foldPath = (target: string) =>
 
 const samePath = (left: string, right: string) => foldPath(left) === foldPath(right);
 
+/**
+ * The path with every symlink and short name resolved away, or the path itself if it cannot be.
+ *
+ * Used ONLY to compare paths, never to produce one. git reports canonical paths while Node
+ * reports whatever it was handed, and the two disagree on both platforms that are not Linux:
+ * macOS `os.tmpdir()` is `/var/folders/...` which is really `/private/var/folders/...`, and a
+ * Windows profile longer than eight characters shows up as `RUNNER~1` on CI and in full
+ * elsewhere. Comparing the raw strings makes a repository look like a different repository.
+ */
+async function canonical(target: string): Promise<string> {
+  return fs.realpath(target).catch(() => target);
+}
+
 export type RepoRootSet = {
   /** The project root, plus its worktrees when git could name them. */
   roots: string[];
@@ -96,7 +109,16 @@ export async function resolveRepoRootSet(projectRoot: string): Promise<RepoRootS
   try {
     const { stdout } = await run('git', ['worktree', 'list', '--porcelain'], { cwd: resolved });
     const roots = parseWorktreeList(stdout).map(root => path.resolve(root));
-    if (!roots.some(root => samePath(root, resolved))) {
+
+    // Compared canonically, returned verbatim. The membership test has to see through symlinks
+    // and short names or git's own answer about this very directory reads as another repo's --
+    // measured: on macOS and on Windows CI this guard dropped every worktree, so a session
+    // recorded against one was never indexed. The RETURNED roots stay in the form the caller
+    // gave and git reported, because they are encoded into archive directory names that a host
+    // agent wrote using those same uncanonicalised paths.
+    const here = await canonical(resolved);
+    const canonicalRoots = await Promise.all(roots.map(canonical));
+    if (!canonicalRoots.some(root => samePath(root, here))) {
       // git answered about some other repository this directory happens to sit inside.
       return { roots: [resolved], degraded: false };
     }
