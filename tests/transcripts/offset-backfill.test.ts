@@ -242,20 +242,30 @@ describe('the backfill inside a budget', () => {
     await regressToNoOffsets();
     await openTranscriptDb(dbPath);
 
-    // A real-but-instantly-spent budget: the one-batch guarantee makes the partial fill
-    // DETERMINISTIC. This used to be `Date.now() + 40`, which asserted a timing coincidence —
-    // under load it filled 0 (the lower bound failed, 2/5 in full runs), and on a quiet
-    // machine it filled all 1,200 inside the window (the upper bound failed). Both bounds
-    // were scheduling accidents. Now the stop is expressed in work: exactly one batch.
-    const first = await pass(Date.now() + 1);
+    // The partial fill is bought through the backfill's own budget, not through a clock. This
+    // used to be `pass(Date.now() + 40)`, then `pass(Date.now() + 1)` — the same 1 ms race the
+    // test above was rewritten to remove, left behind here. `runIndexPass` arms the guarantee on
+    // `deadline > startedAt`, so one descheduling gap between the caller reading the clock and
+    // the pass reading it turns it off, the pass breaks before it ever reaches the backfill, and
+    // `offsetsFilled` is 0. That is exactly how it failed on ubuntu/node-24 in CI, and the
+    // neighbouring test pins the very same input class to 0. An already-spent budget that was
+    // real at the pass start is that input with no window in it: exactly one batch, on any
+    // machine under any load.
+    const first = await fillMissingByteOffsets({
+      dbPath,
+      deadline: Date.now() - 10_000,
+      budgetWasReal: true,
+    });
     const partial = await storedOffsets();
     const filledFirst = partial.filter(o => o !== null).length;
-    expect(first.offsetsFilled).toBeGreaterThan(0);
+    expect(first.filled).toBeGreaterThan(0);
     expect(filledFirst).toBeLessThan(1_200);
 
     // What it wrote is a prefix: resuming means continuing, not starting again.
     expect(partial.slice(0, filledFirst).every(o => o !== null)).toBe(true);
 
+    // The resume is still driven through the real pass — the point of this test is that an
+    // unbudgeted pass picks the backfill up where the budgeted one stopped and fills each row once.
     for (let i = 0; i < 40 && (await storedOffsets()).some(o => o === null); i++) await pass();
 
     expect(await storedOffsets()).toEqual(offsetsOf(lines));
