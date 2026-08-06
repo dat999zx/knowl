@@ -2283,7 +2283,15 @@ program
   .command('diagnose-startup')
   .description('Report why `knowl serve` startups were slow: per-phase timings, SQLite contention, stalls and host kills')
   .option('--since <hours>', 'How far back to look', '48')
+  .option('--clear', 'Delete the machine-wide startup diagnostics log')
   .action(async (options) => {
+    if (options.clear) {
+      const { clearStartupLog, startupLogPath } = await import('../core/startup-trace.js');
+      const file = startupLogPath();
+      clearStartupLog();
+      console.log(`Cleared ${file}`);
+      return;
+    }
     const { formatStartupReport } = await import('./startup-report.js');
     const hours = Number(options.since);
     if (!Number.isFinite(hours) || hours <= 0) {

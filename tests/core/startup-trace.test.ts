@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
   installProcessHooks, MAX_STARTUP_LOG_BYTES, serveBanner, trimStartupLog, type ProcessHooks,
 } from '../../src/core/startup-trace.js';
@@ -129,5 +129,63 @@ describe('serve banner', () => {
     const line = serveBanner({ pid: 7, projectRoot: 'D:\\coding\\knowl', readyMs: 1234 });
     expect(line).toContain('projectRoot=D:\\coding\\knowl');
     expect(line).toContain('ready=1234ms');
+  });
+});
+
+/**
+ * What the log may know about this machine.
+ *
+ * The diagnostics directory is machine-wide, and every `boot-start` record carried the literal
+ * project root beside hostname, PID, load average and free memory. On a shared Unix host that
+ * told every local account which projects this user works on and when. A hash answers the
+ * questions the log exists for -- "same project?", "several servers stalling together?" --
+ * without being identifying.
+ */
+describe('startup diagnostics privacy and permissions', () => {
+  const HOME = path.resolve('./.knowl-startup-trace-test-home');
+  const DISTINCTIVE = path.join(os.tmpdir(), 'a-very-distinctive-project-name');
+  const savedHome = process.env.KNOWL_HOME;
+  const savedDisable = process.env.KNOWL_DISABLE_STARTUP_TRACE;
+
+  // Traced ONCE, in beforeAll. `beginStartupTrace` guards on module-level `active` and is a
+  // no-op on a second call -- correct, since one process has one boot -- so a per-test
+  // beginStartupTrace would silently write nothing and the assertions would read a stale or
+  // absent file. Ordering matters below: the clear test runs last because it destroys the log.
+  beforeAll(async () => {
+    fs.rmSync(HOME, { recursive: true, force: true });
+    process.env.KNOWL_HOME = HOME;
+    delete process.env.KNOWL_DISABLE_STARTUP_TRACE;
+    const { beginStartupTrace } = await import('../../src/core/startup-trace.js');
+    beginStartupTrace({ projectRoot: DISTINCTIVE, version: '0.0.0-test' });
+  });
+
+  afterAll(() => {
+    if (savedHome === undefined) delete process.env.KNOWL_HOME;
+    else process.env.KNOWL_HOME = savedHome;
+    if (savedDisable === undefined) delete process.env.KNOWL_DISABLE_STARTUP_TRACE;
+    else process.env.KNOWL_DISABLE_STARTUP_TRACE = savedDisable;
+    try { fs.rmSync(HOME, { recursive: true, force: true }); } catch { /* Windows */ }
+  });
+
+  it('records a hashed project root, never the path', async () => {
+    const { startupLogPath } = await import('../../src/core/startup-trace.js');
+    const contents = fs.readFileSync(startupLogPath(), 'utf8');
+    expect(contents).not.toContain('a-very-distinctive-project-name');
+    const record = JSON.parse(contents.split('\n').filter(Boolean)[0]);
+    expect(record.projectHash).toMatch(/^[0-9a-f]{16}$/);
+    expect(record.projectRoot).toBeUndefined();
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps the diagnostics directory and log owner-only', async () => {
+    const { diagnosticsDir, startupLogPath } = await import('../../src/core/startup-trace.js');
+    expect(fs.statSync(diagnosticsDir()).mode & 0o777).toBe(0o700);
+    expect(fs.statSync(startupLogPath()).mode & 0o777).toBe(0o600);
+  });
+
+  it('clears the log on request', async () => {
+    const { clearStartupLog, startupLogPath } = await import('../../src/core/startup-trace.js');
+    expect(fs.existsSync(startupLogPath())).toBe(true);
+    clearStartupLog();
+    expect(fs.existsSync(startupLogPath())).toBe(false);
   });
 });

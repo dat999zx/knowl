@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { getSkillsDir } from './registry.js';
+import { writeFileAtomic } from '../core/atomic-write.js';
 
 export type SkillTrustRecord = {
   approvedHash: string;
@@ -73,10 +74,9 @@ async function readTrustFile(projectRoot: string): Promise<TrustFile> {
 }
 
 async function writeTrustFile(projectRoot: string, trust: TrustFile): Promise<void> {
-  const target = trustPath(projectRoot);
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  await fs.writeFile(target, JSON.stringify(trust, null, 2), { encoding: 'utf-8', mode: 0o600 });
-  await fs.chmod(target, 0o600).catch(() => {});
+  // Atomic: this file decides what may execute, and a torn write would leave it unparseable
+  // -- which fails closed, but silently and with no way to tell that from "nothing approved".
+  await writeFileAtomic(trustPath(projectRoot), JSON.stringify(trust, null, 2), { mode: 0o600 });
 }
 
 export async function listTrust(projectRoot: string): Promise<TrustFile> {

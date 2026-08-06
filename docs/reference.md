@@ -787,6 +787,28 @@ stale sessions, retrieval, the MCP inventory, agents and lifecycle registration,
 coverage, and workspace health. Warnings mean the project is not reported ready; they should not
 be treated as an all-clear.
 
+### Startup diagnostics
+
+`knowl diagnose-startup` reports why `knowl serve` startups were slow: per-phase timings, SQLite
+contention, stalls and host kills.
+
+```bash
+knowl diagnose-startup
+knowl diagnose-startup --since 12
+knowl diagnose-startup --clear
+```
+
+The log lives under the Knowl home rather than in any repository, because the question it
+answers spans every project on the machine. Each record holds a boot id, PID, elapsed and
+per-phase timings, Node version, hostname, load average, free memory, and a 16-character hash of
+the project root — never the path itself, and never environment variables or command-line
+arguments. On a shared host the path would have told every local account which projects you work
+on and when; the hash still answers "was this the same project?" and "were several servers
+stalling together?".
+
+The file is capped at 4MB, created owner-only (`0600`, in a `0700` directory), and removable
+with `--clear`. Set `KNOWL_DISABLE_STARTUP_TRACE=1` to turn it off entirely.
+
 ## Local viewer
 
 `knowl view` starts a browser inspector on `127.0.0.1`:
@@ -1226,6 +1248,12 @@ knowl config set ai.apiKey '${CUSTOM_API_KEY}'
 
 Environment-variable placeholders are resolved at runtime. Ollama can run without an API key.
 Deterministic `knowl synthesize` does not use this configuration.
+
+`ai.apiKey` may be set literally, and `.knowl/config.json` is written owner-readable (`0600`) on
+POSIX systems and replaced atomically, so an interrupted write cannot leave a half file that
+`loadConfig` refuses to parse. Prefer an environment reference — the `'${VAR}'` form above — or
+the provider variables `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`, so the credential never lands
+in a file inside the repository directory at all.
 
 ## Local data
 

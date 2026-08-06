@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -89,7 +90,8 @@ export function trimStartupLog(file: string): void {
     const boundary = contents.indexOf('\n', Math.max(0, cut));
     // No newline after the cut means one enormous trailing record; keeping it whole is
     // better than writing a fragment, and the next append will try again.
-    fs.writeFileSync(file, boundary === -1 ? contents : contents.slice(boundary + 1));
+    // Mode preserved: a rewrite must not widen what `append` deliberately narrowed.
+    fs.writeFileSync(file, boundary === -1 ? contents : contents.slice(boundary + 1), { mode: 0o600 });
   } catch {
     // Same rule as append: a diagnostic must never be the reason a server fails to start.
   }
@@ -99,15 +101,41 @@ export function trimStartupLog(file: string): void {
  * Append one record. Synchronous on purpose: this is called from watchdogs and exit handlers,
  * where an async write may never flush before the process dies -- which is precisely the
  * record worth keeping.
+ *
+ * The modes matter because this file is machine-wide rather than per-project: on a shared host
+ * it would otherwise tell every local account which projects this user runs, and when.
  */
 function append(record: Record<string, unknown>): void {
   try {
-    fs.mkdirSync(diagnosticsDir(), { recursive: true });
+    fs.mkdirSync(diagnosticsDir(), { recursive: true, mode: 0o700 });
+    fs.chmodSync(diagnosticsDir(), 0o700);
     const file = startupLogPath();
+    if (!fs.existsSync(file)) fs.writeFileSync(file, '', { mode: 0o600 });
     fs.appendFileSync(file, JSON.stringify(record) + '\n');
+    fs.chmodSync(file, 0o600);
     trimStartupLog(file);
   } catch {
     // A diagnostic must never be the reason a server fails to start.
+  }
+}
+
+/**
+ * A stable, non-identifying handle for one project.
+ *
+ * The log's questions are "was this the same project?" and "were several servers stalling
+ * together?". A hash answers both; the path itself answers neither better, and on a shared
+ * host it names the user's work to every other account.
+ */
+function projectHash(projectRoot: string): string {
+  return crypto.createHash('sha256').update(path.resolve(projectRoot)).digest('hex').slice(0, 16);
+}
+
+/** Remove the machine-wide diagnostics log. Exposed as `knowl diagnose-startup --clear`. */
+export function clearStartupLog(): void {
+  try {
+    fs.rmSync(startupLogPath(), { force: true });
+  } catch {
+    // Same rule as append.
   }
 }
 
@@ -149,7 +177,7 @@ export function beginStartupTrace(context: { projectRoot?: string | null; versio
     at: new Date(bootStartedAt).toISOString(),
     bootId,
     pid: process.pid,
-    projectRoot: context.projectRoot ?? process.cwd(),
+    projectHash: projectHash(context.projectRoot ?? process.cwd()),
     version: context.version ?? null,
     node: process.version,
     host: os.hostname(),
