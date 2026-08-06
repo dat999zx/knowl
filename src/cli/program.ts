@@ -82,7 +82,9 @@ import { closeTranscriptDbs } from '../transcripts/database.js';
 import { applyTranscriptConfigTransition, describeTranscriptTeardown } from '../transcripts/teardown.js';
 
 // Load environment variables (.env file)
-dotenv.config();
+// See the note in src/index.ts: dotenv 17 writes a banner to stdout unless told not to, and
+// stdout here is a machine-readable channel.
+dotenv.config({ quiet: true });
 
 const program = new Command();
 
@@ -794,6 +796,10 @@ workspaceCommand
 workspaceCommand
   .command('promote')
   .description('Share existing knowledge with the other repos in this workspace')
+  // Same reason as `config`: a stray positional here is almost always a category list that
+  // cmd.exe split on its commas, and the action explains exactly that. Commander's generic
+  // arity error would replace the one message that tells a Windows user what went wrong.
+  .allowExcessArguments()
   .option('--category <list>', 'Comma-separated categories, e.g. decision,constraint,architecture')
   .option('--id <id...>', 'Specific item ids')
   .option('--apply', 'Actually promote; without this it is a dry run')
@@ -1150,7 +1156,11 @@ async function rebuildVectorEmbeddings(root: string, options: { force?: boolean 
 // --- 7. CONFIG COMMAND ---
 const configCommand = program
   .command('config')
-  .description('Interactively view or edit repository configuration');
+  .description('Interactively view or edit repository configuration')
+  // Commander 14 rejects excess arguments before the action runs. Left alone, `knowl config
+  // ai.model gpt-4o` would answer "too many arguments for 'config'" instead of naming the
+  // subcommand syntax the user was reaching for, which is the whole point of the check below.
+  .allowExcessArguments();
 
 configCommand.action(async () => {
   try {
