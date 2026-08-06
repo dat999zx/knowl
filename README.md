@@ -178,7 +178,60 @@ Everything below works from the CLI and from any MCP-connected agent, against th
 database. No account, no server, no API key. Each item links into the
 [full reference](docs/reference.md) for the detail — and for the limits.
 
-### Knowledge that corrects itself
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**♻️ Knowledge that corrects itself**
+
+7 atom types · automatic supersession · conflict identity · full history · time travel · evidence · drift detection · code intelligence · secret-safe writes
+
+</td>
+<td width="50%" valign="top">
+
+**🎯 Retrieval tuned for agents**
+
+Vector-primary with BM25 fallback · runs offline · 4 embedding presets · exact-identifier support · token-budgeted context packs · usage feedback
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**⏱️ Work that survives the session**
+
+Automatic lifecycle on 3 hosts · work loops · promotion at session end · handoff baton · resume keys · optional transcript search
+
+</td>
+<td width="50%" valign="top">
+
+**🔗 Workspaces**
+
+Many repos, one shared memory · promote explicitly · read-only peer results · owner-only retirement
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**📦 Reusable procedures**
+
+File-backed skills · inspect before running · deterministic synthesis with no AI provider
+
+</td>
+<td width="50%" valign="top">
+
+**💾 Your data, and getting it back**
+
+Checksummed export/import · verified snapshots · previewing garbage collection · `knowl doctor` · optional AI
+
+</td>
+</tr>
+</table>
+
+<details>
+<summary><b>Knowledge that corrects itself</b> — seven typed atom types, and a write that retires what it replaces</summary>
+<br>
 
 - **Seven atom types** — [listed above](#what-gets-stored). Structure instead of one growing
   notes file.
@@ -202,7 +255,11 @@ database. No account, no server, no API key. Each item links into the
 → [Knowledge model](docs/reference.md#core-knowledge-model) ·
 [Evidence and drift](docs/reference.md#evidence-code-intelligence-and-drift)
 
-### Retrieval tuned for agents
+</details>
+
+<details>
+<summary><b>Retrieval tuned for agents</b> — the current answer wins, not merely the similar one</summary>
+<br>
 
 - **Vector-primary ranking** with a bounded BM25 fallback, reranked by freshness, status,
   confidence, and recency — so the *current* answer wins, not merely the similar one. (This is the
@@ -221,7 +278,11 @@ database. No account, no server, no API key. Each item links into the
 
 → [Retrieval and context](docs/reference.md#retrieval-and-context)
 
-### Work that survives the end of a session
+</details>
+
+<details>
+<summary><b>Work that survives the end of a session</b> — hooks, work loops, handoff batons, and resume keys</summary>
+<br>
 
 - **Automatic lifecycle** on Claude Code, Codex, and Cursor — bootstrap, capture, checkpoints, and
   finalization happen through hooks without the agent being asked.
@@ -239,7 +300,11 @@ database. No account, no server, no API key. Each item links into the
 
 → [Tasks, sessions, and lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle)
 
-### Workspaces: many repos, one shared memory
+</details>
+
+<details>
+<summary><b>Workspaces: many repos, one shared memory</b> — nothing is shared until you promote it</summary>
+<br>
 
 Your API repo learned something the frontend repo needs. Link them, and a query fans out — while
 each repository keeps its own database and its own ownership boundary.
@@ -259,7 +324,11 @@ to fail.
 
 → [Workspaces](docs/reference.md#workspaces)
 
-### Reusable procedures
+</details>
+
+<details>
+<summary><b>Reusable procedures</b> — file-backed skills you can inspect before they run</summary>
+<br>
 
 - **File-backed skills** — package a procedure with its scripts under `.knowl/skills/`, then
   inspect it before it ever runs. `knowl skill list` · `read` · `run`
@@ -268,7 +337,11 @@ to fail.
 
 → [Skills and synthesis](docs/reference.md#learned-skills-and-synthesis)
 
-### Your data, and getting it back
+</details>
+
+<details>
+<summary><b>Your data, and getting it back</b> — portable export, verified snapshots, and one doctor command</summary>
+<br>
 
 - **Portable export/import** — checksummed JSONL with four explicit divergence policies for when
   the same atom changed in two places. `knowl export` · `knowl import --on-divergence newer`
@@ -283,6 +356,8 @@ to fail.
 
 → [Portability and maintenance](docs/reference.md#portability-and-maintenance) ·
 [Optional AI](docs/reference.md#optional-ai)
+
+</details>
 
 ### See it: the local viewer
 
