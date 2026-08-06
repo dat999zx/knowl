@@ -200,6 +200,27 @@ describe('canonical Knowl agent guidance', () => {
     expect(anchors.filter(anchor => !slugs.has(anchor))).toEqual([]);
     expect(readme).toContain('](docs/reference.md)');
   });
+
+  /**
+   * The sibling test above pins the cap out of the six `src/` constants. That sweep counted
+   * eight places and all eight were source, so the README went on telling readers to "query
+   * with two to six keywords" after the rule had been refuted and removed everywhere else.
+   * Prose is an agent-facing surface too: KNOWL.md is installed into projects verbatim, and
+   * the README is where a human reads the workflow before writing it into their own guidance.
+   * Spelled-out numbers are checked because that is the form that survived.
+   */
+  it('never states a numeric keyword cap in the prose docs either', async () => {
+    const digits = /\d+\s*(?:-|–|to)\s*\d+\s+(?:concise\s+)?keywords/i;
+    const words = /(?:one|two|three|four|five|six|seven|eight)\s+to\s+(?:one|two|three|four|five|six|seven|eight)\s+keywords/i;
+    for (const file of ['README.md', 'KNOWL.md', 'docs/reference.md']) {
+      const text = await fs.readFile(path.resolve(file), 'utf8');
+      expect(text, `${file} states a numeric keyword cap`).not.toMatch(digits);
+      expect(text, `${file} states a numeric keyword cap`).not.toMatch(words);
+    }
+    // And the replacement actually landed in the README's workflow summary.
+    const readme = await fs.readFile(path.resolve('README.md'), 'utf8');
+    expect(readme).toMatch(/words that name the subject/);
+  });
 });
 
 describe('workspace guidance', () => {

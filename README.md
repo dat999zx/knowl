@@ -169,7 +169,7 @@ over files the host already wrote.
 `knowl serve` exposes the store over stdio MCP; `knowl init` registers it for you. The workflow the
 installed guidance asks agents to follow is short:
 
-1. Query memory with two to six keywords **before** reading repository files.
+1. Query memory with the words that name the subject **before** reading repository files.
 2. Use an active hit directly; inspect files only on a miss, conflict, or stale result.
 3. Store verified durable findings as you go, and correct contradicted memory rather than
    duplicating it.
