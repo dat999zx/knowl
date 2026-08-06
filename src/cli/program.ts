@@ -1,9 +1,9 @@
 import { Command } from 'commander';
-import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import dotenv from 'dotenv';
+import { spawnWorkLoopCommand } from './windows-spawn.js';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from '../core/version-check.js';
 import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, hasAiConfigured } from '../core/config.js';
@@ -148,80 +148,6 @@ function printPrCheckResult(result: DriftCheckResult) {
 
 function formatCommand(command: string, args: string[]) {
   return [command, ...args].join(' ');
-}
-
-function hasPathSeparator(command: string) {
-  return command.includes('/') || command.includes('\\');
-}
-
-function resolveWindowsCommand(command: string) {
-  const ext = path.extname(command);
-  if (ext) return command;
-
-  const pathEntries = (process.env.Path || process.env.PATH || '').split(path.delimiter).filter(Boolean);
-  const pathExts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
-  const searchDirs = hasPathSeparator(command) ? [''] : [process.cwd(), ...pathEntries];
-
-  for (const dir of searchDirs) {
-    for (const pathExt of pathExts) {
-      const candidate = dir ? path.join(dir, `${command}${pathExt}`) : `${command}${pathExt}`;
-      if (existsSync(candidate)) return candidate;
-    }
-  }
-
-  return command;
-}
-
-function isWindowsBatchCommand(command: string) {
-  const resolved = resolveWindowsCommand(command);
-  const ext = path.extname(resolved).toLowerCase();
-  return ext === '.cmd' || ext === '.bat';
-}
-
-/**
- * Quote one token so `cmd.exe` passes it through as a single argument instead of as syntax.
- *
- * Two parsers read this string in turn. `cmd` goes first and treats `& | < > ( ) ^` as command
- * syntax wherever they are not inside a quoted region; the child's C runtime goes second and
- * undoes one layer of backslash-and-quote. So the quotes do the security work -- inside them
- * cmd stops seeing operators -- and doubling the backslashes that run up to a quote is what
- * the CRT expects on the other side.
- *
- * Not covered: `%VAR%`, which cmd expands inside quotes too and has no escape outside a batch
- * file. That is unchanged from routing through `cmd /c` at all, and the variables in reach are
- * the caller's own, in a command the caller typed.
- */
-function quoteForCmd(value: string): string {
-  return `"${value.replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1')}"`;
-}
-
-function spawnWorkLoopCommand(command: string, args: string[]) {
-  const spawnOptions = {
-    cwd: process.cwd(),
-    env: process.env,
-    stdio: 'inherit' as const,
-  };
-
-  if (process.platform !== 'win32') {
-    return spawnSync(command, args, spawnOptions);
-  }
-
-  if (isWindowsBatchCommand(command)) {
-    // A batch shim cannot be handed to CreateProcess directly, so it has to go through cmd --
-    // and everything after `/c` is re-parsed by cmd before the child ever sees it. Passing the
-    // pieces as separate argv entries left that parse to Node's CRT quoting, which is not cmd
-    // quoting: a repository path or task argument holding `&` ended one command and started
-    // another. One pre-quoted line with `/s` (strip the outer pair, take the rest as the
-    // command) plus `windowsVerbatimArguments` (do not quote what is already quoted) is the
-    // same shape Node's own `shell: true` path uses.
-    const line = [command, ...args].map(quoteForCmd).join(' ');
-    return spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${line}"`], {
-      ...spawnOptions,
-      windowsVerbatimArguments: true,
-    });
-  }
-
-  return spawnSync(command, args, spawnOptions);
 }
 
 function collectOption(value: string, previous: string[]) {
