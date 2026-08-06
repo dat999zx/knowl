@@ -236,6 +236,53 @@ describe('runIndexPass', () => {
     await fs.rm(worktree, { recursive: true, force: true }).catch(() => {});
   }, 30_000);
 
+  /**
+   * The same discovery, reached through a symlinked root.
+   *
+   * git reports canonical paths; Node reports whatever it was handed. Where those differ, the
+   * "is this my own repository?" guard in `resolveRepoRootSet` compared the two raw strings and
+   * concluded git had answered about some other repo, so it dropped every worktree and indexed
+   * only the project root.
+   *
+   * This is not hypothetical and it is not only about symlinks: macOS `os.tmpdir()` is
+   * `/var/folders/...` whose real path is `/private/var/folders/...`, and a Windows profile
+   * name over eight characters appears as `RUNNER~1`. The first CI run that covered anything
+   * but ubuntu failed on all four non-Linux legs for exactly this. A symlink reproduces it on
+   * Linux too, so the cheapest runner catches it next time.
+   */
+  it('discovers worktrees through a symlinked project root', async () => {
+    const repo = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-symrepo-'));
+    const worktree = path.join(repo, '..', `${path.basename(repo)}-wt`);
+    const link = path.join(dir, 'linked-root');
+    const git = (...args: string[]) =>
+      execFileAsync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], { cwd: repo });
+
+    await git('init');
+    await git('commit', '--allow-empty', '-m', 'root');
+    await git('worktree', 'add', worktree, '-b', 'side');
+    // A junction on Windows: it needs no elevation and no developer mode, and `realpath`
+    // resolves it exactly as it resolves a POSIX symlink, so the case under test is the same
+    // one on all three platforms.
+    await fs.symlink(repo, link, process.platform === 'win32' ? 'junction' : 'dir');
+
+    // Archives keyed by the SYMLINKED root and by the worktree, which is how a host agent
+    // that was launched through the link would have written them.
+    const archive = path.join(dir, 'sym-projects');
+    for (const [root, session] of [[link, 'linked-session'], [worktree, 'worktree-session']] as const) {
+      const encoded = path.join(archive, encodeProjectDir(path.resolve(root)));
+      await fs.mkdir(encoded, { recursive: true });
+      await fs.writeFile(path.join(encoded, `${session}.jsonl`), line('user', `content of ${session}`));
+    }
+
+    const pass = await runIndexPass({ projectRoot: link, dbPath, projectsDir: archive });
+    expect(pass.indexed).toBe(2);
+
+    await git('worktree', 'remove', '--force', worktree).catch(() => {});
+    await fs.rm(link, { force: true }).catch(() => {});
+    await fs.rm(repo, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(worktree, { recursive: true, force: true }).catch(() => {});
+  }, 30_000);
+
   it('mirrors every message into the FTS index under its own rowid', async () => {
     await fs.writeFile(sessionFile('a'), line('user', 'embedding crash investigation'));
     await pass();

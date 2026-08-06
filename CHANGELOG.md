@@ -3,6 +3,25 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 3.2.1 — 2026-08-06
+
+### Fixed
+
+- **Worktree transcripts are indexed again on macOS and Windows.** `resolveRepoRootSet` checked
+  that git's worktree list included the current directory before trusting it — a guard against
+  git answering about some enclosing repository. It compared git's canonical paths against Node's
+  uncanonicalised ones, so wherever those differ the guard fired on the repository's *own* answer
+  and returned the project root alone, dropping every worktree. A session recorded against a
+  worktree was then never indexed.
+
+  This needs no symlink to hit: macOS `os.tmpdir()` is `/var/folders/…` whose real path is
+  `/private/var/folders/…`, and a Windows profile name over eight characters appears as
+  `RUNNER~1`. 3.2.0's new CI matrix found it on its first run — the failure was invisible for as
+  long as CI was ubuntu-only.
+
+  Paths are now compared canonically and returned verbatim, since the returned roots are encoded
+  into archive directory names a host agent wrote using the uncanonicalised form.
+
 ## 3.2.0 — 2026-08-05
 
 Hardening, generated documentation, and the CI gates that would have caught this year's defects.
