@@ -29,7 +29,6 @@ import { recordKnowledgeFeedback } from '../store/access-feedback.js';
 import { flagCorrectionSiblingsBestEffort } from '../store/blast-radius.js';
 import { applyFeedbackToTierBestEffort } from '../store/tier.js';
 import { finishMemorySession, listActiveMemorySessions } from '../store/session-repository.js';
-import { getKnowledgeItem } from '../store/repository.js';
 import { isImpactEnabled } from '../store/impact-config.js';
 import { openFindingsForSession, resolveFinding, type ImpactFinding, type ImpactTier } from '../store/impact.js';
 import { activeReadSetForSession } from '../store/read-set.js';

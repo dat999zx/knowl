@@ -490,7 +490,9 @@ async function recordToolReads(input: NormalizedHostHook, sessionId: string, pat
 async function openImpactCardEntries(sessionId: string): Promise<ImpactCardEntry[]> {
   const findings = await openFindingsForSession(sessionId, 'certain');
   return findings.map(finding => {
-    let payload: Record<string, unknown> = {};
+    // No initializer: both the try and the catch assign it, so a `{}` here would be dead and
+    // would hide a path where neither ran.
+    let payload: Record<string, unknown>;
     try {
       payload = finding.pathJson ? JSON.parse(finding.pathJson) as Record<string, unknown> : {};
     } catch {
