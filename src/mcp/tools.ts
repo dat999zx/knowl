@@ -745,14 +745,37 @@ export function registerTools(
             text: `SCOPE: ${explain ? '`explain`' : 'vector search'} limits this query to the project namespace, so ${skippedNamespaces.join(' and ')} knowledge was NOT searched. A miss here does not mean the knowledge is absent; re-run without it for full scope.`,
           });
         }
+        // Lineage, once per response rather than once per row. `kin` marks repos that were the
+        // same codebase and have diverged, which is the case where a foreign result is most
+        // likely to look applicable and least likely to be: same concept names, different
+        // meanings. The write path has warned about this since kin existed; the read path is
+        // where the wrong convention actually gets applied.
+        const kinRepos = [...new Set(resolvedItems
+          .filter(item => (item as { kinDivergent?: boolean }).kinDivergent)
+          .map(item => item.repo!))];
+        if (kinRepos.length) {
+          blocks.push({
+            type: 'text',
+            text: `SHARED LINEAGE: ${kinRepos.join(', ')} ${kinRepos.length > 1 ? 'share' : 'shares'} this repo's lineage with diverged conventions. `
+              + 'Same-named concepts can mean different things here — verify against this repo before applying.',
+          });
+        }
         // The floor's verdict, in words. It used to be delivered by returning nothing at all,
         // which the caller could not tell apart from an empty store or a missing index -- and
         // which deleted the answer on every query where the verdict was wrong. The rows now
         // stand and the verdict rides beside them, so a caller can act on it or overrule it.
         if (resolvedItems.some(item => (item.explanation as { abstained?: boolean } | undefined)?.abstained)) {
+          // Naming the next move only where it exists. An abstention is the one moment the
+          // agent has decided memory is empty, and transcript search is the thing that can
+          // still answer -- but it is off by default, so an unconditional mention would send
+          // callers to a tool their build does not expose.
+          const transcriptRoute = config && isTranscriptSearchEnabled(config)
+            ? ' Before you do, try `knowl_transcript_search` with the same words: past sessions are indexed separately from knowledge items and are not searched by this tool.'
+            : '';
           blocks.push({
             type: 'text',
-            text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `score` and judge. If none of them answers the question, treat this as a miss and go to the files.',
+            text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `score` and judge. If none of them answers the question, treat this as a miss and go to the files.'
+              + transcriptRoute,
           });
         }
         return { content: blocks };

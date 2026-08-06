@@ -5,7 +5,29 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
-The 2026-08-06 audit: nineteen findings across the CLI, the MCP surface and the store.
+### Workspace reads tell the truth about what they found
+
+Groundwork for demand-paged scoping
+([design](docs/superpowers/specs/2026-08-07-demand-paged-scoping-design.md)); each item is a bug
+on its own terms.
+
+- **The relevance floor now applies to federated queries.** `queryFederated` never passed
+  `vector.relevanceFloor` into the ranker, so `minRelevance` arrived `null` on every workspace
+  query, no federated result could carry `abstained`, and `knowl_query`'s `NO CONFIDENT MATCH`
+  notice was unreachable code from the moment a repo was linked — the case where the verdict
+  matters most, because the alternative on offer is another repo's near-miss.
+- **A result from a kin repo says so.** `kin` marks repos of one lineage with diverged
+  conventions, and it was a write-time signal only: the cross-repo write advisory warned about
+  divergence while a federated *read* returned the same repo's items unmarked. One
+  `SHARED LINEAGE` notice per response, not per row.
+- **The miss notice names the next move.** Where `search.transcripts.enabled` is set,
+  `NO CONFIDENT MATCH` now points at `knowl_transcript_search` — past sessions are indexed
+  separately and `knowl_query` does not search them. Conditional, because naming a tool the
+  build does not expose is worse than saying nothing.
+
+### The 2026-08-06 audit
+
+Nineteen findings across the CLI, the MCP surface and the store.
 
 ### Data loss
 

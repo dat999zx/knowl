@@ -8,6 +8,16 @@ import type { ActiveWorkspace } from './resolve.js';
 export type FederatedItem = KnowledgeItem & {
   repo: string;
   explanation?: ExplainedKnowledgeItem['explanation'];
+  /**
+   * This result came from a peer in the caller's own `kin` group: same lineage, diverged
+   * conventions. Present only when true, like `abstained` -- the ordinary result pays nothing.
+   *
+   * Kin was a write-time signal only. `findCrossRepoOverlap` looks wider in a kin peer and
+   * `formatCrossRepoNotice` says "shares this repo's lineage", so someone STORING knowledge was
+   * told about divergence and someone READING it was not -- and reading is where a diverged
+   * convention actually gets applied to the wrong repo.
+   */
+  kinDivergent?: true;
 };
 export type SkipReason = 'absent' | 'unreadable' | 'schema-too-new' | 'unknown';
 export type FederatedResult = {
@@ -133,14 +143,35 @@ export async function queryFederated(input: {
     category: input.category,
     limit: input.limit,
     usingVector: Boolean(input.vector?.enabled && input.vector.embedding),
+    // Without this the floor is `null` here and `answerable` is unconditionally true, so no
+    // federated result could ever carry `abstained` -- and the caller's NO CONFIDENT MATCH
+    // notice was unreachable code from the moment a workspace was linked. The abstention
+    // verdict is not a local-only property: the union is exactly the corpus being judged, and a
+    // workspace is where "the store does not hold this" is most expensive to get wrong, because
+    // the alternative on offer is the peer's near-miss. Same expression as `rankKnowledge`.
+    minRelevance: input.vector?.relevanceFloor ?? null,
   });
 
+  // Which peers are the same lineage as the caller. Read from the manifest rather than from the
+  // peer list, because `kin` is a group name and sameness is what matters, not its presence:
+  // an unrelated pair of repos each carrying a different `kin` are not kin to each other.
+  const selfKin = input.workspace.manifest.repos.find(entry => entry.name === input.workspace.repo)?.kin;
+  const kinRepos = new Set(
+    selfKin
+      ? input.workspace.peers.filter(peer => peer.kin === selfKin).map(peer => peer.name)
+      : [],
+  );
+
   return {
-    items: scored.map(entry => ({
-      ...entry.item,
-      repo: entry.repo ?? input.workspace.repo,
-      explanation: entry.explanation,
-    })),
+    items: scored.map(entry => {
+      const repo = entry.repo ?? input.workspace.repo;
+      return {
+        ...entry.item,
+        repo,
+        explanation: entry.explanation,
+        ...(kinRepos.has(repo) ? { kinDivergent: true as const } : {}),
+      };
+    }),
     skipped,
   };
 }
