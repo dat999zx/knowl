@@ -3,6 +3,68 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+The 2026-08-06 audit: nineteen findings across the CLI, the MCP surface and the store.
+
+### Data loss
+
+- **`doctor` no longer rebuilds the store it was asked to inspect.** It is exempt from the
+  missing-database guard so it can run when something is wrong, but it still called `initDb`, and
+  opening a libSQL `file:` URL creates the file — so diagnosing a repository whose database had
+  moved wrote an empty one, reported it ready, and left the guard unable to fire again.
+  `knowl-sync` runs doctor everywhere, which made routine maintenance the trigger.
+- **`snapshot` is no longer blocked by that guard**, which had been refusing the one command its
+  own error names as the first recovery to try.
+- **`snapshot restore` refuses another repository's snapshot.** The origin is recorded in the
+  manifest; `--accept-origin-mismatch` covers a repository that moved.
+- **`import` verifies each item's `contentHash` against its own content.** Divergence is decided on
+  that field, so an item edited with its hash left alone imported as "identical" and its real
+  content was discarded — under every policy, including `fail`.
+- **`knowl init` refuses to fork memory from a subdirectory.**
+
+### Failures that reported success
+
+- `isError` is set on the uninitialized-project banner and on every cross-repo ownership refusal.
+- `import` exits non-zero when it refuses.
+- `knowl_skill_create` refuses rather than overwriting an existing package.
+- `knowl_handoff` reports replacing an unconsumed baton.
+- `knowl_task_finish` refuses a second finish or a post-finish checkpoint.
+- `supersede` validates the replacement it is given.
+- `knowl_timeline` and `knowl_conflicts` name their overflow instead of truncating blind.
+
+### Context and correctness
+
+- **`knowl_query` is bounded** — 45,147 characters measured for a 25-result query, on the one path
+  with no ceiling. Lowest-ranked results are dropped with the count reported.
+- **`knowl_query` takes an `id`,** returning one item whole. 262 of 639 atoms on a real store
+  exceed the content ceiling, including `reasoning`, which `knowl_decide` requires and no tool
+  could read back.
+- **Tool order is deliberate.** The list led with `knowl_ingest`, which needs an unconfigured AI
+  provider, while `knowl_query` sat seventh.
+- Unknown tools and missing resources return `-32602` rather than a successful `isError` result or
+  the server's own `-32603`; a call omitting `arguments` no longer throws.
+- `knowl_ingest_atoms` is capped at 50.
+
+### Reads that wrote
+
+- **`knowl eval` no longer writes to the store it measures**, and no longer reindexes the live
+  embedding table before measuring it.
+- **`upgrade --all --dry-run` no longer edits the machine registry.**
+
+### The rest
+
+- **Write transactions take their lock up front** (`BEGIN IMMEDIATE`), as `bootstrapSchema` already
+  did for the same reason.
+- **GC compression cannot grow an item** — `summarize` truncated on UTF-16 length while the gate
+  measured bytes, so CJK and accented text came back larger with the original destroyed.
+- **Numeric and timestamp options are validated**, not coerced: `--limit abc` reached a bound
+  parameter as `NaN`, and `--as-of banana` matched every row through SQLite string comparison.
+- **Resume keys are eight characters and a miss costs 250 ms**; existing six-character keys still
+  resolve.
+- **Write failures are diagnosable** — the SQLite verdict in `error.cause` is surfaced through the
+  same sanitizer.
+- **`--json` failures emit an envelope on stdout** while stderr keeps the human line.
 ## 3.2.2 — 2026-08-06
 
 ### Fixed
