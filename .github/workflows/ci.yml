@@ -25,6 +25,40 @@ jobs:
           node-version: 22
           cache: npm
 
+      # Three suites load a real embedding model, so without this every run re-downloads it
+      # from huggingface.co and a rate limit there fails the build for reasons unrelated to the
+      # change under test. Observed 2026-08-05: `Error (429) ... Xenova/all-MiniLM-L6-v2/
+      # config.json` took down `workspace-query`, `cross-repo-semantic` and `cross-repo-eval`
+      # on a PR that touched none of them.
+      #
+      # `.knowl/models` and not `~/.knowl/models`: `resolveModelCache` does default to
+      # `knowlHome()/models`, but no test ever sees the real home. vitest.config.ts pins
+      # KNOWL_HOME to `./.knowl-test-home` suite-wide and those three override it again to
+      # their own fixture, all of which are deleted before the job ends. The repo's own
+      # `.knowl/models` is the one path a model-loading suite both writes and outlives -- it
+      # is what `workspace-query.test.ts` and `write-embedding.test.ts` already point at, and
+      # the two cross-repo suites now do too.
+      #
+      # Keyed on the files that name the models, so adding or switching one fetches once and
+      # then caches. `restore-keys` matters more than the exact key here: on a miss it still
+      # restores the newest previous cache, so a profile change re-downloads only what
+      # actually changed instead of everything.
+      #
+      # Split into restore and save rather than one `actions/cache` step, because that step
+      # only saves when the job succeeds. This suite has a known timing-sensitive test, so a
+      # save-on-green cache stays cold exactly through the runs that need it most: one flake
+      # discards the download, the next run fetches again, and the rate limit this exists to
+      # avoid is hit by the retry. The weights are valid whatever the tests concluded about
+      # the code.
+      - name: Restore embedding model cache
+        id: model-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .knowl/models
+          key: knowl-models-${{ runner.os }}-${{ hashFiles('src/core/vector-profile.ts', 'src/core/config.ts') }}
+          restore-keys: |
+            knowl-models-${{ runner.os }}-
+
       - name: Install dependencies
         run: npm ci
 
@@ -36,3 +70,15 @@ jobs:
 
       - name: Test
         run: npm test
+
+      # `always()`, so a red suite still leaves the weights behind -- that is the whole point
+      # of the split above. Guarded twice: `cache-hit` skips the upload when the exact key was
+      # already restored, and `hashFiles` returns an empty string when nothing is on disk,
+      # which is what stops a job that died before the tests ran from failing again here on a
+      # missing path.
+      - name: Save embedding model cache
+        if: always() && steps.model-cache.outputs.cache-hit != 'true' && hashFiles('.knowl/models/**') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .knowl/models
+          key: ${{ steps.model-cache.outputs.cache-primary-key }}

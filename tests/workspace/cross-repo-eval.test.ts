@@ -29,6 +29,18 @@ const ROOTS: Record<string, string> = {
   server: path.resolve('./.knowl-xeval-server'),
 };
 
+// The repo's own cache, as `workspace-query.test.ts` and `write-embedding.test.ts` already do.
+// Left unset, `resolveModelCache` lands on `knowlHome()/models` -- and `knowlHome()` here is
+// the throwaway HOME above, which `afterAll` deletes. So every run fetched the weights again
+// from huggingface.co, which is a rate limiter this suite has no business depending on: a 429
+// there fails the build for reasons that have nothing to do with the change under test.
+// A stable path inside the repo is one CI can cache and a developer already has warm.
+const MODEL_CACHE = path.resolve('./.knowl/models');
+const CONFIG = {
+  ...DEFAULT_CONFIG,
+  search: { ...DEFAULT_CONFIG.search, vector: { ...DEFAULT_CONFIG.search?.vector, cacheDir: MODEL_CACHE } },
+};
+
 /**
  * Fixture ids are the suite's assertion vocabulary, but item ids are generated and
  * referenced by assertions and evidence with cascading foreign keys -- rewriting a primary
@@ -40,7 +52,7 @@ const realIds = new Map<string, string>();
 async function seedRepo(name: string) {
   const root = ROOTS[name];
   await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
-  await saveConfig(root, { ...DEFAULT_CONFIG });
+  await saveConfig(root, CONFIG);
   await initDb(root);
   await getClient().execute('DELETE FROM knowledge_commits');
   await getClient().execute('DELETE FROM knowledge_items');
@@ -109,7 +121,7 @@ describe('cross-repo retrieval', () => {
         // Federation selects from every repo including this one, so no local pre-query.
         let vector: { enabled: boolean; profileFingerprint: string; embedding?: number[] } | undefined;
         if (semantic) {
-          const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, root);
+          const embedder = await createLocalEmbeddingProvider(CONFIG, root);
           const [embedding] = await embedder.embed([testCase.query]);
           // The fingerprint, not provider/model: those stopped being the eligibility filter
           // when dtype and pooling joined the identity, so the old pair left no fingerprint
@@ -169,7 +181,7 @@ describe('cross-repo retrieval', () => {
     // this is the only place the shipped default gets measured end to end.
     for (const name of Object.keys(ROOTS)) {
       await initDb(ROOTS[name]);
-      const embedder = await createLocalEmbeddingProvider(DEFAULT_CONFIG, ROOTS[name]);
+      const embedder = await createLocalEmbeddingProvider(CONFIG, ROOTS[name]);
       await reindexKnowledgeEmbeddings('local', embedder);
       await closeDb();
     }
