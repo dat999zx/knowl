@@ -3,6 +3,64 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 3.2.0 — 2026-08-05
+
+Hardening, generated documentation, and the CI gates that would have caught this year's defects.
+
+### Breaking
+
+- **A learned skill will not run until you approve it.** `knowl skill approve <name>` records a
+  SHA-256 of the package's exact bytes; any edit to any file in it revokes that approval. Existing
+  packages need approving once. Approval is CLI-only and deliberately unreachable over MCP — the
+  same MCP surface that runs a skill also writes it, and an agent that could approve its own
+  package would make the boundary decorative.
+- **A skill no longer inherits your environment.** It previously received the full `process.env`:
+  model-provider keys, cloud credentials, GitHub tokens, the SSH-agent socket. It now gets an
+  allowlist plus `KNOWL_PROJECT_ROOT`, `KNOWL_SKILL_NAME` and `KNOWL_SKILL_DIR`. Runs are also
+  capped at 120s and 8MB of output.
+
+### Security and durability
+
+- **JSONL import is streamed and bounded.** It read the whole file into memory, split it, and
+  parsed every record before any validation ran. It now reads line by line with ceilings on total
+  bytes (256MB), record count, record size, and files per skill package.
+- **Config is written atomically and owner-only.** An interrupted write left truncated JSON that
+  `loadConfig` could not parse, two writers could interleave, and the mode followed the umask — on
+  a file that can hold a literal `ai.apiKey`. The skill trust file uses the same writer.
+- **Startup diagnostics no longer record your project paths.** The log is machine-wide, and each
+  record carried the literal project root beside hostname, PID and load average — on a shared host,
+  telling every local account which projects you work on and when. It is now a 16-character hash,
+  in a `0700` directory, `0600`, clearable with `knowl diagnose-startup --clear`.
+- "manifest-verified" is now "checksum-verified" throughout. A SHA-256 proves the bytes are intact
+  and says nothing about who produced them.
+
+### Documentation that cannot drift
+
+- The MCP tool schemas moved out of a closure into `src/mcp/tool-definitions.ts`, so something
+  outside the running server can read them. The tool count and the embedding-preset table are now
+  generated; `npm run docs:check` fails on drift and on any tool or command nothing documents.
+  It immediately found the preset table missing `arctic-embed-m-v2` and still claiming every
+  preset is 384-dimension.
+- Curated prose is checked for coverage, not regenerated. Replacing hand-written descriptions with
+  first-sentence extracts would trade accurate documentation for merely current documentation.
+
+### CI
+
+- Matrix over ubuntu/windows/macos × node 22/24. Windows is the primary development host and was
+  never covered.
+- New gates: lint, typecheck, documentation drift, a production dependency audit, and a tarball
+  smoke test that installs what `npm publish` would actually ship.
+- CodeQL weekly and on every PR; Dependabot grouped weekly.
+
+### Dependencies
+
+`@libsql/client` 0.14 → 0.17, `@modelcontextprotocol/sdk` 1.4 → 1.30 (clearing a path-traversal
+advisory), `dotenv` 16 → 17, `commander` 12 → 14. Two of those changed behaviour in ways only the
+end-to-end CLI suites could see — dotenv 17 writes a banner to stdout, and commander 14 rejects
+excess arguments before an action runs. Both are handled; the reasoning, the deferred Zod 4
+migration, and the one unfixable upstream advisory are in
+[docs/dependency-review-2026-08.md](docs/dependency-review-2026-08.md).
+
 ## 3.1.0 — 2026-08-05
 
 Retrieval quality, what a memory read actually hands back, and the storage engine. Includes the
