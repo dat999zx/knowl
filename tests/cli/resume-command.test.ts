@@ -1,8 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createResumePoint } from '../../src/store/resume-points.js';
-import { closeResumeDb } from '../../src/store/resume-store.js';
+import { createResumePoint } from '../../src/session/resume-points.js';
+import { closeResumeDb } from '../../src/session/resume-store.js';
 import { runCliResume } from '../../src/cli/resume-command.js';
 
 let counter = 0;

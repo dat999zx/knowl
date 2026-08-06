@@ -13,7 +13,7 @@ import { flagCorrectionSiblings } from '../../src/store/blast-radius.js';
 import { startMemorySession } from '../../src/store/session-repository.js';
 import { createSnapshot } from '../../src/store/snapshots.js';
 import { upgradeExistingRepository } from '../../src/cli/upgrade.js';
-import { claimCapture, HOOK_CAPTURE_DEBOUNCE_MS } from '../../src/store/hook-debounce.js';
+import { claimCapture, HOOK_CAPTURE_DEBOUNCE_MS } from '../../src/session/hook-debounce.js';
 import {
   CLAIM_SWEEP_BUDGET,
   CLAIM_MAX_AGE_MS,

@@ -28,7 +28,7 @@ import { existingItemsNotice, visibilityGateNotice } from './workspace-visibilit
 import { repoEntry, updateRepoSettings } from '../workspace/repo-settings.js';
 import { runCliQuery } from './query-command.js';
 import { runCliResume } from './resume-command.js';
-import { closeResumeDb } from '../store/resume-store.js';
+import { closeResumeDb } from '../session/resume-store.js';
 import { formatCrossRepoNotice } from './cross-repo-notice.js';
 import { formatWorkspaceBlock } from './workspace-report.js';
 import { resolveWorkspace } from '../workspace/resolve.js';

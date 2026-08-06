@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createClaudeChangeCardOutput, renderChangeCard } from '../../src/cli/agents/change-card.js';
+import { createClaudeChangeCardOutput, renderChangeCard } from '../../src/session/change-card.js';
 import { ChangeSummary } from '../../src/store/change-watermark.js';
 
 const item = (index: number, action: 'insert' | 'update' = 'insert') => ({

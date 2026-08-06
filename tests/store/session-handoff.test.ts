@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectSessionFailureKind, formatPendingHandoffContext } from '../../src/store/session-handoff.js';
+import { detectSessionFailureKind, formatPendingHandoffContext } from '../../src/session/session-handoff.js';
 
 describe('session handoff helpers', () => {
   it('detects hard-stop kinds from structured codes first', () => {

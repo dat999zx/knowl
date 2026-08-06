@@ -1,4 +1,4 @@
-import type { HookHost, NormalizedHookEventName } from '../host-hook.js';
+import type { HookHost, NormalizedHookEventName } from '../../core/host-hook-types.js';
 
 export const MAX_HOST_STRING = 2_000;
 

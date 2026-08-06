@@ -1,4 +1,4 @@
-import type { NormalizedHookEventName } from '../host-hook.js';
+import type { NormalizedHookEventName } from '../../core/host-hook-types.js';
 import type { HostIdentity, HostProfile } from './profile.js';
 import { agentIdentityFrom, hostString } from './profile.js';
 

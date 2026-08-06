@@ -1,4 +1,4 @@
-import type { ChangeSummary } from '../../store/change-watermark.js';
+import type { ChangeSummary } from '../store/change-watermark.js';
 
 const MAX_ITEM_LINES = 5;
 const MAX_TITLE_LENGTH = 90;

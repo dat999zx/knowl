@@ -7,7 +7,7 @@ import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
 import { DEFAULT_CONTEXT_MAX_CHARS } from '../../src/core/token-budget.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { describeAutoDrift, runAutoDriftCheck } from '../../src/store/drift-auto.js';
-import { handleHostLifecycleEvent } from '../../src/store/host-lifecycle.js';
+import { handleHostLifecycleEvent } from '../../src/session/host-lifecycle.js';
 import * as repo from '../../src/store/repository.js';
 
 const ROOT = path.resolve('.knowl-drift-auto-test');

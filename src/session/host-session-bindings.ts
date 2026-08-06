@@ -3,10 +3,10 @@ import { canonicalProjectRoot } from '../core/project-path.js';
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { MemorySession } from '../core/types.js';
 import { HookHost } from '../core/host-hook-types.js';
-import { getClient } from './database.js';
-import { readCommitHead } from './change-watermark.js';
-import { bootstrapAgentSession } from './context-bootstrap.js';
-import { getMemorySession } from './session-repository.js';
+import { getClient } from '../store/database.js';
+import { readCommitHead } from '../store/change-watermark.js';
+import { bootstrapAgentSession } from '../store/context-bootstrap.js';
+import { getMemorySession } from '../store/session-repository.js';
 
 export type HostSessionKey = {
   projectRoot: string;

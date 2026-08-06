@@ -4,7 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { closeDb, getClient, getDb, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
-import { bindHostSession } from '../../src/store/host-session-bindings.js';
+import { bindHostSession } from '../../src/session/host-session-bindings.js';
 import { startMemorySession } from '../../src/store/session-repository.js';
 import { deriveSessionStatuses } from '../../src/transcripts/session-status.js';
 

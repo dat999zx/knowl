@@ -1,14 +1,14 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { closeResumeDb, openResumeDb, resumeDbPath } from '../../src/store/resume-store.js';
+import { closeResumeDb, openResumeDb, resumeDbPath } from '../../src/session/resume-store.js';
 import {
   createResumePoint,
   formatResumeBrief,
   listResumePoints,
   readResumePoint,
-} from '../../src/store/resume-points.js';
-import type { ResumePoint } from '../../src/store/resume-points.js';
+} from '../../src/session/resume-points.js';
+import type { ResumePoint } from '../../src/session/resume-points.js';
 
 const TEST_HOME = path.resolve('./.knowl-resume-points-home');
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
 import { closeDb, getDb, initDb } from '../../src/store/database.js';
-import { handleHostLifecycleEvent } from '../../src/store/host-lifecycle.js';
+import { handleHostLifecycleEvent } from '../../src/session/host-lifecycle.js';
 import * as repo from '../../src/store/repository.js';
 
 const TEST_ROOT = path.resolve('./.knowl-skill-loop-test');

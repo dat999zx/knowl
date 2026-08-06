@@ -1,4 +1,4 @@
-import { renderChangeCard } from '../cli/agents/change-card.js';
+import { renderChangeCard } from '../session/change-card.js';
 import {
   ChangeSummary,
   loadForeignChanges,
@@ -7,9 +7,9 @@ import {
   readCommitHead,
   readPeerCommitHeads,
 } from '../store/change-watermark.js';
-import { listLiveHostBindings } from '../store/host-session-bindings.js';
+import { listLiveHostBindings } from '../session/host-session-bindings.js';
 import { recordMcpCallCommits } from '../store/mcp-call-commits.js';
-import { hostProfile, isHookHost } from '../cli/agents/hosts/index.js';
+import { hostProfile, isHookHost } from '../session/hosts/index.js';
 import { resolveWorkspace, type ActiveWorkspace } from '../workspace/resolve.js';
 
 /**

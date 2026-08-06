@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { canonicalProjectRoot } from '../core/project-path.js';
 import { NormalizedHostHook } from '../core/host-hook-types.js';
-import { HOOK_CAPTURE_DEBOUNCE_MS, sweepDebounceClaims } from './retention.js';
+import { HOOK_CAPTURE_DEBOUNCE_MS, sweepDebounceClaims } from '../store/retention.js';
 
 // The window and the lifetime of the file that enforces it are one decision, so they are
 // made in one place. Re-exported because this is where every caller already looks for it.

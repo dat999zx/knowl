@@ -2,11 +2,11 @@ import { findProjectRoot } from '../core/config.js';
 import { ProjectNotFoundError } from '../core/errors.js';
 import { closeDb, initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
-import { handleHostLifecycleEvent } from '../store/host-lifecycle.js';
+import { handleHostLifecycleEvent } from '../session/host-lifecycle.js';
 import { assertKnowledgeDatabasePresent } from './database-presence.js';
 import { readLifecyclePayload } from './agents/lifecycle.js';
 import { IncompleteHostHookPayloadError, normalizeHostHook } from './agents/host-hook.js';
-import { hostProfile } from './agents/hosts/index.js';
+import { hostProfile } from '../session/hosts/index.js';
 
 /**
  * The agent lifecycle hook, in its own module and off the CLI's import graph.

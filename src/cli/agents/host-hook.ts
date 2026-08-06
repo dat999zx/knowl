@@ -5,7 +5,7 @@ import type {
   HookHost, NormalizedHookEventName, NormalizedHostHook,
 } from '../../core/host-hook-types.js';
 import { isSessionEventType } from './lifecycle.js';
-import { hostProfile, isHookHost } from './hosts/index.js';
+import { hostProfile, isHookHost } from '../../session/hosts/index.js';
 import { AgentName } from './types.js';
 
 /**

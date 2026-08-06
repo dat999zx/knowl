@@ -4,12 +4,12 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
-import { handleHostLifecycleEvent } from '../../src/store/host-lifecycle.js';
+import { handleHostLifecycleEvent } from '../../src/session/host-lifecycle.js';
 import {
   readHostSeenPeerCommits,
   setHostSeenPeerCommits,
   type HostSessionKey,
-} from '../../src/store/host-session-bindings.js';
+} from '../../src/session/host-session-bindings.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';

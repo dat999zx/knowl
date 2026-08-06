@@ -11,8 +11,8 @@ import {
   recordDeliberateHandoff,
   recordPendingSessionHandoff,
   SESSION_HANDOFF_KINDS,
-} from '../../src/store/session-handoff.js';
-import type { PendingHandoff } from '../../src/store/session-handoff.js';
+} from '../../src/session/session-handoff.js';
+import type { PendingHandoff } from '../../src/session/session-handoff.js';
 
 describe('handoff kind inventory', () => {
   it('is a single list the type, the writer and the parser all derive from', () => {

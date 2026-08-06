@@ -5,7 +5,7 @@ import { createClient } from '@libsql/client';
 
 import { acquireClient, releaseAll } from '../../src/store/connection-pool.js';
 import { openTranscriptDb, closeTranscriptDbs } from '../../src/transcripts/database.js';
-import { openResumeDb, closeResumeDb } from '../../src/store/resume-store.js';
+import { openResumeDb, closeResumeDb } from '../../src/session/resume-store.js';
 
 const ROOT = path.resolve('./.knowl-pragma-test');
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HOST_PROFILES, hostProfile } from '../../../src/cli/agents/hosts/index.js';
+import { HOST_PROFILES, hostProfile } from '../../../src/session/hosts/index.js';
 import { HookHost } from '../../../src/cli/agents/host-hook.js';
 
 const ALL_HOSTS: HookHost[] = ['codex', 'claude', 'cursor', 'claude-desktop', 'generic'];
