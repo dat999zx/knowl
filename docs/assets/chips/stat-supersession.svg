@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="146" height="38" viewBox="0 0 146 38"
+     role="img" aria-label="96 percent correct versus 40 percent without supersession">
+  <rect x="0.5" y="0.5" width="145" height="37" rx="8" fill="#161b22" stroke="#30363d"/>
+  <text x="14" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="14" font-weight="700" fill="#199e70">96%</text>
+  <text x="52" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="12" fill="#8b949e">vs 40% stale</text>
+</svg>

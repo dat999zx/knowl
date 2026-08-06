@@ -10,32 +10,34 @@
 [![node](https://img.shields.io/badge/node-%E2%89%A522-3987e5)](package.json)
 [![MCP](https://img.shields.io/badge/protocol-MCP-eda100)](https://modelcontextprotocol.io)
 
+<p align="center">
+  <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="96% correct vs 40% without supersession" height="38" /></picture></a>
+  <a href="#quick-start"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-nokeys.svg"><img src="docs/assets/chips/stat-nokeys.svg" alt="0 API keys needed" height="38" /></picture></a>
+  <a href="#everything-else"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-tools.svg"><img src="docs/assets/chips/stat-tools.svg" alt="27 MCP tools" height="38" /></picture></a>
+  <a href="#what-knowl-is-for"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-local.svg"><img src="docs/assets/chips/stat-local.svg" alt="100% local, no egress" height="38" /></picture></a>
+</p>
+
 [Quick start](#quick-start) ·
 [Why supersession](#the-idea-memory-that-retires-itself) ·
+[What gets stored](#what-gets-stored) ·
 [Features](#features) ·
 [Agent setup](#connecting-an-agent) ·
-[What it's for](#what-knowl-is-for) ·
+[Viewer](#see-it-the-local-viewer) ·
+[Requirements](#requirements-and-local-data) ·
 **[Full reference →](docs/reference.md)**
 
 </div>
 
 ---
 
-> **Looking for the details?** This README is the tour. Everything Knowl ships — every command,
-> every MCP tool, every ranking rule, and every deliberate limit — is documented in the
-> **[full reference](docs/reference.md)**.
-
-Coding agents start every session blank. The usual fix is to write things down — in `CLAUDE.md`,
-in a notes file, in a memory service — and the usual failure is that those notes only ever grow.
-Six months in, the store confidently reports the authentication design you replaced in March,
+Coding agents start every session blank, so teams write things down — and those notes only ever
+grow. Six months in, the store still reports the authentication design you replaced in March,
 because nothing ever told it that decision was over.
 
 Knowl is a repository-local store of **typed knowledge atoms** — decisions, constraints,
-architecture, facts, goals, state, and skills — that agents read and write over the
-[Model Context Protocol](https://modelcontextprotocol.io) or the `knowl` CLI. Every atom carries
-status, freshness, provenance, and history, and **a replacement retires its predecessor at write
-time** rather than sitting beside it. Everything lives in a SQLite database under `.knowl/`; core
-storage and retrieval need no API key and no network.
+architecture, facts, goals, state, and skills — read and written over
+[MCP](https://modelcontextprotocol.io) or the `knowl` CLI, where **a replacement retires its
+predecessor at write time** instead of sitting beside it.
 
 ## Quick start
 
