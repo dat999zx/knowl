@@ -224,14 +224,22 @@ database. No account, no server, no API key. Each item links into the
 
 **♻️ Knowledge that corrects itself**
 
-7 atom types · automatic supersession · conflict identity · full history · time travel · evidence · drift detection · code intelligence · secret-safe writes
+Seven typed atom types, where a same-subject write retires its predecessor instead of
+sitting beside it. That one behavior is the [96%-vs-40% difference](#the-idea-memory-that-retires-itself).
+Evidence attached to a file or symbol goes stale *by itself* when the code moves.
+
+`conflicts` · `timeline` · `query --as-of` · `pr check` · `code index`
 
 </td>
 <td width="50%" valign="top">
 
 **🎯 Retrieval tuned for agents**
 
-Vector-primary with BM25 fallback · runs offline · 4 embedding presets · exact-identifier support · token-budgeted context packs · usage feedback
+Vector-primary with a bounded BM25 fallback, reranked by freshness, status, and confidence,
+so the *current* answer wins rather than the merely similar one. The embedding model is
+local and optional — without it you still get keyword retrieval, and nothing leaves the machine.
+
+`query` · `context --token-budget` · `config set-model` · `access report`
 
 </td>
 </tr>
@@ -240,14 +248,22 @@ Vector-primary with BM25 fallback · runs offline · 4 embedding presets · exac
 
 **⏱️ Work that survives the session**
 
-Automatic lifecycle on 3 hosts · work loops · promotion at session end · handoff baton · resume keys · optional transcript search
+On Claude Code, Codex, and Cursor, hooks own bootstrap, capture, checkpoints, and
+finalization without the agent being asked. A clean finish distills up to eight durable
+candidates. Park a workstream under a key and pick it up in any session, from any directory.
+
+`task run` · `handoff` · `park` · `resume <key>`
 
 </td>
 <td width="50%" valign="top">
 
 **🔗 Workspaces**
 
-Many repos, one shared memory · promote explicitly · read-only peer results · owner-only retirement
+Your API repo learned something the frontend repo needs. Link them and a query fans out,
+while each repository keeps its own database and its own ownership boundary. Nothing is
+shared until you promote it, and only the owner can retire its own atoms.
+
+`workspace init` · `workspace add` · `workspace promote --apply`
 
 </td>
 </tr>
@@ -256,14 +272,22 @@ Many repos, one shared memory · promote explicitly · read-only peer results ·
 
 **📦 Reusable procedures**
 
-File-backed skills · inspect before running · deterministic synthesis with no AI provider
+Package a procedure with its scripts under `.knowl/skills/`, then read it before it ever
+runs. Roll several atoms into one architecture summary deterministically, with no AI
+provider involved at all.
+
+`skill list` · `skill read` · `skill run` · `synthesize`
 
 </td>
 <td width="50%" valign="top">
 
 **💾 Your data, and getting it back**
 
-Checksummed export/import · verified snapshots · previewing garbage collection · `knowl doctor` · optional AI
+Checksummed JSONL export and import with four explicit policies for when the same atom
+changed in two places. Restore verifies schema, size, SHA-256, and SQLite integrity
+*before* touching anything, and takes a pre-restore snapshot first.
+
+`export` · `import --on-divergence` · `snapshot create` · `gc` · `doctor`
 
 </td>
 </tr>
@@ -439,9 +463,11 @@ regression suites with `knowl eval retrieval`.
 Node.js 22 or later. Everything Knowl writes for a project lives under `.knowl/`, which `knowl init`
 adds to `.gitignore`:
 
-- `.knowl/config.json` — project, search, security, AI, and workspace configuration
-- `.knowl/knowl.db` — atoms, assertions, knowledge commits, full-text index, feedback, embeddings
-- `.knowl/skills/` — file-backed skill packages
+| Path | Holds |
+| --- | --- |
+| `.knowl/config.json` | Project, search, security, AI, and workspace configuration |
+| `.knowl/knowl.db` | Atoms, assertions, knowledge commits, full-text index, feedback, embeddings |
+| `.knowl/skills/` | File-backed skill packages |
 
 Workspace manifests live outside member repositories, because their checkout paths are
 machine-local. Exports and snapshots are written only when you ask for them.
@@ -450,23 +476,25 @@ machine-local. Exports and snapshots are written only when you ask for them.
 
 Everything above is the summary. The **[full reference](docs/reference.md)** is one document
 covering every subsystem in depth — including the parts that are deliberately limited, which is
-usually what you actually need to know:
+usually what you actually need to know.
 
-[Knowledge model](docs/reference.md#core-knowledge-model) ·
-[Retrieval and context](docs/reference.md#retrieval-and-context) ·
-[Tasks, sessions, lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle) ·
-[Evidence and drift](docs/reference.md#evidence-code-intelligence-and-drift) ·
-[Workspaces](docs/reference.md#workspaces) ·
-[Skills and synthesis](docs/reference.md#learned-skills-and-synthesis) ·
-[Portability and maintenance](docs/reference.md#portability-and-maintenance) ·
-[Local viewer](docs/reference.md#local-viewer) ·
-[Architecture](docs/reference.md#architecture-and-security-boundaries) ·
-[Agent setup](docs/reference.md#agent-setup) ·
-[Benchmarks](docs/reference.md#benchmarks) ·
-[CLI reference](docs/reference.md#cli-reference) ·
-[MCP tools](docs/reference.md#mcp-tools-and-resources) ·
-[Optional AI](docs/reference.md#optional-ai) ·
-[Local data](docs/reference.md#local-data)
+| If you want to know… | Go to |
+| --- | --- |
+| What an atom is, and what each field means | [Knowledge model](docs/reference.md#core-knowledge-model) |
+| How a query is ranked, and what wins ties | [Retrieval and context](docs/reference.md#retrieval-and-context) |
+| What a hook records, and when | [Tasks, sessions, lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle) |
+| How an atom notices the code moved | [Evidence and drift](docs/reference.md#evidence-code-intelligence-and-drift) |
+| How several repos share memory safely | [Workspaces](docs/reference.md#workspaces) |
+| How a procedure becomes reusable | [Skills and synthesis](docs/reference.md#learned-skills-and-synthesis) |
+| How to export, snapshot, or restore | [Portability and maintenance](docs/reference.md#portability-and-maintenance) |
+| What the viewer shows, and its privacy boundary | [Local viewer](docs/reference.md#local-viewer) |
+| How the pieces fit, and where the trust boundaries are | [Architecture](docs/reference.md#architecture-and-security-boundaries) |
+| How to wire a specific host | [Agent setup](docs/reference.md#agent-setup) |
+| How the numbers on this page were measured | [Benchmarks](docs/reference.md#benchmarks) |
+| Every command and every flag | [CLI reference](docs/reference.md#cli-reference) |
+| Every MCP tool and resource | [MCP tools](docs/reference.md#mcp-tools-and-resources) |
+| What needs a provider, and what never does | [Optional AI](docs/reference.md#optional-ai) |
+| Exactly what lands on disk | [Local data](docs/reference.md#local-data) |
 
 ## Contributing
 
