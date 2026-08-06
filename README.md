@@ -174,6 +174,25 @@ installed guidance asks agents to follow is short:
 3. Store verified durable findings as you go, and correct contradicted memory rather than
    duplicating it.
 
+In practice that looks like this — a new session, no context, nothing pasted in:
+
+```text
+You     why did we pick SQLite over Postgres?
+
+Agent   → knowl_query "sqlite postgres database choice"
+        ← decision · Use SQLite · active · fresh
+          "Keeps storage repository-local and simple to operate."
+          alternatives: PostgreSQL, MongoDB
+          tags: database, local-first
+
+        SQLite keeps the store repository-local and simple to operate.
+        Postgres and MongoDB were both considered and rejected on that
+        basis.
+```
+
+The agent answered before opening a single file, and it knew the options you *rejected* —
+which the code cannot tell it, because rejected alternatives leave no trace in a codebase.
+
 | Host | MCP | Automatic lifecycle | Subagents | Notes |
 | --- | --- | --- | --- | --- |
 | Claude Code | Yes | Yes | Yes | Prompt guidance is installed as well |
@@ -189,6 +208,19 @@ installed guidance asks agents to follow is short:
 Where hooks are available, they own the session lifecycle: bootstrap context, capture, checkpoints,
 and finalization happen without the agent being asked. Where they are not, `knowl task run`,
 `task start`, `task checkpoint`, and `task finish` cover the same ground manually.
+
+`knowl init` writes the MCP registration for every host it detects. To wire one by hand, the
+entry is the same everywhere:
+
+```json
+{
+  "mcpServers": {
+    "knowl": { "command": "knowl", "args": ["serve"] }
+  }
+}
+```
+
+Use `knowl.cmd` as the command on Windows. Codex reads the same entry under `mcp_servers`.
 
 → [MCP tools and resources](docs/reference.md#mcp-tools-and-resources) · [Lifecycle reference](docs/reference.md#tasks-sessions-and-agent-lifecycle)
 
@@ -292,6 +324,18 @@ changed in two places. Restore verifies schema, size, SHA-256, and SQLite integr
 </td>
 </tr>
 </table>
+
+The commands worth knowing on day one:
+
+```bash
+knowl query "auth design"              # search project memory
+knowl state                            # the active memory, as a hierarchy
+knowl conflicts                        # items that contradict each other
+knowl timeline <item-id>               # every version an atom ever had
+knowl context --token-budget 1500      # a fixed-size briefing for an agent
+knowl pr check --since origin/main     # knowledge your diff may invalidate
+knowl doctor                           # setup, retrieval, and registration
+```
 
 <details>
 <summary><b>Knowledge that corrects itself</b> — seven typed atom types, and a write that retires what it replaces</summary>
