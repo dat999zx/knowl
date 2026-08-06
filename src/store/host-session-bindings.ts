@@ -1,4 +1,3 @@
-import path from 'node:path';
 import { canonicalProjectRoot } from '../core/project-path.js';
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { MemorySession } from '../core/types.js';
@@ -61,7 +60,6 @@ export async function getOrCreateHostSession(input: HostSessionInput) {
     return { ...bootstrap, created: false };
   }
 
-  const key = normalizedKey(input);
   const bootstrap = await bootstrapAgentSession({
     projectId: input.projectId,
     title: input.title,

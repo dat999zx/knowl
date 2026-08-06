@@ -11,7 +11,6 @@ const ABANDONED_AFTER_HOURS = 2;
 const id = () => crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 const plusHours = (now: string, hours: number) => new Date(new Date(now).getTime() + hours * HOUR).toISOString();
 const mapSession = (row: any): MemorySession => ({ id: String(row.id), agent: row.agent ? String(row.agent) : null, title: String(row.title), query: row.query ? String(row.query) : null, status: row.status as SessionStatus, startedAt: String(row.started_at), lastHeartbeatAt: String(row.last_heartbeat_at), finishedAt: row.finished_at ? String(row.finished_at) : null, baselineCommit: row.baseline_commit ? String(row.baseline_commit) : null, expiresAt: String(row.expires_at) });
-const mapEvent = (row: any): MemorySessionEvent => ({ id: String(row.id), sessionId: String(row.session_id), type: row.type as SessionEventType, payload: JSON.parse(String(row.payload)), observedAt: String(row.observed_at), expiresAt: String(row.expires_at) });
 
 export async function getMemorySession(id: string): Promise<MemorySession> {
   const row = (await getClient().execute({ sql: 'SELECT * FROM memory_sessions WHERE id = ?', args: [id] })).rows[0];

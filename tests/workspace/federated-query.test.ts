@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
-import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
 import { queryFederated } from '../../src/workspace/federated-query.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';

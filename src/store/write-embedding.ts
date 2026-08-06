@@ -1,5 +1,3 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { KnowledgeItem } from '../core/types.js';
 import { getConfigRoot } from './database.js';
 import { buildKnowledgeEmbeddingText, KnowledgeEmbedder } from './vector-index.js';

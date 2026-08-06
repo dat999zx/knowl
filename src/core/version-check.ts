@@ -46,7 +46,11 @@ async function fetchLatest(packageName: string, fetchImpl: typeof fetch): Promis
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   timer.unref?.();
   try {
-    const response = await fetchImpl(`${REGISTRY_BASE}/${packageName.replace('/', '%2F')}/latest`, {
+    // `/g`, not a bare string: a string pattern replaces the first match only, so a name with a
+    // second slash would put a live path separator in the URL and the request would land on a
+    // different registry route. Scoped names carry exactly one today; the escape should not
+    // depend on that staying true. `@` is left alone -- the registry expects `@scope%2Fname`.
+    const response = await fetchImpl(`${REGISTRY_BASE}/${packageName.replace(/\//g, '%2F')}/latest`, {
       signal: controller.signal,
       headers: { accept: 'application/vnd.npm.install-v1+json, application/json', connection: 'close' },
     });

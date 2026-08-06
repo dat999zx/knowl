@@ -95,9 +95,7 @@ export async function collectNative(
     const failures: string[] = [];
 
     for (const history of input.histories) {
-      let closeRequired = false;
       try {
-        closeRequired = true;
         await adapter.reset({
           runId: `${adapter.metadata.name}-native-${runIndex + 1}-${history.historyId}`,
           mode: 'native',
@@ -121,12 +119,13 @@ export async function collectNative(
         predictions.push({ historyId: history.historyId, error: message });
         failures.push(`${history.historyId}: ${message}`);
       } finally {
-        if (closeRequired) {
-          try {
-            await adapter.close();
-          } catch (error) {
-            failures.push(`${history.historyId}: close: ${error instanceof Error ? error.message : String(error)}`);
-          }
+        // Unconditional: `reset` is the first thing the try does, so every path through it --
+        // including a throw partway -- may have left the adapter holding something. A close that
+        // fails is recorded, never rethrown, so one adapter cannot end the run.
+        try {
+          await adapter.close();
+        } catch (error) {
+          failures.push(`${history.historyId}: close: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     }

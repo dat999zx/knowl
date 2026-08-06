@@ -31,7 +31,7 @@ export function initAI(config: AIConfig): LanguageModel {
     return currentModel;
   }
 
-  const { provider, model, apiKey, baseUrl, temperature } = config;
+  const { provider, model, apiKey, baseUrl } = config;
 
   try {
     if (provider === 'openai') {

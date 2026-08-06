@@ -96,8 +96,10 @@ describe('snapshot restore safety', () => {
 
     await Promise.allSettled([restoreSnapshot(TEST_ROOT, snapshot.path, { confirm: true }), swap]);
 
-    // Whatever happened, the store is never left empty by a file swapped mid-restore.
-    expect(await itemCount()).toBeGreaterThan(0);
+    // Whatever happened, the store is never left torn by a file swapped mid-restore: either the
+    // restore won and the store is back at the snapshot's `expected`, or it refused the swapped
+    // bytes and 'Later' survives. Never fewer than the snapshot held.
+    expect(await itemCount()).toBeGreaterThanOrEqual(expected);
     await fs.writeFile(snapshot.path, original);
   });
 
