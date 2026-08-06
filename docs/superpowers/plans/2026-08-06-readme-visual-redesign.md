@@ -438,7 +438,15 @@ git commit -m "docs(readme): add host grid and lifecycle diagram"
 - Consumes: the chip row from Task 1 Step 6; the GIF goes directly beneath it.
 - Produces: nothing later tasks depend on.
 
-> **Read this before starting.** Neither `vhs` nor `ffmpeg` is installed on this machine, and VHS on Windows needs `ttyd`, which is Unix-oriented. Confirm the tooling path with the user before spending time here. If VHS cannot be made to work, the fallback is a hand-authored animated SVG — which the user explicitly considered and passed on, so it is their call, not the implementer's. **Do not silently substitute.**
+> **RESOLVED 2026-08-06 — this task shipped as an animated SVG, not a GIF.**
+>
+> `vhs`, `ffmpeg`, and `ttyd` were all absent, and `ttyd` is Unix-oriented, so the VHS path
+> was blocked on Windows. Raised with the user, who chose the hand-authored animated SVG
+> fallback. Delivered as `docs/assets/demo.svg`: a 14-second SMIL loop of the same
+> supersession sequence, ~4 KB, crisp at any zoom, editable as text, no dependencies and no
+> recording step. `demo.tape` and `demo.gif` were never created.
+>
+> The steps below are kept as the record of the original plan.
 
 - [ ] **Step 1: Install the toolchain**
 

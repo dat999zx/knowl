@@ -17,6 +17,8 @@
   <a href="#what-knowl-is-for"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-local.svg"><img src="docs/assets/chips/stat-local.svg" alt="100% local, no egress" height="38" /></picture></a>
 </p>
 
+<img src="docs/assets/demo.svg" alt="Storing a replacement decision retires its predecessor at write time; a later query returns only the current one and notes that the superseded item is still queryable" width="92%" />
+
 [Quick start](#quick-start) ·
 [Why supersession](#the-idea-memory-that-retires-itself) ·
 [What gets stored](#what-gets-stored) ·
