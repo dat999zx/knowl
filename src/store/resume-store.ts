@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createClient, type Client } from '@libsql/client';
-import { knowlHome } from '../workspace/paths.js';
+import { knowlHome } from '../core/paths.js';
 import { synchronousPragma } from '../core/sqlite-sync.js';
 
 /**

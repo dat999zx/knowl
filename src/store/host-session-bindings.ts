@@ -2,7 +2,7 @@ import path from 'node:path';
 import { canonicalProjectRoot } from '../core/project-path.js';
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { MemorySession } from '../core/types.js';
-import { HookHost } from '../cli/agents/host-hook.js';
+import { HookHost } from '../core/host-hook-types.js';
 import { getClient } from './database.js';
 import { readCommitHead } from './change-watermark.js';
 import { bootstrapAgentSession } from './context-bootstrap.js';

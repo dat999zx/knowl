@@ -1,4 +1,4 @@
-import { NormalizedHostHook } from '../cli/agents/host-hook.js';
+import { NormalizedHostHook } from '../core/host-hook-types.js';
 import { renderChangeCard } from '../cli/agents/change-card.js';
 import { hostProfile } from '../cli/agents/hosts/index.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';

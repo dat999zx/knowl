@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { knowlHome } from '../workspace/paths.js';
+import { knowlHome } from './paths.js';
 
 /**
  * Why a `knowl serve` startup took as long as it did.

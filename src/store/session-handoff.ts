@@ -1,4 +1,4 @@
-import { NormalizedHostHook } from '../cli/agents/host-hook.js';
+import { NormalizedHostHook } from '../core/host-hook-types.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
 import { normalizeConflictKey } from './conflicts.js';
 import * as repo from './repository.js';

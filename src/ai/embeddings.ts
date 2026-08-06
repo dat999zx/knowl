@@ -4,7 +4,7 @@ import { ProjectConfig } from '../core/types.js';
 import { EmbedOptions, KnowledgeEmbedder } from '../store/vector-index.js';
 import { fingerprintProfile, relevanceFloorFor, resolveVectorProfile, type VectorPooling } from '../core/vector-profile.js';
 import { noteModelLoad } from '../core/startup-trace.js';
-import { knowlHome } from '../workspace/paths.js';
+import { knowlHome } from '../core/paths.js';
 
 type TransformersPipeline = (texts: string[], options: { pooling: VectorPooling; normalize: boolean }) => Promise<{
   data: Float32Array | number[];

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { isProjectRoot } from '../core/config.js';
-import { knowlHome } from '../workspace/paths.js';
+import { knowlHome } from '../core/paths.js';
 
 /**
  * Every Knowl repository this machine has initialized or upgraded.
