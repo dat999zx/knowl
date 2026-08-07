@@ -1027,17 +1027,22 @@ decision fixtures: 22 current decisions, 22 stale predecessors, and 12 rejected 
 defines 44 top-3 cases.
 
 <div align="center">
-<img src="assets/benchmark-governance.svg" alt="Internal governance regression suite: MRR 94.3 percent, 43 stale-active returns with 22 stale-trap failures, and zero rejected items returned" width="82%" />
+<img src="assets/benchmark-governance.svg" alt="Internal governance regression suite: MRR 98.9 percent, 28 stale-active returns with 22 stale-trap failures, and zero rejected items returned" width="82%" />
 </div>
 
 | Recall@3 | MRR | nDCG | Stale-active returns | Stale-trap failures | Rejected items returned |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 100% | 94.3182% | 95.8060% | 43 | 22 | 0 |
+| 100% | 98.8636% | 99.1612% | 28 | 22 | 0 |
 
 MRR is reciprocal rank, not top-1 accuracy. Stale predecessors remain active, so all 22 stale
-traps failed and produced 43 stale-active returns; rejected items test a separate status filter
+traps failed and produced 28 stale-active returns; rejected items test a separate status filter
 and never appeared. Recall@3 means every top three contained the expected current decision, not
 that every result was current.
+
+Re-measured 2026-08-06 with the `granite-small-en-r2` default. The previous figures — MRR
+94.3182%, 43 stale-active returns — were taken on the `minilm-l6-en` default this repository
+shipped before 2026-08-02, so the model is part of the result and is named here rather than
+left to the reader's config.
 
 ```bash
 knowl eval retrieval \
@@ -1052,16 +1057,16 @@ The checked-in [`retrieval-suite.json`](evals/retrieval-suite.json) contains 500
 items; it is not third-party evidence.
 
 <div align="center">
-<img src="assets/benchmark-retrieval-quality.svg" alt="Internal retrieval regression suite: vector plus BM25 Recall at 3 98.8667 percent, Recall at 10 99.4 percent, MRR 96.09 percent, and nDCG 96.8895 percent" width="82%" />
+<img src="assets/benchmark-retrieval-quality.svg" alt="Internal retrieval regression suite: vector plus BM25 Recall at 3 98.8 percent, Recall at 10 100 percent, MRR 95.26 percent, and nDCG 96.44 percent" width="82%" />
 </div>
 
 | Retrieval path | Recall@3 | Recall@10 | MRR | nDCG | Stale hits | Forbidden hits | Failed criteria |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Vector + BM25 | 98.8667% | 99.4% | 96.09% | 96.8895% | 15 | 5 | 8 |
+| Vector + BM25 | 98.8% | 100% | 95.2633% | 96.4363% | 5 | 3 | 3 |
 
-The vector figures were reproduced from the checked-in dataset on 2026-07-28; no result snapshot
-is checked in. The run passed 492 of 500 evaluator cases, including expected, stale, and forbidden
-conditions rather than only search hits.
+Re-measured 2026-08-06 with the `granite-small-en-r2` default, stable across two runs; no result
+snapshot is checked in. The run passed 497 of 500 evaluator cases, including expected, stale, and
+forbidden conditions rather than only search hits.
 
 Fresh BM25-only runs varied under equal-score ordering, including their failure counts. Exact
 BM25 outcome and rank values are therefore not published; rerun the command below in the target

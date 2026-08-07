@@ -2,7 +2,11 @@ import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'node_modules/**', '.benchmark-dist/**', 'benchmarks/**/dist/**', '.tmp/**'] },
+  // `.claude/**` holds agent worktrees, each a second checkout of this repository. Without it
+  // every finding is reported once per worktree -- 52 warnings became 78 with two present, all
+  // of them duplicates against code the developer has not touched. Same reason
+  // `vitest.config.ts` excludes it.
+  { ignores: ['dist/**', 'node_modules/**', '.benchmark-dist/**', 'benchmarks/**/dist/**', '.tmp/**', '.claude/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
