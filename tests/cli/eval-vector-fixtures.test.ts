@@ -88,7 +88,9 @@ describe('knowl eval retrieval --vector against a fixture-backed dataset', () =>
     // a project root to read the vector configuration from, so one has to exist.
     const init = spawnSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: ROOT, encoding: 'utf8' });
     expect(init.status, init.stderr).toBe(0);
-  });
+    // `init` warms the local embedding model, so this hook is exposed to the same contention as
+    // the test body and needs the same headroom as the suite's 30s default.
+  }, 120_000);
 
   afterAll(async () => {
     await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
@@ -107,5 +109,8 @@ describe('knowl eval retrieval --vector against a fixture-backed dataset', () =>
     // make this dataset pass on keywords alone and the regression would go unnoticed again.
     expect(vector.stderr).toMatch(/Embedded 2 fixture\(s\)/);
     expect(bm25.stderr).not.toMatch(/Embedded/);
-  });
+    // Three spawned CLI runs, one of which loads the local embedding model: ~19s alone, and the
+    // suite's 30s default is not enough headroom once four workers are competing for the CPU.
+    // Observed failing once in a full run and passing alone and in two full runs after.
+  }, 120_000);
 });
