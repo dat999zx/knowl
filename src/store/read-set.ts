@@ -58,8 +58,13 @@ export const READ_SET_CHUNK = 200;
 
 /**
  * Rows per multi-row `INSERT`. Lower than `READ_SET_CHUNK` because the ceiling here is counted in
- * *parameters*, not rows: each row binds 7 of them, and SQLite's default `SQLITE_MAX_VARIABLE_NUMBER`
- * is 999. 100 rows is 700 binds, which leaves room without needing to know which build is underneath.
+ * *parameters*, not rows: each row binds 7 of them, so 100 rows is 700 binds.
+ *
+ * The ceiling underneath is `SQLITE_MAX_VARIABLE_NUMBER`, measured at **32,766** on the libSQL
+ * build this ships with -- SQLite raised the default from 999 to 32,766 in 3.32. Both numbers are
+ * recorded because the older one is the reason to keep this conservative: the limit is a property
+ * of whichever build is loaded, not of this code, and a chunk sized against the roomier default
+ * would fail on a host still compiled to the tighter one.
  */
 const READ_SET_INSERT_CHUNK = 100;
 

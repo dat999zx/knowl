@@ -140,15 +140,37 @@ function repoRelative(root: string, filePath: string): string | null {
   return relative;
 }
 
-async function fileContentHash(root: string, relativePath: string): Promise<string | null> {
+/**
+ * A read that failed, split by whether the failure proves anything.
+ *
+ * `unreadable` is not a pedantic third case. Detection runs from a `PostToolUse` hook, which fires
+ * microseconds after a write lands -- exactly when an antivirus scanner or an editor still holds
+ * the file open and `readFile` returns `EBUSY`, `EACCES` or `EPERM` on Windows, and when a
+ * descriptor ceiling can return `EMFILE` on any platform. Every one of those means "ask again
+ * later"; none of them means the file was deleted. Folding them into `gone` fires the strongest
+ * notice this system has, on the one tier allowed to interrupt an agent, about a file that is
+ * sitting there intact -- which is precisely the manufactured false positive `CurrentState`'s own
+ * contract forbids.
+ *
+ * `ENOENT` and `ENOTDIR` are the two that do prove it: the file, or a directory on the way to it,
+ * is not there. Anything else is a missing verdict, and a missing verdict costs recall on a tier
+ * that is allowed to be incomplete rather than precision on the one that is not.
+ */
+type FileHashResult =
+  | { kind: 'hash'; hash: string }
+  | { kind: 'gone' }
+  | { kind: 'unreadable' };
+
+async function fileContentHash(root: string, relativePath: string): Promise<FileHashResult> {
   try {
     // Hashed as bytes, matching `isEvidenceStale` (`evidence-repository.ts:180`) exactly. Any
     // other digest of the same file -- utf-8 normalised, line-ending normalised, trimmed -- would
     // disagree with the hash the read side stored and make every `file://` read look moved.
     const content = await fs.readFile(path.resolve(root, relativePath));
-    return crypto.createHash('sha256').update(content).digest('hex');
-  } catch {
-    return null;
+    return { kind: 'hash', hash: crypto.createHash('sha256').update(content).digest('hex') };
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? { kind: 'gone' } : { kind: 'unreadable' };
   }
 }
 
@@ -156,7 +178,7 @@ async function currentStateOf(
   root: string,
   locator: string,
   symbolsNow: Map<string, CodeSymbol>,
-  fileHashes: Map<string, string | null>,
+  fileHashes: Map<string, FileHashResult>,
   parsedFiles: Set<string>,
 ): Promise<CurrentState> {
   if (locator.startsWith('symbol://')) {
@@ -188,9 +210,10 @@ async function currentStateOf(
 
   if (locator.startsWith('file://')) {
     const relativePath = locator.slice('file://'.length);
-    if (!fileHashes.has(relativePath)) fileHashes.set(relativePath, await fileContentHash(root, relativePath));
-    const hash = fileHashes.get(relativePath) ?? null;
-    return hash === null ? { kind: 'gone' } : { kind: 'hash', hash, signature: null };
+    let result = fileHashes.get(relativePath);
+    if (!result) fileHashes.set(relativePath, result = await fileContentHash(root, relativePath));
+    if (result.kind === 'unreadable') return null;
+    return result.kind === 'gone' ? { kind: 'gone' } : { kind: 'hash', hash: result.hash, signature: null };
   }
 
   return null;
@@ -228,9 +251,14 @@ async function hasOpenFinding(causeLocator: string, affectedId: string): Promise
  * processes, so two hooks firing on the same file in the same instant both pass the check. The
  * index makes the loser a no-op instead of a second notice; ignoring is right rather than raising
  * because losing the race means the finding already exists, which is the outcome we wanted.
+ *
+ * **Null when the row was ignored**, which is what keeps the caller's returned list a true account
+ * of the table. Returning the object regardless would hand back an id that exists nowhere: it can
+ * never be stamped `delivered_at`, never be adjudicated, and never be found again by any query --
+ * a finding shaped exactly like a real one and attached to nothing.
  */
-async function insertFinding(finding: ImpactFinding): Promise<ImpactFinding> {
-  await getClient().execute({
+async function insertFinding(finding: ImpactFinding): Promise<ImpactFinding | null> {
+  const result = await getClient().execute({
     sql: `INSERT OR IGNORE INTO impact_findings
             (id, cause_locator, cause_session, affected_kind, affected_id, tier, path_json, detected_at, delivered_at, resolution, resolved_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
@@ -245,7 +273,7 @@ async function insertFinding(finding: ImpactFinding): Promise<ImpactFinding> {
       finding.detectedAt,
     ],
   });
-  return finding;
+  return Number(result.rowsAffected ?? 0) > 0 ? finding : null;
 }
 
 function rowToFinding(row: Record<string, unknown>): ImpactFinding {
@@ -336,7 +364,7 @@ export async function detectCertainImpact(
 
   const readers = await activeReadersOf(Array.from(candidates));
   const detectedAt = new Date().toISOString();
-  const fileHashes = new Map<string, string | null>();
+  const fileHashes = new Map<string, FileHashResult>();
   const seenEntries = new Set<string>();
   const findings: ImpactFinding[] = [];
 
@@ -378,7 +406,10 @@ export async function detectCertainImpact(
       currentSignature: state.kind === 'gone' ? null : state.signature,
     };
 
-    findings.push(await insertFinding({
+    // Only what the table actually took. The check above makes this the common case by a wide
+    // margin; the drop is the race it cannot close, and a dropped row means the notice already
+    // exists, so there is nothing for this caller to report.
+    const recorded = await insertFinding({
       id: generateId(),
       causeLocator: entry.locator,
       causeSession: causeSession ?? null,
@@ -390,7 +421,8 @@ export async function detectCertainImpact(
       deliveredAt: null,
       resolution: null,
       resolvedAt: null,
-    }));
+    });
+    if (recorded) findings.push(recorded);
   }
 
   return findings;
@@ -451,15 +483,30 @@ export async function openFindingsForSession(
  *
  * `delivered_at IS NULL` in the predicate keeps the first delivery time rather than the latest, so
  * the column answers "when was this agent first told", which is the question worth asking of it.
+ *
+ * **Chunked, because the caller does not cap this list.** The card prints at most
+ * `MAX_IMPACT_ENTRIES`, but `openImpactCardEntries` stamps every open undelivered finding it
+ * fetched (`host-lifecycle.ts`), so the length here is bounded by how stale a session has become
+ * and by nothing else. Past the bind ceiling -- measured at 32,766 on this build of libSQL, not the
+ * 999 of an older default -- the statement throws inside `runToolEventImpact`, whose catch returns
+ * no card at all; and since the stamp never lands, the same oversized set returns and throws again
+ * on every following tool call. The design says a repeated card beats a swallowed one, and
+ * unchunked this swallows every card from then on.
  */
+const DELIVERY_CHUNK = 500;
+
 export async function markFindingsDelivered(ids: string[]): Promise<void> {
   const wanted = [...new Set((ids ?? []).filter(id => typeof id === 'string' && id.length > 0))];
   if (wanted.length === 0) return;
-  await getClient().execute({
-    sql: `UPDATE impact_findings SET delivered_at = ?
-          WHERE delivered_at IS NULL AND id IN (${wanted.map(() => '?').join(', ')})`,
-    args: [new Date().toISOString(), ...wanted],
-  });
+  const deliveredAt = new Date().toISOString();
+  for (let index = 0; index < wanted.length; index += DELIVERY_CHUNK) {
+    const chunk = wanted.slice(index, index + DELIVERY_CHUNK);
+    await getClient().execute({
+      sql: `UPDATE impact_findings SET delivered_at = ?
+            WHERE delivered_at IS NULL AND id IN (${chunk.map(() => '?').join(', ')})`,
+      args: [deliveredAt, ...chunk],
+    });
+  }
 }
 
 /**

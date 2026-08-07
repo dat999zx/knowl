@@ -9,6 +9,7 @@ import { indexFile, listCodeSymbols } from '../../src/code/symbol-index.js';
 import {
   detectCertainImpact,
   detectCertainImpactBestEffort,
+  markFindingsDelivered,
   openFindingsForSession,
   resolveFinding,
 } from '../../src/session/impact.js';
@@ -295,6 +296,77 @@ describe('certain-tier impact detection', () => {
     expect(payload.currentSignature).toContain('Organization');
   });
 
+  /**
+   * "Cannot read it" is not "it is gone", and collapsing the two manufactures exactly the false
+   * positive `CurrentState` was written to prevent.
+   *
+   * This is reachable on the hot path, not in theory. Detection runs from a `PostToolUse` hook
+   * microseconds after a write lands, which on Windows is precisely when an antivirus scanner or
+   * an editor still holds the file open and `readFile` comes back `EBUSY`/`EACCES`. Reporting that
+   * as a deletion fires the strongest notice the system has -- on the one tier allowed to interrupt
+   * an agent, against a file that is sitting there intact.
+   *
+   * A directory standing in for the locked file, because it is the one non-`ENOENT` read failure
+   * that reproduces identically on every platform CI runs. The error code differs; the question the
+   * detector has to answer -- "does a failed read prove deletion?" -- does not.
+   */
+  it('stays silent when a read fails for a reason other than the file being gone', async () => {
+    const unreadable = 'src/unreadable.ts';
+    await fs.mkdir(path.join(testRoot, unreadable), { recursive: true });
+    await seedRead({
+      id: 'read-1',
+      sessionId: 'sess-reader',
+      locator: `file://${unreadable}`,
+      observedHash: 'a-hash-recorded-when-it-was-still-a-file',
+    });
+
+    expect(await detectCertainImpact(testRoot, [unreadable], 'sess-writer')).toEqual([]);
+    expect(await countFindings()).toBe(0);
+  });
+
+  /** A genuine deletion still reports, so the guard above buys silence only where it should. */
+  it('still reports a file that is actually gone', async () => {
+    await indexFile(testRoot, SOURCE);
+    await seedRead({ id: 'read-1', sessionId: 'sess-reader', locator: FILE_LOCATOR, observedHash: await fileHashOf(SOURCE) });
+
+    await fs.rm(path.join(testRoot, SOURCE));
+    const findings = await detectCertainImpact(testRoot, [SOURCE], 'sess-writer');
+
+    expect(findings).toHaveLength(1);
+    expect(JSON.parse(findings[0].pathJson ?? '{}').currentHash).toBeNull();
+  });
+
+  /**
+   * The returned list is a claim about what was recorded, and `INSERT OR IGNORE` must not make it
+   * a lie: an id that exists nowhere can be neither stamped delivered nor adjudicated.
+   *
+   * The lever is the one asymmetry between the two guards. `hasOpenFinding` narrows to
+   * `affected_kind = 'work'`; `idx_impact_findings_unique_open` is on `(cause_locator, affected_id)`
+   * alone. So an open finding of the other kind on the same pair is invisible to the check and
+   * fatal to the insert -- which is the same end state a lost cross-process race produces, reached
+   * deterministically instead of by timing. Detection writes only `work` rows today, so this is
+   * the latent shape of the race rather than a defect reachable from the current call sites.
+   */
+  it('does not return a finding whose insert the open-finding constraint dropped', async () => {
+    await indexFile(testRoot, SOURCE);
+    const readId = await seedRead({
+      id: 'read-1', sessionId: 'sess-reader', locator: SYMBOL, observedHash: await symbolHashOf(SOURCE, 'createSession'),
+    });
+    await getClient().execute({
+      sql: `INSERT INTO impact_findings
+              (id, cause_locator, cause_session, affected_kind, affected_id, tier, path_json, detected_at, delivered_at, resolution, resolved_at)
+            VALUES ('pre-existing', ?, NULL, 'knowledge', ?, 'certain', NULL, ?, NULL, NULL, NULL)`,
+      args: [SYMBOL, readId, AT],
+    });
+
+    await write(SOURCE, V2_SIGNATURE_CHANGED);
+    const findings = await detectCertainImpact(testRoot, [SOURCE], 'sess-writer');
+
+    // The seeded row is the only one the table may hold, so anything returned here is a phantom.
+    expect(await countFindings()).toBe(1);
+    expect(findings).toEqual([]);
+  });
+
   it('never fails the caller in its best-effort form', async () => {
     // A closed store rather than a stub: this is the real condition the wrapper exists for --
     // detection is triggered from a `PostToolUse` hook and a session boundary, either of which can
@@ -307,6 +379,24 @@ describe('certain-tier impact detection', () => {
     } finally {
       await initDb(testRoot);
     }
+  });
+});
+
+describe('marking findings delivered', () => {
+  /**
+   * The card hands over every open undelivered finding, not the handful it printed
+   * (`host-lifecycle.ts:526` against `MAX_IMPACT_ENTRIES`), so the size of this list is bounded by
+   * the session's staleness and nothing else.
+   *
+   * Measured, not assumed: this build of libSQL refuses at 32,767 bound variables. Past that the
+   * statement throws inside `runToolEventImpact`, whose catch returns no card at all -- and because
+   * the stamp never lands, the same oversized set comes back and throws again on the next tool
+   * call. The stated design is that a repeated card beats a swallowed one; unchunked, the failure
+   * is a card swallowed permanently.
+   */
+  it('stamps a set larger than the bind-parameter ceiling', async () => {
+    const ids = Array.from({ length: 40_000 }, (_, index) => `finding-${index}`);
+    await expect(markFindingsDelivered(ids)).resolves.toBeUndefined();
   });
 });
 
