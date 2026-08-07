@@ -1,0 +1,2029 @@
+{
+  "instance": "D:\\coding\\knowl\\benchmarks\\memoryagentbench\\data\\cr-mh-262k.json",
+  "timestamp": "2026-08-07T15:04:10.205Z",
+  "retrieval": "vector+bm25",
+  "embedding": {
+    "provider": "local",
+    "model": "onnx-community/granite-embedding-small-english-r2-ONNX",
+    "dtype": "q8",
+    "pooling": "cls"
+  },
+  "supersede": false,
+  "topK": 10,
+  "facts": 18332,
+  "conflictGroups": 6890,
+  "supersededAtWrite": 0,
+  "activeAfterIngest": 18332,
+  "report": {
+    "questions": 100,
+    "answered": 100,
+    "topOneAccuracy": 0.01,
+    "anyRankAccuracy": 0.12,
+    "staleLeaks": 1,
+    "emptyResults": 0,
+    "p50LatencyMs": 1008,
+    "p95LatencyMs": 1205
+  },
+  "cases": [
+    {
+      "question": "What is the country of origin of the sport played by Christian Abbiati?",
+      "golds": [
+        "Philippines"
+      ],
+      "topContent": "Christian Abbiati plays the position of goalkeeper",
+      "returnedContents": [
+        "Christian Abbiati plays the position of goalkeeper",
+        "Christian Abbiati plays the position of cornerback",
+        "Christian Panucci is associated with the sport of association football",
+        "Bobby Abreu is associated with the sport of cricket",
+        "Ståle Solbakken is associated with the sport of cricket",
+        "Ståle Solbakken is associated with the sport of association football",
+        "Bobby Abreu is associated with the sport of baseball",
+        "Silvio Berlusconi is associated with the sport of baseball",
+        "Scafati Basket is associated with the sport of basketball",
+        "Roman Abramovich is associated with the sport of association football"
+      ],
+      "latencyMs": 992
+    },
+    {
+      "question": "Which religion is the country of citizenship of Karl Lueger predominantly associated with?",
+      "golds": [
+        "atheism"
+      ],
+      "topContent": "Karl Lueger is a citizen of Austria-Hungary",
+      "returnedContents": [
+        "Karl Lueger is a citizen of Austria-Hungary",
+        "Karl Lueger is a citizen of Lordship of Ireland",
+        "Karl Liebknecht is a citizen of German Empire",
+        "Karl Richter is a citizen of Germany",
+        "Karl Liebknecht is a citizen of Kingdom of Hungary",
+        "Karl Richter is a citizen of Colombia",
+        "Charles Lindbergh is affiliated with the religion of Lutheranism",
+        "Karl Kling is a citizen of Germany",
+        "Karl G. Maeser is a citizen of German Empire",
+        "Ludger is affiliated with the religion of Catholic Church"
+      ],
+      "latencyMs": 982
+    },
+    {
+      "question": "The continent where the country of citizenship of the spouse of the author of \"American Pastoral\" is related to is what?",
+      "golds": [
+        "Oceania"
+      ],
+      "topContent": "The author of American Pastoral is Philip Roth",
+      "returnedContents": [
+        "The author of American Pastoral is Philip Roth",
+        "The author of American Pastoral is F. Scott Fitzgerald",
+        "The author of American Gods is Maria von Trapp",
+        "The author of American Splendor is Harvey Pekar",
+        "Mitt Romney is a citizen of United States of America",
+        "Amy Grant is a citizen of United States of America",
+        "Langston Hughes is a citizen of United States of America",
+        "Joseph Pulitzer is a citizen of United States of America",
+        "Judd Apatow is a citizen of United States of America",
+        "Nelson Mandela is a citizen of United States of America"
+      ],
+      "latencyMs": 1034
+    },
+    {
+      "question": "What is the place of origin for the broadcaster who first aired \"Your Hit Parade\"?",
+      "golds": [
+        "Paris"
+      ],
+      "topContent": "The origianl broadcaster of Your Hit Parade is NBC",
+      "returnedContents": [
+        "The origianl broadcaster of Your Hit Parade is NBC",
+        "The origianl broadcaster of This Is Your Life is NBC",
+        "The origianl broadcaster of Macy's Thanksgiving Day Parade is NBC",
+        "The origianl broadcaster of Bachelor in Paradise is MTV",
+        "The origianl broadcaster of Fury is NBC",
+        "The origianl broadcaster of Friends is NBC",
+        "The origianl broadcaster of Banacek is NBC",
+        "The origianl broadcaster of Bachelor in Paradise is American Broadcasting Company",
+        "The origianl broadcaster of Perfect Strangers is MTV",
+        "The origianl broadcaster of Adventures in Paradise is American Broadcasting Company"
+      ],
+      "latencyMs": 999
+    },
+    {
+      "question": "What is the name of the language in which Valmiki wrote his notable works?",
+      "golds": [
+        "English"
+      ],
+      "topContent": "Valmiki is famous for Life and Fate",
+      "returnedContents": [
+        "Valmiki is famous for Life and Fate",
+        "Valmiki is famous for Ramayana",
+        "The official language of Valkeakoski is Finnish",
+        "The author of Johnny Mnemonic is Valmiki",
+        "The Vampyre was written in the language of German",
+        "The Vampyre was written in the language of English",
+        "Veep was written in the language of German",
+        "The Sword of Truth was written in the language of Russian",
+        "Rurouni Kenshin was written in the language of Koine Greek",
+        "Monk was written in the language of Hebrew"
+      ],
+      "latencyMs": 968
+    },
+    {
+      "question": "What is the language officially spoken in the country where the spouse of the Chief Executive Officer of CBS Corporation holds citizenship?",
+      "golds": [
+        "Walloon"
+      ],
+      "topContent": "The chief executive officer of CBS Corporation is Les Moonves",
+      "returnedContents": [
+        "The chief executive officer of CBS Corporation is Les Moonves",
+        "Steve Jobs is a citizen of South Korea",
+        "Chelsea Clinton is a citizen of United States of America",
+        "Joe Biden speaks the language of German",
+        "Chelsea Clinton is a citizen of Philippines",
+        "Steve Jobs is a citizen of United States of America",
+        "Joe Biden speaks the language of English",
+        "The official language of Cuba is English",
+        "Georgia Gibbs is a citizen of People's Republic of China",
+        "Julie Chen is a citizen of United States of America"
+      ],
+      "latencyMs": 1008
+    },
+    {
+      "question": "Which language was the one in which Melvil Dewey produced their notable work?",
+      "golds": [
+        "Italian"
+      ],
+      "topContent": "Melvil Dewey is famous for Dewey Decimal Classification",
+      "returnedContents": [
+        "Melvil Dewey is famous for Dewey Decimal Classification",
+        "Dewey Decimal Classification was written in the language of English",
+        "Dewey Decimal Classification was written in the language of Italian",
+        "Veep was written in the language of German",
+        "The original language of The Guild is Russian",
+        "Deadwood was written in the language of French",
+        "Deadwood was written in the language of English",
+        "Pelit was written in the language of Finnish",
+        "Don DeLillo speaks the language of English",
+        "Veep was written in the language of English"
+      ],
+      "latencyMs": 1079
+    },
+    {
+      "question": "In which language does the director/manager, who is affiliated with \"Revolver\", communicate officially in their country of citizenship?",
+      "golds": [
+        "Arabic"
+      ],
+      "topContent": "Revolver was created in the country of Ireland",
+      "returnedContents": [
+        "Revolver was created in the country of Ireland",
+        "Revolver was created in the country of United States of America",
+        "Revolver was performed by Madonna",
+        "Revolver was performed by The Beatles",
+        "Edgar Reitz speaks the language of German",
+        "Bruce Springsteen speaks the language of German",
+        "The Guild was written in the language of English",
+        "The original language of The Guild is English",
+        "Bertolt Brecht speaks the language of German",
+        "Leo Fender speaks the language of English"
+      ],
+      "latencyMs": 975
+    },
+    {
+      "question": "In which school did the author of \"Measure for Measure\" receive their education?",
+      "golds": [
+        "University of Oxford"
+      ],
+      "topContent": "The author of Measure for Measure is William Shakespeare",
+      "returnedContents": [
+        "The author of Measure for Measure is William Shakespeare",
+        "The author of Measure for Measure is Terrance Dicks",
+        "The author of The School for Scandal is Madeleine L'Engle",
+        "The author of The School for Scandal is Richard Brinsley Sheridan",
+        "The author of Tom Brown's School Days is Thomas Hughes",
+        "The author of Tom Brown's School Days is Brian Friel",
+        "The author of Pedagogy of the Oppressed is Charles Dickens",
+        "The univeristy where Samuel Beckett was educated is University of Southern California",
+        "The author of Wilhelm Meister's Apprenticeship is Tom Clancy",
+        "The univeristy where Joseph Story was educated is Yale University"
+      ],
+      "latencyMs": 888
+    },
+    {
+      "question": "What is the name of the person who created the language used as the official language of the headquarters of FC Viikingit?",
+      "golds": [
+        "L. L. Zamenhof"
+      ],
+      "topContent": "The headquarters of FC Viikingit is located in the city of Helsinki",
+      "returnedContents": [
+        "The headquarters of FC Viikingit is located in the city of Helsinki",
+        "The official language of Oulu is Finnish",
+        "The official language of Nurmijärvi is Finnish",
+        "The official language of Saarijärvi is Finnish",
+        "The official language of Pori is Finnish",
+        "The official language of Vihti is Finnish",
+        "The official language of Rauma is Finnish",
+        "The headquarters of FC Jokerit is located in the city of Helsinki",
+        "The official language of Lieksa is Finnish",
+        "The official language of Valkeakoski is Finnish"
+      ],
+      "latencyMs": 985
+    },
+    {
+      "question": "What continent does the place of birth of the chief executive officer of Visual Basic .NET belong to?",
+      "golds": [
+        "Oceania"
+      ],
+      "topContent": "Visual Basic .NET was developed by Microsoft",
+      "returnedContents": [
+        "Visual Basic .NET was developed by Microsoft",
+        "Visual Basic .NET was developed by Lenovo",
+        "The chief executive officer of Microsoft is Satya Nadella",
+        "The chief executive officer of Lenovo is Yang Yuanqing",
+        "Visual Basic was developed by Microsoft",
+        "Visual Basic for Applications was developed by Microsoft",
+        "Visual Basic for Applications was developed by Qualcomm Inc.",
+        "The chief executive officer of Microsoft is Steve Jobs",
+        "The chief executive officer of Telmex is Carlos Slim",
+        "The chief executive officer of Raytheon is Thomas Kennedy"
+      ],
+      "latencyMs": 1099
+    },
+    {
+      "question": "Where was the person who created the religion that Giulio Alberoni was associated with born?",
+      "golds": [
+        "Epworth"
+      ],
+      "topContent": "Giulio Alberoni is affiliated with the religion of Catholic Church",
+      "returnedContents": [
+        "Giulio Alberoni is affiliated with the religion of Catholic Church",
+        "Giulio Alberoni is affiliated with the religion of Methodism",
+        "Giulio Antonio Santorio is affiliated with the religion of Christian Science",
+        "Giulio Antonio Santorio is affiliated with the religion of Catholic Church",
+        "Francesco Barberini is affiliated with the religion of Christian Science",
+        "Giovanni Papini is affiliated with the religion of Abrahamic religion",
+        "Roberto Formigoni is affiliated with the religion of Catholic Church",
+        "Antonio Barberini is affiliated with the religion of Catholic Church",
+        "Francesco Barberini is affiliated with the religion of Catholic Church",
+        "Fibonacci was born in the city of Pisa"
+      ],
+      "latencyMs": 1321
+    },
+    {
+      "question": "What is the location of the head office of the broadcaster that originally aired \"Adventures in Paradise\"?",
+      "golds": [
+        "Knoxville"
+      ],
+      "topContent": "The origianl broadcaster of Adventures in Paradise is American Broadcasting Company",
+      "returnedContents": [
+        "The origianl broadcaster of Adventures in Paradise is American Broadcasting Company",
+        "The origianl broadcaster of Adventures in Paradise is WTTW",
+        "The origianl broadcaster of Bachelor in Paradise is American Broadcasting Company",
+        "The origianl broadcaster of Bachelor in Paradise is MTV",
+        "The origianl broadcaster of As the World Turns is CBS",
+        "The origianl broadcaster of Fantasy Island is British Broadcasting Corporation",
+        "Adventure Time was created in the country of United Kingdom of Great Britain and Ireland",
+        "The origianl broadcaster of Happy Endings is British Broadcasting Corporation",
+        "The origianl broadcaster of Bewitched is British Broadcasting Corporation",
+        "The origianl broadcaster of Happy Endings is American Broadcasting Company"
+      ],
+      "latencyMs": 967
+    },
+    {
+      "question": "What is the notable work of the performer associated with Miley Stewart?",
+      "golds": [
+        "Gundam"
+      ],
+      "topContent": "Miley Stewart was performed by Miley Cyrus",
+      "returnedContents": [
+        "Miley Stewart was performed by Miley Cyrus",
+        "Miley Stewart was performed by John Lennon",
+        "Hannah Montana was performed by Miley Cyrus",
+        "Miley Cyrus is famous for Hannah Montana",
+        "Miley Cyrus is famous for Roman de la Rose",
+        "Bangerz was performed by Miley Cyrus",
+        "Bella Swan was performed by Kristen Stewart",
+        "Wrecking Ball was performed by Miley Cyrus",
+        "Miley Cyrus speaks the language of English",
+        "Hannah Montana was performed by P!nk"
+      ],
+      "latencyMs": 1052
+    },
+    {
+      "question": "To which continent does Fernando Lugo belong based on his citizenship?",
+      "golds": [
+        "Oceania"
+      ],
+      "topContent": "Fernando Lugo is a citizen of United Kingdom",
+      "returnedContents": [
+        "Fernando Lugo is a citizen of United Kingdom",
+        "Fernando Lugo is a citizen of Paraguay",
+        "Fernando Santos is a citizen of United Kingdom",
+        "Fernando Santos is a citizen of Portugal",
+        "Frank Miller is a citizen of Peru",
+        "Lamberto Bava is a citizen of Iceland",
+        "Carlos Slim is a citizen of Mexico",
+        "Fernando de Rojas speaks the language of Spanish",
+        "Juan Osorio is a citizen of Mexico",
+        "Carlos Slim is a citizen of United States of America"
+      ],
+      "latencyMs": 903
+    },
+    {
+      "question": "What is the place of the headquarters of the educational institution where Stewart Udall received his education?",
+      "golds": [
+        "Long Beach"
+      ],
+      "topContent": "The univeristy where Stewart Udall was educated is University of Arizona",
+      "returnedContents": [
+        "The univeristy where Stewart Udall was educated is University of Arizona",
+        "The univeristy where Stewart Udall was educated is California State University, Long Beach",
+        "The headquarters of University of Glasgow is located in the city of Glasgow",
+        "The headquarters of Uppsala University is located in the city of Uppsala",
+        "The headquarters of University of Sydney is located in the city of Sydney",
+        "The headquarters of University of East Anglia is located in the city of London",
+        "The headquarters of University of East Anglia is located in the city of Norwich",
+        "The headquarters of Baldwin Wallace University is located in the city of Cardiff",
+        "The headquarters of University of Oxford is located in the city of Oxford",
+        "The headquarters of University of Cape Town is located in the city of Cape Town"
+      ],
+      "latencyMs": 917
+    },
+    {
+      "question": "What is the continent of the country of citizenship of the person who founded International Judo Federation?",
+      "golds": [
+        "Europe"
+      ],
+      "topContent": "International Judo Federation is associated with the sport of judo",
+      "returnedContents": [
+        "International Judo Federation is associated with the sport of judo",
+        "Brazilian jiu-jitsu was created in the country of Brazil",
+        "2015 World Judo Championships is associated with the sport of judo",
+        "2013 World Judo Championships is associated with the sport of judo",
+        "2014 World Judo Championships is associated with the sport of judo",
+        "2011 World Judo Championships is associated with the sport of judo",
+        "2009 World Judo Championships is associated with the sport of judo",
+        "2017 World Judo Championships is associated with the sport of judo",
+        "Harry Judd is a citizen of France",
+        "Junji Ito is a citizen of Japan"
+      ],
+      "latencyMs": 912
+    },
+    {
+      "question": "In which country was the individual who founded Duquesne University born?",
+      "golds": [
+        "Epworth"
+      ],
+      "topContent": "Duquesne University is affiliated with the religion of Methodism",
+      "returnedContents": [
+        "Duquesne University is affiliated with the religion of Methodism",
+        "Duquesne University is affiliated with the religion of Catholic Church",
+        "Duke University was founded by James Buchanan Duke",
+        "University of Utah was founded by Daisaku Ikeda",
+        "University of Virginia was founded by Thomas Jefferson",
+        "University of Bucharest was founded by Alexandru Ioan Cuza",
+        "The univeristy where C. Douglas Dillon was educated is Yale University",
+        "The univeristy where C. Douglas Dillon was educated is Harvard University",
+        "The univeristy where Knute Rockne was educated is Santa Clara University",
+        "The univeristy where Adam Putnam was educated is Federal University of Rio de Janeiro"
+      ],
+      "latencyMs": 1036
+    },
+    {
+      "question": "Which city serves as the capital of the country where the manufacturer which created Ford Ranger was founded?",
+      "golds": [
+        "Paris"
+      ],
+      "topContent": "Ford Motor Company was founded in the city of Dearborn",
+      "returnedContents": [
+        "Ford Motor Company was founded in the city of Dearborn",
+        "Ford Motor Company was created in the country of United States of America",
+        "Ford Motor Company was founded in the city of Bangkok",
+        "The company that produced Ford Ranger is Ford Motor Company",
+        "Ford Motor Company was created in the country of Albania",
+        "Ford Motor Company was founded by Henry Ford",
+        "Ford Germany was founded by Henry Ford",
+        "Ford Australia was founded by Henry Ford",
+        "Ford Germany was founded by Carl Laemmle",
+        "Ford Motor Company was founded by Henri Grégoire"
+      ],
+      "latencyMs": 1048
+    },
+    {
+      "question": "Which city is the capital of the country that created the sport associated with Peter Schmeichel's position?",
+      "golds": [
+        "Dublin"
+      ],
+      "topContent": "Peter Schmeichel is associated with the sport of association football",
+      "returnedContents": [
+        "Peter Schmeichel is associated with the sport of association football",
+        "Peter Schmeichel plays the position of goalkeeper",
+        "Peter Schmeichel plays the position of quarterback",
+        "Kasper Schmeichel plays the position of goalkeeper",
+        "Kasper Schmeichel plays the position of power forward",
+        "Peter Shilton is associated with the sport of association football",
+        "Peter Odemwingie is associated with the sport of association football",
+        "Peter Shilton is associated with the sport of rugby",
+        "Peter Vermes is associated with the sport of association football",
+        "Peter Odemwingie is associated with the sport of cricket"
+      ],
+      "latencyMs": 1115
+    },
+    {
+      "question": "Who holds the title of head of state in the country where the sport that Halifax Town A.F.C. is associated with was originated?",
+      "golds": [
+        "Sergio Mattarella"
+      ],
+      "topContent": "Halifax Town A.F.C. is associated with the sport of association football",
+      "returnedContents": [
+        "Halifax Town A.F.C. is associated with the sport of association football",
+        "St Neots Town F.C. is associated with the sport of association football",
+        "Carmarthen Town A.F.C. is associated with the sport of association football",
+        "Hillsborough Stadium is associated with the sport of association football",
+        "The name of the current head of state in England is Harald V of Norway",
+        "Scottish Premiership is associated with the sport of association football",
+        "Ian St. John is associated with the sport of association football",
+        "The Premier of Nova Scotia is Andrew Barr",
+        "John Farrell is associated with the sport of association football",
+        "Glasgow City F.C. is associated with the sport of association football"
+      ],
+      "latencyMs": 1071
+    },
+    {
+      "question": "Which continent is the country of citizenship of Gustav Vigeland located in?",
+      "golds": [
+        "Asia"
+      ],
+      "topContent": "Gustav Vigeland is a citizen of Finland",
+      "returnedContents": [
+        "Gustav Vigeland is a citizen of Finland",
+        "Gustav Vigeland is a citizen of Norway",
+        "Germany is located in the continent of Europe",
+        "Gustav I of Sweden is a citizen of Germany",
+        "Sven Väth is a citizen of Germany",
+        "Sweden is located in the continent of Europe",
+        "Gustav III of Sweden is a citizen of Canada",
+        "Gustav I of Sweden is a citizen of Sweden",
+        "Wilhelm Solf is a citizen of Austria",
+        "Switzerland is located in the continent of Europe"
+      ],
+      "latencyMs": 998
+    },
+    {
+      "question": "What is the country of origin of the sport associated with John Beilein's occupation?",
+      "golds": [
+        "Japan"
+      ],
+      "topContent": "John Beilein works in the field of association football referee",
+      "returnedContents": [
+        "John Beilein works in the field of association football referee",
+        "John Beilein works in the field of basketball coach",
+        "John Farrell is associated with the sport of association football",
+        "Johnny Dawkins is associated with the sport of association football",
+        "John Farrell is associated with the sport of baseball",
+        "John McEnroe is associated with the sport of association football",
+        "John William Bricker is associated with the sport of baseball",
+        "John Harkes is associated with the sport of association football",
+        "David Healy is associated with the sport of association football",
+        "Lionel Hollins is associated with the sport of association football"
+      ],
+      "latencyMs": 1002
+    },
+    {
+      "question": "What is the name of the employer of Lynn Margulis' spouse?",
+      "golds": [
+        "British Broadcasting Corporation"
+      ],
+      "topContent": "Lynn Margulis is married to Carl Sagan",
+      "returnedContents": [
+        "Lynn Margulis is married to Carl Sagan",
+        "Margaret Trudeau is married to Harry Payne Whitney",
+        "Bette Davis is employed by Wayne State University",
+        "Margaret Trudeau is married to Pierre Trudeau",
+        "Mary Anna Custis Lee is married to Robert E. Lee",
+        "Bette Davis is employed by Warner Bros.",
+        "Barbra Streisand is married to John McCallum",
+        "Sargent Shriver is married to Tina Louise",
+        "Vaginal Davis is a citizen of United States of America",
+        "Jay Leno is married to Mavis Leno"
+      ],
+      "latencyMs": 977
+    },
+    {
+      "question": "What kind of sports is Tina Charles into, based on the position she plays in her team?",
+      "golds": [
+        "American football"
+      ],
+      "topContent": "Tina Charles plays the position of center",
+      "returnedContents": [
+        "Tina Charles plays the position of center",
+        "Tina Charles plays the position of defensive back",
+        "Tyson Chandler is associated with the sport of basketball",
+        "Charlotte Independence is associated with the sport of baseball",
+        "Fort Wayne TinCaps is associated with the sport of cricket",
+        "Charlotte Independence is associated with the sport of association football",
+        "Regina Ip works in the field of basketball player",
+        "2009 WNBA Draft is associated with the sport of association football",
+        "Fort Wayne TinCaps is associated with the sport of baseball",
+        "Sports Interactive is associated with the sport of basketball"
+      ],
+      "latencyMs": 995
+    },
+    {
+      "question": "What is the continent of the country where the director / manager of \"Please Please Me\" holds citizenship?",
+      "golds": [
+        "Oceania"
+      ],
+      "topContent": "Please Please Me was performed by The Beatles",
+      "returnedContents": [
+        "Please Please Me was performed by The Beatles",
+        "Please Please Me was performed by Madonna",
+        "P!nk is a citizen of Australia",
+        "Jody Miller is a citizen of Germany",
+        "Simon May is a citizen of Guyana",
+        "Country Joe McDonald is a citizen of Romania",
+        "Tim Burton is a citizen of South Africa",
+        "Irréversible was created in the country of Australia",
+        "Steve Jobs is a citizen of South Korea",
+        "Alain Giresse is a citizen of South Africa"
+      ],
+      "latencyMs": 926
+    },
+    {
+      "question": "What is the birthplace of the spouse of Bianca Jagger?",
+      "golds": [
+        "North Charleston"
+      ],
+      "topContent": "Bianca Jagger is married to Mick Jagger",
+      "returnedContents": [
+        "Bianca Jagger is married to Mick Jagger",
+        "Mick Jagger is a citizen of United Kingdom",
+        "Mick Jagger was born in the city of Dartford",
+        "Mick Jagger was born in the city of North Charleston",
+        "Kim Gordon is married to Joanna Lumley",
+        "Catherine of Braganza is married to Jill Clayburgh",
+        "Jada Pinkett Smith is married to Heidi Montag",
+        "John Cassavetes is married to Gena Rowlands",
+        "Empress Jingu was born in the city of Newcastle upon Tyne",
+        "Victoria Beckham is married to Misty May-Treanor"
+      ],
+      "latencyMs": 795
+    },
+    {
+      "question": "What city served as the capital of the country to which the founder of the sport played in the 2014 World Judo Championships belonged?",
+      "golds": [
+        "New Delhi"
+      ],
+      "topContent": "2014 World Judo Championships is associated with the sport of judo",
+      "returnedContents": [
+        "2014 World Judo Championships is associated with the sport of judo",
+        "2015 World Judo Championships is associated with the sport of judo",
+        "2013 World Judo Championships is associated with the sport of judo",
+        "2011 World Judo Championships is associated with the sport of judo",
+        "World Judo Championships is associated with the sport of aikido",
+        "2017 World Judo Championships is associated with the sport of judo",
+        "2009 World Judo Championships is associated with the sport of judo",
+        "European Judo Championships is associated with the sport of judo",
+        "Pan American Judo Championships is associated with the sport of judo",
+        "International Judo Federation is associated with the sport of judo"
+      ],
+      "latencyMs": 1043
+    },
+    {
+      "question": "In which city is the seat of government located in the country where Family Force 5 came from?",
+      "golds": [
+        "Bondi Junction"
+      ],
+      "topContent": "Family Force 5 was created in the country of Japan",
+      "returnedContents": [
+        "Family Force 5 was created in the country of Japan",
+        "Family Force 5 was created in the country of United States of America",
+        "The headquarters of Swiss Air Force is located in the city of Hanoi",
+        "The headquarters of Swiss Air Force is located in the city of Bern",
+        "The headquarters of Austrian Federal Government is located in the city of Vienna",
+        "The headquarters of Austrian Federal Government is located in the city of New York City",
+        "The Royle Family was created in the country of United Kingdom",
+        "The name of the current head of state in Singapore is Harald V of Norway",
+        "Jump5 was created in the country of United States of America",
+        "The name of the current head of state in England is Harald V of Norway"
+      ],
+      "latencyMs": 1047
+    },
+    {
+      "question": "What location was the place of death of the author of Carmilla?",
+      "golds": [
+        "New York City"
+      ],
+      "topContent": "The author of Carmilla is Joseph Stein",
+      "returnedContents": [
+        "The author of Carmilla is Joseph Stein",
+        "The author of Carmilla is Sheridan Le Fanu",
+        "The author of Death in the Afternoon is Gustave Flaubert",
+        "The author of Death in the Afternoon is Ernest Hemingway",
+        "Selena died in the city of Corpus Christi",
+        "The author of Death on the Nile is Agatha Christie",
+        "Cleopatra died in the city of Marseille",
+        "Lucan died in the city of Rome",
+        "The author of The Cask of Amontillado is Edgar Allan Poe",
+        "Oscar Wilde died in the city of Paris"
+      ],
+      "latencyMs": 1147
+    },
+    {
+      "question": "From what country does the music genre of Dave Matthews Band originate?",
+      "golds": [
+        "Spain"
+      ],
+      "topContent": "The type of music that Dave Matthews Band plays is rock music",
+      "returnedContents": [
+        "The type of music that Dave Matthews Band plays is rock music",
+        "The type of music that The Band Perry plays is country music",
+        "The type of music that Tab Smith plays is jazz",
+        "Rollins Band was created in the country of United States of America",
+        "The type of music that Tab Smith plays is post-punk",
+        "The type of music that David Baker plays is jazz",
+        "The type of music that Will Smith plays is alternative country",
+        "The type of music that Jason Moran plays is jazz",
+        "The type of music that David Baker plays is hip hop music",
+        "The origianl broadcaster of Hardball with Chris Matthews is The CW"
+      ],
+      "latencyMs": 964
+    },
+    {
+      "question": "Who holds the position of chairperson at the organization where Stephen Greenblatt is employed?",
+      "golds": [
+        "Mike Cheston"
+      ],
+      "topContent": "Stephen Greenblatt is employed by Harvard University",
+      "returnedContents": [
+        "Stephen Greenblatt is employed by Harvard University",
+        "Stephen Greenblatt is employed by X Prize Foundation",
+        "The chairperson of The Trump Organization is Rick Perry",
+        "The chairperson of The Trump Organization is Donald Trump",
+        "The chairperson of Congolese Party of Labour is Stephen McNeil",
+        "The chairperson of Muttahida Qaumi Movement is Stephen McNeil",
+        "The chairperson of Stanford University is Jeanne Atkins",
+        "The chairperson of The CW is Mark Pedowitz",
+        "The chairperson of World Wide Web Consortium is Tim Berners-Lee",
+        "The chairperson of World Wide Web Consortium is Gerhard Schröder"
+      ],
+      "latencyMs": 937
+    },
+    {
+      "question": "What is the language recognized as the official medium of communication in the country where the director/manager of the performer with ID 1 is a citizen?",
+      "golds": [
+        "Arabic"
+      ],
+      "topContent": "The official language of Islam is Picard",
+      "returnedContents": [
+        "The official language of Islam is Picard",
+        "The official language of Indonesia is Indonesian",
+        "The official language of Cairo is German",
+        "The official language of Cuba is Spanish",
+        "The official language of Imatra is Esperanto",
+        "The official language of Moscow is German",
+        "The official language of Sweden is German",
+        "The official language of Germany is English",
+        "The official language of Netherlands is Benasquese dialect",
+        "The official language of Hämeenlinna is Esperanto"
+      ],
+      "latencyMs": 1068
+    },
+    {
+      "question": "Who is responsible for the founding of the religious group that has its roots in the institution where James Michael Curley received his education?",
+      "golds": [
+        "Gérard Blitz"
+      ],
+      "topContent": "The univeristy where James Michael Curley was educated is The Catholic University of America",
+      "returnedContents": [
+        "The univeristy where James Michael Curley was educated is The Catholic University of America",
+        "The univeristy where James Michael Curley was educated is Boston College",
+        "Michael Patrick Carroll is affiliated with the religion of Religious Society of Friends",
+        "Seton Hall University is affiliated with the religion of Methodism",
+        "John Woolman is affiliated with the religion of Religious Society of Friends",
+        "Clement III is affiliated with the religion of Religious Society of Friends",
+        "Hubert Walter is affiliated with the religion of Methodism",
+        "Cornelius the Centurion is affiliated with the religion of Methodism",
+        "Mormonism was founded by Juvénal Habyarimana",
+        "Seton Hall University is affiliated with the religion of Catholic Church"
+      ],
+      "latencyMs": 988
+    },
+    {
+      "question": "In what city did the individual who established Metz Cathedral have their occupation?",
+      "golds": [
+        "London"
+      ],
+      "topContent": "Metz Cathedral is affiliated with the religion of Catholic Church",
+      "returnedContents": [
+        "Metz Cathedral is affiliated with the religion of Catholic Church",
+        "Metz Cathedral is affiliated with the religion of Hasidism",
+        "Paul Verlaine was born in the city of Metz",
+        "Etchmiadzin Cathedral was founded by Gregory the Illuminator",
+        "Etchmiadzin Cathedral was founded by Vishwanath Pratap Singh",
+        "Charlemagne died in the city of Paris",
+        "Johannes Vermeer worked in the city of Delft",
+        "George du Maurier worked in the city of Paris",
+        "Catholic Church was founded by Gérard Blitz",
+        "William Blake worked in the city of Munich"
+      ],
+      "latencyMs": 948
+    },
+    {
+      "question": "What is the capital city of the country which Sumie Sakai's sport founder holds citizenship in?",
+      "golds": [
+        "New Delhi"
+      ],
+      "topContent": "Sumie Sakai is associated with the sport of judo",
+      "returnedContents": [
+        "Sumie Sakai is associated with the sport of judo",
+        "Stan Sakai is a citizen of United States of America",
+        "Stan Sakai is famous for Usagi Yojimbo",
+        "The capital of Japan is Tokyo",
+        "sumo was created in the country of Japan",
+        "Keio University is a citizen of Japan",
+        "Junichi Suwabe is a citizen of Japan",
+        "baseball was created in the country of Japan",
+        "Kohei Sato is a citizen of Japan",
+        "sumo was created in the country of Australia"
+      ],
+      "latencyMs": 1051
+    },
+    {
+      "question": "What is the name of the city which is the capital of the country where the director/manager of \"Back in the U.S.S.R.\" holds citizenship?",
+      "golds": [
+        "Canberra"
+      ],
+      "topContent": "Back Stage was created in the country of United States of America",
+      "returnedContents": [
+        "Back Stage was created in the country of United States of America",
+        "Back Stage was created in the country of France",
+        "Back in the U.S.S.R. was performed by Chicago Symphony Orchestra",
+        "Backstreet Boys was created in the country of South Korea",
+        "Backstreet Boys was created in the country of United States of America",
+        "Back in the U.S.S.R. was performed by The Beatles",
+        "Ryback is a citizen of United States of America",
+        "Stephen King is a citizen of United States of America",
+        "Rick Remender is a citizen of United States of America",
+        "George R. R. Martin is a citizen of United States of America"
+      ],
+      "latencyMs": 1006
+    },
+    {
+      "question": "What was the name of the person who founded the religion that Gabriel Narutowicz belonged to?",
+      "golds": [
+        "Gérard Blitz"
+      ],
+      "topContent": "Gabriel Narutowicz is affiliated with the religion of Catholic Church",
+      "returnedContents": [
+        "Gabriel Narutowicz is affiliated with the religion of Catholic Church",
+        "Abrahamic religion was founded by Abraham",
+        "Jarosław Kaczyński is affiliated with the religion of Catholic Church",
+        "Christianity was founded by Jesus Christ",
+        "Venantius Fortunatus is affiliated with the religion of Christian Science",
+        "Józef Glemp is affiliated with the religion of Christian Science",
+        "Jarosław Kaczyński is affiliated with the religion of Methodism",
+        "Venantius Fortunatus is affiliated with the religion of Catholic Church",
+        "Wincenty Kadłubek is affiliated with the religion of Christian Science",
+        "Jadwiga of Poland is affiliated with the religion of Christian Science"
+      ],
+      "latencyMs": 1124
+    },
+    {
+      "question": "In which language are the official documents written in the country of citizenship of Nate \"Tiny\" Archibald?",
+      "golds": [
+        "German"
+      ],
+      "topContent": "Nate \"Tiny\" Archibald is a citizen of United States of America",
+      "returnedContents": [
+        "Nate \"Tiny\" Archibald is a citizen of United States of America",
+        "Nate \"Tiny\" Archibald is a citizen of Sweden",
+        "The official language of California is English",
+        "Andrew Little is a citizen of New Zealand",
+        "Justin Trudeau is a citizen of United States of America",
+        "Justin Trudeau is a citizen of Canada",
+        "Federalist Papers was written in the language of Australian English",
+        "Nate Washington is a citizen of United States of America",
+        "Paul Douglas is a citizen of United States of America",
+        "P!nk is a citizen of Australia"
+      ],
+      "latencyMs": 974
+    },
+    {
+      "question": "What is the name of the school where the author of \"La Celestina\" studied?",
+      "golds": [
+        "Princeton University"
+      ],
+      "topContent": "The author of La Celestina is Sigmund Freud",
+      "returnedContents": [
+        "The author of La Celestina is Sigmund Freud",
+        "The author of La Celestina is Fernando de Rojas",
+        "The univeristy where Giulietta Masina was educated is Sapienza University of Rome",
+        "The univeristy where Giulietta Masina was educated is University of Birmingham",
+        "The univeristy where Lluís Domènech i Montaner was educated is University of Barcelona",
+        "The univeristy where Jason Chaffetz was educated is Sapienza University of Rome",
+        "The author of Lysistrata is Ursula K. Le Guin",
+        "The univeristy where Gabriel Gonzáles Videla was educated is University of Bologna",
+        "The univeristy where Lluís Domènech i Montaner was educated is Yale University",
+        "The univeristy where Miuccia Prada was educated is University of Milan"
+      ],
+      "latencyMs": 994
+    },
+    {
+      "question": "Which language is considered the official language of the religion that Malik Kafur practiced?",
+      "golds": [
+        "Picard"
+      ],
+      "topContent": "Malik Kafur is affiliated with the religion of Islam",
+      "returnedContents": [
+        "Malik Kafur is affiliated with the religion of Islam",
+        "The official language of Islam is Picard",
+        "The official language of Islam is Arabic",
+        "Muwatta Imam Malik was written in the language of Arabic",
+        "The official language of Iran is Persian",
+        "The official language of Qatar is Arabic",
+        "The official language of Saudi Arabia is Arabic",
+        "The official language of Indonesia is Indonesian",
+        "The official language of Israel is Hebrew",
+        "The official language of Egypt is Arabic"
+      ],
+      "latencyMs": 945
+    },
+    {
+      "question": "What is the name of the individual who both directed and managed the performer on \"Yesterday and Today\"?",
+      "golds": [
+        "Narendra Modi"
+      ],
+      "topContent": "Yesterday and Today was performed by The Beatles",
+      "returnedContents": [
+        "Yesterday and Today was performed by The Beatles",
+        "Yesterday and Today was performed by Madonna",
+        "Yesterday was performed by The Beatles",
+        "Yesterday was performed by Madonna",
+        "The origianl broadcaster of Early Today is NBC",
+        "The origianl broadcaster of Early Today is CBS",
+        "Rodgers and Hammerstein is famous for He Stopped Loving Her Today",
+        "The type of music that He Stopped Loving Her Today plays is jazz",
+        "The origianl broadcaster of 60 Minutes is BBC One",
+        "The director of The Beatles is Joe Hockey"
+      ],
+      "latencyMs": 927
+    },
+    {
+      "question": "What city serves as the capital of the country where the sport played by Derek Holland originated?",
+      "golds": [
+        "Ottawa"
+      ],
+      "topContent": "Derek Holland plays the position of starting pitcher",
+      "returnedContents": [
+        "Derek Holland plays the position of starting pitcher",
+        "Derek Holland plays the position of linebacker",
+        "Derek Jeter is associated with the sport of baseball",
+        "Dave Holland is a citizen of Sierra Leone",
+        "Dave Holland is a citizen of United Kingdom",
+        "Derek Farr was born in the city of London",
+        "The capital of Netherlands is Amsterdam",
+        "The capital of People's Republic of China is Daugavpils",
+        "The capital of Netherlands is Narok",
+        "Frank de Boer is associated with the sport of association football"
+      ],
+      "latencyMs": 995
+    },
+    {
+      "question": "What are the languages that the chairperson of Muttahida Qaumi Movement is fluent in when speaking, writing, or signing?",
+      "golds": [
+        "English"
+      ],
+      "topContent": "The chairperson of Muttahida Qaumi Movement is Stephen McNeil",
+      "returnedContents": [
+        "The chairperson of Muttahida Qaumi Movement is Stephen McNeil",
+        "The chairperson of Muttahida Qaumi Movement is Altaf Hussain",
+        "Muttahida Qaumi Movement was founded by Bjarke Ingels",
+        "Muttahida Qaumi Movement was founded by Altaf Hussain",
+        "Shulamith Firestone speaks the language of English",
+        "Bono speaks the language of English",
+        "The chairperson of Nationalist Movement Party is Devlet Bahçeli",
+        "Shulamith Firestone speaks the language of Spanish",
+        "Altaf Hussain speaks the language of Urdu",
+        "Peta Murgatroyd speaks the language of English"
+      ],
+      "latencyMs": 997
+    },
+    {
+      "question": "What city serves as the capital of the country that Ragini Dwivedi belongs to?",
+      "golds": [
+        "Rupnagar"
+      ],
+      "topContent": "Ragini Dwivedi is a citizen of India",
+      "returnedContents": [
+        "Ragini Dwivedi is a citizen of India",
+        "Ragini Dwivedi is a citizen of United Kingdom",
+        "The capital of India is New Delhi",
+        "The capital of India is Grosseto",
+        "The capital of Nepal is Kathmandu",
+        "The capital of United Kingdom is Rupnagar",
+        "The capital of People's Republic of China is Daugavpils",
+        "The capital of Romania is Rajanpur",
+        "Dhirubhai Ambani is a citizen of Australia",
+        "The capital of Bangladesh is Dhaka"
+      ],
+      "latencyMs": 1064
+    },
+    {
+      "question": "What is the place of demise of the author of the book \"Dubliners\"?",
+      "golds": [
+        "London"
+      ],
+      "topContent": "The author of Dubliners is James Joyce",
+      "returnedContents": [
+        "The author of Dubliners is James Joyce",
+        "The author of Dubliners is George Eliot",
+        "Arthur Guinness died in the city of Dublin",
+        "Brian O'Nolan died in the city of Dublin",
+        "Jonathan Swift died in the city of Dublin",
+        "Samuel Beckett was born in the city of Dublin",
+        "The author of Finnegans Wake is James Joyce",
+        "The author of Ulysses is James Joyce",
+        "Sheridan Le Fanu died in the city of Dublin",
+        "The author of The Crow is James O'Barr"
+      ],
+      "latencyMs": 992
+    },
+    {
+      "question": "Where is the headquarters of the company that developed Sailfish OS located?",
+      "golds": [
+        "Normanton"
+      ],
+      "topContent": "Sailfish OS was developed by Mitsubishi",
+      "returnedContents": [
+        "Sailfish OS was developed by Mitsubishi",
+        "Sailfish OS was developed by Jolla",
+        "The headquarters of Sun Microsystems is located in the city of Westwood",
+        "The headquarters of Sun Microsystems is located in the city of Santa Clara",
+        "The headquarters of FromSoftware is located in the city of Tokyo",
+        "The headquarters of Seinäjoen Jalkapallokerho is located in the city of Seinäjoki",
+        "The headquarters of Seinäjoen Jalkapallokerho is located in the city of Stockholm",
+        "The headquarters of Airbnb is located in the city of San Francisco",
+        "The headquarters of Texas Instruments is located in the city of Naval Air Station Oceana",
+        "The headquarters of Silja Line is located in the city of Helsinki"
+      ],
+      "latencyMs": 998
+    },
+    {
+      "question": "Which city serves as the capital of the country of origin of the sport that David Price plays?",
+      "golds": [
+        "Manila"
+      ],
+      "topContent": "David Price plays the position of tight end",
+      "returnedContents": [
+        "David Price plays the position of tight end",
+        "David Price plays the position of starting pitcher",
+        "David Beckham plays the position of safety",
+        "David Beckham plays the position of midfielder",
+        "David Beckham is associated with the sport of association football",
+        "David Blatt is associated with the sport of association football",
+        "David Healy is associated with the sport of association football",
+        "David Seaman plays the position of midfielder",
+        "David Beckham is associated with the sport of cricket",
+        "Richard Price speaks the language of English"
+      ],
+      "latencyMs": 1425
+    },
+    {
+      "question": "Which language is the official language of the country where the spouse of the artist who sang \"All of Me\" comes from?",
+      "golds": [
+        "Spanish"
+      ],
+      "topContent": "All of Me was performed by John Legend",
+      "returnedContents": [
+        "All of Me was performed by John Legend",
+        "All of Me was performed by Bobby Brown",
+        "All About Eve was created in the country of France",
+        "Avril Lavigne is a citizen of Canada",
+        "Montserrat Caballé is a citizen of India",
+        "Nirosha is a citizen of Sweden",
+        "Montserrat Caballé is a citizen of Spain",
+        "Tupac Shakur speaks the language of German",
+        "Kathy Mattea is a citizen of Spain",
+        "Miriam Makeba is a citizen of New Zealand"
+      ],
+      "latencyMs": 1213
+    },
+    {
+      "question": "What is the birthplace of the person who created Indiana Jones?",
+      "golds": [
+        "Lüftelberg"
+      ],
+      "topContent": "Indiana Jones was created by George Lucas",
+      "returnedContents": [
+        "Indiana Jones was created by George Lucas",
+        "Indiana Jones was created by A. A. Milne",
+        "The Indianapolis Star was created in the country of Ukraine",
+        "The Indianapolis Star was created in the country of United States of America",
+        "Jim Jones died in the city of Jonestown",
+        "The author of The Emperor Jones is Eugene O'Neill",
+        "jazz was created in the country of United States of America",
+        "Garfield was created by Jim Davis",
+        "A Thousand Clowns was created in the country of United States of America",
+        "Gotham was created in the country of India"
+      ],
+      "latencyMs": 1051
+    },
+    {
+      "question": "What is the name of the person who leads the company that produces the Chevrolet Chevelle?",
+      "golds": [
+        "David Potts"
+      ],
+      "topContent": "The company that produced Chevrolet Chevelle is General Motors",
+      "returnedContents": [
+        "The company that produced Chevrolet Chevelle is General Motors",
+        "The company that produced Chevrolet Chevelle is Peugeot",
+        "The company that produced Chevrolet Cruze is Toyota",
+        "The company that produced Chevrolet Silverado is General Motors",
+        "The company that produced Chevrolet Chevette is Fiat",
+        "The company that produced Chevrolet Chevette is General Motors",
+        "The company that produced Chevrolet Cruze is General Motors",
+        "The company that produced Chevrolet Volt is General Motors",
+        "The company that produced Chevrolet S-10 is General Motors",
+        "The company that produced Chevrolet Suburban is General Motors"
+      ],
+      "latencyMs": 1013
+    },
+    {
+      "question": "Which profession does the chairperson of the Economic Freedom Fighters belong to?",
+      "golds": [
+        "composer"
+      ],
+      "topContent": "The chairperson of Economic Freedom Fighters is Julius Malema",
+      "returnedContents": [
+        "The chairperson of Economic Freedom Fighters is Julius Malema",
+        "The chairperson of Economic Freedom Fighters is Roberto Calvi",
+        "The chairperson of Israeli Labor Party is Mark Carney",
+        "The chairperson of Congolese Party of Labour is Stephen McNeil",
+        "The chairperson of Labour Party is Jeremy Corbyn",
+        "The chairperson of Israeli Labor Party is Amir Peretz",
+        "The chairperson of Congolese Party of Labour is Denis Sassou-Nguesso",
+        "The chairperson of Ontario New Democratic Party is Habib Bourguiba",
+        "The chairperson of University of Chicago is Robert Zimmer",
+        "The chairperson of X Prize Foundation is Mike Cheston"
+      ],
+      "latencyMs": 1001
+    },
+    {
+      "question": "Which continent is the place of birth of the CEO of the developer of Windows Aero located in?",
+      "golds": [
+        "Africa"
+      ],
+      "topContent": "Windows Aero was developed by Microsoft",
+      "returnedContents": [
+        "Windows Aero was developed by Microsoft",
+        "Windows Aero was developed by Electronic Arts",
+        "The chief executive officer of Microsoft is Steve Jobs",
+        "Windows 7 was developed by ARM Holdings",
+        "Windows 7 was developed by Microsoft",
+        "Windows 95 was developed by Google",
+        "Windows Me was developed by Microsoft",
+        "Windows 10 was developed by Microsoft",
+        "The company that produced Windows Me is Microsoft",
+        "The chief executive officer of Microsoft is Satya Nadella"
+      ],
+      "latencyMs": 974
+    },
+    {
+      "question": "Who currently holds the position of head of government in the country where the genre of Julian Lennon was founded?",
+      "golds": [
+        "Ole Johan Vierdal"
+      ],
+      "topContent": "The type of music that Julian Lennon plays is soul music",
+      "returnedContents": [
+        "The type of music that Julian Lennon plays is soul music",
+        "The type of music that Julian Lennon plays is rock music",
+        "The name of the current head of the Israel government is Kevin Rudd",
+        "John Lennon is famous for Imagine",
+        "The name of the current head of the Scotland government is Nicola Sturgeon",
+        "The name of the current head of the Ireland government is Dorin Alexandrescu",
+        "The name of the current head of the Ireland government is Leo Varadkar",
+        "The name of the current head of the Israel government is Benjamin Netanyahu",
+        "The name of the current head of the Canada government is Justin Trudeau",
+        "John Lennon is famous for Gundam"
+      ],
+      "latencyMs": 1172
+    },
+    {
+      "question": "In which city did the founder of the religion of Steve Cooley have their work location?",
+      "golds": [
+        "Washington, D.C."
+      ],
+      "topContent": "Steve Cooley is affiliated with the religion of Methodism",
+      "returnedContents": [
+        "Steve Cooley is affiliated with the religion of Methodism",
+        "Steve Cooley is affiliated with the religion of Catholic Church",
+        "Steve Jobs was born in the city of San Francisco",
+        "Ed Macauley is affiliated with the religion of Christianity",
+        "John Cody is affiliated with the religion of Methodism",
+        "Edward Mooney is affiliated with the religion of Christian Science",
+        "Pio Laghi is affiliated with the religion of Methodism",
+        "Edward Mooney is affiliated with the religion of Catholic Church",
+        "Ed Macauley is affiliated with the religion of Catholic Church",
+        "John Murphy Farley is affiliated with the religion of Methodism"
+      ],
+      "latencyMs": 1100
+    },
+    {
+      "question": "Which city serves as the capital of the country where the director/manager of the original broadcaster of The Partridge Family is a citizen of?",
+      "golds": [
+        "Oderzo"
+      ],
+      "topContent": "The origianl broadcaster of The Partridge Family is British Broadcasting Corporation",
+      "returnedContents": [
+        "The origianl broadcaster of The Partridge Family is British Broadcasting Corporation",
+        "The origianl broadcaster of The Partridge Family is American Broadcasting Company",
+        "The origianl broadcaster of The Addams Family is American Broadcasting Company",
+        "The origianl broadcaster of Scandal is American Broadcasting Company",
+        "The origianl broadcaster of Modern Family is American Broadcasting Company",
+        "The origianl broadcaster of Fuller House is HBO",
+        "The origianl broadcaster of Modern Family is British Broadcasting Corporation",
+        "The origianl broadcaster of Full House is American Broadcasting Company",
+        "The origianl broadcaster of Full House is British Broadcasting Corporation",
+        "The origianl broadcaster of The Fugitive is British Broadcasting Corporation"
+      ],
+      "latencyMs": 1163
+    },
+    {
+      "question": "What is the name of the person who was in charge of the organization that Philip Agee worked for?",
+      "golds": [
+        "Christopher A. Wray"
+      ],
+      "topContent": "Philip Agee is employed by Central Intelligence Agency",
+      "returnedContents": [
+        "Philip Agee is employed by Central Intelligence Agency",
+        "Philip Agee is employed by Federal Bureau of Investigation",
+        "James Agee died in the city of New York City",
+        "The chairperson of The Trump Organization is Rick Perry",
+        "The author of An Ideal Husband is James Agee",
+        "The author of The Vicar of Wakefield is James Agee",
+        "The chairperson of Palestine Liberation Organization is Regina Ip",
+        "The chairperson of The Trump Organization is Donald Trump",
+        "The author of The Age of Reason is Thomas Paine",
+        "Clinton Foundation was founded by Thomas Jefferson"
+      ],
+      "latencyMs": 1096
+    },
+    {
+      "question": "What is the birthplace of the person who established the religion of Saint Eligius?",
+      "golds": [
+        "Epworth"
+      ],
+      "topContent": "Saint Eligius is affiliated with the religion of Catholic Church",
+      "returnedContents": [
+        "Saint Eligius is affiliated with the religion of Catholic Church",
+        "Saint Eligius is affiliated with the religion of Methodism",
+        "Saint Remigius is affiliated with the religion of Catholic Church",
+        "Saint Engelbert is affiliated with the religion of Catholic Church",
+        "Saint Remigius is affiliated with the religion of Church of Scotland",
+        "John the Evangelist died in the city of Ephesus",
+        "Lukas Podolski is affiliated with the religion of Catholic Church",
+        "The Ecumenical Patriarch of Constantinople is Leni Robredo",
+        "Giulio Alberoni is affiliated with the religion of Catholic Church",
+        "Ignatius of Antioch is affiliated with the religion of Christianity"
+      ],
+      "latencyMs": 979
+    },
+    {
+      "question": "What is the authorship's greatest contribution to literature of the book \"The Age of Reason\"?",
+      "golds": [
+        "Natya Shastra"
+      ],
+      "topContent": "The author of The Age of Reason is Thomas Paine",
+      "returnedContents": [
+        "The author of The Age of Reason is Thomas Paine",
+        "The author of The Age of Reason is Allen Ginsberg",
+        "The author of Critique of Pure Reason is Immanuel Kant",
+        "The author of Critique of Pure Reason is Don DeLillo",
+        "The author of Timon of Athens is Thomas Paine",
+        "The author of Being and Time is Martin Heidegger",
+        "The author of Ringworld is Immanuel Kant",
+        "The author of Philosophical Investigations is John Keats",
+        "The author of Humanae Vitae is Søren Kierkegaard",
+        "The author of The History of Sexuality is Michel Foucault"
+      ],
+      "latencyMs": 962
+    },
+    {
+      "question": "What is the birthplace of the current holder of the Illinois Attorney General's office?",
+      "golds": [
+        "Higashiyamanashi District, Yamanashi"
+      ],
+      "topContent": "The Illinois Attorney General is Ben Carson",
+      "returnedContents": [
+        "The Illinois Attorney General is Ben Carson",
+        "The Illinois Attorney General is Lisa Madigan",
+        "The Governor of Illinois is Adam Putnam",
+        "The Governor of Illinois is Bruce Rauner",
+        "The name of the current head of the Chicago government is Lori Lightfoot",
+        "Eminem was born in the city of Chicago",
+        "Paul was born in the city of Chicago",
+        "Open Mike Eagle was born in the city of Chicago",
+        "The name of the current head of the Ohio government is Jim Watson",
+        "William Henry Perkin was born in the city of Chicago"
+      ],
+      "latencyMs": 965
+    },
+    {
+      "question": "Which historical or religious figure established the religion that Nicholas V is affiliated with?",
+      "golds": [
+        "Lyndon B. Johnson"
+      ],
+      "topContent": "Nicholas V is affiliated with the religion of Catholic Church",
+      "returnedContents": [
+        "Nicholas V is affiliated with the religion of Catholic Church",
+        "Nicholas V is affiliated with the religion of The Church of Jesus Christ of Latter-day Saints",
+        "Nicholas of Tolentino is affiliated with the religion of Church of Scotland",
+        "Gregory V is affiliated with the religion of Catholic Church",
+        "Paul V is affiliated with the religion of Christianity",
+        "Paul V is affiliated with the religion of Catholic Church",
+        "Gregory V is affiliated with the religion of Methodism",
+        "Martin V is affiliated with the religion of Catholic Church",
+        "Philip V of Spain is affiliated with the religion of Catholic Church",
+        "Philip V of Spain is affiliated with the religion of Methodism"
+      ],
+      "latencyMs": 1082
+    },
+    {
+      "question": "What is the birthplace of the author of Ivanhoe?",
+      "golds": [
+        "Mexico City"
+      ],
+      "topContent": "The author of Ivanhoe is Walter Scott",
+      "returnedContents": [
+        "The author of Ivanhoe is Walter Scott",
+        "The author of Georgics is Virgil",
+        "The author of The Winter's Tale is William Shakespeare",
+        "The author of A Midsummer Night's Dream is William Shakespeare",
+        "J. R. R. Tolkien was born in the city of Middelburg",
+        "The author of Ulysses is William Shakespeare",
+        "The author of The Knight's Tale is Geoffrey Chaucer",
+        "The author of Dune is William Shakespeare",
+        "The author of Harry Potter is Victor Hugo",
+        "The author of Georgics is William Shakespeare"
+      ],
+      "latencyMs": 997
+    },
+    {
+      "question": "What is the name of the child of the person who created Feluda?",
+      "golds": [
+        "Zygmunt Krasiński"
+      ],
+      "topContent": "Feluda was created by Satyajit Ray",
+      "returnedContents": [
+        "Feluda was created by Satyajit Ray",
+        "Feluda was created by Terry Pratchett",
+        "Fantine's child is Cosette",
+        "Fantine's child is Legolas",
+        "Wilma Flintstone's child is Pebbles Flintstone",
+        "Jango Fett was created by Phidias",
+        "Claude Frollo was created by Diego Rivera",
+        "Ardashir I's child is Shapur I",
+        "Felicia Day is famous for Arthashastra",
+        "Jango Fett was created by George Lucas"
+      ],
+      "latencyMs": 1023
+    },
+    {
+      "question": "In what city does the director/manager of the original broadcaster of \"NHL on ABC\" hold their citizenship?",
+      "golds": [
+        "New Delhi"
+      ],
+      "topContent": "The origianl broadcaster of NHL on ABC is British Broadcasting Corporation",
+      "returnedContents": [
+        "The origianl broadcaster of NHL on ABC is British Broadcasting Corporation",
+        "The origianl broadcaster of NHL on ABC is American Broadcasting Company",
+        "The origianl broadcaster of NBA on ABC is American Broadcasting Company",
+        "The origianl broadcaster of NBA on ABC is British Broadcasting Corporation",
+        "The origianl broadcaster of Bret Maverick is NBC",
+        "The origianl broadcaster of America's Got Talent is NBC",
+        "The director of American Broadcasting Company is Bob Iger",
+        "The origianl broadcaster of The Neighbors is American Broadcasting Company",
+        "The origianl broadcaster of Face the Nation is NBC",
+        "The origianl broadcaster of NYPD Blue is American Broadcasting Company"
+      ],
+      "latencyMs": 985
+    },
+    {
+      "question": "Which language is considered the official language of the country to which Yip Harburg belongs?",
+      "golds": [
+        "Finnish"
+      ],
+      "topContent": "Yip Harburg is a citizen of United Kingdom",
+      "returnedContents": [
+        "Yip Harburg is a citizen of United Kingdom",
+        "Yip Harburg is a citizen of United States of America",
+        "The official language of Prussia is German",
+        "The official language of Indonesia is Indonesian",
+        "The official language of Nurmijärvi is Finnish",
+        "The official language of Cairo is German",
+        "The official language of Papal States is Latin",
+        "The official language of Israel is Hebrew",
+        "The official language of Pori is Finnish",
+        "Harper Lee speaks the language of German"
+      ],
+      "latencyMs": 1012
+    },
+    {
+      "question": "What is the literary genre of the book \"Dune\" written by the author?",
+      "golds": [
+        "progressive rock"
+      ],
+      "topContent": "The author of Dune is Frank Herbert",
+      "returnedContents": [
+        "The author of Dune is Frank Herbert",
+        "The author of Dune is William Shakespeare",
+        "The author of Dune Messiah is Frank Herbert",
+        "The author of Children of Dune is Veronica Roth",
+        "The author of Heretics of Dune is Damon Knight",
+        "The author of Children of Dune is Frank Herbert",
+        "The author of Heretics of Dune is Frank Herbert",
+        "The author of God Emperor of Dune is Frank Herbert",
+        "The author of God Emperor of Dune is Ngaio Marsh",
+        "Christopher Robin Milne works in the field of writer"
+      ],
+      "latencyMs": 965
+    },
+    {
+      "question": "What is the continent of origin of Thomas Dolby, a musician?",
+      "golds": [
+        "South America"
+      ],
+      "topContent": "Thomas Dolby was born in the city of London",
+      "returnedContents": [
+        "Thomas Dolby was born in the city of London",
+        "Thomas Dolby was born in the city of Los Angeles",
+        "Thomas Graham Jackson was born in the city of London",
+        "Thomas Arne was born in the city of Bengaluru",
+        "Thomas Arne was born in the city of London",
+        "Thomas Graham Jackson was born in the city of Palani",
+        "Thomas Alva Edison was born in the city of Milan",
+        "Thomas Kyd was born in the city of London",
+        "The type of music that Danny Thompson plays is calypso music",
+        "Carnatic music was created in the country of India"
+      ],
+      "latencyMs": 1034
+    },
+    {
+      "question": "What is the name of the school where the founder of House of Bonaparte studied?",
+      "golds": [
+        "Trinity College Dublin"
+      ],
+      "topContent": "House of Bonaparte was founded by Napoleon",
+      "returnedContents": [
+        "House of Bonaparte was founded by Napoleon",
+        "House of Bonaparte was founded by Gustav I of Sweden",
+        "The univeristy where Napoleon was educated is London School of Economics and Political Science",
+        "The univeristy where Napoleon was educated is École Militaire",
+        "Caroline Bonaparte is affiliated with the religion of Christian Science",
+        "Jérôme Bonaparte is affiliated with the religion of Catholic Church",
+        "Caroline Bonaparte is affiliated with the religion of Catholic Church",
+        "Louis Bonaparte is affiliated with the religion of Methodism",
+        "Louis Bonaparte is affiliated with the religion of Catholic Church",
+        "Jérôme Bonaparte is affiliated with the religion of Methodism"
+      ],
+      "latencyMs": 917
+    },
+    {
+      "question": "In which place was the manufacturing company of Chevrolet Caprice founded?",
+      "golds": [
+        "Silver Lake"
+      ],
+      "topContent": "The company that produced Chevrolet Caprice is General Motors",
+      "returnedContents": [
+        "The company that produced Chevrolet Caprice is General Motors",
+        "The company that produced Chevrolet Caprice is Boeing",
+        "The company that produced Chevrolet Corvette is Colt's Manufacturing Company",
+        "The company that produced Holden Caprice is General Motors",
+        "The company that produced Chevrolet Silverado is General Motors",
+        "The company that produced Chevrolet Chevelle is Peugeot",
+        "The company that produced Chevrolet S-10 is General Motors",
+        "The company that produced Holden Caprice is Hon Hai Precision Industry",
+        "The company that produced Chevrolet Volt is General Motors",
+        "The company that produced Chevrolet Vega is Toshiba"
+      ],
+      "latencyMs": 1044
+    },
+    {
+      "question": "Which city is the capital of the country where the genre, which Benjamin Sisko performed, originated?",
+      "golds": [
+        "Rajanpur"
+      ],
+      "topContent": "Benjamin Sisko was performed by Avery Brooks",
+      "returnedContents": [
+        "Benjamin Sisko was performed by Avery Brooks",
+        "Benjamin Sisko was performed by Extreme",
+        "country rock was created in the country of Italy",
+        "samba was created in the country of United States of America",
+        "samba was created in the country of Brazil",
+        "country rock was created in the country of United States of America",
+        "rock music was created in the country of Spain",
+        "dance-punk was created in the country of United States of America",
+        "soca music was created in the country of Trinidad and Tobago",
+        "gangsta rap was created in the country of United States of America"
+      ],
+      "latencyMs": 989
+    },
+    {
+      "question": "What country is the nationality of the spouse of the author of \"David Copperfield\"?",
+      "golds": [
+        "Belgium"
+      ],
+      "topContent": "The author of David Copperfield is Charles Dickens",
+      "returnedContents": [
+        "The author of David Copperfield is Charles Dickens",
+        "The author of David Copperfield is Charles Darwin",
+        "David Beckham is married to Victoria Beckham",
+        "H. P. Lovecraft is married to Sonia Greene",
+        "The author of Lady Chatterley's Lover is H. P. Lovecraft",
+        "Rachel Cooke is a citizen of United Kingdom",
+        "The author of Oliver Twist is Charles Dickens",
+        "The author of Jane Eyre is Charlotte Brontë",
+        "The author of The Colour of Magic is Franz Werfel",
+        "The author of Our Town is Geoffrey Chaucer"
+      ],
+      "latencyMs": 971
+    },
+    {
+      "question": "In which organization did Francis Parkman work as an employee and who is its chairperson?",
+      "golds": [
+        "William J. Donovan"
+      ],
+      "topContent": "Francis Parkman is employed by Office of Strategic Services",
+      "returnedContents": [
+        "Francis Parkman is employed by Office of Strategic Services",
+        "Francis Parkman is employed by Harvard University",
+        "Francis Parkman was born in the city of Boston",
+        "The chairperson of The Trump Organization is Rick Perry",
+        "The chairperson of The Trump Organization is Donald Trump",
+        "The chairperson of Stanford University is Jeanne Atkins",
+        "The chairperson of Fatah is Mahmoud Abbas",
+        "The chairperson of Fatah is Moshe Kahlon",
+        "The chairperson of Office of Strategic Services is Robert James Carlson",
+        "The chairperson of Santer Commission is Philip Hammond"
+      ],
+      "latencyMs": 1022
+    },
+    {
+      "question": "What is the capital of the country where the director/manager of \"Good Morning America\" holds a citizenship?",
+      "golds": [
+        "Beaumont"
+      ],
+      "topContent": "The origianl broadcaster of Good Morning America is American Broadcasting Company",
+      "returnedContents": [
+        "The origianl broadcaster of Good Morning America is American Broadcasting Company",
+        "The origianl broadcaster of Good Morning America is British Broadcasting Corporation",
+        "The Good Earth was created in the country of United States of America",
+        "Mark Goodson is a citizen of United States of America",
+        "Goodie Mob was created in the country of United States of America",
+        "The origianl broadcaster of America This Morning is American Broadcasting Company",
+        "The director of American Broadcasting Company is Bob Iger",
+        "Martin Goodman is a citizen of United States of America",
+        "The director of American Broadcasting Company is Ernst Heinkel",
+        "The capital of United States of America is Harrisville"
+      ],
+      "latencyMs": 984
+    },
+    {
+      "question": "In which language does the government of the country Pee Wee King holds citizenship conduct its official business?",
+      "golds": [
+        "Hebrew"
+      ],
+      "topContent": "Pee Wee King is a citizen of France",
+      "returnedContents": [
+        "Pee Wee King is a citizen of France",
+        "Pee Wee King is a citizen of United States of America",
+        "Stephen King speaks the language of English",
+        "The official language of Kingdom of England is English",
+        "The official language of United Kingdom of Great Britain and Ireland is English",
+        "Peter King is a citizen of Iran",
+        "Peter King is a citizen of United States of America",
+        "The official language of United Kingdom is English",
+        "The official language of United Kingdom is Finnish",
+        "Stephen King is a citizen of United States of America"
+      ],
+      "latencyMs": 1046
+    },
+    {
+      "question": "In what language do official government documents get written in the country that Tomokazu Seki is a citizen of?",
+      "golds": [
+        "German"
+      ],
+      "topContent": "Tomokazu Seki is a citizen of Japan",
+      "returnedContents": [
+        "Tomokazu Seki is a citizen of Japan",
+        "Tomokazu Seki is a citizen of United States of America",
+        "The official language of Japan is Japanese",
+        "The official language of Japan is Swedish",
+        "The official language of Saarijärvi is Finnish",
+        "Tomoyasu Hotei is a citizen of Germany",
+        "The official language of Pori is Finnish",
+        "Tomoyasu Hotei is a citizen of Japan",
+        "Aki Toyosaki is a citizen of Japan",
+        "Daisuke Sasaki is a citizen of Japan"
+      ],
+      "latencyMs": 1160
+    },
+    {
+      "question": "What continent is the country of citizenship of the manager/director of Taxman located in?",
+      "golds": [
+        "Asia"
+      ],
+      "topContent": "Taxman was performed by The Beatles",
+      "returnedContents": [
+        "Taxman was performed by The Beatles",
+        "Taxman was performed by Madonna",
+        "Country Joe McDonald is a citizen of Romania",
+        "André Citroën is a citizen of Australia",
+        "The chairperson of Mapai is David Ben-Gurion",
+        "Tony Jordan is a citizen of United Kingdom",
+        "Don Bradman is a citizen of Australia",
+        "Tony Hillerman is a citizen of United States of America",
+        "Forrest J Ackerman is a citizen of Austria",
+        "Jody Miller is a citizen of Germany"
+      ],
+      "latencyMs": 1043
+    },
+    {
+      "question": "In which city was the person who created the centrifugal governor born?",
+      "golds": [
+        "Edinburgh"
+      ],
+      "topContent": "centrifugal governor was created by James Watt",
+      "returnedContents": [
+        "centrifugal governor was created by James Watt",
+        "centrifugal governor was created by Robert Louis Stevenson",
+        "Herodotus was born in the city of Halicarnassus",
+        "Napoleon was born in the city of London",
+        "Vitruvius was born in the city of Rome",
+        "Plutarch was born in the city of Chaeronea",
+        "Plutarch was born in the city of Varanasi",
+        "Napoleon was born in the city of Ajaccio",
+        "Fibonacci was born in the city of Paris",
+        "The Governor of Oklahoma is Mary Fallin"
+      ],
+      "latencyMs": 1139
+    },
+    {
+      "question": "What is the name of the capital city of the country to which the spouse of the author of Star Trek canon holds citizenship?",
+      "golds": [
+        "Berlin"
+      ],
+      "topContent": "The author of Star Trek canon is Joseph Goebbels",
+      "returnedContents": [
+        "The author of Star Trek canon is Joseph Goebbels",
+        "The author of Star Trek canon is Gene Roddenberry",
+        "The author of Star Trek is James Madison",
+        "The author of Star Trek is Gene Roddenberry",
+        "Star Trek was founded by Queen Victoria I",
+        "The author of Starship Troopers is Daphne du Maurier",
+        "J. R. R. Tolkien was born in the city of Middelburg",
+        "George Lucas is a citizen of Israel",
+        "Kevin Spacey is a citizen of United States of America",
+        "J. R. R. Tolkien was born in the city of Bloemfontein"
+      ],
+      "latencyMs": 1448
+    },
+    {
+      "question": "Which language is considered the official language of Eric Weissberg's country of citizenship?",
+      "golds": [
+        "Finnish"
+      ],
+      "topContent": "Eric Weissberg is a citizen of United Kingdom",
+      "returnedContents": [
+        "Eric Weissberg is a citizen of United Kingdom",
+        "Eric Weissberg is a citizen of United States of America",
+        "The official language of Prussia is German",
+        "The official language of Czech Republic is Czech",
+        "The official language of Israel is Hebrew",
+        "The official language of El Salvador is Spanish",
+        "The official language of Croatia is Croatian",
+        "The official language of California is English",
+        "The official language of Cairo is German",
+        "The official language of Germany is English"
+      ],
+      "latencyMs": 1205
+    },
+    {
+      "question": "Where is the educational institution located where Tom Selleck was educated and its headquarters also situated?",
+      "golds": [
+        "Vienna"
+      ],
+      "topContent": "The univeristy where Tom Selleck was educated is Academy of Fine Arts Vienna",
+      "returnedContents": [
+        "The univeristy where Tom Selleck was educated is Academy of Fine Arts Vienna",
+        "The univeristy where Tom Selleck was educated is University of Southern California",
+        "The univeristy where Tom Brady was educated is University of Bonn",
+        "The univeristy where Tom Brady was educated is University of Michigan",
+        "The headquarters of Stowe School is located in the city of Stowe",
+        "The headquarters of Yale University is located in the city of Toronto",
+        "The univeristy where Samuel Sewall was educated is Oregon State University",
+        "The univeristy where Thomas Vanek was educated is University of Michigan",
+        "The headquarters of University of Toronto is located in the city of Florence",
+        "The headquarters of Boston University is located in the city of Boston"
+      ],
+      "latencyMs": 1037
+    },
+    {
+      "question": "Which language was used by Mario Puzo in writing his famous work?",
+      "golds": [
+        "American English"
+      ],
+      "topContent": "Mario Puzo is famous for The Godfather",
+      "returnedContents": [
+        "Mario Puzo is famous for The Godfather",
+        "Mario Puzo is famous for Billy Elliot the Musical",
+        "Mario Puzo is a citizen of South Africa",
+        "The author of The Godfather is Mario Puzo",
+        "Mario Puzo is a citizen of United States of America",
+        "The author of The Knight's Tale is Mario Puzo",
+        "Vito Corleone was created by Mario Puzo",
+        "Michael Corleone was created by Mario Puzo",
+        "Land of Oz was created by Mario Puzo",
+        "Mario Monti speaks the language of Italian"
+      ],
+      "latencyMs": 1112
+    },
+    {
+      "question": "Which continent is the country of origin of Teenage Fanclub located in?",
+      "golds": [
+        "Oceania"
+      ],
+      "topContent": "Teenage Fanclub was created in the country of Italy",
+      "returnedContents": [
+        "Teenage Fanclub was created in the country of Italy",
+        "Teenage Fanclub was created in the country of United Kingdom",
+        "The origianl broadcaster of Teen Wolf is MTV",
+        "Young Guns was created in the country of Israel",
+        "Young Guns was created in the country of United States of America",
+        "Club Nouveau was created in the country of United States of America",
+        "Club Nouveau was created in the country of Soviet Union",
+        "Adult Swim was created in the country of India",
+        "Famous Funnies was created in the country of Luxembourg",
+        "Australian hip hop was created in the country of Australia"
+      ],
+      "latencyMs": 1053
+    },
+    {
+      "question": "Where was the work location of the individual who founded the religion practiced by Edward Mooney?",
+      "golds": [
+        "Riyadh Region"
+      ],
+      "topContent": "Edward Mooney is affiliated with the religion of Christian Science",
+      "returnedContents": [
+        "Edward Mooney is affiliated with the religion of Christian Science",
+        "Edward Mooney is affiliated with the religion of Catholic Church",
+        "Paul Mooney is a citizen of Australia",
+        "Moazzam Begg is affiliated with the religion of Catholic Church",
+        "Paul Mooney is a citizen of United States of America",
+        "Ed Macauley is affiliated with the religion of Christianity",
+        "Buddhism was founded by Mekere Morauta",
+        "Ed Macauley is affiliated with the religion of Catholic Church",
+        "Joseph de Maistre is affiliated with the religion of Methodism",
+        "Shingon Buddhism was founded by William Waynflete"
+      ],
+      "latencyMs": 1171
+    },
+    {
+      "question": "What is the professional background of the spouse of Lalu Prasad Yadav?",
+      "golds": [
+        "singer"
+      ],
+      "topContent": "Lalu Prasad Yadav is married to Rabri Devi",
+      "returnedContents": [
+        "Lalu Prasad Yadav is married to Rabri Devi",
+        "Lalu Prasad Yadav is married to Goldust",
+        "Lalu Prasad Yadav is a citizen of India",
+        "Judd Apatow is married to Lalu Prasad Yadav",
+        "Rashtriya Janata Dal was founded by Lalu Prasad Yadav",
+        "Akhilesh Yadav is married to Dimple Yadav",
+        "Mulayam Singh Yadav's child is Akhilesh Yadav",
+        "Mulayam Singh Yadav's child is John Stuart Mill",
+        "Akhilesh Yadav worked in the city of Lucknow",
+        "Akhilesh Yadav is a citizen of India"
+      ],
+      "latencyMs": 973
+    },
+    {
+      "question": "What is the name of the capital city of the country that is the origin of the sport played by Enrico Villanueva?",
+      "golds": [
+        "Bondi Junction"
+      ],
+      "topContent": "Enrico Villanueva plays the position of closer",
+      "returnedContents": [
+        "Enrico Villanueva plays the position of closer",
+        "Enrico Villanueva plays the position of center",
+        "Esteban Cambiasso is associated with the sport of cricket",
+        "Esteban Cambiasso is associated with the sport of association football",
+        "Ciudad de Murcia is associated with the sport of association football",
+        "Esporte Clube Novo Hamburgo is associated with the sport of association football",
+        "Ciudad de Murcia is associated with the sport of basketball",
+        "Chacarita Juniors is associated with the sport of association football",
+        "Millonarios is associated with the sport of association football",
+        "Ettore Bugatti is associated with the sport of baseball"
+      ],
+      "latencyMs": 1230
+    },
+    {
+      "question": "In what field did the author, who is known for Julius Caesar, work in?",
+      "golds": [
+        "philosopher"
+      ],
+      "topContent": "The author of Julius Caesar is William Shakespeare",
+      "returnedContents": [
+        "The author of Julius Caesar is William Shakespeare",
+        "The author of Julius Caesar is Aristotle",
+        "The author of The Twelve Caesars is John von Neumann",
+        "The author of The Twelve Caesars is Suetonius",
+        "Longus works in the field of writer",
+        "Virgil works in the field of poet",
+        "William Shakespeare works in the field of businessperson",
+        "The author of Romeo and Juliet is William Shakespeare",
+        "The author of Gorgias is Karl Marx",
+        "The author of Antony and Cleopatra is William Shakespeare"
+      ],
+      "latencyMs": 1018
+    },
+    {
+      "question": "Which faith is the partner of Benigno Aquino Jr. affiliated with?",
+      "golds": [
+        "Methodism"
+      ],
+      "topContent": "Benigno Aquino Jr. is married to Corazon Aquino",
+      "returnedContents": [
+        "Benigno Aquino Jr. is married to Corazon Aquino",
+        "Corazon Aquino is affiliated with the religion of Catholic Church",
+        "Corazon Aquino is affiliated with the religion of Methodism",
+        "Andres Bonifacio is affiliated with the religion of Catholicism",
+        "Enrique Peña Nieto is affiliated with the religion of Catholic Church",
+        "Luis Antonio Tagle is affiliated with the religion of Catholic Church",
+        "Roberto Formigoni is affiliated with the religion of Buddhism",
+        "Luis Muñoz Rivera is affiliated with the religion of Catholic Church",
+        "Pedro Arrupe is affiliated with the religion of Religious Society of Friends",
+        "Nicholas of Tolentino is affiliated with the religion of Catholic Church"
+      ],
+      "latencyMs": 1078
+    },
+    {
+      "question": "From which country does the spouse of the creator of WWE Tough Enough hold citizenship?",
+      "golds": [
+        "Ireland"
+      ],
+      "topContent": "WWE Tough Enough was created by William Shakespeare",
+      "returnedContents": [
+        "WWE Tough Enough was created by William Shakespeare",
+        "WWE Tough Enough was created by Vince McMahon",
+        "Mark Haddon is a citizen of United Kingdom",
+        "Vince McMahon is a citizen of Germany",
+        "Brian May is a citizen of United Kingdom",
+        "Trudie Styler is a citizen of Italy",
+        "Alessandra Daddario is a citizen of United States of America",
+        "Trudie Styler is a citizen of United Kingdom",
+        "Kim Kardashian is a citizen of United States of America",
+        "Brian May is a citizen of Pakistan"
+      ],
+      "latencyMs": 988
+    },
+    {
+      "question": "What is the name of the current head of state of the country where \"Outsourced\" came from?",
+      "golds": [
+        "Recep Tayyip Erdoğan"
+      ],
+      "topContent": "Outsourced was created in the country of United States of America",
+      "returnedContents": [
+        "Outsourced was created in the country of United States of America",
+        "The name of the current head of state in Cameroon is Paul Biya",
+        "Outsourced was created in the country of Turkey",
+        "The name of the current head of state in Nicaragua is Daniel Ortega",
+        "The name of the current head of state in Indonesia is Oleg Tsarev",
+        "The name of the current head of state in Iceland is Guðni Jóhannesson",
+        "The name of the current head of state in Lebanon is Vajubhai Vala",
+        "OutKast was created in the country of United States of America",
+        "The name of the current head of state in Czech Republic is Bounnhang Vorachith",
+        "The name of the current head of state in Ireland is Roch Marc Christian Kaboré"
+      ],
+      "latencyMs": 998
+    },
+    {
+      "question": "In which city is the headquarters of the TV network that originally broadcasted NBA on ABC?",
+      "golds": [
+        "Red Bank"
+      ],
+      "topContent": "The origianl broadcaster of NBA on ABC is American Broadcasting Company",
+      "returnedContents": [
+        "The origianl broadcaster of NBA on ABC is American Broadcasting Company",
+        "The origianl broadcaster of NBA on ABC is British Broadcasting Corporation",
+        "The headquarters of CTV Television Network is located in the city of Toronto",
+        "The headquarters of CTV Television Network is located in the city of Arlington County",
+        "The headquarters of TV Land is located in the city of New York City",
+        "The headquarters of HBO is located in the city of New York City",
+        "The origianl broadcaster of NHL on ABC is British Broadcasting Corporation",
+        "The origianl broadcaster of NHL on ABC is American Broadcasting Company",
+        "The headquarters of American Broadcasting Company is located in the city of California",
+        "The headquarters of American Broadcasting Company is located in the city of New York City"
+      ],
+      "latencyMs": 1033
+    },
+    {
+      "question": "What is the name of the founder of the religion associated with Dzhokhar Dudayev?",
+      "golds": [
+        "Gérard Blitz"
+      ],
+      "topContent": "Dzhokhar Dudayev is affiliated with the religion of Islam",
+      "returnedContents": [
+        "Dzhokhar Dudayev is affiliated with the religion of Islam",
+        "Dzhokhar Dudayev is affiliated with the religion of Catholic Church",
+        "Fyodor Dostoyevsky is affiliated with the religion of Russian Orthodox Church",
+        "Fyodor Dostoyevsky is affiliated with the religion of Catholicism",
+        "Josef Dobrovský is affiliated with the religion of Religious Society of Friends",
+        "Hasidism was founded by Nicholas II of Russia",
+        "Zoroastrianism was founded by Zoroaster",
+        "Viktor Zubkov is affiliated with the religion of Church of the Nazarene",
+        "Pravind Jugnauth is affiliated with the religion of Taoism",
+        "Zoroastrianism was founded by Hipólito Yrigoyen"
+      ],
+      "latencyMs": 1076
+    },
+    {
+      "question": "Which political figure holds the role of head of state for the country that Brad Stevens' sport is associated with?",
+      "golds": [
+        "Mikhail Gorbachev"
+      ],
+      "topContent": "Brad Stevens is associated with the sport of basketball",
+      "returnedContents": [
+        "Brad Stevens is associated with the sport of basketball",
+        "The head coach of Boston Celtics is Brad Stevens",
+        "The name of the current head of state in United States of America is Donald Trump",
+        "Brad Grey is a citizen of United States of America",
+        "Christopher Stevens is a citizen of United States of America",
+        "The name of the current head of state in Russia is Vladimir Putin",
+        "The name of the current head of state in Sweden is Bashar al-Assad",
+        "Brad Miller plays the position of wide receiver",
+        "Christopher Stevens is a citizen of Austria",
+        "The name of the current head of state in England is Elizabeth II"
+      ],
+      "latencyMs": 1055
+    },
+    {
+      "question": "What is the name of the leader of the government in the country where the sport related to the 1985 NBA Draft originated?",
+      "golds": [
+        "Lili Bosse"
+      ],
+      "topContent": "1985 NBA Draft is associated with the sport of association football",
+      "returnedContents": [
+        "1985 NBA Draft is associated with the sport of association football",
+        "1985 NBA Draft is associated with the sport of basketball",
+        "1996 NBA Draft is associated with the sport of basketball",
+        "2004 NBA Draft is associated with the sport of basketball",
+        "2004 NBA Draft is associated with the sport of association football",
+        "2012 NBA Draft is associated with the sport of basketball",
+        "basketball was created in the country of Soviet Union",
+        "2017 NBA draft is associated with the sport of basketball",
+        "Philippine Basketball Association Draft is associated with the sport of basketball",
+        "1986 NBA Playoffs is associated with the sport of association football"
+      ],
+      "latencyMs": 1084
+    },
+    {
+      "question": "In which city is the capital located of the country where the sport that Ricky Rubio plays originated?",
+      "golds": [
+        "Bondi Junction"
+      ],
+      "topContent": "Ricky Rubio plays the position of defender",
+      "returnedContents": [
+        "Ricky Rubio plays the position of defender",
+        "Ricky Rubio plays the position of point guard",
+        "The capital of Spain is Madrid",
+        "The capital of Puerto Rico is San Juan",
+        "Brazilian jiu-jitsu was created in the country of Brazil",
+        "Millonarios is associated with the sport of association football",
+        "Ciudad de Murcia is associated with the sport of association football",
+        "Red Bull Arena is associated with the sport of association football",
+        "The capital of Dominican Republic is Santo Domingo",
+        "Red Bull Arena is associated with the sport of baseball"
+      ],
+      "latencyMs": 1041
+    },
+    {
+      "question": "What is the primary language spoken in the country where Flogging Molly comes from?",
+      "golds": [
+        "English"
+      ],
+      "topContent": "Flogging Molly was created in the country of Germany",
+      "returnedContents": [
+        "Flogging Molly was created in the country of Germany",
+        "Flogging Molly was created in the country of United States of America",
+        "Ian Fleming speaks the language of English",
+        "Dolly Parton speaks the language of English",
+        "William Golding speaks the language of English",
+        "The official language of Scotland is English",
+        "Ian Fleming speaks the language of Italian",
+        "Daniel Defoe speaks the language of English",
+        "Isla Fisher speaks the language of English",
+        "E. M. Forster speaks the language of English"
+      ],
+      "latencyMs": 935
+    },
+    {
+      "question": "Which company did the employer of the creator of Link work for?",
+      "golds": [
+        "University of Oxford"
+      ],
+      "topContent": "Link was created by Shigeru Miyamoto",
+      "returnedContents": [
+        "Link was created by Shigeru Miyamoto",
+        "Facebook was created by Marv Wolfman",
+        "Facebook was created by Mark Zuckerberg",
+        "Rob Pike is employed by Google",
+        "Larry Page is employed by Google",
+        "funk was created in the country of United States of America",
+        "funk was created in the country of Japan",
+        "The origianl broadcaster of GLOW is Netflix",
+        "MathML was developed by World Wide Web Consortium",
+        "Knots Landing was created by David Jacobs"
+      ],
+      "latencyMs": 980
+    },
+    {
+      "question": "What is the country of origin of the sport associated with Dave Dombrowski's employer?",
+      "golds": [
+        "Australia"
+      ],
+      "topContent": "Dave Dombrowski is employed by Stevenage F.C.",
+      "returnedContents": [
+        "Dave Dombrowski is employed by Stevenage F.C.",
+        "Dave Dombrowski is employed by Detroit Tigers",
+        "Dave Duncan is associated with the sport of baseball",
+        "Dave Roberts is associated with the sport of baseball",
+        "Joe McGinnity is associated with the sport of association football",
+        "defenceman is associated with the sport of ice hockey",
+        "defenceman is associated with the sport of roller derby",
+        "Lenny Dykstra is associated with the sport of baseball",
+        "Joe McGinnity is associated with the sport of baseball",
+        "Mike D'Antoni is associated with the sport of basketball"
+      ],
+      "latencyMs": 1019
+    },
+    {
+      "question": "Which sport is associated with the position played by Bobby Hurley?",
+      "golds": [
+        "sumo"
+      ],
+      "topContent": "Bobby Hurley plays the position of midfielder",
+      "returnedContents": [
+        "Bobby Hurley plays the position of midfielder",
+        "Bobby Hurley plays the position of point guard",
+        "Bobby Hebert plays the position of quarterback",
+        "Bobby Abreu is associated with the sport of baseball",
+        "Bobby Hebert plays the position of goalkeeper",
+        "Bruce Hurst is associated with the sport of baseball",
+        "Bob Turley is associated with the sport of baseball",
+        "Roy Hibbert plays the position of center",
+        "Bob Bradley is associated with the sport of association football",
+        "Stephen Curry plays the position of point guard"
+      ],
+      "latencyMs": 963
+    },
+    {
+      "question": "What is the place of employment of the individual who founded the religion practiced by Jacqueline Kennedy Onassis?",
+      "golds": [
+        "Edinburgh"
+      ],
+      "topContent": "Jacqueline Kennedy Onassis is affiliated with the religion of Catholic Church",
+      "returnedContents": [
+        "Jacqueline Kennedy Onassis is affiliated with the religion of Catholic Church",
+        "Jacqueline Kennedy Onassis is affiliated with the religion of Church of Scotland",
+        "Jacqueline Kennedy Onassis speaks the language of English",
+        "Jacqueline Kennedy Onassis is a citizen of United States of America",
+        "Jacqueline Kennedy Onassis is a citizen of United Kingdom",
+        "John F. Kennedy is married to Jacqueline Kennedy Onassis",
+        "Jean Kennedy Smith is affiliated with the religion of Christian Science",
+        "Jean Kennedy Smith is affiliated with the religion of Catholic Church",
+        "Ethel Skakel Kennedy is affiliated with the religion of The Church of Jesus Christ of Latter-day Saints",
+        "Anthony Kennedy is affiliated with the religion of Catholic Church"
+      ],
+      "latencyMs": 994
+    },
+    {
+      "question": "What is the birthplace of the person who founded the religion that Ferdinando I de' Medici professes?",
+      "golds": [
+        "Epworth"
+      ],
+      "topContent": "Ferdinando I de' Medici is affiliated with the religion of Catholic Church",
+      "returnedContents": [
+        "Ferdinando I de' Medici is affiliated with the religion of Catholic Church",
+        "Ferdinando I de' Medici is affiliated with the religion of Methodism",
+        "Cosimo II de' Medici died in the city of Florence",
+        "Nation of Islam was founded by Ferdinand VI of Spain",
+        "Dante Alighieri was born in the city of Florence",
+        "Niccolò Machiavelli was born in the city of Florence",
+        "Molinism was founded by Luis de Molina",
+        "Ferdinand III of Castile is affiliated with the religion of Catholicism",
+        "Fernando Collor de Mello is affiliated with the religion of Catholic Church",
+        "Ferdinand VI of Spain is affiliated with the religion of Catholic Church"
+      ],
+      "latencyMs": 1075
+    }
+  ]
+}

@@ -76,24 +76,40 @@ tested directly rather than through a fabricated context.
 
 ---
 
-## Multi-hop: top-1 is the wrong metric
+## Multi-hop: top-1 is the wrong metric, and 262k has a hard ceiling
 
-`cr-mh-6k`, 455 facts, 156 conflict groups, granite-small-en-r2, top-k 10:
+granite-small-en-r2, top-k 10, vector+bm25:
 
-| | supersession ON | OFF |
-| --- | --- | --- |
-| top-1 | **0%** | **0%** |
-| any-rank (gold in top-10) | **50%** | 37% |
-| stale leaks | **0** | 29 |
+| | 6k ON | 6k OFF | 262k ON | 262k OFF |
+| --- | --- | --- | --- | --- |
+| top-1 | **0%** | **0%** | 2% | 1% |
+| any-rank (gold in top-10) | **50%** | 37% | **14%** | 12% |
+| stale leaks | **0** | 29 | **0** | 1 |
 
-top-1 is 0% in both arms because a multi-hop answer is not contained in any single fact — the
+top-1 is ~0% in every arm because a multi-hop answer is not contained in any single fact — the
 question needs two facts combined, so a substring match against one retrieved atom can never
 succeed. **Do not report top-1 for the multi-hop instances.**
 
-On the appropriate metric supersession helps clearly: +13 points of any-rank and all 29 stale
-leaks eliminated. This corrects an earlier reading that supersession "did not help multi-hop and
-was marginally negative" — that came from the MAB *reader* score, a different measurement.
-Retrieval-side, supersession helps; the unsolved part is the reader chaining two facts.
+**The 14% at 262k is a ceiling, not a score.** Only 14 questions in 100 have the gold anywhere in
+the retrieved set, so a perfect reader scores at most 14%. That fully explains the 7-8% reader
+result reported earlier: the reader was never the binding constraint — retrieval was.
+
+Multi-hop retrieval collapses with corpus size in a way single-hop does not (any-rank 50% → 14%,
+while single-hop holds at 97-100% over the same range). The reason is structural: a multi-hop
+question names the *first* hop's subject, so a single query against the second hop's fact has
+nothing lexical or semantic to match on. More facts means more competition for the same ten slots
+with no extra signal.
+
+**This reframes the gap to the published 27%.** No reader can exceed what retrieval surfaces, so a
+number roughly double our ceiling cannot be a reader advantage. Closing it needs **chained
+retrieval** — resolve hop 1, then query again for hop 2 — which Knowl does not do: `knowl_query`
+is single-shot and returns ranked atoms without iterating. Tuning supersession, ranking or the
+reader prompt provably cannot move this number.
+
+Supersession still helps on the appropriate metric (+13 any-rank and all 29 stale leaks
+eliminated at 6k; only +2 at 262k, where the ceiling is dominated by hop 2 never being retrieved
+at all). This corrects an earlier reading that supersession "did not help multi-hop and was
+marginally negative" — that came from the reader score, a different measurement.
 
 ---
 
