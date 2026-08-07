@@ -67,9 +67,14 @@ type Run = { metrics: { recallAt3: number }; stderr: string };
 function evaluate(vector: boolean): Run {
   const args = [CLI_PATH, 'eval', 'retrieval', '--dataset', DATASET, '--json'];
   if (vector) args.push('--vector');
+  // cwd is the initialised fixture repository, not the process's own. The command resolves a
+  // project root to read vector config from, and a developer checkout happens to be one --
+  // `.knowl/` is gitignored, so CI's is not, and running from the default cwd passed locally
+  // and failed on all four legs with "No Knowl project found".
+  //
   // spawnSync rather than execFileSync: stderr carries the fixture-embedding notice, which is
   // the direct evidence the reindex ran, and execFileSync does not hand it back on success.
-  const result = spawnSync(process.execPath, args, { encoding: 'utf8' });
+  const result = spawnSync(process.execPath, args, { cwd: ROOT, encoding: 'utf8' });
   expect(result.status, result.stderr).toBe(0);
   return { metrics: JSON.parse(result.stdout).metrics, stderr: result.stderr };
 }
@@ -79,6 +84,10 @@ describe('knowl eval retrieval --vector against a fixture-backed dataset', () =>
     await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(ROOT, { recursive: true });
     await fs.writeFile(DATASET, JSON.stringify(DATASET_JSON), 'utf8');
+    // The fixtures are evaluated in a throwaway store the command builds, but it still resolves
+    // a project root to read the vector configuration from, so one has to exist.
+    const init = spawnSync(process.execPath, [CLI_PATH, 'init', '--yes'], { cwd: ROOT, encoding: 'utf8' });
+    expect(init.status, init.stderr).toBe(0);
   });
 
   afterAll(async () => {
