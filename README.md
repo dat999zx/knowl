@@ -17,7 +17,7 @@
   <a href="#what-knowl-is-for"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-local.svg"><img src="docs/assets/chips/stat-local.svg" alt="100% local, no egress" height="38" /></picture></a>
 </p>
 
-<img src="docs/assets/demo.svg" alt="Recording a decision, then recording a replacement under the same subject, which supersedes the first at write time; knowl state then lists only the current decision" width="92%" />
+<img src="docs/assets/demo.gif" alt="Recording a decision, then recording a replacement under the same subject, which supersedes the first at write time; knowl status then reports one active item and one superseded" width="92%" />
 
 [Quick start](#quick-start) ·
 [Why supersession](#the-idea-memory-that-retires-itself) ·

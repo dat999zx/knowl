@@ -438,13 +438,23 @@ git commit -m "docs(readme): add host grid and lifecycle diagram"
 - Consumes: the chip row from Task 1 Step 6; the GIF goes directly beneath it.
 - Produces: nothing later tasks depend on.
 
-> **RESOLVED 2026-08-06 — this task shipped as an animated SVG, not a GIF.**
+> **RESOLVED 2026-08-06 — shipped as a real recording, via Docker, after two detours.**
 >
-> `vhs`, `ffmpeg`, and `ttyd` were all absent, and `ttyd` is Unix-oriented, so the VHS path
-> was blocked on Windows. Raised with the user, who chose the hand-authored animated SVG
-> fallback. Delivered as `docs/assets/demo.svg`: a 14-second SMIL loop of the same
-> supersession sequence, ~4 KB, crisp at any zoom, editable as text, no dependencies and no
-> recording step. `demo.tape` and `demo.gif` were never created.
+> First attempt: `vhs`, `ffmpeg` and `ttyd` were absent, so the task shipped a hand-authored
+> animated SVG instead.
+>
+> Second attempt: all three installed cleanly from winget, and `vhs` still hung — no output,
+> no error, `ttyd` never spawned, nothing bound to a port, reproduced on a one-line tape.
+> That is upstream `charmbracelet/vhs#631`, not a local misconfiguration.
+>
+> Driving the real CLI in the process showed the SVG was **wrong**: it depicted two
+> differently-titled decisions superseding each other, which does not happen — differing
+> titles are a near duplicate and the CLI leaves both active. Supersession at write time
+> needs a same-subject title.
+>
+> Shipped: `docs/assets/demo.gif`, recorded through `docs/assets/demo.Dockerfile` +
+> `demo.tape`, which run VHS in a container against the **published** knowl release. Real
+> output, ending on `Active: 1 / Superseded: 1`. `demo.svg` was deleted.
 >
 > The steps below are kept as the record of the original plan.
 
