@@ -32,11 +32,11 @@ Show
 
 Sleep 500ms
 
-Type `knowl decide "Auth approach" "Stateless auth via JWT."`
+Type `knowl decide "Database choice" "PostgreSQL. Managed, familiar."`
 Enter
 Sleep 1400ms
 
-Type `knowl decide "Auth approach" "Server-side session cookies. Revocable."`
+Type `knowl decide "Database choice" "SQLite. Lives beside the code, no server."`
 Enter
 Sleep 2200ms
 

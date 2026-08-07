@@ -12,8 +12,8 @@
   <rect x="122" y="100" width="52" height="20" rx="10" fill="#0f2e1f" stroke="#1c5c3c"/>
   <text x="148" y="114" font-size="11" font-weight="600" fill="#3fb950" text-anchor="middle">active</text>
 
-  <text x="48" y="146" font-size="15" font-weight="700" fill="#ffffff">Use session cookies</text>
-  <text x="48" y="167" font-size="11.5" fill="#898781">Server-side sessions. Revocable on logout.</text>
+  <text x="48" y="146" font-size="15" font-weight="700" fill="#ffffff">Use SQLite</text>
+  <text x="48" y="167" font-size="11.5" fill="#898781">Lives beside the code. No server to run.</text>
 
   <line x1="48" y1="182" x2="428" y2="182" stroke="#30363d"/>
 
@@ -24,17 +24,17 @@
   <text x="166" y="225" font-size="11.5" fill="#c9d1d9">0.95</text>
 
   <text x="48" y="247" font-size="11.5" fill="#6e7681">tags</text>
-  <text x="166" y="247" font-size="11.5" fill="#c9d1d9">auth · security</text>
+  <text x="166" y="247" font-size="11.5" fill="#c9d1d9">database · local-first</text>
 
   <text x="48" y="269" font-size="11.5" fill="#6e7681">source commit</text>
   <text x="166" y="269" font-size="11.5" fill="#c9d1d9">7b2e04c</text>
 
   <text x="48" y="291" font-size="11.5" fill="#6e7681">affected paths</text>
-  <text x="166" y="291" font-size="11.5" fill="#c9d1d9">src/auth/session.ts</text>
+  <text x="166" y="291" font-size="11.5" fill="#c9d1d9">src/store/database.ts</text>
 
   <circle cx="52" cy="308" r="3.5" fill="#eda100"/>
   <text x="66" y="312" font-size="11.5" fill="#6e7681">evidence</text>
-  <text x="166" y="312" font-size="11.5" fill="#eda100">symbol://SessionStore#rotate</text>
+  <text x="166" y="312" font-size="11.5" fill="#eda100">symbol://openDatabase</text>
 
   <!-- connectors -->
   <path d="M448 110 H482" stroke="#3987e5" stroke-width="1.2"/>

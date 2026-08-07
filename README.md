@@ -17,7 +17,7 @@
   <a href="#what-knowl-is-for"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-local.svg"><img src="docs/assets/chips/stat-local.svg" alt="100% local, no egress" height="38" /></picture></a>
 </p>
 
-<img src="docs/assets/demo-agent.svg" alt="An agent asks why the project uses session cookies, calls knowl_query, and answers from the active decision — including the alternative that was rejected — while the superseded predecessor is skipped. No files opened." width="94%" />
+<img src="docs/assets/demo-agent.svg" alt="An agent is asked which database the project uses, calls knowl_query, and answers SQLite from the active decision — knowing PostgreSQL was considered and rejected — while the superseded predecessor is skipped. No files opened." width="94%" />
 
 [Quick start](#quick-start) ·
 [Why supersession](#the-idea-memory-that-retires-itself) ·
@@ -33,7 +33,7 @@
 ---
 
 Coding agents start every session blank, so teams write things down — and those notes only ever
-grow. Six months in, the store still reports the authentication design you replaced in March,
+grow. Six months in, the store still reports the database you migrated off last spring,
 because nothing ever told it that decision was over.
 
 Knowl is a repository-local store of **typed knowledge atoms** — decisions, constraints,
@@ -79,7 +79,7 @@ Then start a new agent session so the host picks up its guidance and MCP registr
 
 ## The idea: memory that retires itself
 
-Most memory systems are append-only. Storing "we moved to session cookies" leaves "we use JWTs"
+Most memory systems are append-only. Storing "we moved to SQLite" leaves "we use PostgreSQL"
 active and retrievable, so the agent gets both and picks by rank. Knowl treats a same-subject write
 as a correction: the predecessor is marked `superseded`, drops out of normal retrieval, and stays
 queryable through [`knowl timeline`](docs/reference.md#metadata-history-and-ownership).
@@ -111,7 +111,7 @@ Not a mock-up — the same sequence against the published CLI, recorded from
 [`demo.tape`](docs/assets/demo.tape):
 
 <div align="center">
-<img src="docs/assets/demo.gif" alt="Terminal recording: knowl decide records a decision, a second decide under the same subject reports Superseded older decision, and knowl status then reports one active item and one superseded" width="88%" />
+<img src="docs/assets/demo.gif" alt="Terminal recording: knowl decide records a database decision, a second decide on the same subject reports Superseded older decision, and knowl status then reports one active item and one superseded" width="88%" />
 </div>
 
 ## What gets stored
@@ -242,7 +242,7 @@ Not user preferences, not chat history — the decisions, constraints, and archi
 codebase, and which of them are still true today.
 
 <div align="center">
-<img src="docs/assets/demo-drift.svg" alt="The same six months in two stores: append-only, where every note stays true forever and a query today matches four contradicting answers; and governed, where each superseded fact ends where it stopped being true and the same query matches one" width="92%" />
+<img src="docs/assets/demo-drift.svg" alt="One question answered four times over two years: append-only keeps every answer true forever so a query today matches four contradicting ones, while a governed store ends each replaced answer and matches one" width="92%" />
 </div>
 
 Three choices follow from that:
