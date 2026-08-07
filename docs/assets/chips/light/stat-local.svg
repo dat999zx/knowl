@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="38" viewBox="0 0 180 38"
+     role="img" aria-label="100 percent local, no egress">
+  <rect x="0.5" y="0.5" width="179" height="37" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="14" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="14" font-weight="700" fill="#9a6700">100%</text>
+  <text x="61" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="12" fill="#57606a">local, no egress</text>
+</svg>

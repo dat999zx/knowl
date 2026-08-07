@@ -1,12 +1,13 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 import { createClient } from '@libsql/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { isLifecycleCapability, isLifecycleEvent, readLifecyclePayload } from '../../src/cli/agents/lifecycle.js';
 
-const TEST_DIR = path.resolve('./.knowl-agent-lifecycle-test');
+const TEST_DIR = path.join(os.tmpdir(), 'knowl-agent-lifecycle-test');
 const CLI_PATH = path.resolve('./dist/index.js');
 
 function run(args: string[], input?: string) {

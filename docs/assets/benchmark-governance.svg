@@ -1,6 +1,6 @@
 <svg width="760" height="228" viewBox="0 0 760 228" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-labelledby="governance-title governance-desc">
   <title id="governance-title">Internal governance retrieval benchmark</title>
-  <desc id="governance-desc">Across 44 top-three cases, mean reciprocal rank was 94.3 percent. Stale active decisions appeared 43 times and caused 22 stale-trap failures. Rejected decisions appeared zero times.</desc>
+  <desc id="governance-desc">Across 44 top-three cases, mean reciprocal rank was 100 percent. Stale active decisions appeared 27 times and caused 21 stale-trap failures. Rejected decisions appeared zero times.</desc>
 
   <rect x="1" y="1" width="758" height="226" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
 
@@ -14,13 +14,13 @@
   </g>
 
   <g text-anchor="middle">
-    <text x="138" y="142" font-size="40" font-weight="800" fill="#3987e5">94.3<tspan font-size="20" font-weight="700" fill="#7cb0f5">%</tspan></text>
+    <text x="138" y="142" font-size="40" font-weight="800" fill="#3987e5">100<tspan font-size="20" font-weight="700" fill="#7cb0f5">%</tspan></text>
     <text x="138" y="169" font-size="13" font-weight="600" fill="#c3c2b7">mean reciprocal rank</text>
-    <text x="138" y="188" font-size="12" fill="#898781">not a top-1 percentage</text>
+    <text x="138" y="188" font-size="12" fill="#898781">expected decision ranked first</text>
 
-    <text x="380" y="142" font-size="40" font-weight="800" fill="#eda100">43</text>
+    <text x="380" y="142" font-size="40" font-weight="800" fill="#eda100">27</text>
     <text x="380" y="169" font-size="13" font-weight="600" fill="#c3c2b7">stale-active returns</text>
-    <text x="380" y="188" font-size="12" fill="#898781">22 stale-trap failures</text>
+    <text x="380" y="188" font-size="12" fill="#898781">21 stale-trap failures</text>
 
     <text x="621.5" y="142" font-size="40" font-weight="800" fill="#0ca30c">0</text>
     <text x="621.5" y="169" font-size="13" font-weight="600" fill="#c3c2b7">rejected items returned</text>

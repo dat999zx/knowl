@@ -23,9 +23,9 @@ function fixtureText(id: string): string {
 }
 
 describe('semantic suite shape', () => {
-  it('has 100 to 120 cases', () => {
+  it('has 100 to 140 cases', () => {
     expect(suite.cases.length).toBeGreaterThanOrEqual(100);
-    expect(suite.cases.length).toBeLessThanOrEqual(120);
+    expect(suite.cases.length).toBeLessThanOrEqual(140);
   });
 
   it('gives every case a tier and a resolvable expected item', () => {
@@ -37,11 +37,37 @@ describe('semantic suite shape', () => {
     }
   });
 
-  it('keeps queries to the 2-6 keywords agents actually send', () => {
+  /**
+   * This assertion used to cap every query at 6 words, which baked a refuted rule into the one
+   * suite meant to discriminate. The ground-truth ablation in docs/evals/agent-surface.md found
+   * truncating to six words costs 4.7-7.2pp hit@1 while off-subject padding costs 24-37pp: count
+   * is not the variable, on-subject-ness is. The cap also made the suite unrepresentative --
+   * 921 real knowl_query calls average 5.75 words with 26.6% over 6 and a max of 12, while the
+   * suite averaged 3.5 and topped out at 6, so no case exercised the length agents actually send.
+   *
+   * What replaces it is a floor and a distribution, not a ceiling.
+   */
+  it('carries queries at the length agents really send, with no upper cap', () => {
+    const lengths = suite.cases.map((c: any) => String(c.query).trim().split(/\s+/).length);
+    for (const length of lengths) expect(length).toBeGreaterThanOrEqual(2);
+    // Representativeness: real traffic is 26.6% over six words. Well under that and the suite
+    // has drifted back to the short-query regime the cap created.
+    const overSix = lengths.filter((n: number) => n > 6).length;
+    expect(overSix / lengths.length).toBeGreaterThan(0.15);
+  });
+
+  /**
+   * Agents do not end a query with a question mark: 0 of 921 real calls did. A suite of
+   * natural-language questions would measure a phrasing nobody sends.
+   *
+   * Only the punctuation is asserted. The same measurement also found no query *leading* with an
+   * interrogative, but enforcing that here fails `where secrets live` -- a relative clause, not a
+   * question, and perfectly plausible agent phrasing. The blunt version of this rule flags good
+   * queries, which is how the word-count cap it replaced went wrong in the first place.
+   */
+  it('never phrases a case as an explicit question', () => {
     for (const testCase of suite.cases) {
-      const words = String(testCase.query).trim().split(/\s+/);
-      expect(words.length).toBeGreaterThanOrEqual(2);
-      expect(words.length).toBeLessThanOrEqual(6);
+      expect(String(testCase.query).trim()).not.toMatch(/\?$/);
     }
   });
 

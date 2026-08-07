@@ -2,11 +2,12 @@
 import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { createClient } from '@libsql/client';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
-const TEST_DIR = path.resolve('./.knowl-cli-test');
-const AGENTS_TEST_DIR = path.resolve('./.knowl-cli-agents-test');
-const AGENTS_REFRESH_TEST_DIR = path.resolve('./.knowl-cli-agents-refresh-test');
+const TEST_DIR = path.join(os.tmpdir(), 'knowl-cli-test');
+const AGENTS_TEST_DIR = path.join(os.tmpdir(), 'knowl-cli-agents-test');
+const AGENTS_REFRESH_TEST_DIR = path.join(os.tmpdir(), 'knowl-cli-agents-refresh-test');
 const CLI_PATH = path.resolve('./dist/index.js');
 const managedSection = (source: string) => source.match(
   /<!-- KNOWL_PROJECT_MEMORY -->[\s\S]*?<!-- \/KNOWL_PROJECT_MEMORY -->/,
@@ -98,7 +99,7 @@ describe('CLI Integration', () => {
   });
 
   it('should create project .gitignore with .knowl during init', async () => {
-    const ignoreDir = path.resolve('./.knowl-cli-new-gitignore-test');
+    const ignoreDir = path.join(os.tmpdir(), 'knowl-cli-new-gitignore-test');
     await fs.rm(ignoreDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(ignoreDir, { recursive: true });
 
@@ -115,7 +116,7 @@ describe('CLI Integration', () => {
   });
 
   it('should append .knowl to existing project .gitignore without overwriting content', async () => {
-    const gitignoreDir = path.resolve('./.knowl-cli-gitignore-test');
+    const gitignoreDir = path.join(os.tmpdir(), 'knowl-cli-gitignore-test');
     await fs.rm(gitignoreDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(gitignoreDir, { recursive: true });
     await fs.writeFile(path.join(gitignoreDir, '.gitignore'), 'node_modules/\n.env\n', 'utf-8');
@@ -156,7 +157,7 @@ describe('CLI Integration', () => {
   });
 
   it('should merge missing default config keys when init is rerun in an existing repository', async () => {
-    const oldProjectDir = path.resolve('./.knowl-cli-old-config-test');
+    const oldProjectDir = path.join(os.tmpdir(), 'knowl-cli-old-config-test');
     await fs.rm(oldProjectDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(path.join(oldProjectDir, '.knowl'), { recursive: true });
     await fs.writeFile(
@@ -186,7 +187,7 @@ describe('CLI Integration', () => {
   });
 
   it('should bootstrap missing database tables when init is rerun in an existing repository', async () => {
-    const oldDbDir = path.resolve('./.knowl-cli-old-db-test');
+    const oldDbDir = path.join(os.tmpdir(), 'knowl-cli-old-db-test');
     await fs.rm(oldDbDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(path.join(oldDbDir, '.knowl'), { recursive: true });
     await fs.writeFile(
@@ -216,7 +217,7 @@ describe('CLI Integration', () => {
   });
 
   it('should run explicit upgrade for existing repositories', async () => {
-    const upgradeDir = path.resolve('./.knowl-cli-upgrade-test');
+    const upgradeDir = path.join(os.tmpdir(), 'knowl-cli-upgrade-test');
     await fs.rm(upgradeDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(upgradeDir, { recursive: true });
 
@@ -296,7 +297,7 @@ describe('CLI Integration', () => {
   });
 
   it('rejects an unsupported explicit agent before base init writes', async () => {
-    const root = path.resolve('.knowl-cli-invalid-agent-test');
+    const root = path.join(os.tmpdir(), 'knowl-cli-invalid-agent-test');
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(root, { recursive: true });
     expect(() => execFileSync(process.execPath, [CLI_PATH, 'init', 'unknown', '--yes'], {
@@ -313,7 +314,7 @@ describe('CLI Integration', () => {
     { name: 'claude', agents: ['claude'], present: ['KNOWL.md', 'AGENTS.md', 'CLAUDE.md'], absent: ['GEMINI.md'] },
     { name: 'gemini', agents: ['gemini'], present: ['KNOWL.md', 'AGENTS.md', 'GEMINI.md', '.gemini/settings.json'], absent: ['CLAUDE.md'] },
   ])('applies the $name host-file creation policy', async ({ name, agents, present, absent }) => {
-    const root = path.resolve(`.knowl-cli-creation-${name}-test`);
+    const root = path.join(os.tmpdir(), `knowl-cli-creation-${name}-test`);
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(root, { recursive: true });
     execFileSync(process.execPath, [CLI_PATH, 'init', ...agents, '--yes'], { cwd: root, encoding: 'utf8' });
@@ -323,7 +324,7 @@ describe('CLI Integration', () => {
   });
 
   it('doctor reports selected native instructions that are missing or stale', async () => {
-    const root = path.resolve('.knowl-cli-stale-claude-instructions-test');
+    const root = path.join(os.tmpdir(), 'knowl-cli-stale-claude-instructions-test');
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(root, { recursive: true });
     execFileSync(process.execPath, [CLI_PATH, 'init', 'claude', '--yes'], { cwd: root, encoding: 'utf8' });
@@ -377,7 +378,7 @@ describe('CLI Integration', () => {
   });
 
   it('should run a work loop with start, checkpoint, and finish commands', async () => {
-    const workLoopDir = path.resolve('./.knowl-cli-work-loop-test');
+    const workLoopDir = path.join(os.tmpdir(), 'knowl-cli-work-loop-test');
     await fs.rm(workLoopDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(workLoopDir, { recursive: true });
 
@@ -439,7 +440,7 @@ describe('CLI Integration', () => {
   }, 60_000);
 
   it('should run a command inside an automatic work loop', async () => {
-    const workLoopRunDir = path.resolve('./.knowl-cli-work-loop-run-test');
+    const workLoopRunDir = path.join(os.tmpdir(), 'knowl-cli-work-loop-run-test');
     await fs.rm(workLoopRunDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(workLoopRunDir, { recursive: true });
 
@@ -489,7 +490,7 @@ describe('CLI Integration', () => {
   }, 60_000);
 
   it('should checkpoint failed automatic work loop commands and preserve the exit code', async () => {
-    const workLoopFailureDir = path.resolve('./.knowl-cli-work-loop-run-failure-test');
+    const workLoopFailureDir = path.join(os.tmpdir(), 'knowl-cli-work-loop-run-failure-test');
     await fs.rm(workLoopFailureDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(workLoopFailureDir, { recursive: true });
 
@@ -538,7 +539,7 @@ describe('CLI Integration', () => {
   });
 
   it('should run automatic work loop commands resolved from PATH', async () => {
-    const workLoopPathDir = path.resolve('./.knowl-cli-work-loop-run-path-test');
+    const workLoopPathDir = path.join(os.tmpdir(), 'knowl-cli-work-loop-run-path-test');
     await fs.rm(workLoopPathDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(workLoopPathDir, { recursive: true });
 
@@ -568,7 +569,7 @@ describe('CLI Integration', () => {
   });
 
   it('should mark changed PR knowledge for review from git diff', async () => {
-    const prDir = path.resolve('./.knowl-cli-pr-check-test');
+    const prDir = path.join(os.tmpdir(), 'knowl-cli-pr-check-test');
     await fs.rm(prDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(path.join(prDir, 'src'), { recursive: true });
 
@@ -635,7 +636,7 @@ describe('CLI Integration', () => {
   }, 60_000);
 
   it('should report agent readiness with doctor', async () => {
-    const doctorDir = path.resolve('./.knowl-cli-doctor-test');
+    const doctorDir = path.join(os.tmpdir(), 'knowl-cli-doctor-test');
     await fs.rm(doctorDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(doctorDir, { recursive: true });
     execSync(`node "${CLI_PATH}" init codex --yes`, {
@@ -682,7 +683,7 @@ describe('CLI Integration', () => {
   });
 
   it('should print doctor fix hints when guidance and gitignore are stale', async () => {
-    const staleDir = path.resolve('./.knowl-cli-doctor-stale-test');
+    const staleDir = path.join(os.tmpdir(), 'knowl-cli-doctor-stale-test');
     await fs.rm(staleDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(staleDir, { recursive: true });
     execSync(`node "${CLI_PATH}" init --yes`, {
@@ -722,7 +723,7 @@ describe('CLI Integration', () => {
   });
 
   it('should audit and safely restore snapshots through the CLI', async () => {
-    const snapshotDir = path.resolve('./.knowl-cli-snapshot-test');
+    const snapshotDir = path.join(os.tmpdir(), 'knowl-cli-snapshot-test');
     await fs.rm(snapshotDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(snapshotDir, { recursive: true });
     execSync(`node "${CLI_PATH}" init --yes`, { cwd: snapshotDir, encoding: 'utf-8' });
@@ -754,7 +755,7 @@ describe('CLI Integration', () => {
   }, 60_000);
 
   it('should list inspectable evidence for a knowledge item', async () => {
-    const evidenceDir = path.resolve('./.knowl-cli-evidence-test');
+    const evidenceDir = path.join(os.tmpdir(), 'knowl-cli-evidence-test');
     await fs.rm(evidenceDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(evidenceDir, { recursive: true });
     execSync(`node "${CLI_PATH}" init --yes`, { cwd: evidenceDir, encoding: 'utf-8' });
@@ -772,7 +773,7 @@ describe('CLI Integration', () => {
   }, 60_000);
 
   it('should index symbols and report stale symbol evidence with an unambiguous replacement', async () => {
-    const symbolDir = path.resolve('./.knowl-cli-symbol-test');
+    const symbolDir = path.join(os.tmpdir(), 'knowl-cli-symbol-test');
     await fs.rm(symbolDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(path.join(symbolDir, 'src'), { recursive: true });
     try {
@@ -806,7 +807,7 @@ describe('CLI Integration', () => {
   }, 60_000);
 
   it('should synthesize a tagged project understanding on demand', async () => {
-    const synthesisDir = path.resolve('./.knowl-cli-synthesis-test');
+    const synthesisDir = path.join(os.tmpdir(), 'knowl-cli-synthesis-test');
     await fs.rm(synthesisDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(synthesisDir, { recursive: true });
     try {
@@ -822,7 +823,7 @@ describe('CLI Integration', () => {
   }, 60_000);
 
   it('should export and dry-run import portable JSONL memory', async () => {
-    const portabilityDir = path.resolve('./.knowl-cli-portability-test');
+    const portabilityDir = path.join(os.tmpdir(), 'knowl-cli-portability-test');
     const exportPath = path.join(portabilityDir, 'memory.jsonl');
     await fs.rm(portabilityDir, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(portabilityDir, { recursive: true });

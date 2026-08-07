@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 
-const TEST_DIR = path.resolve('./.knowl-cli-skill-test');
+const TEST_DIR = path.join(os.tmpdir(), 'knowl-cli-skill-test');
 const CLI_PATH = path.resolve('./dist/index.js');
 
 describe('CLI learned skills', () => {

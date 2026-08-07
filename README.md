@@ -10,32 +10,36 @@
 [![node](https://img.shields.io/badge/node-%E2%89%A522-3987e5)](package.json)
 [![MCP](https://img.shields.io/badge/protocol-MCP-eda100)](https://modelcontextprotocol.io)
 
+<p align="center">
+  <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="98% correct vs 47% without supersession" height="38" /></picture></a>
+  <a href="#quick-start"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-nokeys.svg"><img src="docs/assets/chips/stat-nokeys.svg" alt="0 API keys needed" height="38" /></picture></a>
+  <a href="#everything-else"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-tools.svg"><img src="docs/assets/chips/stat-tools.svg" alt="27 MCP tools" height="38" /></picture></a>
+  <a href="#what-knowl-is-for"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-local.svg"><img src="docs/assets/chips/stat-local.svg" alt="100% local, no egress" height="38" /></picture></a>
+</p>
+
+<img src="docs/assets/demo-agent.svg" alt="An agent is asked which database the project uses, calls knowl_query, and answers SQLite from the active decision — knowing PostgreSQL was considered and rejected — while the superseded predecessor is skipped. No files opened." width="94%" />
+
 [Quick start](#quick-start) ·
 [Why supersession](#the-idea-memory-that-retires-itself) ·
+[What gets stored](#what-gets-stored) ·
 [Features](#features) ·
 [Agent setup](#connecting-an-agent) ·
-[What it's for](#what-knowl-is-for) ·
+[Viewer](#see-it-the-local-viewer) ·
+[Requirements](#requirements-and-local-data) ·
 **[Full reference →](docs/reference.md)**
 
 </div>
 
 ---
 
-> **Looking for the details?** This README is the tour. Everything Knowl ships — every command,
-> every MCP tool, every ranking rule, and every deliberate limit — is documented in the
-> **[full reference](docs/reference.md)**.
-
-Coding agents start every session blank. The usual fix is to write things down — in `CLAUDE.md`,
-in a notes file, in a memory service — and the usual failure is that those notes only ever grow.
-Six months in, the store confidently reports the authentication design you replaced in March,
+Coding agents start every session blank, so teams write things down — and those notes only ever
+grow. Six months in, the store still reports the database you migrated off last spring,
 because nothing ever told it that decision was over.
 
 Knowl is a repository-local store of **typed knowledge atoms** — decisions, constraints,
-architecture, facts, goals, state, and skills — that agents read and write over the
-[Model Context Protocol](https://modelcontextprotocol.io) or the `knowl` CLI. Every atom carries
-status, freshness, provenance, and history, and **a replacement retires its predecessor at write
-time** rather than sitting beside it. Everything lives in a SQLite database under `.knowl/`; core
-storage and retrieval need no API key and no network.
+architecture, facts, goals, state, and skills — read and written over
+[MCP](https://modelcontextprotocol.io) or the `knowl` CLI, where **a replacement retires its
+predecessor at write time** instead of sitting beside it.
 
 ## Quick start
 
@@ -75,29 +79,40 @@ Then start a new agent session so the host picks up its guidance and MCP registr
 
 ## The idea: memory that retires itself
 
-Most memory systems are append-only. Storing "we moved to session cookies" leaves "we use JWTs"
+Most memory systems are append-only. Storing "we moved to SQLite" leaves "we use PostgreSQL"
 active and retrievable, so the agent gets both and picks by rank. Knowl treats a same-subject write
 as a correction: the predecessor is marked `superseded`, drops out of normal retrieval, and stays
 queryable through [`knowl timeline`](docs/reference.md#metadata-history-and-ownership).
+
+<div align="center">
+<img src="docs/assets/demo-store.svg" alt="A write naming a subject the store already holds: the replacement takes the active lane, the predecessor is stamped superseded and moved into history, and a later query sweep matches only the current decision" width="92%" />
+</div>
 
 That single behavior is most of the accuracy difference. On the
 [MemoryAgentBench](https://github.com/HUST-AI-HYZ/MemoryAgentBench) Conflict Resolution track —
 455 facts, 100 questions about which fact is current, top-5 retrieval, no LLM reader:
 
 <div align="center">
-<img src="docs/assets/benchmark-conflict-resolution.svg" alt="MemoryAgentBench conflict-resolution ablation: supersession on reached 96 percent top-1 with 3 stale returns; supersession off reached 40 percent top-1 with 62 stale returns" width="82%" />
+<img src="docs/assets/benchmark-conflict-resolution.svg" alt="MemoryAgentBench conflict-resolution ablation: supersession on reached 98 percent top-1 with 2 stale returns; supersession off reached 47 percent top-1 with 62 stale returns" width="82%" />
 </div>
 
 | Configuration | Top-1 | Stale returns | Active atoms |
 | --- | ---: | ---: | ---: |
-| **Supersession ON** | **96.0%** | **3 / 100** | 306 |
-| Supersession OFF | 40.0% | 62 / 100 | 455 |
+| **Supersession ON** | **98.0%** | **2 / 100** | 306 |
+| Supersession OFF | 47.0% | 62 / 100 | 455 |
 
 Same corpus, same ranker, same query path. The only variable is whether the outdated fact is still
 active. See [benchmarks](docs/reference.md#benchmarks) for the protocol, the checked-in results,
 and what the track does not cover.
 
 Supersession is a correction, not a delete: the item, its assertions, and its history all survive.
+
+Not a mock-up — the same sequence against the published CLI, recorded from
+[`demo.tape`](docs/assets/demo.tape):
+
+<div align="center">
+<img src="docs/assets/demo.gif" alt="Terminal recording: knowl decide records a database decision, a second decide on the same subject reports Superseded older decision, and knowl status then reports one active item and one superseded" width="88%" />
+</div>
 
 ## What gets stored
 
@@ -112,6 +127,10 @@ Every atom has exactly one of seven categories:
 | `architecture` | How components are arranged and interact |
 | `state` | Current progress, readiness, blockers, or operational status |
 | `skill` | A reusable procedure or learned workflow description |
+
+<div align="center">
+<img src="docs/assets/atom-anatomy.svg" alt="A decision atom with its governed fields: status, freshness, confidence, tags, source commit, affected paths, and evidence — one evidence locator shown gone stale" width="88%" />
+</div>
 
 Alongside the content, each atom keeps a status (`active`, `deprecated`, `rejected`, `archived`,
 `superseded`), a freshness flag, confidence, tags, source commit, affected paths, and optional
@@ -128,13 +147,62 @@ over files the host already wrote.
 
 ## Connecting an agent
 
+<table>
+<tr>
+<td align="center" width="20%">
+<a href="https://claude.com/product/claude-code"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="48" height="48" /></a><br/>
+<strong>Claude Code</strong><br/>
+<sub>MCP · lifecycle · subagents</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex" width="48" height="48" /></a><br/>
+<strong>Codex</strong><br/>
+<sub>MCP · lifecycle · subagents</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://cursor.com"><img src="https://github.com/getcursor.png?size=120" alt="Cursor" width="48" height="48" /></a><br/>
+<strong>Cursor</strong><br/>
+<sub>MCP · lifecycle</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://github.com/google-gemini/gemini-cli"><img src="https://github.com/google-gemini.png?size=120" alt="Gemini CLI" width="48" height="48" /></a><br/>
+<strong>Gemini CLI</strong><br/>
+<sub>MCP · manual loop</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://claude.ai/download"><img src="https://github.com/anthropics.png?size=120" alt="Claude Desktop" width="48" height="48" /></a><br/>
+<strong>Claude Desktop</strong><br/>
+<sub>MCP · manual loop</sub>
+</td>
+</tr>
+</table>
+
 `knowl serve` exposes the store over stdio MCP; `knowl init` registers it for you. The workflow the
 installed guidance asks agents to follow is short:
 
-1. Query memory with two to six keywords **before** reading repository files.
+1. Query memory with the words that name the subject **before** reading repository files.
 2. Use an active hit directly; inspect files only on a miss, conflict, or stale result.
 3. Store verified durable findings as you go, and correct contradicted memory rather than
    duplicating it.
+
+In practice that looks like this — a new session, no context, nothing pasted in:
+
+```text
+You     why did we pick SQLite over Postgres?
+
+Agent   → knowl_query "sqlite postgres database choice"
+        ← decision · Use SQLite · active · fresh
+          "Keeps storage repository-local and simple to operate."
+          alternatives: PostgreSQL, MongoDB
+          tags: database, local-first
+
+        SQLite keeps the store repository-local and simple to operate.
+        Postgres and MongoDB were both considered and rejected on that
+        basis.
+```
+
+The agent answered before opening a single file, and it knew the options you *rejected* —
+which the code cannot tell it, because rejected alternatives leave no trace in a codebase.
 
 | Host | MCP | Automatic lifecycle | Subagents | Notes |
 | --- | --- | --- | --- | --- |
@@ -144,9 +212,26 @@ installed guidance asks agents to follow is short:
 | Gemini CLI | Yes | No | No | MCP plus the manual work loop |
 | Claude Desktop | Yes | No | No | MCP plus the manual work loop |
 
+<div align="center">
+<img src="docs/assets/lifecycle.svg" alt="Session lifecycle: bootstrap injects relevant memory, capture records bounded events, checkpoints record milestones, finalization distills durable candidates" width="88%" />
+</div>
+
 Where hooks are available, they own the session lifecycle: bootstrap context, capture, checkpoints,
 and finalization happen without the agent being asked. Where they are not, `knowl task run`,
 `task start`, `task checkpoint`, and `task finish` cover the same ground manually.
+
+`knowl init` writes the MCP registration for every host it detects. To wire one by hand, the
+entry is the same everywhere:
+
+```json
+{
+  "mcpServers": {
+    "knowl": { "command": "knowl", "args": ["serve"] }
+  }
+}
+```
+
+Use `knowl.cmd` as the command on Windows. Codex reads the same entry under `mcp_servers`.
 
 → [MCP tools and resources](docs/reference.md#mcp-tools-and-resources) · [Lifecycle reference](docs/reference.md#tasks-sessions-and-agent-lifecycle)
 
@@ -155,6 +240,10 @@ and finalization happen without the agent being asked. Where they are not, `know
 Knowl does one job: keep a repository's engineering truth accurate for the agents working on it.
 Not user preferences, not chat history — the decisions, constraints, and architecture of a
 codebase, and which of them are still true today.
+
+<div align="center">
+<img src="docs/assets/demo-drift.svg" alt="One question answered four times over two years: append-only keeps every answer true forever so a query today matches four contradicting ones, while a governed store ends each replaced answer and matches one" width="92%" />
+</div>
 
 Three choices follow from that:
 
@@ -176,12 +265,101 @@ Everything below works from the CLI and from any MCP-connected agent, against th
 database. No account, no server, no API key. Each item links into the
 [full reference](docs/reference.md) for the detail — and for the limits.
 
-### Knowledge that corrects itself
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**♻️ Knowledge that corrects itself**
+
+Seven typed atom types, where a same-subject write retires its predecessor instead of
+sitting beside it. That one behavior is the [98%-vs-47% difference](#the-idea-memory-that-retires-itself).
+Evidence attached to a file or symbol goes stale *by itself* when the code moves.
+
+`conflicts` · `timeline` · `query --as-of` · `pr check` · `code index`
+
+</td>
+<td width="50%" valign="top">
+
+**🎯 Retrieval tuned for agents**
+
+Vector-primary with a bounded BM25 fallback, reranked by freshness, status, and confidence,
+so the *current* answer wins rather than the merely similar one. The embedding model is
+local and optional — without it you still get keyword retrieval, and nothing leaves the machine.
+
+`query` · `context --token-budget` · `config set-model` · `access report`
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**⏱️ Work that survives the session**
+
+On Claude Code, Codex, and Cursor, hooks own bootstrap, capture, checkpoints, and
+finalization without the agent being asked. A clean finish distills up to eight durable
+candidates. Park a workstream under a key and pick it up in any session, from any directory.
+
+`task run` · `handoff` · `park` · `resume <key>`
+
+</td>
+<td width="50%" valign="top">
+
+**🔗 Workspaces**
+
+Your API repo learned something the frontend repo needs. Link them and a query fans out,
+while each repository keeps its own database and its own ownership boundary. Nothing is
+shared until you promote it, and only the owner can retire its own atoms.
+
+`workspace init` · `workspace add` · `workspace promote --apply`
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+**📦 Reusable procedures**
+
+Package a procedure with its scripts under `.knowl/skills/`, then read it before it ever
+runs. Roll several atoms into one architecture summary deterministically, with no AI
+provider involved at all.
+
+`skill list` · `skill read` · `skill run` · `synthesize`
+
+</td>
+<td width="50%" valign="top">
+
+**💾 Your data, and getting it back**
+
+Checksummed JSONL export and import with four explicit policies for when the same atom
+changed in two places. Restore verifies schema, size, SHA-256, and SQLite integrity
+*before* touching anything, and takes a pre-restore snapshot first.
+
+`export` · `import --on-divergence` · `snapshot create` · `gc` · `doctor`
+
+</td>
+</tr>
+</table>
+
+The commands worth knowing on day one:
+
+```bash
+knowl query "auth design"              # search project memory
+knowl state                            # the active memory, as a hierarchy
+knowl conflicts                        # items that contradict each other
+knowl timeline <item-id>               # every version an atom ever had
+knowl context --token-budget 1500      # a fixed-size briefing for an agent
+knowl pr check --since origin/main     # knowledge your diff may invalidate
+knowl doctor                           # setup, retrieval, and registration
+```
+
+<details>
+<summary><b>Knowledge that corrects itself</b> — seven typed atom types, and a write that retires what it replaces</summary>
+<br>
 
 - **Seven atom types** — [listed above](#what-gets-stored). Structure instead of one growing
   notes file.
 - **Automatic supersession** — a same-subject write retires its predecessor. This is the
-  [96%-vs-40% difference](#the-idea-memory-that-retires-itself) above.
+  [98%-vs-47% difference](#the-idea-memory-that-retires-itself) above.
 - **Conflict identity** — mark an atom exclusive and Knowl refuses a second active answer to the
   same question, instead of quietly holding both. `knowl conflicts`
 - **Full history** — every version an atom ever had survives as an immutable assertion.
@@ -200,7 +378,11 @@ database. No account, no server, no API key. Each item links into the
 → [Knowledge model](docs/reference.md#core-knowledge-model) ·
 [Evidence and drift](docs/reference.md#evidence-code-intelligence-and-drift)
 
-### Retrieval tuned for agents
+</details>
+
+<details>
+<summary><b>Retrieval tuned for agents</b> — the current answer wins, not merely the similar one</summary>
+<br>
 
 - **Vector-primary ranking** with a bounded BM25 fallback, reranked by freshness, status,
   confidence, and recency — so the *current* answer wins, not merely the similar one. (This is the
@@ -219,7 +401,11 @@ database. No account, no server, no API key. Each item links into the
 
 → [Retrieval and context](docs/reference.md#retrieval-and-context)
 
-### Work that survives the end of a session
+</details>
+
+<details>
+<summary><b>Work that survives the end of a session</b> — hooks, work loops, handoff batons, and resume keys</summary>
+<br>
 
 - **Automatic lifecycle** on Claude Code, Codex, and Cursor — bootstrap, capture, checkpoints, and
   finalization happen through hooks without the agent being asked.
@@ -237,7 +423,11 @@ database. No account, no server, no API key. Each item links into the
 
 → [Tasks, sessions, and lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle)
 
-### Workspaces: many repos, one shared memory
+</details>
+
+<details>
+<summary><b>Workspaces: many repos, one shared memory</b> — nothing is shared until you promote it</summary>
+<br>
 
 Your API repo learned something the frontend repo needs. Link them, and a query fans out — while
 each repository keeps its own database and its own ownership boundary.
@@ -257,7 +447,11 @@ to fail.
 
 → [Workspaces](docs/reference.md#workspaces)
 
-### Reusable procedures
+</details>
+
+<details>
+<summary><b>Reusable procedures</b> — file-backed skills you can inspect before they run</summary>
+<br>
 
 - **File-backed skills** — package a procedure with its scripts under `.knowl/skills/`, then
   inspect it before it ever runs. `knowl skill list` · `read` · `run`
@@ -266,7 +460,11 @@ to fail.
 
 → [Skills and synthesis](docs/reference.md#learned-skills-and-synthesis)
 
-### Your data, and getting it back
+</details>
+
+<details>
+<summary><b>Your data, and getting it back</b> — portable export, verified snapshots, and one doctor command</summary>
+<br>
 
 - **Portable export/import** — checksummed JSONL with four explicit divergence policies for when
   the same atom changed in two places. `knowl export` · `knowl import --on-divergence newer`
@@ -281,6 +479,8 @@ to fail.
 
 → [Portability and maintenance](docs/reference.md#portability-and-maintenance) ·
 [Optional AI](docs/reference.md#optional-ai)
+
+</details>
 
 ### See it: the local viewer
 
@@ -322,9 +522,11 @@ regression suites with `knowl eval retrieval`.
 Node.js 22 or later. Everything Knowl writes for a project lives under `.knowl/`, which `knowl init`
 adds to `.gitignore`:
 
-- `.knowl/config.json` — project, search, security, AI, and workspace configuration
-- `.knowl/knowl.db` — atoms, assertions, knowledge commits, full-text index, feedback, embeddings
-- `.knowl/skills/` — file-backed skill packages
+| Path | Holds |
+| --- | --- |
+| `.knowl/config.json` | Project, search, security, AI, and workspace configuration |
+| `.knowl/knowl.db` | Atoms, assertions, knowledge commits, full-text index, feedback, embeddings |
+| `.knowl/skills/` | File-backed skill packages |
 
 Workspace manifests live outside member repositories, because their checkout paths are
 machine-local. Exports and snapshots are written only when you ask for them.
@@ -333,23 +535,25 @@ machine-local. Exports and snapshots are written only when you ask for them.
 
 Everything above is the summary. The **[full reference](docs/reference.md)** is one document
 covering every subsystem in depth — including the parts that are deliberately limited, which is
-usually what you actually need to know:
+usually what you actually need to know.
 
-[Knowledge model](docs/reference.md#core-knowledge-model) ·
-[Retrieval and context](docs/reference.md#retrieval-and-context) ·
-[Tasks, sessions, lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle) ·
-[Evidence and drift](docs/reference.md#evidence-code-intelligence-and-drift) ·
-[Workspaces](docs/reference.md#workspaces) ·
-[Skills and synthesis](docs/reference.md#learned-skills-and-synthesis) ·
-[Portability and maintenance](docs/reference.md#portability-and-maintenance) ·
-[Local viewer](docs/reference.md#local-viewer) ·
-[Architecture](docs/reference.md#architecture-and-security-boundaries) ·
-[Agent setup](docs/reference.md#agent-setup) ·
-[Benchmarks](docs/reference.md#benchmarks) ·
-[CLI reference](docs/reference.md#cli-reference) ·
-[MCP tools](docs/reference.md#mcp-tools-and-resources) ·
-[Optional AI](docs/reference.md#optional-ai) ·
-[Local data](docs/reference.md#local-data)
+| If you want to know… | Go to |
+| --- | --- |
+| What an atom is, and what each field means | [Knowledge model](docs/reference.md#core-knowledge-model) |
+| How a query is ranked, and what wins ties | [Retrieval and context](docs/reference.md#retrieval-and-context) |
+| What a hook records, and when | [Tasks, sessions, lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle) |
+| How an atom notices the code moved | [Evidence and drift](docs/reference.md#evidence-code-intelligence-and-drift) |
+| How several repos share memory safely | [Workspaces](docs/reference.md#workspaces) |
+| How a procedure becomes reusable | [Skills and synthesis](docs/reference.md#learned-skills-and-synthesis) |
+| How to export, snapshot, or restore | [Portability and maintenance](docs/reference.md#portability-and-maintenance) |
+| What the viewer shows, and its privacy boundary | [Local viewer](docs/reference.md#local-viewer) |
+| How the pieces fit, and where the trust boundaries are | [Architecture](docs/reference.md#architecture-and-security-boundaries) |
+| How to wire a specific host | [Agent setup](docs/reference.md#agent-setup) |
+| How the numbers on this page were measured | [Benchmarks](docs/reference.md#benchmarks) |
+| Every command and every flag | [CLI reference](docs/reference.md#cli-reference) |
+| Every MCP tool and resource | [MCP tools](docs/reference.md#mcp-tools-and-resources) |
+| What needs a provider, and what never does | [Optional AI](docs/reference.md#optional-ai) |
+| Exactly what lands on disk | [Local data](docs/reference.md#local-data) |
 
 ## Contributing
 

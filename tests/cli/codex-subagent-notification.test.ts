@@ -1,10 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CODEX_HOOK_EVENTS } from '../../src/cli/agents/hook-config.js';
 
-const TEST_DIR = path.resolve('./.knowl-codex-subagent-notification-test');
+const TEST_DIR = path.join(os.tmpdir(), 'knowl-codex-subagent-notification-test');
 const CLI_PATH = path.resolve('./dist/index.js');
 
 function run(args: string[], input?: string): string {

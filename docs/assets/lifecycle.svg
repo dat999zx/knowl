@@ -1,0 +1,45 @@
+<svg width="900" height="220" viewBox="0 0 900 220" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Session lifecycle in four stages: bootstrap injects memory relevant to the repository at session start, capture records bounded events but never transcripts, checkpoint records milestones and blockers as work proceeds, and finalize distills up to eight durable candidates. Hooks drive all four; where a host has none, the manual work loop covers the same ground">
+  <rect x="1" y="1" width="898" height="218" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
+
+  <text x="28" y="38" font-size="21" font-weight="700" fill="#ffffff">Session lifecycle</text>
+  <text x="28" y="60" font-size="13.5" fill="#898781">Hooks drive all four. Where a host has none, the manual work loop covers the same ground.</text>
+
+  <!-- 1 bootstrap -->
+  <rect x="28" y="80" width="190" height="90" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <circle cx="48" cy="100" r="9" fill="#132b47" stroke="#1f4b7a"/>
+  <text x="48" y="104" font-size="10" font-weight="700" fill="#58a6ff" text-anchor="middle">1</text>
+  <text x="66" y="104" font-size="13.5" font-weight="700" fill="#ffffff">bootstrap</text>
+  <text x="48" y="130" font-size="11.5" fill="#898781">Session start injects</text>
+  <text x="48" y="147" font-size="11.5" fill="#898781">memory for this repo.</text>
+
+  <!-- 2 capture -->
+  <rect x="246" y="80" width="190" height="90" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <circle cx="266" cy="100" r="9" fill="#132b47" stroke="#1f4b7a"/>
+  <text x="266" y="104" font-size="10" font-weight="700" fill="#58a6ff" text-anchor="middle">2</text>
+  <text x="284" y="104" font-size="13.5" font-weight="700" fill="#ffffff">capture</text>
+  <text x="266" y="130" font-size="11.5" fill="#898781">Bounded events only —</text>
+  <text x="266" y="147" font-size="11.5" fill="#898781">never transcripts.</text>
+
+  <!-- 3 checkpoint -->
+  <rect x="464" y="80" width="190" height="90" rx="10" fill="#0d1117" stroke="#30363d"/>
+  <circle cx="484" cy="100" r="9" fill="#132b47" stroke="#1f4b7a"/>
+  <text x="484" y="104" font-size="10" font-weight="700" fill="#58a6ff" text-anchor="middle">3</text>
+  <text x="502" y="104" font-size="13.5" font-weight="700" fill="#ffffff">checkpoint</text>
+  <text x="484" y="130" font-size="11.5" fill="#898781">Milestones and blockers,</text>
+  <text x="484" y="147" font-size="11.5" fill="#898781">as work proceeds.</text>
+
+  <!-- 4 finalize -->
+  <rect x="682" y="80" width="190" height="90" rx="10" fill="#0d1117" stroke="#199e70"/>
+  <circle cx="702" cy="100" r="9" fill="#0f2e1f" stroke="#1c5c3c"/>
+  <text x="702" y="104" font-size="10" font-weight="700" fill="#3fb950" text-anchor="middle">4</text>
+  <text x="720" y="104" font-size="13.5" font-weight="700" fill="#ffffff">finalize</text>
+  <text x="702" y="130" font-size="11.5" fill="#898781">Distills up to 8 durable</text>
+  <text x="702" y="147" font-size="11.5" fill="#898781">candidates.</text>
+
+  <!-- arrows -->
+  <path d="M222 125 H238 m-5 -4 l5 4 -5 4" stroke="#3987e5" stroke-width="1.4" fill="none"/>
+  <path d="M440 125 H456 m-5 -4 l5 4 -5 4" stroke="#3987e5" stroke-width="1.4" fill="none"/>
+  <path d="M658 125 H674 m-5 -4 l5 4 -5 4" stroke="#3987e5" stroke-width="1.4" fill="none"/>
+
+  <text x="28" y="198" font-size="11.5" fill="#6e7681">Never prompts, transcripts, stdout, or environment variables — bounded events and summaries only.</text>
+</svg>

@@ -1469,11 +1469,25 @@ program
         const config = await loadConfig(root);
         if (!isVectorSearchEnabled(config)) throw new Error('Vector search is not enabled. Set search.vector.enabled true to run --vector.');
         embedder = await createLocalEmbeddingProvider(config, root);
-        // No reindex. An "evaluate" command was rewriting the live embedding table before
-        // measuring it, which both mutates the store the user asked it to observe and makes
-        // the numbers describe a state the store was not in. Measure what retrieval would
-        // actually return today; if coverage is the problem, that is the user's call to fix.
-        console.error('Note: evaluates the store as it stands. If embedding coverage is incomplete, run `knowl reindex --vectors` first.');
+        if (fixtureRoot) {
+          // A fixture store is built by this command, milliseconds ago, and thrown away when it
+          // returns -- so embedding it is not the live-store mutation the note below guards
+          // against, and without it `--vector` cannot measure anything. The fixtures are created
+          // with no embeddings, so a query vector has nothing to match and every case silently
+          // falls through to BM25: `--vector` and plain BM25 returned byte-identical metrics on
+          // every fixture-backed dataset, including the semantic suite built to need embeddings.
+          // The note's own advice was unfollowable here too -- there is no store for the user to
+          // reindex. Five of the six checked-in datasets carry fixtures.
+          const indexed = await reindexKnowledgeEmbeddings(project.id, embedder);
+          console.error(`Embedded ${indexed.indexed} fixture(s) for the vector run.`);
+        } else {
+          // No reindex against a live store. An "evaluate" command was rewriting the live
+          // embedding table before measuring it, which both mutates the store the user asked it
+          // to observe and makes the numbers describe a state the store was not in. Measure what
+          // retrieval would actually return today; if coverage is the problem, that is the
+          // user's call to fix.
+          console.error('Note: evaluates the store as it stands. If embedding coverage is incomplete, run `knowl reindex --vectors` first.');
+        }
       }
 
       const evaluation = await evaluateRetrieval(cases, async (testCase) => {

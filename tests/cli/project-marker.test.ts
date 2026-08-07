@@ -100,7 +100,7 @@ describe('knowl init against a .knowl directory that is not a project', () => {
   let root = '';
 
   beforeEach(async () => {
-    root = await fs.mkdtemp(path.resolve('./.knowl-init-marker-'));
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-init-marker-'));
   });
 
   afterEach(async () => {

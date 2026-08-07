@@ -1,10 +1,11 @@
 import { execSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { createClient } from '@libsql/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
-const ROOT = path.resolve('./.knowl-temporal-cli-test');
+const ROOT = path.join(os.tmpdir(), 'knowl-temporal-cli-test');
 const CLI = path.resolve('./dist/index.js');
 
 describe('temporal CLI', () => {
