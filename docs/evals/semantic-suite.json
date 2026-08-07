@@ -1643,6 +1643,260 @@
         "password-policy"
       ],
       "limit": 10
+    },
+    {
+      "id": "soft-delete-b3",
+      "tier": "basic",
+      "query": "deleted_at timestamp so an accidental delete can be undone",
+      "expectedItemIds": [
+        "soft-delete"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "db-postgres-b3",
+      "tier": "basic",
+      "query": "postgresql primary transactional datastore system of record",
+      "expectedItemIds": [
+        "db-postgres"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "auth-jwt-b3",
+      "tier": "basic",
+      "query": "jwt access token valid fifteen minutes signed rs256",
+      "expectedItemIds": [
+        "auth-jwt"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "rate-limit-api-b3",
+      "tier": "basic",
+      "query": "hundred requests per minute sliding window per api key",
+      "expectedItemIds": [
+        "rate-limit-api"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "deploy-canary-b3",
+      "tier": "basic",
+      "query": "canary release five percent traffic thirty minutes error rate",
+      "expectedItemIds": [
+        "deploy-canary"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "config-env-b3",
+      "tier": "basic",
+      "query": "runtime settings read from environment variables at boot",
+      "expectedItemIds": [
+        "config-env"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "logs-structured-b3",
+      "tier": "basic",
+      "query": "structured json log lines carrying a request id",
+      "expectedItemIds": [
+        "logs-structured"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "retention-audit-b3",
+      "tier": "basic",
+      "query": "audit events retained seven years for compliance",
+      "expectedItemIds": [
+        "retention-audit"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "queue-retry-b3",
+      "tier": "basic",
+      "query": "failed job retries six times exponential backoff jitter",
+      "expectedItemIds": [
+        "queue-retry"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "tests-unit-b3",
+      "tier": "basic",
+      "query": "unit suite runs on every commit under two minutes",
+      "expectedItemIds": [
+        "tests-unit"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "secrets-vault-b3",
+      "tier": "basic",
+      "query": "credentials fetched from the managed vault at boot",
+      "expectedItemIds": [
+        "secrets-vault"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "pagination-cursor-b3",
+      "tier": "basic",
+      "query": "cursor pagination keeps results steady while rows are inserted",
+      "expectedItemIds": [
+        "pagination-cursor"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "idempotency-keys-b3",
+      "tier": "basic",
+      "query": "repeated request with the same idempotency key returns the original response",
+      "expectedItemIds": [
+        "idempotency-keys"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "timezone-utc-b3",
+      "tier": "basic",
+      "query": "timestamps stored in utc converted in the presentation layer",
+      "expectedItemIds": [
+        "timezone-utc"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "uploads-s3-b3",
+      "tier": "basic",
+      "query": "clients upload directly to object storage with a presigned url",
+      "expectedItemIds": [
+        "uploads-s3"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "hard-purge-m2",
+      "tier": "moderate",
+      "query": "permanent removal of expired records by a scheduled overnight job",
+      "expectedItemIds": [
+        "hard-purge"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "auth-refresh-m2",
+      "tier": "moderate",
+      "query": "detecting a reused token and revoking the whole chain",
+      "expectedItemIds": [
+        "auth-refresh"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "deploy-blue-green-m2",
+      "tier": "moderate",
+      "query": "two identical stacks swapping traffic at the load balancer",
+      "expectedItemIds": [
+        "deploy-blue-green"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "feature-flags-m2",
+      "tier": "moderate",
+      "query": "shipping unfinished code dark behind a per request toggle",
+      "expectedItemIds": [
+        "feature-flags"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "migrations-expand-m2",
+      "tier": "moderate",
+      "query": "renaming a column by backfilling then switching reads over",
+      "expectedItemIds": [
+        "migrations-expand"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "alerting-pager-m2",
+      "tier": "moderate",
+      "query": "which failures are allowed to wake a human at night",
+      "expectedItemIds": [
+        "alerting-pager"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cdn-assets-m2",
+      "tier": "moderate",
+      "query": "hashed static filenames cached for a year at the edge",
+      "expectedItemIds": [
+        "cdn-assets"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "webhooks-signing-m2",
+      "tier": "moderate",
+      "query": "verifying an incoming callback came from us before trusting it",
+      "expectedItemIds": [
+        "webhooks-signing"
+      ],
+      "mustNotReturn": [],
+      "limit": 10
+    },
+    {
+      "id": "cache-redis-x2",
+      "tier": "extreme",
+      "query": "storage tier that can vanish without any data harm",
+      "expectedItemIds": [
+        "cache-redis"
+      ],
+      "mustNotReturn": [
+        "uploads-s3"
+      ],
+      "limit": 10
+    },
+    {
+      "id": "password-policy-x2",
+      "tier": "extreme",
+      "query": "no symbol or capital requirement for sign in credentials",
+      "expectedItemIds": [
+        "password-policy"
+      ],
+      "mustNotReturn": [
+        "rate-limit-login"
+      ],
+      "limit": 10
     }
   ]
 }
