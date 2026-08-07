@@ -113,6 +113,22 @@ marginally negative" — that came from the reader score, a different measuremen
 
 ---
 
+## What the ablation actually changes, in the retrieved set
+
+The same question, same corpus, same reader — only governance toggled. Taken from the saved
+retrieved-context dumps:
+
+```
+supersession ON                                supersession OFF
+- William Waynflete speaks ... Latin           - William Waynflete speaks ... Latin
+                                               - William Waynflete speaks ... English
+```
+
+The OFF arm hands the reader both the current and the retired value and asks it to pick, having
+told it (in text that trails all ten facts) to prefer the larger serial number. The ON arm never
+offers the retired value at all. That is the whole mechanism: write-time supersession does not win
+the arbitration step, it **deletes** it.
+
 ## Upstream bugs, verified at source
 
 1. **UTF-8 crash on Windows.** `open(path, "w")` with no encoding, in `agent.py` (×4) and
