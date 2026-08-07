@@ -465,6 +465,43 @@ export async function selectCandidates(
  *
  * and the floor judges `cosine` before any of it.
  */
+/**
+ * Below this, the page's cosines are treated as one flat value rather than rescaled.
+ *
+ * Rescaling a range narrower than this turns rounding noise into a full-strength ranking signal.
+ * The measured median page range is 0.1075, so this only fires when the candidates really are
+ * indistinguishable -- and where they are, their order is not worth manufacturing.
+ */
+const MIN_SEMANTIC_RANGE = 0.02;
+
+/**
+ * Put the semantic half on the same scale as the lexical half, so `alpha` means what it says.
+ *
+ * The lexical term is normalised against the corpus best, so it spans very nearly the whole
+ * [0,1] range on any page with a decent match. A cosine does not: measured over the 135-case
+ * semantic suite on granite-small-en-r2, the gap between rank 1 and rank 10 has a median of
+ * **0.1075**, and rank 1 to rank 2 a median of 0.0649. Fusion at alpha 0.8 therefore hands the
+ * semantic half a median swing of 0.086 while the lexical half can swing the full 0.2 -- so the
+ * term holding 20% of the weight carries roughly 2.3x the ranking authority, and a lexical
+ * match routinely overturns the best semantic hit. Measured consequence on the same suite: of
+ * the five cases where the #1 vector hit failed to finish first, all five had no lexical match
+ * at all (`scripts/diagnose-semantic-suite.ts`).
+ *
+ * Min-max rather than divide-by-best, which is the opposite of the choice made for lexical just
+ * above, and for a reason that does not apply there: dividing 0.76 by 0.80 gives 0.95 and leaves
+ * the range as compressed as it was, because cosines do not start near zero. Only the
+ * differences between them carry ranking information.
+ *
+ * This is safe for the abstention floor specifically because the floor judges the **raw** cosine
+ * on its own, before any of this, so rescaling for ranking cannot make an off-topic query look
+ * answerable.
+ */
+function rescaleSemantic(value: number, floor: number, ceiling: number): number {
+  const range = ceiling - floor;
+  if (range < MIN_SEMANTIC_RANGE) return value;
+  return (value - floor) / range;
+}
+
 export function scoreCandidates<T extends Candidate & { repo?: string }>(
   candidates: T[],
   options: {
@@ -526,6 +563,20 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     corpusBest.set(corpus, Math.max(corpusBest.get(corpus) ?? 0, raw));
   }
   const anyLexical = corpusBest.size > 0;
+  // Semantic range across this candidate page, for the rescale below.
+  //
+  // Folded rather than spread: `Math.max(...values)` passes one argument per candidate and blows
+  // the stack on a large page. The candidate set is bounded by `limit * OVERFETCH` in the normal
+  // path but not in every caller, and a ranking helper must not carry a size ceiling nobody
+  // states.
+  let semanticCeiling = 0;
+  let semanticFloor = 1;
+  for (const candidate of candidates) {
+    const value = Math.min(Math.max(candidate.vectorScore ?? 0, 0), 1);
+    if (value > semanticCeiling) semanticCeiling = value;
+    if (value < semanticFloor) semanticFloor = value;
+  }
+  if (!candidates.length) semanticFloor = 0;
   // Alpha renormalises over the signals that exist, and does so globally rather than per
   // corpus: two repos scored under different alphas would not be comparable, which is the
   // whole reason scoring runs over the union.
@@ -555,7 +606,9 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
       const coverage = Math.min(Math.max(result.lexicalCoverage ?? 1, 0), 1);
       const lexical = raw === undefined ? 0 : (best > 0 ? Math.min(raw / best, 1) * coverage : coverage);
       const semantic = Math.min(Math.max(result.vectorScore ?? 0, 0), 1);
-      const relevance = usingVector ? alpha * semantic + (1 - alpha) * lexical : lexical;
+      const relevance = usingVector
+        ? alpha * rescaleSemantic(semantic, semanticFloor, semanticCeiling) + (1 - alpha) * lexical
+        : lexical;
 
       const recency = normalizedRecencyScore(result.item, timestamps);
       // Clamped, not trusted. `confidence` is unvalidated at the write boundary and a model
