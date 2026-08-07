@@ -39,6 +39,15 @@ is written now because `visibility` is one column on the item, not a per-workspa
 "another person". Rows written under this default predate any counterparty, so a future `shared`
 migration must ask again rather than inherit them as consent.
 
+Everything that told an agent or a reader the opposite moved with it. The "N existing items are
+still private" notice suggested re-running `add --promote-existing`, which the guard above now
+refuses — it names `--default-visibility workspace --promote-existing`, and a test parses the line
+the tool prints and runs it rather than asserting its wording. The guidance installed into every
+repo's `KNOWL.md` said knowledge stays private until someone promotes it; it now says visibility is
+the repo's recorded default and names the command that prints it, because that sentence is what an
+agent consults before deciding a write is safe. The README and `docs/reference.md` said the same
+thing on the front page and did not document the flag at all.
+
 ### A cross-repo evaluation suite that spans more than one workspace shape
 
 `cross-repo-suite.json` held **three** cases over a single two-repo fixture. That is not enough to

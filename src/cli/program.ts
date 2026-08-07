@@ -639,7 +639,7 @@ workspaceCommand
         .then(manifest => manifest.mode)
         .catch(() => null);
       const defaultedToWorkspace = requested === undefined && manifestMode === 'linked';
-      const visibility = requested ?? (defaultedToWorkspace ? 'workspace' : undefined);
+      const visibility = defaultedToWorkspace ? 'workspace' : requested;
 
       // Rejected rather than ignored. A flag that silently does nothing is how you end up
       // believing a whole repo was shared when none of it was -- the same rule `knowl upgrade`
@@ -671,6 +671,10 @@ workspaceCommand
           console.log('New writes here default to workspace visibility, because every repo in a linked');
           console.log('workspace is on this machine and read by you. Pass --default-visibility repo to');
           console.log('keep this repo\'s writes private instead.');
+          // Blank line because the two say different things: one explains why this is happening
+          // without a flag, the other what workspace visibility costs. Run together they read as
+          // one paragraph and the irreversibility warning stops looking like a warning.
+          console.log('');
         }
         for (const line of visibilityGateNotice(repoName)) console.log(line);
         console.log('');

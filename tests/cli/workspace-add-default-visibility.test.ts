@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
+import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
 import { createManifest, readManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
@@ -23,11 +24,19 @@ function knowl(cwd: string, ...args: string[]) {
   return { stdout: result.stdout ?? '', stderr: result.stderr ?? '', status: result.status };
 }
 
+/**
+ * Seeded with one item on purpose. An empty repo never prints `existingItemsNotice`, so a
+ * fixture with nothing in it cannot see what that notice tells someone to type next -- and that
+ * notice is now reachable with no flags at all.
+ */
 async function seed(root: string, name: string) {
   await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
   await saveConfig(root, { ...DEFAULT_CONFIG });
   await initDb(root);
-  await repo.createProject(root, name);
+  const project = await repo.createProject(root, name);
+  await storeKnowledgeItemDeduped(project.id, {
+    category: 'fact', title: `${name} knows something`, content: `Written by ${name} before it linked.`,
+  });
   await closeDb();
 }
 
@@ -118,6 +127,24 @@ describe('workspace add default visibility', () => {
 
     expect(refused.status).toBe(1);
     expect(refused.stderr).toMatch(/explicit --default-visibility workspace/);
+  });
+
+  it('prints a follow-up command that the --promote-existing guard actually accepts', () => {
+    // The two halves of this change pull against each other, and this is where they meet.
+    // Defaulting the visibility makes `existingItemsNotice` reachable with no flags typed;
+    // requiring an EXPLICIT --default-visibility workspace for --promote-existing makes the
+    // short form of its advice fail. So the notice is not asserted as a string here -- the line
+    // it prints is parsed and run, and the test fails if the tool contradicts itself.
+    const linked = knowl(A, 'workspace', 'add', 'ws', '--name', 'a');
+    expect(linked.status).toBe(0);
+
+    const suggestion = linked.stdout.split('\n').find(line => line.includes('re-run add with'));
+    expect(suggestion, 'the existing-items notice did not print').toBeDefined();
+    const flags = suggestion!.trim().replace(/^Or re-run add with /, '').replace(/ to do it in one step\.$/, '').split(' ');
+
+    const followed = knowl(B, 'workspace', 'add', 'ws', '--name', 'b', ...flags);
+    expect(followed.status, `following "${suggestion!.trim()}" failed: ${followed.stderr}`).toBe(0);
+    expect(followed.stdout).toMatch(/Promoted \d+ existing item/);
   });
 
   it('does not default when the workspace is not in linked mode', async () => {

@@ -30,6 +30,12 @@ export function visibilityGateNotice(repoName: string): string[] {
  * The category list is quoted because `knowl.cmd` runs through `cmd.exe`, which splits an
  * unquoted comma list on the commas. Guidance that prints a command must print one that works
  * on the platform reading it.
+ *
+ * `--default-visibility workspace` is spelled out alongside `--promote-existing` because this
+ * notice is now reachable with no flags at all: a linked workspace defaults the visibility, but
+ * `--promote-existing` deliberately still demands the explicit flag. Printing the shorter form
+ * would hand the reader a command that fails -- and the one place that must not happen is the
+ * text that fires precisely when someone did not type a visibility.
  */
 export function existingItemsNotice(count: number): string[] {
   if (count <= 0) return [];
@@ -37,6 +43,6 @@ export function existingItemsNotice(count: number): string[] {
     `${count} existing item${count === 1 ? '' : 's'} ${count === 1 ? 'is' : 'are'} still private.`,
     'Share them with:',
     `  knowl workspace promote --category "${KNOWLEDGE_CATEGORIES.join(',')}" --apply`,
-    'Or re-run add with --promote-existing to do it in one step.',
+    'Or re-run add with --default-visibility workspace --promote-existing to do it in one step.',
   ];
 }
