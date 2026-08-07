@@ -27,16 +27,83 @@ export type CrInstance = {
 
 const MIN_KEY_RATIO = 0.6;
 
-function stripNumbering(line: string): string {
-  return line.replace(/^\s*\d+\.\s*/, '').replace(/\s*\.\s*$/, '').trim();
+/**
+ * Give every question a list of accepted gold answers.
+ *
+ * The dataset server is not uniform across rows: the 6k instances carry one string per question,
+ * while the 262k single-hop instance carries an array wherever more than one surface form is
+ * accepted. Scoring wants one shape, and a schema admitting only one of them rejects real data.
+ */
+export function normalizeAnswers(answers: readonly (string | readonly string[])[]): string[][] {
+  return answers.map(answer => (Array.isArray(answer) ? [...answer] : [answer as string]));
 }
 
+function stripTrailingPeriod(text: string): string {
+  return text.replace(/\s*\.\s*$/, '').trim();
+}
+
+/**
+ * Fail loudly when the serial chain stopped while its successor is still in the text.
+ *
+ * A strict +1 chain can never resume once broken, so a single break silently buries every later
+ * fact inside the last one -- no error, a completed run, and a plausible-looking score. That is
+ * exactly the failure mode that produced a bogus 40%.
+ *
+ * Deliberately NOT implemented by comparing the accepted chain length to a raw marker count:
+ * sentences legitimately end in numbers ("Channel 4.", "iOS 6.", years), which inflates the marker
+ * count on a perfectly correct parse.
+ */
+export function assertChainComplete(lastFactText: string, nextSerial: number): void {
+  if (!new RegExp(`(^|\\D)${nextSerial}\\.`).test(lastFactText)) return;
+  throw new Error(
+    `CR fact chain broke at ${nextSerial}: marker "${nextSerial}." is still present in the text ` +
+      `the final fact swallowed, so the parse buried every later fact in one atom. ` +
+      `Last fact begins: ${lastFactText.slice(0, 120)}`,
+  );
+}
+
+/**
+ * Split the context into facts on the running serial number rather than on newlines.
+ *
+ * The raw dataset is newline-delimited, but MemoryAgentBench does not deliver it that way: its
+ * chunker builds each chunk as `" ".join(nltk.sent_tokenize(text))`, which is strictly
+ * sentence-aligned and drops the newline at every seam. Splitting on '\n' there yields ONE fact
+ * holding the whole context, which silently disables supersession -- a single atom has nothing to
+ * supersede. Both delivery shapes must parse identically, so the serial is the only reliable
+ * separator.
+ *
+ * Two properties matter and are easy to get wrong:
+ *   - The marker must not require whitespace around it. At a chunk seam the separator is gone
+ *     entirely, giving "America.1163." or "290.Søren". Whitespace does not identify a fact.
+ *   - The marker must not consume the whitespace that follows it. Sentences legitimately end in
+ *     numbers, and a false marker that eats the space before the real next serial leaves that
+ *     serial unmatched, breaking the chain permanently.
+ */
 export function parseFactLines(context: string): string[] {
-  return context
-    .split('\n')
-    .slice(1) // drop the "Here is a list of facts:" header
-    .map(stripNumbering)
-    .filter(Boolean);
+  const marker = /(\d+)\./g;
+  const starts: number[] = [];
+  let expected = 0;
+
+  for (let match = marker.exec(context); match; match = marker.exec(context)) {
+    if (Number(match[1]) !== expected) continue;
+    // Where the fact's text begins -- computed, never consumed by the pattern.
+    starts.push(match.index + match[0].length);
+    expected++;
+  }
+
+  if (!starts.length) return [];
+
+  const facts = starts.map((start, position) => {
+    // Each fact runs to the start of the next accepted marker, so the header before "0." is
+    // dropped for free and a false marker inside the text is simply kept.
+    const end = position + 1 < starts.length
+      ? context.lastIndexOf(`${position + 1}.`, starts[position + 1])
+      : context.length;
+    return stripTrailingPeriod(context.slice(start, end));
+  });
+
+  assertChainComplete(facts[facts.length - 1], expected);
+  return facts.filter(Boolean);
 }
 
 function commonPrefixKey(a: string, b: string): string | null {
@@ -83,6 +150,18 @@ export function parseFacts(context: string): CrFact[] {
     const key = keyByIndex.get(index) ?? text;
     return { index, text, key, value: text.slice(key.length).trim() };
   });
+}
+
+/**
+ * Reassemble MemoryAgentBench's chunk stream and parse it.
+ *
+ * The chunker joins sentences with ' ', so the separator it drops at each seam is a space and
+ * restoring it is the faithful reconstruction. The serial chain must not *depend* on that
+ * though -- a seam shape the chunker happens to emit would otherwise become a silent parse
+ * failure, and silence is exactly how this went unnoticed the first time.
+ */
+export function factsFromChunks(chunks: readonly string[]): CrFact[] {
+  return parseFacts(chunks.join(' '));
 }
 
 /** Facts that share a key, in context order. The last one is the current value. */
