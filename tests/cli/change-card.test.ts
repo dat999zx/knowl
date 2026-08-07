@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createClaudeChangeCardOutput, renderChangeCard } from '../../src/session/change-card.js';
+import { createClaudeChangeCardOutput, ImpactCardEntry, renderChangeCard } from '../../src/session/change-card.js';
 import { ChangeSummary } from '../../src/store/change-watermark.js';
 
 const item = (index: number, action: 'insert' | 'update' = 'insert') => ({
@@ -8,6 +8,14 @@ const item = (index: number, action: 'insert' | 'update' = 'insert') => ({
   title: `Item ${index}`,
   action,
 });
+
+const impact = (
+  locator: string,
+  wasSignature: string | null = null,
+  nowSignature: string | null = null,
+): ImpactCardEntry => ({ locator, wasSignature, nowSignature });
+
+const CLOSING = 'Call knowl_query before relying on earlier memory in these areas.';
 
 describe('change card rendering', () => {
   it('renders a singular header, one line per item, and the closing instruction', () => {
@@ -67,6 +75,151 @@ describe('change card rendering', () => {
       hookSpecificOutput: {
         hookEventName: 'PostToolUse',
         additionalContext: renderChangeCard(summary),
+      },
+    });
+  });
+});
+
+describe('code impact stanza', () => {
+  const summary: ChangeSummary = { count: 1, items: [item(1, 'update')] };
+
+  it('leaves the knowledge-only card byte-identical whether impact is absent or empty', () => {
+    // The two existing callers pass one argument. An empty array must take the same branch as an
+    // absent one, or a caller that computes findings and gets none silently changes its card.
+    const baseline = [
+      'KNOWL CHANGED: 1 item since you last looked.',
+      '- fact (update): Item 1',
+      CLOSING,
+    ].join('\n');
+
+    expect(renderChangeCard(summary)).toBe(baseline);
+    expect(renderChangeCard(summary, [])).toBe(baseline);
+    expect(renderChangeCard(summary, undefined)).toBe(baseline);
+  });
+
+  it('renders both stanzas in one card, separated by a blank line', () => {
+    const card = renderChangeCard(summary, [
+      impact(
+        'symbol://src/auth/session.ts#createSession',
+        'createSession(user: User): Session',
+        'createSession(user: User, org: Organization): Session',
+      ),
+    ]);
+
+    expect(card).toBe([
+      'KNOWL CHANGED: 1 item since you last looked.',
+      '- fact (update): Item 1',
+      '',
+      'CODE IMPACT: 1 thing you read has changed.',
+      '- src/auth/session.ts#createSession — signature changed since you read it',
+      '  was: createSession(user: User): Session',
+      '  now: createSession(user: User, org: Organization): Session',
+      'Re-read before writing to: src/auth/session.ts',
+      CLOSING,
+    ].join('\n'));
+  });
+
+  it('renders an impact-only card with no KNOWL CHANGED header', () => {
+    const card = renderChangeCard(undefined, [impact('file://src/auth/session.ts')]);
+
+    expect(card).toBe([
+      'CODE IMPACT: 1 thing you read has changed.',
+      '- src/auth/session.ts — file changed since you read it',
+      'Re-read before writing to: src/auth/session.ts',
+      CLOSING,
+    ].join('\n'));
+    expect(card).not.toContain('KNOWL CHANGED');
+  });
+
+  it('renders nothing at all when there is no news of either kind', () => {
+    // Not a lone closing line: an instruction about stanzas that are not there is pure tool-side
+    // noise, and the caller can only suppress what it can recognise as empty.
+    expect(renderChangeCard(undefined)).toBe('');
+    expect(renderChangeCard(undefined, [])).toBe('');
+  });
+
+  it('agrees the subject and verb with the finding count', () => {
+    const one = renderChangeCard(undefined, [impact('file://a.ts')]);
+    const many = renderChangeCard(undefined, [impact('file://a.ts'), impact('file://b.ts')]);
+
+    expect(one).toContain('CODE IMPACT: 1 thing you read has changed.');
+    expect(many).toContain('CODE IMPACT: 2 things you read have changed.');
+  });
+
+  it('strips the symbol scheme and names the file for a file locator', () => {
+    const card = renderChangeCard(undefined, [
+      impact('symbol://src/a.ts#Thing', 'class Thing', 'class Thing extends Base'),
+      impact('file://src/b.ts'),
+      impact('weird://something'),
+    ]);
+
+    expect(card).toContain('- src/a.ts#Thing — signature changed since you read it');
+    expect(card).toContain('- src/b.ts — file changed since you read it');
+    // An unparseable locator is still reported, but it names no file to re-read: guessing one
+    // would be the same fabrication the null-signature rule refuses.
+    expect(card).toContain('- weird://something — changed since you read it');
+    expect(card).toContain('Re-read before writing to: src/a.ts, src/b.ts');
+  });
+
+  it('omits was/now entirely when either signature is unproven', () => {
+    const card = renderChangeCard(undefined, [
+      impact('symbol://src/a.ts#one', null, 'one(): void'),
+      impact('symbol://src/a.ts#two', 'two(): void', null),
+      impact('file://src/b.ts'),
+    ]);
+
+    expect(card).not.toContain('was:');
+    expect(card).not.toContain('now:');
+    expect(card.split('\n').filter(line => line.startsWith('- '))).toHaveLength(3);
+  });
+
+  it('caps impact entries at three and reports the overflow', () => {
+    const entries = [1, 2, 3, 4, 5].map(index => impact(`symbol://src/a.ts#s${index}`));
+    const card = renderChangeCard(undefined, entries);
+    const lines = card.split('\n').filter(line => line.startsWith('- '));
+
+    expect(lines).toHaveLength(4);
+    expect(lines[3]).toBe('- +2 more');
+    expect(card).toContain('CODE IMPACT: 5 things you read have changed.');
+    expect(card).not.toContain('#s4');
+  });
+
+  it('truncates a long signature with a visible marker and keeps it on one line', () => {
+    const card = renderChangeCard(undefined, [
+      impact('symbol://src/a.ts#f', `f(${'x'.repeat(200)})`, 'f()\n  : void'),
+    ]);
+
+    // 89 characters plus the ellipsis: a cut-off signature reads as a complete one, so the marker
+    // is the only thing standing between the agent and a call written against sliced-off params.
+    expect(card).toContain(`  was: f(${'x'.repeat(87)}…`);
+    expect(card.split('\n').find(line => line.startsWith('  was:'))?.length).toBe(97);
+    expect(card).toContain('  now: f() : void');
+  });
+
+  it('lists distinct files once in the re-read line and caps that too', () => {
+    const sameFile = renderChangeCard(undefined, [
+      impact('symbol://src/a.ts#one'),
+      impact('symbol://src/a.ts#two'),
+      impact('file://src/a.ts'),
+    ]);
+
+    expect(sameFile).toContain('Re-read before writing to: src/a.ts\n');
+    expect(sameFile.match(/src\/a\.ts/g)?.length).toBe(4);
+
+    const manyFiles = renderChangeCard(undefined, ['a', 'b', 'c', 'd', 'e'].map(name => impact(`file://src/${name}.ts`)));
+
+    // Paths come from every entry, not only the three the cap rendered: the cheap actionable half
+    // of the stanza must not be truncated to fund the expensive explanatory half.
+    expect(manyFiles).toContain('Re-read before writing to: src/a.ts, src/b.ts, src/c.ts (+2 more)');
+  });
+
+  it('forwards impact through the Claude PostToolUse envelope', () => {
+    const entries = [impact('file://src/a.ts')];
+
+    expect(createClaudeChangeCardOutput(undefined, entries)).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PostToolUse',
+        additionalContext: renderChangeCard(undefined, entries),
       },
     });
   });

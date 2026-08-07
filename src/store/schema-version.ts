@@ -43,8 +43,15 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * Level 2 adds `knowledge_commit_items` and its covering index, and backfills it from every
  * commit already on disk (`backfillCommitItems`). Purely additive, so `KNOWL_SCHEMA_VERSION`
  * stays where it is and no older build is locked out.
+ *
+ * Level 3 adds `work_read_sets` and `impact_findings` with their four indexes -- the read-set
+ * and impact-record substrate for change-impact detection. Two new tables, no altered column
+ * and no backfill, which is why it is a level bump and not a version one: an older build opens
+ * this database, finds every table it knows about intact, and never looks at these two. What
+ * the bump buys is that a database created before them still gets them, since the gate is the
+ * only thing that decides whether `SCHEMA_STATEMENTS` runs at all.
  */
-export const KNOWL_MIGRATION_LEVEL = 2;
+export const KNOWL_MIGRATION_LEVEL = 3;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

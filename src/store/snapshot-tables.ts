@@ -55,6 +55,17 @@ export const SNAPSHOT_TABLE_POLICY: Readonly<Record<string, SnapshotTablePolicy>
   // Last git commit the drift check ran against, keyed by project root. Git history is what
   // moves here, and a snapshot of the knowledge store says nothing about it.
   drift_state: 'preserved',
+  // What sessions running *now* have read, and the findings filed against those reads. Both
+  // describe live work against the working tree on disk, which a restore does not touch -- the
+  // same reason `memory_sessions` and `code_files` are preserved. Restoring them would resurrect
+  // one week-old session's beliefs about a file that has moved on since, and every one of those
+  // rows is a candidate for interrupting whoever is working now.
+  //
+  // `impact_findings` has a second reason of its own: its `resolution` column is the adjudication
+  // the certain tier's precision number is computed from. Rolling it back would silently restate
+  // a measurement, which is worse than losing it.
+  work_read_sets: 'preserved',
+  impact_findings: 'preserved',
 
   // --- derived, trigger-maintained ---------------------------------------------------------
   knowledge_items_fts: 'rebuilt',

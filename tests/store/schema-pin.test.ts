@@ -24,6 +24,10 @@ const SCHEMA_PINS: Record<number, string> = {
   // 2 adds `knowledge_commit_items` and its covering index. Additive, so
   // `KNOWL_SCHEMA_VERSION` deliberately does not move with it.
   2: '1e9ab9fdb263a49ec80f26eff98fe0c3',
+  // 3 adds `work_read_sets` and `impact_findings`, their four indexes, and the partial unique
+  // index that closes the duplicate-finding window. Additive again, so `KNOWL_SCHEMA_VERSION`
+  // again does not move.
+  3: '627dad6b3eff5019fb2442a4a1a12a05',
 };
 
 let root: string;
