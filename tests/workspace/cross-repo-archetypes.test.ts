@@ -256,10 +256,8 @@ describe('cross-repo retrieval across workspace archetypes', () => {
   it('holds the recorded baseline on the positional fallback path', async () => {
     const evaluation = await scoreAll(false);
     for (const [archetype, metrics] of Object.entries(evaluation.byTier)) {
-      // eslint-disable-next-line no-console
       console.log(`POSITIONAL ${archetype.padEnd(20)} MRR=${metrics.mrr.toFixed(4)} R@3=${metrics.recallAt3.toFixed(4)}`);
     }
-    // eslint-disable-next-line no-console
     console.log(`POSITIONAL soft-forbidden shown: ${evaluation.metrics.forbiddenHitCount}`);
     expect(evaluation.metrics.forbiddenHitCount).toBeLessThanOrEqual(baseline.softForbidden.positional);
     for (const [archetype, recorded] of Object.entries(baseline.positional)) {
@@ -276,10 +274,8 @@ describe('cross-repo retrieval across workspace archetypes', () => {
     }
     const evaluation = await scoreAll(true);
     for (const [archetype, metrics] of Object.entries(evaluation.byTier)) {
-      // eslint-disable-next-line no-console
       console.log(`SEMANTIC ${archetype.padEnd(20)} MRR=${metrics.mrr.toFixed(4)} R@3=${metrics.recallAt3.toFixed(4)}`);
     }
-    // eslint-disable-next-line no-console
     console.log(`SEMANTIC soft-forbidden shown: ${evaluation.metrics.forbiddenHitCount}`);
     expect(evaluation.metrics.forbiddenHitCount).toBeLessThanOrEqual(baseline.softForbidden.semantic);
     for (const [archetype, recorded] of Object.entries(baseline.semantic)) {

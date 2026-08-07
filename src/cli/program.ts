@@ -927,10 +927,16 @@ workspaceCommand
 
       // The number the "weak query" predicate has to be chosen from. Printed rather than
       // interpreted: nothing in this build acts on it yet, and that is the point of the phase.
+      //
+      // Named as the cosine it is. Calling it a "score" would invite comparison with the
+      // `score` field `knowl_query` returns, which is the fused-and-prioritised number on a
+      // different scale; this one is comparable to the per-model relevance floors instead.
+      // Queries answered without a semantic half contribute no row here at all, which is why
+      // the count is printed beside it rather than assumed to be the total.
       const { scores } = summary;
       if (scores.withScore > 0) {
         const show = (value: number | null) => (value === null ? '-' : value.toFixed(3));
-        console.log(`  top-result score over ${scores.withScore} scored quer(ies): min ${show(scores.min)}, median ${show(scores.median)}, max ${show(scores.max)}`);
+        console.log(`  best cosine over ${scores.withScore} semantically-scored quer(ies): min ${show(scores.min)}, median ${show(scores.median)}, max ${show(scores.max)}`);
       }
 
       console.log('\nMost-repeated questions:');
@@ -938,7 +944,7 @@ workspaceCommand
         // A question whose terms were withheld still counts. Saying so beats a blank line that
         // reads as a bug -- the secret validators refused the text, deliberately.
         const label = question.terms ?? `(terms withheld) ${question.fingerprint.slice(0, 12)}`;
-        const best = question.bestScore === null ? '' : ` best ${question.bestScore.toFixed(3)}`;
+        const best = question.bestScore === null ? '' : ` cos ${question.bestScore.toFixed(3)}`;
         console.log(`  ${String(question.count).padStart(4)}x  ${label}${best}`);
       }
       console.log('\nThis ledger is local to this machine and is not synced between checkouts.');

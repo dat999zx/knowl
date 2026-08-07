@@ -37,12 +37,31 @@ Two things the suite keeps separate on purpose:
 - **Scores are recorded per archetype, not pooled.** A change that lifts the average while
   wrecking one shape is the exact failure this exists to catch, and an average is what hides it.
 
+It found one on arrival. Against 3.3.0 the recorded baseline fails at `polyglot-services`,
+semantic MRR 1.0 → 0.975, traced by experiment to 4152c34's min-max rescale of the semantic
+half: neutralising `rescaleSemantic` restores 1.0 and leaves every other cell byte-identical,
+and the whole positional column is untouched, which is what a semantic-only cause predicts. One
+case moves — a query naming a peer service, where amplifying a narrow cosine lead is the
+rescale working as designed. Recorded as an accepted cost rather than reverted: 4152c34 won on
+the two suites that can discriminate, over 135 and 56 cases, and overturning that on a single
+fixture case is the closed-loop reasoning `cross-repo-local-preference.md` exists to warn
+against. The reasoning is in the baseline file, so the next drop is still a regression.
+
 ### `knowl workspace demand` — what the repos actually ask each other for
 
 A workspace-level ledger recording every cross-repo query: which repo asked, which answered,
-the top result's score, and the query itself where it passes the repo's own secret validators
+how well it was answered, and the query itself where it passes the repo's own secret validators
 (a fingerprint always, so demand stays countable even when the text is withheld). Lives beside
 the workspace manifest, not in any member repo, and is local to this machine.
+
+"How well" is the best **raw cosine** on the answered page, and withheld entirely where no
+semantic half ran. The column exists so a "weak query" threshold can be chosen from its
+distribution later, which needs a number meaning the same thing on every row — and the fused
+score is not one. Its semantic half is min-max scaled across the candidate page (3.3.0), so the
+best row lands near 1.0 whether its cosine was 0.9 or 0.2; with vector off, its lexical half is
+normalised against each corpus's own best hit, so the top row lands near 1.0 again. Cosine is
+what the relevance floor is measured against, so a threshold picked from this column is
+comparable to the shipped per-model floors.
 
 **Nothing acts on it.** It exists to answer, with data rather than intuition, whether there is
 enough cross-repo demand to justify proposing promotions at all — see the

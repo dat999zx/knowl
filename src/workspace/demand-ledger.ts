@@ -7,7 +7,16 @@ import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import type { ProjectConfig } from '../core/types.js';
 import { workspaceDir } from './paths.js';
 
-/** Bump when a migration must run. Read and written as `PRAGMA user_version`. */
+/**
+ * Stamped into `PRAGMA user_version` on every open. Written, not yet read.
+ *
+ * Nothing branches on it today because `ensureDemandColumns` handles the only migration shape
+ * this file has so far -- an older build's table missing later columns, which is detectable
+ * from `table_info` alone and does not need a version to find. The stamp is here so a change
+ * that column inspection *cannot* detect (a rewritten column meaning, a dropped index the
+ * guard would not restore) has a marker already present in files written before it, instead of
+ * meeting a generation of files it cannot identify.
+ */
 const SCHEMA_VERSION = 1;
 
 /** Rows older than this are dropped when the ledger is opened. */
@@ -20,6 +29,17 @@ export type DemandEvent = {
   kind: DemandKind;
   /** The raw query. Fingerprinted always; stored verbatim only if it passes the validators. */
   query: string;
+  /**
+   * The best RAW cosine on the answered page, or null where no semantic half ran.
+   *
+   * Deliberately not the fused `finalScore`. This column is the calibration readout -- a
+   * threshold gets chosen from its distribution later -- and that only works if the number
+   * means the same thing on every row. The fused score does not: its semantic half is min-max
+   * scaled across the candidate page, and with vector off its lexical half is normalised
+   * against each corpus's own best hit, so on both paths the top row lands near 1.0 whatever
+   * it was. Cosine is also the quantity the relevance floor is measured against, so a
+   * threshold picked here is comparable to the shipped per-model floors.
+   */
   topScore?: number | null;
   servedRepo?: string | null;
   servedItemId?: string | null;
@@ -60,11 +80,6 @@ function schemaStatements(): string[] {
       served_repo TEXT,
       served_item_id TEXT,
       detail TEXT
-    );`,
-    `CREATE TABLE IF NOT EXISTS demand_declines (
-      item_id TEXT PRIMARY KEY,
-      declined_at TEXT NOT NULL,
-      reason TEXT
     );`,
   ];
 }
@@ -109,7 +124,19 @@ async function ensureDemandColumns(client: Client): Promise<void> {
   }
 }
 
-const clients = new Map<string, Client>();
+/**
+ * Cached by PROMISE, not by client, and that is load-bearing rather than stylistic.
+ *
+ * Opening is asynchronous, so caching the resolved client leaves the whole bootstrap as a gap
+ * in which the cache is still empty: every caller that arrives during it misses, opens its own
+ * connection, and the last `set` wins. The others are never handed back and never closed, so
+ * `closeDemandDb` cannot reach them -- on Windows each one holds the `-shm` sidecar open for
+ * the life of the process. This is not hypothetical here: the writes are fire-and-forget from
+ * a response path, so the natural traffic shape is a burst that all misses together, which is
+ * what `takes concurrent writers on one file` drives. Caching the in-flight promise collapses
+ * the burst onto one connection.
+ */
+const clients = new Map<string, Promise<Client>>();
 
 /**
  * Open (and on first use create) a workspace's ledger.
@@ -123,22 +150,34 @@ export async function openDemandDb(workspaceName: string): Promise<Client> {
   const existing = clients.get(resolved);
   if (existing) return existing;
 
-  await fs.mkdir(path.dirname(resolved), { recursive: true });
-  const client = createClient({ url: `file:${resolved}` });
+  const opening = (async () => {
+    await fs.mkdir(path.dirname(resolved), { recursive: true });
+    const client = createClient({ url: `file:${resolved}` });
+    try {
+      for (const statement of schemaStatements()) await client.execute(statement);
+      await ensureDemandColumns(client);
+      for (const statement of indexStatements()) await client.execute(statement);
+      await client.execute(`PRAGMA user_version = ${SCHEMA_VERSION};`);
+      await pruneExpired(client);
+    } catch (error) {
+      // A partially bootstrapped client still holds whatever lock it took.
+      await client.close();
+      throw error;
+    }
+    return client;
+  })();
+
+  // Cached before the first await above can yield, so a concurrent caller sees it. Evicted on
+  // failure so a later call retries rather than inheriting a rejection forever -- the failure
+  // this has to survive is a transient one (the directory not there yet, a file where the
+  // directory should be), and a permanently poisoned cache entry would turn it permanent.
+  clients.set(resolved, opening);
   try {
-    for (const statement of schemaStatements()) await client.execute(statement);
-    await ensureDemandColumns(client);
-    for (const statement of indexStatements()) await client.execute(statement);
-    await client.execute(`PRAGMA user_version = ${SCHEMA_VERSION};`);
-    await pruneExpired(client);
+    return await opening;
   } catch (error) {
-    // A partially bootstrapped client still holds whatever lock it took.
-    await client.close();
+    if (clients.get(resolved) === opening) clients.delete(resolved);
     throw error;
   }
-
-  clients.set(resolved, client);
-  return client;
 }
 
 async function pruneExpired(client: Client): Promise<void> {
@@ -229,8 +268,30 @@ export type DemandSummary = {
   scores: { withScore: number; min: number | null; median: number | null; max: number | null };
 };
 
+const EMPTY_SUMMARY: DemandSummary = {
+  total: 0,
+  byKind: [],
+  byQueryingRepo: [],
+  byServingRepo: [],
+  topQuestions: [],
+  scores: { withScore: 0, min: null, median: null, max: null },
+};
+
 /** What the ledger has learned so far. Read-only; the report subcommand's whole body. */
 export async function summarizeDemand(workspaceName: string, limit = 20): Promise<DemandSummary> {
+  // Reading must not write. Opening a libSQL `file:` URL CREATES the file, so going straight to
+  // `openDemandDb` would have the report command bring the very ledger it reports on into
+  // existence -- the same shape as `doctor` writing an empty store for the repository it was
+  // asked to inspect, which 3.3.0 fixed as data loss. Here it is milder (there is nothing to
+  // overwrite) but the reading is identical either way: an absent ledger means nothing has been
+  // recorded, and that is an answer, not a reason to create one. Pruning and the column guard
+  // also run on open, and neither has any business firing on a read.
+  try {
+    await fs.access(demandDbPath(workspaceName));
+  } catch {
+    return EMPTY_SUMMARY;
+  }
+
   const client = await openDemandDb(workspaceName);
   const rows = async (sql: string) => (await client.execute(sql)).rows;
 
@@ -274,9 +335,15 @@ export async function summarizeDemand(workspaceName: string, limit = 20): Promis
 
 /** Drop cached clients so the next open reconnects. Tests need this on Windows. */
 export async function closeDemandDb(): Promise<void> {
-  const entries = [...clients.entries()];
+  const pending = [...clients.values()];
   clients.clear();
-  for (const [, client] of entries) {
+  for (const opening of pending) {
+    // Settle the open before closing it. A close racing an in-flight bootstrap would leave the
+    // connection the bootstrap is still creating outside this sweep -- the leak the promise
+    // cache exists to prevent, reintroduced at the other end. A rejected open created nothing
+    // that outlived it, so it needs nothing here.
+    const client = await opening.catch(() => null);
+    if (!client) continue;
     await client.execute('PRAGMA wal_checkpoint(TRUNCATE)').catch(() => {});
     client.close();
   }

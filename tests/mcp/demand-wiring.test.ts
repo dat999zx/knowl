@@ -5,6 +5,8 @@ import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
+import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
+import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
 import { createMcpServer } from '../../src/mcp/server.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
@@ -133,6 +135,61 @@ describe('demand ledger wiring', () => {
 
     expect(await eventuallyTotal(ws, 1)).toBe(1);
     expect((await summarizeDemand(ws)).topQuestions[0].terms).toBe('ceramic glaze firing schedule');
+  });
+
+  it('records the raw cosine, not the fused score', async () => {
+    // The column is the calibration readout -- a "weak query" threshold gets chosen from its
+    // distribution -- so it has to hold a number that means the same thing on every row.
+    // `finalScore` does not: its semantic half is min-max scaled across the candidate page, so
+    // the best row lands near 1.0 whether its cosine was 0.9 or 0.2. Cosine is what the
+    // relevance floor is measured against, which is what makes a threshold picked here
+    // comparable to the shipped per-model floors.
+    for (const root of [A, B]) {
+      await initDb(root);
+      await reindexKnowledgeEmbeddings('local', await createLocalEmbeddingProvider(await loadConfig(root), root));
+      await closeDb();
+    }
+
+    await initDb(A);
+    const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth token expire', limit: 5, explain: true });
+    await closeDb();
+
+    const items = JSON.parse(result.content[0].text) as Array<{ explanation?: { finalScore?: number; uncalibrated?: string; contributions?: { semantic?: number } } }>;
+    const bestCosine = Math.max(...items
+      .filter(item => !item.explanation?.uncalibrated)
+      .map(item => item.explanation?.contributions?.semantic ?? 0));
+    expect(bestCosine).toBeGreaterThan(0);
+
+    expect(await eventuallyTotal(ws, 1)).toBe(1);
+    const { scores } = await summarizeDemand(ws);
+    expect(scores.withScore).toBe(1);
+    expect(scores.max).toBeCloseTo(bestCosine, 6);
+
+    // And not the number it used to record. Stated as a distinct assertion because the two
+    // coinciding would make the one above pass while proving nothing.
+    const topFused = items[0]?.explanation?.finalScore;
+    expect(typeof topFused).toBe('number');
+    expect(Math.abs(topFused! - bestCosine)).toBeGreaterThan(1e-6);
+  });
+
+  it('records no score at all when no semantic half ran', async () => {
+    // With vector off, ranking is each corpus's rows divided by its own best hit, so the top
+    // row scores near 1.0 whatever it is -- an order, not a strength. Writing that into the
+    // calibration column would fill it with ~1.0 rows carrying no information, and a threshold
+    // chosen from that distribution would be picked from noise. The demand row still lands;
+    // only the number is withheld, on exactly the predicate `knowl_query` withholds a published
+    // score on.
+    const base = await loadConfig(A);
+    const noVector = { ...base, search: { ...base.search, vector: { ...base.search?.vector, enabled: false } } };
+
+    await initDb(A);
+    await callTool(A, noVector, 'knowl_query', { query: 'auth token expire', limit: 5 });
+    await closeDb();
+
+    expect(await eventuallyTotal(ws, 1)).toBe(1);
+    const summary = await summarizeDemand(ws);
+    expect(summary.total).toBe(1);
+    expect(summary.scores.withScore).toBe(0);
   });
 
   it('writes nothing at all outside a workspace', async () => {

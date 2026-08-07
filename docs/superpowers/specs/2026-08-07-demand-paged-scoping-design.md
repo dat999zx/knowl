@@ -56,7 +56,8 @@ that the workspace could not answer, and paging in is a promotion proposed to a 
    knowledge cannot answer reaches session transcripts — which hold the same facts in
    already-written prose and are separately gated.
 3. **Demand ledger (Phase C), measure-only.** A workspace-level SQLite file recording every
-   federated query: fingerprint, score, which repo served it. No behaviour depends on it. It
+   federated query: fingerprint, best raw cosine, which repo served it. No behaviour depends on
+   it. It
    exists to answer "what does one repo actually ask another for" with data instead of intuition.
 4. **Consolidator (Phase D), review-only and gated.** Proposes promotions where demand,
    peer-duplication and content-sensitivity agree. Never applies without explicit ids.

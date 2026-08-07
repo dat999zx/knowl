@@ -52,13 +52,23 @@ start.
 - Retention prunes rows over 90 days on open.
 
 Wired at two points: the `knowl_query` federation block (one row per workspace query, with the
-top score and per-repo contribution) and `handleTranscriptSearch` (one row per foreign serving
+best cosine and per-repo contribution) and `handleTranscriptSearch` (one row per foreign serving
 repo). `knowl workspace demand` reports it.
 
-Verified: `tests/workspace/demand-ledger.test.ts` (11 — fingerprint dedup, secret withholding,
-configured patterns, retention prune, legacy-column upgrade, concurrent writers, never throws)
-and `tests/mcp/demand-wiring.test.ts` (4 — records a hit and a miss, writes nothing outside a
-workspace, and still answers the query when the ledger directory is unwritable). CLI output
+The score column holds the best **raw cosine** on the answered page, not the fused
+`finalScore`, and holds nothing where no semantic half ran. A threshold is only choosable from
+this distribution if the number means the same thing on every row, and the fused score stopped
+being one: 4152c34 min-max scales its semantic half across the candidate page, so the best row
+sits near 1.0 whatever its cosine was, and with vector off its lexical half is normalised
+against each corpus's own best hit, landing near 1.0 again. Cosine is what the relevance floor
+is measured against, so a cut chosen here is comparable to the shipped per-model floors.
+
+Verified: `tests/workspace/demand-ledger.test.ts` (13 — fingerprint dedup, secret withholding,
+configured patterns, retention prune, legacy-column upgrade, concurrent writers on one
+connection, retry after a failed open, reporting an absent ledger without creating one, never
+throws) and `tests/mcp/demand-wiring.test.ts` (6 — records a hit and a miss, records the cosine
+rather than the fused score, records no score where none was calibrated, writes nothing outside
+a workspace, and still answers the query when the ledger directory is unwritable). CLI output
 checked end-to-end against a throwaway workspace.
 
 ## Phase D — consolidator — GATED SHUT, NOT BUILT

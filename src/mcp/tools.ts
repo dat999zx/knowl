@@ -915,11 +915,48 @@ export function registerTools(
         // slow or failing ledger could still affect is whether the caller gets their answer.
         if (active && query) {
           const top = resolvedItems[0];
+          // The raw cosine, not `finalScore`, and only where a semantic half actually ran.
+          //
+          // That column exists so a "weak query" threshold can be picked off the distribution
+          // later, which needs a number meaning the same thing on every row. `finalScore` is
+          // not one, for two independent reasons. Since 4152c34 the semantic half is min-max
+          // scaled across the candidate page, so the best row's semantic term is ~1.0 whether
+          // its cosine was 0.9 or 0.2 -- the rescale exists to amplify small gaps, which is
+          // exactly what destroys cross-query comparability. And with vector off, the lexical
+          // half is normalised against each corpus's own best hit, so the top row scores ~1.0
+          // whatever it is. A column mixing those scales still has a distribution; no threshold
+          // read off it would mean anything. `scoreOf` already refuses to publish that number
+          // to the caller for the same reason -- this must not record what that gate rejects.
+          //
+          // Cosine is the quantity the relevance floor is measured against, so a threshold
+          // chosen from this column is comparable to `MODEL_RELEVANCE_FLOORS`. It is the best
+          // cosine on the RETURNED page, not over the whole candidate set -- the ranker does
+          // not surface the latter -- so it is a lower bound on the `bestCosine` the floor
+          // actually judged. `abstained` in `detail` carries that verdict exactly, so the two
+          // together say more than either alone.
+          //
+          // Uncalibrated rows are excluded rather than counted as 0, and no row left means no
+          // number at all. An unembedded row's semantic half is 0 by ABSENCE, not by verdict --
+          // vector never saw it -- and a store with no embeddings yet would otherwise fill this
+          // column with zeroes indistinguishable from real misses, which is the same mistake as
+          // recording the fused score, made at the other end of the range. Same predicate
+          // `scoreOf` withholds a published number on, for the same reason.
+          const judged = scored
+            ? resolvedItems.filter(item =>
+              !(item.explanation as { uncalibrated?: string } | undefined)?.uncalibrated)
+            : [];
+          const bestCosine = judged.length
+            ? judged.reduce((best, item) => {
+              const semantic = (item.explanation as { contributions?: { semantic?: number } } | undefined)
+                ?.contributions?.semantic;
+              return typeof semantic === 'number' && semantic > best ? semantic : best;
+            }, 0)
+            : null;
           void recordDemandEventBestEffort(active.name, {
             queryingRepo: active.repo,
             kind: 'federated_query',
             query,
-            topScore: (top?.explanation as { finalScore?: number } | undefined)?.finalScore ?? null,
+            topScore: bestCosine,
             servedRepo: top?.repo ?? null,
             servedItemId: top?.id ?? null,
             detail: {

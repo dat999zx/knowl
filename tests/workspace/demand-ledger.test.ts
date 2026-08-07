@@ -163,16 +163,50 @@ describe('demand ledger', () => {
     expect(summary.byServingRepo).toEqual([{ repo: 'b', count: 1 }]);
   });
 
-  it('takes concurrent writers on one file', async () => {
+  it('takes concurrent writers on one file, on one connection', async () => {
     // Every knowl process on the machine may write this, and the busy timeout is deliberately
-    // low -- losing a row beats blocking a query. What must not happen is a thrown error.
+    // low -- across processes, losing a row beats blocking a query. WITHIN one process there is
+    // nothing to lose to: `openDemandDb` caches the in-flight open, so a burst that all misses
+    // the cache together collapses onto a single connection and the writes simply queue.
+    //
+    // So this asserts all twenty rather than "more than none". The weaker assertion passed
+    // equally when each caller opened its own connection -- which is the shape that leaks, since
+    // only the last one is reachable from the cache and the other nineteen are never closed.
+    // Twenty is the number that distinguishes the two.
     await Promise.all(
       Array.from({ length: 20 }, (_, index) =>
         recordDemandEventBestEffort(ws, event({ query: `question ${index % 5}` }))),
     );
 
     const summary = await summarizeDemand(ws);
-    expect(summary.total).toBeGreaterThan(0);
-    expect(summary.topQuestions.length).toBeLessThanOrEqual(5);
+    expect(summary.total).toBe(20);
+    expect(summary.topQuestions.length).toBe(5);
+  });
+
+  it('reports an empty ledger without creating one', async () => {
+    // Opening a libSQL `file:` URL creates the file, so a report that goes straight to the
+    // client brings into existence the thing it is reporting on -- the shape 3.3.0 fixed in
+    // `doctor`. "Nothing recorded" is an answer; it is not a reason to write.
+    const summary = await summarizeDemand(ws);
+
+    expect(summary.total).toBe(0);
+    expect(summary.scores.withScore).toBe(0);
+    await expect(fs.access(demandDbPath(ws))).rejects.toThrow();
+  });
+
+  it('retries the open after a failure instead of caching the rejection', async () => {
+    // The cost of caching a promise rather than a client: a rejected open must not be handed to
+    // every later caller forever. The failure this survives is transient by nature -- something
+    // sitting where the workspace directory belongs -- so recovery has to be automatic.
+    const dir = path.dirname(demandDbPath(ws));
+    await fs.mkdir(path.dirname(dir), { recursive: true });
+    await fs.writeFile(dir, 'not a directory');
+
+    await recordDemandEventBestEffort(ws, event());
+    expect(await fs.readFile(dir, 'utf-8')).toBe('not a directory');
+
+    await fs.rm(dir, { force: true });
+    await recordDemandEventBestEffort(ws, event());
+    expect((await summarizeDemand(ws)).total).toBe(1);
   });
 });
