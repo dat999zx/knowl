@@ -17,7 +17,7 @@
   <a href="#what-knowl-is-for"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-local.svg"><img src="docs/assets/chips/stat-local.svg" alt="100% local, no egress" height="38" /></picture></a>
 </p>
 
-<img src="docs/assets/demo.gif" alt="Recording a decision, then recording a replacement under the same subject, which supersedes the first at write time; knowl status then reports one active item and one superseded" width="92%" />
+<img src="docs/assets/demo-agent.svg" alt="An agent asks why the project uses session cookies, calls knowl_query, and answers from the active decision — including the alternative that was rejected — while the superseded predecessor is skipped. No files opened." width="94%" />
 
 [Quick start](#quick-start) ·
 [Why supersession](#the-idea-memory-that-retires-itself) ·
@@ -84,6 +84,10 @@ active and retrievable, so the agent gets both and picks by rank. Knowl treats a
 as a correction: the predecessor is marked `superseded`, drops out of normal retrieval, and stays
 queryable through [`knowl timeline`](docs/reference.md#metadata-history-and-ownership).
 
+<div align="center">
+<img src="docs/assets/demo-store.svg" alt="A write naming a subject the store already holds: the replacement takes the active lane, the predecessor is stamped superseded and moved into history, and a later query sweep matches only the current decision" width="92%" />
+</div>
+
 That single behavior is most of the accuracy difference. On the
 [MemoryAgentBench](https://github.com/HUST-AI-HYZ/MemoryAgentBench) Conflict Resolution track —
 455 facts, 100 questions about which fact is current, top-5 retrieval, no LLM reader:
@@ -102,6 +106,13 @@ active. See [benchmarks](docs/reference.md#benchmarks) for the protocol, the che
 and what the track does not cover.
 
 Supersession is a correction, not a delete: the item, its assertions, and its history all survive.
+
+Not a mock-up — the same sequence against the published CLI, recorded from
+[`demo.tape`](docs/assets/demo.tape):
+
+<div align="center">
+<img src="docs/assets/demo.gif" alt="Terminal recording: knowl decide records a decision, a second decide under the same subject reports Superseded older decision, and knowl status then reports one active item and one superseded" width="88%" />
+</div>
 
 ## What gets stored
 
@@ -229,6 +240,10 @@ Use `knowl.cmd` as the command on Windows. Codex reads the same entry under `mcp
 Knowl does one job: keep a repository's engineering truth accurate for the agents working on it.
 Not user preferences, not chat history — the decisions, constraints, and architecture of a
 codebase, and which of them are still true today.
+
+<div align="center">
+<img src="docs/assets/demo-drift.svg" alt="The same six months in two stores: append-only, where every note stays true forever and a query today matches four contradicting answers; and governed, where each superseded fact ends where it stopped being true and the same query matches one" width="92%" />
+</div>
 
 Three choices follow from that:
 

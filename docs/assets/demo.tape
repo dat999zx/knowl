@@ -16,7 +16,7 @@ Set FontSize 16
 Set Width 1240
 Set Height 470
 Set Theme "Dracula"
-Set TypingSpeed 45ms
+Set TypingSpeed 22ms
 Set Padding 22
 
 # Setup the viewer does not see. A fresh, empty repository matters: the duplicate finder
@@ -30,18 +30,18 @@ Type "export PS1='$ ' && clear"
 Enter
 Show
 
-Sleep 800ms
+Sleep 500ms
 
 Type `knowl decide "Auth approach" "Stateless auth via JWT."`
 Enter
-Sleep 2500ms
+Sleep 1400ms
 
 Type `knowl decide "Auth approach" "Server-side session cookies. Revocable."`
 Enter
-Sleep 3500ms
+Sleep 2200ms
 
 # head, because `status` also prints a per-category breakdown that pushes the line the demo
 # exists for off the top. Active 1 / Superseded 1 is the whole claim in two lines.
 Type `knowl status | head -n 11`
 Enter
-Sleep 4500ms
+Sleep 3000ms
