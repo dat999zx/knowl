@@ -220,7 +220,19 @@ const originalTmpdirEnv = new Map<string, string | undefined>();
  * the setup-time sweep that had to be removed.
  */
 export async function setup(): Promise<void> {
-  systemTmpdir = os.tmpdir();
+  // realpath because macOS reports `os.tmpdir()` as `/var/folders/...`, a symlink to
+  // `/private/var/folders/...`. A spawned CLI resolves its own cwd, so a fixture handed out
+  // under the symlinked form compares unequal to the same directory as the child sees it, and
+  // every guard deciding identity by comparing paths silently stops matching. Not hypothetical:
+  // it turned `knowl init` refusals into successes on the macOS CI leg while Linux and Windows
+  // stayed green. Canonicalising the parent fixes every caller at once, because this is the
+  // value the TMPDIR variables below hand to `os.tmpdir()` in the workers.
+  //
+  // The parent and not just the run root: `sweepOrphanedTemporaryRoots` decides what to skip
+  // with `path.resolve(target) === path.resolve(skip)`, and `path.resolve` normalises without
+  // resolving symlinks. A canonical run root under a symlinked parent would compare unequal to
+  // itself there, and the sweep would stop recognising its own live root.
+  systemTmpdir = await fs.realpath(os.tmpdir());
   // mkdtemp rather than a name of our own: two suites can be running at once, and each must
   // own its root outright or the concurrency hazard just moves up a level.
   runRoot = await fs.mkdtemp(path.join(systemTmpdir, RUN_ROOT_PREFIX));
