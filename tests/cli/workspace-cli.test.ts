@@ -242,7 +242,10 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
     const shown = knowl(settable, 'workspace', 'set');
     expect(shown.status).toBe(0);
     expect(shown.stdout).toMatch(/role:\s+\(none\)/i);
-    expect(shown.stdout).toMatch(/default visibility:\s+repo/i);
+    // `workspace` because this repo joined a LINKED workspace without naming a visibility, and
+    // that now defaults to sharing rather than to `repo`. Was `repo`, which was the
+    // pre-workspace compatibility value left in place after workspaces shipped.
+    expect(shown.stdout).toMatch(/default visibility:\s+workspace/i);
 
     const changed = knowl(settable, 'workspace', 'set', '--role', 'the main app', '--default-visibility', 'workspace');
     expect(changed.status).toBe(0);

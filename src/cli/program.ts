@@ -605,7 +605,7 @@ workspaceCommand
   .description('Link this repo into a workspace')
   .option('--name <repo-name>', 'Name this repo carries inside the workspace; defaults to the directory name')
   .option('--role <text>', 'What this repo is, for agents that have only the manifest')
-  .option('--default-visibility <repo|workspace>', 'Visibility stamped on new writes here (default: repo)')
+  .option('--default-visibility <repo|workspace>', 'Visibility stamped on new writes here (default: workspace in a linked workspace)')
   .option('--kin <group>', 'Group name shared with repos of the same lineage')
   .option('--promote-existing', 'Also share knowledge already in this repo; requires --default-visibility workspace')
   .option('--force', 'Link even though .knowl/config.json is tracked by git')
@@ -613,13 +613,47 @@ workspaceCommand
     try {
       const root = await findProjectRoot(process.cwd());
       const repoName = options.name ?? path.basename(root).toLowerCase().replace(/[^a-z0-9-]+/g, '-');
-      const visibility = parseDefaultVisibility(options.defaultVisibility);
+      const requested = parseDefaultVisibility(options.defaultVisibility);
+
+      /**
+       * A repo joining a `linked` workspace shares by default.
+       *
+       * `'repo'` was the compatibility default: it preserved pre-workspace behaviour, which was
+       * right when the columns landed and nothing read them. Once workspaces shipped it became a
+       * policy default nobody chose, and because promotion has no inverse it only ever drifts one
+       * way -- measured on a real three-repo workspace, to 95% private, with the same rule shared
+       * from one repo and private in its sibling purely by where someone was standing.
+       *
+       * Sharing costs little and loses nothing: over 92 cases across five workspace archetypes,
+       * pooled MRR moves 0.9837 -> 0.9674 while recall@3 is unchanged to four decimal places
+       * (docs/evals/share-everything.md). Answers are reordered, never dropped.
+       *
+       * Applied ONLY on an explicit `workspace add`, and only to the entry being created. A
+       * person is at the terminal, reads the notice below, and can pass `--default-visibility
+       * repo`. Existing entries are untouched and absent still means `'repo'` -- changing what
+       * omission resolves to would publish every linked repo's next write on account of a
+       * release rather than a decision, which is the bulk publish `tests/cli/upgrade.test.ts`
+       * already forbids and which no `--default-visibility repo` could undo.
+       */
+      const manifestMode = await readManifest(workspaceManifestPath(workspaceName))
+        .then(manifest => manifest.mode)
+        .catch(() => null);
+      const defaultedToWorkspace = requested === undefined && manifestMode === 'linked';
+      const visibility = requested ?? (defaultedToWorkspace ? 'workspace' : undefined);
 
       // Rejected rather than ignored. A flag that silently does nothing is how you end up
       // believing a whole repo was shared when none of it was -- the same rule `knowl upgrade`
       // applies to its --all-only flags.
-      if (options.promoteExisting && visibility !== 'workspace') {
-        throw new Error('--promote-existing only applies with --default-visibility workspace, because it publishes everything this repo already knows.');
+      //
+      // Checked against `requested`, NOT the resolved value: the new default must not stand in
+      // for saying it out loud here. Defaulting a repo's FUTURE writes to workspace is a small,
+      // announced, per-command decision. Publishing everything the repo already knows is the
+      // largest irreversible action this tool has, and letting a default satisfy its
+      // precondition would mean `workspace add ws --promote-existing` quietly bulk-publishes an
+      // entire history -- exactly the shape of unrequested publish this default was scoped to
+      // avoid. The two must not be merged just because they name the same enum.
+      if (options.promoteExisting && requested !== 'workspace') {
+        throw new Error('--promote-existing only applies with an explicit --default-visibility workspace, because it publishes everything this repo already knows.');
       }
 
       await joinWorkspace({
@@ -630,6 +664,14 @@ workspaceCommand
 
       if (visibility === 'workspace') {
         console.log('');
+        // Said before the gate notice, not instead of it. Someone who did not pass a flag needs
+        // to know a default decided this and how to decline it; someone who passed
+        // `--default-visibility workspace` already knows and is not told twice.
+        if (defaultedToWorkspace) {
+          console.log('New writes here default to workspace visibility, because every repo in a linked');
+          console.log('workspace is on this machine and read by you. Pass --default-visibility repo to');
+          console.log('keep this repo\'s writes private instead.');
+        }
         for (const line of visibilityGateNotice(repoName)) console.log(line);
         console.log('');
 

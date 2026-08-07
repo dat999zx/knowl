@@ -5,6 +5,40 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+### `workspace add` shares by default in a linked workspace
+
+**Breaking-ish, for new links only.** A repo joining a `linked` workspace now gets
+`defaultVisibility: workspace` unless it passes `--default-visibility repo`. The command says a
+default decided it and how to decline.
+
+`'repo'` was the *compatibility* default — it preserved pre-workspace behaviour when the columns
+landed and nothing read them, which was right at the time. Once workspaces shipped it became a
+*policy* default nobody chose, and since promotion has no inverse it only drifts one way: measured
+on a real three-repo workspace, to 95% private, with the same rule shared from one repo and
+private in its sibling purely by where someone happened to be standing.
+
+Sharing costs little and loses nothing — across 92 cases and five workspace archetypes, pooled MRR
+moves 0.9837 → 0.9674 while recall@3 is unchanged to four decimal places
+([measurement](docs/evals/share-everything.md)). Answers get reordered, never dropped.
+
+Two limits, both deliberate:
+
+- **Repos already in a manifest do not move.** An absent `defaultVisibility` still resolves to
+  `'repo'`. Changing that would publish every linked repo's next write on account of a release
+  rather than a decision, and no `--default-visibility repo` could undo it — the bulk publish
+  `tests/cli/upgrade.test.ts` already forbids. The new default applies only where a person ran a
+  command and read the notice.
+- **The default does not satisfy `--promote-existing`.** That still requires an explicit
+  `--default-visibility workspace`. Defaulting future writes is small and announced; publishing
+  everything a repo already knows is the largest irreversible action here, and a default must not
+  stand in for saying it out loud.
+
+The `linked`-mode condition ships unconditional today, since nothing constructs `'shared'` yet. It
+is written now because `visibility` is one column on the item, not a per-workspace grant: under
+`linked` a shared row means "me, in another directory", and under `shared` the same bit would mean
+"another person". Rows written under this default predate any counterparty, so a future `shared`
+migration must ask again rather than inherit them as consent.
+
 ### A cross-repo evaluation suite that spans more than one workspace shape
 
 `cross-repo-suite.json` held **three** cases over a single two-repo fixture. That is not enough to
