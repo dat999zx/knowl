@@ -6,6 +6,7 @@ import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, 
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem } from '../workspace/ownership.js';
 import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
+import { recordDemandEventBestEffort } from '../workspace/demand-ledger.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
 import { runPipeline } from '../pipeline/pipeline.js';
@@ -867,15 +868,112 @@ export function registerTools(
             text: `SCOPE: ${explain ? '`explain`' : 'vector search'} limits this query to the project namespace, so ${skippedNamespaces.join(' and ')} knowledge was NOT searched. A miss here does not mean the knowledge is absent; re-run without it for full scope.`,
           });
         }
+        // Lineage, once per response rather than once per row. `kin` marks repos that were the
+        // same codebase and have diverged, which is the case where a foreign result is most
+        // likely to look applicable and least likely to be: same concept names, different
+        // meanings. The write path has warned about this since kin existed; the read path is
+        // where the wrong convention actually gets applied.
+        const kinRepos = [...new Set(resolvedItems
+          .filter(item => (item as { kinDivergent?: boolean }).kinDivergent)
+          .map(item => item.repo!))];
+        if (kinRepos.length) {
+          blocks.push({
+            type: 'text',
+            text: `SHARED LINEAGE: ${kinRepos.join(', ')} ${kinRepos.length > 1 ? 'share' : 'shares'} this repo's lineage with diverged conventions. `
+              + 'Same-named concepts can mean different things here — verify against this repo before applying.',
+          });
+        }
         // The floor's verdict, in words. It used to be delivered by returning nothing at all,
         // which the caller could not tell apart from an empty store or a missing index -- and
         // which deleted the answer on every query where the verdict was wrong. The rows now
         // stand and the verdict rides beside them, so a caller can act on it or overrule it.
         if (resolvedItems.some(item => (item.explanation as { abstained?: boolean } | undefined)?.abstained)) {
+          // Naming the next move only where it exists. An abstention is the one moment the
+          // agent has decided memory is empty, and transcript search is the thing that can
+          // still answer -- but it is off by default, so an unconditional mention would send
+          // callers to a tool their build does not expose.
+          const transcriptRoute = config && isTranscriptSearchEnabled(config)
+            ? ' Before you do, try `knowl_transcript_search` with the same words: past sessions are indexed separately from knowledge items and are not searched by this tool.'
+            : '';
           blocks.push({
             type: 'text',
-            text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `score` and judge. If none of them answers the question, treat this as a miss and go to the files.',
+            text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `score` and judge. If none of them answers the question, treat this as a miss and go to the files.'
+              + transcriptRoute,
           });
+        }
+        // What one repo actually asks the others for, recorded after the answer is built.
+        //
+        // Every workspace query, not only the weak ones. The obvious design logs "queries the
+        // workspace could not answer" and reads abstention as that signal -- but abstention is
+        // corpus-dependent and, measured on the real 483-item store, off-topic queries top out
+        // at ~0.29 against a 0.16 floor. A predicate that fires almost never would produce an
+        // empty ledger and the false conclusion that there is no cross-repo demand. So the
+        // score is recorded on every row and the threshold is chosen from the distribution
+        // afterwards, by `knowl workspace demand`.
+        //
+        // `void`, never awaited: this runs after the response is assembled, so the only thing a
+        // slow or failing ledger could still affect is whether the caller gets their answer.
+        if (active && query) {
+          const top = resolvedItems[0];
+          // The raw cosine, not `finalScore`, and only where a semantic half actually ran.
+          //
+          // That column exists so a "weak query" threshold can be picked off the distribution
+          // later, which needs a number meaning the same thing on every row. `finalScore` is
+          // not one, for two independent reasons. Since 4152c34 the semantic half is min-max
+          // scaled across the candidate page, so the best row's semantic term is ~1.0 whether
+          // its cosine was 0.9 or 0.2 -- the rescale exists to amplify small gaps, which is
+          // exactly what destroys cross-query comparability. And with vector off, the lexical
+          // half is normalised against each corpus's own best hit, so the top row scores ~1.0
+          // whatever it is. A column mixing those scales still has a distribution; no threshold
+          // read off it would mean anything. `scoreOf` already refuses to publish that number
+          // to the caller for the same reason -- this must not record what that gate rejects.
+          //
+          // Cosine is the quantity the relevance floor is measured against, so a threshold
+          // chosen from this column is comparable to `MODEL_RELEVANCE_FLOORS`. It is the best
+          // cosine on the RETURNED page, not over the whole candidate set -- the ranker does
+          // not surface the latter -- so it is a lower bound on the `bestCosine` the floor
+          // actually judged. `abstained` in `detail` carries that verdict exactly, so the two
+          // together say more than either alone.
+          //
+          // Uncalibrated rows are excluded rather than counted as 0, and no row left means no
+          // number at all. An unembedded row's semantic half is 0 by ABSENCE, not by verdict --
+          // vector never saw it -- and a store with no embeddings yet would otherwise fill this
+          // column with zeroes indistinguishable from real misses, which is the same mistake as
+          // recording the fused score, made at the other end of the range. Same predicate
+          // `scoreOf` withholds a published number on, for the same reason.
+          const judged = scored
+            ? resolvedItems.filter(item =>
+              !(item.explanation as { uncalibrated?: string } | undefined)?.uncalibrated)
+            : [];
+          const bestCosine = judged.length
+            ? judged.reduce((best, item) => {
+              const semantic = (item.explanation as { contributions?: { semantic?: number } } | undefined)
+                ?.contributions?.semantic;
+              return typeof semantic === 'number' && semantic > best ? semantic : best;
+            }, 0)
+            : null;
+          void recordDemandEventBestEffort(active.name, {
+            queryingRepo: active.repo,
+            kind: 'federated_query',
+            query,
+            topScore: bestCosine,
+            servedRepo: top?.repo ?? null,
+            servedItemId: top?.id ?? null,
+            detail: {
+              results: resolvedItems.length,
+              // Per-repo contribution, so a repo that is asked constantly and answers nothing
+              // is distinguishable from one that is never reached at all.
+              contributed: resolvedItems.reduce<Record<string, number>>((counts, item) => {
+                const repoName = item.repo ?? active.repo;
+                counts[repoName] = (counts[repoName] ?? 0) + 1;
+                return counts;
+              }, {}),
+              ...(skippedRepos.length ? { skipped: skippedRepos.map(skip => skip.repo) } : {}),
+              ...(resolvedItems.some(item => (item.explanation as { abstained?: boolean } | undefined)?.abstained)
+                ? { abstained: true }
+                : {}),
+            },
+          }, config);
         }
         return { content: blocks };
       }

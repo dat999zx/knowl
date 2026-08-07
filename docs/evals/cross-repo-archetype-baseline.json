@@ -1,0 +1,20 @@
+{
+  "recordedAt": "2026-08-07",
+  "note": "Re-recorded on main after 3.3.0. Originally recorded on scope/2-demand-ledger at 4c5f6bf, whose only ranking-path change is passing the relevance floor into federated scoring -- that labels abstention and cannot reorder results, so these numbers describe upstream ranking behaviour. Recorded BEFORE any ranking change was attempted against this suite, which is what makes it a control rather than a rubber stamp. Per archetype, never pooled: a change that lifts the average while wrecking one shape is the failure this suite exists to catch, and an average is what would hide it. A drop in any cell is a regression, not noise. Values are truncated DOWN to 4dp so they are true floors -- rounding 0.91666.. up to 0.9167 makes the recorded baseline unmeetable by the run that produced it. softForbidden is a CEILING on the suites' quality preferences ('the other client's same-named setting should not crowd this page'), which the current ranker does not fully satisfy and a future one may improve on; the hard guarantee -- a peer's repo-private row never crossing into another repo's results -- is asserted separately, computed from the fixtures' own visibility, and must be exactly zero.",
+  "semanticRescaleCost": "One cell moved between the original recording and this one, and it is an accepted cost rather than noise: polyglot-services semantic MRR 1.0 -> 0.975, caused by 4152c34 (the min-max rescale of the semantic half, shipped in 3.3.0), which landed on main after this suite branched. Attributed by experiment, not inference -- setting MIN_SEMANTIC_RANGE above 1 to make rescaleSemantic an identity restores 1.0 and every other cell is byte-identical either way. The whole positional column is unchanged, which is what a semantic-only cause predicts. The case is polyglot-services/billing-wrong-timeout-applied: 'can I just reuse search-svc's 10 second queue timeout for our invoice consumer', asked from billing-svc, where the correct answer billing-svc-queue-timeout falls to rank 2 behind search-svc-events-consumed. The query names a peer service, so the wrong item wins the cosine narrowly, and min-max scaling over the candidate page turns a narrow cosine lead into a wide one -- amplifying small gaps is what the rescale is for, and this is the same trade 4152c34 already measured and accepted elsewhere (retrieval-500 Recall@10 1.000 -> 0.998). Not reverted here: that change won on the two suites that can discriminate, over 135 and 56 cases, and overturning it on one fixture case would be exactly the closed-loop reasoning docs/evals/cross-repo-local-preference.md exists to warn against.",
+  "positional": {
+    "asymmetric-trio": { "mrr": 0.9444, "recallAt3": 1.0 },
+    "client-projects": { "mrr": 1.0, "recallAt3": 1.0 },
+    "fork-siblings": { "mrr": 0.9444, "recallAt3": 0.9444 },
+    "monorepo-split": { "mrr": 0.9166, "recallAt3": 0.9444 },
+    "polyglot-services": { "mrr": 0.9, "recallAt3": 0.95 }
+  },
+  "semantic": {
+    "asymmetric-trio": { "mrr": 1.0, "recallAt3": 1.0 },
+    "client-projects": { "mrr": 0.9722, "recallAt3": 1.0 },
+    "fork-siblings": { "mrr": 0.9444, "recallAt3": 0.9444 },
+    "monorepo-split": { "mrr": 1.0, "recallAt3": 1.0 },
+    "polyglot-services": { "mrr": 0.975, "recallAt3": 1.0 }
+  },
+  "softForbidden": { "positional": 7, "semantic": 8 }
+}

@@ -1,0 +1,2012 @@
+{
+  "version": 1,
+  "description": "Cross-repo retrieval across five workspace archetypes. Exists because cross-repo-suite.json holds three cases over one two-repo fixture, which cannot establish that a ranking change generalises -- a change measured as a clear win over one real workspace broke two of those three the moment it met somebody else's fixture. Ground truth was authored per archetype without sight of the ranking rules, from one question only: \"a developer in this repo typed this -- which item genuinely answers them?\" No label refers to which repo an item lives in, so the labels cannot encode the preference a ranker is then congratulated for having. Scored per archetype (via tier) as well as pooled, because a change that lifts the average while wrecking one shape is the failure this suite exists to catch.",
+  "archetypes": [
+    {
+      "name": "asymmetric-trio",
+      "repos": {
+        "platform": [
+          {
+            "id": "platform-webhook-retry-backoff",
+            "category": "constraint",
+            "title": "Webhook sender retry backoff and DLQ",
+            "content": "workers/webhook_sender.py retries a failed customer POST 4x with 1s/4s/16s/64s backoff, then drops the payload into the `webhook_dlq` Redis list.",
+            "visibility": "repo"
+          },
+          {
+            "id": "platform-rate-limit-contract",
+            "category": "fact",
+            "title": "Public API rate limit: 100 req/s, 429 + Retry-After",
+            "content": "The public API enforces 100 req/s per API key; exceeding it returns HTTP 429 with a `Retry-After` header in seconds and no other backoff hint.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "platform-idempotency-key-window",
+            "category": "fact",
+            "title": "POST /v1/events idempotency key window is 24h",
+            "content": "POST /v1/events accepts an `Idempotency-Key` header; the same key replays the cached 201 response for 24h before eviction from `idempotency_cache`.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "platform-signing-secret-rotation",
+            "category": "constraint",
+            "title": "Webhook signing secret: 5-min dual-validity on rotation",
+            "content": "Webhook payloads are HMAC-SHA256 signed with the endpoint's `signing_secret`; after POST /v1/endpoints/{id}/rotate-secret, the old secret stays valid for 5 minutes to avoid dropped deliveries.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "platform-events-table-partitioning",
+            "category": "architecture",
+            "title": "events table monthly partitioning via pg_partman",
+            "content": "The `events` table is partitioned by month on `created_at`; `infra/partman.sql` (cron) creates new partitions 3 months ahead of need.",
+            "visibility": "repo"
+          },
+          {
+            "id": "platform-celery-broker-config",
+            "category": "architecture",
+            "title": "Celery broker: Redis db 3, shared by two queues",
+            "content": "Celery broker is `redis://queue:6379/3`; the `webhook_sender` and `digest_email` queues share that broker at different priority levels.",
+            "visibility": "repo"
+          },
+          {
+            "id": "platform-staging-migration-window",
+            "category": "state",
+            "title": "Staging migration window and pool_timeout gotcha",
+            "content": "Staging DB migrations run Tuesdays 02:00-04:00 UTC via `make migrate-staging`; bump `pool_timeout` to 30s in db.yaml first or the job hangs waiting for a connection.",
+            "visibility": "repo"
+          },
+          {
+            "id": "platform-auth-header-format",
+            "category": "fact",
+            "title": "Auth header: Bearer token, X-Api-Key deprecated",
+            "content": "All API requests authenticate with `Authorization: Bearer <api_key>`; the legacy `X-Api-Key` header still works but logs a deprecation warning and 410s after 2026-Q4.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "platform-pagination-cursor-opaque",
+            "category": "fact",
+            "title": "Pagination cursor is opaque base64, don't hand-construct",
+            "content": "GET /v1/events paginates with an opaque `cursor` param (base64 of `{table}:{id}:{ts}`); the encoding has changed twice, so callers must treat it as opaque.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "platform-error-code-catalog",
+            "category": "fact",
+            "title": "Internal error code catalog E1xxx/E2xxx/E3xxx",
+            "content": "`errors/catalog.py` defines internal codes: E1xxx validation, E2xxx auth, E3xxx downstream timeout; the public API only ever surfaces E2xxx/E3xxx in the response `code` field, E1xxx detail is stripped.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "platform-worker-autoscale-keda",
+            "category": "architecture",
+            "title": "Webhook worker KEDA autoscale thresholds",
+            "content": "webhook_sender workers autoscale via KEDA on Redis queue depth > 500; scale-up cooldown is 60s, scale-down cooldown is 300s to avoid thrashing.",
+            "visibility": "repo"
+          },
+          {
+            "id": "platform-signing-secrets-in-vault",
+            "category": "constraint",
+            "title": "Webhook signing keys live in Vault, not Postgres",
+            "content": "Production webhook signing keys are held in Vault under `kv/data/platform/signing-keys`; the `endpoints` table stores only a reference id, never the key material itself.",
+            "visibility": "repo"
+          }
+        ],
+        "sdk-js": [
+          {
+            "id": "sdk-js-auto-retry-policy",
+            "category": "fact",
+            "title": "SDK auto-retries idempotent calls up to 3x via axios-retry",
+            "content": "The JS SDK retries idempotent calls (GET, and POST when `Idempotency-Key` is set) up to 3 times on 429/5xx using axios-retry with 200ms exponential backoff; it never retries other 4xx codes.",
+            "visibility": "repo"
+          },
+          {
+            "id": "sdk-js-verify-webhook-signature",
+            "category": "fact",
+            "title": "verifyWebhookSignature() helper and its error type",
+            "content": "`verifyWebhookSignature(payload, header, secret)` in src/webhooks.ts recomputes HMAC-SHA256 and does a timing-safe compare against `X-Signal-Signature`; throws `SignatureVerificationError` on mismatch.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "sdk-js-auto-pagination-iterator",
+            "category": "fact",
+            "title": "events.list() auto-pagination via async iterator",
+            "content": "`client.events.list()` returns an async iterator that follows the opaque `cursor` field automatically; consumers should never read or persist the cursor themselves.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "sdk-js-node-version-support",
+            "category": "fact",
+            "title": "SDK supports Node 18+, undici fallback for 16",
+            "content": "The SDK targets Node 18+ and uses native `fetch` when available; on Node 16 (EOL, untested) it falls back to bundling `undici`.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "sdk-js-v3-rename-endpoints",
+            "category": "decision",
+            "title": "v3 renamed webhooks.create() to endpoints.create()",
+            "content": "v3.0.0 renamed `client.webhooks.create()` to `client.endpoints.create()` to match the platform's `/v1/endpoints` naming; v2 stays published (deprecated) until 2026-12-31.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "sdk-js-types-hand-written",
+            "category": "fact",
+            "title": "SDK types are hand-written, not OpenAPI-generated",
+            "content": "TypeScript types in src/types.ts are hand-written, not generated from the platform's OpenAPI spec; a new API field needs a separate manual PR on the SDK side.",
+            "visibility": "workspace"
+          }
+        ],
+        "handbook": [
+          {
+            "id": "handbook-security-review-required",
+            "category": "constraint",
+            "title": "Auth/security-path PRs require security reviewer sign-off",
+            "content": "Any PR touching `**/auth/**` or `security/` requires sign-off from a designated security reviewer before merge, regardless of diff size.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "handbook-oncall-rotation",
+            "category": "fact",
+            "title": "On-call rotation: weekly, PagerDuty platform-primary",
+            "content": "On-call rotates weekly with Monday 10:00 UTC handoff via the PagerDuty schedule `platform-primary`; secondary is paged only after 15 minutes with no ack.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "handbook-postmortem-sla",
+            "category": "constraint",
+            "title": "Postmortem required within 3 days for 5+ min outages",
+            "content": "Any incident with customer-facing downtime over 5 minutes gets a written postmortem within 3 business days, posted to #incidents and linked from the on-call runbook.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "handbook-changelog-entry-required",
+            "category": "decision",
+            "title": "CHANGELOG.md entry required in same PR as user-facing change",
+            "content": "Every user-facing change to the API or SDK needs a CHANGELOG.md entry in the same PR; CI (`check-changelog.yml`) blocks merges touching src/ or server/ without one.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "handbook-docs-style-guide",
+            "category": "fact",
+            "title": "Docs style: second person, no em dashes, runnable samples",
+            "content": "External-facing docs use second person ('you'), avoid em dashes, and every code sample must be runnable as-is with no elided `# ...` lines.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "handbook-weekly-sync-moved",
+            "category": "state",
+            "title": "Weekly sync moved to Wednesdays 9:30am",
+            "content": "Team sync moved from Mondays to Wednesdays 9:30am UTC starting 2026-07-01 to stop overlapping the platform team's deploy window.",
+            "visibility": "repo"
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "sdk-retry-vs-webhook-delivery",
+          "queryFrom": "sdk-js",
+          "query": "does the SDK retry failed requests automatically",
+          "expectedItemIds": [
+            "sdk-js-auto-retry-policy"
+          ],
+          "mustNotReturn": [
+            "platform-webhook-retry-backoff"
+          ],
+          "limit": 3,
+          "why": "The question is about the SDK's own HTTP client retry behavior, not the platform's internal Celery retry/DLQ logic for outbound webhook delivery, which is a different mechanism entirely."
+        },
+        {
+          "id": "sdk-rate-limit-retry-after",
+          "queryFrom": "sdk-js",
+          "query": "what happens when I hit the rate limit, does it tell me how long to wait",
+          "expectedItemIds": [
+            "platform-rate-limit-contract"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "Only the platform item documents the 429 + Retry-After contract; it's workspace-visible and is the genuine client-facing answer."
+        },
+        {
+          "id": "sdk-verify-webhook-signature",
+          "queryFrom": "sdk-js",
+          "query": "how do I verify a webhook actually came from Signal",
+          "expectedItemIds": [
+            "sdk-js-verify-webhook-signature"
+          ],
+          "mustNotReturn": [
+            "platform-signing-secrets-in-vault"
+          ],
+          "limit": 3,
+          "why": "The SDK ships a dedicated verifyWebhookSignature() helper that directly answers this; the Vault storage location of production secrets is unrelated ops trivia private to platform."
+        },
+        {
+          "id": "sdk-signature-during-rotation",
+          "queryFrom": "sdk-js",
+          "query": "just rotated the signing secret, will signatures from before the rotation still verify for a bit",
+          "expectedItemIds": [
+            "platform-signing-secret-rotation"
+          ],
+          "mustNotReturn": [],
+          "limit": 5,
+          "why": "The 5-minute dual-validity window during rotation is documented only in the platform contract item, which is workspace-visible and is exactly what an SDK integrator needs during a rotation."
+        },
+        {
+          "id": "sdk-cursor-opacity",
+          "queryFrom": "sdk-js",
+          "query": "the cursor field in list responses, can I pull the record id out of it myself",
+          "expectedItemIds": [
+            "platform-pagination-cursor-opaque",
+            "sdk-js-auto-pagination-iterator"
+          ],
+          "mustNotReturn": [],
+          "limit": 5,
+          "why": "Both items independently warn against reading or decoding the cursor manually, from complementary angles: the platform item explains the format is opaque and has changed twice, the SDK item says to just use the async iterator."
+        },
+        {
+          "id": "sdk-oncall-schedule",
+          "queryFrom": "sdk-js",
+          "query": "who's on call for a platform incident right now",
+          "expectedItemIds": [
+            "handbook-oncall-rotation"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "On-call rotation is a cross-cutting process fact stored in the handbook and made workspace-visible, so it genuinely answers this even when asked from the SDK repo."
+        },
+        {
+          "id": "sdk-changelog-requirement",
+          "queryFrom": "sdk-js",
+          "query": "do I need to add a changelog entry for a small bug fix PR",
+          "expectedItemIds": [
+            "handbook-changelog-entry-required"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "The CHANGELOG policy explicitly applies to any user-facing change in the API or SDK and is workspace-visible, directly answering the question."
+        },
+        {
+          "id": "sdk-min-node-version",
+          "queryFrom": "sdk-js",
+          "query": "minimum node version we support",
+          "expectedItemIds": [
+            "sdk-js-node-version-support"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "Unambiguous repo-private fact that directly and fully answers the question from within its own repo."
+        },
+        {
+          "id": "platform-auth-pr-review",
+          "queryFrom": "platform",
+          "query": "does a change to the login endpoint need extra sign-off before merge",
+          "expectedItemIds": [
+            "handbook-security-review-required"
+          ],
+          "mustNotReturn": [],
+          "limit": 5,
+          "why": "The handbook's process rule about auth-path PRs is the genuine answer to a question asked from the code repo whose files it governs."
+        },
+        {
+          "id": "platform-v3-rename-support",
+          "queryFrom": "platform",
+          "query": "customer says webhooks.create is undefined on the latest client, what changed",
+          "expectedItemIds": [
+            "sdk-js-v3-rename-endpoints"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "The rename happened in the SDK's v3 release, recorded as a workspace-visible decision there; a platform engineer triaging the ticket needs that item, not anything in platform itself."
+        },
+        {
+          "id": "platform-celery-redis-db",
+          "queryFrom": "platform",
+          "query": "what redis db does celery use",
+          "expectedItemIds": [
+            "platform-celery-broker-config"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "Purely internal platform architecture fact, correctly answered within its own repo."
+        },
+        {
+          "id": "platform-staging-migration-timeout",
+          "queryFrom": "platform",
+          "query": "staging migration keeps hanging, something about a timeout",
+          "expectedItemIds": [
+            "platform-staging-migration-window"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "The pool_timeout gotcha for staging migrations is exactly this internal note; validates that a generic keyword like 'timeout' still resolves to the specific matching item rather than an unrelated one."
+        },
+        {
+          "id": "handbook-signature-error-name",
+          "queryFrom": "handbook",
+          "query": "writing up the webhook docs, what's the exact error class name if signature verification fails",
+          "expectedItemIds": [
+            "sdk-js-verify-webhook-signature"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "Only the SDK item names the concrete SignatureVerificationError type; a handbook author documenting the SDK needs that specific fact from the small repo."
+        },
+        {
+          "id": "handbook-rate-limit-number",
+          "queryFrom": "handbook",
+          "query": "how many requests per second can a customer send before getting throttled",
+          "expectedItemIds": [
+            "platform-rate-limit-contract"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "The handbook has no rate-limit numbers of its own; the true figure lives in platform's workspace-visible contract item, needed here e.g. for writing external docs."
+        },
+        {
+          "id": "handbook-postmortem-deadline",
+          "queryFrom": "handbook",
+          "query": "when is the postmortem due after an outage",
+          "expectedItemIds": [
+            "handbook-postmortem-sla"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "Handbook's own process rule, unambiguous single-item match."
+        },
+        {
+          "id": "sdk-auth-header-deprecation",
+          "queryFrom": "sdk-js",
+          "query": "is X-Api-Key still an ok header to send or should it be Authorization Bearer now",
+          "expectedItemIds": [
+            "platform-auth-header-format"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "The authentication contract, including the X-Api-Key deprecation timeline, is defined once in platform and made workspace-visible specifically so SDK implementers can rely on it."
+        },
+        {
+          "id": "sdk-error-code-taxonomy-hard",
+          "queryFrom": "sdk-js",
+          "query": "what error codes should I expect back from the API and what do they mean",
+          "expectedItemIds": [
+            "platform-error-code-catalog"
+          ],
+          "mustNotReturn": [],
+          "limit": 5,
+          "why": "The E1xxx/E2xxx/E3xxx taxonomy is described only by platform-error-code-catalog, so the honest answer lives in the other repo. (Item was authored repo-private, which made the case unscorable; widened to workspace so the expectation is reachable.)"
+        },
+        {
+          "id": "handbook-node-version-hard",
+          "queryFrom": "handbook",
+          "query": "does the SDK still work on old Node 14 environments some customers run",
+          "expectedItemIds": [
+            "sdk-js-node-version-support"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "Only sdk-js-node-version-support states which Node versions the SDK still supports. (Item was authored repo-private, which made the case unscorable; widened to workspace so the expectation is reachable.)"
+        }
+      ]
+    },
+    {
+      "name": "client-projects",
+      "repos": {
+        "acme-portal": [
+          {
+            "id": "acme-portal-deploy-blue-green",
+            "category": "fact",
+            "title": "Production deploys use blue-green via ECS",
+            "content": "acme-portal deploys to AWS ECS with blue-green swaps run by scripts/deploy-prod.sh; traffic cutover is a manual toggle of the ALB target group, it does not happen automatically.",
+            "visibility": "repo"
+          },
+          {
+            "id": "acme-portal-auth-flow-oauth-only",
+            "category": "constraint",
+            "title": "Auth flow is OAuth2 via Auth0, no password login",
+            "content": "acme-portal's auth flow is OAuth2 only through Auth0 tenant acme-portal.us.auth0.com; the legacy password-login form was removed in migration 20260512 and must not be re-added.",
+            "visibility": "repo"
+          },
+          {
+            "id": "acme-portal-staging-db-reset-safe",
+            "category": "state",
+            "title": "Staging DB can be freely reset via seed script",
+            "content": "acme-portal's staging Postgres (port 6543) is populated entirely by scripts/seed-staging.ts with synthetic data; it's safe to drop and reseed it anytime without asking anyone.",
+            "visibility": "repo"
+          },
+          {
+            "id": "acme-portal-search-elasticsearch",
+            "category": "architecture",
+            "title": "Product search runs on a dedicated Elasticsearch cluster",
+            "content": "acme-portal's product search hits Elasticsearch 8.x at search.acme.internal:9200, separate from the primary Postgres db; a nightly reindex job runs at 2am via scripts/reindex-products.ts.",
+            "visibility": "repo"
+          },
+          {
+            "id": "acme-portal-payment-stripe-migration",
+            "category": "fact",
+            "title": "Payments run through Stripe Connect, not Braintree",
+            "content": "acme-portal migrated off Braintree onto Stripe Connect in Q2 2026; all new payment code uses the Stripe SDK, and the old Braintree keys have been revoked.",
+            "visibility": "repo"
+          },
+          {
+            "id": "acme-portal-webhook-retry-incident",
+            "category": "fact",
+            "title": "Webhook consumer outage from retries without backoff",
+            "content": "On 2026-06-14 acme-portal's webhook consumer caused a thundering-herd outage because retries had no backoff; fixed by adding exponential backoff, which became the house-wide policy.",
+            "visibility": "workspace"
+          }
+        ],
+        "globex-api": [
+          {
+            "id": "globex-api-deploy-blue-green",
+            "category": "fact",
+            "title": "Production deploys use blue-green via ECS",
+            "content": "globex-api deploys to AWS ECS with blue-green, but cutover is fully automated by CodeDeploy with a 10-minute bake window and auto-rollback on a 5xx spike — there is no manual target-group toggle like acme's pipeline.",
+            "visibility": "repo"
+          },
+          {
+            "id": "globex-api-auth-flow-mtls",
+            "category": "constraint",
+            "title": "Auth flow requires mTLS client certificates",
+            "content": "globex-api's auth flow requires a mutual-TLS client cert issued by Globex's internal CA in addition to an API key; a request with a valid key but no client cert is rejected at the gateway on port 8443.",
+            "visibility": "repo"
+          },
+          {
+            "id": "globex-api-staging-db-contains-real-data",
+            "category": "constraint",
+            "title": "Staging DB must never be dropped or truncated",
+            "content": "globex-api's staging MySQL is a nightly anonymized-but-real export from prod — a legacy exception Globex compliance approved before the house synthetic-data policy existed. Dropping or truncating it destroys data their QA team depends on and needs 48h written notice to Globex first.",
+            "visibility": "repo"
+          },
+          {
+            "id": "globex-api-rate-limiting-token-bucket",
+            "category": "architecture",
+            "title": "Rate limiting uses a Redis token bucket, not fixed window",
+            "content": "globex-api enforces rate limits via a token-bucket algorithm in Redis (redis-globex:6379), keyed per API-client cert fingerprint; the refill rate is set in config/rate-limits.yml, not hardcoded.",
+            "visibility": "repo"
+          },
+          {
+            "id": "globex-api-compliance-soc2",
+            "category": "constraint",
+            "title": "Every prod deploy needs a linked Jira ticket for SOC2",
+            "content": "globex-api is under active SOC2 Type II audit; every production deploy must reference a ticket in the GLBX Jira project or it's a compliance finding that has to be reverted and re-logged.",
+            "visibility": "repo"
+          },
+          {
+            "id": "globex-api-oncall-escalation-incident",
+            "category": "fact",
+            "title": "Sev1 sat unacknowledged for 28 minutes",
+            "content": "On 2026-05-02 a globex-api sev1 sat unacknowledged for 28 minutes before someone escalated; that gap is why the house-wide PagerDuty escalation window was shortened to 15 minutes.",
+            "visibility": "workspace"
+          }
+        ],
+        "house-toolkit": [
+          {
+            "id": "house-toolkit-pr-review-two-approvals",
+            "category": "constraint",
+            "title": "PRs require two approvals before merging to main",
+            "content": "Every client repo has branch protection requiring 2 approving reviews on main; there is no hotfix exception, even for a sev1 patch.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "house-toolkit-secrets-vault-only",
+            "category": "constraint",
+            "title": "Secrets belong in Vault, never in a .env file",
+            "content": "All engagement credentials go in HashiCorp Vault at vault.house.internal:8200 under the client's namespace; a committed .env with real values is a sev1 security incident, not a warning.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "house-toolkit-api-key-rotation-90-days",
+            "category": "constraint",
+            "title": "Rotate every client API key every 90 days",
+            "content": "Per the standard MSA, all third-party and internal API keys issued on a client engagement are rotated on a 90-day cycle regardless of the client's own security posture; track due dates in the shared Vault rotation calendar.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "house-toolkit-invoice-net30",
+            "category": "decision",
+            "title": "Standard invoicing terms are Net-30",
+            "content": "Default consulting terms are Net-30 unless the SOW says otherwise; billing status per client lives in the internal Harvest workspace, not in any client repo.",
+            "visibility": "repo"
+          },
+          {
+            "id": "house-toolkit-postmortem-template",
+            "category": "fact",
+            "title": "Client incidents get a blameless postmortem in 48h",
+            "content": "Any client-facing incident gets a blameless postmortem within 48 hours using the template at notion.so/house/postmortems, posted to that client's #incidents channel.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "house-toolkit-staging-data-must-be-synthetic",
+            "category": "constraint",
+            "title": "Staging environments must run on synthetic seed data",
+            "content": "House policy: no client staging environment may be seeded from a raw production dump; use the anonymized generator or hand-built fixtures only. New engagements have no exception to this.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "house-toolkit-oncall-rotation-tool",
+            "category": "fact",
+            "title": "Consultant on-call rotation lives in PagerDuty",
+            "content": "The internal rotation for which consultant is reachable after hours is schedule 'house-consultants-primary' in PagerDuty; this is separate from any client's own incident escalation policy.",
+            "visibility": "repo"
+          },
+          {
+            "id": "house-toolkit-client-repo-naming",
+            "category": "fact",
+            "title": "Client repos are named <client>-<system>, lowercase",
+            "content": "Repo naming convention is lowercase kebab-case as <client>-<system> (e.g. acme-portal, globex-api) — never the client's full legal entity name, to keep NDA scope out of any public index.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "house-toolkit-webhook-retry-policy",
+            "category": "constraint",
+            "title": "Webhook and queue retries use backoff with jitter",
+            "content": "Standardized after the acme-portal thundering-herd incident: every client's webhook/queue retry logic uses exponential backoff with full jitter, capped at 5 attempts, before it goes to a dead-letter queue.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "house-toolkit-oncall-escalation-policy",
+            "category": "constraint",
+            "title": "Escalate a sev1 to secondary on-call after 15 minutes",
+            "content": "Standardized after a globex-api sev1 sat unacknowledged for 28 minutes: every engagement's PagerDuty policy escalates an unacked sev1 to secondary on-call after 15 minutes, down from the old 30-minute default.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "house-toolkit-code-review-checklist",
+            "category": "fact",
+            "title": "PR template links to the shared review checklist",
+            "content": "Every client repo's PR template links to house-toolkit/docs/review-checklist.md; reviewers confirm tests, migrations, and a rollback plan are present before approving, on top of the 2-approval rule.",
+            "visibility": "workspace"
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "acme-deploy-cutover-basic",
+          "queryFrom": "acme-portal",
+          "query": "how does our deploy pipeline cut over traffic to the new version",
+          "expectedItemIds": [
+            "acme-portal-deploy-blue-green"
+          ],
+          "mustNotReturn": [
+            "globex-api-deploy-blue-green"
+          ],
+          "limit": 3,
+          "why": "acme-portal's own blue-green deploy note answers this; globex-api has a near-identically titled note about a completely different, fully automated cutover mechanism."
+        },
+        {
+          "id": "globex-deploy-cutover-basic",
+          "queryFrom": "globex-api",
+          "query": "does the deploy cutover happen automatically or do I have to flip something",
+          "expectedItemIds": [
+            "globex-api-deploy-blue-green"
+          ],
+          "mustNotReturn": [
+            "acme-portal-deploy-blue-green"
+          ],
+          "limit": 3,
+          "why": "Only globex-api's note states CodeDeploy automates the cutover; acme's identically-titled note describes a manual toggle and would give the wrong answer here."
+        },
+        {
+          "id": "acme-staging-reset-ok",
+          "queryFrom": "acme-portal",
+          "query": "can I just wipe and reseed the staging database",
+          "expectedItemIds": [
+            "acme-portal-staging-db-reset-safe"
+          ],
+          "mustNotReturn": [
+            "globex-api-staging-db-contains-real-data"
+          ],
+          "limit": 3,
+          "why": "acme's own note directly answers this; globex-api's staging note describes a different, non-synthetic database and is private to that repo besides."
+        },
+        {
+          "id": "globex-staging-truncate-danger",
+          "queryFrom": "globex-api",
+          "query": "is it fine to truncate the staging tables before a demo",
+          "expectedItemIds": [
+            "globex-api-staging-db-contains-real-data"
+          ],
+          "mustNotReturn": [
+            "acme-portal-staging-db-reset-safe"
+          ],
+          "limit": 3,
+          "why": "globex's staging mirrors real anonymized prod data and truncating it needs 48h client notice; surfacing acme's 'safe to reset anytime' note for this query would cause real data loss."
+        },
+        {
+          "id": "acme-auth-flow-basic",
+          "queryFrom": "acme-portal",
+          "query": "what's our auth flow, is it just oauth",
+          "expectedItemIds": [
+            "acme-portal-auth-flow-oauth-only"
+          ],
+          "mustNotReturn": [
+            "globex-api-auth-flow-mtls"
+          ],
+          "limit": 3,
+          "why": "acme's auth is OAuth2-only via Auth0; globex's mTLS-based auth note is a different client's system entirely, despite the near-identical generic phrase 'auth flow'."
+        },
+        {
+          "id": "globex-auth-flow-basic",
+          "queryFrom": "globex-api",
+          "query": "walk me through the auth flow for the gateway",
+          "expectedItemIds": [
+            "globex-api-auth-flow-mtls"
+          ],
+          "mustNotReturn": [
+            "acme-portal-auth-flow-oauth-only"
+          ],
+          "limit": 3,
+          "why": "globex's gateway requires mTLS client certs on top of API keys; acme's OAuth-only note is a different system and would mislead a globex developer."
+        },
+        {
+          "id": "acme-api-key-rotation",
+          "queryFrom": "acme-portal",
+          "query": "how often are we supposed to rotate api keys",
+          "expectedItemIds": [
+            "house-toolkit-api-key-rotation-90-days"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "Key rotation cadence is a house-wide policy, not something acme-portal defines itself, so the toolkit's rule is the genuine answer even though the question came from a client repo."
+        },
+        {
+          "id": "globex-pr-approval-count",
+          "queryFrom": "globex-api",
+          "query": "how many approvals does a PR need before I can merge to main",
+          "expectedItemIds": [
+            "house-toolkit-pr-review-two-approvals"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "Branch protection is a house-wide rule that applies uniformly to every client repo including globex-api's own main branch."
+        },
+        {
+          "id": "acme-webhook-retry-policy",
+          "queryFrom": "acme-portal",
+          "query": "what's the retry policy for webhook consumers, do we back off",
+          "expectedItemIds": [
+            "house-toolkit-webhook-retry-policy"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "The actual retry policy (exponential backoff, jitter, 5-attempt cap) is codified in the house toolkit; acme's own note only records the incident that caused the policy, not the policy itself."
+        },
+        {
+          "id": "globex-oncall-escalation-window",
+          "queryFrom": "globex-api",
+          "query": "how long before an unacked sev1 escalates to secondary on call",
+          "expectedItemIds": [
+            "house-toolkit-oncall-escalation-policy"
+          ],
+          "mustNotReturn": [
+            "house-toolkit-oncall-rotation-tool"
+          ],
+          "limit": 3,
+          "why": "The 15-minute escalation window is the house-wide policy; the on-call ROTATION note is a different, unrelated fact about which consultant is staffed, despite sharing the keyword 'on-call'."
+        },
+        {
+          "id": "house-repo-naming-convention",
+          "queryFrom": "house-toolkit",
+          "query": "what naming convention do new client repos follow",
+          "expectedItemIds": [
+            "house-toolkit-client-repo-naming"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "This is exactly what the naming-convention note documents, and house-toolkit is the repo that owns it."
+        },
+        {
+          "id": "house-postmortem-process",
+          "queryFrom": "house-toolkit",
+          "query": "what do we do after a client-facing incident, is there a template",
+          "expectedItemIds": [
+            "house-toolkit-postmortem-template"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "The blameless-postmortem note directly answers the process question and lives in house-toolkit itself."
+        },
+        {
+          "id": "acme-payment-provider",
+          "queryFrom": "acme-portal",
+          "query": "which payment provider are we on, stripe or braintree",
+          "expectedItemIds": [
+            "acme-portal-payment-stripe-migration"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "acme's own migration note is the only item that states the current payment provider."
+        },
+        {
+          "id": "globex-rate-limit-mechanism",
+          "queryFrom": "globex-api",
+          "query": "how is rate limiting implemented, sliding window or something else",
+          "expectedItemIds": [
+            "globex-api-rate-limiting-token-bucket"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "globex's own architecture note is the only item describing its rate-limiting implementation."
+        },
+        {
+          "id": "acme-secrets-in-env",
+          "queryFrom": "acme-portal",
+          "query": "can I just put the api keys in a .env file for now",
+          "expectedItemIds": [
+            "house-toolkit-secrets-vault-only"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "Secrets handling is a house-wide security rule (Vault only) that overrides any client-local convenience, so it's the genuine answer regardless of which client repo asks."
+        },
+        {
+          "id": "globex-staging-synthetic-or-mirror",
+          "queryFrom": "globex-api",
+          "query": "are we supposed to use synthetic data in staging or can it mirror prod",
+          "expectedItemIds": [
+            "globex-api-staging-db-contains-real-data",
+            "house-toolkit-staging-data-must-be-synthetic"
+          ],
+          "mustNotReturn": [
+            "acme-portal-staging-db-reset-safe"
+          ],
+          "limit": 5,
+          "why": "A complete truthful answer needs both: the house-wide rule says synthetic-only, but globex-api's staging is a documented pre-policy exception that actually mirrors real anonymized prod data."
+        },
+        {
+          "id": "acme-search-reindex-schedule",
+          "queryFrom": "acme-portal",
+          "query": "when does the product search index get rebuilt",
+          "expectedItemIds": [
+            "acme-portal-search-elasticsearch"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "Only acme's Elasticsearch architecture note states the nightly 2am reindex schedule."
+        },
+        {
+          "id": "globex-deploy-jira-requirement",
+          "queryFrom": "globex-api",
+          "query": "do prod deploys need to be linked to a jira ticket",
+          "expectedItemIds": [
+            "globex-api-compliance-soc2"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "The SOC2 compliance note is the only item stating the Jira-ticket-per-deploy requirement, specific to globex-api's audit obligations."
+        }
+      ]
+    },
+    {
+      "name": "fork-siblings",
+      "repos": {
+        "legacy-shop": [
+          {
+            "id": "legacy-shop-cart-sessions-table",
+            "category": "fact",
+            "title": "Cart state lives in MySQL `cart_sessions` table",
+            "content": "Active carts are rows in `cart_sessions` keyed by PHP session ID; cron `purge_carts.php` deletes rows older than 30 minutes. No cart survives a session ID change (e.g. clearing cookies).",
+            "visibility": "workspace"
+          },
+          {
+            "id": "legacy-shop-tax-nexus-rule",
+            "category": "constraint",
+            "title": "Sales tax only charged in nexus states",
+            "content": "We collect sales tax only in states where we have physical nexus per the 2026-01 legal review; the current list of 14 states lives in table `tax_nexus_states`. Selling into a non-nexus state means zero tax, not exempt-flagged.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "legacy-shop-coupon-stacking-rule",
+            "category": "decision",
+            "title": "Coupon stacking limited to one percent-off plus one flat",
+            "content": "Decided 2025-08: a checkout can apply at most one percentage-off coupon and one flat-dollar coupon simultaneously, never two of the same type. Enforced in `CouponStack::validate()`.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "legacy-shop-loyalty-points-rate",
+            "category": "fact",
+            "title": "Loyalty points accrue at 1 point per dollar",
+            "content": "Customers earn 1 loyalty point per $1 of pre-tax spend, written to `loyalty_ledger`; unused points expire 12 months after the earning transaction, not on a rolling calendar year.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "legacy-shop-orders-table",
+            "category": "architecture",
+            "title": "`orders` table stores line items as a JSON blob",
+            "content": "MySQL `orders` is one row per order; line items are denormalized into a `line_items_json` TEXT column rather than a child table, because the original schema predates JSON support being reliable in our MySQL version.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "legacy-shop-nightly-reconcile-job",
+            "category": "state",
+            "title": "`nightly-reconcile.php` cron reconciles inventory counts",
+            "content": "Cron `nightly-reconcile.php` runs at 2am server time and diffs our on-hand inventory counts against the warehouse's nightly CSV export, emailing ops on any SKU mismatch over 5 units.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "legacy-shop-price-engine-mode",
+            "category": "constraint",
+            "title": "`PRICE_ENGINE_MODE` env toggles legacy vs tiered pricing",
+            "content": "Env var `PRICE_ENGINE_MODE` is `legacy` (flat per-SKU price) or `tiered` (reads `price_tiers` table for volume discounts); still defaults to `legacy` in production pending the Q3 tiered-pricing rollout.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "legacy-shop-shipping-flat-rate-stale",
+            "category": "fact",
+            "title": "Shipping is a flat $5.99 regardless of weight",
+            "content": "Decided 2025-11: all domestic orders ship for a flat $5.99, no weight or dimension calculation. Implemented in `ShippingCalculator::flatRate()`.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "legacy-shop-deploy-process",
+            "category": "state",
+            "title": "Deploys are manual SCP plus a migrate.php script",
+            "content": "No CI/CD — deploy is `scp` the changed files to both web nodes then run `php migrate.php` by hand; remember to re-seed `tax_nexus_states` after any migration that touches it, it's not part of the seed script.",
+            "visibility": "repo"
+          },
+          {
+            "id": "legacy-shop-php-version-constraint",
+            "category": "constraint",
+            "title": "Pinned to PHP 7.4, can't upgrade yet",
+            "content": "We're stuck on PHP 7.4 because the abandoned `legacy/payment-gw` Composer package throws deprecation-as-fatal on PHP 8+; upgrading requires replacing that package first.",
+            "visibility": "repo"
+          },
+          {
+            "id": "legacy-shop-session-store",
+            "category": "fact",
+            "title": "PHP sessions are on local disk, not shared",
+            "content": "Sessions write to `/var/lib/php/sessions` on each web node's local disk, not a shared store, so the load balancer must use sticky sessions or users get logged out mid-checkout.",
+            "visibility": "repo"
+          }
+        ],
+        "shop-next": [
+          {
+            "id": "shop-next-orders-table",
+            "category": "architecture",
+            "title": "`orders` is header-only; line items are normalized",
+            "content": "Postgres `orders` holds order-level fields only; line items live in a separate `order_items` table with a foreign key to `orders.id`, one row per SKU per order — no JSON blobs.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shop-next-nightly-reconcile-job",
+            "category": "state",
+            "title": "`nightly-reconcile` job reconciles Stripe payouts",
+            "content": "The Go cron job named `nightly-reconcile` runs at 3am UTC and diffs Stripe payout totals against `orders.paid_at` sums for that day; it has nothing to do with inventory. Alerts post to #payments-ops on any mismatch.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shop-next-price-engine-mode",
+            "category": "constraint",
+            "title": "`PRICE_ENGINE_MODE` controls sync vs async pricing calls",
+            "content": "Config key `PRICE_ENGINE_MODE` is `sync` (checkout blocks on the price-engine gRPC call) or `async` (price is queued and checkout polls); default is `async` in production since the sync path timed out under Black Friday load.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shop-next-shipping-tiers-current",
+            "category": "decision",
+            "title": "Shipping moved to weight-based tiers, $4.99-$12.99",
+            "content": "Per the 2026-05 ops decision, domestic shipping is now weight-tiered from $4.99 to $12.99 instead of a flat rate. legacy-shop's cron still hardcodes the old flat $5.99 — known drift, tracked as ticket SHOP-4021, not yet fixed there.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shop-next-refund-window-policy",
+            "category": "decision",
+            "title": "30-day refund window, store credit only after",
+            "content": "Customers get a cash/original-payment refund within 30 days of delivery; after day 30 (up to 90) only store credit is issued, no exceptions without a manager override. Applies storewide, both storefronts.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shop-next-cart-table",
+            "category": "fact",
+            "title": "Cart state lives in Postgres `carts`, no TTL",
+            "content": "Active carts are rows in `carts` keyed by `user_id` (not session ID) and never expire automatically; abandoned carts are cleaned up by the separate `cart-gc` worker every 6 hours instead of a request-time TTL check.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shop-next-k8s-deploy",
+            "category": "architecture",
+            "title": "Deploys via ArgoCD to GKE, three services",
+            "content": "shop-next deploys through ArgoCD to GKE across three services — `api`, `price-engine`, `worker`. Rollback is `argocd app rollback shop-next-api` (or the equivalent app name per service), not a manual redeploy.",
+            "visibility": "repo"
+          },
+          {
+            "id": "shop-next-go-version-constraint",
+            "category": "constraint",
+            "title": "Pinned to Go 1.22 for sqlc codegen compatibility",
+            "content": "We're on Go 1.22 because our `sqlc`-generated query code isn't compatible with the breaking changes in sqlc v2; upgrading Go past 1.22 is blocked on finishing the sqlc v2 migration first.",
+            "visibility": "repo"
+          },
+          {
+            "id": "shop-next-feature-flag-system",
+            "category": "fact",
+            "title": "Feature flags run through LaunchDarkly, not env vars",
+            "content": "All feature flags are LaunchDarkly-backed, checked at runtime via the LD SDK; `PRICE_ENGINE_MODE` is the one deliberate exception still read from a plain env var, a legacy holdover nobody's migrated yet.",
+            "visibility": "repo"
+          },
+          {
+            "id": "shop-next-pci-log-constraint",
+            "category": "constraint",
+            "title": "Never log full card PAN in payment code",
+            "content": "Our custom checkout form collects card fields directly (via Stripe Elements tokenization), so payment logging code must only ever log last4 + brand, never the full PAN — legacy-shop doesn't need this note since its hosted-redirect gateway never sees card data at all.",
+            "visibility": "repo"
+          },
+          {
+            "id": "shop-next-webhook-retry-policy",
+            "category": "constraint",
+            "title": "Stripe webhook handler retries 5x with backoff",
+            "content": "The `/webhooks/stripe` handler retries failed processing 5 times with exponential backoff, then writes the payload to `webhook_failures` for manual replay. legacy-shop has no webhook consumer — it polls Stripe's API instead.",
+            "visibility": "repo"
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "cart-storage-mechanism-from-shop-next",
+          "queryFrom": "shop-next",
+          "query": "how do we store cart state, does it expire",
+          "expectedItemIds": [
+            "shop-next-cart-table"
+          ],
+          "mustNotReturn": [
+            "legacy-shop-cart-sessions-table"
+          ],
+          "limit": 3,
+          "why": "shop-next carts are keyed by user_id with no TTL and are cleaned up by cart-gc; legacy's session-keyed, 30-min-purge design would be a wrong answer for this codebase."
+        },
+        {
+          "id": "cart-storage-mechanism-from-legacy",
+          "queryFrom": "legacy-shop",
+          "query": "cart_sessions expiry logic",
+          "expectedItemIds": [
+            "legacy-shop-cart-sessions-table"
+          ],
+          "mustNotReturn": [
+            "shop-next-cart-table"
+          ],
+          "limit": 3,
+          "why": "the literal table name cart_sessions and its 30-minute purge cron only exist in legacy-shop; shop-next's carts table has no TTL at all."
+        },
+        {
+          "id": "nightly-reconcile-meaning-shop-next",
+          "queryFrom": "shop-next",
+          "query": "what does the nightly-reconcile job actually do",
+          "expectedItemIds": [
+            "shop-next-nightly-reconcile-job"
+          ],
+          "mustNotReturn": [
+            "legacy-shop-nightly-reconcile-job"
+          ],
+          "limit": 1,
+          "why": "same job name, but shop-next's version reconciles Stripe payouts, not inventory — returning legacy's item would badly mislead about what the job checks."
+        },
+        {
+          "id": "nightly-reconcile-meaning-legacy",
+          "queryFrom": "legacy-shop",
+          "query": "nightly-reconcile.php inventory mismatch",
+          "expectedItemIds": [
+            "legacy-shop-nightly-reconcile-job"
+          ],
+          "mustNotReturn": [
+            "shop-next-nightly-reconcile-job"
+          ],
+          "limit": 1,
+          "why": "the .php filename and inventory/warehouse-CSV context uniquely identify legacy's job, which has nothing to do with Stripe payouts."
+        },
+        {
+          "id": "price-engine-mode-values-shop-next",
+          "queryFrom": "shop-next",
+          "query": "PRICE_ENGINE_MODE possible values",
+          "expectedItemIds": [
+            "shop-next-price-engine-mode"
+          ],
+          "mustNotReturn": [
+            "legacy-shop-price-engine-mode"
+          ],
+          "limit": 1,
+          "why": "shop-next's values are sync/async (gRPC call timing); legacy's same-named var means legacy/tiered pricing logic entirely — wrong answer if swapped."
+        },
+        {
+          "id": "price-engine-mode-default-legacy",
+          "queryFrom": "legacy-shop",
+          "query": "what's the default for PRICE_ENGINE_MODE in prod",
+          "expectedItemIds": [
+            "legacy-shop-price-engine-mode"
+          ],
+          "mustNotReturn": [
+            "shop-next-price-engine-mode",
+            "shop-next-feature-flag-system"
+          ],
+          "limit": 1,
+          "why": "legacy still defaults to legacy pricing; shop-next's same-named var (default async) and its private note that just mentions PRICE_ENGINE_MODE in passing both answer the wrong question."
+        },
+        {
+          "id": "current-shipping-rate-from-legacy",
+          "queryFrom": "legacy-shop",
+          "query": "what should our shipping rate be right now",
+          "expectedItemIds": [
+            "shop-next-shipping-tiers-current"
+          ],
+          "mustNotReturn": [
+            "legacy-shop-shipping-flat-rate-stale"
+          ],
+          "limit": 5,
+          "why": "the 2025-11 flat-rate note is stale; the actual current policy is shop-next's 2026-05 weight-tiered decision, which even documents that legacy hasn't caught up yet."
+        },
+        {
+          "id": "why-legacy-still-flat-rate",
+          "queryFrom": "legacy-shop",
+          "query": "why is legacy-shop still charging flat $5.99 shipping",
+          "expectedItemIds": [
+            "shop-next-shipping-tiers-current",
+            "legacy-shop-shipping-flat-rate-stale"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "only the shop-next note explains this is a known, ticketed drift (SHOP-4021) rather than intentional policy; the legacy note confirms current legacy behavior but doesn't know it's outdated."
+        },
+        {
+          "id": "orders-line-items-storage-shop-next",
+          "queryFrom": "shop-next",
+          "query": "are line items normalized or JSON in the orders table",
+          "expectedItemIds": [
+            "shop-next-orders-table"
+          ],
+          "mustNotReturn": [
+            "legacy-shop-orders-table"
+          ],
+          "limit": 3,
+          "why": "shop-next normalizes line items into order_items; legacy's JSON-blob design is a different schema that would misinform a shop-next query or migration."
+        },
+        {
+          "id": "orders-schema-legacy",
+          "queryFrom": "legacy-shop",
+          "query": "line_items_json column",
+          "expectedItemIds": [
+            "legacy-shop-orders-table"
+          ],
+          "mustNotReturn": [
+            "shop-next-orders-table"
+          ],
+          "limit": 1,
+          "why": "line_items_json is a legacy-only column name; shop-next has no such column at all."
+        },
+        {
+          "id": "tax-nexus-states-count",
+          "queryFrom": "shop-next",
+          "query": "which states do we actually collect sales tax in",
+          "expectedItemIds": [
+            "legacy-shop-tax-nexus-rule"
+          ],
+          "mustNotReturn": [],
+          "limit": 5,
+          "why": "the nexus-state tax rule is a shared legal/business fact filed under legacy-shop but genuinely applies storewide, including shop-next."
+        },
+        {
+          "id": "coupon-stacking-limit",
+          "queryFrom": "shop-next",
+          "query": "can two percent-off coupons stack at checkout",
+          "expectedItemIds": [
+            "legacy-shop-coupon-stacking-rule"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "coupon stacking is a storewide business rule; the only recorded decision lives in legacy-shop's notes but answers the shop-next dev's question just as well."
+        },
+        {
+          "id": "refund-window-legacy-query",
+          "queryFrom": "legacy-shop",
+          "query": "how many days do customers have to get a refund",
+          "expectedItemIds": [
+            "shop-next-refund-window-policy"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "the refund policy is decided storewide and only documented under shop-next, but it governs legacy-shop's checkout too."
+        },
+        {
+          "id": "loyalty-points-expiry",
+          "queryFrom": "shop-next",
+          "query": "loyalty points expiration rule",
+          "expectedItemIds": [
+            "legacy-shop-loyalty-points-rate"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "loyalty accrual and expiry is a shared program rule recorded under legacy-shop but applicable to both storefronts."
+        },
+        {
+          "id": "tax-rule-vs-deploy-note-distractor",
+          "queryFrom": "legacy-shop",
+          "query": "sales tax nexus states rule",
+          "expectedItemIds": [
+            "legacy-shop-tax-nexus-rule"
+          ],
+          "mustNotReturn": [
+            "legacy-shop-deploy-process"
+          ],
+          "limit": 3,
+          "why": "the deploy-process note only mentions tax_nexus_states in passing as a reseed reminder; the actual nexus rule is a distinct item and is what the query is really asking for."
+        },
+        {
+          "id": "pci-logging-rule-shop-next",
+          "queryFrom": "shop-next",
+          "query": "is it ok to log the full card number anywhere",
+          "expectedItemIds": [
+            "shop-next-pci-log-constraint"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "this constraint lives in shop-next's own repo-private notes and directly answers the question for a shop-next developer."
+        },
+        {
+          "id": "k8s-rollback-command",
+          "queryFrom": "shop-next",
+          "query": "argocd rollback command for the api service",
+          "expectedItemIds": [
+            "shop-next-k8s-deploy"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "the ArgoCD app name and rollback command are documented only in this shop-next-private architecture note."
+        },
+        {
+          "id": "deploy-rollback-process-legacy",
+          "queryFrom": "legacy-shop",
+          "query": "how do we roll back a bad deploy",
+          "expectedItemIds": [
+            "legacy-shop-deploy-process"
+          ],
+          "mustNotReturn": [
+            "shop-next-k8s-deploy"
+          ],
+          "limit": 3,
+          "why": "legacy-shop has no ArgoCD/GKE setup; its rollback story is manual SCP plus migrate.php, not `argocd app rollback`, and the shop-next item is private besides."
+        }
+      ]
+    },
+    {
+      "name": "monorepo-split",
+      "repos": {
+        "frontend": [
+          {
+            "id": "frontend-typing-rate-limit",
+            "category": "fact",
+            "title": "Composer's 'typing rate limit' throttles keystrokes, not API calls",
+            "content": "The chat composer's so-called rate limit throttles onChange dispatch to once per 300ms (lodash debounce, components/Composer.tsx) — a UI perf trick, completely unrelated to any API request rate limiting.",
+            "visibility": "repo"
+          },
+          {
+            "id": "frontend-display-user-interface",
+            "category": "constraint",
+            "title": "DisplayUser strips PII from the shared User type",
+            "content": "Components use a local DisplayUser interface (frontend/src/types/display-user.ts) that picks only {id, name, avatarUrl} out of shared's User type — never pass the full shared User object into a client component.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "frontend-login-redirect-bug-report",
+            "category": "state",
+            "title": "QA: login succeeds then bounces back to /login on staging",
+            "content": "QA logged a repeated 'login succeeds then redirects to /login again' report on staging.duckapp.com; network tab on the frontend shows the auth cookie simply never gets sent, root cause not identified from this side.",
+            "visibility": "repo"
+          },
+          {
+            "id": "frontend-vite-proxy-config",
+            "category": "fact",
+            "title": "Vite dev server proxies /api to localhost:4000",
+            "content": "vite.config.ts proxies /api to localhost:4000 in dev; forgetting to restart Vite after changing the backend port is the #1 cause of local 'fetch failed' reports.",
+            "visibility": "repo"
+          },
+          {
+            "id": "frontend-design-tokens",
+            "category": "fact",
+            "title": "Design tokens live in tokens.css as CSS variables",
+            "content": "Color/spacing/radius tokens live in frontend/src/styles/tokens.css as CSS custom properties; Tailwind config reads them via theme.extend — don't hardcode hex values in components.",
+            "visibility": "repo"
+          },
+          {
+            "id": "frontend-form-validation-reuse",
+            "category": "decision",
+            "title": "Forms reuse shared's zod schemas via hookform resolver",
+            "content": "Decided to wire React Hook Form to shared's zod schemas directly via @hookform/resolvers/zod instead of writing parallel client-side rules — keeps client and server error messages from drifting apart.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "frontend-token-refresh-flow",
+            "category": "fact",
+            "title": "api-client silently refreshes on 401 before retrying",
+            "content": "frontend/src/lib/api-client.ts intercepts 401 responses and calls /auth/refresh with the refresh token before retrying the original request once; see backend's token TTL note for the actual expiry numbers.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "frontend-routing-lib",
+            "category": "fact",
+            "title": "Routing uses react-router-dom v7 data routers",
+            "content": "Routing uses createBrowserRouter (react-router-dom v7 data routers); the legacy <Routes> JSX pattern was removed in the v7 migration, don't reintroduce it.",
+            "visibility": "repo"
+          }
+        ],
+        "backend": [
+          {
+            "id": "backend-rate-limit-enforcement",
+            "category": "fact",
+            "title": "API rate limiter caps requests at 100/min per IP",
+            "content": "server/middleware/rateLimit.ts enforces 100 requests/minute per IP, built on the RateLimitConfig shape from shared; requests over the cap get HTTP 429 with a Retry-After header.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "backend-session-cookie-samesite",
+            "category": "fact",
+            "title": "SameSite=Strict cookie causes cross-subdomain login loop",
+            "content": "The auth session cookie is set SameSite=Strict; when frontend is served from a different subdomain than the API, the cookie never attaches on redirect and login loops back to /login — this is the actual root cause of the reported infinite-redirect bug.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "backend-db-migration-tool",
+            "category": "fact",
+            "title": "Migrations run via node-pg-migrate, not Prisma",
+            "content": "backend/migrations use the node-pg-migrate CLI (`npm run migrate:up`); Prisma was evaluated in February and rejected over migration-ordering issues, don't reintroduce it.",
+            "visibility": "repo"
+          },
+          {
+            "id": "backend-user-model-vs-type",
+            "category": "constraint",
+            "title": "DB user row has internal columns never sent over API",
+            "content": "backend/src/models/user.ts (the DB row shape) includes password_hash, deleted_at, and internal_notes columns that must never appear in an API response — only the shared User type fields get serialized out.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "backend-validation-error-mapping",
+            "category": "fact",
+            "title": "Error handler maps ValidationError to HTTP 422",
+            "content": "backend/src/middleware/errorHandler.ts catches shared's ValidationError and returns 422 with the field list attached.",
+            "visibility": "repo"
+          },
+          {
+            "id": "backend-deploy-target",
+            "category": "state",
+            "title": "API deploys to Render, frontend deploys to Vercel",
+            "content": "backend deploys via Render's Docker runtime on push to main, using its own GitHub Actions workflow — separate pipeline from frontend's Vercel deploy, don't conflate the two configs.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "backend-jwt-expiry",
+            "category": "fact",
+            "title": "Access tokens expire in 15 min, refresh in 30 days",
+            "content": "JWTs issued by backend/src/auth/tokens.ts expire after 15 minutes; refresh tokens last 30 days. Frontend should silently refresh on a 401 rather than forcing re-login.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "backend-node-version-note",
+            "category": "fact",
+            "title": "Admin reindex script needs Node 20, app doesn't",
+            "content": "The one-off backend/scripts/admin-reindex.cjs script needs Node 20 for a native module; unrelated to the app's own Node 18 runtime pin and unrelated to frontend's React version.",
+            "visibility": "repo"
+          }
+        ],
+        "shared": [
+          {
+            "id": "shared-user-type-canonical",
+            "category": "architecture",
+            "title": "Canonical User type lives in shared package",
+            "content": "The single-source-of-truth `User` interface is defined in shared/src/types/user.ts and re-exported to both frontend and backend — never redeclare it locally.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shared-zod-email-regex",
+            "category": "fact",
+            "title": "Shared email validator rejects plus-addressing",
+            "content": "The zod schema in shared/src/validation/user.schema.ts uses a regex that fails emails with a `+` in the local part (e.g. jane+test@x.com); known gap, not yet ticketed.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shared-semver-policy",
+            "category": "decision",
+            "title": "Shared package bumps minor for any new field",
+            "content": "Decided 2026-05: any new optional field added to an existing shared type triggers a minor version bump, even though it's non-breaking, so consumers can pin safely.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shared-validation-error-shape",
+            "category": "architecture",
+            "title": "Validation errors always return field/code/message array",
+            "content": "Every shared validator throws a ValidationError carrying an array of {field, code, message}; backend maps `code` to an HTTP status in its error handler, frontend maps `code` to an i18n key for display.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shared-build-target",
+            "category": "fact",
+            "title": "tsup emits dual CJS and ESM, don't go ESM-only",
+            "content": "shared/tsup.config.ts emits both CJS and ESM; switching to ESM-only in April broke backend's require() import and had to be reverted.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shared-rate-limit-schema",
+            "category": "constraint",
+            "title": "RateLimitConfig type has no enforcement logic",
+            "content": "shared/src/types/rate-limit.ts exports a RateLimitConfig type ({windowMs, max}) used only to type-check config objects passed around — it contains zero actual limiting logic; the real rate limiter lives in backend.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "shared-legacy-address-type",
+            "category": "state",
+            "title": "Deprecated Address type still exported for back-compat",
+            "content": "shared/src/types/address.ts has been deprecated since the monorepo split but stays exported because a pinned frontend build on shared@2.3 still imports it; remove once frontend is past 3.0.",
+            "visibility": "repo"
+          },
+          {
+            "id": "shared-tsup-jsx-check",
+            "category": "fact",
+            "title": "tsup's unused JSX export only smoke-tested on React 18",
+            "content": "shared's build has an unused JSX types export that was only smoke-tested against React 18 as a peer dependency — irrelevant to frontend's real React version, which is tracked in frontend's own package.json, not here.",
+            "visibility": "workspace"
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "frontend-why-login-loops",
+          "queryFrom": "frontend",
+          "query": "why does login keep redirecting back to the login page",
+          "expectedItemIds": [
+            "backend-session-cookie-samesite"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "the frontend bug report only observes the symptom; the actual root cause (SameSite cookie across subdomains) is documented in backend's note."
+        },
+        {
+          "id": "backend-rate-limit-meaning",
+          "queryFrom": "backend",
+          "query": "what's our rate limit",
+          "expectedItemIds": [
+            "backend-rate-limit-enforcement"
+          ],
+          "mustNotReturn": [
+            "frontend-typing-rate-limit"
+          ],
+          "limit": 3,
+          "why": "in backend, 'rate limit' means the actual API request limiter; frontend's 'typing rate limit' is an unrelated keystroke throttle and private to frontend anyway."
+        },
+        {
+          "id": "frontend-rate-limit-meaning",
+          "queryFrom": "frontend",
+          "query": "rate limit on the composer",
+          "expectedItemIds": [
+            "frontend-typing-rate-limit"
+          ],
+          "mustNotReturn": [
+            "backend-rate-limit-enforcement"
+          ],
+          "limit": 3,
+          "why": "the composer's rate limit is a keystroke debounce, not the API limiter; returning backend's item would be a same-name mismatch even though it's workspace-visible."
+        },
+        {
+          "id": "shared-rate-limit-type-question",
+          "queryFrom": "shared",
+          "query": "does RateLimitConfig actually enforce anything",
+          "expectedItemIds": [
+            "shared-rate-limit-schema"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "shared's own note explicitly states the type has no enforcement logic, which directly answers the question."
+        },
+        {
+          "id": "backend-user-fields-leak-check",
+          "queryFrom": "backend",
+          "query": "which user fields am I allowed to return from the API",
+          "expectedItemIds": [
+            "backend-user-model-vs-type"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "backend's own constraint note lists exactly which DB columns must never be serialized into API responses."
+        },
+        {
+          "id": "frontend-user-type-source",
+          "queryFrom": "frontend",
+          "query": "where is the User type actually defined",
+          "expectedItemIds": [
+            "shared-user-type-canonical"
+          ],
+          "mustNotReturn": [
+            "frontend-display-user-interface"
+          ],
+          "limit": 3,
+          "why": "the canonical User type is owned by shared; DisplayUser is a derived subset, not the source of truth, so returning it instead would mislead."
+        },
+        {
+          "id": "frontend-validation-error-format",
+          "queryFrom": "frontend",
+          "query": "what does a validation error look like from the API",
+          "expectedItemIds": [
+            "shared-validation-error-shape"
+          ],
+          "mustNotReturn": [
+            "backend-validation-error-mapping"
+          ],
+          "limit": 3,
+          "why": "shared's note is the complete, workspace-visible description of the error shape; backend's own mapping note is private and must not leak to frontend."
+        },
+        {
+          "id": "backend-validation-error-format",
+          "queryFrom": "backend",
+          "query": "validation error shape from shared",
+          "expectedItemIds": [
+            "shared-validation-error-shape",
+            "backend-validation-error-mapping"
+          ],
+          "mustNotReturn": [],
+          "limit": 5,
+          "why": "shared's note gives the canonical shape while backend's own private note describes how backend specifically maps it to a 422 — both genuinely answer, from complementary angles, and backend can see its own private note."
+        },
+        {
+          "id": "backend-email-plus-addressing",
+          "queryFrom": "backend",
+          "query": "user signup fails for email addresses with a plus sign",
+          "expectedItemIds": [
+            "shared-zod-email-regex"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "the bug is caused by shared's email regex; the real answer lives in shared even though the symptom would show up in backend's signup flow."
+        },
+        {
+          "id": "backend-tsup-cjs-esm",
+          "queryFrom": "backend",
+          "query": "why did our require() import of the shared package break",
+          "expectedItemIds": [
+            "shared-build-target"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "shared's build note documents that an ESM-only build broke backend's require() import — it's the direct cause, recorded in shared, not backend."
+        },
+        {
+          "id": "frontend-react-19-support",
+          "queryFrom": "frontend",
+          "query": "is the shared package tested against React 19",
+          "expectedItemIds": [
+            "shared-tsup-jsx-check"
+          ],
+          "mustNotReturn": [
+            "backend-node-version-note"
+          ],
+          "limit": 3,
+          "why": "The JSX transform check that decides React 19 compatibility lives in shared-tsup-jsx-check. (Item was authored repo-private, which made the case unscorable; widened to workspace so the expectation is reachable.)"
+        },
+        {
+          "id": "backend-admin-script-node-version",
+          "queryFrom": "backend",
+          "query": "node version for the admin reindex script",
+          "expectedItemIds": [
+            "backend-node-version-note"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "directly documented in backend's own private note about the admin-reindex script."
+        },
+        {
+          "id": "frontend-fetch-failed-locally",
+          "queryFrom": "frontend",
+          "query": "fetch failed in local dev, api calls not working",
+          "expectedItemIds": [
+            "frontend-vite-proxy-config"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "frontend's own note names this exact symptom and its most common cause (stale vite proxy after a backend port change)."
+        },
+        {
+          "id": "shared-legacy-address-still-used",
+          "queryFrom": "shared",
+          "query": "can we delete the old Address type yet",
+          "expectedItemIds": [
+            "shared-legacy-address-type"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "shared's own state note explains exactly why Address is still exported and the condition for removing it."
+        },
+        {
+          "id": "frontend-token-refresh-and-ttl",
+          "queryFrom": "frontend",
+          "query": "how long until the access token expires",
+          "expectedItemIds": [
+            "backend-jwt-expiry"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "the actual TTL numbers (15 min / 30 days) are only recorded in backend's note; frontend's own refresh-flow note references it but doesn't restate the numbers, so it doesn't itself answer 'how long'."
+        },
+        {
+          "id": "frontend-error-code-i18n",
+          "queryFrom": "frontend",
+          "query": "how do we turn a validation error code into a translated message",
+          "expectedItemIds": [
+            "shared-validation-error-shape"
+          ],
+          "mustNotReturn": [
+            "backend-validation-error-mapping"
+          ],
+          "limit": 3,
+          "why": "shared's note explicitly says frontend maps the error code to an i18n key; backend's own mapping note is a different, backend-only concern (HTTP 422) and is private, so it must not leak to frontend."
+        },
+        {
+          "id": "frontend-why-zod-in-forms",
+          "queryFrom": "frontend",
+          "query": "why are we using hookform resolvers instead of writing our own validation",
+          "expectedItemIds": [
+            "frontend-form-validation-reuse"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "the decision and its rationale are recorded verbatim in frontend's own note."
+        },
+        {
+          "id": "shared-semver-bump-question",
+          "queryFrom": "shared",
+          "query": "do I need to bump the version for a new optional field",
+          "expectedItemIds": [
+            "shared-semver-policy"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "shared's own decision note directly answers the versioning policy question."
+        }
+      ]
+    },
+    {
+      "name": "polyglot-services",
+      "repos": {
+        "billing-svc": [
+          {
+            "id": "billing-svc-retry-policy",
+            "category": "decision",
+            "title": "Payment charge retry policy: 3 attempts, backoff",
+            "content": "Failed Stripe charge calls retry 3 times with exponential backoff (2s base, 30s cap); the 4th failure flips the invoice to PAYMENT_FAILED for manual review and stops retrying.",
+            "visibility": "repo"
+          },
+          {
+            "id": "billing-svc-queue-timeout",
+            "category": "fact",
+            "title": "invoice-events queue visibility timeout is 45 seconds",
+            "content": "The `invoice-events` SQS consumer in BillingWorker.java sets a 45s visibility timeout to cover the full Stripe charge round-trip; a shorter timeout causes duplicate charge attempts.",
+            "visibility": "repo"
+          },
+          {
+            "id": "billing-svc-idempotency-key",
+            "category": "constraint",
+            "title": "Charge calls must include an idempotency key",
+            "content": "Every PaymentGateway.charge() call must pass a UUID idempotency key built from invoice_id + attempt_number, or Stripe can double-charge the customer on retry.",
+            "visibility": "repo"
+          },
+          {
+            "id": "billing-svc-ledger-db",
+            "category": "architecture",
+            "title": "Ledger state lives in Postgres billing_ledger schema",
+            "content": "All invoice and payment state lives in the billing_ledger Postgres schema, owned solely by billing-svc; no other service should read it directly.",
+            "visibility": "repo"
+          },
+          {
+            "id": "billing-svc-events-published",
+            "category": "architecture",
+            "title": "billing-svc publishes invoice.paid to the shared bus",
+            "content": "billing-svc publishes invoice.paid and invoice.failed events to the billing-events Kafka topic on the shared bus; consumers should expect the v2 payload schema per BILL-402.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "billing-svc-oncall",
+            "category": "fact",
+            "title": "Billing incidents page through #billing-page, not #incidents",
+            "content": "Production billing incidents page the on-call via the #billing-page Slack channel; the PagerDuty service name is billing-svc-prod.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "billing-svc-decoy-queue-mention",
+            "category": "fact",
+            "title": "Month-end close waits for the invoice queue to drain",
+            "content": "The month-end closing batch job waits for the invoice-events queue to fully drain (no fixed timeout) before generating the revenue report, to avoid double-counting in-flight charges.",
+            "visibility": "repo"
+          }
+        ],
+        "search-svc": [
+          {
+            "id": "search-svc-retry-policy",
+            "category": "decision",
+            "title": "Index commit retry policy: 5 attempts, fixed delay",
+            "content": "Failed IndexWriter::commit() calls retry up to 5 times with a fixed 200ms delay (no backoff) since a reindex batch is cheap and idempotent; the 6th failure logs to Sentry and the batch is skipped.",
+            "visibility": "repo"
+          },
+          {
+            "id": "search-svc-queue-timeout",
+            "category": "fact",
+            "title": "reindex-jobs queue visibility timeout is 10 seconds",
+            "content": "The reindex-jobs SQS consumer in worker.rs uses a 10s visibility timeout because a single reindex batch normally finishes in under 2s; anything longer indicates a stuck worker.",
+            "visibility": "repo"
+          },
+          {
+            "id": "search-svc-shard-count",
+            "category": "fact",
+            "title": "Production index runs 12 shards across 3 nodes",
+            "content": "The production Tantivy index is split into 12 shards across 3 nodes (4 shards/node); shard count is fixed at deploy time and changing it requires a full reindex.",
+            "visibility": "repo"
+          },
+          {
+            "id": "search-svc-query-api",
+            "category": "architecture",
+            "title": "Public query API is gRPC on port 7443",
+            "content": "search-svc exposes its query API via gRPC on port 7443 (search.v1.SearchService); other services should call SearchService.Query for typeahead, not the deprecated REST /search endpoint.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "search-svc-events-consumed",
+            "category": "architecture",
+            "title": "search-svc consumes catalog.updated from the shared bus",
+            "content": "search-svc subscribes to the catalog-events Kafka topic and reindexes on catalog.updated; the consumer group is search-svc-indexer and lag alerts fire above 5000 messages.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "search-svc-relevance-tuning",
+            "category": "fact",
+            "title": "BM25 tuned to k1=1.2, b=0.75 for product titles",
+            "content": "BM25 parameters are tuned to k1=1.2, b=0.75 specifically for the product-title field; changing these for other fields requires a separate relevance eval run before shipping.",
+            "visibility": "repo"
+          },
+          {
+            "id": "search-svc-decoy-timeout-mention",
+            "category": "fact",
+            "title": "Cold-start cache warm-up takes about 90 seconds",
+            "content": "On deploy, the in-memory query cache takes roughly 90 seconds to warm from cold before p99 latency stabilizes; this is an observed startup characteristic, not a configurable timeout.",
+            "visibility": "repo"
+          }
+        ],
+        "notify-svc": [
+          {
+            "id": "notify-svc-retry-policy",
+            "category": "decision",
+            "title": "Email send retry policy: 4 attempts, minute backoff",
+            "content": "Failed SES send_email calls retry 4 times at 1/2/4/8 minute intervals via Celery's retry_backoff; after the 4th failure the notification is marked undeliverable and not retried further.",
+            "visibility": "repo"
+          },
+          {
+            "id": "notify-svc-queue-timeout",
+            "category": "fact",
+            "title": "notify-outbox queue visibility timeout is 120 seconds",
+            "content": "The notify-outbox SQS consumer in worker.py sets a 120s visibility timeout since SES send plus Jinja template rendering can occasionally take up to 90s under load.",
+            "visibility": "repo"
+          },
+          {
+            "id": "notify-svc-rate-limit",
+            "category": "constraint",
+            "title": "SES send rate capped at 14 emails per second",
+            "content": "notify-svc throttles outbound SES calls to 14/sec, just under the AWS account's 14.3/sec sending limit, via a token-bucket in rate_limiter.py; exceeding it triggers AWS throttling errors.",
+            "visibility": "repo"
+          },
+          {
+            "id": "notify-svc-events-consumed",
+            "category": "architecture",
+            "title": "notify-svc consumes invoice.paid and user.signup events",
+            "content": "notify-svc listens on billing-events (for invoice.paid/invoice.failed) and user-events (for user.signup) Kafka topics to trigger transactional emails; the consumer group is notify-svc-mailer.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "notify-svc-template-store",
+            "category": "fact",
+            "title": "Email templates live in S3, not the repo",
+            "content": "Jinja2 email templates live in the notify-templates-prod S3 bucket and hot-reload every 5 minutes; they are not bundled in the notify-svc repo, so editing one doesn't require a deploy.",
+            "visibility": "repo"
+          },
+          {
+            "id": "notify-svc-decoy-retry-mention",
+            "category": "fact",
+            "title": "Bounce webhook handler is stateless, no retry logic",
+            "content": "The SES bounce/complaint webhook handler in webhooks.py just writes to the suppression list and returns 200 immediately; there's no retry logic since SES itself retries webhook delivery on failure.",
+            "visibility": "repo"
+          }
+        ],
+        "infra": [
+          {
+            "id": "infra-message-bus",
+            "category": "architecture",
+            "title": "Company message bus is MSK Kafka cluster core-bus",
+            "content": "All inter-service events flow through the shared MSK Kafka cluster core-bus (us-east-1); each service owns its own topics and consumer groups, but the cluster and retention config are managed by infra.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "infra-retry-convention",
+            "category": "decision",
+            "title": "Default cross-service retry convention: 3 tries, jitter",
+            "content": "The company-wide default for any new inter-service HTTP or queue retry logic is 3 attempts with exponential backoff (1s base, 20s cap) plus full jitter, per the platform reliability RFC; services may deviate with a documented reason.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "infra-queue-timeout-floor",
+            "category": "constraint",
+            "title": "SQS visibility timeout must be 6x handler runtime",
+            "content": "Platform policy: any SQS consumer's visibility timeout must be at least 6x the p99 handler processing time, to prevent duplicate delivery under normal load; enforced by a pre-deploy Terraform lint check.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "infra-deploy-pipeline",
+            "category": "fact",
+            "title": "All services deploy via the shared svc-deploy workflow",
+            "content": "Every service, including infra itself, deploys through the reusable svc-deploy.yml GitHub Actions workflow, which runs terraform plan against the shared infra repo before any service-specific apply.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "infra-secrets-management",
+            "category": "fact",
+            "title": "Secrets come from Vault at secret/data/<service>/prod",
+            "content": "All services read runtime secrets from HashiCorp Vault under secret/data/<service>/prod; no service should hardcode credentials or read secrets from .env files in production.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "infra-region-standard",
+            "category": "constraint",
+            "title": "All production services run in us-east-1 only",
+            "content": "Production infrastructure for every service is provisioned exclusively in us-east-1; there is no active multi-region failover, so a us-east-1 outage takes down billing-svc, search-svc, and notify-svc simultaneously.",
+            "visibility": "workspace"
+          },
+          {
+            "id": "infra-tfstate-backend",
+            "category": "state",
+            "title": "Terraform state backend migration is in progress",
+            "content": "infra's own Terraform state is mid-migration from one monolithic S3 backend to per-module state files under envs/prod/*; this is internal infra housekeeping with no effect on how services consume infra outputs.",
+            "visibility": "repo"
+          },
+          {
+            "id": "infra-observability",
+            "category": "fact",
+            "title": "Structured JSON logs ship to Loki via Fluent Bit",
+            "content": "Every service must log structured JSON to stdout; a Fluent Bit sidecar ships it to the shared Loki cluster. Unstructured or plaintext logs get dropped by the parser and become unsearchable in Grafana.",
+            "visibility": "workspace"
+          }
+        ]
+      },
+      "cases": [
+        {
+          "id": "billing-retry-policy-own",
+          "queryFrom": "billing-svc",
+          "query": "what's our retry policy for failed payment charges",
+          "expectedItemIds": [
+            "billing-svc-retry-policy"
+          ],
+          "mustNotReturn": [
+            "search-svc-retry-policy",
+            "notify-svc-retry-policy"
+          ],
+          "limit": 3,
+          "why": "The developer is asking about billing-svc's own charge retry logic; the other services' retry policies govern unrelated workflows with different values."
+        },
+        {
+          "id": "search-retry-policy-own",
+          "queryFrom": "search-svc",
+          "query": "retry policy for index commit failures",
+          "expectedItemIds": [
+            "search-svc-retry-policy"
+          ],
+          "mustNotReturn": [
+            "billing-svc-retry-policy",
+            "notify-svc-retry-policy"
+          ],
+          "limit": 3,
+          "why": "Only search-svc-retry-policy describes IndexWriter::commit retry behavior; the billing and notify retry policies cover unrelated payment and email workflows."
+        },
+        {
+          "id": "notify-retry-policy-own",
+          "queryFrom": "notify-svc",
+          "query": "how many times do we retry a failed email send",
+          "expectedItemIds": [
+            "notify-svc-retry-policy"
+          ],
+          "mustNotReturn": [
+            "billing-svc-retry-policy",
+            "search-svc-retry-policy"
+          ],
+          "limit": 3,
+          "why": "notify-svc-retry-policy is the only item describing SES email retry attempts and backoff timing; the others cover unrelated payment and indexing retries."
+        },
+        {
+          "id": "billing-queue-timeout-own",
+          "queryFrom": "billing-svc",
+          "query": "visibility timeout on the invoice queue",
+          "expectedItemIds": [
+            "billing-svc-queue-timeout"
+          ],
+          "mustNotReturn": [
+            "search-svc-queue-timeout",
+            "notify-svc-queue-timeout"
+          ],
+          "limit": 3,
+          "why": "The developer means billing-svc's invoice-events queue specifically; the other services' queue timeouts apply to different queues with different values."
+        },
+        {
+          "id": "search-queue-timeout-own",
+          "queryFrom": "search-svc",
+          "query": "SQS visibility timeout for the reindex jobs queue",
+          "expectedItemIds": [
+            "search-svc-queue-timeout"
+          ],
+          "mustNotReturn": [
+            "billing-svc-queue-timeout",
+            "notify-svc-queue-timeout"
+          ],
+          "limit": 3,
+          "why": "Only search-svc-queue-timeout documents the reindex-jobs queue's 10s timeout; billing's 45s and notify's 120s values are for unrelated queues."
+        },
+        {
+          "id": "notify-queue-timeout-own",
+          "queryFrom": "notify-svc",
+          "query": "what timeout is set on the notify outbox queue",
+          "expectedItemIds": [
+            "notify-svc-queue-timeout"
+          ],
+          "mustNotReturn": [
+            "billing-svc-queue-timeout",
+            "search-svc-queue-timeout"
+          ],
+          "limit": 3,
+          "why": "notify-svc-queue-timeout is the only item about the notify-outbox queue; the other two describe unrelated queues in other services."
+        },
+        {
+          "id": "billing-wrong-timeout-applied",
+          "queryFrom": "billing-svc",
+          "query": "can I just reuse search-svc's 10 second queue timeout for our invoice consumer",
+          "expectedItemIds": [
+            "billing-svc-queue-timeout"
+          ],
+          "mustNotReturn": [
+            "search-svc-queue-timeout"
+          ],
+          "limit": 3,
+          "why": "search-svc's 10s timeout is tuned for a sub-2s reindex handler and would be far too short for billing's ~45s Stripe round-trip, causing duplicate charges; billing's own 45s value is correct."
+        },
+        {
+          "id": "infra-new-retry-convention",
+          "queryFrom": "notify-svc",
+          "query": "what retry pattern should a brand new inter-service call use",
+          "expectedItemIds": [
+            "infra-retry-convention"
+          ],
+          "mustNotReturn": [
+            "billing-svc-retry-policy",
+            "search-svc-retry-policy"
+          ],
+          "limit": 5,
+          "why": "For a new cross-service call with no existing convention, the company-wide default lives in infra-retry-convention; the per-service policies are already-tuned exceptions for specific existing workflows, not the baseline."
+        },
+        {
+          "id": "search-message-bus-generic",
+          "queryFrom": "search-svc",
+          "query": "what message bus does the company use",
+          "expectedItemIds": [
+            "infra-message-bus"
+          ],
+          "mustNotReturn": [],
+          "limit": 5,
+          "why": "This is a platform-wide infrastructure fact (MSK Kafka cluster core-bus) that infra owns and answers identically no matter which service asks."
+        },
+        {
+          "id": "billing-secrets-question",
+          "queryFrom": "billing-svc",
+          "query": "where do production secrets come from",
+          "expectedItemIds": [
+            "infra-secrets-management"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "Secrets management is a company-wide infra convention (the Vault path pattern) that applies uniformly to every service, not something billing-svc defines itself."
+        },
+        {
+          "id": "notify-events-consumed-own",
+          "queryFrom": "notify-svc",
+          "query": "which kafka topics does notify-svc listen on",
+          "expectedItemIds": [
+            "notify-svc-events-consumed"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "Only notify-svc-events-consumed lists the specific topics (billing-events, user-events) and consumer group notify-svc subscribes to."
+        },
+        {
+          "id": "billing-events-published-crosscheck",
+          "queryFrom": "notify-svc",
+          "query": "what event does billing-svc emit when an invoice gets paid",
+          "expectedItemIds": [
+            "billing-svc-events-published"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "A notify-svc developer building the invoice.paid email trigger needs billing-svc's own workspace-visible event contract as the authoritative source for the topic and schema."
+        },
+        {
+          "id": "search-query-api-crosscheck",
+          "queryFrom": "billing-svc",
+          "query": "how do I call search-svc for typeahead results",
+          "expectedItemIds": [
+            "search-svc-query-api"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "search-svc-query-api is the workspace-visible note documenting the public gRPC contract other services must use instead of the deprecated REST endpoint."
+        },
+        {
+          "id": "billing-monthend-drain",
+          "queryFrom": "billing-svc",
+          "query": "how long does the invoice queue take to drain at month end",
+          "expectedItemIds": [
+            "billing-svc-decoy-queue-mention"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "The query is specifically about the month-end close job's drain-wait behavior, which only billing-svc-decoy-queue-mention describes; the invoice-events SQS timeout item is a different, unrelated setting despite sharing the word 'queue'."
+        },
+        {
+          "id": "search-cold-start-decoy",
+          "queryFrom": "search-svc",
+          "query": "how long does cache warm-up take after a fresh deploy",
+          "expectedItemIds": [
+            "search-svc-decoy-timeout-mention"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "Cache warm-up duration is only described in search-svc-decoy-timeout-mention; it is an observed startup characteristic, not the configurable reindex-jobs queue timeout, despite both mentioning seconds and startup behavior."
+        },
+        {
+          "id": "notify-bounce-webhook-decoy",
+          "queryFrom": "notify-svc",
+          "query": "does the bounce webhook handler need retry logic",
+          "expectedItemIds": [
+            "notify-svc-decoy-retry-mention"
+          ],
+          "mustNotReturn": [],
+          "limit": 1,
+          "why": "notify-svc-decoy-retry-mention directly answers that the bounce webhook is stateless with no retry logic needed, which is a distinct code path from the email-send retry policy."
+        },
+        {
+          "id": "infra-deploy-pipeline-crosscheck",
+          "queryFrom": "infra",
+          "query": "how do the services actually get deployed to prod",
+          "expectedItemIds": [
+            "infra-deploy-pipeline"
+          ],
+          "mustNotReturn": [],
+          "limit": 5,
+          "why": "Deployment pipeline mechanics are documented in infra-deploy-pipeline, the shared svc-deploy.yml workflow used by all four repos including infra itself."
+        },
+        {
+          "id": "infra-region-standard-crosscheck",
+          "queryFrom": "notify-svc",
+          "query": "do we run in more than one AWS region",
+          "expectedItemIds": [
+            "infra-region-standard"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "Region topology is an infra-owned platform fact (us-east-1 only, no failover) that is true for every service equally, not a notify-svc-specific setting."
+        },
+        {
+          "id": "infra-observability-crosscheck",
+          "queryFrom": "search-svc",
+          "query": "where do my application logs end up",
+          "expectedItemIds": [
+            "infra-observability"
+          ],
+          "mustNotReturn": [],
+          "limit": 3,
+          "why": "Log shipping (structured JSON to Loki via Fluent Bit) is a platform-wide infra convention that applies to search-svc the same as any other service, not something it configures itself."
+        },
+        {
+          "id": "infra-queue-floor-crosscheck-billing",
+          "queryFrom": "billing-svc",
+          "query": "is there a minimum SQS visibility timeout we're supposed to follow",
+          "expectedItemIds": [
+            "infra-queue-timeout-floor"
+          ],
+          "mustNotReturn": [],
+          "limit": 5,
+          "why": "The 6x-p99-runtime floor is a platform-wide policy enforced by infra's Terraform lint, applicable when sizing any service's queue timeout, including billing's own."
+        }
+      ]
+    }
+  ]
+}

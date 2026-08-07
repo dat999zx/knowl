@@ -3,6 +3,93 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### A cross-repo evaluation suite that spans more than one workspace shape
+
+`cross-repo-suite.json` held **three** cases over a single two-repo fixture. That is not enough to
+tell whether a ranking change generalises, and the gap was demonstrated the expensive way: a
+change measured as a clear win over one real three-repo workspace — 12 queries, 9 unchanged,
+every regression accounted for — broke two of those three cases the moment it met a fixture built
+by somebody else. The sample was not merely small, it was **narrow**: every query, every label and
+every counterexample came from one person's data and one person's judgement.
+
+`cross-repo-archetypes.json` adds **92 cases over 5 workspace archetypes, 15 repos and 121 items**,
+each archetype carrying a different failure mode — a split monorepo (vocabulary overlaps by
+construction), diverged forks (same name, different meaning), unrelated client projects sharing
+generic words alongside a house toolkit that is correct everywhere, an asymmetric big-service /
+small-SDK / prose-handbook trio, and four independent services where most cross-repo hits are
+noise.
+
+Ground truth was authored **without sight of the ranking rules**, from one question only: *"a
+developer in this repo typed this — which item genuinely answers them?"*, with authors explicitly
+instructed not to reason about which repo an item lives in. So the labels cannot encode the
+preference a ranker is then congratulated for having. Several land against the intuitive answer:
+one case's honest answer is a peer's item because the local note explicitly defers to it.
+
+Two things the suite keeps separate on purpose:
+
+- **Privacy is not a ranking metric.** A peer's repo-private row must never be returned, ever.
+  That is asserted at exactly zero and computed from the fixtures' own visibility, not from the
+  suites' `mustNotReturn` — which mixes the hard guarantee with "this shouldn't crowd the page".
+  Merged, a ranking regression could pass as a privacy failure, or a leak hide inside a tolerance
+  granted for ranking.
+- **Scores are recorded per archetype, not pooled.** A change that lifts the average while
+  wrecking one shape is the exact failure this exists to catch, and an average is what hides it.
+
+It found one on arrival. Against 3.3.0 the recorded baseline fails at `polyglot-services`,
+semantic MRR 1.0 → 0.975, traced by experiment to 4152c34's min-max rescale of the semantic
+half: neutralising `rescaleSemantic` restores 1.0 and leaves every other cell byte-identical,
+and the whole positional column is untouched, which is what a semantic-only cause predicts. One
+case moves — a query naming a peer service, where amplifying a narrow cosine lead is the
+rescale working as designed. Recorded as an accepted cost rather than reverted: 4152c34 won on
+the two suites that can discriminate, over 135 and 56 cases, and overturning that on a single
+fixture case is the closed-loop reasoning `cross-repo-local-preference.md` exists to warn
+against. The reasoning is in the baseline file, so the next drop is still a regression.
+
+### `knowl workspace demand` — what the repos actually ask each other for
+
+A workspace-level ledger recording every cross-repo query: which repo asked, which answered,
+how well it was answered, and the query itself where it passes the repo's own secret validators
+(a fingerprint always, so demand stays countable even when the text is withheld). Lives beside
+the workspace manifest, not in any member repo, and is local to this machine.
+
+"How well" is the best **raw cosine** on the answered page, and withheld entirely where no
+semantic half ran. The column exists so a "weak query" threshold can be chosen from its
+distribution later, which needs a number meaning the same thing on every row — and the fused
+score is not one. Its semantic half is min-max scaled across the candidate page (3.3.0), so the
+best row lands near 1.0 whether its cosine was 0.9 or 0.2; with vector off, its lexical half is
+normalised against each corpus's own best hit, so the top row lands near 1.0 again. Cosine is
+what the relevance floor is measured against, so a threshold picked from this column is
+comparable to the shipped per-model floors.
+
+**Nothing acts on it.** It exists to answer, with data rather than intuition, whether there is
+enough cross-repo demand to justify proposing promotions at all — see the
+[design](docs/superpowers/specs/2026-08-07-demand-paged-scoping-design.md), which treats
+"the evidence says no, so do not build it" as a success condition. Writes are fire-and-forget
+and every failure is swallowed: a telemetry file that can fail a query is worse than no
+telemetry.
+
+### Workspace reads tell the truth about what they found
+
+Groundwork for demand-paged scoping
+([design](docs/superpowers/specs/2026-08-07-demand-paged-scoping-design.md)); each item is a bug
+on its own terms.
+
+- **The relevance floor now applies to federated queries.** `queryFederated` never passed
+  `vector.relevanceFloor` into the ranker, so `minRelevance` arrived `null` on every workspace
+  query, no federated result could carry `abstained`, and `knowl_query`'s `NO CONFIDENT MATCH`
+  notice was unreachable code from the moment a repo was linked — the case where the verdict
+  matters most, because the alternative on offer is another repo's near-miss.
+- **A result from a kin repo says so.** `kin` marks repos of one lineage with diverged
+  conventions, and it was a write-time signal only: the cross-repo write advisory warned about
+  divergence while a federated *read* returned the same repo's items unmarked. One
+  `SHARED LINEAGE` notice per response, not per row.
+- **The miss notice names the next move.** Where `search.transcripts.enabled` is set,
+  `NO CONFIDENT MATCH` now points at `knowl_transcript_search` — past sessions are indexed
+  separately and `knowl_query` does not search them. Conditional, because naming a tool the
+  build does not expose is worse than saying nothing.
+
 ## 3.3.0 — 2026-08-07
 
 ### Added
