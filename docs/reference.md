@@ -549,6 +549,15 @@ knowl workspace promote --category decision
 knowl workspace promote --category decision --apply
 ```
 
+A repository joining a `linked` workspace records `defaultVisibility: workspace`, so the knowledge
+it writes from then on is readable by its peers. The command prints that a default decided it and
+how to decline; `--default-visibility repo` opts out, and `knowl workspace set` with no flags
+prints the current value. Repositories already listed in a manifest are never moved: an absent
+`defaultVisibility` still resolves to `repo`, because changing what omission means would publish
+every linked repository's next write on account of an upgrade rather than a decision, and there is
+no demote. Knowledge written before the default, or under `--default-visibility repo`, stays
+private until it is promoted.
+
 For another checkout or machine, copy the workspace manifest and join from each repository:
 
 ```bash
@@ -560,7 +569,7 @@ The shipped workspace commands are:
 | Command | Purpose |
 | --- | --- |
 | `knowl workspace init <name>` | Create a workspace outside its member repositories |
-| `knowl workspace add <name> [--name <repo-name>] [--force]` | Link the current repository |
+| `knowl workspace add <name> [--name <repo-name>] [--default-visibility <repo\|workspace>] [--promote-existing] [--force]` | Link the current repository; shares its new writes by default in a `linked` workspace |
 | `knowl workspace join <manifest> [--name <repo-name>] [--force]` | Adopt a copied manifest and map this checkout |
 | `knowl workspace list` | List workspaces known to this machine |
 | `knowl workspace status [--verbose]` | Show this repository's membership and peer health |
@@ -1114,7 +1123,7 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 | Command | Description |
 | --- | --- |
 | `knowl workspace init <name>` | Create a workspace |
-| `knowl workspace add <name> [--name <repo-name>] [--force]` | Link the current repository |
+| `knowl workspace add <name> [--name <repo-name>] [--default-visibility <repo\|workspace>] [--promote-existing] [--force]` | Link the current repository; shares its new writes by default in a `linked` workspace |
 | `knowl workspace join <manifest> [--name <repo-name>]` | Join from a copied manifest |
 | `knowl workspace list` | List machine-local workspaces |
 | `knowl workspace status [--verbose]` | Show membership and resolved peers |

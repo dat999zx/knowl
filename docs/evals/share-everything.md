@@ -42,6 +42,37 @@ rules were shared from one repo and private in its sibling.
 The comparison is therefore: a measured −0.016 MRR and no recall loss, against an unmeasured but
 demonstrably large volume of knowledge that is never retrieved at all.
 
+## It is not capture noise
+
+The obvious suspicion, raised on review: workspaces accumulate auto-captured `fact` and `state`
+entries — per-commit resolutions, transient test failures — and that mass is what moves the number
+when the default flips. If so, the recommendation would narrow to "flip the default, keep the
+noise categories out".
+
+It does not hold. Tested by adding the missing variable rather than removing a category: 120
+capture-noise items of exactly that shape (`Resolved failure in src/session/impact.ts: readFile on
+a directory -> EISDIR`, half `fact`, half `state`, private), roughly doubling the corpus, then
+re-measuring the same delta.
+
+| corpus | curated MRR | shared MRR | Δ | forbidden shown |
+| --- | --- | --- | --- | --- |
+| clean (121 items) | 0.9837 | 0.9674 | −0.0163 | 8 → 35 |
+| +120 noise items | 0.9837 | 0.9674 | −0.0163 | 8 → 35 |
+
+Identical to four decimal places, same forbidden count. **Capture noise never competes**: it does
+not rank for a real question, so it never enters the per-repo candidate pool, and
+`DEFAULT_PER_REPO_CAP` means the pool is what matters rather than the corpus. Noise is dead weight
+in the store, not a rival in the ranking. The −0.016 is substantive items competing.
+
+Excluding `fact` and `state` from the flip *does* recover about a third of it (0.9674 → 0.9728) —
+but by sharing fewer substantive items, not by withholding noise, since the noisy and clean runs
+of that arm are also identical. "Share less" moving the number toward "share nothing" is
+mechanical, and does not support a category rule.
+
+Note this suite cannot answer the question by holding `fact` and `state` private outright: **47 of
+its 92 expected answers are in those two categories**, because the fixture authors used them for
+substance rather than for capture. That measures fixture composition, not the hypothesis.
+
 ## Why the cost is structurally bounded
 
 `DEFAULT_PER_REPO_CAP = 10`. Only ten candidates per repo ever enter scoring, however many are

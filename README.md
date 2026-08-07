@@ -307,8 +307,9 @@ candidates. Park a workstream under a key and pick it up in any session, from an
 **🔗 Workspaces**
 
 Your API repo learned something the frontend repo needs. Link them and a query fans out,
-while each repository keeps its own database and its own ownership boundary. Nothing is
-shared until you promote it, and only the owner can retire its own atoms.
+while each repository keeps its own database and its own ownership boundary. Knowledge a
+repo already holds is shared only when you promote it, and only the owner can retire its
+own atoms.
 
 `workspace init` · `workspace add` · `workspace promote --apply`
 
@@ -426,7 +427,7 @@ knowl doctor                           # setup, retrieval, and registration
 </details>
 
 <details>
-<summary><b>Workspaces: many repos, one shared memory</b> — nothing is shared until you promote it</summary>
+<summary><b>Workspaces: many repos, one shared memory</b> — you decide what each repo shares</summary>
 <br>
 
 Your API repo learned something the frontend repo needs. Link them, and a query fans out — while
@@ -435,15 +436,17 @@ each repository keeps its own database and its own ownership boundary.
 ```bash
 knowl workspace init product      # create the workspace
 knowl workspace add product       # run inside each repo that joins it
+                                  # ...or --default-visibility repo to keep its writes private
 
 knowl workspace promote --category decision           # preview what would be shared
 knowl workspace promote --category decision --apply   # publish it
 ```
 
-Nothing is shared until you promote it — private knowledge stays private, peer results are
-read-only and labeled with the repo that owns them, and only the owner can retire its own atoms. A
-peer that is missing or unreadable is skipped and disclosed, never a reason for your local search
-to fail.
+Joining a workspace shares what the repo writes **from then on**, and says so when it does; pass
+`--default-visibility repo` to decline. What the repo already knows is shared only when you
+promote it. Peer results are read-only and labeled with the repo that owns them, and only the
+owner can retire its own atoms. A peer that is missing or unreadable is skipped and disclosed,
+never a reason for your local search to fail.
 
 → [Workspaces](docs/reference.md#workspaces)
 
