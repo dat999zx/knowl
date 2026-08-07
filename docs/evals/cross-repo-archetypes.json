@@ -371,7 +371,7 @@
           ],
           "mustNotReturn": [],
           "limit": 5,
-          "why": "By meaning alone this internal catalog is the only item describing the E1xxx/E2xxx/E3xxx taxonomy and which codes actually surface publicly, even though it is marked repo-private to platform and so may not be retrievable from sdk-js in practice."
+          "why": "The E1xxx/E2xxx/E3xxx taxonomy is described only by platform-error-code-catalog, so the honest answer lives in the other repo. (Item was authored repo-private, which made the case unscorable; widened to workspace so the expectation is reachable.)"
         },
         {
           "id": "handbook-node-version-hard",
@@ -382,7 +382,7 @@
           ],
           "mustNotReturn": [],
           "limit": 3,
-          "why": "The genuine answer (Node 18+ minimum, undici fallback on 16) is only in an sdk-js item marked repo-private, so a handbook query for support-docs purposes is judged correct by meaning even though visibility would withhold it."
+          "why": "Only sdk-js-node-version-support states which Node versions the SDK still supports. (Item was authored repo-private, which made the case unscorable; widened to workspace so the expectation is reachable.)"
         }
       ]
     },
@@ -1471,7 +1471,7 @@
             "backend-node-version-note"
           ],
           "limit": 3,
-          "why": "shared's own note is the only place this is documented (only smoke-tested on React 18); backend's node-version note just mentions React in passing about an unrelated script and would be a misleading, private-to-backend match."
+          "why": "The JSX transform check that decides React 19 compatibility lives in shared-tsup-jsx-check. (Item was authored repo-private, which made the case unscorable; widened to workspace so the expectation is reachable.)"
         },
         {
           "id": "backend-admin-script-node-version",
