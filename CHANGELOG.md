@@ -5,6 +5,38 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+### A cross-repo evaluation suite that spans more than one workspace shape
+
+`cross-repo-suite.json` held **three** cases over a single two-repo fixture. That is not enough to
+tell whether a ranking change generalises, and the gap was demonstrated the expensive way: a
+change measured as a clear win over one real three-repo workspace — 12 queries, 9 unchanged,
+every regression accounted for — broke two of those three cases the moment it met a fixture built
+by somebody else. The sample was not merely small, it was **narrow**: every query, every label and
+every counterexample came from one person's data and one person's judgement.
+
+`cross-repo-archetypes.json` adds **92 cases over 5 workspace archetypes, 15 repos and 121 items**,
+each archetype carrying a different failure mode — a split monorepo (vocabulary overlaps by
+construction), diverged forks (same name, different meaning), unrelated client projects sharing
+generic words alongside a house toolkit that is correct everywhere, an asymmetric big-service /
+small-SDK / prose-handbook trio, and four independent services where most cross-repo hits are
+noise.
+
+Ground truth was authored **without sight of the ranking rules**, from one question only: *"a
+developer in this repo typed this — which item genuinely answers them?"*, with authors explicitly
+instructed not to reason about which repo an item lives in. So the labels cannot encode the
+preference a ranker is then congratulated for having. Several land against the intuitive answer:
+one case's honest answer is a peer's item because the local note explicitly defers to it.
+
+Two things the suite keeps separate on purpose:
+
+- **Privacy is not a ranking metric.** A peer's repo-private row must never be returned, ever.
+  That is asserted at exactly zero and computed from the fixtures' own visibility, not from the
+  suites' `mustNotReturn` — which mixes the hard guarantee with "this shouldn't crowd the page".
+  Merged, a ranking regression could pass as a privacy failure, or a leak hide inside a tolerance
+  granted for ranking.
+- **Scores are recorded per archetype, not pooled.** A change that lifts the average while
+  wrecking one shape is the exact failure this exists to catch, and an average is what hides it.
+
 ### `knowl workspace demand` — what the repos actually ask each other for
 
 A workspace-level ledger recording every cross-repo query: which repo asked, which answered,

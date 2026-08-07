@@ -1,0 +1,19 @@
+{
+  "recordedAt": "2026-08-07",
+  "note": "Recorded on scope/2-demand-ledger at 4c5f6bf, whose only ranking-path change is passing the relevance floor into federated scoring -- that labels abstention and cannot reorder results, so these numbers describe upstream ranking behaviour. Recorded BEFORE any ranking change was attempted against this suite, which is what makes it a control rather than a rubber stamp. Per archetype, never pooled: a change that lifts the average while wrecking one shape is the failure this suite exists to catch, and an average is what would hide it. A drop in any cell is a regression, not noise. Values are truncated DOWN to 4dp so they are true floors -- rounding 0.91666.. up to 0.9167 makes the recorded baseline unmeetable by the run that produced it. softForbidden is a CEILING on the suites' quality preferences ('the other client's same-named setting should not crowd this page'), which the current ranker does not fully satisfy and a future one may improve on; the hard guarantee -- a peer's repo-private row never crossing into another repo's results -- is asserted separately, computed from the fixtures' own visibility, and must be exactly zero.",
+  "positional": {
+    "asymmetric-trio": { "mrr": 0.9444, "recallAt3": 1.0 },
+    "client-projects": { "mrr": 1.0, "recallAt3": 1.0 },
+    "fork-siblings": { "mrr": 0.9444, "recallAt3": 0.9444 },
+    "monorepo-split": { "mrr": 0.9166, "recallAt3": 0.9444 },
+    "polyglot-services": { "mrr": 0.9, "recallAt3": 0.95 }
+  },
+  "semantic": {
+    "asymmetric-trio": { "mrr": 1.0, "recallAt3": 1.0 },
+    "client-projects": { "mrr": 0.9722, "recallAt3": 1.0 },
+    "fork-siblings": { "mrr": 0.9444, "recallAt3": 0.9444 },
+    "monorepo-split": { "mrr": 1.0, "recallAt3": 1.0 },
+    "polyglot-services": { "mrr": 1.0, "recallAt3": 1.0 }
+  },
+  "softForbidden": { "positional": 7, "semantic": 8 }
+}
