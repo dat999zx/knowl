@@ -62,7 +62,11 @@ function changedPaths(projectRoot: string, raw: Record<string, unknown>): string
     ? raw.changed_paths
     : Array.isArray(raw.changedPaths)
       ? raw.changedPaths
-      : [raw.file_path, raw.filePath, raw.path];
+      // `notebook_path` is the name Claude Code gives NotebookEdit's target, and it is the only
+      // write tool that does not use `file_path`. Without it a notebook edit normalises to an
+      // event with no changed path at all, so the file is never re-indexed and nothing that
+      // depends on knowing it changed can fire -- silently, and only for notebooks.
+      : [raw.file_path, raw.filePath, raw.path, raw.notebook_path];
   return values
     .map(value => relativePath(projectRoot, value))
     .filter((value): value is string => Boolean(value))
@@ -154,21 +158,25 @@ function toolCaptureKey(toolName: string, input: Record<string, unknown>): strin
   }
 }
 
-function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'knowlTool' | 'knowlToolName' | 'knowlChangeKeys' | 'captureKey'> {
+function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'toolName' | 'knowlTool' | 'knowlToolName' | 'knowlChangeKeys' | 'captureKey'> {
   const input = toolInput(raw);
   const toolName = stringValue(raw.tool_name) ?? stringValue(raw.toolName) ?? '';
   const knowlTool = /knowl/i.test(toolName);
   const changeKeys = knowlTool
     ? { knowlChangeKeys: knowlChangeKeys(input), knowlToolName: bareKnowlToolName(toolName) }
     : {};
+  // Spread, so a payload with no tool_name leaves the field absent rather than empty:
+  // `toolName: ''` asserts "a tool called nothing", which a consumer cannot distinguish
+  // from a real name it fails to recognise, whereas undefined says the host stayed silent.
+  const named = toolName ? { toolName } : {};
   const isShell = hostProfile(host).isShellEvent(eventName, toolName);
   // Shell events already fingerprint on the command itself, so they were never affected.
-  if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, knowlTool, ...changeKeys };
+  if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, ...named, knowlTool, ...changeKeys };
 
   const captureKey = toolCaptureKey(toolName, input);
   const paths = changedPaths(projectRoot, { ...raw, ...input });
-  if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths }, knowlTool, captureKey, ...changeKeys };
-  return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) }, knowlTool, captureKey, ...changeKeys };
+  if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths }, ...named, knowlTool, captureKey, ...changeKeys };
+  return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) }, ...named, knowlTool, captureKey, ...changeKeys };
 }
 
 function failurePayload(raw: Record<string, unknown>, failed: boolean): Record<string, unknown> {

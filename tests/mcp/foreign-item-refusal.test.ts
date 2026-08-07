@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
@@ -12,10 +13,13 @@ import { joinWorkspace } from '../../src/workspace/membership.js';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/core/config.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
-const HOME = path.resolve('./.knowl-foreign-home');
-const A = path.resolve('./.knowl-foreign-a');
-const B = path.resolve('./.knowl-foreign-b');
-const SOLO = path.resolve('./.knowl-foreign-solo');
+// Under os.tmpdir(), which global setup points at this run's own root. Inside the repository
+// these raced: a full-suite run intermittently failed saveConfig with a Windows EPERM renaming
+// config.json over its .tmp sibling, and windows-latest is a CI leg.
+const HOME = path.join(os.tmpdir(), 'knowl-foreign-home');
+const A = path.join(os.tmpdir(), 'knowl-foreign-a');
+const B = path.join(os.tmpdir(), 'knowl-foreign-b');
+const SOLO = path.join(os.tmpdir(), 'knowl-foreign-solo');
 
 class InMemoryTransport {
   onclose?: () => void;

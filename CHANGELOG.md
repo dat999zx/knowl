@@ -71,9 +71,72 @@ on its own terms.
   separately and `knowl_query` does not search them. Conditional, because naming a tool the
   build does not expose is worse than saying nothing.
 
-### The 2026-08-06 audit
+## 3.3.0 — 2026-08-07
 
-Nineteen findings across the CLI, the MCP surface and the store.
+### Added
+
+- **Change impact detection, off by default.** When one session edits code another session has
+  read, the second is told. Detection only — it reports, it never blocks. A finding is emitted
+  only when both halves are demonstrable from stored state: a session recorded a read of that
+  exact locator, and the locator's hash has moved since. Nothing infers, walks an edge or scores
+  a similarity, because this is the only tier allowed to push into an agent's context.
+
+  Enable with `impact.enabled`. It is deliberately absent from the default config rather than
+  present and false, so upgrading cannot switch it on. Adds two tables (`work_read_sets`,
+  `impact_findings`), a `CODE IMPACT` stanza inside the existing mid-turn card, and the
+  `knowl_impact` MCP tool, registered only when enabled. Schema version is unchanged at 1; the
+  migration level moves 2 → 3, so older builds still open the database.
+
+### Retrieval
+
+- **The semantic half of fusion now carries the weight it was configured to have.** Fusion is
+  `alpha * semantic + (1 - alpha) * lexical` at alpha 0.8, so the semantic term was meant to hold
+  four fifths of the ranking authority. It did not: the lexical term is normalised against the
+  corpus best and spans nearly all of [0,1], while a cosine does not, because cosines do not start
+  near zero. Measured across 135 cases, the semantic swing was 0.086 against the lexical term's
+  0.200 — so the term holding 20% of the weight carried roughly 2.3x the authority, and a lexical
+  match routinely overturned the best semantic hit. Of five cases where the #1 vector hit failed
+  to finish first, all five had no lexical match at all: absence from the lexical arm was being
+  read as evidence against.
+
+  The semantic side is now min-max scaled across the candidate page — not divided by the best,
+  which would leave the range as compressed as it was. Pages narrower than 0.02 are left alone so
+  rounding noise is not amplified into a ranking signal.
+
+  | suite | metric | before | after |
+  | --- | --- | --- | --- |
+  | semantic (135) | Recall@3 | 0.896 | **0.919** |
+  | | MRR | 0.858 | **0.870** |
+  | | extreme tier | 0.333 | **0.381** |
+  | governance (56) | MRR | 0.989 | **1.000** |
+  | retrieval (500) | Recall@10 | 1.000 | 0.998 |
+
+  It wins on the two suites that can discriminate and costs one case on each of the two that are
+  saturated. The relevance floor is unaffected — it judges the raw cosine before this scaling —
+  and that was checked against a live store rather than inferred: six of six off-topic probes
+  refused and six of six on-topic answered, identical on both sides.
+
+### Fixed
+
+- **Windows: a batch shim run through `cmd` no longer loses its own directory, and an argument
+  can no longer start a second command.** `knowl task run` hands `cmd /c` a resolved full path
+  rather than a quoted bare name, which had left `%~dp0` expanding to the caller's working
+  directory — enough to make `npm` die with `MODULE_NOT_FOUND`. Quoting alone does not neutralise
+  `& | < > ( ) ^` for a batch target either, because cmd parses the line twice; those are now
+  caret-escaped inside the quoted token.
+- **Twenty-nine code-scanning alerts closed**, including two incomplete sanitizations and five
+  filesystem races. The three that remain are all the same rule firing on `knowl task run`
+  spawning a command the caller typed, which is what that command is for.
+
+### Internal
+
+- The module layer graph is enforced by a test rather than by convention, and the last value-import
+  cycles are gone, so `core` now depends on nothing.
+- Test fixtures moved out of the repository into a per-run temporary root, so a run cannot leak
+  fixtures or collide with a parallel one.
+
+The rest of this release is the 2026-08-06 audit: nineteen findings across the CLI, the MCP
+surface and the store.
 
 ### Data loss
 

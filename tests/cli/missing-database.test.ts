@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -17,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
  */
 
 const CLI_PATH = path.resolve('./dist/index.js');
-const BASE = path.resolve('./.knowl-missing-db');
+const BASE = path.join(os.tmpdir(), 'knowl-missing-db');
 const REPO = path.join(BASE, 'repo');
 const NOT_A_REPO = path.join(BASE, 'plain-directory');
 const DB = path.join(REPO, '.knowl', 'knowl.db');

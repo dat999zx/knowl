@@ -1,4 +1,5 @@
-import { index, primaryKey, sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { sql } from 'drizzle-orm';
+import { index, primaryKey, sqliteTable, text, integer, real, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const knowledgeItems = sqliteTable('knowledge_items', {
   id: text('id').primaryKey(),
@@ -195,4 +196,57 @@ export const codeSymbolEdges = sqliteTable('code_symbol_edges', {
 }, (table) => [
   primaryKey({ columns: [table.fromLocator, table.toLocator, table.kind] }),
   index('idx_code_symbol_edges_target').on(table.toLocator),
+]);
+
+/**
+ * What a session read, hashed at read time. Mirrored here rather than left to raw SQL like
+ * `drift_state` and `mcp_call_commits` because those two are read by one call site each,
+ * whereas this is the join target of every impact query -- capture, release, GC, the gate and
+ * the pull tool -- and an untyped `affected_id`/`session_id` pairing across two tables is
+ * exactly the hole `conflictScope` fell through when a cast stood in for a column type.
+ *
+ * Compile-time only: `drizzle.config.ts` has no generated output and never has, so the runtime
+ * DDL in `bootstrap.ts` remains the single source of truth. Keep the two in step by hand.
+ */
+export const workReadSets = sqliteTable('work_read_sets', {
+  id: text('id').primaryKey(),
+  sessionId: text('session_id').notNull(),
+  /** `__agent__:<id>` when the read came from a sub-agent; NULL for the main session. */
+  agentId: text('agent_id'),
+  /** 'symbol://path#Name' | 'file://path'. Directory locators are rejected at insert. */
+  locator: text('locator').notNull(),
+  /** `signature_hash` or content hash AS OF THE READ. The whole mechanism, hence NOT NULL. */
+  observedHash: text('observed_hash').notNull(),
+  /** The tool that produced the read, once `NormalizedHostHook` carries it. */
+  toolName: text('tool_name'),
+  readAt: text('read_at').notNull(),
+  /** NULL means live work. Set at task-finish/session-stop; swept at GC. */
+  releasedAt: text('released_at'),
+}, (table) => [
+  index('idx_work_read_sets_locator').on(table.locator, table.releasedAt),
+  index('idx_work_read_sets_session').on(table.sessionId, table.releasedAt),
+]);
+
+/** One detected impact. See `bootstrap.ts` for why `resolution` is the point of the table. */
+export const impactFindings = sqliteTable('impact_findings', {
+  id: text('id').primaryKey(),
+  causeLocator: text('cause_locator').notNull(),
+  causeSession: text('cause_session'),
+  /** 'knowledge' | 'work' -- decides which table `affectedId` points into, so no reference(). */
+  affectedKind: text('affected_kind').notNull(),
+  affectedId: text('affected_id').notNull(),
+  /** 'certain' | 'likely' | 'possible'. Only 'certain' may push and gate. */
+  tier: text('tier').notNull(),
+  /** The edge chain justifying the finding; NULL at the certain tier, which has no chain. */
+  pathJson: text('path_json'),
+  detectedAt: text('detected_at').notNull(),
+  /** When the card last showed this finding. NULL until then; see `bootstrap.ts` for why. */
+  deliveredAt: text('delivered_at'),
+  /** NULL means open. 'repaired' | 'dismissed' | 'expired' | 'false_positive' once adjudicated. */
+  resolution: text('resolution'),
+  resolvedAt: text('resolved_at'),
+}, (table) => [
+  index('idx_impact_findings_open').on(table.resolution, table.tier, table.affectedKind, table.affectedId),
+  index('idx_impact_findings_affected').on(table.affectedKind, table.affectedId, table.resolution),
+  uniqueIndex('idx_impact_findings_unique_open').on(table.causeLocator, table.affectedId).where(sql`resolution IS NULL`),
 ]);

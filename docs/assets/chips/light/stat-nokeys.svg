@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="146" height="38" viewBox="0 0 146 38"
+     role="img" aria-label="Zero API keys needed">
+  <rect x="0.5" y="0.5" width="145" height="37" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="14" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="14" font-weight="700" fill="#0969da">0</text>
+  <text x="33" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
+        font-size="12" fill="#57606a">API keys needed</text>
+</svg>

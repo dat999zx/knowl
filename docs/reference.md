@@ -977,17 +977,23 @@ retrieving the newest valid fact after updates. The Knowl harness uses the
 top-5 vector+BM25 retrieval, and no LLM reader.
 
 <div align="center">
-<img src="assets/benchmark-conflict-resolution.svg" alt="MemoryAgentBench conflict-resolution ablation: supersession on reached 96 percent top-1 with 3 stale returns; supersession off reached 40 percent top-1 with 62 stale returns" width="82%" />
+<img src="assets/benchmark-conflict-resolution.svg" alt="MemoryAgentBench conflict-resolution ablation: supersession on reached 98 percent top-1 with 2 stale returns; supersession off reached 47 percent top-1 with 62 stale returns" width="82%" />
 </div>
 
 | Configuration | Top-1 | Any rank | Stale returns | Active atoms | Stored p50 / p95 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| **Supersession ON** | **96.0%** | 100% | **3 / 100** | 306 | 19 / 21 ms |
-| Supersession OFF | 40.0% | 100% | 62 / 100 | 455 | 20 / 24 ms |
+| **Supersession ON** | **98.0%** | 100% | **2 / 100** | 306 | 13 / 19 ms |
+| Supersession OFF | 47.0% | 98% | 62 / 100 | 455 | 14 / 20 ms |
 
 Supersession retired 149 facts at write time; both rows otherwise use the same corpus, path, and
 metric. The instance covers dynamic single-hop latest-fact conflicts, not static, conditional,
 multi-hop, or reader behavior.
+
+Re-measured 2026-08-06 with the `granite-small-en-r2` default, stable across two runs. The
+previous figures — 96.0% and 40.0% top-1 with 3 stale returns — were taken on the `minilm-l6-en`
+default this repository shipped before 2026-08-02. The retrieval path here is vector + BM25, so
+the embedding model is part of the result and is named rather than left to the reader's config.
+Both arms moved; the gap narrowed from 56 to 51 points.
 
 The two result JSON files are checked in:
 [supersession ON](../benchmarks/memoryagentbench/results/cr-sh-6k-supersede-on.json) and
@@ -1027,17 +1033,28 @@ decision fixtures: 22 current decisions, 22 stale predecessors, and 12 rejected 
 defines 44 top-3 cases.
 
 <div align="center">
-<img src="assets/benchmark-governance.svg" alt="Internal governance regression suite: MRR 94.3 percent, 43 stale-active returns with 22 stale-trap failures, and zero rejected items returned" width="82%" />
+<img src="assets/benchmark-governance.svg" alt="Internal governance regression suite: MRR 100 percent, 27 stale-active returns with 21 stale-trap failures, and zero rejected items returned" width="82%" />
 </div>
 
 | Recall@3 | MRR | nDCG | Stale-active returns | Stale-trap failures | Rejected items returned |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 100% | 94.3182% | 95.8060% | 43 | 22 | 0 |
+| 100% | 100% | 100% | 27 | 21 | 0 |
 
-MRR is reciprocal rank, not top-1 accuracy. Stale predecessors remain active, so all 22 stale
-traps failed and produced 43 stale-active returns; rejected items test a separate status filter
+MRR is reciprocal rank, not top-1 accuracy, and at 100% it means the expected current decision
+ranked first in every one of the 44 cases. Stale predecessors remain active, so 21 stale traps
+still failed and produced 27 stale-active returns; rejected items test a separate status filter
 and never appeared. Recall@3 means every top three contained the expected current decision, not
 that every result was current.
+
+**This suite is now saturated and cannot show an improvement**, only a regression. Every ranking
+metric is at ceiling, so the only figures left that can move are the two stale counts. Use
+`semantic-suite.json` for anything that has to discriminate.
+
+Measured on the `granite-small-en-r2` default. Two earlier sets of figures are worth knowing
+about, because both differed by something other than the ranker: MRR 94.3182% with 43
+stale-active returns was taken on the `minilm-l6-en` default this repository shipped before
+2026-08-02, and MRR 98.86% with 28 stale-active returns predates the semantic rescale in
+`scoreCandidates`. The model and the scoring are both part of the result.
 
 ```bash
 knowl eval retrieval \
@@ -1052,16 +1069,23 @@ The checked-in [`retrieval-suite.json`](evals/retrieval-suite.json) contains 500
 items; it is not third-party evidence.
 
 <div align="center">
-<img src="assets/benchmark-retrieval-quality.svg" alt="Internal retrieval regression suite: vector plus BM25 Recall at 3 98.8667 percent, Recall at 10 99.4 percent, MRR 96.09 percent, and nDCG 96.8895 percent" width="82%" />
+<img src="assets/benchmark-retrieval-quality.svg" alt="Internal retrieval regression suite: vector plus BM25 Recall at 3 98.6 percent, Recall at 10 99.8 percent, MRR 95.21 percent, and nDCG 96.36 percent" width="82%" />
 </div>
 
 | Retrieval path | Recall@3 | Recall@10 | MRR | nDCG | Stale hits | Forbidden hits | Failed criteria |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Vector + BM25 | 98.8667% | 99.4% | 96.09% | 96.8895% | 15 | 5 | 8 |
+| Vector + BM25 | 98.6% | 99.8% | 95.21% | 96.36% | 11 | 2 | 3 |
 
-The vector figures were reproduced from the checked-in dataset on 2026-07-28; no result snapshot
-is checked in. The run passed 492 of 500 evaluator cases, including expected, stale, and forbidden
+Measured on the `granite-small-en-r2` default, byte-identical across two runs; no result snapshot
+is checked in. The run passed 497 of 500 evaluator cases, including expected, stale, and forbidden
 conditions rather than only search hits.
+
+This suite is near its ceiling too, and the numbers moved slightly *down* when the semantic
+rescale in `scoreCandidates` landed — Recall@3 98.8% to 98.6% and Recall@10 100% to 99.8%, one
+case each. That change was kept because it wins where these suites cannot discriminate: on
+`semantic-suite.json` it moved Recall@3 89.6% to 91.9% and the hardest tier's MRR 33.3% to 38.1%,
+and it left the external MemoryAgentBench result unchanged. A suite at ceiling reports the cost of
+a change and not its benefit, which is the reason not to tune against this one.
 
 Fresh BM25-only runs varied under equal-score ordering, including their failure counts. Exact
 BM25 outcome and rank values are therefore not published; rerun the command below in the target

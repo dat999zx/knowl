@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../../src/core/config.js';
+import { resolveVectorProfile, type VectorProfile } from '../../src/core/vector-profile.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../../src/ai/embeddings.js';
 import { closeDb, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
@@ -38,6 +39,15 @@ export type CrRunResult = {
   instance: string;
   timestamp: string;
   retrieval: 'vector+bm25' | 'bm25';
+  /**
+   * The embedding profile the vector arm actually ran on, or null for a bm25-only run.
+   *
+   * Recorded because a result was otherwise distinguishable only by `timestamp`: the default
+   * preset moved from minilm-l6-en to granite-small-en-r2 on 2026-08-02, which shifted cr-sh-6k
+   * top-1 from 96% to 98%, and the checked-in 32k/64k runs predate it. Subtracting one preset's
+   * number from another's is exactly the mistake this file's README warns about for filenames.
+   */
+  embedding: VectorProfile | null;
   supersede: boolean;
   topK: number;
   facts: number;
@@ -72,11 +82,13 @@ export async function runConflictResolution(options: CrRunOptions): Promise<CrRu
   const superseded = buildSupersededValues(facts);
 
   let embedder: Awaited<ReturnType<typeof createLocalEmbeddingProvider>> | null = null;
+  let embedding: VectorProfile | null = null;
   if (options.vector) {
     const config = await loadConfig(options.projectRoot);
     if (!isVectorSearchEnabled(config)) {
       throw new Error('Vector search is not enabled. Set search.vector.enabled true, or pass --no-vector.');
     }
+    embedding = resolveVectorProfile(config);
     embedder = await createLocalEmbeddingProvider(config, options.projectRoot);
   }
 
@@ -155,6 +167,7 @@ export async function runConflictResolution(options: CrRunOptions): Promise<CrRu
       instance: options.instancePath,
       timestamp: new Date().toISOString(),
       retrieval: options.vector ? 'vector+bm25' : 'bm25',
+      embedding,
       supersede: options.supersede,
       topK: options.topK,
       facts: facts.length,

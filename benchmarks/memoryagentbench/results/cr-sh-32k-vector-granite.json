@@ -1,0 +1,1529 @@
+{
+  "instance": "D:\\coding\\knowl\\.claude\\worktrees\\fix+eval-vector-fixture-embeddings\\benchmarks\\memoryagentbench\\data\\cr-sh-32k.json",
+  "timestamp": "2026-08-07T04:30:57.810Z",
+  "retrieval": "vector+bm25",
+  "embedding": {
+    "provider": "local",
+    "model": "onnx-community/granite-embedding-small-english-r2-ONNX",
+    "dtype": "q8",
+    "pooling": "cls"
+  },
+  "supersede": true,
+  "topK": 5,
+  "facts": 2310,
+  "conflictGroups": 810,
+  "supersededAtWrite": 775,
+  "activeAfterIngest": 1535,
+  "report": {
+    "questions": 100,
+    "answered": 100,
+    "topOneAccuracy": 0.95,
+    "anyRankAccuracy": 0.98,
+    "staleLeaks": 1,
+    "emptyResults": 0,
+    "p50LatencyMs": 41,
+    "p95LatencyMs": 47
+  },
+  "cases": [
+    {
+      "question": "Which sport is Salem-Keizer Volcanoes associated with?",
+      "golds": [
+        "basketball"
+      ],
+      "topContent": "Salem-Keizer Volcanoes is associated with the sport of basketball",
+      "returnedContents": [
+        "Salem-Keizer Volcanoes is associated with the sport of basketball",
+        "goaltender is associated with the sport of pesäpallo",
+        "placekicker is associated with the sport of rugby",
+        "center is associated with the sport of basketball",
+        "cornerback is associated with the sport of field hockey"
+      ],
+      "latencyMs": 50
+    },
+    {
+      "question": "What position does Nick Rimando play?",
+      "golds": [
+        "flanker"
+      ],
+      "topContent": "Nick Rimando plays the position of flanker",
+      "returnedContents": [
+        "Nick Rimando plays the position of flanker",
+        "Hines Ward plays the position of cornerback",
+        "Freddie Freeman plays the position of linebacker",
+        "Dennis Erickson plays the position of quarterback",
+        "Regina Ip works in the field of basketball player"
+      ],
+      "latencyMs": 44
+    },
+    {
+      "question": "Which sport is power forward associated with?",
+      "golds": [
+        "rugby"
+      ],
+      "topContent": "power forward is associated with the sport of rugby",
+      "returnedContents": [
+        "power forward is associated with the sport of rugby",
+        "small forward is associated with the sport of rugby",
+        "Sebastian Janikowski plays the position of power forward",
+        "goaltender is associated with the sport of pesäpallo",
+        "linebacker is associated with the sport of shinty"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "Which religion is Morris Iemma affiliated with?",
+      "golds": [
+        "Methodism"
+      ],
+      "topContent": "Morris Iemma is affiliated with the religion of Methodism",
+      "returnedContents": [
+        "Morris Iemma is affiliated with the religion of Methodism",
+        "Iman is affiliated with the religion of Islam",
+        "Imelda Marcos is affiliated with the religion of atheism",
+        "Niagara University is affiliated with the religion of Methodism",
+        "Common is affiliated with the religion of Christianity"
+      ],
+      "latencyMs": 46
+    },
+    {
+      "question": "Which sport is FC Slutsk associated with?",
+      "golds": [
+        "association football"
+      ],
+      "topContent": "FC Slutsk is associated with the sport of association football",
+      "returnedContents": [
+        "FC Slutsk is associated with the sport of association football",
+        "FC Irtysh Omsk is associated with the sport of association football",
+        "FC Vorskla Poltava is associated with the sport of basketball",
+        "Terrassa FC is associated with the sport of baseball",
+        "HIFK Fotboll is associated with the sport of association football"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "What is the capital of United Kingdom?",
+      "golds": [
+        "Rupnagar"
+      ],
+      "topContent": "The capital of United Kingdom is Rupnagar",
+      "returnedContents": [
+        "The capital of United Kingdom is Rupnagar",
+        "The capital of United States of America is Harrisville",
+        "The capital of Great Britain is London",
+        "United Kingdom is located in the continent of Oceania",
+        "The capital of England is Amposta"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "What is the country of citizenship of Dan Christensen?",
+      "golds": [
+        "United States of America"
+      ],
+      "topContent": "Dan Christensen is a citizen of United States of America",
+      "returnedContents": [
+        "Dan Christensen is a citizen of United States of America",
+        "Dan Povenmire is a citizen of United States of America",
+        "Bryan Adams is a citizen of Canada",
+        "Dirk Nowitzki is a citizen of Canada",
+        "Hal Erickson is a citizen of United States of America"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "Who founded Montanism?",
+      "golds": [
+        "Montanus of Phrygia"
+      ],
+      "topContent": "Montanism was founded by Montanus of Phrygia",
+      "returnedContents": [
+        "Montanism was founded by Montanus of Phrygia",
+        "Pedro Menéndez de Avilés is affiliated with the religion of Montanism",
+        "Mormonism was founded by Juvénal Habyarimana",
+        "Taoism was founded by Juliette Gordon Low",
+        "Methodism was founded by John Wesley"
+      ],
+      "latencyMs": 38
+    },
+    {
+      "question": "Which city did Noel Pemberton Billing work in?",
+      "golds": [
+        "London"
+      ],
+      "topContent": "Noel Pemberton Billing worked in the city of Washington, D.C.",
+      "returnedContents": [
+        "Noel Pemberton Billing worked in the city of Washington, D.C.",
+        "Christianity was founded by Noel Pemberton Billing",
+        "Lyndon B. Johnson worked in the city of London",
+        "Jesus Christ worked in the city of Galilee",
+        "John Knox worked in the city of Edinburgh"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "What is the capital of Papal States?",
+      "golds": [
+        "Rome"
+      ],
+      "topContent": "The capital of Papal States is Watertown",
+      "returnedContents": [
+        "The capital of Papal States is Watertown",
+        "Vijay Mallya is a citizen of Papal States",
+        "The capital of Italy is Duluth",
+        "The capital of Germany is Marcapata",
+        "The capital of India is Grosseto"
+      ],
+      "latencyMs": 36
+    },
+    {
+      "question": "What is the country of citizenship of Edmund Burke?",
+      "golds": [
+        "Kingdom of Ireland"
+      ],
+      "topContent": "Edmund Burke is a citizen of Kingdom of Ireland",
+      "returnedContents": [
+        "Edmund Burke is a citizen of Kingdom of Ireland",
+        "Country Joe McDonald is a citizen of Romania",
+        "Ernest of Bavaria is a citizen of United Kingdom",
+        "Edward Stillingfleet is a citizen of Australia",
+        "Madame du Barry is a citizen of Great Britain"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "What is the country of citizenship of Colin Irwin?",
+      "golds": [
+        "Israel"
+      ],
+      "topContent": "Colin Irwin is a citizen of Israel",
+      "returnedContents": [
+        "Colin Irwin is a citizen of Israel",
+        "Imtiaz Ali is a citizen of India",
+        "Bob Iger is a citizen of United States of America",
+        "Country Joe McDonald is a citizen of Romania",
+        "Vincent Lindon is a citizen of France"
+      ],
+      "latencyMs": 37
+    },
+    {
+      "question": "Who is the developer of Apple DOS?",
+      "golds": [
+        "Apple Inc."
+      ],
+      "topContent": "Apple DOS was developed by Apple Inc.",
+      "returnedContents": [
+        "Apple DOS was developed by Apple Inc.",
+        "AppleScript was developed by Apple Inc.",
+        "The company that produced Apple TV is Apple Inc.",
+        "QuickTime was developed by Apple Inc.",
+        "The chief executive officer of Apple Inc. is Vijay Mallya"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "Which sport is Gary SouthShore RailCats associated with?",
+      "golds": [
+        "baseball"
+      ],
+      "topContent": "Gary SouthShore RailCats is associated with the sport of baseball",
+      "returnedContents": [
+        "Gary SouthShore RailCats is associated with the sport of baseball",
+        "linebacker is associated with the sport of shinty",
+        "placekicker is associated with the sport of rugby",
+        "Chicago American Giants is associated with the sport of roller derby",
+        "power forward is associated with the sport of rugby"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "Which city was Bachir Gemayel born in?",
+      "golds": [
+        "Beirut"
+      ],
+      "topContent": "Bachir Gemayel was born in the city of Beirut",
+      "returnedContents": [
+        "Bachir Gemayel was born in the city of Beirut",
+        "Church of Scotland was founded by Bachir Gemayel",
+        "Mahidol Adulyadej was born in the city of Salisbury",
+        "George Lucas was born in the city of Modesto",
+        "Mehriban Aliyeva was born in the city of Baku"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "What is the country of citizenship of Rick Remender?",
+      "golds": [
+        "Italy"
+      ],
+      "topContent": "Rick Remender is a citizen of Italy",
+      "returnedContents": [
+        "Rick Remender is a citizen of Italy",
+        "Jason Motte is a citizen of Ireland",
+        "Lionel Richie is a citizen of Ghana",
+        "Terrance Dicks is a citizen of United States of America",
+        "Damien Dempsey is a citizen of United States of America"
+      ],
+      "latencyMs": 39
+    },
+    {
+      "question": "Which sport is Jeff Hornacek associated with?",
+      "golds": [
+        "association football"
+      ],
+      "topContent": "Jeff Hornacek is associated with the sport of association football",
+      "returnedContents": [
+        "Jeff Hornacek is associated with the sport of association football",
+        "The head coach of Burnley F.C. is Jeff Hornacek",
+        "defender is associated with the sport of baseball",
+        "closer is associated with the sport of baseball",
+        "Bob Bradley is associated with the sport of field hockey"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "Who is Charles Darwin married to?",
+      "golds": [
+        "Amala Paul"
+      ],
+      "topContent": "Charles Darwin is married to Amala Paul",
+      "returnedContents": [
+        "Charles Darwin is married to Amala Paul",
+        "Charles Dickens is married to Catherine Dickens",
+        "Charles Dickens is married to Jaya Bhaduri Bachchan",
+        "The author of Our Mutual Friend is Charles Darwin",
+        "The author of David Copperfield is Charles Darwin"
+      ],
+      "latencyMs": 39
+    },
+    {
+      "question": "Who is the author of David Copperfield?",
+      "golds": [
+        "Charles Darwin"
+      ],
+      "topContent": "The author of David Copperfield is Charles Darwin",
+      "returnedContents": [
+        "The author of David Copperfield is Charles Darwin",
+        "The author of Our Mutual Friend is Charles Darwin",
+        "The author of The Canterbury Tales is Mark Haddon",
+        "The author of The Witcher is T. S. Eliot",
+        "The author of Coraline is John Stuart Mill"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "Which religion is Maria Amalia of Naples and Sicily affiliated with?",
+      "golds": [
+        "Church of Greece"
+      ],
+      "topContent": "Maria Amalia of Naples and Sicily is affiliated with the religion of Church of Greece",
+      "returnedContents": [
+        "Maria Amalia of Naples and Sicily is affiliated with the religion of Church of Greece",
+        "David Bowie is married to Maria Amalia of Naples and Sicily",
+        "Saxo Grammaticus is affiliated with the religion of Christianity",
+        "Kingdom of Etruria is affiliated with the religion of Christianity",
+        "Imelda Marcos is affiliated with the religion of atheism"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "What position does Tony Parker play?",
+      "golds": [
+        "shooting guard"
+      ],
+      "topContent": "Tony Parker plays the position of shooting guard",
+      "returnedContents": [
+        "Tony Parker plays the position of shooting guard",
+        "Shawn Bradley plays the position of midfielder",
+        "Brad Friedel plays the position of defender",
+        "David Blatt plays the position of defender",
+        "Tony Popovic is associated with the sport of association football"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "Which sport is flanker associated with?",
+      "golds": [
+        "rugby"
+      ],
+      "topContent": "flanker is associated with the sport of rugby",
+      "returnedContents": [
+        "flanker is associated with the sport of rugby",
+        "linebacker is associated with the sport of shinty",
+        "cornerback is associated with the sport of field hockey",
+        "Nate Robinson plays the position of flanker",
+        "placekicker is associated with the sport of rugby"
+      ],
+      "latencyMs": 37
+    },
+    {
+      "question": "What language does Federico García Lorca speak?",
+      "golds": [
+        "Spanish"
+      ],
+      "topContent": "Federico García Lorca speaks the language of Spanish",
+      "returnedContents": [
+        "Federico García Lorca speaks the language of Spanish",
+        "The author of A Passage to India is Federico García Lorca",
+        "David Stirling speaks the language of Spanish",
+        "Ray Bradbury speaks the language of Italian",
+        "Raúl Velasco speaks the language of Spanish"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "What is Stephen Crane famous for?",
+      "golds": [
+        "Charlie Hebdo"
+      ],
+      "topContent": "Stephen Crane is famous for Charlie Hebdo",
+      "returnedContents": [
+        "Stephen Crane is famous for Charlie Hebdo",
+        "The author of The Birth of Tragedy is Stephen Crane",
+        "David Crane is a citizen of United States of America",
+        "David Crane is a citizen of ancient Rome",
+        "Stephen McNeil works in the field of journalist"
+      ],
+      "latencyMs": 39
+    },
+    {
+      "question": "Who is Igor of Kiev married to?",
+      "golds": [
+        "Olga of Kiev"
+      ],
+      "topContent": "Igor of Kiev is married to Olga of Kiev",
+      "returnedContents": [
+        "Igor of Kiev is married to Olga of Kiev",
+        "Olga of Kiev died in the city of Rodez",
+        "Maksim Chmerkovskiy is married to Peta Murgatroyd",
+        "Prince Andrew, Duke of York is married to Mahidol Adulyadej",
+        "Maksim Chmerkovskiy is married to Johann Adolph Hasse"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "What is the country of citizenship of Robert Wisdom?",
+      "golds": [
+        "United States of America"
+      ],
+      "topContent": "Robert Wisdom is a citizen of United States of America",
+      "returnedContents": [
+        "Robert Wisdom is a citizen of United States of America",
+        "Robert Rich, 2nd Earl of Warwick is a citizen of United Kingdom",
+        "Robert A. Heinlein is a citizen of United States of America",
+        "Wilbert Awdry is a citizen of United Kingdom",
+        "Hal Erickson is a citizen of United States of America"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "What is the country of citizenship of Renaud Lavillenie?",
+      "golds": [
+        "Ireland"
+      ],
+      "topContent": "Renaud Lavillenie is a citizen of Ireland",
+      "returnedContents": [
+        "Renaud Lavillenie is a citizen of Ireland",
+        "Vincent Lindon is a citizen of France",
+        "Country Joe McDonald is a citizen of Romania",
+        "Victor Hugo is a citizen of France",
+        "Lionel Richie is a citizen of Ghana"
+      ],
+      "latencyMs": 44
+    },
+    {
+      "question": "Which sport is midfielder associated with?",
+      "golds": [
+        "sumo"
+      ],
+      "topContent": "outfielder is associated with the sport of cricket",
+      "returnedContents": [
+        "outfielder is associated with the sport of cricket",
+        "goalkeeper is associated with the sport of Gaelic football",
+        "Tony Pérez is associated with the sport of association football",
+        "Neil Lennon is associated with the sport of football",
+        "Steve Sax is associated with the sport of association football"
+      ],
+      "latencyMs": 39
+    },
+    {
+      "question": "What is the country of citizenship of James Badge Dale?",
+      "golds": [
+        "United States of America"
+      ],
+      "topContent": "James Badge Dale is a citizen of United States of America",
+      "returnedContents": [
+        "James Badge Dale is a citizen of United States of America",
+        "Reese Witherspoon's child is James Badge Dale",
+        "James L. Brooks is a citizen of United Kingdom",
+        "James Brolin is a citizen of Russia",
+        "Mark Haddon is a citizen of United Kingdom"
+      ],
+      "latencyMs": 47
+    },
+    {
+      "question": "Which sport is Darryl Strawberry associated with?",
+      "golds": [
+        "baseball"
+      ],
+      "topContent": "Darryl Strawberry is associated with the sport of baseball",
+      "returnedContents": [
+        "Darryl Strawberry is associated with the sport of baseball",
+        "defender is associated with the sport of baseball",
+        "Darryl Dawkins plays the position of goaltender",
+        "linebacker is associated with the sport of shinty",
+        "cornerback is associated with the sport of field hockey"
+      ],
+      "latencyMs": 47
+    },
+    {
+      "question": "Which company is Apple TV produced by?",
+      "golds": [
+        "Apple Inc."
+      ],
+      "topContent": "The company that produced Apple TV is Apple Inc.",
+      "returnedContents": [
+        "The company that produced Apple TV is Apple Inc.",
+        "The company that produced AP1000 is Canadair",
+        "The company that produced Chevrolet S-10 Blazer is Hon Hai Precision Industry",
+        "The company that produced GMC Envoy is General Motors",
+        "The company that produced Chevrolet Vega is Toshiba"
+      ],
+      "latencyMs": 38
+    },
+    {
+      "question": "Which city is the headquarter of Microsoft located in?",
+      "golds": [
+        "Beverly Hills"
+      ],
+      "topContent": "The headquarters of Microsoft is located in the city of Beverly Hills",
+      "returnedContents": [
+        "The headquarters of Microsoft is located in the city of Beverly Hills",
+        "The headquarters of Howard University is located in the city of Mexico City",
+        "The headquarters of Google is located in the city of Plovdiv",
+        "The headquarters of WTTW is located in the city of Knoxville",
+        "The headquarters of Yale University is located in the city of Toronto"
+      ],
+      "latencyMs": 47
+    },
+    {
+      "question": "Which religion is Catholic bishop affiliated with?",
+      "golds": [
+        "Catholicism"
+      ],
+      "topContent": "Catholic bishop is affiliated with the religion of Catholicism",
+      "returnedContents": [
+        "Catholic bishop is affiliated with the religion of Catholicism",
+        "John Krol is affiliated with the religion of Catholic Church",
+        "Dante Alighieri is affiliated with the religion of Catholic Church",
+        "Pierre Duhem is affiliated with the religion of Catholic Church",
+        "Andrzej Duda is affiliated with the religion of Catholic Church"
+      ],
+      "latencyMs": 39
+    },
+    {
+      "question": "Which city did William Holman Hunt die in?",
+      "golds": [
+        "Washington, D.C."
+      ],
+      "topContent": "William Holman Hunt died in the city of Washington, D.C.",
+      "returnedContents": [
+        "William Holman Hunt died in the city of Washington, D.C.",
+        "William Hogarth died in the city of London",
+        "A Rake's Progress was created by William Holman Hunt",
+        "William Morris died in the city of London",
+        "William Shakespeare died in the city of Stratford-upon-Avon"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "What is the country of citizenship of Travis Barker?",
+      "golds": [
+        "United States of America"
+      ],
+      "topContent": "Travis Barker is a citizen of United States of America",
+      "returnedContents": [
+        "Travis Barker is a citizen of United States of America",
+        "Winston Churchill is married to Travis Barker",
+        "Travis Tritt is a citizen of Vietnam",
+        "Tim Berners-Lee is a citizen of United Kingdom",
+        "Terrance Dicks is a citizen of United States of America"
+      ],
+      "latencyMs": 39
+    },
+    {
+      "question": "Which sport is Burleigh Grimes associated with?",
+      "golds": [
+        "baseball"
+      ],
+      "topContent": "Burleigh Grimes is associated with the sport of baseball",
+      "returnedContents": [
+        "Burleigh Grimes is associated with the sport of baseball",
+        "defender is associated with the sport of baseball",
+        "goaltender is associated with the sport of pesäpallo",
+        "Bob Bradley is associated with the sport of field hockey",
+        "Bo Ryan is associated with the sport of association football"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "Which university was Hrishikesh Mukherjee educated at?",
+      "golds": [
+        "University of Calcutta"
+      ],
+      "topContent": "The univeristy where Hrishikesh Mukherjee was educated is University of Calcutta",
+      "returnedContents": [
+        "The univeristy where Hrishikesh Mukherjee was educated is University of Calcutta",
+        "The univeristy where John Magufuli was educated is University of St Andrews",
+        "The univeristy where Jan Eliasson was educated is University of the Punjab",
+        "The univeristy where Ernst Cassirer was educated is Humboldt University of Berlin",
+        "The univeristy where Tony Harrison was educated is University of California, Los Angeles"
+      ],
+      "latencyMs": 45
+    },
+    {
+      "question": "Who is the original broadcaster of Parenthood?",
+      "golds": [
+        "NBC"
+      ],
+      "topContent": "The origianl broadcaster of Parenthood is NBC",
+      "returnedContents": [
+        "The origianl broadcaster of Parenthood is NBC",
+        "The origianl broadcaster of One Life to Live is American Broadcasting Company",
+        "The origianl broadcaster of The Addams Family is American Broadcasting Company",
+        "The origianl broadcaster of 60 Minutes is BBC One",
+        "The origianl broadcaster of General Hospital is American Broadcasting Company"
+      ],
+      "latencyMs": 38
+    },
+    {
+      "question": "What position does Lisa Leslie play?",
+      "golds": [
+        "goaltender"
+      ],
+      "topContent": "Lisa Leslie plays the position of goaltender",
+      "returnedContents": [
+        "Lisa Leslie plays the position of goaltender",
+        "Lee Cattermole plays the position of goaltender",
+        "Hope Solo plays the position of midfielder",
+        "Shawn Bradley plays the position of midfielder",
+        "Bob Lanier plays the position of goaltender"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "What is the capital of Iran?",
+      "golds": [
+        "Tehran"
+      ],
+      "topContent": "The capital of Iran is Tehran",
+      "returnedContents": [
+        "The capital of Iran is Tehran",
+        "The capital of France is Harare",
+        "The capital of Romania is Rajanpur",
+        "The capital of Ireland is Dublin",
+        "The capital of India is Grosseto"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "Who is the original broadcaster of The Drew Carey Show?",
+      "golds": [
+        "American Broadcasting Company"
+      ],
+      "topContent": "The origianl broadcaster of The Drew Carey Show is American Broadcasting Company",
+      "returnedContents": [
+        "The origianl broadcaster of The Drew Carey Show is American Broadcasting Company",
+        "The origianl broadcaster of One Life to Live is American Broadcasting Company",
+        "The origianl broadcaster of The Addams Family is American Broadcasting Company",
+        "The origianl broadcaster of General Hospital is American Broadcasting Company",
+        "The origianl broadcaster of 666 Park Avenue is American Broadcasting Company"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "Who is the chief executive officer of Apple Inc.?",
+      "golds": [
+        "Vijay Mallya"
+      ],
+      "topContent": "The chief executive officer of Apple Inc. is Vijay Mallya",
+      "returnedContents": [
+        "The chief executive officer of Apple Inc. is Vijay Mallya",
+        "The chief executive officer of NeXT Computer, Inc. is Steve Jobs",
+        "The chief executive officer of Microsoft is Steve Jobs",
+        "The chief executive officer of Google is Lakshmi Mittal",
+        "The chief executive officer of Netflix is Neil Aspinall"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "What kind of work does Sabbatai Zevi do?",
+      "golds": [
+        "superhero"
+      ],
+      "topContent": "Sabbatai Zevi works in the field of superhero",
+      "returnedContents": [
+        "Sabbatai Zevi works in the field of superhero",
+        "Sabbateans was founded by Sabbatai Zevi",
+        "Rabri Devi works in the field of politician",
+        "Moshe Kahlon works in the field of soldier",
+        "The author of Unix philosophy is Zadie Smith"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "What is the country of citizenship of Lionel Richie?",
+      "golds": [
+        "Ghana"
+      ],
+      "topContent": "Lionel Richie is a citizen of Ghana",
+      "returnedContents": [
+        "Lionel Richie is a citizen of Ghana",
+        "All Night Long was performed by Lionel Richie",
+        "Country Joe McDonald is a citizen of Romania",
+        "Renaud Lavillenie is a citizen of Ireland",
+        "Elton John is a citizen of United Kingdom"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "Which religion is Tom Cruise affiliated with?",
+      "golds": [
+        "Scientology"
+      ],
+      "topContent": "Tom Cruise is affiliated with the religion of Scientology",
+      "returnedContents": [
+        "Tom Cruise is affiliated with the religion of Scientology",
+        "Common is affiliated with the religion of Christianity",
+        "David Miscavige is affiliated with the religion of Islam",
+        "Jonathan Swift is affiliated with the religion of atheism",
+        "Michael Patrick Carroll is affiliated with the religion of Religious Society of Friends"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "Which company is Ford F-Series produced by?",
+      "golds": [
+        "Ford Motor Company"
+      ],
+      "topContent": "The company that produced Ford Falcon is Ford Motor Company",
+      "returnedContents": [
+        "The company that produced Ford Falcon is Ford Motor Company",
+        "The company that produced Ford Zephyr is Ford Motor Company",
+        "The company that produced Ford Fairmont is Citroën",
+        "The company that produced Ford Transit Connect is Ford Motor Company",
+        "The company that produced Ford S-Max is Blue Origin"
+      ],
+      "latencyMs": 45
+    },
+    {
+      "question": "Who is the author of Inuyasha?",
+      "golds": [
+        "Terrance Dicks"
+      ],
+      "topContent": "The author of Inuyasha is Rumiko Takahashi",
+      "returnedContents": [
+        "The author of Inuyasha is Rumiko Takahashi",
+        "The author of Inuyasha is Terrance Dicks",
+        "The author of Coraline is Neil Gaiman",
+        "The author of Cardcaptor Sakura is William Shakespeare",
+        "The author of Categories is Aristotle"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "Which continent is San Francisco located in?",
+      "golds": [
+        "Africa"
+      ],
+      "topContent": "San Francisco is located in the continent of Africa",
+      "returnedContents": [
+        "San Francisco is located in the continent of Africa",
+        "Chile is located in the continent of Europe",
+        "Beijing is located in the continent of Asia",
+        "France is located in the continent of North America",
+        "Beijing is located in the continent of North America"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "Which sport is Terry Collins associated with?",
+      "golds": [
+        "baseball"
+      ],
+      "topContent": "Terry Collins is associated with the sport of baseball",
+      "returnedContents": [
+        "Terry Collins is associated with the sport of baseball",
+        "Terry Francona is associated with the sport of baseball",
+        "Steve Sax is associated with the sport of association football",
+        "Neil Lennon is associated with the sport of football",
+        "Terrassa FC is associated with the sport of baseball"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "Which sport is 2009 Six Nations Championship associated with?",
+      "golds": [
+        "association football"
+      ],
+      "topContent": "2009 Six Nations Championship is associated with the sport of association football",
+      "returnedContents": [
+        "2009 Six Nations Championship is associated with the sport of association football",
+        "2009 WNBA season is associated with the sport of association football",
+        "power forward is associated with the sport of rugby",
+        "wide receiver is associated with the sport of rugby",
+        "center is associated with the sport of rugby union"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "What position does Vernon Davis play?",
+      "golds": [
+        "defensive end"
+      ],
+      "topContent": "Vernon Davis plays the position of defensive end",
+      "returnedContents": [
+        "Vernon Davis plays the position of defensive end",
+        "Freddie Freeman plays the position of linebacker",
+        "David Blatt plays the position of defender",
+        "Robert Parish plays the position of quarterback",
+        "Nate Robinson plays the position of flanker"
+      ],
+      "latencyMs": 46
+    },
+    {
+      "question": "What is the name of the current head of state in Ireland?",
+      "golds": [
+        "Roch Marc Christian Kaboré"
+      ],
+      "topContent": "The name of the current head of state in Ireland is Roch Marc Christian Kaboré",
+      "returnedContents": [
+        "The name of the current head of state in Ireland is Roch Marc Christian Kaboré",
+        "The name of the current head of the Ireland government is Dorin Alexandrescu",
+        "The name of the current head of state in United States of America is Connachta",
+        "The name of the current head of state in Iceland is Anusuiya Uikey",
+        "The name of the current head of state in Czech Republic is Miloš Zeman"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "Who performed Past Masters?",
+      "golds": [
+        "Madonna"
+      ],
+      "topContent": "Past Masters was performed by Madonna",
+      "returnedContents": [
+        "Past Masters was performed by Madonna",
+        "1 was performed by Madonna",
+        "Space Oddity was performed by Lou Reed",
+        "Back to Black was performed by Frank Zappa",
+        "From Me to You was performed by The Beatles"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "Which sport is Imran Khan associated with?",
+      "golds": [
+        "association football"
+      ],
+      "topContent": "Imran Khan is associated with the sport of association football",
+      "returnedContents": [
+        "Imran Khan is associated with the sport of association football",
+        "The Prime Minister of Pakistan is Imran Khan",
+        "Pakistan Tehreek-e-Insaf was founded by Imran Khan",
+        "David Beckham is associated with the sport of cricket",
+        "outfielder is associated with the sport of cricket"
+      ],
+      "latencyMs": 44
+    },
+    {
+      "question": "What is the country of citizenship of Tomoyasu Hotei?",
+      "golds": [
+        "Germany"
+      ],
+      "topContent": "Tomoyasu Hotei is a citizen of Germany",
+      "returnedContents": [
+        "Tomoyasu Hotei is a citizen of Germany",
+        "Yoshihiro Togashi is a citizen of Myanmar",
+        "Rumiko Takahashi is a citizen of Japan",
+        "Kazunori Yamauchi is a citizen of Japan",
+        "Ayumi Hamasaki is a citizen of Japan"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "What language does Matti Vanhanen speak?",
+      "golds": [
+        "Finnish"
+      ],
+      "topContent": "Matti Vanhanen speaks the language of Finnish",
+      "returnedContents": [
+        "Matti Vanhanen speaks the language of Finnish",
+        "Benjamin Millepied speaks the language of German",
+        "Andrew Stanton speaks the language of German",
+        "Ricky Gervais speaks the language of English",
+        "Kristen Stewart speaks the language of English"
+      ],
+      "latencyMs": 39
+    },
+    {
+      "question": "Who founded Transcendental Meditation movement?",
+      "golds": [
+        "Adalbert of Prague"
+      ],
+      "topContent": "Transcendental Meditation movement was founded by Adalbert of Prague",
+      "returnedContents": [
+        "Transcendental Meditation movement was founded by Adalbert of Prague",
+        "Shingon Buddhism was founded by William Waynflete",
+        "Taoism was founded by Juliette Gordon Low",
+        "Mormonism was founded by Juvénal Habyarimana",
+        "Taoism was founded by Laozi"
+      ],
+      "latencyMs": 44
+    },
+    {
+      "question": "What is the name of the current head of state in United States of America?",
+      "golds": [
+        "Connachta"
+      ],
+      "topContent": "The name of the current head of state in United States of America is Connachta",
+      "returnedContents": [
+        "The name of the current head of state in United States of America is Connachta",
+        "The name of the current head of the United States of America government is Ole Johan Vierdal",
+        "The name of the current head of state in United Kingdom is Emmerson Mnangagwa",
+        "The name of the current head of state in Russia is Vladimir Putin",
+        "The name of the current head of state in Soviet Union is Elizabeth II"
+      ],
+      "latencyMs": 35
+    },
+    {
+      "question": "Who is the developer of AppleScript?",
+      "golds": [
+        "Apple Inc."
+      ],
+      "topContent": "AppleScript was developed by Apple Inc.",
+      "returnedContents": [
+        "AppleScript was developed by Apple Inc.",
+        "QuickTime was developed by Apple Inc.",
+        "XML Schema was developed by GNU Project",
+        "Apple DOS was developed by Apple Inc.",
+        "QuickTime was developed by Valve Corporation"
+      ],
+      "latencyMs": 32
+    },
+    {
+      "question": "Which continent is Philippines located in?",
+      "golds": [
+        "Asia"
+      ],
+      "topContent": "Philippines is located in the continent of Asia",
+      "returnedContents": [
+        "Philippines is located in the continent of Asia",
+        "Australia is located in the continent of Oceania",
+        "Italy is located in the continent of Oceania",
+        "Chile is located in the continent of Europe",
+        "Israel is located in the continent of Asia"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "Who is the author of The Great Movies?",
+      "golds": [
+        "John Evelyn"
+      ],
+      "topContent": "The author of The Great Movies is John Evelyn",
+      "returnedContents": [
+        "The author of The Great Movies is John Evelyn",
+        "The author of 1984 is Constantine VII",
+        "The author of 1984 is George Orwell",
+        "The author of The Normal Heart is Larry Kramer",
+        "The author of Coraline is Neil Gaiman"
+      ],
+      "latencyMs": 38
+    },
+    {
+      "question": "Which university was Chicago Boys educated at?",
+      "golds": [
+        "Yale University"
+      ],
+      "topContent": "The univeristy where Chicago Boys was educated is Yale University",
+      "returnedContents": [
+        "The univeristy where Chicago Boys was educated is Yale University",
+        "The univeristy where Siim Kallas was educated is Howard University",
+        "The univeristy where Lou Reed was educated is Fordham University",
+        "The chairperson of University of Chicago is Robert Zimmer",
+        "The univeristy where Galileo Galilei was educated is Exeter College"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "What is the country of citizenship of Andrew Carnegie?",
+      "golds": [
+        "United Kingdom"
+      ],
+      "topContent": "Andrew Carnegie is a citizen of United Kingdom",
+      "returnedContents": [
+        "Andrew Carnegie is a citizen of United Kingdom",
+        "Andrew Stanton speaks the language of German",
+        "Steve Jobs is a citizen of South Korea",
+        "J. K. Rowling is a citizen of United Kingdom",
+        "Stephen McGee is a citizen of United States of America"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "Who is Kristen Bell married to?",
+      "golds": [
+        "Dax Shepard"
+      ],
+      "topContent": "Kristen Bell is married to Dax Shepard",
+      "returnedContents": [
+        "Kristen Bell is married to Dax Shepard",
+        "Veronica Mars was performed by Kristen Bell",
+        "Kristen Stewart speaks the language of English",
+        "Garth Brooks is married to Josh Homme",
+        "Beyoncé is married to Jay-Z"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "What is William Gibson famous for?",
+      "golds": [
+        "Neuromancer"
+      ],
+      "topContent": "William Gibson is famous for Neuromancer",
+      "returnedContents": [
+        "William Gibson is famous for Neuromancer",
+        "The author of Pattern Recognition is William Gibson",
+        "William Morris died in the city of London",
+        "Philadelphia was founded by William Penn",
+        "William Shakespeare works in the field of businessperson"
+      ],
+      "latencyMs": 37
+    },
+    {
+      "question": "Which religion is Bahawalpur State affiliated with?",
+      "golds": [
+        "Catholic Church"
+      ],
+      "topContent": "Bahawalpur State is affiliated with the religion of Catholic Church",
+      "returnedContents": [
+        "Bahawalpur State is affiliated with the religion of Catholic Church",
+        "bhikkhu is affiliated with the religion of Buddhism",
+        "Buddhist temple is affiliated with the religion of Islam",
+        "Iman is affiliated with the religion of Islam",
+        "Niagara University is affiliated with the religion of Methodism"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "Who is the chief executive officer of Advanced Micro Devices?",
+      "golds": [
+        "Sundar Pichai"
+      ],
+      "topContent": "The chief executive officer of Advanced Micro Devices is Sundar Pichai",
+      "returnedContents": [
+        "The chief executive officer of Advanced Micro Devices is Sundar Pichai",
+        "The chief executive officer of Microsoft is Steve Jobs",
+        "Advanced Micro Devices was founded in the city of Toronto",
+        "The company that produced AMD Accelerated Processing Unit is Advanced Micro Devices",
+        "The chief executive officer of Apple Inc. is Vijay Mallya"
+      ],
+      "latencyMs": 44
+    },
+    {
+      "question": "What is the country of citizenship of Sue Grafton?",
+      "golds": [
+        "Ukraine"
+      ],
+      "topContent": "Sue Grafton is a citizen of Ukraine",
+      "returnedContents": [
+        "Sue Grafton is a citizen of Ukraine",
+        "Kinsey Millhone was created by Sue Grafton",
+        "Go Nagai is a citizen of United Kingdom",
+        "Madame du Barry is a citizen of Great Britain",
+        "Faure Essozimna Gnassingbé Eyadéma is a citizen of Chile"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "Who is the developer of Internet Explorer 5?",
+      "golds": [
+        "Google"
+      ],
+      "topContent": "Internet Explorer 5 was developed by Google",
+      "returnedContents": [
+        "Internet Explorer 5 was developed by Google",
+        "Gran Turismo 5 was developed by inXile entertainment",
+        "iPod was developed by Google",
+        "ASP.NET was developed by Google",
+        "The chairperson of MI5 is Gerald E. H. Abraham"
+      ],
+      "latencyMs": 32
+    },
+    {
+      "question": "Who is the author of The Marriage of Figaro?",
+      "golds": [
+        "Thomas Kyd"
+      ],
+      "topContent": "The author of The Marriage of Figaro is Thomas Kyd",
+      "returnedContents": [
+        "The author of The Marriage of Figaro is Thomas Kyd",
+        "The author of Bartholomew Fayre: A Comedy is William Shakespeare",
+        "William Shakespeare is married to Philip IV of France",
+        "The author of Cardcaptor Sakura is William Shakespeare",
+        "The author of 1984 is Constantine VII"
+      ],
+      "latencyMs": 44
+    },
+    {
+      "question": "Who is the author of The Age of Reason?",
+      "golds": [
+        "Allen Ginsberg"
+      ],
+      "topContent": "The author of The Age of Reason is Allen Ginsberg",
+      "returnedContents": [
+        "The author of The Age of Reason is Allen Ginsberg",
+        "The author of The Vicar of Wakefield is James Agee",
+        "The author of 1984 is Constantine VII",
+        "The author of The Birth of Tragedy is Stephen Crane",
+        "The author of 1984 is George Orwell"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "What language does Daphne du Maurier speak?",
+      "golds": [
+        "Arabic"
+      ],
+      "topContent": "Daphne du Maurier speaks the language of Arabic",
+      "returnedContents": [
+        "Daphne du Maurier speaks the language of Arabic",
+        "Daphne du Maurier is a citizen of United Kingdom",
+        "The author of Rebecca is Daphne du Maurier",
+        "The author of Starship Troopers is Daphne du Maurier",
+        "Madame du Barry is a citizen of Great Britain"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "Which city is the headquarter of MTV located in?",
+      "golds": [
+        "London"
+      ],
+      "topContent": "The headquarters of MTV is located in the city of London",
+      "returnedContents": [
+        "The headquarters of MTV is located in the city of London",
+        "The headquarters of Channel 4 is located in the city of Toronto",
+        "The headquarters of WTTW is located in the city of Knoxville",
+        "The headquarters of Google is located in the city of Plovdiv",
+        "The headquarters of Howard University is located in the city of Mexico City"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "Who was Malvolio created by?",
+      "golds": [
+        "William Shakespeare"
+      ],
+      "topContent": "Malvolio was created by William Shakespeare",
+      "returnedContents": [
+        "Malvolio was created by William Shakespeare",
+        "Polonius was created by William Shakespeare",
+        "Polonius was created by Steven Moffat",
+        "Saruman was created by Dan Povenmire",
+        "Ultimates was created by Mark Millar"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "What type of music does Nat King Cole play?",
+      "golds": [
+        "J-pop"
+      ],
+      "topContent": "The type of music that Nat King Cole plays is J-pop",
+      "returnedContents": [
+        "The type of music that Nat King Cole plays is J-pop",
+        "Nat King Cole's child is Natalie Cole",
+        "Unforgettable was performed by Nat King Cole",
+        "The type of music that Trisha Yearwood plays is country music",
+        "The type of music that Patsy Cline plays is rock music"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "Who is the developer of Unreal Tournament 2004?",
+      "golds": [
+        "Epic Games"
+      ],
+      "topContent": "Unreal Tournament 2004 was developed by Epic Games",
+      "returnedContents": [
+        "Unreal Tournament 2004 was developed by Epic Games",
+        "2004 NBA Draft is associated with the sport of association football",
+        "Internet Explorer 5 was developed by Google",
+        "Gran Turismo 5 was developed by inXile entertainment",
+        "No More Heroes was developed by NetherRealm Studios"
+      ],
+      "latencyMs": 35
+    },
+    {
+      "question": "Which country was heartland rock created in?",
+      "golds": [
+        "Scotland"
+      ],
+      "topContent": "heartland rock was created in the country of Scotland",
+      "returnedContents": [
+        "heartland rock was created in the country of Scotland",
+        "rock music was created in the country of Spain",
+        "rap rock was created in the country of Russian Empire",
+        "The type of music that Boyd Raeburn plays is heartland rock",
+        "country music was created in the country of United Kingdom"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "What is the country of citizenship of Cédric Klapisch?",
+      "golds": [
+        "Malaysia"
+      ],
+      "topContent": "Cédric Klapisch is a citizen of Malaysia",
+      "returnedContents": [
+        "Cédric Klapisch is a citizen of Malaysia",
+        "Mikhail Khodorkovsky is a citizen of Ireland",
+        "Renaud Lavillenie is a citizen of Ireland",
+        "Dirk Nowitzki is a citizen of Canada",
+        "Cy Young is a citizen of Russia"
+      ],
+      "latencyMs": 41
+    },
+    {
+      "question": "Who founded Jaguar Cars?",
+      "golds": [
+        "Eugène Schneider"
+      ],
+      "topContent": "Jaguar Cars was founded by Eugène Schneider",
+      "returnedContents": [
+        "Jaguar Cars was founded by Eugène Schneider",
+        "The company that produced Jaguar Mark 2 is Jaguar Cars",
+        "Atari Jaguar was developed by Microsoft",
+        "Junkers was founded by Hugo Junkers",
+        "Ford Motor Company was founded by Henri Grégoire"
+      ],
+      "latencyMs": 44
+    },
+    {
+      "question": "Which sport is Sports Interactive associated with?",
+      "golds": [
+        "basketball"
+      ],
+      "topContent": "Sports Interactive is associated with the sport of basketball",
+      "returnedContents": [
+        "Sports Interactive is associated with the sport of basketball",
+        "FIFPro is associated with the sport of basketball",
+        "center is associated with the sport of basketball",
+        "safety is associated with the sport of American football",
+        "Steve Sax is associated with the sport of association football"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "Which country was Sigur Rós created in?",
+      "golds": [
+        "Israel"
+      ],
+      "topContent": "Sigur Rós was created in the country of Israel",
+      "returnedContents": [
+        "Sigur Rós was created in the country of Israel",
+        "jazz was created in the country of Romania",
+        "U2 was created in the country of Ireland",
+        "sumo was created in the country of Australia",
+        "The Sword was created in the country of France"
+      ],
+      "latencyMs": 49
+    },
+    {
+      "question": "Which country was pesäpallo created in?",
+      "golds": [
+        "Philippines"
+      ],
+      "topContent": "pesäpallo was created in the country of Philippines",
+      "returnedContents": [
+        "pesäpallo was created in the country of Philippines",
+        "sumo was created in the country of Australia",
+        "petanque was created in the country of Malta",
+        "vallenato was created in the country of Colombia",
+        "goaltender is associated with the sport of pesäpallo"
+      ],
+      "latencyMs": 46
+    },
+    {
+      "question": "Who was Kinsey Millhone created by?",
+      "golds": [
+        "Sue Grafton"
+      ],
+      "topContent": "Kinsey Millhone was created by Sue Grafton",
+      "returnedContents": [
+        "Kinsey Millhone was created by Sue Grafton",
+        "Ultimates was created by Mark Millar",
+        "Mark Millar is famous for Kick-Ass",
+        "Malvolio was created by William Shakespeare",
+        "Finnish was created by Stirling Silliphanta"
+      ],
+      "latencyMs": 45
+    },
+    {
+      "question": "What is the country of citizenship of Madame du Barry?",
+      "golds": [
+        "Great Britain"
+      ],
+      "topContent": "Madame du Barry is a citizen of Great Britain",
+      "returnedContents": [
+        "Madame du Barry is a citizen of Great Britain",
+        "Daphne du Maurier is a citizen of United Kingdom",
+        "Daphne du Maurier speaks the language of Arabic",
+        "Germaine Dulac is a citizen of France",
+        "Victor Hugo is a citizen of France"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "Which language was The Thorn Birds written in?",
+      "golds": [
+        "French"
+      ],
+      "topContent": "The Thorn Birds was written in the language of French",
+      "returnedContents": [
+        "The Thorn Birds was written in the language of French",
+        "The Vampyre was written in the language of German",
+        "The Fairly OddParents was written in the language of French",
+        "Angel was written in the language of Māori",
+        "Colleen McCullough is famous for The Thorn Birds"
+      ],
+      "latencyMs": 52
+    },
+    {
+      "question": "Who is the head coach of Los Angeles FC?",
+      "golds": [
+        "Bob Bradley"
+      ],
+      "topContent": "The head coach of Los Angeles FC is Bob Bradley",
+      "returnedContents": [
+        "The head coach of Los Angeles FC is Bob Bradley",
+        "The head coach of Central Coast Mariners FC is Michael O'Neill",
+        "The head coach of Western Sydney Wanderers FC is Aaron Rodgers",
+        "The head coach of Burnley F.C. is Jeff Hornacek",
+        "The head coach of Atlético Madrid is Frank Lampard"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "Which company is Buick Regal produced by?",
+      "golds": [
+        "Aston Martin Lagonda"
+      ],
+      "topContent": "The company that produced Buick Regal is Aston Martin Lagonda",
+      "returnedContents": [
+        "The company that produced Buick Regal is Aston Martin Lagonda",
+        "The company that produced Ford Falcon is Ford Motor Company",
+        "The company that produced Chevrolet Vega is Toshiba",
+        "The company that produced Chevrolet Cruze is General Motors",
+        "The company that produced Ford Fairmont is Citroën"
+      ],
+      "latencyMs": 44
+    },
+    {
+      "question": "Which religion is Natalie Portman affiliated with?",
+      "golds": [
+        "interdenominational organization"
+      ],
+      "topContent": "Natalie Portman is affiliated with the religion of interdenominational organization",
+      "returnedContents": [
+        "Natalie Portman is affiliated with the religion of interdenominational organization",
+        "Natalie Portman is married to Benjamin Millepied",
+        "Jane Foster was performed by Natalie Portman",
+        "Yves Montand is married to Natalie Portman",
+        "Lady Gaga is affiliated with the religion of Methodism"
+      ],
+      "latencyMs": 45
+    },
+    {
+      "question": "Who was Finnish created by?",
+      "golds": [
+        "Stirling Silliphanta"
+      ],
+      "topContent": "Finnish was created by Mikael Agricola",
+      "returnedContents": [
+        "Finnish was created by Mikael Agricola",
+        "Finnish was created by Stirling Silliphanta",
+        "Helsingin Sanomat was written in the language of Finnish",
+        "Esperanto was created by Frank Miller",
+        "Matti Vanhanen speaks the language of Finnish"
+      ],
+      "latencyMs": 48
+    },
+    {
+      "question": "What position does Artur Boruc play?",
+      "golds": [
+        "midfielder"
+      ],
+      "topContent": "Artur Boruc plays the position of midfielder",
+      "returnedContents": [
+        "Artur Boruc plays the position of midfielder",
+        "David Blatt plays the position of defender",
+        "Darryl Dawkins plays the position of goaltender",
+        "Cole Aldrich plays the position of goalkeeper",
+        "Carlos Boozer plays the position of shooting guard"
+      ],
+      "latencyMs": 44
+    },
+    {
+      "question": "What is the country of citizenship of Ada Wong?",
+      "golds": [
+        "United States of America"
+      ],
+      "topContent": "Ada Wong is a citizen of United States of America",
+      "returnedContents": [
+        "Ada Wong is a citizen of United States of America",
+        "Country Joe McDonald is a citizen of Romania",
+        "Amanda Palmer is a citizen of United States of America",
+        "Justin Trudeau is a citizen of United States of America",
+        "Madame du Barry is a citizen of Great Britain"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "Who is Lalu Prasad Yadav married to?",
+      "golds": [
+        "Goldust"
+      ],
+      "topContent": "Lalu Prasad Yadav is married to Goldust",
+      "returnedContents": [
+        "Lalu Prasad Yadav is married to Goldust",
+        "Asif Ali Zardari is married to Charles VI of France",
+        "Elton John is married to Manjula Vijayakumar",
+        "Ilham Aliyev is married to Mehriban Aliyeva",
+        "Mohandas Karamchand Gandhi is married to Kasturba Gandhi"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "Which company is Ford S-Max produced by?",
+      "golds": [
+        "Blue Origin"
+      ],
+      "topContent": "The company that produced Ford S-Max is Blue Origin",
+      "returnedContents": [
+        "The company that produced Ford S-Max is Blue Origin",
+        "The company that produced Ford Falcon is Ford Motor Company",
+        "The company that produced Ford Zephyr is Ford Motor Company",
+        "The company that produced Ford Fairmont is Citroën",
+        "The company that produced Ford Transit Connect is Ford Motor Company"
+      ],
+      "latencyMs": 35
+    },
+    {
+      "question": "Which country was Orkneyinga saga created in?",
+      "golds": [
+        "Iceland"
+      ],
+      "topContent": "Orkneyinga saga was created in the country of Iceland",
+      "returnedContents": [
+        "Orkneyinga saga was created in the country of Iceland",
+        "sumo was created in the country of Australia",
+        "petanque was created in the country of Malta",
+        "heartland rock was created in the country of Scotland",
+        "The Sword was created in the country of France"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "Which sport is shooting guard associated with?",
+      "golds": [
+        "rugby"
+      ],
+      "topContent": "shooting guard is associated with the sport of rugby",
+      "returnedContents": [
+        "shooting guard is associated with the sport of rugby",
+        "point guard is associated with the sport of cricket",
+        "Tony Parker plays the position of shooting guard",
+        "Brook Lopez plays the position of shooting guard",
+        "Kenley Jansen plays the position of shooting guard"
+      ],
+      "latencyMs": 37
+    },
+    {
+      "question": "What is the country of citizenship of Henri Grégoire?",
+      "golds": [
+        "India"
+      ],
+      "topContent": "Henri Grégoire is a citizen of India",
+      "returnedContents": [
+        "Henri Grégoire is a citizen of India",
+        "Henri Grégoire is affiliated with the religion of Christianity",
+        "Ford Motor Company was founded by Henri Grégoire",
+        "Louis Henri Loison is a citizen of Mexico",
+        "Rex Harrison is a citizen of France"
+      ],
+      "latencyMs": 39
+    },
+    {
+      "question": "Which city was Constantine VII born in?",
+      "golds": [
+        "Constantinople"
+      ],
+      "topContent": "Constantine VII was born in the city of Constantinople",
+      "returnedContents": [
+        "Constantine VII was born in the city of Constantinople",
+        "The author of 1984 is Constantine VII",
+        "George Lucas was born in the city of Modesto",
+        "Catherine II of Russia died in the city of Paris",
+        "Charles VI of France died in the city of Shorne"
+      ],
+      "latencyMs": 42
+    },
+    {
+      "question": "What is the country of citizenship of Wilhelm von Humboldt?",
+      "golds": [
+        "Germany"
+      ],
+      "topContent": "Wilhelm von Humboldt is a citizen of Germany",
+      "returnedContents": [
+        "Wilhelm von Humboldt is a citizen of Germany",
+        "Humboldt University of Berlin was founded by Howard Hughes",
+        "The univeristy where Wilhelm II was educated is Baldwin Wallace University",
+        "Ferdinand von Richthofen is a citizen of Canada",
+        "Ernst Heinkel is a citizen of Tang Empire"
+      ],
+      "latencyMs": 40
+    },
+    {
+      "question": "What is the name of the current head of the South Korea government?",
+      "golds": [
+        "Mauro Carlesse"
+      ],
+      "topContent": "The name of the current head of the South Korea government is Mauro Carlesse",
+      "returnedContents": [
+        "The name of the current head of the South Korea government is Mauro Carlesse",
+        "The name of the current head of the Thailand government is Hüseyin Özgürgün",
+        "The name of the current head of the Sweden government is Gro Harlem Brundtland",
+        "The name of the current head of the Ireland government is Dorin Alexandrescu",
+        "The name of the current head of the Japan government is Shinzō Abe"
+      ],
+      "latencyMs": 43
+    },
+    {
+      "question": "What position does David Seaman play?",
+      "golds": [
+        "midfielder"
+      ],
+      "topContent": "David Seaman plays the position of midfielder",
+      "returnedContents": [
+        "David Seaman plays the position of midfielder",
+        "David Blatt plays the position of defender",
+        "Darryl Dawkins plays the position of goaltender",
+        "Freddie Freeman plays the position of linebacker",
+        "David Beckham is associated with the sport of cricket"
+      ],
+      "latencyMs": 41
+    }
+  ]
+}
