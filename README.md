@@ -11,7 +11,7 @@
 [![MCP](https://img.shields.io/badge/protocol-MCP-eda100)](https://modelcontextprotocol.io)
 
 <p align="center">
-  <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="96% correct vs 40% without supersession" height="38" /></picture></a>
+  <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="98% correct vs 47% without supersession" height="38" /></picture></a>
   <a href="#quick-start"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-nokeys.svg"><img src="docs/assets/chips/stat-nokeys.svg" alt="0 API keys needed" height="38" /></picture></a>
   <a href="#everything-else"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-tools.svg"><img src="docs/assets/chips/stat-tools.svg" alt="27 MCP tools" height="38" /></picture></a>
   <a href="#what-knowl-is-for"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-local.svg"><img src="docs/assets/chips/stat-local.svg" alt="100% local, no egress" height="38" /></picture></a>
@@ -89,13 +89,13 @@ That single behavior is most of the accuracy difference. On the
 455 facts, 100 questions about which fact is current, top-5 retrieval, no LLM reader:
 
 <div align="center">
-<img src="docs/assets/benchmark-conflict-resolution.svg" alt="MemoryAgentBench conflict-resolution ablation: supersession on reached 96 percent top-1 with 3 stale returns; supersession off reached 40 percent top-1 with 62 stale returns" width="82%" />
+<img src="docs/assets/benchmark-conflict-resolution.svg" alt="MemoryAgentBench conflict-resolution ablation: supersession on reached 98 percent top-1 with 2 stale returns; supersession off reached 47 percent top-1 with 62 stale returns" width="82%" />
 </div>
 
 | Configuration | Top-1 | Stale returns | Active atoms |
 | --- | ---: | ---: | ---: |
-| **Supersession ON** | **96.0%** | **3 / 100** | 306 |
-| Supersession OFF | 40.0% | 62 / 100 | 455 |
+| **Supersession ON** | **98.0%** | **2 / 100** | 306 |
+| Supersession OFF | 47.0% | 62 / 100 | 455 |
 
 Same corpus, same ranker, same query path. The only variable is whether the outdated fact is still
 active. See [benchmarks](docs/reference.md#benchmarks) for the protocol, the checked-in results,
@@ -257,7 +257,7 @@ database. No account, no server, no API key. Each item links into the
 **♻️ Knowledge that corrects itself**
 
 Seven typed atom types, where a same-subject write retires its predecessor instead of
-sitting beside it. That one behavior is the [96%-vs-40% difference](#the-idea-memory-that-retires-itself).
+sitting beside it. That one behavior is the [98%-vs-47% difference](#the-idea-memory-that-retires-itself).
 Evidence attached to a file or symbol goes stale *by itself* when the code moves.
 
 `conflicts` · `timeline` · `query --as-of` · `pr check` · `code index`
@@ -344,7 +344,7 @@ knowl doctor                           # setup, retrieval, and registration
 - **Seven atom types** — [listed above](#what-gets-stored). Structure instead of one growing
   notes file.
 - **Automatic supersession** — a same-subject write retires its predecessor. This is the
-  [96%-vs-40% difference](#the-idea-memory-that-retires-itself) above.
+  [98%-vs-47% difference](#the-idea-memory-that-retires-itself) above.
 - **Conflict identity** — mark an atom exclusive and Knowl refuses a second active answer to the
   same question, instead of quietly holding both. `knowl conflicts`
 - **Full history** — every version an atom ever had survives as an immutable assertion.

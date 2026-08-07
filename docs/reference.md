@@ -977,17 +977,23 @@ retrieving the newest valid fact after updates. The Knowl harness uses the
 top-5 vector+BM25 retrieval, and no LLM reader.
 
 <div align="center">
-<img src="assets/benchmark-conflict-resolution.svg" alt="MemoryAgentBench conflict-resolution ablation: supersession on reached 96 percent top-1 with 3 stale returns; supersession off reached 40 percent top-1 with 62 stale returns" width="82%" />
+<img src="assets/benchmark-conflict-resolution.svg" alt="MemoryAgentBench conflict-resolution ablation: supersession on reached 98 percent top-1 with 2 stale returns; supersession off reached 47 percent top-1 with 62 stale returns" width="82%" />
 </div>
 
 | Configuration | Top-1 | Any rank | Stale returns | Active atoms | Stored p50 / p95 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| **Supersession ON** | **96.0%** | 100% | **3 / 100** | 306 | 19 / 21 ms |
-| Supersession OFF | 40.0% | 100% | 62 / 100 | 455 | 20 / 24 ms |
+| **Supersession ON** | **98.0%** | 100% | **2 / 100** | 306 | 13 / 19 ms |
+| Supersession OFF | 47.0% | 98% | 62 / 100 | 455 | 14 / 20 ms |
 
 Supersession retired 149 facts at write time; both rows otherwise use the same corpus, path, and
 metric. The instance covers dynamic single-hop latest-fact conflicts, not static, conditional,
 multi-hop, or reader behavior.
+
+Re-measured 2026-08-06 with the `granite-small-en-r2` default, stable across two runs. The
+previous figures — 96.0% and 40.0% top-1 with 3 stale returns — were taken on the `minilm-l6-en`
+default this repository shipped before 2026-08-02. The retrieval path here is vector + BM25, so
+the embedding model is part of the result and is named rather than left to the reader's config.
+Both arms moved; the gap narrowed from 56 to 51 points.
 
 The two result JSON files are checked in:
 [supersession ON](../benchmarks/memoryagentbench/results/cr-sh-6k-supersede-on.json) and
@@ -1032,7 +1038,7 @@ defines 44 top-3 cases.
 
 | Recall@3 | MRR | nDCG | Stale-active returns | Stale-trap failures | Rejected items returned |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 100% | 98.8636% | 99.1612% | 28 | 22 | 0 |
+| 100% | 98.86% | 99.16% | 28 | 22 | 0 |
 
 MRR is reciprocal rank, not top-1 accuracy. Stale predecessors remain active, so all 22 stale
 traps failed and produced 28 stale-active returns; rejected items test a separate status filter
@@ -1062,7 +1068,7 @@ items; it is not third-party evidence.
 
 | Retrieval path | Recall@3 | Recall@10 | MRR | nDCG | Stale hits | Forbidden hits | Failed criteria |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Vector + BM25 | 98.8% | 100% | 95.2633% | 96.4363% | 5 | 3 | 3 |
+| Vector + BM25 | 98.8% | 100% | 95.26% | 96.44% | 5 | 3 | 3 |
 
 Re-measured 2026-08-06 with the `granite-small-en-r2` default, stable across two runs; no result
 snapshot is checked in. The run passed 497 of 500 evaluator cases, including expected, stale, and

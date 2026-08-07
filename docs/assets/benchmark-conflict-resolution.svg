@@ -1,4 +1,4 @@
-<svg width="760" height="420" viewBox="0 0 760 420" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="MemoryAgentBench conflict-resolution ablation: supersession on achieved 96 percent top-1 accuracy with 3 stale returns out of 100; supersession off achieved 40 percent top-1 accuracy with 62 stale returns out of 100">
+<svg width="760" height="420" viewBox="0 0 760 420" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="MemoryAgentBench conflict-resolution ablation: supersession on achieved 98 percent top-1 accuracy with 2 stale returns out of 100; supersession off achieved 47 percent top-1 accuracy with 62 stale returns out of 100">
   <rect x="1" y="1" width="758" height="418" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
 
   <text x="28" y="42" font-size="21" font-weight="700" fill="#ffffff">Conflict resolution</text>
@@ -23,11 +23,11 @@
     <text x="154" y="148">Supersession ON</text>
     <text x="154" y="226">Supersession OFF</text>
   </g>
-  <rect x="170" y="128" width="460.8" height="28" rx="7" fill="#199e70"/>
-  <rect x="170" y="206" width="192" height="28" rx="7" fill="#3987e5"/>
+  <rect x="170" y="128" width="470.4" height="28" rx="7" fill="#199e70"/>
+  <rect x="170" y="206" width="225.6" height="28" rx="7" fill="#3987e5"/>
   <g font-size="15" font-weight="700" fill="#ffffff">
-    <text x="640" y="148">96%</text>
-    <text x="372" y="226">40%</text>
+    <text x="650" y="148">98%</text>
+    <text x="406" y="226">47%</text>
   </g>
 
   <text x="28" y="330" font-size="14" font-weight="700" fill="#c3c2b7">Stale returns</text>
@@ -35,7 +35,7 @@
     <g>
       <rect x="0" y="0" width="252" height="46" rx="12" fill="#12251a" stroke="#1e5c38"/>
       <circle cx="22" cy="23" r="5" fill="#199e70"/>
-      <text x="38" y="28" fill="#7fdca0">ON: 3 / 100</text>
+      <text x="38" y="28" fill="#7fdca0">ON: 2 / 100</text>
     </g>
     <g transform="translate(270,0)">
       <rect x="0" y="0" width="252" height="46" rx="12" fill="#1b2330" stroke="#305f94"/>
