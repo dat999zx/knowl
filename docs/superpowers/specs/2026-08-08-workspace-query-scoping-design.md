@@ -134,13 +134,41 @@ Every repo is still read on the default path, exactly as today. Only the *presen
 This matters for two reasons: the pointer block costs no extra query, and the demand ledger keeps
 seeing the same events it sees now. Only `scope: "local"` changes what is read.
 
-### Per-repo scoring becomes correct
+### Scoring stays a single union pass; grouping is presentation only
 
-The current code fuses everything into one ranking deliberately: `normalizedRecencyScore`
-normalizes each item's date against the candidate set it arrives with, so ranking per repo and
-fusing would give every repo's newest item the same recency score
-(`src/workspace/federated-query.ts:52-58`). Grouped output never compares two repos' scores, so
-that constraint expires. Recency normalizing within a repo is correct for a per-repo list.
+An earlier draft of this design said scoring would move to one pass per repo, on the grounds that
+grouped output never compares two repos' scores so `normalizedRecencyScore`'s union requirement
+expires. **That was wrong.** Recency is one of four coupled reasons the union pass exists, and
+reading `src/store/agent-query.ts` shows the other three survive grouping intact:
+
+1. **Alpha renormalizes globally.** `alpha = !usingVector ? 0 : (anyLexical ? FUSION_ALPHA : 1)`
+   (`agent-query.ts:583`), with the comment stating it is global "rather than per corpus: two
+   repos scored under different alphas would not be comparable, which is the whole reason scoring
+   runs over the union." A repo with no lexical hit would score under alpha 1 while its neighbour
+   scored under 0.8.
+2. **The semantic rescale is page-wide.** `rescaleSemantic` min-maxes against `semanticFloor` and
+   `semanticCeiling` computed over all candidates (`agent-query.ts:572-578`). Per repo, every
+   repo's best row rescales to ~1.0 — the same defect in a new place.
+3. **The abstention verdict is deliberately cross-corpus.** When the floor fires, rows from a
+   corpus that judged *nothing* are labelled rather than exempted (`agent-query.ts:691-696`),
+   because "an off-topic peer item became the answer to a question the indexed store had just
+   said it could not answer" (K-36). Judging each group alone reverses that fix.
+
+The comparability argument also applies to the *reader*, not only the code. `score` is published
+on every row, and an agent reading a grouped response sees two groups' numbers side by side and
+will compare them whether or not the ranker did.
+
+**Consequence, and it shrinks the change:** `scoreCandidates` is not modified at all. It runs once
+over the union exactly as today — global alpha, page-wide rescale, per-corpus lexical
+normalization via `corpusBest`, the cross-corpus abstention verdict, union recency. Slot
+allocation and grouping happen after it returns, in `queryFederated`, over the scored and ordered
+list. The only call-site change is a `limit` large enough that slot allocation has rows to
+allocate.
+
+The cross-repo lexical problem this design might otherwise have had to solve is already solved
+inside that pass: `corpusBest` normalizes per corpus and `lexicalCoverage` — "corpus-independent
+by construction, which is what makes two repos' lexical evidence comparable at all"
+(`agent-query.ts:260-267`) — is the signal that spans them.
 
 ## What the relevance floor keeps doing
 
@@ -148,9 +176,12 @@ Nothing is replaced. The floor's current job — a verdict rendered as the `NO C
 block (`src/mcp/tools.ts:890`) — is untouched. It does not drop rows and does not reorder; slot
 priority decides ordering and shape and produces no verdict. The two do not overlap.
 
-One knock-on: under grouping, `abstained` becomes **per group** rather than one verdict over the
-fused set. Each group is scored within itself, so the block can name which repos came up empty
-instead of delivering a single flat verdict. Strictly more informative, no new machinery.
+One knock-on, revised from an earlier draft: `abstained` does **not** become a per-group verdict.
+It is computed over the union with cross-corpus logic that exists to fix a real bug
+(`src/store/agent-query.ts:691-696`, K-36) — rows from a corpus that judged nothing are labelled
+rather than exempted — and recomputing it per group would undo that. Only the *reporting* changes:
+`abstained` is already a per-item set, so the block can name which repos hold abstained rows
+without the verdict being recomputed anywhere.
 
 ## Decisions
 
@@ -187,8 +218,10 @@ silently under-reports cross-repo demand — the exact measurement
 
 ## Blast radius
 
-**Core.** `queryFederated` returns `{ groups, skipped }` instead of a fused list; scoring moves
-from one union pass to one pass per repo. Roughly the back half of `src/workspace/federated-query.ts`.
+**Core.** `queryFederated` returns `{ groups, skipped }` instead of a fused list, and gains slot
+allocation over the list `scoreCandidates` already returns. `src/store/agent-query.ts` is not
+modified — see "Scoring stays a single union pass" above. Confined to the back half of
+`src/workspace/federated-query.ts`.
 
 **Downstream, four places:**
 
@@ -201,10 +234,15 @@ from one union pass to one pass per repo. Roughly the back half of `src/workspac
   filled its slots: the first direct measurement of how often this fires.
 
 **Evals.** `docs/evals/cross-repo-archetypes.json` — 92 cases over 5 archetypes — scores MRR, R@3
-and forbidden against a single fused ranking. Grouped output has no single ranking, so the suite
-needs a defined flattening (local group first, then peers in group order) to keep MRR meaning what
-it meant. Numbers will move. That is re-baselining and must be recorded as such, so the shift is
-not read later as a retrieval regression.
+and forbidden against a single fused ranking. The suite needs a defined flattening (local group
+first, then peers in group order) to keep MRR meaning what it meant.
+
+Numbers will move **only from slot allocation**, not from scoring: relevance, priors and ordering
+within the union are byte-identical to today, so any case whose gold answer is local and already
+in the page is untouched. What moves is cases where a foreign row currently outranks a local one.
+That is a smaller and better-understood delta than a scoring change would produce, and it is
+re-baselining rather than regression — but it must be recorded as such, so the shift is not read
+later as a retrieval fault.
 
 **Tests.** Local fills all slots → flat plus pointer. Local partial → grouped, local first. Local
 zero → grouped with an empty local key. `scope: "local"` → peer databases never opened.
