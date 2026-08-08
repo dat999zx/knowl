@@ -25,6 +25,9 @@ import { releaseAll } from '../../src/store/connection-pool.js';
  * nothing can fail to be.
  */
 let fixture = 0;
+// Per test, not per file: KNOWL_HOME is process-global and vitest shares a process across
+// files, so a literal workspace name lets one file overwrite another file's manifest.
+let ws = '';
 let HOME = '';
 let A = '';
 let B = '';
@@ -84,28 +87,29 @@ async function federate(query: string, limit: number, repos?: string[]) {
 describe('federated grouping', () => {
   beforeEach(async () => {
     fixture += 1;
+    ws = `slot${fixture}`;
     HOME = path.resolve(`./.knowl-slot-${fixture}-home`);
     A = path.resolve(`./.knowl-slot-${fixture}-a`);
     B = path.resolve(`./.knowl-slot-${fixture}-b`);
     process.env.KNOWL_HOME = HOME;
     await closeDb();
     await releaseAll();
-    await writeManifest(workspaceManifestPath('ws'), createManifest('ws', null));
+    await writeManifest(workspaceManifestPath(ws), createManifest(ws, null));
     await seed(A, 'a', [
       { title: 'Local auth note', content: 'Auth tokens expire locally.', visibility: 'repo' },
     ]);
     await seed(B, 'b', [
       { title: 'Deploy runs on tag push', content: 'Deployment is triggered by pushing a tag.', visibility: 'workspace' },
     ]);
-    await joinWorkspace({ projectRoot: A, workspaceName: 'ws', repoName: 'a' });
-    await joinWorkspace({ projectRoot: B, workspaceName: 'ws', repoName: 'b' });
-  });
+    await joinWorkspace({ projectRoot: A, workspaceName: ws, repoName: 'a' });
+    await joinWorkspace({ projectRoot: B, workspaceName: ws, repoName: 'b' });
+  }, 120_000);
 
   afterEach(async () => {
     delete process.env.KNOWL_HOME;
     await closeDb();
     await releaseAll();
-  });
+  }, 120_000);
 
   // Removal is deferred to the very end, where every handle is closed and EBUSY cannot fire.
   // Best-effort even here: a leftover fixture directory is residue, while a failed teardown
@@ -117,7 +121,7 @@ describe('federated grouping', () => {
           .catch(() => {});
       }
     }
-  });
+  }, 120_000);
 
   it('groups by repo when a peer row wins a slot, with local first and empty', async () => {
     const result = await federate('deployment tag push', 5);
@@ -127,7 +131,7 @@ describe('federated grouping', () => {
     expect(result.groups[0].items).toEqual([]);
     expect(result.groups[1].repo).toBe('b');
     expect(result.groups[1].items[0].title).toBe('Deploy runs on tag push');
-  });
+  }, 120_000);
 
   it('stays flat when every returned row is local', async () => {
     const result = await federate('auth tokens expire', 5);
@@ -136,7 +140,7 @@ describe('federated grouping', () => {
     expect(result.groups).toHaveLength(1);
     expect(result.groups[0].repo).toBe('a');
     expect(result.groups[0].items[0].title).toBe('Local auth note');
-  });
+  }, 120_000);
 
   it('keeps every row of one repo together, rather than interleaving by score', async () => {
     // What grouping actually changes. Page membership is still the ranker's -- an ownership
@@ -153,7 +157,7 @@ describe('federated grouping', () => {
       expect(new Set(group.items.map(item => item.repo)).size).toBeLessThanOrEqual(1);
     }
     expect(result.groups.map(group => group.repo).sort()).toEqual(['a', 'b']);
-  });
+  }, 120_000);
 
   it('orders groups by their best row, so a better peer answer is not buried', async () => {
     // Local first is a rule about an EMPTY local group, not a licence to outrank a better
@@ -166,7 +170,7 @@ describe('federated grouping', () => {
     const result = await federate('deployment tag push', 5);
 
     expect(result.groups.map(group => group.repo)).toEqual(['b', 'a']);
-  });
+  }, 120_000);
 
   it('reports a peer match that won no slot, by name and count only', async () => {
     // Two matching rows in the peer, one slot. The row that misses is named and counted, never
@@ -178,7 +182,7 @@ describe('federated grouping', () => {
     const result = await federate('deployment', 1);
 
     expect(result.unshown).toEqual([{ repo: 'b', matches: 1 }]);
-  });
+  }, 120_000);
 
   it('never returns more than the limit across all groups', async () => {
     await addItems(A, 'a', [
@@ -188,11 +192,11 @@ describe('federated grouping', () => {
     const total = result.groups.reduce((count, group) => count + group.items.length, 0);
 
     expect(total).toBe(2);
-  });
+  }, 120_000);
 
   it('flattens in group order, for callers that score one ranking', async () => {
     const result = await federate('deployment tag push', 5);
 
     expect(flattenGroups(result).map(item => item.repo)).toEqual(['b']);
-  });
+  }, 120_000);
 });

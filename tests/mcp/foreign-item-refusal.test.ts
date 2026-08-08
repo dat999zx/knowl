@@ -279,7 +279,10 @@ describe('item-scoped tools and foreign items', () => {
     // The local item's paths do resolve against this checkout, so they must still arrive --
     // or the guard has simply turned the feature off.
     expect(local?.affectedPaths).toEqual(['src/local/auth.ts']);
-  });
+    // Explicit budget, like the heavy workspace suites carry. This case seeds two repos and
+    // warms the embedding model; it finishes in ~10s alone and had no timeout of its own, so it
+    // sat just under the 30s default and went over as soon as anything else ran beside it.
+  }, 120_000);
 
   it('local items are unaffected', async () => {
     await initDb(A);

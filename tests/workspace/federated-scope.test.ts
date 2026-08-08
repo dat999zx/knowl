@@ -15,6 +15,9 @@ import { releaseAll } from '../../src/store/connection-pool.js';
 // Numbered per test rather than wiped between tests: the wipe fails EBUSY on Windows and the
 // shared pattern in this directory swallows it, so state accumulates. See federated-grouping.
 let fixture = 0;
+// Per test, not per file: KNOWL_HOME is process-global and vitest shares a process across
+// files, so a literal workspace name lets one file overwrite another file's manifest.
+let ws = '';
 let HOME = '';
 let A = '';
 let B = '';
@@ -54,28 +57,29 @@ async function federate(query: string, limit: number, extra: {
 describe('federated scope', () => {
   beforeEach(async () => {
     fixture += 1;
+    ws = `scope${fixture}`;
     HOME = path.resolve(`./.knowl-scope-${fixture}-home`);
     A = path.resolve(`./.knowl-scope-${fixture}-a`);
     B = path.resolve(`./.knowl-scope-${fixture}-b`);
     process.env.KNOWL_HOME = HOME;
     await closeDb();
     await releaseAll();
-    await writeManifest(workspaceManifestPath('ws'), createManifest('ws', null));
+    await writeManifest(workspaceManifestPath(ws), createManifest(ws, null));
     await seed(A, 'a', [
       { title: 'Local auth note', content: 'Auth tokens expire locally.', visibility: 'repo' },
     ]);
     await seed(B, 'b', [
       { title: 'Deploy runs on tag push', content: 'Deployment is triggered by pushing a tag.', visibility: 'workspace' },
     ]);
-    await joinWorkspace({ projectRoot: A, workspaceName: 'ws', repoName: 'a' });
-    await joinWorkspace({ projectRoot: B, workspaceName: 'ws', repoName: 'b' });
-  });
+    await joinWorkspace({ projectRoot: A, workspaceName: ws, repoName: 'a' });
+    await joinWorkspace({ projectRoot: B, workspaceName: ws, repoName: 'b' });
+  }, 120_000);
 
   afterEach(async () => {
     delete process.env.KNOWL_HOME;
     await closeDb();
     await releaseAll();
-  });
+  }, 120_000);
 
   afterAll(async () => {
     for (let index = 1; index <= fixture; index += 1) {
@@ -84,7 +88,7 @@ describe('federated scope', () => {
           .catch(() => {});
       }
     }
-  });
+  }, 120_000);
 
   it('searches only this repo under scope local', async () => {
     const result = await federate('deployment tag push', 5, { scope: 'local' });
@@ -92,26 +96,26 @@ describe('federated scope', () => {
     expect(result.groups).toHaveLength(1);
     expect(result.groups[0].repo).toBe('a');
     expect(flattenGroups(result)).toEqual([]);
-  });
+  }, 120_000);
 
   it('does not reach a peer at all under scope local', async () => {
     // Observable proof rather than a spy: an absent peer is normally reported as skipped, and a
     // peer that is never considered produces no entry. Repointing `b` at a path that was never
     // checked out makes "reached and found missing" and "not reached" distinguishable.
-    const manifest = await readManifest(workspaceManifestPath('ws'));
+    const manifest = await readManifest(workspaceManifestPath(ws));
     manifest.repos = manifest.repos.map(entry =>
       entry.name === 'b' ? { ...entry, path: path.resolve('./.knowl-scope-never-cloned') } : entry);
-    await writeManifest(workspaceManifestPath('ws'), manifest);
+    await writeManifest(workspaceManifestPath(ws), manifest);
 
     expect((await federate('auth', 5)).skipped).toEqual([{ repo: 'b', reason: 'absent' }]);
     expect((await federate('auth', 5, { scope: 'local' })).skipped).toEqual([]);
-  });
+  }, 120_000);
 
   it('is flat under scope local even when nothing is found', async () => {
     const result = await federate('deployment tag push', 5, { scope: 'local' });
 
     expect(result.shape).toBe('flat');
-  });
+  }, 120_000);
 
   it('is grouped under scope workspace even when only local answers', async () => {
     // An explicit scope fixes the shape. A caller who asked for a partitioned view gets one
@@ -121,13 +125,13 @@ describe('federated scope', () => {
 
     expect(result.shape).toBe('grouped');
     expect(result.groups[0].repo).toBe('a');
-  });
+  }, 120_000);
 
   it('is grouped when repos names a single repo', async () => {
     const result = await federate('deployment', 5, { repos: ['b'] });
 
     expect(result.shape).toBe('grouped');
-  });
+  }, 120_000);
 
   it('lets repos win when both are passed', async () => {
     // More specific of the two. Refusing a benign combination would cost a caller their answer
@@ -135,5 +139,5 @@ describe('federated scope', () => {
     const result = await federate('deployment tag push', 5, { repos: ['b'], scope: 'local' });
 
     expect(flattenGroups(result).some(item => item.repo === 'b')).toBe(true);
-  });
+  }, 120_000);
 });

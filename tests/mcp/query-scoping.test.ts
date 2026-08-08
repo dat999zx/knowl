@@ -15,6 +15,9 @@ import type { ProjectConfig } from '../../src/core/types.js';
 // Numbered per test: the shared wipe fails EBUSY on Windows and is swallowed. See
 // tests/workspace/federated-grouping.test.ts.
 let fixture = 0;
+// Per test, not per file: KNOWL_HOME is process-global and vitest shares a process across
+// files, so a literal workspace name lets one file overwrite another file's manifest.
+let ws = '';
 let HOME = '';
 let A = '';
 let B = '';
@@ -38,7 +41,7 @@ async function callTool(root: string, config: ProjectConfig, name: string, args:
   transport.onmessage!({
     jsonrpc: '2.0', id: 'init', method: 'initialize',
     params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 't', version: '1' } },
-  });
+  }, 120_000);
   await initialized;
   transport.onmessage!({ jsonrpc: '2.0', method: 'notifications/initialized' });
 
@@ -87,28 +90,29 @@ const noticeOf = (response: any) => response.content.map((block: any) => block.t
 describe('knowl_query scoping', () => {
   beforeEach(async () => {
     fixture += 1;
+    ws = `qscope${fixture}`;
     HOME = path.resolve(`./.knowl-qscope-${fixture}-home`);
     A = path.resolve(`./.knowl-qscope-${fixture}-a`);
     B = path.resolve(`./.knowl-qscope-${fixture}-b`);
     process.env.KNOWL_HOME = HOME;
     await closeDb();
     await releaseAll();
-    await writeManifest(workspaceManifestPath('ws'), createManifest('ws', null));
+    await writeManifest(workspaceManifestPath(ws), createManifest(ws, null));
     await seed(A, 'a', [
       { title: 'Local auth note', content: 'Auth tokens expire locally.', visibility: 'repo' },
     ]);
     await seed(B, 'b', [
       { title: 'Deploy runs on tag push', content: 'Deployment is triggered by pushing a tag.', visibility: 'workspace' },
     ]);
-    await joinWorkspace({ projectRoot: A, workspaceName: 'ws', repoName: 'a' });
-    await joinWorkspace({ projectRoot: B, workspaceName: 'ws', repoName: 'b' });
-  });
+    await joinWorkspace({ projectRoot: A, workspaceName: ws, repoName: 'a' });
+    await joinWorkspace({ projectRoot: B, workspaceName: ws, repoName: 'b' });
+  }, 120_000);
 
   afterEach(async () => {
     delete process.env.KNOWL_HOME;
     await closeDb();
     await releaseAll();
-  });
+  }, 120_000);
 
   afterAll(async () => {
     for (let index = 1; index <= fixture; index += 1) {
@@ -116,7 +120,7 @@ describe('knowl_query scoping', () => {
         await fs.rm(path.resolve(`./.knowl-qscope-${index}-${suffix}`), { recursive: true, force: true }).catch(() => {});
       }
     }
-  });
+  }, 120_000);
 
   it('returns a grouped first block when a peer row wins a slot', async () => {
     const parsed = JSON.parse((await query({ query: 'deployment tag push', limit: 5 })).content[0].text);
@@ -124,33 +128,33 @@ describe('knowl_query scoping', () => {
     expect(Array.isArray(parsed)).toBe(false);
     expect(parsed.a).toEqual([]);
     expect(parsed.b[0].title).toBe('Deploy runs on tag push');
-  });
+  }, 120_000);
 
   it('says LOCAL MISS, naming this repo, when the local group is empty', async () => {
     const notice = noticeOf(await query({ query: 'deployment tag push', limit: 5 }));
 
     expect(notice).toContain('LOCAL MISS');
     expect(notice).toContain('describes');
-  });
+  }, 120_000);
 
   it('keeps a bare array and adds no LOCAL MISS when local answers', async () => {
     const response = await query({ query: 'auth tokens expire', limit: 5 });
 
     expect(Array.isArray(JSON.parse(response.content[0].text))).toBe(true);
     expect(noticeOf(response)).not.toContain('LOCAL MISS');
-  });
+  }, 120_000);
 
   it('omits the repo field inside groups, where the key already says it', async () => {
     const parsed = JSON.parse((await query({ query: 'deployment tag push', limit: 5 })).content[0].text);
 
     expect(parsed.b[0].repo).toBeUndefined();
-  });
+  }, 120_000);
 
   it('keeps the repo field on a flat row, which has no key to say it', async () => {
     const parsed = JSON.parse((await query({ query: 'auth tokens expire', limit: 5 })).content[0].text);
 
     expect(parsed[0].repo).toBe('a');
-  });
+  }, 120_000);
 
   it('points at a peer that matched but won no slot, without quoting it', async () => {
     // Two matching peer rows against one slot, so exactly one is left unshown and the pointer
@@ -178,18 +182,18 @@ describe('knowl_query scoping', () => {
     // would fail on the payload and prove nothing about the pointer.
     expect(pointer).not.toContain('changelog entry');
     expect(pointer).not.toContain('triggered by pushing');
-  });
+  }, 120_000);
 
   it('is grouped under scope workspace even when only local answers', async () => {
     const parsed = JSON.parse((await query({ query: 'auth tokens expire', limit: 5, scope: 'workspace' })).content[0].text);
 
     expect(Array.isArray(parsed)).toBe(false);
     expect(parsed.a[0].title).toBe('Local auth note');
-  });
+  }, 120_000);
 
   it('is a bare array under scope local, whatever the peer holds', async () => {
     const parsed = JSON.parse((await query({ query: 'deployment tag push', limit: 5, scope: 'local' })).content[0].text);
 
     expect(parsed).toEqual([]);
-  });
+  }, 120_000);
 });
