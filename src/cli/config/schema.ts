@@ -22,7 +22,8 @@ export type ConfigKey =
   | 'memory.organization.path'
   | 'memory.global.enabled'
   | 'memory.global.path'
-  | 'impact.enabled';
+  | 'impact.enabled'
+  | 'impact.gate';
 
 export type ConfigCategory = 'Search' | 'Security' | 'AI provider' | 'Memory namespaces' | 'Change impact';
 
@@ -81,6 +82,9 @@ const VECTOR_PROVIDERS = ['local'] as const;
 const VECTOR_DTYPES = ['q4', 'q8', 'fp16', 'fp32'] as const;
 const VECTOR_POOLINGS = ['mean', 'cls'] as const;
 const AI_PROVIDERS = ['openai', 'anthropic', 'ollama', 'custom'] as const;
+// Ordered by how much they can cost the person running them, which is also the order they are
+// meant to be adopted in: nothing, then measurement, then refusal.
+const IMPACT_GATE_MODES = ['off', 'shadow', 'enforce'] as const;
 
 export const CONFIG_FIELDS: ConfigField[] = [
   // The preset leads the Search list: it is the one setting most people should touch,
@@ -211,6 +215,16 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: booleanValue, defaultValue: false,
     label: 'Change impact detection',
     description: 'Record which code each session read, and flag work whose code changed underneath it. While on, a task finish reports unresolved changes instead of closing clean.',
+  },
+  {
+    // `defaultValue: 'off'` lives here and nowhere else, for the same reason as `impact.enabled`
+    // above and with more at stake: the literal in DEFAULT_CONFIG would be merged into every
+    // config on the machine by `upgradeConfigDefaults`, which for this key means arming a write
+    // gate in every repository the user has ever initialized.
+    key: 'impact.gate', category: 'Change impact', type: 'enum', values: IMPACT_GATE_MODES,
+    parse: enumValue(IMPACT_GATE_MODES), defaultValue: 'off',
+    label: 'Write gate',
+    description: 'Before an edit lands on code this session read and has not seen since: shadow records what it would have refused and lets the write through, enforce refuses it and hands back what changed. Needs change impact detection on.',
   },
 ];
 
