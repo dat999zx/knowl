@@ -15,19 +15,19 @@ import { releaseAll } from '../../src/store/connection-pool.js';
 /**
  * A fresh directory triple per test, rather than one triple wiped between them.
  *
- * `fs.rm` on a fixture root fails EBUSY on Windows -- a SQLite handle outlives `closeDb()` and
- * `releaseAll()` -- and the shared pattern in this directory swallows that with `.catch(() => {})`.
- * The wipe therefore never happens: state accumulates across tests, and a test asserting that
- * this repo holds *nothing* passes or fails on its position in the file. Sibling suites escape it
- * only because their one mutating test runs last.
+ * This is the convention `tests/global-teardown.ts` describes for "suites that need genuine
+ * per-test isolation", and this suite needs it: `fs.rm` on a fixture root fails EBUSY on Windows
+ * -- libSQL holds the `-shm` sidecar until the owning process lets go -- and that failure is
+ * swallowed **on purpose**, because a locked fixture must not fail an otherwise passing test.
  *
- * Numbering sidesteps the lock instead of fighting it. Nothing is ever removed mid-run, so
- * nothing can fail to be.
+ * The consequence is that nothing is actually removed mid-run. A suite whose tests each add a
+ * local row, and which asserts elsewhere that this repo holds *nothing*, would pass or fail on
+ * position in the file. Measured here before the counter went in: the same assertion returned
+ * `['a','b']` in a full-file run and `['b']` in isolation.
+ *
+ * Numbering sidesteps the lock rather than fighting it, and global teardown collects the roots.
  */
 let fixture = 0;
-// Per test, not per file: KNOWL_HOME is process-global and vitest shares a process across
-// files, so a literal workspace name lets one file overwrite another file's manifest.
-let ws = '';
 let HOME = '';
 let A = '';
 let B = '';
@@ -87,22 +87,21 @@ async function federate(query: string, limit: number, repos?: string[]) {
 describe('federated grouping', () => {
   beforeEach(async () => {
     fixture += 1;
-    ws = `slot${fixture}`;
     HOME = path.resolve(`./.knowl-slot-${fixture}-home`);
     A = path.resolve(`./.knowl-slot-${fixture}-a`);
     B = path.resolve(`./.knowl-slot-${fixture}-b`);
     process.env.KNOWL_HOME = HOME;
     await closeDb();
     await releaseAll();
-    await writeManifest(workspaceManifestPath(ws), createManifest(ws, null));
+    await writeManifest(workspaceManifestPath('ws'), createManifest('ws', null));
     await seed(A, 'a', [
       { title: 'Local auth note', content: 'Auth tokens expire locally.', visibility: 'repo' },
     ]);
     await seed(B, 'b', [
       { title: 'Deploy runs on tag push', content: 'Deployment is triggered by pushing a tag.', visibility: 'workspace' },
     ]);
-    await joinWorkspace({ projectRoot: A, workspaceName: ws, repoName: 'a' });
-    await joinWorkspace({ projectRoot: B, workspaceName: ws, repoName: 'b' });
+    await joinWorkspace({ projectRoot: A, workspaceName: 'ws', repoName: 'a' });
+    await joinWorkspace({ projectRoot: B, workspaceName: 'ws', repoName: 'b' });
   }, 120_000);
 
   afterEach(async () => {

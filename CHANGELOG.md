@@ -138,9 +138,15 @@ shape instead.
 The demand ledger records `localAnswered` — how often this repo is asked something only a
 neighbour holds, which nothing measured before — and marks a narrowed read with `scope`.
 
-**Breaking for callers that assume an array:** a workspace query returns an object whenever a
-linked repo contributed a row. Repos with no workspace are entirely unaffected and still return
-the bare array they always have.
+**Shipping as a minor, deliberately.** A workspace query returns an object where it returned an
+array, which is a contract change — but the affected surface is narrow enough that a major bump
+would misrepresent it. A repo with no workspace is untouched and still returns the bare array it
+always has; `resolveWorkspace` returns null and federation is never reached. Within a workspace,
+the consumers are agents reading JSON, which adapt to a labelled shape without code changes, and
+the labelling is the point of the change. A programmatic consumer parsing `knowl query` output in
+a linked repo does need to handle both shapes, and that is the cost being accepted here rather
+than hidden: check `Array.isArray` before iterating, or pass `scope: "local"` for the old shape
+unconditionally.
 
 ### A cross-repo evaluation suite that spans more than one workspace shape
 

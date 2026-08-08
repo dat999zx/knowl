@@ -12,12 +12,10 @@ import { joinWorkspace } from '../../src/workspace/membership.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 
-// Numbered per test rather than wiped between tests: the wipe fails EBUSY on Windows and the
-// shared pattern in this directory swallows it, so state accumulates. See federated-grouping.
+// Numbered per test: the convention global-teardown.ts describes for suites needing genuine
+// per-test isolation. The wipe fails EBUSY on Windows and is swallowed on purpose, so nothing is
+// removed mid-run and state would otherwise accumulate. See federated-grouping for the measurement.
 let fixture = 0;
-// Per test, not per file: KNOWL_HOME is process-global and vitest shares a process across
-// files, so a literal workspace name lets one file overwrite another file's manifest.
-let ws = '';
 let HOME = '';
 let A = '';
 let B = '';
@@ -57,22 +55,21 @@ async function federate(query: string, limit: number, extra: {
 describe('federated scope', () => {
   beforeEach(async () => {
     fixture += 1;
-    ws = `scope${fixture}`;
     HOME = path.resolve(`./.knowl-scope-${fixture}-home`);
     A = path.resolve(`./.knowl-scope-${fixture}-a`);
     B = path.resolve(`./.knowl-scope-${fixture}-b`);
     process.env.KNOWL_HOME = HOME;
     await closeDb();
     await releaseAll();
-    await writeManifest(workspaceManifestPath(ws), createManifest(ws, null));
+    await writeManifest(workspaceManifestPath('ws'), createManifest('ws', null));
     await seed(A, 'a', [
       { title: 'Local auth note', content: 'Auth tokens expire locally.', visibility: 'repo' },
     ]);
     await seed(B, 'b', [
       { title: 'Deploy runs on tag push', content: 'Deployment is triggered by pushing a tag.', visibility: 'workspace' },
     ]);
-    await joinWorkspace({ projectRoot: A, workspaceName: ws, repoName: 'a' });
-    await joinWorkspace({ projectRoot: B, workspaceName: ws, repoName: 'b' });
+    await joinWorkspace({ projectRoot: A, workspaceName: 'ws', repoName: 'a' });
+    await joinWorkspace({ projectRoot: B, workspaceName: 'ws', repoName: 'b' });
   }, 120_000);
 
   afterEach(async () => {
@@ -102,10 +99,10 @@ describe('federated scope', () => {
     // Observable proof rather than a spy: an absent peer is normally reported as skipped, and a
     // peer that is never considered produces no entry. Repointing `b` at a path that was never
     // checked out makes "reached and found missing" and "not reached" distinguishable.
-    const manifest = await readManifest(workspaceManifestPath(ws));
+    const manifest = await readManifest(workspaceManifestPath('ws'));
     manifest.repos = manifest.repos.map(entry =>
       entry.name === 'b' ? { ...entry, path: path.resolve('./.knowl-scope-never-cloned') } : entry);
-    await writeManifest(workspaceManifestPath(ws), manifest);
+    await writeManifest(workspaceManifestPath('ws'), manifest);
 
     expect((await federate('auth', 5)).skipped).toEqual([{ repo: 'b', reason: 'absent' }]);
     expect((await federate('auth', 5, { scope: 'local' })).skipped).toEqual([]);

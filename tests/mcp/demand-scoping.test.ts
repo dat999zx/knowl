@@ -13,8 +13,13 @@ import { closeDemandDb, openDemandDb, summarizeDemand } from '../../src/workspac
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/core/config.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
-// Per test: KNOWL_HOME is process-global and vitest shares a process across files, and the
-// fixture wipe fails EBUSY on Windows. See tests/workspace/federated-grouping.test.ts.
+// A numbered fixture root per test, the convention global-teardown.ts describes for "suites that
+// need genuine per-test isolation": the wipe fails EBUSY on Windows and is swallowed on purpose,
+// so nothing is removed mid-run and state would otherwise accumulate between tests.
+//
+// The workspace name is numbered too, which the other suites here do not need. The demand ledger
+// is keyed by workspace name and `closeDemandDb` is a module-level singleton, so a shared name
+// would have two tests reading one ledger. `demand-wiring.test.ts` numbers it for the same reason.
 let fixture = 0;
 let ws = '';
 let HOME = '';

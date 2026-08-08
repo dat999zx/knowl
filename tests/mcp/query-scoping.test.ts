@@ -12,12 +12,10 @@ import { joinWorkspace } from '../../src/workspace/membership.js';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/core/config.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
-// Numbered per test: the shared wipe fails EBUSY on Windows and is swallowed. See
-// tests/workspace/federated-grouping.test.ts.
+// Numbered per test: the convention global-teardown.ts describes for suites needing genuine
+// per-test isolation. The wipe fails EBUSY on Windows and is swallowed on purpose, so nothing is
+// removed mid-run and state would otherwise accumulate. See federated-grouping for the measurement.
 let fixture = 0;
-// Per test, not per file: KNOWL_HOME is process-global and vitest shares a process across
-// files, so a literal workspace name lets one file overwrite another file's manifest.
-let ws = '';
 let HOME = '';
 let A = '';
 let B = '';
@@ -90,22 +88,21 @@ const noticeOf = (response: any) => response.content.map((block: any) => block.t
 describe('knowl_query scoping', () => {
   beforeEach(async () => {
     fixture += 1;
-    ws = `qscope${fixture}`;
     HOME = path.resolve(`./.knowl-qscope-${fixture}-home`);
     A = path.resolve(`./.knowl-qscope-${fixture}-a`);
     B = path.resolve(`./.knowl-qscope-${fixture}-b`);
     process.env.KNOWL_HOME = HOME;
     await closeDb();
     await releaseAll();
-    await writeManifest(workspaceManifestPath(ws), createManifest(ws, null));
+    await writeManifest(workspaceManifestPath('ws'), createManifest('ws', null));
     await seed(A, 'a', [
       { title: 'Local auth note', content: 'Auth tokens expire locally.', visibility: 'repo' },
     ]);
     await seed(B, 'b', [
       { title: 'Deploy runs on tag push', content: 'Deployment is triggered by pushing a tag.', visibility: 'workspace' },
     ]);
-    await joinWorkspace({ projectRoot: A, workspaceName: ws, repoName: 'a' });
-    await joinWorkspace({ projectRoot: B, workspaceName: ws, repoName: 'b' });
+    await joinWorkspace({ projectRoot: A, workspaceName: 'ws', repoName: 'a' });
+    await joinWorkspace({ projectRoot: B, workspaceName: 'ws', repoName: 'b' });
   }, 120_000);
 
   afterEach(async () => {
