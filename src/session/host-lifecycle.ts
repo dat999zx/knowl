@@ -53,6 +53,7 @@ import { bootstrapAgentSession } from '../store/context-bootstrap.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
 import { describeAutoDrift, runAutoDriftCheckBestEffort, type AutoDriftResult } from '../store/drift-auto.js';
+import { describeObservedUsePromotions, promoteByObservedUseBestEffort } from '../store/tier.js';
 
 // Emit the mid-turn continuation reminder after this many consecutive non-Knowl
 // tool calls; any Knowl tool call resets the counter to zero.
@@ -708,6 +709,9 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     await closeInactiveHostSessionBindings();
     // Detection only: names what moved and the command to review it, mutating nothing.
     const drift = await runAutoDriftCheckBestEffort(projectId, input.projectRoot);
+    // After drift, and fed its candidates: an item whose files moved this session must not be
+    // promoted on the strength of a `freshness` column detection deliberately left alone.
+    const standing = await promoteByObservedUseBestEffort(projectId, drift?.candidateIds ?? []);
     const started = await bootstrapWithHandoff(projectId, input, 'session', true);
     // The warning is charged against the cap first — the same rule the subagent card
     // follows. Prepending it to an already-budgeted block pushed the session past the size
@@ -717,9 +721,13 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // only one survives truncation it should be the one saying the instructions on disk cannot be
     // trusted -- an agent acting on stale guidance gets the subsequent work wrong, where a missed
     // drift notice costs it a re-read.
+    // Standing last of the three: it reports something the store already did successfully,
+    // where the other two are warnings that the work ahead may be built on bad ground. If the
+    // cap drops a line, drop this one.
     const warning = truncateText([
       await staleGuidanceWarningBestEffort(input.projectRoot),
       describeAutoDrift(drift),
+      describeObservedUsePromotions(standing),
     ].filter(Boolean).join('\n\n'), DEFAULT_CONTEXT_MAX_CHARS);
     const recentBudget = warning
       ? Math.max(0, DEFAULT_CONTEXT_MAX_CHARS - warning.length - 2)

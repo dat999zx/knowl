@@ -8,6 +8,12 @@ export type AutoDriftResult = {
   candidateCount: number;
   /** Up to the first few candidate titles, for the session-start warning. */
   candidateTitles: string[];
+  /**
+   * Every candidate's id, not just the titled few. Detection does not flip `freshness`, so
+   * stored freshness alone cannot tell a later pass in this same session that an item's files
+   * just moved. Standing promotion reads this to refuse anything currently drifting.
+   */
+  candidateIds: string[];
   /** The watermark the diff ran from; absent when nothing was compared. */
   sinceCommit?: string;
 };
@@ -49,13 +55,13 @@ export async function runAutoDriftCheck(projectId: string, projectRoot: string):
   })).rows[0];
   const watermark = row ? String(row.last_checked_commit) : null;
 
-  if (watermark === current) return { checked: true, candidateCount: 0, candidateTitles: [], sinceCommit: watermark };
+  if (watermark === current) return { checked: true, candidateCount: 0, candidateTitles: [], candidateIds: [], sinceCommit: watermark };
 
   // First run learns the baseline and reports nothing: diffing from the repository's
   // root commit would announce most of the store as drift candidates in one wall.
   if (!watermark) {
     await writeWatermark(projectRoot, current);
-    return { checked: false, candidateCount: 0, candidateTitles: [] };
+    return { checked: false, candidateCount: 0, candidateTitles: [], candidateIds: [] };
   }
 
   let changedFiles: string[];
@@ -65,11 +71,12 @@ export async function runAutoDriftCheck(projectId: string, projectRoot: string):
     // The watermark commit no longer exists — rebase, aggressive gc, a rewritten branch.
     // Re-baseline rather than guess; the next real change is caught from the new baseline.
     await writeWatermark(projectRoot, current);
-    return { checked: false, candidateCount: 0, candidateTitles: [] };
+    return { checked: false, candidateCount: 0, candidateTitles: [], candidateIds: [] };
   }
 
   let candidateCount = 0;
   let candidateTitles: string[] = [];
+  let candidateIds: string[] = [];
   if (changedFiles.length > 0) {
     const result = await checkKnowledgeDrift(projectId, {
       sinceCommit: watermark,
@@ -79,10 +86,11 @@ export async function runAutoDriftCheck(projectId: string, projectRoot: string):
     });
     candidateCount = result.candidates.length;
     candidateTitles = result.candidates.slice(0, WARNING_TITLE_LIMIT).map(candidate => candidate.title);
+    candidateIds = result.candidates.map(candidate => candidate.itemId);
   }
 
   await writeWatermark(projectRoot, current);
-  return { checked: true, candidateCount, candidateTitles, sinceCommit: watermark };
+  return { checked: true, candidateCount, candidateTitles, candidateIds, sinceCommit: watermark };
 }
 
 /** Hooks must never fail the host: any error reads as "no drift information this session". */

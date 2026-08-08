@@ -54,7 +54,7 @@ describe('automatic drift check', () => {
 
   it('learns the baseline on first run and reports nothing', async () => {
     const first = await runAutoDriftCheck(projectId, ROOT);
-    expect(first).toEqual({ checked: false, candidateCount: 0, candidateTitles: [] });
+    expect(first).toEqual({ checked: false, candidateCount: 0, candidateTitles: [], candidateIds: [] });
 
     const second = await runAutoDriftCheck(projectId, ROOT);
     expect(second?.checked).toBe(true);
@@ -79,6 +79,9 @@ describe('automatic drift check', () => {
     expect(result?.checked).toBe(true);
     expect(result?.candidateCount).toBe(1);
     expect(result?.candidateTitles).toEqual(['Billing module']);
+    // Ids carry every candidate, not just the titled few — standing promotion consumes this
+    // list to refuse an item whose files moved, and a truncated list would let one slip past.
+    expect(result?.candidateIds).toEqual([item.id]);
 
     // Detection only: freshness is untouched on both candidate and bystander.
     const rows = await getClient().execute({
@@ -98,7 +101,7 @@ describe('automatic drift check', () => {
       args: ['0000000000000000000000000000000000000000', ROOT],
     });
     const result = await runAutoDriftCheck(projectId, ROOT);
-    expect(result).toEqual({ checked: false, candidateCount: 0, candidateTitles: [] });
+    expect(result).toEqual({ checked: false, candidateCount: 0, candidateTitles: [], candidateIds: [] });
   });
 
   it('returns null outside a git repository', async () => {
@@ -116,9 +119,10 @@ describe('automatic drift check', () => {
 
   it('renders the warning with the pinned review command, only when something matched', () => {
     expect(describeAutoDrift(null)).toBeUndefined();
-    expect(describeAutoDrift({ checked: true, candidateCount: 0, candidateTitles: [], sinceCommit: 'abc' })).toBeUndefined();
+    expect(describeAutoDrift({ checked: true, candidateCount: 0, candidateTitles: [], candidateIds: [], sinceCommit: 'abc' })).toBeUndefined();
     const warning = describeAutoDrift({
       checked: true, candidateCount: 4, candidateTitles: ['Billing module', 'Rate limits'],
+      candidateIds: ['a', 'b', 'c', 'd'],
       sinceCommit: 'abcdef0123456789',
     });
     expect(warning).toContain('4 knowledge item(s)');

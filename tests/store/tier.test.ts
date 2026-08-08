@@ -5,7 +5,15 @@ import { sql } from 'drizzle-orm';
 import { closeDb, getClient, getDb, initDb } from '../../src/store/database.js';
 import { scoreCandidates } from '../../src/store/agent-query.js';
 import { recordKnowledgeFeedback } from '../../src/store/access-feedback.js';
-import { applyFeedbackToTier, VERIFY_THRESHOLD } from '../../src/store/tier.js';
+import {
+  applyFeedbackToTier,
+  OBSERVED_USE_MAX_PER_RUN,
+  OBSERVED_USE_MIN_DAYS,
+  OBSERVED_USE_MIN_QUESTIONS,
+  promoteByObservedUse,
+  VERIFY_THRESHOLD,
+} from '../../src/store/tier.js';
+import { recordKnowledgeAccess } from '../../src/store/access-feedback.js';
 import * as repo from '../../src/store/repository.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
 
@@ -208,5 +216,185 @@ describe('evidence tier and provenance', () => {
     const mapped = await repo.getKnowledgeItem(item.id);
     expect(mapped?.tier).toBe('verified');
     expect(mapped?.provenance).toBe('inferred');
+  });
+});
+
+// Its own root: the suite above holds an open handle on its database for the whole file, and
+// on Windows re-initialising the same path fails with EBUSY rather than silently reopening.
+const OBSERVED_ROOT = path.resolve('.knowl-observed-use-test');
+
+describe('standing earned by observed use', () => {
+  let projectId = '';
+
+  beforeAll(async () => {
+    await fs.rm(OBSERVED_ROOT, { recursive: true, force: true });
+    await fs.mkdir(path.join(OBSERVED_ROOT, '.knowl'), { recursive: true });
+    await initDb(OBSERVED_ROOT);
+    projectId = (await repo.createProject(OBSERVED_ROOT, 'Observed use test')).id;
+  });
+
+  beforeEach(async () => {
+    const db = getDb() as any;
+    await db.run(sql`DELETE FROM knowledge_access`);
+    await db.run(sql`DELETE FROM knowledge_items`);
+    // Commits too, unlike the suite above: this one asserts on the commit log itself, and a
+    // commit left by the previous test reads as a second promotion from this one.
+    // knowledge_commit_items cascades, so the index clears with it.
+    await db.run(sql`DELETE FROM knowledge_commits`);
+  });
+
+  afterAll(async () => {
+    await closeDb();
+    await fs.rm(OBSERVED_ROOT, { recursive: true, force: true }).catch(() => {});
+  });
+
+  async function seedItem(title: string, options: { paths?: string[] | null } = {}) {
+    return repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title,
+      content: `${title} — content.`,
+      affectedPaths: options.paths === undefined ? ['src/store/tier.ts'] : options.paths,
+    });
+  }
+
+  /**
+   * One retrieval per day, each asking a different question, anchored to the item's CURRENT
+   * `tier_since` rather than to the wall clock. The pass counts only from that boundary, and
+   * an edit moves it — so wall-clock offsets would leave the pre-edit rows sitting after the
+   * new boundary and the reset test would pass an item it should have refused. Reading the
+   * boundary each call is what makes "an edit restarts the climb" actually testable.
+   */
+  async function seedRetrievals(itemId: string, days: number, options: { query?: string } = {}) {
+    const since = Date.parse((await repo.getKnowledgeItem(itemId))!.tierSince!);
+    for (let day = 0; day < days; day++) {
+      await recordKnowledgeAccess({
+        itemId,
+        query: options.query ?? `distinct question ${day}`,
+        surface: 'mcp',
+        rank: 0,
+        retrievedAt: new Date(since + day * 86_400_000 + 60_000).toISOString(),
+      });
+    }
+  }
+
+  it('promotes an item the store watched answer distinct questions across distinct days', async () => {
+    const item = await seedItem('Recurring fact');
+    await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
+
+    const result = await promoteByObservedUse(projectId);
+    expect(result.promoted).toEqual([{ itemId: item.id, tier: 'verified', reason: 'promoted' }]);
+    expect(result.deferred).toBe(0);
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('verified');
+  });
+
+  it('writes a knowledge commit, so every automatic promotion stays auditable', async () => {
+    const item = await seedItem('Audited fact');
+    await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
+    await promoteByObservedUse(projectId);
+
+    const row = (await getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM knowledge_commits WHERE message LIKE 'Promote to verified by observed use%'`,
+    })).rows[0];
+    expect(Number(row.n)).toBe(1);
+  });
+
+  // The falsifiability gate, and the reason the whole feature is defensible. An item with no
+  // affected paths is unreachable by the drift checker, so nothing was ever in a position to
+  // contradict it — promoting it on use alone would be confidence accumulating without ground
+  // truth, which is the failure the feedback path was built to avoid.
+  it('refuses an item with no affected paths, however often it is retrieved', async () => {
+    const item = await seedItem('Unfalsifiable fact', { paths: null });
+    await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS + 3);
+
+    expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+  });
+
+  it('refuses a burst inside one day — recurrence is days, not hits', async () => {
+    const item = await seedItem('Bursty fact');
+    const oneMoment = new Date(Date.parse(item.tierSince!) + 60_000).toISOString();
+    for (let hit = 0; hit < 20; hit++) {
+      await recordKnowledgeAccess({
+        itemId: item.id, query: `question ${hit}`, surface: 'mcp', rank: 0, retrievedAt: oneMoment,
+      });
+    }
+
+    expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
+  });
+
+  it('refuses an item that only ever answered one question', async () => {
+    const item = await seedItem('One-question fact');
+    await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS + 2, { query: 'the only question ever asked' });
+
+    expect(OBSERVED_USE_MIN_QUESTIONS).toBeGreaterThan(1);
+    expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
+  });
+
+  it('refuses anything that ever caused a correction', async () => {
+    const item = await seedItem('Once-wrong fact');
+    await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
+    await recordKnowledgeFeedback({ itemId: item.id, used: true, causedCorrection: true });
+
+    expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
+  });
+
+  it('refuses an item whose files moved this session, whatever the freshness column says', async () => {
+    const item = await seedItem('Drifting fact');
+    await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
+    // Detection does not flip freshness, so the column still reads fresh — which is exactly
+    // the state that would wrongly promote if the live drift result were not consulted.
+    expect((await repo.getKnowledgeItem(item.id))?.freshness).toBe('fresh');
+
+    expect((await promoteByObservedUse(projectId, [item.id])).promoted).toEqual([]);
+    expect((await promoteByObservedUse(projectId, [])).promoted).toHaveLength(1);
+  });
+
+  it('refuses an item already flagged needs_review', async () => {
+    const item = await seedItem('Stale fact');
+    await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
+    await repo.updateKnowledgeItem(item.id, { freshness: 'needs_review' });
+
+    expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
+  });
+
+  it('caps a run and reports the remainder rather than silently dropping it', async () => {
+    const overflow = 3;
+    for (let n = 0; n < OBSERVED_USE_MAX_PER_RUN + overflow; n++) {
+      const item = await seedItem(`Eligible fact ${n}`);
+      await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
+    }
+
+    const first = await promoteByObservedUse(projectId);
+    expect(first.promoted).toHaveLength(OBSERVED_USE_MAX_PER_RUN);
+    expect(first.deferred).toBe(overflow);
+
+    // The backlog drains on later runs instead of stranding.
+    const second = await promoteByObservedUse(projectId);
+    expect(second.promoted).toHaveLength(overflow);
+    expect(second.deferred).toBe(0);
+    expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
+  });
+
+  it('counts only from tier_since, so an edit restarts the climb', async () => {
+    const item = await seedItem('Reworded recurring fact');
+    // The climb has to sit in the PAST for this to test anything. An edit moves `tier_since`
+    // forward by milliseconds, so rows seeded from the original boundary would still clear the
+    // new one and the test would pass an item it is supposed to refuse — which is exactly how
+    // it failed the first time it ran.
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET tier_since = ? WHERE id = ?',
+      args: [new Date(Date.now() - 30 * 86_400_000).toISOString(), item.id],
+    });
+    await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
+    expect((await promoteByObservedUse(projectId)).promoted).toHaveLength(1);
+
+    await repo.updateKnowledgeItem(item.id, { content: 'A materially different claim.' });
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+    // The retrievals above confirmed wording this edit replaced; they must not carry over.
+    expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
+
+    // Use of the new wording earns it back.
+    await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
+    expect((await promoteByObservedUse(projectId)).promoted).toHaveLength(1);
   });
 });
