@@ -4,7 +4,9 @@
 
 **Goal:** A `knowl_query` from a repo that has never touched a subject must not return another repo's answer in a shape indistinguishable from its own.
 
-**Architecture:** Local candidates fill result slots before peer candidates, by ownership count rather than by score. Output is a bare JSON array when every returned row is local, and an object keyed by repo when any row is foreign — so the response *shape* carries the attribution. `scoreCandidates` is not modified: it runs once over the union exactly as today, and slot allocation plus grouping happen after it returns, inside `queryFederated`.
+**Architecture:** Relevance decides which rows reach the page, exactly as today. Those rows are then partitioned by owning repo: a bare JSON array when every returned row is local, an object keyed by repo when any row is foreign — so the response *shape* carries the attribution. `scoreCandidates` is not modified and is not even called differently; grouping happens after it returns, inside `queryFederated`.
+
+> **Task 1 was implemented, measured, and corrected.** The original architecture gave local candidates every slot before any peer's. Measured against `docs/evals/cross-repo-archetypes.json` it collapsed Recall@3 on all five archetypes (asymmetric-trio 1.0 → 0.361, monorepo-split 1.0 → 0.528) — `perRepoCap` admits ten candidates per repo whatever their quality, so local nearly always held `limit` weak matches and peers never reached the page. Attribution moved to the shape alone, which costs two eval cells instead of the answer. Tasks 2–8 below are unaffected in substance; where they say "slot allocation", read "grouping".
 
 **Tech Stack:** TypeScript (ESM, `.js` import specifiers), vitest, SQLite via libsql, MCP SDK.
 
@@ -17,7 +19,8 @@
 - **The first MCP content block stays parseable JSON.** A bare array in the flat case, an object in the grouped case. Notices are always separate blocks.
 - **Peer reads stay read-only and `visibility: 'workspace'`-filtered in SQL.** Nothing in this plan touches `openPeerStore` or the visibility predicate.
 - **Local is always the first group**, including when it is empty. Its position is what says "this is your repo, and this is what it had."
-- Run `npm.cmd test` and `npm.cmd run typecheck` before claiming any task complete. Typecheck has a known 15-error baseline — do not treat those as new failures, but do not add to them.
+- Run `npm.cmd test` and `npm.cmd run typecheck` before claiming any task complete. **Both are clean on this branch** — measured 2026-08-08: 253 files / 2206 passed / 4 skipped / 0 failed, and `tsc --noEmit` reports 0 errors. An earlier draft of this plan cited a 15-error typecheck baseline carried over from the 2.7.0 release notes; it no longer holds, so any typecheck error is this work's.
+- **In a fresh worktree, `npm run build` before `npm test`.** Several suites spawn `./dist/index.js` (e.g. `tests/store/retention.test.ts:175`) and `dist/` is gitignored, so without a build 19 files / 67 tests fail in a way that reads as broken code rather than a missing prerequisite.
 
 ---
 

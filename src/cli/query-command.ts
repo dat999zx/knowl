@@ -3,7 +3,7 @@ import { loadConfig } from '../core/config.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { rankKnowledge, type RankOptions } from '../store/agent-query.js';
 import { queryKnowledgeBase } from '../store/queries.js';
-import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
+import { flattenGroups, queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 
 /**
@@ -97,7 +97,8 @@ export async function runCliQuery(input: {
     const federated = await queryFederated({
       workspace: active, query: input.query ?? '', limit, vector,
     });
-    return { items: federated.items.map(withRankerVerdict), skipped: federated.skipped };
+    // Flattened local-first for now; grouped rendering lands with the CLI printer.
+    return { items: flattenGroups(federated).map(withRankerVerdict), skipped: federated.skipped };
   }
 
   const ranked = await rankKnowledge(input.projectId, { query: input.query, limit, vector });

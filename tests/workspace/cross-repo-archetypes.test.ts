@@ -8,7 +8,7 @@ import { createKnowledgeItem } from '../../src/store/repository.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
 import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
 import { evaluateRetrieval, type RetrievalEvaluationCase } from '../../src/store/retrieval-evaluation.js';
-import { queryFederated } from '../../src/workspace/federated-query.js';
+import { flattenGroups, queryFederated } from '../../src/workspace/federated-query.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
@@ -170,10 +170,10 @@ async function scoreAll(semantic: boolean) {
         workspace: active, query: testCase.query, limit: testCase.limit, vector,
       });
       return {
-        itemIds: federated.items.map(item => item.id),
+        itemIds: flattenGroups(federated).map(item => item.id),
         staleItemIds: [],
         latencyMs: Date.now() - started,
-        contextChars: federated.items.reduce((sum, item) => sum + item.title.length + item.content.length, 0),
+        contextChars: flattenGroups(federated).reduce((sum, item) => sum + item.title.length + item.content.length, 0),
       };
     } finally {
       await closeDb();
@@ -237,7 +237,7 @@ describe('cross-repo retrieval across workspace archetypes', () => {
           const federated = await queryFederated({
             workspace: active, query: spec.query, limit: Math.max(spec.limit, 10),
           });
-          for (const item of federated.items) {
+          for (const item of flattenGroups(federated)) {
             const fixtureId = idToFixture.get(item.id);
             if (!fixtureId) continue;
             const ownerRepo = privateTo.get(fixtureId)!;

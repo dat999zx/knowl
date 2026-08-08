@@ -9,7 +9,7 @@ import { queryKnowledgeForAgent } from '../../src/store/agent-query.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
 import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
 import { evaluateRetrieval, type RetrievalEvaluationCase } from '../../src/store/retrieval-evaluation.js';
-import { queryFederated } from '../../src/workspace/federated-query.js';
+import { flattenGroups, queryFederated } from '../../src/workspace/federated-query.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
@@ -136,10 +136,10 @@ describe('cross-repo retrieval', () => {
           workspace: active, query: testCase.query, limit: testCase.limit, vector,
         });
         return {
-          itemIds: federated.items.map(item => item.id),
+          itemIds: flattenGroups(federated).map(item => item.id),
           staleItemIds: [],
           latencyMs: Date.now() - started,
-          contextChars: federated.items.reduce((sum, item) => sum + item.title.length + item.content.length, 0),
+          contextChars: flattenGroups(federated).reduce((sum, item) => sum + item.title.length + item.content.length, 0),
         };
       } finally {
         await closeDb();
@@ -206,7 +206,7 @@ describe('cross-repo retrieval', () => {
       const local = await queryKnowledgeForAgent('local', { query, limit: 10, surface: 'eval' });
       const active = (await resolveWorkspace(root))!;
       const federated = await queryFederated({ workspace: active, localItems: local, query, limit: 5 });
-      expect(federated.items.some(item => item.id === realIds.get('server-private'))).toBe(false);
+      expect(flattenGroups(federated).some(item => item.id === realIds.get('server-private'))).toBe(false);
     } finally {
       await closeDb();
     }
@@ -221,7 +221,7 @@ describe('cross-repo retrieval', () => {
       const local = await queryKnowledgeForAgent('local', { query: 'retry policy', limit: 10, surface: 'eval' });
       const active = (await resolveWorkspace(root))!;
       const federated = await queryFederated({ workspace: active, localItems: local, query: 'retry policy', limit: 1 });
-      expect(federated.items[0].repo).toBe('web');
+      expect(flattenGroups(federated)[0].repo).toBe('web');
     } finally {
       await closeDb();
     }

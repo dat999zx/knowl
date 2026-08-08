@@ -5,7 +5,7 @@ import { captureChangeWatermark, consumeChangeNotice } from './change-notice.js'
 import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem } from '../workspace/ownership.js';
-import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
+import { flattenGroups, queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { recordDemandEventBestEffort } from '../workspace/demand-ledger.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
@@ -765,7 +765,10 @@ export function registerTools(
             vector,
           });
           skippedRepos = federated.skipped;
-          resolvedItems = federated.items;
+          // Flattened for now: local group first, then peers. The grouped shape reaches the
+          // response in a later change; what lands here is the ordering half of slot priority,
+          // which is already the thing that stops a peer row outranking a local one.
+          resolvedItems = flattenGroups(federated);
         }
 
         const withStaleStatus = async (itemId: string) => Promise.all((await listEvidenceForItem(itemId)).map(async evidence => ({

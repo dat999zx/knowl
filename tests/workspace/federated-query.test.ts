@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
-import { queryFederated } from '../../src/workspace/federated-query.js';
+import { flattenGroups, queryFederated } from '../../src/workspace/federated-query.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
@@ -68,6 +68,15 @@ async function federate(query: string, limit: number, repos?: string[]) {
   }
 }
 
+/**
+ * The one-ranking view, for assertions about what federation *finds* rather than how it shapes
+ * what it found. Shape is `federated-slot-priority.test.ts`'s subject; these tests predate it and
+ * are about selection, visibility and attribution.
+ */
+async function items(query: string, limit: number, repos?: string[]) {
+  return flattenGroups(await federate(query, limit, repos));
+}
+
 describe('federated read', () => {
   beforeEach(async () => {
     process.env.KNOWL_HOME = HOME;
@@ -91,8 +100,8 @@ describe('federated read', () => {
   });
 
   it('returns a peer workspace-visible item, labelled with its repo', async () => {
-    const result = await federate('auth', 5);
-    const fromB = result.items.find(item => item.repo === 'b');
+    const found = await items('auth', 5);
+    const fromB = found.find(item => item.repo === 'b');
     expect(fromB).toBeDefined();
     expect(fromB!.title).toBe('Auth token TTL is fifteen minutes');
   });
@@ -102,30 +111,30 @@ describe('federated read', () => {
     // "auth token expire" missed a peer item titled "Auth token TTL is fifteen minutes",
     // because one filler word breaks the phrase. Agents query in keywords, which is
     // exactly the shape that failed.
-    const result = await federate('auth token expire', 5);
-    expect(result.items.some(item => item.repo === 'b' && item.title.includes('Auth token TTL'))).toBe(true);
+    const found = await items('auth token expire', 5);
+    expect(found.some(item => item.repo === 'b' && item.title.includes('Auth token TTL'))).toBe(true);
   });
 
   it('orders peer candidates by how many query tokens they match', async () => {
-    const result = await federate('auth token TTL fifteen minutes', 5);
-    const fromPeer = result.items.filter(item => item.repo === 'b');
+    const found = await items('auth token TTL fifteen minutes', 5);
+    const fromPeer = found.filter(item => item.repo === 'b');
     expect(fromPeer[0].title).toBe('Auth token TTL is fifteen minutes');
   });
 
   it('never returns a peer repo-private item', async () => {
-    const result = await federate('auth', 5);
-    expect(result.items.some(item => item.title === 'Auth scratch note')).toBe(false);
+    const found = await items('auth', 5);
+    expect(found.some(item => item.title === 'Auth scratch note')).toBe(false);
   });
 
   it('returns local repo-private items, which only stay out of OTHER repos', async () => {
-    const result = await federate('auth', 5);
-    expect(result.items.some(item => item.title === 'Local auth note' && item.repo === 'a')).toBe(true);
+    const found = await items('auth', 5);
+    expect(found.some(item => item.title === 'Local auth note' && item.repo === 'a')).toBe(true);
   });
 
   it('filters hard on origin repo, not on where an item might apply', async () => {
-    const result = await federate('auth', 5, ['b']);
-    expect(result.items.length).toBeGreaterThan(0);
-    expect(result.items.every(item => item.repo === 'b')).toBe(true);
+    const found = await items('auth', 5, ['b']);
+    expect(found.length).toBeGreaterThan(0);
+    expect(found.every(item => item.repo === 'b')).toBe(true);
   });
 
   it('reports a repo name that matches nothing, instead of quietly not searching it', async () => {
@@ -134,14 +143,14 @@ describe('federated read', () => {
     // draw from a misspelling. The name is surfaced so the mistake is visible in the answer.
     const result = await federate('auth', 5, ['bee']);
 
-    expect(result.items).toEqual([]);
+    expect(flattenGroups(result)).toEqual([]);
     expect(result.skipped).toEqual([{ repo: 'bee', reason: 'unknown' }]);
   });
 
   it('still searches the repos that do resolve when one name is wrong', async () => {
     const result = await federate('auth', 5, ['b', 'bee']);
 
-    expect(result.items.some(item => item.repo === 'b')).toBe(true);
+    expect(flattenGroups(result).some(item => item.repo === 'b')).toBe(true);
     expect(result.skipped).toEqual([{ repo: 'bee', reason: 'unknown' }]);
   });
 
@@ -160,8 +169,8 @@ describe('federated read', () => {
   });
 
   it('never returns more than the limit, however many repos are linked', async () => {
-    const result = await federate('auth', 1);
-    expect(result.items.length).toBe(1);
+    const found = await items('auth', 1);
+    expect(found.length).toBe(1);
   });
 
   it('leaves the peer database byte-identical', async () => {
@@ -176,8 +185,8 @@ describe('federated read', () => {
     // The drift this replaces: the old peer scanner built items by hand and attached no
     // explanation, so peer results could not be compared to local ones on anything but
     // position, and none of the recency, confidence or freshness boosts applied.
-    const result = await federate('auth', 5);
-    const fromPeer = result.items.find(item => item.repo === 'b');
+    const found = await items('auth', 5);
+    const fromPeer = found.find(item => item.repo === 'b');
 
     expect(fromPeer).toBeDefined();
     expect(fromPeer!.explanation?.contributions).toHaveProperty('recency');
@@ -196,8 +205,8 @@ describe('federated read', () => {
       { title: 'Shared auth policy', content: 'Auth policy is identical in both repos.', visibility: 'workspace' },
     ]);
 
-    const result = await federate('auth', 3);
-    const titles = result.items.map(item => item.title);
+    const found = await items('auth', 3);
+    const titles = found.map(item => item.title);
 
     expect(titles).toHaveLength(3);
     expect(new Set(titles).size).toBe(3);

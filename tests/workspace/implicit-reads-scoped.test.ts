@@ -12,7 +12,7 @@ import { startWorkLoop } from '../../src/store/work-loop.js';
 import { synthesizeKnowledge } from '../../src/store/synthesis.js';
 import { configuredNamespaces } from '../../src/store/namespaces.js';
 import { resolveStorage } from '../../src/store/storage-roles.js';
-import { queryFederated } from '../../src/workspace/federated-query.js';
+import { flattenGroups, queryFederated } from '../../src/workspace/federated-query.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
@@ -128,6 +128,6 @@ describe('federation is opt-in', () => {
     const active = (await resolveWorkspace(A))!;
     const federated = await queryFederated({ workspace: active, localItems: local, query: 'auth', limit: 5 });
     await closeDb();
-    expect(federated.items.some(item => item.repo === 'b')).toBe(true);
+    expect(flattenGroups(federated).some(item => item.repo === 'b')).toBe(true);
   });
 });

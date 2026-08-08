@@ -66,21 +66,44 @@ it. A floor-gated branch would be blind in precisely the case it was built for.
 
 ## Design
 
-**Slot priority by ownership, not by score.** Local candidates fill result slots first, in their own
-order. Peers fill only what is left, grouped by repo. Output is flat if and only if every returned
-row is local.
+> **Superseded once, by measurement.** This section originally specified *slot priority by
+> ownership*: local candidates fill every result slot before any peer's. It was implemented and
+> measured against `docs/evals/cross-repo-archetypes.json` on 2026-08-08, and it fails —
+> Recall@3 collapsed on **all five** archetypes (asymmetric-trio 1.0 → 0.361, monorepo-split
+> 1.0 → 0.528, client-projects 1.0 → 0.694, polyglot-services 1.0 → 0.600, fork-siblings
+> 0.944 → 0.639). The gold answer was not ranking lower; it was leaving the page.
+>
+> **Cause.** `perRepoCap` admits ten candidates per repo whatever their quality, so a local repo
+> nearly always holds `limit` weak FTS matches and peers won no slot at all.
+>
+> **The reasoning error.** The abstention measurements say no *absolute threshold* can separate
+> "weak local answer" from "no local answer". They say nothing against ranking a local row
+> against a peer row inside one scored union — which is precisely the comparison `corpusBest`
+> (per-corpus lexical normalization) and `lexicalCoverage` ("corpus-independent by construction,
+> which is what makes two repos' lexical evidence comparable at all") exist to make valid. A
+> limit on what a threshold can decide was over-read as a limit on what a ranking can decide.
+>
+> Attribution belongs in the response **shape**, where it costs two eval cells, not in slot
+> allocation, where it costs the answer.
 
-No threshold, no per-model constant, no verdict. The rule reads a count, and counts are reliable
-where scores measurably are not. It behaves identically with vectors on or off, so the
-lexical-only path stops being a degraded special case.
+**Grouping by owning repo. Relevance still decides the page.**
+
+`scoreCandidates` runs once over the union and its top `limit` rows are the page, exactly as
+before. Those rows are then partitioned by owning repo. Output is a bare array when every
+returned row is local, and an object keyed by repo when any row is foreign.
+
+Groups are ordered by their best row, so a peer holding the better answer is not buried behind
+this repo's weaker one. The single exception is an **empty** local group, which is pinned first:
+it ranks nowhere, so the pin costs no position, and it is the entire "your repo has nothing on
+this" signal.
 
 ### Behaviour
 
 | Local produced | Response shape |
 | --- | --- |
-| `limit` rows (fills it) | flat array, unchanged, plus a pointer block naming peers with matches |
-| 1..`limit-1` rows | grouped; local key first, peers filling the remainder |
-| 0 rows | grouped; local key present and empty |
+| every returned row | flat array, unchanged, plus a pointer block naming peers with matches |
+| some rows, peers took others | grouped; groups ordered by best row |
+| no rows | grouped; local key present, empty, and first |
 
 Flat, as today, with no `repo` field on rows:
 
@@ -158,12 +181,11 @@ The comparability argument also applies to the *reader*, not only the code. `sco
 on every row, and an agent reading a grouped response sees two groups' numbers side by side and
 will compare them whether or not the ranker did.
 
-**Consequence, and it shrinks the change:** `scoreCandidates` is not modified at all. It runs once
-over the union exactly as today — global alpha, page-wide rescale, per-corpus lexical
-normalization via `corpusBest`, the cross-corpus abstention verdict, union recency. Slot
-allocation and grouping happen after it returns, in `queryFederated`, over the scored and ordered
-list. The only call-site change is a `limit` large enough that slot allocation has rows to
-allocate.
+**Consequence, and it shrinks the change:** `scoreCandidates` is not modified at all, and is not
+even called differently. It runs once over the union exactly as today — global alpha, page-wide
+rescale, per-corpus lexical normalization via `corpusBest`, the cross-corpus abstention verdict,
+union recency, `limit` unchanged. Grouping happens after it returns, in `queryFederated`, over the
+page it already chose.
 
 The cross-repo lexical problem this design might otherwise have had to solve is already solved
 inside that pass: `corpusBest` normalizes per corpus and `lexicalCoverage` — "corpus-independent
@@ -173,8 +195,8 @@ by construction, which is what makes two repos' lexical evidence comparable at a
 ## What the relevance floor keeps doing
 
 Nothing is replaced. The floor's current job — a verdict rendered as the `NO CONFIDENT MATCH`
-block (`src/mcp/tools.ts:890`) — is untouched. It does not drop rows and does not reorder; slot
-priority decides ordering and shape and produces no verdict. The two do not overlap.
+block (`src/mcp/tools.ts:890`) — is untouched. It does not drop rows and does not reorder;
+grouping decides shape and produces no verdict. The two do not overlap.
 
 One knock-on, revised from an earlier draft: `abstained` does **not** become a per-group verdict.
 It is computed over the union with cross-corpus logic that exists to fix a real bug
@@ -187,7 +209,8 @@ without the verdict being recomputed anywhere.
 
 | # | Decision | Why |
 | --- | --- | --- |
-| 1 | Slot priority is count-based, never score-based | The three measurements above; no threshold can gate this |
+| 1 | Relevance decides the page; grouping decides the shape | Ownership priority was measured and collapsed Recall@3 on all five archetypes |
+| 1b | Groups ordered by best row, empty local group pinned first | An empty group ranks nowhere, so pinning costs no position; a non-empty one must not outrank a better answer |
 | 2 | Flat output iff every row is local | The shape is the signal; a notice alongside foreign rows is skippable |
 | 3 | Peers are still read on the default path | Keeps the pointer free and the demand ledger whole |
 | 4 | Pointer block carries repo names and counts, never content | Preserves discoverability without reintroducing silent substitution |
@@ -197,12 +220,21 @@ without the verdict being recomputed anywhere.
 
 ## Accepted costs
 
-**A weak local row can displace a strong peer row.** With local filling slots first, a
-low-relevance local hit takes a slot a genuinely useful shared fact would have had. The pointer
-block is what recovers it — the peer is named and counted, and one re-query with `repos` reads it.
+**Grouping cannot interleave, and that costs two eval cells.** Bunching each repo's rows together
+is the whole mechanism, and it is incompatible with strict relevance order: with `limit: 5` and a
+relevance order of `[local, gold, local, local, local]`, grouping yields `[local ×4, gold]`, so an
+answer that sat at rank 2 sits at rank 5 — still on the page, outside the top 3. Measured cost on
+`cross-repo-archetypes`: positional polyglot-services MRR 0.9 → 0.8916 and semantic
+monorepo-split Recall@3 1.0 → 0.9722, roughly one case each. The other **18 of 20 cells are
+byte-identical**, because page membership never changed. Recorded in the baseline's
+`groupingCost` note.
 
-**Local's weak row can sit above better peer rows.** Local returns one weak row against `limit` 3,
-so the grouped response leads with that row and follows with two solid peer rows. This is
+**A peer match can be left off the page entirely.** `limit` is `limit`, and a peer row that loses
+to local rows on relevance is not shown. The pointer block is what recovers it — the peer is named
+and counted, and one re-query with `repos` reads it.
+
+**Local's weak row can sit above better peer rows** *within the flattened view*, whenever local's
+best row outscores the peer's best and so takes the first group. This is
 deliberate: reading peer rows as this repo's answer is the failure being eliminated; reading a weak
 local row as weak is not a failure.
 
@@ -231,22 +263,22 @@ modified — see "Scoring stays a single union pass" above. Confined to the back
   handling — `affectedPaths` and evidence stripped (`src/mcp/tools.ts:804-821`) — is unchanged.
 - `src/cli/query-command.ts` shares the engine and needs the same grouped rendering.
 - The demand ledger's `servedRepo` and `contributed` still derive from groups. Add whether local
-  filled its slots: the first direct measurement of how often this fires.
+  contributed the top row: the first direct measurement of how often this fires.
 
 **Evals.** `docs/evals/cross-repo-archetypes.json` — 92 cases over 5 archetypes — scores MRR, R@3
-and forbidden against a single fused ranking. The suite needs a defined flattening (local group
-first, then peers in group order) to keep MRR meaning what it meant.
+and forbidden against a single ranking, so the suite takes `flattenGroups`: groups in order, rows
+in the ranker's order within each.
 
-Numbers will move **only from slot allocation**, not from scoring: relevance, priors and ordering
-within the union are byte-identical to today, so any case whose gold answer is local and already
-in the page is untouched. What moves is cases where a foreign row currently outranks a local one.
-That is a smaller and better-understood delta than a scoring change would produce, and it is
-re-baselining rather than regression — but it must be recorded as such, so the shift is not read
+Measured 2026-08-08: **18 of 20 cells byte-identical**, two moved by roughly one case each
+(positional polyglot-services MRR 0.9 → 0.8916, semantic monorepo-split Recall@3 1.0 → 0.9722).
+Page membership never changed, so nothing moved from scoring; the two that moved are grouping's
+inability to interleave. Recorded in the baseline's `groupingCost` note so the shift is not read
 later as a retrieval fault.
 
-**Tests.** Local fills all slots → flat plus pointer. Local partial → grouped, local first. Local
-zero → grouped with an empty local key. `scope: "local"` → peer databases never opened.
-`repos` and `scope` together → `repos` wins. Ledger event recorded under `scope: "local"`.
+**Tests.** Every row local → flat plus pointer. Mixed → grouped, groups ordered by best row.
+Local empty → grouped with an empty local key, pinned first. Rows of one repo never interleaved
+with another's. `scope: "local"` → peer databases never opened. `repos` and `scope` together →
+`repos` wins. Ledger event recorded under `scope: "local"`.
 
 ## What this design does not do
 

@@ -7,7 +7,7 @@ import * as repo from '../../src/store/repository.js';
 import { createKnowledgeItem } from '../../src/store/repository.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
 import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
-import { queryFederated } from '../../src/workspace/federated-query.js';
+import { flattenGroups, queryFederated } from '../../src/workspace/federated-query.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
@@ -96,15 +96,15 @@ describe('federated abstention', () => {
     // rows still come back, labelled.
     const result = await federate('auth token expiry', 0.99);
 
-    expect(result.items.length).toBeGreaterThan(0);
-    expect(result.items.every(item => item.explanation?.abstained === true)).toBe(true);
+    expect(flattenGroups(result).length).toBeGreaterThan(0);
+    expect(flattenGroups(result).every(item => item.explanation?.abstained === true)).toBe(true);
   }, 180_000);
 
   it('marks a peer result too, not just the local ones', async () => {
     // The half a local-only fix would miss. A peer row left unlabelled on an abstained page is
     // the one unlabelled row there, which reads as the answer.
     const result = await federate('auth token expiry', 0.99);
-    const fromPeer = result.items.find(item => item.repo === 'b');
+    const fromPeer = flattenGroups(result).find(item => item.repo === 'b');
 
     expect(fromPeer).toBeDefined();
     expect(fromPeer!.explanation?.abstained).toBe(true);
@@ -116,8 +116,8 @@ describe('federated abstention', () => {
     // query being weak.
     const result = await federate('auth token expiry', null);
 
-    expect(result.items.length).toBeGreaterThan(0);
-    expect(result.items.every(item => item.explanation?.abstained === undefined)).toBe(true);
+    expect(flattenGroups(result).length).toBeGreaterThan(0);
+    expect(flattenGroups(result).every(item => item.explanation?.abstained === undefined)).toBe(true);
   }, 180_000);
 
   it('leaves a real answer unlabelled at the configured floor', async () => {
@@ -129,7 +129,7 @@ describe('federated abstention', () => {
     const result = await federate('how long do access tokens last', embedder.relevanceFloor);
 
     expect(embedder.relevanceFloor).toBeGreaterThan(0);
-    expect(result.items.every(item => item.explanation?.abstained === undefined)).toBe(true);
+    expect(flattenGroups(result).every(item => item.explanation?.abstained === undefined)).toBe(true);
   }, 180_000);
 
   it('abstains on an off-topic query at that same floor', async () => {
@@ -141,7 +141,7 @@ describe('federated abstention', () => {
     const embedder = await createLocalEmbeddingProvider(CONFIG, A);
     const result = await federate('sourdough bread hydration percentage', embedder.relevanceFloor);
 
-    expect(result.items.length).toBeGreaterThan(0);
-    expect(result.items.every(item => item.explanation?.abstained === true)).toBe(true);
+    expect(flattenGroups(result).length).toBeGreaterThan(0);
+    expect(flattenGroups(result).every(item => item.explanation?.abstained === true)).toBe(true);
   }, 180_000);
 });

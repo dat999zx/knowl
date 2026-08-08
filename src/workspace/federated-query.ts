@@ -1,5 +1,5 @@
 import type { ExplainedKnowledgeItem, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
-import { scoreCandidates, selectCandidates, type Candidate, type RankOptions } from '../store/agent-query.js';
+import { scoreCandidates, selectCandidates, type Candidate, type RankOptions, type ScoredCandidate } from '../store/agent-query.js';
 import { openPeerStore } from '../store/store-handle.js';
 import { PeerDatabaseMissingError } from '../store/connection-pool.js';
 import { SchemaTooNewError } from '../store/schema-version.js';
@@ -20,10 +20,51 @@ export type FederatedItem = KnowledgeItem & {
   kinDivergent?: true;
 };
 export type SkipReason = 'absent' | 'unreadable' | 'schema-too-new' | 'unknown';
+
+export type FederatedGroup = { repo: string; items: FederatedItem[] };
+
 export type FederatedResult = {
-  items: FederatedItem[];
+  /**
+   * Results partitioned by owning repo, local always first and present even when empty.
+   *
+   * Grouping is the mechanism, not a decoration on one. A bare array reads as "this repo's
+   * answer", and no notice printed beside one is loud enough to stop it being read that way
+   * when the rows are foreign -- the `repo` field was already on every row and lost to a
+   * standing instruction to use a relevant hit immediately. A response whose *shape* is wrong
+   * for "this repo's answer" cannot be read as one.
+   */
+  groups: FederatedGroup[];
+  /**
+   * Peers whose candidates were scored but won no slot, by name and count.
+   *
+   * Never content: including it would reintroduce exactly the silent substitution grouping
+   * exists to remove. Counts are bounded by `perRepoCap`, so a peer holding more matches than
+   * the cap reports the cap rather than the truth -- an undercount, which is the safe direction
+   * for a pointer whose only job is "there is more over there".
+   */
+  unshown: Array<{ repo: string; matches: number }>;
+  /**
+   * Flat iff every returned row is local.
+   *
+   * An explicit `scope` or `repos` fixes this instead of deriving it: a caller who named repos
+   * asked for a partitioned view and gets one whether or not the partition turned out
+   * interesting. A shape that changed under them based on what was found would be worse than a
+   * one-key object.
+   */
+  shape: 'flat' | 'grouped';
   skipped: Array<{ repo: string; reason: SkipReason }>;
 };
+
+/**
+ * One ranking again, local first then peers in group order.
+ *
+ * For callers that genuinely need a single list -- the eval suites, which score MRR over a
+ * ranking -- rather than for the agent-facing surfaces, whose whole point is that the list is
+ * not single.
+ */
+export function flattenGroups(result: FederatedResult): FederatedItem[] {
+  return result.groups.flatMap(group => group.items);
+}
 
 const DEFAULT_PER_REPO_CAP = 10;
 
@@ -40,6 +81,28 @@ function skipReasonFor(error: unknown): SkipReason {
   if (error instanceof PeerDatabaseMissingError) return 'absent';
   if (error instanceof SchemaTooNewError) return 'schema-too-new';
   return 'unreadable';
+}
+
+/**
+ * Peers that matched and won no slot, by name and count.
+ *
+ * Counted from the candidate set rather than from the scored page, because the page is capped at
+ * `limit` and the question is what did NOT reach it. Bounded by `perRepoCap`, so a peer holding
+ * more matches than the cap undercounts -- the safe direction for a pointer whose only claim is
+ * "there is more over there".
+ */
+function countUnshown(
+  candidates: Array<{ item: { id: string }; repo: string }>,
+  page: ScoredCandidate[],
+  localRepo: string,
+): Array<{ repo: string; matches: number }> {
+  const shown = new Set(page.map(entry => entry.item.id));
+  const counts = new Map<string, number>();
+  for (const candidate of candidates) {
+    if (shown.has(candidate.item.id) || candidate.repo === localRepo) continue;
+    counts.set(candidate.repo, (counts.get(candidate.repo) ?? 0) + 1);
+  }
+  return [...counts].map(([repo, matches]) => ({ repo, matches }));
 }
 
 /**
@@ -138,6 +201,28 @@ export async function queryFederated(input: {
     }
   }
 
+  // Scored over the union, and relevance alone decides which rows reach the page.
+  //
+  // An earlier version of this file allocated slots by ownership -- every local candidate before
+  // any peer one -- so that a peer answer could never be mistaken for this repo's own. It was
+  // measured against `docs/evals/cross-repo-archetypes.json` and it does not work: `perRepoCap`
+  // admits ten candidates per repo whatever their quality, so a local repo nearly always holds
+  // `limit` weak FTS matches, and peers were shut out of the page entirely. Recall@3 fell on
+  // every one of the five archetypes -- asymmetric-trio 1.0 -> 0.361, monorepo-split 1.0 -> 0.528
+  // -- which is not the answer ranking lower but the answer leaving the page.
+  //
+  // The mistake was over-reading the abstention measurements. They say no ABSOLUTE threshold can
+  // separate "weak local answer" from "no local answer"; they say nothing against ranking a local
+  // row against a peer row inside one scored union, which is the comparison `corpusBest` and
+  // `lexicalCoverage` exist to make valid. Attribution belongs in the response shape, where it
+  // costs no recall, and not in slot allocation, where it costs a great deal.
+  //
+  // The union itself is not negotiable, and recency is only one of four reasons. `alpha`
+  // renormalises globally because "two repos scored under different alphas would not be
+  // comparable, which is the whole reason scoring runs over the union"; `rescaleSemantic`
+  // min-maxes across the candidate page; and the abstention verdict deliberately labels rows from
+  // a corpus that judged nothing, which is how an off-topic peer item once became the answer to a
+  // question the indexed store had just said it could not answer (K-36).
   const scored = scoreCandidates([...byContent.values()], {
     query: input.query,
     category: input.category,
@@ -162,16 +247,50 @@ export async function queryFederated(input: {
       : [],
   );
 
+  const unshown = countUnshown([...byContent.values()], scored, input.workspace.repo);
+
+  // Local first and always present, including when it holds nothing. An empty group under this
+  // repo's own name is the response saying "your repo had nothing on this" -- the sentence a
+  // bare array could not form, and the one an agent needs before it applies a foreign fact here.
+  //
+  // Ordering WITHIN a group is the ranker's, and the groups themselves are ordered by their best
+  // row, so nothing here overturns relevance. What grouping changes is only whether a reader can
+  // see who owns each row without reading a field.
+  const groups: FederatedGroup[] = [{ repo: input.workspace.repo, items: [] }];
+  const byRepo = new Map<string, FederatedGroup>([[input.workspace.repo, groups[0]]]);
+  for (const entry of scored) {
+    const repo = entry.repo ?? input.workspace.repo;
+    let group = byRepo.get(repo);
+    if (!group) {
+      group = { repo, items: [] };
+      byRepo.set(repo, group);
+      groups.push(group);
+    }
+    group.items.push({
+      ...entry.item,
+      repo,
+      explanation: entry.explanation,
+      ...(kinRepos.has(repo) ? { kinDivergent: true as const } : {}),
+    });
+  }
+
+  // Groups in relevance order, except an EMPTY local group, which is pinned first.
+  //
+  // Two things are being kept apart. A group that holds rows earns its place by its best row,
+  // exactly as a row does -- pushing a peer's better answer below this repo's weaker one would
+  // reorder the ranker's verdict under the reader, and reading order is what MRR measures. An
+  // empty local group ranks nowhere at all, so pinning it first costs no position and is the
+  // whole "your repo has nothing on this" signal.
+  // Each group's first row is its best -- groups are built by walking `scored` in order -- so
+  // the group's rank is that row's score.
+  const bestOf = (group: FederatedGroup) =>
+    (group.items[0]?.explanation as { finalScore?: number } | undefined)?.finalScore ?? -Infinity;
+  const ordered = groups.filter(group => group.items.length > 0).sort((left, right) => bestOf(right) - bestOf(left));
+  const emptyLocal = groups.find(group => group.items.length === 0);
   return {
-    items: scored.map(entry => {
-      const repo = entry.repo ?? input.workspace.repo;
-      return {
-        ...entry.item,
-        repo,
-        explanation: entry.explanation,
-        ...(kinRepos.has(repo) ? { kinDivergent: true as const } : {}),
-      };
-    }),
+    groups: emptyLocal ? [emptyLocal, ...ordered] : ordered,
+    unshown,
+    shape: groups.length > 1 ? 'grouped' : 'flat',
     skipped,
   };
 }
