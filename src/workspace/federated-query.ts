@@ -129,6 +129,18 @@ export async function queryFederated(input: {
   status?: KnowledgeStatus;
   tags?: string[];
   repos?: string[];
+  /**
+   * A named scope, for callers that do not know their own repo's name.
+   *
+   * `repos: ['<self>']` already means local-only, and an agent cannot reliably write it -- it
+   * would have to know what this repo is called in the manifest, which is a fact about the
+   * workspace file rather than about the query. That is the whole reason this exists beside
+   * `repos` rather than instead of it.
+   *
+   * `repos` wins when both arrive: it is the more specific of the two, and refusing a benign
+   * combination would cost a caller their answer over a preference.
+   */
+  scope?: 'local' | 'workspace';
   perRepoCap?: number;
   /**
    * The local vector config, including the query embedding when one was produced.
@@ -139,7 +151,11 @@ export async function queryFederated(input: {
   vector?: RankOptions['vector'];
 }): Promise<FederatedResult> {
   const cap = input.perRepoCap ?? DEFAULT_PER_REPO_CAP;
-  const wanted = input.repos && input.repos.length > 0 ? new Set(input.repos) : null;
+  const named = input.repos && input.repos.length > 0 ? input.repos : null;
+  // `repos` first, then `scope`. Only `local` narrows -- `workspace` is the default reach and
+  // says so explicitly, which is what makes it a shape declaration rather than a filter.
+  const scoped = named ?? (input.scope === 'local' ? [input.workspace.repo] : null);
+  const wanted = scoped ? new Set(scoped) : null;
   const skipped: FederatedResult['skipped'] = [];
   const candidates: RepoCandidate[] = [];
 
@@ -287,10 +303,22 @@ export async function queryFederated(input: {
     (group.items[0]?.explanation as { finalScore?: number } | undefined)?.finalScore ?? -Infinity;
   const ordered = groups.filter(group => group.items.length > 0).sort((left, right) => bestOf(right) - bestOf(left));
   const emptyLocal = groups.find(group => group.items.length === 0);
+
+  // An explicit scope FIXES the shape; only the default path derives it from what was found.
+  //
+  // A caller who named repos, or asked for the workspace, requested a repo-partitioned view and
+  // gets one whether or not the partition turned out interesting -- `{ "a": [...] }` rather than
+  // a bare array. A shape that changed under them based on results would be worse than a one-key
+  // object, because a caller cannot write a parser against it.
+  const explicit = named || input.scope;
+  const shape: FederatedResult['shape'] = explicit
+    ? (input.scope === 'local' && !named ? 'flat' : 'grouped')
+    : (groups.length > 1 ? 'grouped' : 'flat');
+
   return {
     groups: emptyLocal ? [emptyLocal, ...ordered] : ordered,
     unshown,
-    shape: groups.length > 1 ? 'grouped' : 'flat',
+    shape,
     skipped,
   };
 }

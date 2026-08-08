@@ -610,7 +610,7 @@ export function registerTools(
       }
       
       else if (name === 'knowl_query') {
-        const { id, query, category, status, tags, limit, includeEvidence, explain, asOf, repos } = args as any;
+        const { id, query, category, status, tags, limit, includeEvidence, explain, asOf, repos, scope } = args as any;
         // Fetch-by-id: the second half of progressive disclosure. Truncation with no way to read
         // the rest is not disclosure, it is loss with a warning label -- 262 of 639 atoms on a
         // real store exceed the content ceiling and no tool could return them whole. A parameter
@@ -762,6 +762,7 @@ export function registerTools(
             tags,
             limit: limit ?? 3,
             repos,
+            scope,
             vector,
           });
           skippedRepos = federated.skipped;
