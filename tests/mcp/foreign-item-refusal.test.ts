@@ -269,7 +269,10 @@ describe('item-scoped tools and foreign items', () => {
     const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth token expire', limit: 5 });
     await closeDb();
 
-    const items = JSON.parse(result.content[0].text);
+    // Keyed by repo once a linked repo contributes a row; this test is about which paths cross,
+    // not about the layout, so it reads the rows out of whichever shape arrived.
+    const payload = JSON.parse(result.content[0].text);
+    const items: any[] = Array.isArray(payload) ? payload : Object.values(payload).flat() as any[];
     const foreign = items.find((item: any) => item.id === foreignId);
     const local = items.find((item: any) => item.id === localId);
     if (foreign) expect(foreign).not.toHaveProperty('affectedPaths');

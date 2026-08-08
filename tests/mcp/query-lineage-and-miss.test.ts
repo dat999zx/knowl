@@ -132,7 +132,11 @@ describe('knowl_query lineage notice', () => {
     expect(blocksOf(result).some((text: string) => text.includes('SHARED LINEAGE'))).toBe(false);
   });
 
-  it('keeps the first block a bare JSON array', async () => {
+  it('keeps the notice out of the payload, so the first block parses on its own', async () => {
+    // The claim here was always about the lineage notice living in its own block rather than
+    // being folded into the payload; "bare array" was how that was spelled before a workspace
+    // response could be keyed by repo. A peer answers this query, so the payload is an object
+    // now -- what must hold is that block 0 is complete JSON and carries no prose.
     await updateRepoSettings({ workspaceName: 'ws', repoName: 'a', settings: { kin: 'lineage' } });
     await updateRepoSettings({ workspaceName: 'ws', repoName: 'b', settings: { kin: 'lineage' } });
 
@@ -140,7 +144,9 @@ describe('knowl_query lineage notice', () => {
     const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth', limit: 5 });
     await closeDb();
 
-    expect(Array.isArray(JSON.parse(result.content[0].text))).toBe(true);
+    expect(() => JSON.parse(result.content[0].text)).not.toThrow();
+    expect(result.content[0].text).not.toContain('SHARED LINEAGE');
+    expect(result.content.slice(1).map((block: any) => block.text).join('\n')).toContain('SHARED LINEAGE');
   });
 });
 

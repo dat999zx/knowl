@@ -272,8 +272,16 @@ export async function queryFederated(input: {
   // Ordering WITHIN a group is the ranker's, and the groups themselves are ordered by their best
   // row, so nothing here overturns relevance. What grouping changes is only whether a reader can
   // see who owns each row without reading a field.
-  const groups: FederatedGroup[] = [{ repo: input.workspace.repo, items: [] }];
-  const byRepo = new Map<string, FederatedGroup>([[input.workspace.repo, groups[0]]]);
+  //
+  // Seeded only when this repo was actually searched. Under `repos: ['b']` it was not, and an
+  // empty group under its name would say "your repo has nothing on this" when the truth is
+  // "your repo was not asked" -- the same conflation between absent and unsearched that the
+  // `skipped` list exists to prevent one level up.
+  const localSearched = !wanted || wanted.has(input.workspace.repo);
+  const groups: FederatedGroup[] = localSearched ? [{ repo: input.workspace.repo, items: [] }] : [];
+  const byRepo = new Map<string, FederatedGroup>(
+    localSearched ? [[input.workspace.repo, groups[0]]] : [],
+  );
   for (const entry of scored) {
     const repo = entry.repo ?? input.workspace.repo;
     let group = byRepo.get(repo);

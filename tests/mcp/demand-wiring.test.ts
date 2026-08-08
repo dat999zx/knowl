@@ -54,6 +54,18 @@ async function callTool(root: string, config: ProjectConfig, name: string, args:
   return result.result;
 }
 
+/**
+ * The rows of a query payload, whichever shape it came back in.
+ *
+ * A workspace response is keyed by repo once a linked repo contributes a row, and these tests
+ * are about what the ledger recorded rather than about how the payload was laid out. Groups
+ * arrive in relevance order, so the flattened first row is still the top-scoring one.
+ */
+function rowsOf(text: string): any[] {
+  const payload = JSON.parse(text);
+  return Array.isArray(payload) ? payload : Object.values(payload).flat() as any[];
+}
+
 async function seed(root: string, name: string, items: Array<{ title: string; content: string; visibility: string }>) {
   await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
   await saveConfig(root, {
@@ -116,7 +128,7 @@ describe('demand ledger wiring', () => {
     await initDb(A);
     const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth token expire', limit: 5 });
     await closeDb();
-    expect(JSON.parse(result.content[0].text).length).toBeGreaterThan(0);
+    expect(rowsOf(result.content[0].text).length).toBeGreaterThan(0);
 
     expect(await eventuallyTotal(ws, 1)).toBe(1);
     const summary = await summarizeDemand(ws);
@@ -154,7 +166,7 @@ describe('demand ledger wiring', () => {
     const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth token expire', limit: 5, explain: true });
     await closeDb();
 
-    const items = JSON.parse(result.content[0].text) as Array<{ explanation?: { finalScore?: number; uncalibrated?: string; contributions?: { semantic?: number } } }>;
+    const items = rowsOf(result.content[0].text) as Array<{ explanation?: { finalScore?: number; uncalibrated?: string; contributions?: { semantic?: number } } }>;
     const bestCosine = Math.max(...items
       .filter(item => !item.explanation?.uncalibrated)
       .map(item => item.explanation?.contributions?.semantic ?? 0));

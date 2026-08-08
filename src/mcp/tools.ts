@@ -766,7 +766,7 @@ export function registerTools(
         // Federation is reached only from here. Peers are deliberately absent from
         // configuredNamespaces so implicit context assembly cannot fan out.
         const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
-        let skippedRepos: FederatedResult['skipped'] = [];
+        let federated: FederatedResult | null = null;
         let resolvedItems: Array<KnowledgeItem & { repo?: string; explanation?: unknown }> = items as any;
         if (active) {
           // Federation selects from every repo including this one and scores the union in a
@@ -774,7 +774,7 @@ export function registerTools(
           // local items would score them by different rules than the peers' -- and recency,
           // which normalizes against the candidate set it is given, would make every repo's
           // newest item equally recent.
-          const federated = await queryFederated({
+          federated = await queryFederated({
             workspace: active,
             query: query ?? '',
             category: category as KnowledgeCategory,
@@ -785,12 +785,12 @@ export function registerTools(
             scope,
             vector,
           });
-          skippedRepos = federated.skipped;
-          // Flattened for now: local group first, then peers. The grouped shape reaches the
-          // response in a later change; what lands here is the ordering half of slot priority,
-          // which is already the thing that stops a peer row outranking a local one.
+          // Everything downstream of the payload -- the kin block, the abstention verdict, the
+          // demand ledger -- asks questions about the result set rather than about its shape, so
+          // they keep reading one flat list.
           resolvedItems = flattenGroups(federated);
         }
+        const skippedRepos: FederatedResult['skipped'] = federated?.skipped ?? [];
 
         const withStaleStatus = async (itemId: string) => Promise.all((await listEvidenceForItem(itemId)).map(async evidence => ({
           ...evidence,
@@ -850,15 +850,33 @@ export function registerTools(
             ...(explain && item.explanation ? { explanation: item.explanation } : {}),
           };
         };
-        const payload = includeEvidence
-          ? await Promise.all(resolvedItems.map(async item => (isForeign(item)
-            ? compact(item)
-            : { ...compact(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
-          : resolvedItems.map(compact);
-        // The notice is a separate block so the first block stays a bare JSON array for
-        // every existing caller. One unnamed group until the grouped shape is wired through.
+        // Inside a group the key already names the repo, so the per-row field is noise. It stays
+        // on a flat row, which has no key to say it.
+        const compactInGroup = (item: any) => {
+          const { repo: _repo, ...rest } = compact(item);
+          return rest;
+        };
+        const rowsOf = async (rows: typeof resolvedItems, shaper: (item: any) => Record<string, unknown>) => (
+          includeEvidence
+            ? await Promise.all(rows.map(async item => (isForeign(item)
+              ? shaper(item)
+              : { ...shaper(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
+            : rows.map(shaper)
+        );
+        // `compactInGroup` only where there is a key to carry the name. A flat response is a bare
+        // array whatever produced it, so its rows keep `repo` exactly as before.
+        const shaper = federated?.shape === 'grouped' ? compactInGroup : compact;
+        const payloadGroups = federated
+          ? await Promise.all(federated.groups.map(async group => ({
+            repo: group.repo,
+            rows: await rowsOf(group.items, shaper),
+          })))
+          : [{ repo: '', rows: await rowsOf(resolvedItems, compact) }];
+        // The notice is a separate block so the first block stays parseable on its own: a bare
+        // JSON array for every existing caller, an object keyed by repo when a linked repo
+        // contributed a row.
         const { text: payloadText, shortened, omitted: omittedResults } =
-          boundQueryPayload([{ repo: '', rows: payload as Record<string, unknown>[] }], 'flat');
+          boundQueryPayload(payloadGroups as Array<{ repo: string; rows: Record<string, unknown>[] }>, federated?.shape ?? 'flat');
         const blocks: { type: 'text'; text: string }[] = [{ type: 'text', text: payloadText }];
         if (shortened > 0 || omittedResults > 0) {
           const what = [
@@ -870,6 +888,32 @@ export function registerTools(
             text: `RESPONSE BOUNDED: ${what}, to keep this response under ${MAX_RESPONSE_CHARS} characters. `
               + 'These were the weakest matches, not a scoping failure. Read any result whole with '
               + '`knowl_query` and its `id`; narrow the query or lower `limit` to see more of them at once.',
+          });
+        }
+        // This repo returned nothing and a linked one did. The shape already says so; this says
+        // the one thing a shape cannot, which is that a foreign fact describes a foreign repo.
+        //
+        // Only on the default path. A caller who asked for `scope: 'workspace'` or named `repos`
+        // requested exactly this and does not need to be told what they asked for.
+        if (federated && !scope && !repos?.length
+          && federated.groups[0]?.items.length === 0 && federated.groups.length > 1) {
+          const answering = federated.groups.slice(1).map(group => group.repo);
+          blocks.push({
+            type: 'text',
+            text: `LOCAL MISS: ${federated.groups[0].repo} (this repo) returned nothing for this query. `
+              + `Everything above is from ${answering.join(', ')} and describes ${answering.length > 1 ? 'those repos' : 'that repo'}, not this one. `
+              + 'Verify against this repo before applying it, and treat this as a miss if it does not transfer.',
+          });
+        }
+        // A linked repo matched and won no slot. Names and counts, never content: the knowledge
+        // stays findable without the response being able to substitute it for this repo's own.
+        if (federated?.unshown.length) {
+          const described = federated.unshown.map(entry => `${entry.repo} (${entry.matches})`).join(', ');
+          const names = federated.unshown.map(entry => `"${entry.repo}"`).join(', ');
+          blocks.push({
+            type: 'text',
+            text: `WORKSPACE: linked repos also hold matches not shown here: ${described}. `
+              + `Re-query with repos: [${names}] to read them.`,
           });
         }
         if (skippedRepos.length) {

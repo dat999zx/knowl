@@ -96,20 +96,26 @@ describe('knowl_query in a workspace', () => {
     for (const dir of [HOME, A, B, SOLO]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   });
 
-  it('labels every item with its repo in the serialized payload', async () => {
+  it('labels every item with its owning repo, by the key it sits under', async () => {
+    // The label moved from a per-row field to the group key. It used to be a `repo` string on
+    // each row, which is exactly what an agent skimmed past on the way to using a linked repo's
+    // answer as this repo's own -- the shape now carries what the field could not.
     await initDb(A);
     const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth', limit: 5 });
     await closeDb();
-    const items = JSON.parse(result.content[0].text);
-    expect(items.length).toBeGreaterThan(0);
-    expect(items.every((item: any) => typeof item.repo === 'string')).toBe(true);
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(Array.isArray(payload)).toBe(false);
+    expect(Object.keys(payload).sort()).toEqual(['a', 'b']);
+    expect(Object.values(payload).flat().length).toBeGreaterThan(0);
   });
 
   it('surfaces the peer workspace item and hides the peer private one', async () => {
     await initDb(A);
     const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth', limit: 5 });
     await closeDb();
-    const titles = JSON.parse(result.content[0].text).map((item: any) => item.title);
+    const titles = Object.values(JSON.parse(result.content[0].text)).flat().map((item: any) => item.title);
+
     expect(titles).toContain('Auth token TTL is fifteen minutes');
     expect(titles).not.toContain('Auth scratch note');
   });
@@ -118,16 +124,20 @@ describe('knowl_query in a workspace', () => {
     await initDb(A);
     const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth', limit: 5, repos: ['b'] });
     await closeDb();
-    const items = JSON.parse(result.content[0].text);
-    expect(items.length).toBeGreaterThan(0);
-    expect(items.every((item: any) => item.repo === 'b')).toBe(true);
+    const payload = JSON.parse(result.content[0].text);
+
+    // Naming repos is an explicit request for a partitioned view, so the shape is fixed grouped
+    // even though only one repo answered.
+    expect(Object.keys(payload)).toEqual(['b']);
+    expect(payload.b.length).toBeGreaterThan(0);
   });
 
   it('omits evidence for a foreign item rather than judging it against this filesystem', async () => {
     await initDb(A);
     const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth', limit: 5, includeEvidence: true });
     await closeDb();
-    const foreign = JSON.parse(result.content[0].text).find((item: any) => item.repo === 'b');
+    const foreign = JSON.parse(result.content[0].text).b?.[0];
+
     expect(foreign).toBeDefined();
     expect(foreign.evidence).toBeUndefined();
   });
