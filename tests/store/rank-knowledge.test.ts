@@ -228,4 +228,56 @@ describe('scoreCandidates', () => {
     const scored = scoreCandidates([weakBoth, strongVector], { limit: 2, usingVector: true });
     expect(scored[0].item.id).toBe('strongVector');
   });
+
+  /**
+   * The provenance prior used to key on the literal `'inferred'`.
+   *
+   * Censused over the five real stores on this machine -- 1,014 active items -- 72.9% leave
+   * provenance unset, 26.2% say `observed`, 0.9% `user_stated`, and ZERO say `inferred`. So the
+   * multiplier had never fired, and the incentive ran backwards: silence scored exactly as well
+   * as a grounding claim, and labelling your own inference honestly was the only way to lose
+   * rank. It now keys on the absence of a claim.
+   */
+  describe('the provenance prior', () => {
+    const withProvenance = (id: string, provenance?: string) => {
+      const base = candidate(id, '2026-01-01T00:00:00.000Z');
+      return { ...base, item: { ...base.item, provenance } as unknown as KnowledgeItem };
+    };
+
+    it('ranks a grounding claim above silence', () => {
+      const scored = scoreCandidates(
+        [withProvenance('unset'), withProvenance('observed', 'observed')],
+        { limit: 2, usingVector: false },
+      );
+      expect(scored[0].item.id).toBe('observed');
+    });
+
+    it('treats user_stated as a claim too', () => {
+      const scored = scoreCandidates(
+        [withProvenance('unset'), withProvenance('stated', 'user_stated')],
+        { limit: 2, usingVector: false },
+      );
+      expect(scored[0].item.id).toBe('stated');
+    });
+
+    it('does not punish an honest `inferred` any harder than saying nothing', () => {
+      // The old keying made this the ONLY losing move. Both are unclaimed; both take the same
+      // discount, so the order between them is decided by the tie-break and not by candour.
+      const [a, b] = scoreCandidates(
+        [withProvenance('inferred', 'inferred'), withProvenance('unset')],
+        { limit: 2, usingVector: false },
+      );
+      expect(a.score).toBeCloseTo(b.score, 10);
+    });
+
+    it('is order-neutral when every candidate agrees, which is why both eval suites are unmoved', () => {
+      // The eval fixtures set no provenance at all, so every candidate takes the same
+      // multiplier. A change that moved those numbers would be changing something else.
+      const uniform = scoreCandidates(
+        [{ ...withProvenance('a'), bm25Rank: 2 }, { ...withProvenance('b'), bm25Rank: 1 }],
+        { limit: 2, usingVector: false },
+      );
+      expect(uniform.map(entry => entry.item.id)).toEqual(['b', 'a']);
+    });
+  });
 });

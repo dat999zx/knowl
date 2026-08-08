@@ -5,6 +5,7 @@ import { getRecentContext } from '../store/recent-context.js';
 import { formatRecentContextToMarkdown, formatHierarchyToMarkdown } from '../core/format.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS, MAX_TITLE_CHARS, truncateText } from '../core/token-budget.js';
+import { fenceUntrusted, inlineUntrusted, UNTRUSTED_NOTICE_BRIEF } from '../core/untrusted.js';
 import { formatInitError } from './init-error.js';
 import { sanitizeToolErrorMessage } from './tool-schema.js';
 
@@ -93,15 +94,25 @@ export function registerResources(
           status: 'active',
         });
         
-        let md = `# Active ${category.toUpperCase()} Items\n\n`;
+        // The third markdown route out of this file, and the one that was left raw. The two
+        // above it are contained because they go through the format.ts helpers; this one builds
+        // its own markdown and interpolated a stored body straight after a `##`, which is the
+        // exact shape `formatHierarchyToMarkdown` was fixed for. Same store, same reader, same
+        // defect -- a resource read is answered by the agent's own client with nobody looking.
+        //
+        // Truncate first, then contain, for the reason `format.ts` gives: otherwise a body whose
+        // fence run sits past the ceiling picks the fence length for text that is then cut away.
+        let md = `# Active ${category.toUpperCase()} Items\n\n${UNTRUSTED_NOTICE_BRIEF}\n\n`;
         if (items.length === 0) {
           md += `No active items recorded in this category.`;
         } else {
           for (const item of items.slice(0, DEFAULT_RESULT_LIMIT)) {
-            md += `## ${truncateText(item.title, MAX_TITLE_CHARS)} (ID: ${item.id})\n\n${truncateText(item.content, MAX_ITEM_CONTENT_CHARS)}\n\n`;
-            if (item.reasoning) md += `**Reasoning:** ${truncateText(item.reasoning, MAX_PREVIEW_CHARS)}\n\n`;
+            md += `## ${inlineUntrusted(truncateText(item.title, MAX_TITLE_CHARS))} (ID: ${item.id})\n\n`;
+            // A body keeps its shape, inside a container it cannot close.
+            md += `${fenceUntrusted(truncateText(item.content, MAX_ITEM_CONTENT_CHARS))}\n\n`;
+            if (item.reasoning) md += `**Reasoning:** ${inlineUntrusted(truncateText(item.reasoning, MAX_PREVIEW_CHARS))}\n\n`;
             if (item.alternatives && item.alternatives.length > 0) {
-              md += `**Alternatives:** ${truncateText(item.alternatives.join(', '), MAX_PREVIEW_CHARS)}\n\n`;
+              md += `**Alternatives:** ${inlineUntrusted(truncateText(item.alternatives.join(', '), MAX_PREVIEW_CHARS))}\n\n`;
             }
             md += `---\n\n`;
           }

@@ -129,7 +129,27 @@ const FRESHNESS_PRIOR_STALE = 0.88;
 const CONFIDENCE_PRIOR_FLOOR = 0.98;
 const RECENCY_PRIOR_FLOOR = 0.99;
 const TIER_UNVERIFIED_PRIOR = 0.99;
-const PROVENANCE_INFERRED_PRIOR = 0.98;
+/**
+ * Applied to any item that does not **claim** first-hand grounding.
+ *
+ * It used to key on the literal `'inferred'`, which made it dead code and the incentive
+ * backwards. Censused across the five real stores on this machine -- 1,014 active items --
+ * 72.9% leave provenance unset, 26.2% say `observed`, 0.9% `user_stated`, and **zero** say
+ * `inferred`. The multiplier had therefore never fired once. Worse, because unset scored
+ * exactly as well as `observed`, saying nothing was free and labelling your own inference
+ * honestly was the only way to lose rank.
+ *
+ * Keying on the absence of a claim inverts that: declaring `observed` or `user_stated` earns
+ * full credit, and both silence and an honest `inferred` sit one notch below. Unknown
+ * provenance is not evidence of provenance.
+ *
+ * Order-neutral on any corpus with uniform provenance -- including both eval suites, whose
+ * fixtures set none, so every candidate takes the same multiplier and nothing moves. It bites
+ * only where items differ, which is the only place it should.
+ */
+const UNCLAIMED_PROVENANCE_PRIOR = 0.98;
+/** The two values that assert someone actually grounded the claim. */
+const CLAIMED_PROVENANCE = new Set(['observed', 'user_stated']);
 const CATEGORY_MISS_PRIOR = 0.90;
 const IDENTIFIER_MISS_PRIOR = 0.98;
 
@@ -620,7 +640,8 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
       const category = !options.category || result.item.category === options.category ? 1 : CATEGORY_MISS_PRIOR;
       const exactIdentifier = !identifier || containsIdentifier(result.item, identifier) ? 1 : IDENTIFIER_MISS_PRIOR;
       const standing = (result.item.tier === 'verified' ? 1 : TIER_UNVERIFIED_PRIOR)
-        * (result.item.provenance === 'inferred' ? PROVENANCE_INFERRED_PRIOR : 1);
+        // Absence of a claim, not the presence of `inferred` -- see UNCLAIMED_PROVENANCE_PRIOR.
+        * (CLAIMED_PROVENANCE.has(result.item.provenance ?? '') ? 1 : UNCLAIMED_PROVENANCE_PRIOR);
 
       const prior = freshness
         * (CONFIDENCE_PRIOR_FLOOR + (1 - CONFIDENCE_PRIOR_FLOOR) * confidence)

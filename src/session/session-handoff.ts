@@ -1,5 +1,6 @@
 import { NormalizedHostHook } from '../core/host-hook-types.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
+import { inlineUntrusted } from '../core/untrusted.js';
 import { normalizeConflictKey } from '../store/conflicts.js';
 import * as repo from '../store/repository.js';
 import { getClient } from '../store/database.js';
@@ -293,6 +294,16 @@ export function formatPendingHandoffContext(handoff: PendingHandoff): string {
   // work, the other recovers from a blocker. Telling a session that parked cleanly it "ended
   // before a clean finish" invites it to go looking for damage that does not exist.
   const planned = handoff.kind === 'handoff';
+  // This card is injected at SessionStart with no human in the loop, and every value below
+  // reaches it as raw text on a `- Label: value` line. A value carrying a newline used to break
+  // out to column 0, where an ATX heading or a fence opener is live markdown -- so `errorMessage`,
+  // which is a string from an external host process rather than anything an agent wrote, could
+  // put `## SYSTEM` into the first thing a fresh session reads.
+  //
+  // Every value is contained, with no triage over which ones are "really" untrusted. The set of
+  // host-supplied fields grows as fields are added, and a rule with exceptions is the one that
+  // gets forgotten at the next `lines.push`. Collapsing is a no-op on the one-line values.
+  const field = (value: string) => inlineUntrusted(value);
   const lines = [
     planned ? '# KNOWL - SESSION HANDOFF' : '# KNOWL - PENDING SESSION HANDOFF',
     '',
@@ -300,26 +311,26 @@ export function formatPendingHandoffContext(handoff: PendingHandoff): string {
       ? 'The previous session parked this work for you on purpose. Pick it up from here.'
       : 'Previous host session ended before a clean finish. Continue from this handoff first.',
     '',
-    `- Kind: ${handoff.kind}`,
-    `- Urgency: ${handoff.urgency}`,
-    `- Host: ${handoff.host}`,
-    planned ? `- Parked at: ${handoff.failedAt}` : `- Failed at: ${handoff.failedAt}`,
-    `- External session: ${handoff.externalSessionId}`,
+    `- Kind: ${field(handoff.kind)}`,
+    `- Urgency: ${field(handoff.urgency)}`,
+    `- Host: ${field(handoff.host)}`,
+    planned ? `- Parked at: ${field(handoff.failedAt)}` : `- Failed at: ${field(handoff.failedAt)}`,
+    `- External session: ${field(handoff.externalSessionId)}`,
   ];
-  if (handoff.memorySessionId) lines.push(`- Memory session: ${handoff.memorySessionId}`);
-  if (handoff.sessionTitle) lines.push(`- Session title: ${handoff.sessionTitle}`);
-  if (handoff.errorCode) lines.push(`- Error code: ${handoff.errorCode}`);
-  if (handoff.errorMessage) lines.push(`- Error: ${handoff.errorMessage}`);
-  if (handoff.lastCheckpoint) lines.push(`- Last checkpoint: ${handoff.lastCheckpoint}`);
-  if (handoff.changedPaths?.length) lines.push(`- Changed paths: ${handoff.changedPaths.join(', ')}`);
+  if (handoff.memorySessionId) lines.push(`- Memory session: ${field(handoff.memorySessionId)}`);
+  if (handoff.sessionTitle) lines.push(`- Session title: ${field(handoff.sessionTitle)}`);
+  if (handoff.errorCode) lines.push(`- Error code: ${field(handoff.errorCode)}`);
+  if (handoff.errorMessage) lines.push(`- Error: ${field(handoff.errorMessage)}`);
+  if (handoff.lastCheckpoint) lines.push(`- Last checkpoint: ${field(handoff.lastCheckpoint)}`);
+  if (handoff.changedPaths?.length) lines.push(`- Changed paths: ${field(handoff.changedPaths.join(', '))}`);
   if (handoff.taskState) {
     lines.push('', '## Task state');
-    if (handoff.taskState.goal) lines.push(`- Goal: ${handoff.taskState.goal}`);
-    if (handoff.taskState.completed?.length) lines.push(`- Completed: ${handoff.taskState.completed.join('; ')}`);
-    if (handoff.taskState.nextAction) lines.push(`- Next action: ${handoff.taskState.nextAction}`);
-    if (handoff.taskState.blocker) lines.push(`- Blocker: ${handoff.taskState.blocker}`);
-    if (handoff.taskState.artifactRefs?.length) lines.push(`- Artifacts: ${handoff.taskState.artifactRefs.join(', ')}`);
-    if (handoff.taskState.verificationStatus) lines.push(`- Verification: ${handoff.taskState.verificationStatus}`);
+    if (handoff.taskState.goal) lines.push(`- Goal: ${field(handoff.taskState.goal)}`);
+    if (handoff.taskState.completed?.length) lines.push(`- Completed: ${field(handoff.taskState.completed.join('; '))}`);
+    if (handoff.taskState.nextAction) lines.push(`- Next action: ${field(handoff.taskState.nextAction)}`);
+    if (handoff.taskState.blocker) lines.push(`- Blocker: ${field(handoff.taskState.blocker)}`);
+    if (handoff.taskState.artifactRefs?.length) lines.push(`- Artifacts: ${field(handoff.taskState.artifactRefs.join(', '))}`);
+    if (handoff.taskState.verificationStatus) lines.push(`- Verification: ${field(handoff.taskState.verificationStatus)}`);
   }
   lines.push('', 'Do not restart from scratch. Resume the interrupted work using this handoff plus recent project memory.');
   return truncateText(lines.join('\n'), DEFAULT_CONTEXT_MAX_CHARS);

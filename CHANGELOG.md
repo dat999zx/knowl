@@ -5,6 +5,57 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+### Retrieved text renders as data, not as live markdown
+
+Everything in the store is untrusted input, and not because the user is hostile: session capture
+and `knowl_ingest` both write atoms no human has read, so a poisoned file comment or a scraped
+page can become one. Retrieval then replays it every session, and in a workspace it reaches every
+linked repo — OWASP ASI06.
+
+A stored body used to be interpolated straight into markdown. One carrying a fence run, an ATX
+heading, a thematic break or a blockquote became **real structure** in the agent's context rather
+than a quoted claim. New `src/core/untrusted.ts` contains it two ways, because the surfaces
+differ: `fenceUntrusted` opens a fence one backtick longer than the longest run in the body, so
+the body provably cannot close its own container, and `inlineUntrusted` collapses whitespace for
+one-line contexts — sufficient rather than partial, since every CommonMark block construct must
+begin at a line start.
+
+Applied at every surface that reaches an agent with no human in the loop, which is the rule for
+finding them rather than which file they live in: the project brain state, the session bootstrap
+card, the skill rows inside it, the mid-turn skill nudge, the pending-session handoff and a
+parked resume brief. The handoff's `errorMessage` is the sharpest of them — a string from an
+external host process, landing in the first thing a fresh session reads.
+
+Also the `knowl://category/{name}` resource, the mid-turn change card, the parked-work listing
+and both transcript tools. Three of those sat in modules that were already **partly** contained —
+`resources.ts` had fixed its other two routes, `resume-points.ts` had contained the brief but not
+the listing that renders the same goal, and `change-card.ts` had been collapsing whitespace in
+`renderSignature` while leaving `item.title` on the line beside it. The transcript tools hold the
+least reviewed text knowl has: a transcript row is whatever a past session happened to say, tool
+output and fetched pages included, and the search response keeps speaking in knowl's own voice
+below the hits.
+
+The JSON surface takes the rule in the `knowl_query` description instead of a per-response block:
+that response's block count is a contract, where an extra block reports an anomaly, and JSON
+already contains bodies structurally.
+
+### The provenance prior scores the absence of a claim
+
+`provenance === 'inferred'` never matched. Censused across five real stores — 1,014 active items
+— 72.9% leave provenance unset, 26.2% say `observed`, 0.9% `user_stated`, and zero say
+`inferred`. The multiplier had not fired once.
+
+Worse than dead, the incentive ran backwards: unset scored exactly as well as `observed`, so
+saying nothing about where a claim came from was free, and labelling your own inference honestly
+was the only way to lose rank. It now keys on the absence of a grounding claim, so `observed` and
+`user_stated` earn full credit while silence and an honest `inferred` sit together one notch
+below. Order-neutral on any corpus with uniform provenance, including both eval suites, so no
+measured number moves.
+
+The `knowl_store` and `knowl_ingest_atoms` schemas say so, which is the point: the field's whole
+purpose is to be filled in, and the description is the only place a writer learns what filling it
+in is worth.
+
 ### `workspace add` shares by default in a linked workspace
 
 **Breaking-ish, for new links only.** A repo joining a `linked` workspace now gets

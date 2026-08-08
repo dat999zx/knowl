@@ -1,5 +1,6 @@
 import type { ProjectConfig } from '../core/types.js';
 import { loadConfig } from '../core/config.js';
+import { fenceUntrusted } from '../core/untrusted.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { resolveStorage } from '../store/storage-roles.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
@@ -157,7 +158,18 @@ export async function handleTranscriptSearch(input: {
         line: hit.line,
       });
       lines.push(`${locator}  [${hit.role}]${parent}`);
-      lines.push(hit.text ?? '(message body unavailable -- the transcript file was removed)');
+      // A transcript message is the least reviewed text knowl holds: it is whatever a past
+      // session said, including tool output, file contents and fetched pages, replayed verbatim.
+      // Verbatim is the point, so this fences rather than collapses -- the body keeps its shape
+      // inside a container it cannot close.
+      //
+      // The container also has to hold because of what comes AFTER these hits. The coverage
+      // lines and the `knowl_store` reminder below are knowl speaking in its own voice, and an
+      // uncontained body could sit above them emitting `## ...` structure of its own. The
+      // fallback string is knowl's, not a hit's, so it stays outside.
+      lines.push(hit.text === undefined || hit.text === null
+        ? '(message body unavailable -- the transcript file was removed)'
+        : fenceUntrusted(hit.text));
       lines.push('');
     }
   }
@@ -345,9 +357,17 @@ export async function handleTranscriptRead(input: {
     return `Nothing readable at ${input.locator}. The transcript file has probably been deleted; its rows are dropped on the next index pass.`;
   }
 
+  // Same containment as the search hits, and for the same reason -- this is the other half of
+  // the same round trip, so containing one and not the other would mean a body is inert when it
+  // is found and live when it is opened.
+  //
+  // The marker moves onto its own line because a fence has to start at one. That also retires an
+  // accident in the old shape: the focused excerpt was prefixed `> `, which is a live blockquote
+  // marker, so the text an agent was told to read most carefully was the one wrapped in markdown
+  // structure knowl did not intend.
   return truncate(
     excerpts
-      .map(excerpt => `${excerpt.line === parsed.line ? '>' : ' '} [${excerpt.role}] ${excerpt.text}`)
+      .map(excerpt => `${excerpt.line === parsed.line ? '>' : ' '} [${excerpt.role}]\n${fenceUntrusted(excerpt.text)}`)
       .join('\n\n'),
     MAX_RESPONSE_CHARS,
   );

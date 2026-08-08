@@ -12,6 +12,7 @@ import { initAI } from '../ai/provider.js';
 import { runPipeline } from '../pipeline/pipeline.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { formatHierarchyToMarkdown, formatRecentContextToMarkdown } from '../core/format.js';
+import { inlineUntrusted } from '../core/untrusted.js';
 import { compactMcpJson, compactItemResponse, compactAssertionResponse, boundedEvidence } from './response-format.js';
 import { DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS, truncateText, uncalibratedScore, type UncalibratedScore } from '../core/token-budget.js';
 import { getRecentContext } from '../store/recent-context.js';
@@ -520,7 +521,9 @@ export function registerTools(
 
         if (result.action === 'duplicate') {
           return {
-            content: [{ type: 'text', text: `NOT STORED — this ${category} is already held verbatim as item ${result.item.id} ("${result.item.title}"), so nothing was written and nothing was lost. No action needed.` }],
+            // The quoted title is stored text echoed back on one line, so it gets the same
+            // treatment as every other stored value that reaches the agent.
+            content: [{ type: 'text', text: `NOT STORED — this ${category} is already held verbatim as item ${result.item.id} ("${inlineUntrusted(result.item.title)}"), so nothing was written and nothing was lost. No action needed.` }],
           };
         }
 
@@ -593,7 +596,7 @@ export function registerTools(
 
         if (result.action === 'duplicate') {
           return {
-            content: [{ type: 'text', text: `NOT STORED — this decision is already held verbatim as item ${result.item.id} ("${result.item.title}"), so nothing was written and nothing was lost. No action needed.` }],
+            content: [{ type: 'text', text: `NOT STORED — this decision is already held verbatim as item ${result.item.id} ("${inlineUntrusted(result.item.title)}"), so nothing was written and nothing was lost. No action needed.` }],
           };
         }
 
@@ -901,6 +904,10 @@ export function registerTools(
               + transcriptRoute,
           });
         }
+        // No provenance block here, deliberately: the block count above is a contract where an
+        // extra block reports an anomaly, and the JSON payload already contains bodies
+        // structurally. The declaration lives in the `knowl_query` description instead.
+
         // What one repo actually asks the others for, recorded after the answer is built.
         //
         // Every workspace query, not only the weak ones. The obvious design logs "queries the
@@ -1302,7 +1309,10 @@ export function registerTools(
             type: 'text',
             text: [
               'Parked in this project:',
-              ...points.map(point => `- ${point.key}: ${point.goal} (${point.createdAt})`),
+              // The same free-text goal `formatResumeBrief` contains twelve lines up. Containing
+              // it there and not here would mean a poisoned goal is inert when it is read in full
+              // and live when it is merely listed, which is the wrong way round.
+              ...points.map(point => `- ${point.key}: ${inlineUntrusted(point.goal)} (${point.createdAt})`),
               '',
               'Resume one with knowl_resume and its key.',
             ].join('\n'),

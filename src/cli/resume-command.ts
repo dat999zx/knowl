@@ -1,3 +1,4 @@
+import { inlineUntrusted } from '../core/untrusted.js';
 import { formatResumeBrief, listResumePoints, readResumePoint } from '../session/resume-points.js';
 
 export type ResumeCommandResult = {
@@ -48,6 +49,8 @@ export async function runCliResume(input: {
 
   return {
     kind: 'list',
-    text: points.map(point => `${point.key}  ${point.goal}  (${point.createdAt})`).join('\n'),
+    // One line per point is the format, so a goal carrying a newline would silently become two
+    // and the second would start at column 0. Same containment as the MCP listing beside it.
+    text: points.map(point => `${point.key}  ${inlineUntrusted(point.goal)}  (${point.createdAt})`).join('\n'),
   };
 }
