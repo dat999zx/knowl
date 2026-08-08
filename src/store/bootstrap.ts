@@ -364,6 +364,47 @@ const SCHEMA_STATEMENTS = [
   // rather than an exception inside a best-effort path.
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_impact_findings_unique_open ON impact_findings(cause_locator, affected_id) WHERE resolution IS NULL;`,
 
+  // What an enforcing write gate *would* have refused, recorded while it is refusing nothing.
+  //
+  // The gate is the one part of this subsystem that can cost somebody their working session, so
+  // plan §9 puts a ≥95%-precision-over-≥40-findings bar in front of letting it block. Shadow mode
+  // is how that bar is measured: the verdict is computed for real, the refusal is withheld, and
+  // every withheld refusal lands here.
+  //
+  // No `resolution` column of its own, deliberately. Each row names a finding, and findings
+  // already carry the adjudication through `knowl_impact({resolve})` -- which plan §15 established
+  // is the *only* adjudication path, precisely because the gate leaves findings open by design. A
+  // second verdict column here would be a second answer to a question that already has one.
+  `CREATE TABLE IF NOT EXISTS impact_gate_shadow (
+    id TEXT PRIMARY KEY,
+    finding_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    target_path TEXT NOT NULL,
+    observed_at TEXT NOT NULL
+  );`,
+  // One row per stale belief, and this index is what makes the measurement mean anything.
+  //
+  // Shadow mode deliberately does *not* release the read-set rows it names. Enforcing mode does,
+  // so a retry is never blocked twice -- safe there, because the agent has been told to re-read.
+  // Doing it while merely observing would clear a belief nobody re-read, and `work_read_sets`
+  // would stop describing what the session holds while being the evidence this measurement rests
+  // on. So the belief stays live, and the same finding comes back on the next write to that file.
+  // Unconstrained, the row count would then measure *writes attempted* rather than *denials an
+  // enforcing gate would have issued*, and those differ by however many times an agent happens to
+  // edit one file.
+  //
+  // `finding_id` alone, not `(finding_id, read_set_id)`: a finding's `affected_id` already *is*
+  // the read-set row id -- `detectCertainImpact` writes `affectedId: entry.id` from the row it
+  // compared, and `openFindingsForSession` joins `work_read_sets w ON w.id = f.affected_id`. One
+  // finding is therefore one stale belief, and a stored read-set id would be a second copy of a
+  // value that can only ever disagree with its source.
+  //
+  // `session_id` is kept even though that same join reaches it, and this is the one place the
+  // denormalization earns itself: `sweepReadSets` hard-deletes released rows, so after GC the join
+  // returns nothing and the owning session is unrecoverable. Findings are not swept by that path,
+  // so the measurement survives -- but only if the session is recorded where GC cannot reach it.
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_impact_gate_shadow_finding ON impact_gate_shadow(finding_id);`,
+
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
     VALUES (new.id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));

@@ -51,7 +51,14 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * the bump buys is that a database created before them still gets them, since the gate is the
  * only thing that decides whether `SCHEMA_STATEMENTS` runs at all.
  */
-export const KNOWL_MIGRATION_LEVEL = 3;
+/*
+ * Level 4 adds `impact_gate_shadow` and its unique index on `finding_id` -- what an enforcing
+ * write gate would have refused, recorded while it refuses nothing, so the certain tier's
+ * precision can be measured before anything is allowed to block. Additive on exactly the same
+ * reasoning as level 3: one new table, no altered column, no backfill, so `KNOWL_SCHEMA_VERSION`
+ * stays at 1 and no installed build is locked out of a database it can still read completely.
+ */
+export const KNOWL_MIGRATION_LEVEL = 4;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

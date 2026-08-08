@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_CONFIG, NEW_PROJECT_CONFIG, mergeConfigDefaults } from '../../src/core/config.js';
 import { CONFIG_FIELDS, getConfigField } from '../../src/cli/config/schema.js';
-import { isImpactEnabled } from '../../src/store/impact-config.js';
+import { impactGateMode, isImpactEnabled } from '../../src/store/impact-config.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
 /**
  * Change-impact detection is additive, advisory and off until someone says otherwise.
  *
- * The gate matters more than a normal feature flag because of what the subsystem does when
- * it is on: it captures read sets on every tool call and declines to record a clean task
- * finish while a certain-tier finding is unresolved. Turning that on by accident does not
- * degrade quietly -- it holds up work in a repository whose owner never heard of it.
+ * The flag matters more than a normal feature flag because of what the subsystem does when it is
+ * on: it captures read sets on every tool call and pushes findings into the agent's context
+ * through the shared change card. Turning that on by accident does not degrade quietly -- it
+ * spends context in a repository whose owner never heard of it, on the channel a wrong finding
+ * damages most.
+ *
+ * Refusing the write is a second switch, `impact.gate`, covered further down.
  */
 
 const baseConfig = (): ProjectConfig => ({
@@ -95,5 +98,84 @@ describe('where the default is allowed to live', () => {
     expect(field.parse('false')).toBe(false);
     expect(() => field.parse('yes')).toThrow();
     expect(CONFIG_FIELDS.filter(candidate => candidate.key === 'impact.enabled')).toHaveLength(1);
+  });
+});
+
+/**
+ * The write gate's own switch, separate from detection's.
+ *
+ * They are separated because the risks differ in kind rather than degree. Detection spends
+ * context and can be wrong in a card; the gate refuses a tool call, and being wrong there costs
+ * somebody their working session. So arming it is a second, deliberate act, and it starts in
+ * `shadow` -- computing the verdict and withholding the refusal -- until plan §9's
+ * ≥95%-over-≥40-findings bar has actually been measured.
+ */
+const withGate = (impact: Record<string, unknown>): ProjectConfig =>
+  ({ ...baseConfig(), impact: impact as ProjectConfig['impact'] });
+
+describe('write gate mode', () => {
+  it('is off when nothing is configured', () => {
+    expect(impactGateMode(undefined)).toBe('off');
+    expect(impactGateMode(baseConfig())).toBe('off');
+    expect(impactGateMode(withGate({}))).toBe('off');
+  });
+
+  it('reads shadow and enforce when detection is on', () => {
+    expect(impactGateMode(withGate({ enabled: true, gate: 'shadow' }))).toBe('shadow');
+    expect(impactGateMode(withGate({ enabled: true, gate: 'enforce' }))).toBe('enforce');
+    expect(impactGateMode(withGate({ enabled: true, gate: 'off' }))).toBe('off');
+  });
+
+  /**
+   * Detection off is gate off, whatever the gate key says.
+   *
+   * The gate's entire input is the open findings the detector writes, so an armed gate over a
+   * disabled detector is not a stricter configuration -- it is one that can never fire while
+   * reporting that it can. Deciding it here means one place answers the question instead of
+   * every call site re-deriving it and one of them getting it wrong.
+   */
+  it('is off when the gate is armed but detection is not', () => {
+    expect(impactGateMode(withGate({ enabled: false, gate: 'enforce' }))).toBe('off');
+    expect(impactGateMode(withGate({ gate: 'enforce' }))).toBe('off');
+    expect(impactGateMode(withGate({ enabled: 'yes', gate: 'enforce' }))).toBe('off');
+  });
+
+  it('treats anything unrecognised as off', () => {
+    // Same rule `isImpactEnabled` follows, and for a sharper reason: a malformed value here does
+    // not merely switch on machinery nobody asked for, it can take away somebody's ability to
+    // write a file. A config.json is a file people edit by hand.
+    expect(impactGateMode(withGate({ enabled: true, gate: 'yes' }))).toBe('off');
+    expect(impactGateMode(withGate({ enabled: true, gate: 'ENFORCE' }))).toBe('off');
+    expect(impactGateMode(withGate({ enabled: true, gate: true }))).toBe('off');
+    expect(impactGateMode(withGate({ enabled: true, gate: 1 }))).toBe('off');
+    expect(impactGateMode(withGate({ enabled: true, gate: null }))).toBe('off');
+    expect(impactGateMode(withGate({ enabled: true }))).toBe('off');
+  });
+
+  it('leaves isImpactEnabled alone', () => {
+    // The two switches answer different questions, so arming the gate must not imply detection
+    // and enabling detection must not imply a gate.
+    expect(isImpactEnabled(withGate({ enabled: true, gate: 'enforce' }))).toBe(true);
+    expect(isImpactEnabled(withGate({ gate: 'enforce' }))).toBe(false);
+    expect(impactGateMode(withGate({ enabled: true }))).toBe('off');
+  });
+
+  it('stays out of DEFAULT_CONFIG, like every other key in this block', () => {
+    // The same mass-write hazard as `impact.enabled`, one step worse: a default written there
+    // would arm a write gate in every repository on the machine at the next upgrade.
+    expect(DEFAULT_CONFIG.impact).toBeUndefined();
+    expect(NEW_PROJECT_CONFIG.impact).toBeUndefined();
+  });
+
+  it('is settable from the CLI as an enum, defaulting to off', () => {
+    const field = getConfigField('impact.gate');
+    expect(field.type).toBe('enum');
+    expect(field.values).toEqual(['off', 'shadow', 'enforce']);
+    expect(field.defaultValue).toBe('off');
+    expect(field.parse('shadow')).toBe('shadow');
+    expect(field.parse('enforce')).toBe('enforce');
+    expect(() => field.parse('true')).toThrow();
+    expect(() => field.parse('ENFORCE')).toThrow();
+    expect(CONFIG_FIELDS.filter(candidate => candidate.key === 'impact.gate')).toHaveLength(1);
   });
 });

@@ -281,13 +281,14 @@ export interface ProjectConfig {
   };
   /**
    * Live change-impact detection: what a session read, whether that code moved underneath
-   * it, and a gate that declines to record a clean finish while a certain-tier finding is
-   * unresolved. Off by default for two separate reasons.
+   * it, and findings an agent can pull and adjudicate. Off by default for two separate
+   * reasons. Refusing the write itself is a separate switch, `gate` below, for a separate
+   * risk.
    *
    * It is advisory machinery that spends context: findings reach the agent through the
    * shared change card, and tool-side noise is the channel a wrong finding damages most, so
-   * a repository that never asked for it must pay nothing -- not a card line, not a capture
-   * write, not a held-open task finish.
+   * a repository that never asked for it must pay nothing -- not a card line and not a
+   * capture write.
    *
    * Deliberately absent from DEFAULT_CONFIG for the same reason `search.transcripts` is:
    * `upgradeConfigDefaults` merges that object into every config on the machine, so a
@@ -296,6 +297,23 @@ export interface ProjectConfig {
    */
   impact?: {
     enabled?: boolean;
+    /**
+     * Whether the `PreToolUse` write gate refuses an edit whose premise has already moved.
+     *
+     * A second switch rather than a mode of `enabled`, because the two carry different kinds of
+     * risk. Detection spends context and can be wrong inside a card; the gate refuses a tool
+     * call, and being wrong there costs somebody their working session. Arming it is therefore a
+     * separate, deliberate act.
+     *
+     * `shadow` computes the identical verdict, records it in `impact_gate_shadow`, and lets the
+     * write through -- the state the certain tier's ≥95%-over-≥40-findings bar is measured in,
+     * before anything is permitted to block. `enforce` denies and hands back what changed.
+     *
+     * Meaningless without `enabled`, and resolved to `off` in that case rather than honoured:
+     * the gate reads the findings the detector writes, so an armed gate over a disabled detector
+     * can never fire while claiming it can.
+     */
+    gate?: 'off' | 'shadow' | 'enforce';
   };
   /**
    * This repo's half of workspace membership. The other half is the workspace manifest

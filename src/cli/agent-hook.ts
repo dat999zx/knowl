@@ -45,6 +45,18 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
       await catchUpTranscripts(root);
     }
 
+    // **This path must exit 0, including when the output is a refusal.**
+    //
+    // Claude Code reads a `PreToolUse` verdict from stdout only on exit 0. A non-zero exit is
+    // read as the hook having crashed, and the verdict is discarded -- so a `permissionDecision:
+    // "deny"` emitted alongside a failing exit code does not block anything, it just runs the
+    // tool. That is the single most common cause of "deny is ignored" reports upstream
+    // (anthropics/claude-code#37210 was closed as exactly this, on the reporter's own diagnosis),
+    // and it fails in the direction that is hardest to notice: every test still passes, because
+    // the refusal is computed correctly and only the process's exit status throws it away.
+    //
+    // So the deny returns normally from here. Do not add a `process.exit` to this branch, and do
+    // not "signal failure" from a hook that produced a verdict.
     if (result.hostOutput) console.log(JSON.stringify(result.hostOutput));
     else if (!hostProfile(normalized.host).nativeOutput) console.log(JSON.stringify(result));
     await closeDb();

@@ -3,19 +3,17 @@
 Plan for handling the case where one actor's in-progress code change invalidates another
 agent's unfinished work. Written 2026-08-05.
 
-> **What is in this branch, and what is not.** This document describes the whole arc, including
-> the part that is *not* here. This branch is **detection only**: the read-set, certain-tier
-> findings, the card stanza and `knowl_impact`. It is off by default and it refuses nothing —
-> every path through it is advisory, and every failure path allows the turn to proceed.
+> **What is in this branch.** The **write gate** of §7.5 — the `PreToolUse` refusal — on top of
+> the detection layer. This is the first thing in knowl that can stop a user's tool call from
+> happening, so the two sections to read before the code are §7.5's four non-optional properties
+> and §10's coverage ceiling, which names four open bugs in the host's own hook implementation
+> by number.
 >
-> The **write gate** of §7.5 — the `PreToolUse` refusal that is the mechanism the evidence
-> actually supports — is deliberately proposed **separately**, so that accepting detection does
-> not commit anyone to accepting enforcement. Two reasons it is split rather than bundled: its
-> precision is not yet measured against §9's ≥95% bar, and §10 records four open bugs in the
-> host's own hook implementation that bound what a refusal can currently guarantee. Detection is
-> unaffected by all four.
->
-> Read §7.5 and §10 as design, not as shipped behaviour.
+> It is off by default (`impact.enabled`), fails open on every failure mode, and refuses at most
+> once per stale read so it can never trap an agent. §9.1 carries the precision measurement the
+> gate's bar is stated in terms of — **100% over 46 adjudicated scenarios**, against a ≥95% bar —
+> and §10 says plainly what that number does *not* establish, which is prevalence in real
+> sessions.
 
 **This is v2. It contradicts v1 (same path, earlier today) on its central design choice.** v1
 proposed *detect → notify the stale agent*. A full prior-art pass found that notification is
@@ -406,6 +404,30 @@ Four properties it must have, none optional:
 
 **`knowl_task_finish` is *not* a second gate, and the build proved it cannot be one** — §15.
 
+**Shipped in shadow mode first `[C]`.** `impact.gate` takes `off` (default), `shadow` or
+`enforce`, and is separate from `impact.enabled` because the risks differ in kind: detection
+spends context, while the gate refuses a tool call. `shadow` computes the identical verdict,
+records it in `impact_gate_shadow`, and lets the write through — so §9's ≥95%-over-≥40-findings
+bar is measured against real traffic before anything is refused. Promotion to `enforce` is a
+separate decision on a stated number, not a follow-up commit.
+
+Shadow deliberately **does not release** the read-set rows it names, and this is the one place it
+departs from the third property above. Enforcing mode releases them so a retry is never blocked
+twice, which is safe there because the agent has been told to re-read; doing the same while merely
+observing would clear a belief nobody re-read, and `work_read_sets` is simultaneously the evidence
+the precision number is computed from. A diagnostic must not change the process it observes.
+
+The consequence is that the belief stays live and the same finding returns on the next write to
+that file, which is why `impact_gate_shadow` is **unique on `finding_id`**: the row count has to
+equal the denials an enforcing gate would have issued, not the writes that were attempted, and
+those differ by however many times an agent happens to edit one file. `finding_id` alone is
+sufficient because a finding's `affected_id` already *is* the read-set row id, so one finding is
+one stale belief.
+
+Precision reads `1 − false_positive / adjudicated` over the findings those rows point at
+(`shadowGatePrecision`), with unresolved findings excluded from **both** halves — counting an
+unadjudicated block as correct is how a number talks its way past the bar it was meant to clear.
+
 **The notice is a courtesy.** Added to `renderChangeCard` (`change-card.ts:21`) — the shared
 renderer, so it reaches both the hook path and the MCP path. Constraints from `[C]`: the
 mid-turn slot is **single-occupancy** with a documented priority order
@@ -446,7 +468,7 @@ Not automatic merge resolution. Not semantic conflict inference. §11.
 | **P-0** | `toolName` on hook events; `indexFile()` export; G-6 transaction fix | full suite green; single-file index p95 measured |
 | **P-1** | incremental index on write; freshness in `doctor` | index stays current through a real session; no repo walk mid-session |
 | **P-2** | `work_read_sets` + capture + release + GC | read-set matches ground truth on a scripted session; bounded growth |
-| **P-3** | certain-tier detection + `impact_findings` + **the `PreToolUse` write gate** | **≥95% precision over ≥40 findings**, adjudicated |
+| **P-3** | certain-tier detection + `impact_findings` + **the `PreToolUse` write gate, in `shadow` first** | **≥95% precision over ≥40 findings**, adjudicated — measured *from shadow rows*, and the gate stays out of `enforce` until it is met |
 | **P-4** | reference edges, tiers, `knowl_impact` | likely-tier ≥70%; misses catalogued |
 | **P-5** | test selection + replan hint | end-to-end task success improves, or it does not ship |
 | **P-6** | cross-repo impact via workspace peers | — |

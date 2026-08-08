@@ -43,6 +43,19 @@ export interface HostProfile {
   isShellEvent(hostEvent: string, toolName: string): boolean;
   startContext(event: NormalizedHookEventName, context: string): HostOutput | undefined;
   midTurnContext(text: string): HostOutput | undefined;
+  /**
+   * The host's own envelope for refusing the tool call this hook fired for, if it has one.
+   *
+   * Capability by return value again, and fail closed: a host whose refusal channel is not
+   * confirmed leaves this absent, so calling it yields undefined. The alternative -- assuming
+   * every host can deny -- emits an envelope the host ignores and then reports the call as
+   * blocked, so the write lands while the caller is told it did not. A gate that degrades to
+   * advisory is recoverable; one that lies about what it stopped is not.
+   *
+   * `reason` is the entire message the agent receives, because a denial has no second
+   * channel: whatever the agent needs in order to recover has to be inside this string.
+   */
+  denyToolCall?: (reason: string) => HostOutput | undefined;
 }
 
 export const hostString = (value: unknown): string | undefined =>

@@ -130,7 +130,7 @@ const IMPACT_TOOLS: ToolDefinition[] = [
             properties: {
               scope: {
                 type: 'string', enum: ['mine', 'all'],
-                description: 'mine (default): findings against reads still held open -- the work someone can still act on. all: every open finding, including ones whose read was released when a task finished and which nobody has adjudicated yet.',
+                description: 'mine (default): findings against reads still held open -- the work someone can still act on. all: every open finding, including ones whose read was released when its session ended and which nobody has adjudicated yet.',
               },
               tier: {
                 type: 'string', enum: ['certain', 'likely', 'possible'],
@@ -352,8 +352,12 @@ const impactText = (value: unknown): string | null =>
  * the protocol stateless and removed `Mcp-Session-Id`, so a tool call carries nothing that names
  * its caller. A held read is the closest honest proxy -- it is work somebody is still standing on,
  * which is the set an agent can act on -- and `all` widens it to include findings whose read was
- * released at a task finish and which nobody has adjudicated, since an unadjudicated finding is
- * exactly what the precision denominator is missing (plan §9).
+ * released when its session ended and which nobody has adjudicated, since an unadjudicated finding
+ * is exactly what the precision denominator is missing (plan §9).
+ *
+ * Session end, not task finish: `releaseSessionReadSet` is called from the stop and failure
+ * branches of `host-lifecycle.ts` and nowhere else. The task-scoped release was removed in #33
+ * because nothing on the capture path knows a task id.
  *
  * The read-set query runs only for a session that actually has findings, so the common case --
  * every session clean -- costs one query per live session and nothing else.
@@ -1168,7 +1172,7 @@ export function registerTools(
         // gate resolved through the task's tag queries an id under which no read exists. The
         // loose repair (any recent session) is the one thing this must not do: it would block
         // one agent's finish over another agent's stale read. The write gate
-        // (`store/write-gate.ts`) is the chokepoint instead, and it needs no such join because
+        // (`session/write-gate.ts`) is the chokepoint instead, and it needs no such join because
         // it runs inside the session that holds the read. Plan §15.
         const result = await finishWorkLoop(projectId!, taskId, summary);
         return {

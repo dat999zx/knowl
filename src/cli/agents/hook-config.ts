@@ -98,6 +98,13 @@ export async function mergeNestedHookConfig(
     : {};
   const events = hostProfile(host).hookEvents;
   let hadOwnEntry = false;
+  // Spread first, so an event added to a profile after a settings.json was written appends
+  // as a new key and every event already there keeps its position and its foreign handlers.
+  // Note what this does *not* do: nothing re-runs the merge on its own. An install written by
+  // an older build stays a version behind until `knowl init <host>` or `knowl doctor --fix`
+  // runs -- `verifyNestedHookConfig` requires an entry for every declared event, so the
+  // missing one surfaces as "lifecycle hooks missing or stale" with a host-init remedy
+  // rather than as silence.
   const nextHooks = { ...hooks };
   for (const event of events) {
     const current = Array.isArray(hooks[event]) ? hooks[event] as Record<string, any>[] : [];

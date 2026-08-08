@@ -20,7 +20,17 @@ export type NormalizedHookEventName =
   | 'turn-stop'
   | 'session-stop'
   | 'agent-start'
-  | 'agent-stop';
+  | 'agent-stop'
+  /**
+   * A tool call the host is asking about *before* running it, and whose answer decides
+   * whether it runs at all.
+   *
+   * Separate from `session-event` because tense is the whole point: a post-tool event
+   * records what happened and its return value is advice, while this one is a question the
+   * host is waiting on. Folding the two together would let a consumer record a write that
+   * was then refused, and answer a refusal request for a call that already executed.
+   */
+  | 'tool-precheck';
 
 export interface NormalizedHostHook {
   host: HookHost;

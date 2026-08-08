@@ -4,7 +4,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { bootstrapSchema } from '../../src/store/bootstrap.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
-import { KNOWL_MIGRATION_LEVEL, readMigrationLevel } from '../../src/store/schema-version.js';
+import { KNOWL_MIGRATION_LEVEL, KNOWL_SCHEMA_VERSION, readMigrationLevel } from '../../src/store/schema-version.js';
 
 /**
  * The change-impact substrate: `work_read_sets` (what a session read, hashed at read time) and
@@ -269,5 +269,64 @@ describe('change-impact schema', () => {
     );
     expect(Number(rows.rows[0].reads)).toBe(1);
     expect(Number(rows.rows[0].findings)).toBe(1);
+  });
+
+  it('gives impact_gate_shadow exactly the specified columns and nullability', async () => {
+    expect(await columnsOf('impact_gate_shadow')).toEqual([
+      { name: 'id', type: 'TEXT', notnull: 0, pk: 1 },
+      { name: 'finding_id', type: 'TEXT', notnull: 1, pk: 0 },
+      { name: 'session_id', type: 'TEXT', notnull: 1, pk: 0 },
+      { name: 'target_path', type: 'TEXT', notnull: 1, pk: 0 },
+      { name: 'observed_at', type: 'TEXT', notnull: 1, pk: 0 },
+    ]);
+  });
+
+  /**
+   * The unique index is the whole design of shadow mode, so it is pinned as a *unique* index on
+   * exactly `finding_id` rather than merely as an index that exists.
+   *
+   * Shadow mode deliberately does not release the read-set rows it names -- releasing a belief the
+   * agent never re-read would make `work_read_sets` stop describing what the session holds, while
+   * that table is simultaneously the evidence the precision number is computed from. So the belief
+   * stays live and the same finding returns on the next write to that file. Without uniqueness the
+   * row count would measure writes attempted rather than denials an enforcing gate would have
+   * issued, and those differ by however many times an agent happens to edit one file.
+   */
+  it('keeps one shadow row per finding', async () => {
+    expect(await indexesOf('impact_gate_shadow')).toEqual(['idx_impact_gate_shadow_finding']);
+    expect(await indexColumns('idx_impact_gate_shadow_finding')).toEqual(['finding_id']);
+
+    const unique = await getClient().execute(
+      "SELECT \"unique\" FROM pragma_index_list('impact_gate_shadow') WHERE name = 'idx_impact_gate_shadow_finding'",
+    );
+    expect(Number(unique.rows[0].unique)).toBe(1);
+  });
+
+  it('ignores a second row for a finding already recorded, keeping the first target', async () => {
+    const insert = (id: string, target: string) => getClient().execute({
+      sql: `INSERT OR IGNORE INTO impact_gate_shadow (id, finding_id, session_id, target_path, observed_at)
+            VALUES (?, 'finding-a', 'session-1', ?, ?)`,
+      args: [id, target, AT],
+    });
+
+    await insert('shadow-1', 'src/a.ts');
+    const repeat = await insert('shadow-2', 'src/b.ts');
+
+    expect(Number(repeat.rowsAffected ?? 0)).toBe(0);
+    const rows = await getClient().execute(
+      "SELECT id, target_path FROM impact_gate_shadow WHERE finding_id = 'finding-a'",
+    );
+    expect(rows.rows).toHaveLength(1);
+    // The *first* target survives, not the latest. The row is written once and every later
+    // attempt is ignored, so the column answers "what was in flight when this would first have
+    // been blocked" -- which is the question a false-positive adjudication asks.
+    expect(String(rows.rows[0].target_path)).toBe('src/a.ts');
+  });
+
+  it('holds the migration level at 4 with the schema version pinned to 1', () => {
+    expect(KNOWL_MIGRATION_LEVEL).toBe(4);
+    // Additive tables never move the compatibility floor: raising it locks out installed builds
+    // that would otherwise read this database perfectly well.
+    expect(KNOWL_SCHEMA_VERSION).toBe(1);
   });
 });
