@@ -1,7 +1,8 @@
 import type { ImpactCardEntry } from './change-card.js';
 import { loadConfig } from '../core/config.js';
 import { getClient } from '../store/database.js';
-import { isImpactEnabled } from '../store/impact-config.js';
+import { impactGateMode } from '../store/impact-config.js';
+import { recordShadowBlock } from '../store/gate-shadow.js';
 import { openFindingsForSession } from './impact.js';
 import { activeReadSetForSession, repoRelativePath, type ReadSetEntry } from '../store/read-set.js';
 
@@ -41,6 +42,13 @@ import { activeReadSetForSession, repoRelativePath, type ReadSetEntry } from '..
  * detector that stays silent costs recall on an advisory subsystem; a gate that wrongly blocks
  * costs a person their working session, and this runs in front of every write in every session of
  * every repo that turned it on.
+ *
+ * **And it refuses nothing until it has earned the right to.** `impact.gate` starts at `off`, and
+ * the step before `enforce` is `shadow`: the identical verdict, recorded rather than delivered, so
+ * the ≥95%-over-≥40-findings bar plan §9 sets is measured against real traffic before a single
+ * write is stopped. Shadow deliberately does not release the read-set rows it names -- see the
+ * branch in `shouldRefuseWrite` -- because the table it would be writing to is the same one the
+ * measurement is computed from.
  */
 
 /** What the caller needs to act: whether to refuse, and the text that makes a refusal actionable. */
@@ -51,8 +59,19 @@ export interface WriteGateDecision {
   /**
    * The read-set rows this denial named and released. Present so the caller can see the one-shot
    * happened rather than take it on trust; see `releaseGatedReads`.
+   *
+   * Empty in `shadow`, which withholds the refusal and therefore has no one-shot to spend.
    */
   releasedReadIds: string[];
+  /**
+   * The findings this call recorded as withheld refusals. Non-empty only in `shadow`, and only
+   * for beliefs not already on file.
+   *
+   * It exists because `shadow` and "nothing was wrong" are otherwise the same `allow()`, and a
+   * caller that cannot tell them apart cannot report what the gate is finding while it is not
+   * blocking -- which is the entire output of shadow mode.
+   */
+  shadowedFindingIds: string[];
 }
 
 /**
@@ -72,7 +91,7 @@ const MAX_REREAD_PATHS = 3;
  */
 const MAX_SIGNATURE_LENGTH = 90;
 
-const allow = (): WriteGateDecision => ({ deny: false, reason: null, releasedReadIds: [] });
+const allow = (): WriteGateDecision => ({ deny: false, reason: null, releasedReadIds: [], shadowedFindingIds: [] });
 
 
 /**
@@ -225,9 +244,16 @@ async function releaseGatedReads(ids: string[]): Promise<boolean> {
 /**
  * Whether this write should be refused, and why.
  *
+ * **Three modes, one verdict.** `impact.gate` decides what is done with the answer, never what the
+ * answer is: `off` does not compute it, `shadow` computes it and records it in
+ * `impact_gate_shadow` while letting the write through, `enforce` refuses. Shadow is the default
+ * destination rather than a debugging aid -- plan §9 requires ≥95% precision over ≥40 adjudicated
+ * findings before this is allowed to block anything, and that number cannot be measured by a gate
+ * that is already blocking.
+ *
  * Deny only when all four hold, and allow whenever any of them is merely probable:
  *
- * 1. the repository asked for change-impact detection;
+ * 1. the repository asked for change-impact detection *and* armed the gate;
  * 2. this session has an *unreleased* read-set row for a locator in a file being written;
  * 3. that row's `observed_hash` no longer matches what is there -- established by the finding,
  *    which was recorded by comparing against that exact row;
@@ -262,10 +288,11 @@ export async function shouldRefuseWrite(
     if (targets.size === 0) return allow();
 
     // `loadConfig` throws on a missing or unreadable config, and an unreadable config is the off
-    // case by `isImpactEnabled`'s own rule: every failure mode of this subsystem is a failure of
+    // case by `impactGateMode`'s own rule: every failure mode of this subsystem is a failure of
     // turning it on, and this one takes away someone's ability to write a file.
     const config = await loadConfig(root).catch(() => null);
-    if (!isImpactEnabled(config ?? undefined)) return allow();
+    const mode = impactGateMode(config ?? undefined);
+    if (mode === 'off') return allow();
 
     const findings = await openFindingsForSession(sessionId, 'certain');
     if (findings.length === 0) return allow();
@@ -277,6 +304,10 @@ export async function shouldRefuseWrite(
     const entries: ImpactCardEntry[] = [];
     const paths: string[] = [];
     const ids: string[] = [];
+    // Collected alongside `ids` rather than derived from it. The two are the same value today --
+    // `detectCertainImpact` writes `affectedId: entry.id` -- but they answer different questions,
+    // and the shadow log keys on the finding because that is what carries the adjudication.
+    const findingIds: string[] = [];
     for (const finding of findings) {
       const entry = live.get(finding.affectedId);
       // Released since the finding was recorded: the session has re-read this locator and the
@@ -288,15 +319,43 @@ export async function shouldRefuseWrite(
 
       const pair = provenPair(finding.pathJson);
       ids.push(entry.id);
+      findingIds.push(finding.id);
       entries.push({ locator: entry.locator, wasSignature: pair.was, nowSignature: pair.now });
       if (!paths.includes(filePath)) paths.push(filePath);
     }
     if (entries.length === 0) return allow();
 
+    /*
+     * Shadow: the same verdict, withheld.
+     *
+     * **Nothing is released, and that is the point.** Enforcing mode releases these rows so a
+     * retry is never blocked twice, which is safe there because the agent has been told to
+     * re-read. Doing it here would clear a belief nobody re-read, and `work_read_sets` would stop
+     * describing what the session holds -- while being the evidence the precision number is
+     * computed from. A diagnostic must not change the process it observes.
+     *
+     * The belief therefore stays live and this same finding returns on the next write to the file;
+     * `idx_impact_gate_shadow_finding` is what stops that inflating the count, so the number of
+     * rows stays equal to the number of denials `enforce` would have issued.
+     *
+     * `paths[0]` because the row is written once and every later attempt is ignored, so the column
+     * answers "what was in flight when this would first have been blocked" -- the question a
+     * false-positive adjudication actually asks.
+     */
+    if (mode === 'shadow') {
+      const shadowedFindingIds: string[] = [];
+      for (const findingId of findingIds) {
+        if (await recordShadowBlock({ findingId, sessionId, targetPath: paths[0] })) {
+          shadowedFindingIds.push(findingId);
+        }
+      }
+      return { deny: false, reason: null, releasedReadIds: [], shadowedFindingIds };
+    }
+
     // Refuse only once the one-shot is durable. See `releaseGatedReads`.
     if (!await releaseGatedReads(ids)) return allow();
 
-    return { deny: true, reason: renderRefusal(entries, paths), releasedReadIds: ids };
+    return { deny: true, reason: renderRefusal(entries, paths), releasedReadIds: ids, shadowedFindingIds: [] };
   } catch {
     // Anything at all -- a store mid-snapshot, a schema older than the read-set, a row shaped by a
     // future version. The write proceeds.

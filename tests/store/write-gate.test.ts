@@ -10,6 +10,7 @@ import { detectCertainImpact } from '../../src/session/impact.js';
 import { recordRead } from '../../src/store/read-set.js';
 import * as repo from '../../src/store/repository.js';
 import { shouldRefuseWrite } from '../../src/session/write-gate.js';
+import { countShadowBlocks } from '../../src/store/gate-shadow.js';
 
 /**
  * The write gate, tested as a *refusal* claim: what it blocks, and far more often what it does not.
@@ -86,8 +87,20 @@ async function write(relativePath: string, contents: string): Promise<void> {
 }
 
 /** The real gate: the config is re-read per call, so it can be flipped mid-test. */
+async function setImpact(impact: Record<string, unknown>): Promise<void> {
+  await write('.knowl/config.json', JSON.stringify({ version: 1, impact }));
+}
+
+/**
+ * Detection on and the gate *enforcing*, which is what the suite below is about.
+ *
+ * The gate mode has to be written explicitly. `impact.enabled` alone resolves to `gate: 'off'`
+ * through `impactGateMode`, so a helper that set only `enabled` would leave every refusal test
+ * here asserting against a gate that was switched off -- and they would not fail loudly, they
+ * would all quietly start allowing, which is the same shape as the feature working.
+ */
 async function setImpactEnabled(enabled: boolean): Promise<void> {
-  await write('.knowl/config.json', JSON.stringify({ version: 1, impact: { enabled } }));
+  await setImpact({ enabled, gate: 'enforce' });
 }
 
 async function symbolHashOf(relativePath: string, qualifiedName: string): Promise<string> {
@@ -332,5 +345,125 @@ describe('write gate — on the hook path', () => {
     const result = await handleHostLifecycleEvent(projectId, precheck('host-session', 'Read', [SOURCE]));
 
     expect(result).toEqual({ accepted: true });
+  });
+});
+
+/**
+ * The three modes, and the one property shadow exists for.
+ *
+ * The gate is the only part of this subsystem that can cost somebody their working session, so it
+ * is not allowed to refuse anything until plan §9's ≥95%-over-≥40-findings bar has been measured.
+ * Shadow is where that measurement happens: the identical verdict, computed for real, with the
+ * refusal withheld.
+ */
+describe('write gate — modes', () => {
+  const openFindingId = async (): Promise<string> => String((await getClient().execute(
+    'SELECT id FROM impact_findings WHERE resolution IS NULL ORDER BY detected_at, id',
+  )).rows[0].id);
+
+  it('computes nothing and allows when the gate is off', async () => {
+    await setImpact({ enabled: true, gate: 'off' });
+    await makeStale();
+
+    const decision = await shouldRefuseWrite(testRoot, READER, [SOURCE]);
+
+    expect(decision.deny).toBe(false);
+    expect(decision.shadowedFindingIds).toEqual([]);
+    expect(await countShadowBlocks()).toBe(0);
+    // Nothing was spent: the belief is untouched and the gate is still armed for whenever
+    // somebody turns it on.
+    expect((await readRow('read-1')).released_at).toBeNull();
+  });
+
+  it('shadow records the withheld refusal and lets the write through', async () => {
+    await setImpact({ enabled: true, gate: 'shadow' });
+    await makeStale();
+    const findingId = await openFindingId();
+
+    const decision = await shouldRefuseWrite(testRoot, READER, [SOURCE]);
+
+    expect(decision.deny).toBe(false);
+    expect(decision.reason).toBeNull();
+    expect(decision.shadowedFindingIds).toEqual([findingId]);
+    expect(await countShadowBlocks()).toBe(1);
+  });
+
+  /**
+   * The property the whole mode exists for.
+   *
+   * Releasing here would clear a belief the agent never re-read, so `work_read_sets` would stop
+   * describing what the session holds -- while being the evidence the precision number is computed
+   * from. A diagnostic must not change the process it observes.
+   */
+  it('shadow does not release the read-set row it named', async () => {
+    await setImpact({ enabled: true, gate: 'shadow' });
+    await makeStale();
+
+    await shouldRefuseWrite(testRoot, READER, [SOURCE]);
+
+    expect((await readRow('read-1')).released_at).toBeNull();
+  });
+
+  /**
+   * Because the belief stays live it returns on every later write to that file, so the count has
+   * to be defended by the unique index rather than by the belief going away.
+   */
+  it('shadow logs one row however many writes hit the same belief', async () => {
+    await setImpact({ enabled: true, gate: 'shadow' });
+    await makeStale();
+
+    const first = await shouldRefuseWrite(testRoot, READER, [SOURCE]);
+    const second = await shouldRefuseWrite(testRoot, READER, [SOURCE]);
+    const third = await shouldRefuseWrite(testRoot, READER, [SOURCE]);
+
+    expect(await countShadowBlocks()).toBe(1);
+    // Only the write that actually recorded something reports it, so a caller counting these does
+    // not double-count either.
+    expect(first.shadowedFindingIds).toHaveLength(1);
+    expect(second.shadowedFindingIds).toEqual([]);
+    expect(third.shadowedFindingIds).toEqual([]);
+  });
+
+  it('shadow leaves the finding open, so it stays in the precision denominator', async () => {
+    await setImpact({ enabled: true, gate: 'shadow' });
+    await makeStale();
+
+    await shouldRefuseWrite(testRoot, READER, [SOURCE]);
+
+    const open = await getClient().execute('SELECT COUNT(*) AS n FROM impact_findings WHERE resolution IS NULL');
+    expect(Number(open.rows[0].n)).toBe(1);
+  });
+
+  it('enforce denies, releases, and writes no shadow row', async () => {
+    await setImpact({ enabled: true, gate: 'enforce' });
+    await makeStale();
+
+    const decision = await shouldRefuseWrite(testRoot, READER, [SOURCE]);
+
+    expect(decision.deny).toBe(true);
+    expect(decision.reason).toContain('KNOWL BLOCKED THIS WRITE');
+    expect(decision.releasedReadIds).toEqual(['read-1']);
+    expect(decision.shadowedFindingIds).toEqual([]);
+    expect(await countShadowBlocks()).toBe(0);
+    expect((await readRow('read-1')).released_at).not.toBeNull();
+  });
+
+  it('allows when the gate is armed but detection is off', async () => {
+    // Decided in `impactGateMode`, and re-asserted here because this is the call site where
+    // getting it wrong takes away somebody's edit rather than merely logging a wrong row.
+    await setImpact({ enabled: false, gate: 'enforce' });
+    await makeStale();
+
+    expect((await shouldRefuseWrite(testRoot, READER, [SOURCE])).deny).toBe(false);
+  });
+
+  it('allows when the mode is a value nobody defined', async () => {
+    await setImpact({ enabled: true, gate: 'block' });
+    await makeStale();
+
+    const decision = await shouldRefuseWrite(testRoot, READER, [SOURCE]);
+
+    expect(decision.deny).toBe(false);
+    expect(await countShadowBlocks()).toBe(0);
   });
 });
