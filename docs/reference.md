@@ -1006,6 +1006,11 @@ The figures above are retrieval-level and scored by this repository. The same cl
 Knowl returned. Metric is `substring_exact_match`, the field the benchmark specifies for Conflict
 Resolution; reader is gpt-4o-mini at temperature 0.7, top-k 10, 100 questions per cell.
 
+**Each cell is a single run, not a median of several.** At temperature 0.7 with n = 100, binomial
+standard error is roughly 3 points, so treat each individual figure as carrying a few points of
+uncertainty. The comparisons are wider than that — the ablation gap is about five standard errors
+and holds at two corpus sizes — but a single figure quoted alone should not be read to the point.
+
 <div align="center">
 <img src="assets/benchmark-mab-comparison.svg" alt="MemoryAgentBench FactConsolidation single-hop at 262K context, substring exact match, gpt-4o-mini reader: Knowl 90, GPT-4o long-context 60, BM25 56, NV-Embed-v2 55, HippoRAG-v2 54, GPT-4o-mini long-context 45, Cognee 28, MemGPT 28, Mem0 18" width="82%" />
 </div>
