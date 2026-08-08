@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { runDoctor } from '../../src/cli/doctor-report.js';
+import { installKnowlProjectGuidance } from '../../src/core/agents-guidance.js';
 import { fingerprintProfile, resolveVectorProfile } from '../../src/core/vector-profile.js';
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
 import type { ProjectConfig } from '../../src/core/types.js';
@@ -125,6 +126,11 @@ describe('doctor retrieval self-test', () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-probe-'));
     await fs.mkdir(path.join(root, '.knowl'), { recursive: true });
     await fs.writeFile(path.join(root, '.knowl', 'config.json'), JSON.stringify(DEFAULT_CONFIG), 'utf-8');
+    // Guidance too, because `knowl init` writes it and this fixture is standing in for an
+    // initialised repository. Building `.knowl` by hand without it produced a state no real
+    // install reaches -- and once stale guidance became a FAIL, that artificial gap was what
+    // these tests were measuring instead of the probe they are named for.
+    await installKnowlProjectGuidance(root);
     await initDb(root);
     return (await repo.createProject(root, 'doctor-probe')).id;
   }
@@ -190,6 +196,39 @@ describe('doctor retrieval self-test', () => {
     expect(probeCheck(result.checks).status).toBe('WARN');
     expect(result.ready).toBe(true);
     expect(result.checks.some(check => check.status === 'FAIL')).toBe(false);
+  });
+
+  it('is NOT READY when the guidance on disk is stale', async () => {
+    // The gap this closes: guidance staleness was a WARN and the verdict gates on FAIL, so
+    // `doctor` said READY while the lifecycle hook injected a card rendered from the running
+    // build and the host read a contradicting KNOWL.md from disk. Measured 2026-08-08 -- a knowl
+    // command run against a stale dist/ reverted guidance that had just landed and nothing said so.
+    await bareRepo();
+    const knowlMd = path.join(root, 'KNOWL.md');
+    const current = await fs.readFile(knowlMd, 'utf-8');
+    await fs.writeFile(knowlMd, current.replace('### Linked repositories', '### Linked repos (from an older build)'), 'utf-8');
+    await closeDb();
+
+    const result = await runDoctor(root);
+    const guidance = result.checks.find(check => check.message.includes('KNOWL.md'));
+
+    expect(guidance?.status).toBe('FAIL');
+    expect(result.ready).toBe(false);
+    // The remedy stays wired, so `doctor --fix` can still repair what the verdict now blocks on.
+    expect(guidance?.remedy).toEqual({ kind: 'guidance' });
+  });
+
+  it('is READY once that guidance matches the running build', async () => {
+    // The control. Without it the assertion above would pass on any repository at all, and the
+    // fixture change that installs guidance would be untested.
+    await bareRepo();
+    await closeDb();
+
+    const result = await runDoctor(root);
+    const guidance = result.checks.find(check => check.message.includes('KNOWL.md'));
+
+    expect(guidance?.status).toBe('OK');
+    expect(result.ready).toBe(true);
   });
 
   it('re-finds a stored item by its own title words', async () => {

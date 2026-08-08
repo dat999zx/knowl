@@ -56,11 +56,16 @@ describe('npm update check', () => {
     expect(result?.latest).toBe('1.5.0');
   });
 
-  it('always refetches at ttlMs 0, which is what makes doctor a diagnostic', async () => {
+  it('always refetches at ttlMs 0, even within the same millisecond', async () => {
     // `knowl doctor` passes 0 where `status` takes the day-long default. Measured 2026-08-08:
     // 3.4.0 published five hours after the cache was written, and doctor went on reporting a
     // healthy 3.3.0 for the rest of the day. A diagnostic that cannot be made to look again is
     // one you stop believing.
+    //
+    // "Even within the same millisecond" is the whole assertion. Age alone does not deliver it:
+    // `age > ttlMs` at 0 serves the cache when both calls share a tick, because 0 is not greater
+    // than 0. This test failed exactly that way on the macOS CI runner while ubuntu and windows
+    // passed, which is how the gap was found rather than shipped.
     await checkForUpdate({ packageName: PKG, currentVersion: '1.3.1', projectRoot: root, fetchImpl: okFetch('1.4.0') });
     const result = await checkForUpdate({
       packageName: PKG, currentVersion: '1.3.1', projectRoot: root, ttlMs: 0, fetchImpl: okFetch('1.6.0'),
@@ -68,6 +73,18 @@ describe('npm update check', () => {
 
     expect(result?.latest).toBe('1.6.0');
     expect(result?.updateAvailable).toBe(true);
+  });
+
+  it('serves a same-millisecond cache at a positive ttl, so status is unaffected', async () => {
+    // The control for the rule above. `ttlMs <= 0` must be what disables the cache, not a change
+    // to how age is compared -- `status` still wants the day-long cache and must keep getting it
+    // whatever the clock resolution is.
+    await checkForUpdate({ packageName: PKG, currentVersion: '1.3.1', projectRoot: root, fetchImpl: okFetch('1.4.0') });
+    const result = await checkForUpdate({
+      packageName: PKG, currentVersion: '1.3.1', projectRoot: root, ttlMs: 60_000, fetchImpl: okFetch('1.7.0'),
+    });
+
+    expect(result?.latest).toBe('1.4.0');
   });
 
   it('still writes the shared cache when it bypasses it, so the next status benefits', async () => {
