@@ -64,6 +64,43 @@ describe('project guidance files', () => {
     expect(await installKnowlProjectGuidance(ROOT)).toEqual({ knowl: 'unchanged', agents: 'unchanged' });
   });
 
+  /**
+   * A CRLF checkout is current, and stays current.
+   *
+   * Everything here composes with `\n` and `core.autocrlf` hands back `\r\n`, so an exact
+   * comparison calls a perfectly good file stale on every Windows clone — with no action that
+   * fixes it, because the next checkout restores CRLF. Survivable while staleness was advisory;
+   * not once it blocks `doctor`'s verdict, which is how it was caught: `doctor` reported NOT
+   * READY on this repository minutes after the severity changed.
+   */
+  it('treats a CRLF checkout as current, and does not rewrite it', async () => {
+    await fs.mkdir(ROOT, { recursive: true });
+    await installKnowlProjectGuidance(ROOT);
+    for (const name of ['KNOWL.md', 'AGENTS.md']) {
+      const file = path.join(ROOT, name);
+      await fs.writeFile(file, (await fs.readFile(file, 'utf8')).replaceAll('\n', '\r\n'), 'utf8');
+    }
+
+    expect(await isKnowlProjectGuidanceCurrent(ROOT)).toBe(true);
+    // And a reinstall leaves it alone rather than churning every line back to LF.
+    expect(await installKnowlProjectGuidance(ROOT)).toEqual({ knowl: 'unchanged', agents: 'unchanged' });
+    expect(await fs.readFile(path.join(ROOT, 'AGENTS.md'), 'utf8')).toContain('\r\n');
+  });
+
+  it('does not double the carriage return when refreshing a CRLF file', async () => {
+    // The bug the check above would otherwise hide: composing without normalising first expands
+    // each `\n` of an already-CRLF prefix into `\r\r\n`, so the file never equals itself again.
+    await fs.mkdir(ROOT, { recursive: true });
+    await fs.writeFile(path.join(ROOT, 'AGENTS.md'), '# Agent Instructions\r\n\r\nHand-written.\r\n', 'utf8');
+    await installKnowlProjectGuidance(ROOT);
+
+    const agents = await fs.readFile(path.join(ROOT, 'AGENTS.md'), 'utf8');
+
+    expect(agents).not.toContain('\r\r');
+    expect(agents).toContain('Hand-written.');
+    expect(await isKnowlProjectGuidanceCurrent(ROOT)).toBe(true);
+  });
+
   it('is not current when either file is missing or stale', async () => {
     await fs.mkdir(ROOT, { recursive: true });
     await installKnowlProjectGuidance(ROOT);
