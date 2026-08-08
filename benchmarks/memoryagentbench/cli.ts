@@ -10,6 +10,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { z } from 'zod';
 import { findProjectRoot } from '../../src/core/config.js';
+import { normalizeAnswers } from './facts.js';
 import { runConflictResolution } from './runner.js';
 
 const SPLIT_URL =
@@ -22,7 +23,7 @@ const SPLIT_URL =
 const RowSchema = z.object({
   context: z.string(),
   questions: z.array(z.string()),
-  answers: z.array(z.string()),
+  answers: z.array(z.union([z.string(), z.array(z.string())])),
   metadata: z.object({ qa_pair_ids: z.array(z.string()).optional() }).partial().optional(),
 });
 
@@ -50,7 +51,12 @@ program
 
     const candidate = row.metadata?.qa_pair_ids?.[0]?.replace(/_no\d+$/, '');
     const id = candidate && SAFE_ID.test(candidate) ? candidate : `row-${Number(options.row)}`;
-    const instance = { id, context: row.context, questions: row.questions, answers: row.answers };
+    const instance = {
+      id,
+      context: row.context,
+      questions: row.questions,
+      answers: normalizeAnswers(row.answers),
+    };
 
     const outPath = path.resolve(options.out);
     await fs.mkdir(path.dirname(outPath), { recursive: true });

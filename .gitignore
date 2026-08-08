@@ -39,5 +39,9 @@ data/
 .dist-bench/
 docs/evals/results/shards/
 .benchmark-dist/
+# The MAB bridge builds to its own directory: `bench:cr` cleans .benchmark-dist on every run,
+# which would delete a bridge built alongside the CLI mid-experiment.
+.bridge-dist/
+.verify-dist/
 .benchmark-tsc/
 benchmarks/*/data/

@@ -974,8 +974,9 @@ manual work loop for lifecycle capture.
 
 ## Benchmarks
 
-These retrieval-level suites use no answer-generating reader. MemoryAgentBench supplies an
-external conflict fixture; the other two suites are internal regression data.
+Most suites below are retrieval-level and use no answer-generating reader. MemoryAgentBench
+supplies an external conflict fixture, and is additionally run end-to-end inside its own harness
+with an LLM reader; the other two suites are internal regression data.
 
 ### MemoryAgentBench conflict resolution
 
@@ -997,6 +998,55 @@ top-5 vector+BM25 retrieval, and no LLM reader.
 Supersession retired 149 facts at write time; both rows otherwise use the same corpus, path, and
 metric. The instance covers dynamic single-hop latest-fact conflicts, not static, conditional,
 multi-hop, or reader behavior.
+
+#### End-to-end, in MemoryAgentBench's own harness
+
+The figures above are retrieval-level and scored by this repository. The same claim was also run
+**inside MemoryAgentBench's harness and scored by its own code**, with an LLM reader consuming what
+Knowl returned. Metric is `substring_exact_match`, the field the benchmark specifies for Conflict
+Resolution; reader is gpt-4o-mini at temperature 0.7, top-k 10, 100 questions per cell.
+
+<div align="center">
+<img src="assets/benchmark-mab-comparison.svg" alt="MemoryAgentBench FactConsolidation single-hop at 262K context, substring exact match, gpt-4o-mini reader: Knowl 90, GPT-4o long-context 60, BM25 56, NV-Embed-v2 55, HippoRAG-v2 54, GPT-4o-mini long-context 45, Cognee 28, MemGPT 28, Mem0 18" width="82%" />
+</div>
+
+| System | FactConsolidation-SH @262K |
+| --- | ---: |
+| **Knowl** | **90** |
+| GPT-4o (long-context) | 60 |
+| BM25 | 56 |
+| NV-Embed-v2 | 55 |
+| HippoRAG-v2 | 54 |
+| GPT-4o-mini (long-context) | 45 |
+| Cognee | 28 |
+| MemGPT | 28 |
+| Mem0 | 18 |
+
+Knowl's row was measured here. Every other row is from the paper's Table 2, which states that "all
+RAG agents and commercial memory agents use GPT-4o-mini as the backbone" — the same reader used for
+Knowl, so the rows are like-for-like. Long-context rows use their own named model. Systems the
+paper does not evaluate on this task, including Zep, Graphiti and Letta, are not listed rather than
+carried over from secondary sources.
+
+The ablation in that harness:
+
+| Instance | Supersession ON | OFF | Gap |
+| --- | ---: | ---: | ---: |
+| `factconsolidation_sh_262k` | **90** | 73 | **+17** |
+| `factconsolidation_sh_6k` | **94** | 78 | **+16** |
+| `factconsolidation_mh_262k` | 7 | 6 | +1 |
+
+`input_len` stays within 294–410 on every row of every cell, which is the cheapest contamination
+check available: rows left behind by an earlier code path carry a visibly different context size,
+and MemoryAgentBench's `--force` flag does **not** discard old results — it only bypasses the
+context-level skip, so stale rows are otherwise silently averaged into a new score.
+
+Multi-hop is retrieval-bound, not reader-bound. Only 14 of 100 multi-hop questions have the gold
+answer anywhere in the retrieved set, so no reader could exceed 14; Knowl scores 7. Quote it with
+that ceiling attached — the fix is chained retrieval, which Knowl does not do, not prompt or
+supersession tuning.
+
+Method and full write-up: [independent rebuild](evals/memoryagentbench-replication.md).
 
 Re-measured 2026-08-06 with the `granite-small-en-r2` default, stable across two runs. The
 previous figures — 96.0% and 40.0% top-1 with 3 stale returns — were taken on the `minilm-l6-en`
