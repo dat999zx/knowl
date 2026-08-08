@@ -62,7 +62,8 @@ const KNOWL_REMINDER_DRIFT = 12;
  * and deliberately do not.
  *
  * A read-set row asserts "this session saw this text and holds a belief about it", and the
- * certain tier spends that assertion by interrupting the agent and gating its task finish. So the
+ * certain tier spends that assertion by interrupting the agent and, once the gate is enforcing,
+ * refusing its write. So the
  * set is the tools that return *contents*: `Read`, and `NotebookRead`, whose target the host names
  * `notebook_path` rather than `file_path` -- which is why that key had to be added to `changedPaths`
  * and to the stdin allowlist in the same change, or this entry would have named a tool whose paths
@@ -412,7 +413,7 @@ function impactChangedPaths(payload: Record<string, unknown>): string[] {
  * single design difference between this and the only published system with the same shape:
  * STORM's own stated limitation is that file-level granularity makes "two agents editing
  * different functions in the same file" a false-positive rejection (plan §6). The certain tier is
- * the only tier allowed to push into an agent's context and gate a task finish, held to ≥95%
+ * the only tier allowed to push into an agent's context and refuse its write, held to ≥95%
  * precision, and file granularity spends that budget on edits that never touched anything the
  * reader saw. `file://` is recorded only when the file yields no symbols at all -- a non-code
  * file, a language with no grammar here, or a parse that produced nothing -- where the file hash

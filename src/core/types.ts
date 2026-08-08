@@ -281,13 +281,14 @@ export interface ProjectConfig {
   };
   /**
    * Live change-impact detection: what a session read, whether that code moved underneath
-   * it, and a gate that declines to record a clean finish while a certain-tier finding is
-   * unresolved. Off by default for two separate reasons.
+   * it, and findings an agent can pull and adjudicate. Off by default for two separate
+   * reasons. Refusing the write itself is a separate switch, `gate` below, for a separate
+   * risk.
    *
    * It is advisory machinery that spends context: findings reach the agent through the
    * shared change card, and tool-side noise is the channel a wrong finding damages most, so
-   * a repository that never asked for it must pay nothing -- not a card line, not a capture
-   * write, not a held-open task finish.
+   * a repository that never asked for it must pay nothing -- not a card line and not a
+   * capture write.
    *
    * Deliberately absent from DEFAULT_CONFIG for the same reason `search.transcripts` is:
    * `upgradeConfigDefaults` merges that object into every config on the machine, so a

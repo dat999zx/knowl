@@ -214,7 +214,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
     key: 'impact.enabled', category: 'Change impact', type: 'boolean',
     parse: booleanValue, defaultValue: false,
     label: 'Change impact detection',
-    description: 'Record which code each session read, and flag work whose code changed underneath it. While on, a task finish reports unresolved changes instead of closing clean.',
+    description: 'Record which code each session read, and flag work whose code changed underneath it. Findings reach the agent through the change card and knowl_impact.',
   },
   {
     // `defaultValue: 'off'` lives here and nowhere else, for the same reason as `impact.enabled`

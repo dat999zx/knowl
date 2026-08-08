@@ -7,10 +7,13 @@ import type { ProjectConfig } from '../../src/core/types.js';
 /**
  * Change-impact detection is additive, advisory and off until someone says otherwise.
  *
- * The gate matters more than a normal feature flag because of what the subsystem does when
- * it is on: it captures read sets on every tool call and declines to record a clean task
- * finish while a certain-tier finding is unresolved. Turning that on by accident does not
- * degrade quietly -- it holds up work in a repository whose owner never heard of it.
+ * The flag matters more than a normal feature flag because of what the subsystem does when it is
+ * on: it captures read sets on every tool call and pushes findings into the agent's context
+ * through the shared change card. Turning that on by accident does not degrade quietly -- it
+ * spends context in a repository whose owner never heard of it, on the channel a wrong finding
+ * damages most.
+ *
+ * Refusing the write is a second switch, `impact.gate`, covered further down.
  */
 
 const baseConfig = (): ProjectConfig => ({
