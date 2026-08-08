@@ -243,10 +243,13 @@ readers; this one makes peer answers less prominent. They reconcile through Deci
 peers are still read, still recorded in the ledger, and still named in every response. What changes
 is that a peer answer is never mistakable for a local one.
 
-**`scope: "local"` undercounts demand.** Skipping peer selection means no `federated_query` ledger
-event of the usual shape. The event must still be recorded, marked as locally scoped, or the ledger
-silently under-reports cross-repo demand — the exact measurement
-[demand-paged scoping](2026-08-07-demand-paged-scoping-design.md) is waiting on.
+**~~`scope: "local"` undercounts demand.~~** *Checked 2026-08-08 and it does not.* The concern was
+that skipping peer selection would skip the ledger write. It does not: the write is guarded on
+`active && query`, which a locally-scoped query still satisfies, so volume is unaffected. Only the
+*interpretation* needed help, and `detail.scope` now marks a narrowed read so it is not counted as
+an open one. `detail.localAnswered` was added alongside it — the first direct measurement of how
+often this repo is asked something only a neighbour holds, which is the quantity grouping actually
+changes and which nothing recorded before.
 
 ## Blast radius
 

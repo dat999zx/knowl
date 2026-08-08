@@ -1052,6 +1052,24 @@ export function registerTools(
               ...(resolvedItems.some(item => (item.explanation as { abstained?: boolean } | undefined)?.abstained)
                 ? { abstained: true }
                 : {}),
+              // Whether this repo put anything on the page at all -- the quantity grouping
+              // actually changes, and nothing measured it before. Read from the local group's
+              // occupancy rather than from a score, for the same reason the grouping decision
+              // is: no threshold can separate a weak local answer from no local answer, but
+              // "did it contribute a row" is a count and counts do not need calibrating.
+              //
+              // Only where the local repo was searched. Under `repos: ['b']` it was not, and
+              // recording `false` would say this repo failed to answer a question it was never
+              // asked -- the same absent-versus-unsearched conflation `skipped` exists to avoid.
+              ...(federated?.groups.some(group => group.repo === active.repo)
+                ? { localAnswered: (federated.groups.find(group => group.repo === active.repo)?.items.length ?? 0) > 0 }
+                : {}),
+              // A narrowed read, marked so it is not counted as an open one. The event is
+              // recorded either way -- the guard above is `active && query`, which a local scope
+              // still satisfies -- so the ledger's volume is unaffected and only its
+              // interpretation needed the flag.
+              ...(scope ? { scope } : {}),
+              ...(repos?.length ? { repos } : {}),
             },
           }, config);
         }
