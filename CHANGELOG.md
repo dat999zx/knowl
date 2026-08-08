@@ -5,6 +5,33 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+### Stale guidance is NOT READY, and the session says so
+
+`knowl doctor` detected stale `KNOWL.md` / `AGENTS.md` and reported it as a `WARN`. The verdict
+gates on `FAIL`, so **doctor said READY while agents were reading instructions this version did not
+write** — which is exactly what happened on 2026-08-08, when a `knowl` command run against a stale
+`dist/` reverted guidance that had just landed and nothing anywhere said so.
+
+That severity is now `FAIL`. Every other `WARN` here means an optional thing is not configured — no
+vector provider, no work loop, `.knowl` not gitignored. Guidance staleness is not optional-anything:
+the block between the markers is owned by Knowl and rewritten wholesale, while anything outside it
+is preserved, so a difference there is never a preference. The obvious objection — that this flips
+installs which upgraded without re-initialising — does not hold: `knowl upgrade` and `knowl init`
+both reinstall guidance, so staleness survives neither, and `doctor --fix` already had the remedy
+wired.
+
+**The lifecycle hook now warns too, and this is the case that actually bites.** The hook injects its
+guidance card rendered from the *running build* while the host reads `KNOWL.md` from *disk*, so a
+stale file does not merely under-inform the agent — it contradicts the card inside the same session,
+with nothing to break the tie. Session start now leads with a `KNOWL GUIDANCE STALE` line naming
+which source is wrong, charged against the context budget rather than stacked on top of it.
+
+The hook warns only when the files are **present and different**, where `doctor` fails on missing or
+stale alike. The two are opposite findings: an absent file is one the host never read, so there is
+no second version of the guidance to contradict, and "written by a different version" would simply
+be false. A project that never ran `knowl init` is `doctor`'s to report, not something to repeat at
+every session start.
+
 ### `knowl doctor` asks the registry every time
 
 The update check caches for a day, which is right for `knowl status` — run in passing, and a

@@ -14,6 +14,7 @@ import {
 } from '../store/read-set.js';
 import { shouldRefuseWrite } from './write-gate.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';
+import { isKnowlProjectGuidanceCurrent } from '../core/agents-guidance.js';
 import {
   ChangeSummary,
   loadChangesInRange,
@@ -651,6 +652,45 @@ async function finalizeFailedStop(projectId: string, input: NormalizedHostHook, 
   return { promotion, handoff };
 }
 
+/**
+ * Whether this project's KNOWL.md and AGENTS.md still say what this build writes.
+ *
+ * The reason it belongs at session start and not only in `doctor`: the guidance card in this
+ * context block is rendered from the RUNNING build, while the host reads KNOWL.md from disk. A
+ * stale file therefore does not merely under-inform the agent, it **contradicts** the card in the
+ * same session, and nothing said which one to believe. Measured 2026-08-08: a `knowl` command run
+ * against a stale `dist/` reverted guidance that had just landed, and every session afterwards
+ * carried both versions at once.
+ *
+ * So the warning names the winner rather than just reporting drift -- an agent that knows the file
+ * is wrong can act on the card and tell the user, which is the whole point of saying it here.
+ *
+ * Two file reads and a string compare, once per session. Not on the per-tool-call path, where the
+ * write gate's process cost was the objection. Best-effort throughout: a missing or unreadable
+ * instruction file is not a reason to fail a session bootstrap.
+ */
+async function staleGuidanceWarningBestEffort(projectRoot: string): Promise<string | null> {
+  try {
+    // Present AND different, not merely "not current" -- `isKnowlProjectGuidanceCurrent` reports
+    // false for both, and the two mean opposite things here. A file that does not exist is one
+    // the host never read, so there is no second version of the guidance and nothing to
+    // contradict; saying "written by a different version of Knowl" about an absent file is just
+    // false. That case is `doctor`'s to raise, where "this project was never set up" is the
+    // finding. Narrowing to drift also keeps this quiet for every project that uses Knowl through
+    // MCP without the markdown files.
+    const present = await Promise.all(['KNOWL.md', 'AGENTS.md'].map(name =>
+      fs.access(path.join(projectRoot, name)).then(() => true, () => false)));
+    if (!present.every(Boolean)) return null;
+    if (await isKnowlProjectGuidanceCurrent(projectRoot)) return null;
+  } catch {
+    return null;
+  }
+  return 'KNOWL GUIDANCE STALE: this project\'s KNOWL.md / AGENTS.md were written by a different '
+    + 'version of Knowl than the one running, so they may contradict the guidance in this block. '
+    + 'Where they disagree, the file is the stale one. Run `knowl init` (or `knowl doctor --fix`) '
+    + 'to refresh them.';
+}
+
 export async function handleHostLifecycleEvent(projectId: string, input: NormalizedHostHook): Promise<HostLifecycleResult> {
   // First, and claimed before anything else can mistake it for a session boundary: every event
   // this function does not recognise falls through to the session-stop handler at the bottom, and
@@ -673,7 +713,14 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // follows. Prepending it to an already-budgeted block pushed the session past the size
     // the host was promised, and the warning is the part that must survive: the watermark
     // has already advanced, so this line is the only record of the window.
-    const warning = truncateText(describeAutoDrift(drift) ?? '', DEFAULT_CONTEXT_MAX_CHARS);
+    // Guidance first, then drift. Both are charged against the cap before recent context, and if
+    // only one survives truncation it should be the one saying the instructions on disk cannot be
+    // trusted -- an agent acting on stale guidance gets the subsequent work wrong, where a missed
+    // drift notice costs it a re-read.
+    const warning = truncateText([
+      await staleGuidanceWarningBestEffort(input.projectRoot),
+      describeAutoDrift(drift),
+    ].filter(Boolean).join('\n\n'), DEFAULT_CONTEXT_MAX_CHARS);
     const recentBudget = warning
       ? Math.max(0, DEFAULT_CONTEXT_MAX_CHARS - warning.length - 2)
       : DEFAULT_CONTEXT_MAX_CHARS;

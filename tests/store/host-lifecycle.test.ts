@@ -51,6 +51,42 @@ describe('host lifecycle orchestration', () => {
     await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
   });
 
+  /**
+   * The contradiction this warning exists for.
+   *
+   * The card in this context block is rendered from the running build; the host reads KNOWL.md
+   * from disk. When the file is stale the agent is handed both versions in one session and given
+   * nothing to break the tie, so the warning names which one is wrong rather than merely
+   * reporting drift.
+   */
+  it('warns at session start when the guidance on disk is stale', async () => {
+    const { installKnowlProjectGuidance } = await import('../../src/core/agents-guidance.js');
+    await installKnowlProjectGuidance(ROOT);
+    const knowlMd = path.join(ROOT, 'KNOWL.md');
+    const current = await fs.readFile(knowlMd, 'utf-8');
+    await fs.writeFile(knowlMd, current.replace('### Required workflow', '### Required workflow (older build)'), 'utf-8');
+
+    const result = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex', event: 'session-start', externalSessionId: 'stale-guidance', externalTurnId: undefined,
+    }));
+
+    expect(result.context).toContain('KNOWL GUIDANCE STALE');
+    expect(result.context).toContain('the file is the stale one');
+    // Recent context survives beside it: the warning is charged against the cap, not stacked on it.
+    expect(result.context!.length).toBeLessThanOrEqual(3_000);
+  });
+
+  it('says nothing at session start when the guidance matches the build', async () => {
+    const { installKnowlProjectGuidance } = await import('../../src/core/agents-guidance.js');
+    await installKnowlProjectGuidance(ROOT);
+
+    const result = await handleHostLifecycleEvent(projectId, hook({
+      host: 'codex', event: 'session-start', externalSessionId: 'fresh-guidance', externalTurnId: undefined,
+    }));
+
+    expect(result.context ?? '').not.toContain('KNOWL GUIDANCE STALE');
+  });
+
   it('bootstraps bounded context at host session start', async () => {
     const result = await handleHostLifecycleEvent(projectId, hook({
       host: 'codex',

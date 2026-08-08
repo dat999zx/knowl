@@ -52,13 +52,33 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         : 'Config missing vector search defaults; run knowl upgrade',
     });
 
+    // FAIL, not WARN, and this is the one check where that distinction is worth arguing.
+    //
+    // Every other WARN here means an optional thing is not configured -- no vector provider, no
+    // work loop, `.knowl` not gitignored. Guidance staleness is not optional-anything: the block
+    // between the markers is owned by Knowl and rewritten wholesale by `installKnowlProjectGuidance`,
+    // while anything outside it is preserved. So a difference there is never a preference. It is
+    // always this project holding instructions some other version of Knowl wrote.
+    //
+    // Which makes READY a lie in the case that matters most. The lifecycle hook injects its
+    // guidance card from the RUNNING build while the host reads KNOWL.md from disk, so a stale
+    // file does not merely under-inform the agent -- it contradicts the card in the same session.
+    // Measured 2026-08-08: a `knowl` command run against a stale `dist/` reverted guidance that
+    // had just landed, and `doctor` went on reporting READY while agents were told to look for a
+    // per-row `repo` field the response shape no longer had.
+    //
+    // The obvious objection -- that this flips every install that upgraded the CLI without
+    // re-initialising -- was checked: `knowl upgrade` and `knowl init` both call
+    // `installKnowlProjectGuidance`, so staleness survives neither. What is left is a project
+    // nobody has upgraded, where NOT READY is the honest answer, and the remedy is already wired
+    // here as `{ kind: 'guidance' }` for `doctor --fix`.
     const guidanceCurrent = await isKnowlProjectGuidanceCurrent(root);
     checks.push({
-      status: guidanceCurrent ? 'OK' : 'WARN',
+      status: guidanceCurrent ? 'OK' : 'FAIL',
       message: guidanceCurrent
         ? 'KNOWL.md and AGENTS.md guidance current'
-        : 'KNOWL.md or AGENTS.md Knowl guidance missing or stale; run knowl init',
-      fix: guidanceCurrent ? undefined : 'run `knowl init`',
+        : 'KNOWL.md or AGENTS.md Knowl guidance missing or stale; agents are reading instructions this version did not write. Run knowl init',
+      fix: guidanceCurrent ? undefined : 'run `knowl init` (or `knowl doctor --fix`)',
       remedy: guidanceCurrent ? undefined : { kind: 'guidance' },
     });
 
