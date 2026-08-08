@@ -29,6 +29,14 @@ export function isUpdateCheckEnabled(config?: { updateCheck?: { enabled?: boolea
 }
 
 async function readCache(cacheFile: string, ttlMs: number): Promise<string | null> {
+  // A non-positive TTL means "do not use the cache", decided before any clock is read.
+  //
+  // The age comparison alone does not deliver that. `age > ttlMs` at `ttlMs: 0` still serves the
+  // cache when both calls land in the same millisecond, because 0 is not greater than 0 -- so
+  // `knowl doctor`, which passes 0 precisely to force a fresh answer, could quietly return the
+  // cached one. Caught by CI on macOS, where the runner was fast enough for the write and the
+  // read to share a tick; ubuntu and windows both passed and hid it.
+  if (ttlMs <= 0) return null;
   try {
     const entry = JSON.parse(await fs.readFile(cacheFile, 'utf-8')) as CacheEntry;
     const age = Date.now() - new Date(entry.checkedAt).getTime();

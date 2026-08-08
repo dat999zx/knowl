@@ -44,6 +44,12 @@ it look again. A diagnostic that cannot be refreshed is one you stop believing.
 is already deliberate and slow, fails silently offline like every other caller, and still writes
 the shared cache so the next `knowl status` benefits from the fresh answer. `status` is unchanged.
 
+A non-positive TTL now disables the cache before any clock is read. The age comparison alone did
+not deliver that: `age > ttlMs` at `ttlMs: 0` still served the cache when the write and the read
+landed in the same millisecond, so `doctor` could quietly return the cached answer it passed 0 to
+avoid. Caught by CI on macOS, where the runner was fast enough to share a tick; ubuntu and windows
+both passed and hid it.
+
 ### `docs:check` catches drift in KNOWL.md and AGENTS.md
 
 Both files are generated from `src/core/knowl-guidance.ts` by `installKnowlProjectGuidance`, and
