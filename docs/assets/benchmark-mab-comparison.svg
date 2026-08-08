@@ -1,0 +1,60 @@
+<svg width="760" height="474" viewBox="0 0 760 474" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="MemoryAgentBench FactConsolidation single-hop at 262K context, substring exact match, gpt-4o-mini backbone. Knowl 90. GPT-4o long context 60. BM25 56. NV-Embed-v2 55. HippoRAG-v2 54. GPT-4o-mini long context 45. Cognee 28. MemGPT 28. Mem0 18. Knowl measured in MemoryAgentBench's own harness; all other figures from the MemoryAgentBench paper, Table 2.">
+  <rect x="1" y="1" width="758" height="472" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
+
+  <text x="28" y="42" font-size="21" font-weight="700" fill="#ffffff">Scored in the benchmark's own harness</text>
+  <text x="28" y="66" font-size="14" fill="#898781">MemoryAgentBench · FactConsolidation single-hop @262K · substring exact match</text>
+  <text x="28" y="86" font-size="14" fill="#898781">gpt-4o-mini reader for every row, Knowl's included</text>
+
+  <!-- Plot area: x 214 to 694 spans 0-100, so 4.8px per point. Bar widths encode the value. -->
+  <g stroke="#2c2c2a" stroke-width="1">
+    <line x1="214" y1="108" x2="214" y2="404"/>
+    <line x1="334" y1="108" x2="334" y2="404"/>
+    <line x1="454" y1="108" x2="454" y2="404"/>
+    <line x1="574" y1="108" x2="574" y2="404"/>
+    <line x1="694" y1="108" x2="694" y2="404"/>
+  </g>
+  <g font-size="12" fill="#898781" text-anchor="middle">
+    <text x="214" y="424">0</text>
+    <text x="334" y="424">25</text>
+    <text x="454" y="424">50</text>
+    <text x="574" y="424">75</text>
+    <text x="694" y="424">100</text>
+  </g>
+
+  <g font-size="13" fill="#c3c2b7" text-anchor="end">
+    <text x="198" y="130" font-weight="700" fill="#ffffff">Knowl</text>
+    <text x="198" y="163">GPT-4o long-context</text>
+    <text x="198" y="196">BM25</text>
+    <text x="198" y="229">NV-Embed-v2</text>
+    <text x="198" y="262">HippoRAG-v2</text>
+    <text x="198" y="295">GPT-4o-mini long-context</text>
+    <text x="198" y="328">Cognee</text>
+    <text x="198" y="361">MemGPT</text>
+    <text x="198" y="394">Mem0</text>
+  </g>
+
+  <!-- width = value * 4.8 -->
+  <rect x="214" y="115" width="432"   height="21" rx="5" fill="#199e70"/>
+  <rect x="214" y="148" width="288"   height="21" rx="5" fill="#3987e5"/>
+  <rect x="214" y="181" width="268.8" height="21" rx="5" fill="#3987e5"/>
+  <rect x="214" y="214" width="264"   height="21" rx="5" fill="#3987e5"/>
+  <rect x="214" y="247" width="259.2" height="21" rx="5" fill="#3987e5"/>
+  <rect x="214" y="280" width="216"   height="21" rx="5" fill="#3987e5"/>
+  <rect x="214" y="313" width="134.4" height="21" rx="5" fill="#3987e5"/>
+  <rect x="214" y="346" width="134.4" height="21" rx="5" fill="#3987e5"/>
+  <rect x="214" y="379" width="86.4"  height="21" rx="5" fill="#3987e5"/>
+
+  <g font-size="14" font-weight="700">
+    <text x="658" y="131" fill="#7fdca0">90</text>
+    <text x="514" y="164" fill="#c3c2b7">60</text>
+    <text x="494.8" y="197" fill="#c3c2b7">56</text>
+    <text x="490" y="230" fill="#c3c2b7">55</text>
+    <text x="485.2" y="263" fill="#c3c2b7">54</text>
+    <text x="442" y="296" fill="#c3c2b7">45</text>
+    <text x="360.4" y="329" fill="#c3c2b7">28</text>
+    <text x="360.4" y="362" fill="#c3c2b7">28</text>
+    <text x="312.4" y="395" fill="#c3c2b7">18</text>
+  </g>
+
+  <text x="28" y="452" font-size="12" fill="#6f6d67">Knowl measured here · all other figures from the MemoryAgentBench paper, Table 2</text>
+</svg>

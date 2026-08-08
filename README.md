@@ -11,7 +11,7 @@
 [![MCP](https://img.shields.io/badge/protocol-MCP-eda100)](https://modelcontextprotocol.io)
 
 <p align="center">
-  <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="98% correct vs 47% without supersession" height="38" /></picture></a>
+  <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="Scores 90 on MemoryAgentBench FactConsolidation single-hop at 262K" height="38" /></picture></a>
   <a href="#quick-start"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-nokeys.svg"><img src="docs/assets/chips/stat-nokeys.svg" alt="0 API keys needed" height="38" /></picture></a>
   <a href="#everything-else"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-tools.svg"><img src="docs/assets/chips/stat-tools.svg" alt="27 MCP tools" height="38" /></picture></a>
   <a href="#what-knowl-is-for"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-local.svg"><img src="docs/assets/chips/stat-local.svg" alt="100% local, no egress" height="38" /></picture></a>
@@ -89,11 +89,11 @@ queryable through [`knowl timeline`](docs/reference.md#metadata-history-and-owne
 </div>
 
 That single behavior is most of the accuracy difference. On the
-[MemoryAgentBench](https://github.com/HUST-AI-HYZ/MemoryAgentBench) Conflict Resolution track —
+[MemoryAgentBench](https://github.com/HUST-AI-HYZ/MemoryAgentBench) Conflict Resolution corpus —
 455 facts, 100 questions about which fact is current, top-5 retrieval, no LLM reader:
 
 <div align="center">
-<img src="docs/assets/benchmark-conflict-resolution.svg" alt="MemoryAgentBench conflict-resolution ablation: supersession on reached 98 percent top-1 with 2 stale returns; supersession off reached 47 percent top-1 with 62 stale returns" width="82%" />
+<img src="docs/assets/benchmark-conflict-resolution.svg" alt="Conflict-resolution retrieval ablation: supersession on reached 98 percent top-1 with 2 stale returns; supersession off reached 47 percent top-1 with 62 stale returns" width="82%" />
 </div>
 
 | Configuration | Top-1 | Stale returns | Active atoms |
@@ -102,8 +102,53 @@ That single behavior is most of the accuracy difference. On the
 | Supersession OFF | 47.0% | 62 / 100 | 455 |
 
 Same corpus, same ranker, same query path. The only variable is whether the outdated fact is still
-active. See [benchmarks](docs/reference.md#benchmarks) for the protocol, the checked-in results,
-and what the track does not cover.
+active. This is a **retrieval-level** measurement in Knowl's own harness: it asks whether the
+current fact comes back first, with no model in the loop.
+
+### Verified end-to-end, in the benchmark's own harness
+
+Because a number you score yourself is worth less than one somebody else scores, the same claim was
+re-run **inside MemoryAgentBench's harness, scored by its own code**, with an LLM reading what
+Knowl returned — the harder, fully end-to-end setup, at the largest context the task offers:
+
+<div align="center">
+<img src="docs/assets/benchmark-mab-comparison.svg" alt="MemoryAgentBench FactConsolidation single-hop at 262K context, substring exact match, gpt-4o-mini reader: Knowl 90, GPT-4o long-context 60, BM25 56, NV-Embed-v2 55, HippoRAG-v2 54, GPT-4o-mini long-context 45, Cognee 28, MemGPT 28, Mem0 18" width="82%" />
+</div>
+
+| System | FactConsolidation-SH @262K |
+| --- | ---: |
+| **Knowl** | **90** |
+| GPT-4o (long-context) | 60 |
+| BM25 | 56 |
+| NV-Embed-v2 | 55 |
+| HippoRAG-v2 | 54 |
+| GPT-4o-mini (long-context) | 45 |
+| Cognee | 28 |
+| MemGPT | 28 |
+| Mem0 | 18 |
+
+18,332 facts, 100 questions, substring exact match. Every row uses **gpt-4o-mini as the reader**,
+Knowl's included — the paper states it for all RAG and memory agents, so these are like-for-like.
+Knowl's figure was measured here; every other figure is from the MemoryAgentBench paper, Table 2.
+Systems the paper does not evaluate on this task are not listed.
+
+Switching supersession off in that same harness drops Knowl to **73**, and the gap holds across a
+40× change in corpus size:
+
+<div align="center">
+<img src="docs/assets/benchmark-supersession-ablation.svg" alt="Supersession ablation in MemoryAgentBench's own harness: at 262K context, supersession on scores 90 and off scores 73, a 17 point gap; at 6K context, on scores 94 and off scores 78, a 16 point gap" width="82%" />
+</div>
+
+| Context | Supersession ON | OFF | Gap |
+| --- | ---: | ---: | ---: |
+| 262K | **90** | 73 | **+17** |
+| 6K | **94** | 78 | **+16** |
+
+The two sections measure different things and are not comparable to each other: 98% is retrieval
+top-1 at 6K with no reader, 90 is end-to-end accuracy at 262K with one. Only the second is
+comparable to the published systems above. See [benchmarks](docs/reference.md#benchmarks) for the
+protocol, the checked-in results, and what the task does not cover — including multi-hop, where
+Knowl scores 7 against a 14-point retrieval ceiling.
 
 Supersession is a correction, not a delete: the item, its assertions, and its history all survive.
 
@@ -272,7 +317,7 @@ database. No account, no server, no API key. Each item links into the
 **♻️ Knowledge that corrects itself**
 
 Seven typed atom types, where a same-subject write retires its predecessor instead of
-sitting beside it. That one behavior is the [98%-vs-47% difference](#the-idea-memory-that-retires-itself).
+sitting beside it. That one behavior is the [90-vs-73 difference](#the-idea-memory-that-retires-itself).
 Evidence attached to a file or symbol goes stale *by itself* when the code moves.
 
 `conflicts` · `timeline` · `query --as-of` · `pr check` · `code index`
@@ -359,7 +404,7 @@ knowl doctor                           # setup, retrieval, and registration
 - **Seven atom types** — [listed above](#what-gets-stored). Structure instead of one growing
   notes file.
 - **Automatic supersession** — a same-subject write retires its predecessor. This is the
-  [98%-vs-47% difference](#the-idea-memory-that-retires-itself) above.
+  [90-vs-73 difference](#the-idea-memory-that-retires-itself) above.
 - **Conflict identity** — mark an atom exclusive and Knowl refuses a second active answer to the
   same question, instead of quietly holding both. `knowl conflicts`
 - **Full history** — every version an atom ever had survives as an immutable assertion.

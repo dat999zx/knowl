@@ -1,0 +1,53 @@
+<svg width="760" height="404" viewBox="0 0 760 404" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif" role="img" aria-label="Supersession ablation on MemoryAgentBench FactConsolidation single-hop, substring exact match, gpt-4o-mini. At 262K context supersession on scores 90 and supersession off scores 73, a 17 point gap. At 6K context supersession on scores 94 and off scores 78, a 16 point gap. Same corpus, same retrieval, same reader and same prompt in both arms.">
+  <rect x="1" y="1" width="758" height="402" rx="16" fill="#161b22" stroke="#2c313a" stroke-width="1.5"/>
+
+  <text x="28" y="42" font-size="21" font-weight="700" fill="#ffffff">What supersession is worth</text>
+  <text x="28" y="66" font-size="14" fill="#898781">Same corpus, same retrieval, same reader, same prompt — only conflict handling differs</text>
+
+  <!-- Plot area: x 190 to 670 spans 0-100, so 4.8px per point. Bar widths encode the value. -->
+  <g stroke="#2c2c2a" stroke-width="1">
+    <line x1="190" y1="96" x2="190" y2="286"/>
+    <line x1="310" y1="96" x2="310" y2="286"/>
+    <line x1="430" y1="96" x2="430" y2="286"/>
+    <line x1="550" y1="96" x2="550" y2="286"/>
+    <line x1="670" y1="96" x2="670" y2="286"/>
+  </g>
+  <g font-size="12" fill="#898781" text-anchor="middle">
+    <text x="190" y="306">0</text>
+    <text x="310" y="306">25</text>
+    <text x="430" y="306">50</text>
+    <text x="550" y="306">75</text>
+    <text x="670" y="306">100</text>
+  </g>
+
+  <text x="174" y="112" font-size="12" fill="#6f6d67" text-anchor="end">262K context</text>
+  <g font-size="13" fill="#c3c2b7" text-anchor="end" font-weight="600">
+    <text x="174" y="139">Supersession ON</text>
+    <text x="174" y="177">Supersession OFF</text>
+  </g>
+  <rect x="190" y="122" width="432"   height="24" rx="6" fill="#199e70"/>
+  <rect x="190" y="160" width="350.4" height="24" rx="6" fill="#3987e5"/>
+  <g font-size="14" font-weight="700">
+    <text x="634" y="140" fill="#7fdca0">90</text>
+    <text x="552.4" y="178" fill="#7cb0f5">73</text>
+  </g>
+
+  <text x="174" y="214" font-size="12" fill="#6f6d67" text-anchor="end">6K context</text>
+  <g font-size="13" fill="#c3c2b7" text-anchor="end" font-weight="600">
+    <text x="174" y="241">Supersession ON</text>
+    <text x="174" y="279">Supersession OFF</text>
+  </g>
+  <rect x="190" y="224" width="451.2" height="24" rx="6" fill="#199e70" opacity="0.75"/>
+  <rect x="190" y="262" width="374.4" height="24" rx="6" fill="#3987e5" opacity="0.75"/>
+  <g font-size="14" font-weight="700">
+    <text x="653.2" y="242" fill="#7fdca0">94</text>
+    <text x="576.4" y="280" fill="#7cb0f5">78</text>
+  </g>
+
+  <g transform="translate(28,326)" font-size="13" font-weight="700">
+    <rect x="0" y="0" width="340" height="44" rx="12" fill="#12251a" stroke="#1e5c38"/>
+    <text x="20" y="27" fill="#7fdca0">+17 points @262K · +16 @6K</text>
+    <rect x="358" y="0" width="344" height="44" rx="12" fill="#1b2330" stroke="#305f94"/>
+    <text x="378" y="27" fill="#7cb0f5" font-weight="400">Stable across a 40× corpus change</text>
+  </g>
+</svg>
