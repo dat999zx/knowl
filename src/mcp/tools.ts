@@ -246,12 +246,31 @@ const QUERY_EXCERPT_CHARS = 240;
  * resort, for when every body is already an excerpt and the count itself is the cost. At least
  * one result is always kept: a single oversized atom should come back truncated-but-present
  * rather than as an empty array that reads like a miss. The counts are returned rather than
- * folded into the payload, because the first block must stay a bare JSON array for callers
- * that parse it.
+ * folded into the payload, because the first block must stay parseable for callers that read it.
+ *
+ * **Grouped payloads use the same walk over a flattened view.** Groups arrive with an empty
+ * local group pinned first and the rest in relevance order, so laying them end to end puts the
+ * weakest rows of the least relevant repo last -- "trim peers before local" is what the existing
+ * tail-first rule already does once the rows are in one sequence, and needs no separate rule.
+ * An empty group keeps its key with an empty array: that key IS the "your repo has nothing on
+ * this" signal, and a serializer that dropped it would delete the message the shape carries.
  */
-function boundQueryPayload(payload: unknown[]): { text: string; shortened: number; omitted: number } {
-  const kept = payload.map(entry => ({ value: entry as Record<string, unknown>, shortened: false }));
-  const serialize = () => compactMcpJson(kept.map(entry => entry.value));
+export function boundQueryPayload(
+  groups: Array<{ repo: string; rows: Record<string, unknown>[] }>,
+  shape: 'flat' | 'grouped',
+): { text: string; shortened: number; omitted: number } {
+  // One flat view for the shrink walk, one grouped view for serialization. `repo` rides along
+  // so a row replaced during the walk lands back under the right key.
+  const kept = groups.flatMap(group =>
+    group.rows.map(value => ({ repo: group.repo, value, shortened: false })));
+  const serialize = () => {
+    if (shape === 'flat') return compactMcpJson(kept.map(entry => entry.value));
+    const byRepo: Record<string, Record<string, unknown>[]> = {};
+    for (const group of groups) byRepo[group.repo] = [];
+    for (const entry of kept) byRepo[entry.repo].push(entry.value);
+    return compactMcpJson(byRepo);
+  };
+
   let text = serialize();
   if (text.length <= MAX_RESPONSE_CHARS) return { text, shortened: 0, omitted: 0 };
 
@@ -261,6 +280,7 @@ function boundQueryPayload(payload: unknown[]): { text: string; shortened: numbe
     // `truncated` is the same flag a content-ceiling cut sets, so the instruction the tool
     // description already gives -- call again with `id` to read the rest -- covers this too.
     kept[index] = {
+      repo: kept[index].repo,
       value: { ...kept[index].value, content: truncateText(content, QUERY_EXCERPT_CHARS), truncated: true },
       shortened: true,
     };
@@ -836,8 +856,9 @@ export function registerTools(
             : { ...compact(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
           : resolvedItems.map(compact);
         // The notice is a separate block so the first block stays a bare JSON array for
-        // every existing caller.
-        const { text: payloadText, shortened, omitted: omittedResults } = boundQueryPayload(payload);
+        // every existing caller. One unnamed group until the grouped shape is wired through.
+        const { text: payloadText, shortened, omitted: omittedResults } =
+          boundQueryPayload([{ repo: '', rows: payload as Record<string, unknown>[] }], 'flat');
         const blocks: { type: 'text'; text: string }[] = [{ type: 'text', text: payloadText }];
         if (shortened > 0 || omittedResults > 0) {
           const what = [
