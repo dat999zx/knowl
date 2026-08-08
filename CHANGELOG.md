@@ -5,6 +5,24 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+### The guidance check is line-ending agnostic
+
+Found by running `knowl doctor` on this repository immediately after the change below: it reported
+**NOT READY** on a checkout whose guidance was perfectly current. Everything in
+`knowl-guidance.ts` composes with `\n`, `core.autocrlf` hands back `\r\n`, and the comparison was
+exact — so every Windows clone was stale by definition, with no action that fixed it, because the
+next checkout restored CRLF. Survivable while staleness was advisory; not once it blocks the
+verdict.
+
+The check now ignores line endings, and a refresh writes back in whichever endings the file
+already used rather than converting it. Both halves matter: the second is what stops a guidance
+refresh rewriting every line of a CRLF file as a side effect.
+
+Includes one bug introduced by the first attempt at that fix and caught by the same manual run:
+composing without normalising to LF first expands each `\n` of an already-CRLF prefix into
+`\r\r\n`, so the file never compares equal to itself again. Normalise, compose, convert back — the
+order `scripts/generate-docs.ts` already used.
+
 ### Stale guidance is NOT READY, and the session says so
 
 `knowl doctor` detected stale `KNOWL.md` / `AGENTS.md` and reported it as a `WARN`. The verdict
