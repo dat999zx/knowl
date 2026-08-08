@@ -24,6 +24,59 @@ fact reaches the reader **every single time**, and the reader still answers most
 The failure being measured is arbitration, not retrieval. That number is now independently
 confirmed.
 
+## Reader scores, in MemoryAgentBench's own harness
+
+gpt-4o-mini via OpenRouter, temperature 0.7, top-k 10, 100 questions per cell, MAB's own reader
+layout (facts first, instruction trailing — byte-identical to `_handle_bm25_rag`). `input_len`
+stays inside 294–410 on every row of every cell, so no run is contaminated by rows from an earlier
+code path.
+
+| instance | supersession ON | OFF | gap |
+| --- | --- | --- | --- |
+| `factconsolidation_sh_6k` | **94.0** | 78.0 | **+16** |
+| `factconsolidation_sh_262k` | **90.0** | 73.0 | **+17** |
+| `factconsolidation_mh_262k` | 7.0 | 6.0 | +1 |
+
+Against the published field at 262k single-hop:
+
+| system | FC-SH |
+| --- | --- |
+| **Knowl (this run)** | **90** |
+| Reddy & Challaram, gpt-4o | 93 |
+| Reddy & Challaram, gpt-4o-mini | 82 |
+| GPT-4o long-context | 60 |
+| HippoRAG-v2 | 54 |
+| BM25 | 48 |
+| Mem0 | 18 |
+| Zep | 7 |
+
+The gpt-4o-mini row is the like-for-like comparison; their 93 uses a stronger reader than ours.
+
+**The multi-hop result was predicted before it was measured.** Retrieval alone put the ceiling at
+14% (only 14 questions in 100 have the gold anywhere in the top 10), so no reader could exceed
+that. The reader landed at 7.0, and the +1 ON/OFF gap matches the +2 ceiling gap. Multi-hop is
+retrieval-bound. Always quote it as "7, against a 14 retrieval ceiling" — quoting 7 alone invites
+someone to go tune the prompt, which provably cannot move it.
+
+## The bug this exercise found in its own adapter
+
+The first 262k run scored **20.0**. It completed without error, `input_len` was a clean ~336, and
+20 is entirely plausible here — three published baselines score below it. Nothing looked wrong.
+
+The cause: MAB wraps every question in ~200 tokens of task boilerplate, and the handler was passing
+that whole string to `knowl_query` as the search query. It is identical for all 100 questions, so
+as a retrieval query it is pure noise. Every RAG baseline in the repo strips it first via
+`_extract_retrieval_query` (`agent.py:970`). Fixing it moved 6k ON from 68 → **94**.
+
+It was caught only by holding the reader score against retrieval measured on the same corpus:
+in-repo retrieval says 87% top-1, and no reader converts 87% retrieval into 20% answers.
+
+> **A reader score far below the measured retrieval score means the adapter is broken, not that the
+> reader is weak.** Hold the two numbers side by side, always.
+
+Note the failure degrades with corpus size — at 6k enough signal survived the noise to look
+merely mediocre, at 262k it collapsed. A small-instance smoke test would not have caught it.
+
 ## What did not replicate
 
 **Single-hop top-1 with supersession OFF: 42% here against 70% reported.**
@@ -37,6 +90,48 @@ a preset difference rather than a defect on either side.
 
 This is **not settled**. The reported run's preset is unrecorded — `runner.ts` only began stamping
 `embedding` in each result recently. Neither OFF top-1 figure should be published.
+
+**The supersession gap: +17 here against +43 reported.**
+
+Reported was 85/42. Measured is 90/73. The ON arms are close (90 vs 85); the entire divergence sits
+in the OFF arm (73 vs 42). The gap holds at +16 at 6k and +17 at 262k — stable across a 40×
+corpus-size change, which is stronger evidence than a single larger figure from one cell.
+
+Both readings agree that supersession helps substantially. **Do not publish +43.**
+
+**The placement effect reverses.**
+
+| reader layout, supersession OFF | reported | measured |
+| --- | --- | --- |
+| MAB's own (facts first, instruction trailing) | 42 | **73.0** |
+| system-first (instruction in system msg, facts in user msg) | 73 | **54.0** |
+| placement effect | **+31** | **−19** |
+
+The reported conclusion was that placement is worth +31 to a leaky memory system, and therefore
+that published baselines are partly a measure of reader plumbing. Here, moving the instruction
+ahead of the facts made the leaky arm 19 points **worse**.
+
+Caveat that must travel with this: `system-first` is a construction, not a standard, and the
+original report said so. This implementation puts the full templated message (instruction +
+question) in the system role and the facts in the user role. A different reading of the same
+description — instruction in system, question still trailing in user — is plausible and might
+behave differently. So this refutes *this reconstruction*, not necessarily the exact prompt that
+produced 73/42.
+
+Either way: two implementations of the same described layout produced opposite signs. That is the
+definition of a result too fragile to report. **Do not publish a placement finding in either
+direction.**
+
+## Scorecard against the prior session's three headline claims
+
+| claim | status |
+| --- | --- |
+| Knowl scores ~85 on FC-SH @262k in MAB's own harness | **holds, and improves** — measured 90 |
+| Write-time supersession is worth +43 | **overstated** — measured +17, stable at +16/+17 across scales |
+| Prompt placement is worth +31 to a leaky system | **reverses** — measured −19, and too fragile to publish |
+
+The qualitative core survives intact: knowl leads the published field on this task, and resolving
+conflicts at write time beats leaving them for the reader. The two quantitative extras do not.
 
 ---
 
