@@ -6,7 +6,12 @@ export default tseslint.config(
   // every finding is reported once per worktree -- 52 warnings became 78 with two present, all
   // of them duplicates against code the developer has not touched. Same reason
   // `vitest.config.ts` excludes it.
-  { ignores: ['dist/**', 'node_modules/**', '.benchmark-dist/**', 'benchmarks/**/dist/**', '.tmp/**', '.claude/**'] },
+  // `.bridge-dist/**` is bundled output like `dist/**` and was the one build directory missing
+  // here, so `npm run lint` reported 29 errors -- `no-this-alias`, control characters in regexes,
+  // empty catch blocks -- against generated third-party code nobody can fix. It is gitignored, so
+  // CI's fresh checkout never has it and only local runs went red, which is the worst shape for a
+  // signal to fail in: contributors learn the lint output is wrong and stop reading it.
+  { ignores: ['dist/**', 'node_modules/**', '.benchmark-dist/**', '.bridge-dist/**', 'benchmarks/**/dist/**', '.tmp/**', '.claude/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

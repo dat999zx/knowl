@@ -56,6 +56,29 @@ describe('npm update check', () => {
     expect(result?.latest).toBe('1.5.0');
   });
 
+  it('always refetches at ttlMs 0, which is what makes doctor a diagnostic', async () => {
+    // `knowl doctor` passes 0 where `status` takes the day-long default. Measured 2026-08-08:
+    // 3.4.0 published five hours after the cache was written, and doctor went on reporting a
+    // healthy 3.3.0 for the rest of the day. A diagnostic that cannot be made to look again is
+    // one you stop believing.
+    await checkForUpdate({ packageName: PKG, currentVersion: '1.3.1', projectRoot: root, fetchImpl: okFetch('1.4.0') });
+    const result = await checkForUpdate({
+      packageName: PKG, currentVersion: '1.3.1', projectRoot: root, ttlMs: 0, fetchImpl: okFetch('1.6.0'),
+    });
+
+    expect(result?.latest).toBe('1.6.0');
+    expect(result?.updateAvailable).toBe(true);
+  });
+
+  it('still writes the shared cache when it bypasses it, so the next status benefits', async () => {
+    await checkForUpdate({
+      packageName: PKG, currentVersion: '1.3.1', projectRoot: root, ttlMs: 0, fetchImpl: okFetch('1.6.0'),
+    });
+    const raw = JSON.parse(await fs.readFile(path.join(root, '.knowl', 'cache', 'update-check.json'), 'utf-8'));
+
+    expect(raw.latest).toBe('1.6.0');
+  });
+
   it('honours config and environment opt-outs', () => {
     expect(isUpdateCheckEnabled({})).toBe(true);
     expect(isUpdateCheckEnabled({ updateCheck: { enabled: false } })).toBe(false);

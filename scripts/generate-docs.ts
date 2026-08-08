@@ -22,6 +22,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS } from '../src/mcp/tool-definitions.js';
 import { DEFAULT_PRESET_ID, VECTOR_PRESETS } from '../src/core/vector-profile.js';
+import { stripManagedKnowlGuidance } from '../src/core/agents-guidance.js';
+import { renderManagedKnowlGuidanceSection } from '../src/core/knowl-guidance.js';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const check = process.argv.includes('--check');
@@ -121,6 +123,51 @@ if (check && stale) {
   console.error('Generated documentation regions are stale. Run: npm run docs:generate');
 } else if (!check) {
   console.log(stale ? 'Generated documentation regions updated.' : 'Generated documentation regions already current.');
+}
+
+/**
+ * This repository's own KNOWL.md and AGENTS.md, against the guidance they are generated from.
+ *
+ * Both files are written by `installKnowlProjectGuidance` from `renderManagedKnowlGuidanceSection`,
+ * and nothing verified them — the region check above covers README.md and docs/reference.md only.
+ * The gap is not theoretical: on 2026-08-08 it let two separate stale-guidance commits through in
+ * one day. One was a `knowl` command run against a stale `dist/`, which rewrote both files from an
+ * older build and silently reverted bullets that had just landed; the other was a change that
+ * edited KNOWL.md and left AGENTS.md behind, with `docs:check` reporting "regions are current"
+ * while the two files disagreed with each other and with the source.
+ *
+ * Checked from `src/`, never from `dist/`, which is the whole point: a stale build is exactly the
+ * failure being caught, so trusting the build to detect it would close the loop on itself.
+ *
+ * `installKnowlProjectGuidance` is deliberately NOT reused here even though it composes the same
+ * text. It writes LF unconditionally, which is right for a user's project and wrong for this one:
+ * a checkout with `core.autocrlf` holds CRLF, so it rewrites every line of both files on every
+ * run and reports drift that git cannot see. Same trap the region writer above documents, so the
+ * comparison normalises and the write matches the file's own endings.
+ */
+const managedGuidance = renderManagedKnowlGuidanceSection();
+let guidanceStale = false;
+for (const name of ['KNOWL.md', 'AGENTS.md']) {
+  const file = path.join(root, name);
+  const current = fs.readFileSync(file, 'utf8');
+  const eol = current.includes('\r\n') ? '\r\n' : '\n';
+  const unmanaged = stripManagedKnowlGuidance(current.replaceAll('\r\n', '\n')).trimEnd();
+  const expected = (unmanaged.length > 0 ? `${unmanaged}\n\n${managedGuidance}` : managedGuidance)
+    .replaceAll('\n', eol);
+  if (expected === current) continue;
+  guidanceStale = true;
+  if (!check) fs.writeFileSync(file, expected);
+}
+
+if (check && guidanceStale) {
+  failures.push(
+    'KNOWL.md / AGENTS.md do not match src/core/knowl-guidance.ts. '
+    + 'Run: npm run docs:generate (a knowl command run against a stale dist/ is the usual cause)',
+  );
+} else if (!check) {
+  console.log(guidanceStale
+    ? 'Project guidance rewritten from src/core/knowl-guidance.ts.'
+    : 'Project guidance already matches src/core/knowl-guidance.ts.');
 }
 
 for (const failure of failures) console.error(`✗ ${failure}`);

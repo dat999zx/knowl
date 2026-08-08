@@ -2501,7 +2501,20 @@ program
       const root = await findProjectRoot(process.cwd());
       const config = await loadConfig(root);
       if (isUpdateCheckEnabled(config)) {
-        const update = await checkForUpdate({ packageName: PACKAGE_NAME, currentVersion: PACKAGE_VERSION, projectRoot: root });
+        // `ttlMs: 0`, unlike `status`, so this always asks the registry.
+        //
+        // The day-long cache is right for a command run in passing and wrong for the one command
+        // whose entire job is to report what is true right now. Measured 2026-08-08: 3.4.0
+        // published at 10:18Z against a cache written at 05:14Z, and `doctor` went on reporting
+        // a healthy 3.3.0 for the rest of the day -- a diagnostic that cannot be made to look
+        // again is one you stop believing.
+        //
+        // Costs at most `FETCH_TIMEOUT_MS` (2s) on a deliberate, already-slow command, fails
+        // silently offline like every other caller, and still refreshes the shared cache so the
+        // next `knowl status` benefits.
+        const update = await checkForUpdate({
+          packageName: PACKAGE_NAME, currentVersion: PACKAGE_VERSION, projectRoot: root, ttlMs: 0,
+        });
         if (update?.updateAvailable) console.log(formatUpdateNotice(update, PACKAGE_NAME));
       }
     } catch {
