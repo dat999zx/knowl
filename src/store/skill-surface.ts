@@ -1,4 +1,5 @@
 import type { SurfacedSkill } from '../core/skill-surface.js';
+import { inlineUntrusted } from '../core/untrusted.js';
 
 export type { SurfacedSkill };
 
@@ -50,9 +51,16 @@ export function matchSkillForCommand(command: string, skills: SurfacedSkill[]): 
   return matches.reduce((best, skill) => (skill.name.length > best.name.length ? skill : best));
 }
 
+/**
+ * The mid-turn nudge, and the same containment rule as `renderSkillRow`.
+ *
+ * A nudge is a stronger surface than the card, not a weaker one: it arrives unprompted in the
+ * middle of a turn, next to a command the agent is already about to run. Both fields are stored
+ * text, so both are collapsed to one line before they get there.
+ */
 export function renderSkillUseNudge(skill: SurfacedSkill): string {
   return [
-    `KNOWL: a saved skill covers this — **${skill.name}**: ${skill.purpose}`,
+    `KNOWL: a saved skill covers this — **${inlineUntrusted(skill.name)}**: ${inlineUntrusted(skill.purpose)}`,
     'Run it with knowl_skill_run if it fits what you are doing.',
   ].join('\n');
 }

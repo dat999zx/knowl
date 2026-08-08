@@ -17,15 +17,21 @@
  *
  * The JSON surface (`compactMcpJson`) already has a structural container -- a body is a quoted,
  * escaped JSON string and cannot syntactically escape it. What it lacked was the *declaration*,
- * which `UNTRUSTED_NOTICE` supplies as its own content block. That block must stay a bare JSON
- * array (many callers `JSON.parse(content[0].text)`), so the notice rides beside it exactly as
- * the existing `SCOPE:` notices do.
+ * and `UNTRUSTED_NOTICE` supplies that from the `knowl_query` tool description rather than from
+ * a per-response block. A block was the obvious move and is the wrong one: three tests pin that
+ * response's block count -- one is named "says nothing when the results already fit" -- because
+ * on this surface an extra block is how an anomaly is reported. A standing property of the tool
+ * belongs where the tool is described, stated once and costing nothing per call.
  *
- * The markdown surface had no container at all. `formatHierarchyToMarkdown` interpolated a body
+ * The markdown surfaces had no container at all. `formatHierarchyToMarkdown` interpolated a body
  * straight into a `###` heading followed by the raw body, so a body containing a fence run, an
  * ATX heading or a thematic break rendered as **live markdown structure** in the agent's
- * context -- and `formatRecentContextToMarkdown` is the session-bootstrap card, injected
- * automatically with no human in the loop. That is the surface these helpers exist for.
+ * context. Those surfaces are the reason these helpers exist, and the rule for finding the rest
+ * of them is *injected without a human in the loop*, not *lives in `format.ts`*:
+ * `formatRecentContextToMarkdown` is the session-bootstrap card, `renderSkillRow` renders inside
+ * it from a stored item title, `renderSkillUseNudge` interrupts mid-turn,
+ * `formatPendingHandoffContext` opens a session, and `formatResumeBrief` replays a parked one.
+ * Every one of them interpolates stored or host-supplied text and every one calls in here.
  */
 
 /**

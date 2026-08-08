@@ -1,4 +1,5 @@
 import type { KnowledgeItem } from './types.js';
+import { inlineUntrusted } from './untrusted.js';
 
 export interface SurfacedSkill {
   name: string;
@@ -26,9 +27,19 @@ export const SKILLS_SECTION_HEADER = '## Available skills\n\n';
  * Selection and rendering read the cost from this one function so they cannot drift:
  * charging `name: purpose` while rendering `- **name** — purpose` under-counted every
  * row by 10 characters, and every non-runnable row by 25.
+ *
+ * Both fields are stored text, and a skill's name is its item title -- arbitrary. This row
+ * renders inside `formatRecentContextToMarkdown`, the bootstrap card injected with no human in
+ * the loop, so a title carrying a newline used to reach column 0 there and an `## SYSTEM` or a
+ * fence opener at column 0 is live markdown. Containment belongs HERE and not at the call site
+ * for the same reason the cost does: `selectSurfacedSkills` prices the budget with
+ * `renderSkillRow(skill).length`, so a call site that contained the row afterwards would price
+ * one string and emit another. Collapsing only ever shortens, so the budget stays honest.
  */
 export function renderSkillRow(skill: SurfacedSkill): string {
-  return `- **${skill.name}**${skill.runnable ? '' : ' (not runnable)'} — ${skill.purpose}\n`;
+  const name = inlineUntrusted(skill.name);
+  const purpose = inlineUntrusted(skill.purpose);
+  return `- **${name}**${skill.runnable ? '' : ' (not runnable)'} — ${purpose}\n`;
 }
 
 /** The whole section, header and trailing blank line included, or '' for no skills. */

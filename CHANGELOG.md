@@ -5,6 +5,31 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+### Retrieved text renders as data, not as live markdown
+
+Everything in the store is untrusted input, and not because the user is hostile: session capture
+and `knowl_ingest` both write atoms no human has read, so a poisoned file comment or a scraped
+page can become one. Retrieval then replays it every session, and in a workspace it reaches every
+linked repo — OWASP ASI06.
+
+A stored body used to be interpolated straight into markdown. One carrying a fence run, an ATX
+heading, a thematic break or a blockquote became **real structure** in the agent's context rather
+than a quoted claim. New `src/core/untrusted.ts` contains it two ways, because the surfaces
+differ: `fenceUntrusted` opens a fence one backtick longer than the longest run in the body, so
+the body provably cannot close its own container, and `inlineUntrusted` collapses whitespace for
+one-line contexts — sufficient rather than partial, since every CommonMark block construct must
+begin at a line start.
+
+Applied at every surface that reaches an agent with no human in the loop, which is the rule for
+finding them rather than which file they live in: the project brain state, the session bootstrap
+card, the skill rows inside it, the mid-turn skill nudge, the pending-session handoff and a
+parked resume brief. The handoff's `errorMessage` is the sharpest of them — a string from an
+external host process, landing in the first thing a fresh session reads.
+
+The JSON surface takes the rule in the `knowl_query` description instead of a per-response block:
+that response's block count is a contract, where an extra block reports an anomaly, and JSON
+already contains bodies structurally.
+
 ### `workspace add` shares by default in a linked workspace
 
 **Breaking-ish, for new links only.** A repo joining a `linked` workspace now gets
