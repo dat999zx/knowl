@@ -28,6 +28,10 @@ const SCHEMA_PINS: Record<number, string> = {
   // index that closes the duplicate-finding window. Additive again, so `KNOWL_SCHEMA_VERSION`
   // again does not move.
   3: '627dad6b3eff5019fb2442a4a1a12a05',
+  // 4 adds `impact_gate_shadow` and its unique index on `finding_id` -- what an enforcing write
+  // gate would have refused, recorded while it refuses nothing. Additive again, so
+  // `KNOWL_SCHEMA_VERSION` again does not move.
+  4: '4592e436daefd236d1f15554d1a2db3a',
 };
 
 let root: string;

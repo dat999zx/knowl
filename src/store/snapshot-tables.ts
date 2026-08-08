@@ -66,6 +66,11 @@ export const SNAPSHOT_TABLE_POLICY: Readonly<Record<string, SnapshotTablePolicy>
   // a measurement, which is worse than losing it.
   work_read_sets: 'preserved',
   impact_findings: 'preserved',
+  // Same reason as `impact_findings`' own, one step further along: these rows are the measurement
+  // the write gate is not allowed to start blocking without. A restore that rolled them back would
+  // silently reset the precision denominator to zero while leaving the findings they point at in
+  // place, so the next reading would be taken over a sample that no longer matches the history.
+  impact_gate_shadow: 'preserved',
 
   // --- derived, trigger-maintained ---------------------------------------------------------
   knowledge_items_fts: 'rebuilt',
