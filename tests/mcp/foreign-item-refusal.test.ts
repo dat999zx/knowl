@@ -269,14 +269,20 @@ describe('item-scoped tools and foreign items', () => {
     const result = await callTool(A, await loadConfig(A), 'knowl_query', { query: 'auth token expire', limit: 5 });
     await closeDb();
 
-    const items = JSON.parse(result.content[0].text);
+    // Keyed by repo once a linked repo contributes a row; this test is about which paths cross,
+    // not about the layout, so it reads the rows out of whichever shape arrived.
+    const payload = JSON.parse(result.content[0].text);
+    const items: any[] = Array.isArray(payload) ? payload : Object.values(payload).flat() as any[];
     const foreign = items.find((item: any) => item.id === foreignId);
     const local = items.find((item: any) => item.id === localId);
     if (foreign) expect(foreign).not.toHaveProperty('affectedPaths');
     // The local item's paths do resolve against this checkout, so they must still arrive --
     // or the guard has simply turned the feature off.
     expect(local?.affectedPaths).toEqual(['src/local/auth.ts']);
-  });
+    // Explicit budget, like the heavy workspace suites carry. This case seeds two repos and
+    // warms the embedding model; it finishes in ~10s alone and had no timeout of its own, so it
+    // sat just under the 30s default and went over as soon as anything else ran beside it.
+  }, 120_000);
 
   it('local items are unaffected', async () => {
     await initDb(A);

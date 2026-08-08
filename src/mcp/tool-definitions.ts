@@ -364,6 +364,11 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
                 maxItems: 20,
                 description: 'Only in a workspace. Restrict results to knowledge produced by these linked repos. Matches the owning repo, not repos an item merely applies to.',
               },
+              scope: {
+                type: 'string',
+                enum: ['local', 'workspace'],
+                description: 'Only in a workspace. `local` searches this repo alone and returns a bare array; `workspace` searches every sharing repo and always returns results keyed by repo. Omit for the default, which searches everything and keys by repo only when a linked repo actually contributed a row -- so a bare array always means every row is this repo\'s. Use `local` when the question is about this repo specifically and a neighbour\'s convention would be wrong here. `repos` wins if both are given.',
+              },
             },
           },
         },

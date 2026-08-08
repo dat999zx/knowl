@@ -5,7 +5,7 @@ import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
-import { queryFederated } from '../../src/workspace/federated-query.js';
+import { flattenGroups, queryFederated } from '../../src/workspace/federated-query.js';
 import { loadForeignPeerChanges } from '../../src/store/change-watermark.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
@@ -72,7 +72,7 @@ async function whatBSees(): Promise<{ found: string[]; notified: string[] }> {
     const federated = await queryFederated({ workspace: active, query: 'deploys blue green', limit: 10 });
     const changes = await loadForeignPeerChanges(active.peers[0], 0);
     return {
-      found: federated.items.map(item => item.title),
+      found: flattenGroups(federated).map(item => item.title),
       notified: (changes.items ?? []).map((entry: any) => String(entry.title)),
     };
   } finally {

@@ -5,7 +5,7 @@ import { captureChangeWatermark, consumeChangeNotice } from './change-notice.js'
 import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem } from '../workspace/ownership.js';
-import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
+import { flattenGroups, queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { recordDemandEventBestEffort } from '../workspace/demand-ledger.js';
 import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
@@ -246,12 +246,31 @@ const QUERY_EXCERPT_CHARS = 240;
  * resort, for when every body is already an excerpt and the count itself is the cost. At least
  * one result is always kept: a single oversized atom should come back truncated-but-present
  * rather than as an empty array that reads like a miss. The counts are returned rather than
- * folded into the payload, because the first block must stay a bare JSON array for callers
- * that parse it.
+ * folded into the payload, because the first block must stay parseable for callers that read it.
+ *
+ * **Grouped payloads use the same walk over a flattened view.** Groups arrive with an empty
+ * local group pinned first and the rest in relevance order, so laying them end to end puts the
+ * weakest rows of the least relevant repo last -- "trim peers before local" is what the existing
+ * tail-first rule already does once the rows are in one sequence, and needs no separate rule.
+ * An empty group keeps its key with an empty array: that key IS the "your repo has nothing on
+ * this" signal, and a serializer that dropped it would delete the message the shape carries.
  */
-function boundQueryPayload(payload: unknown[]): { text: string; shortened: number; omitted: number } {
-  const kept = payload.map(entry => ({ value: entry as Record<string, unknown>, shortened: false }));
-  const serialize = () => compactMcpJson(kept.map(entry => entry.value));
+export function boundQueryPayload(
+  groups: Array<{ repo: string; rows: Record<string, unknown>[] }>,
+  shape: 'flat' | 'grouped',
+): { text: string; shortened: number; omitted: number } {
+  // One flat view for the shrink walk, one grouped view for serialization. `repo` rides along
+  // so a row replaced during the walk lands back under the right key.
+  const kept = groups.flatMap(group =>
+    group.rows.map(value => ({ repo: group.repo, value, shortened: false })));
+  const serialize = () => {
+    if (shape === 'flat') return compactMcpJson(kept.map(entry => entry.value));
+    const byRepo: Record<string, Record<string, unknown>[]> = {};
+    for (const group of groups) byRepo[group.repo] = [];
+    for (const entry of kept) byRepo[entry.repo].push(entry.value);
+    return compactMcpJson(byRepo);
+  };
+
   let text = serialize();
   if (text.length <= MAX_RESPONSE_CHARS) return { text, shortened: 0, omitted: 0 };
 
@@ -261,15 +280,31 @@ function boundQueryPayload(payload: unknown[]): { text: string; shortened: numbe
     // `truncated` is the same flag a content-ceiling cut sets, so the instruction the tool
     // description already gives -- call again with `id` to read the rest -- covers this too.
     kept[index] = {
+      repo: kept[index].repo,
       value: { ...kept[index].value, content: truncateText(content, QUERY_EXCERPT_CHARS), truncated: true },
       shortened: true,
     };
     text = serialize();
   }
 
+  // Dropping must never empty a group that had rows.
+  //
+  // The keys are rebuilt from `groups` on every serialize, so a group whose last row is popped
+  // comes back as `[]` -- and an empty array under a repo's name is exactly how this surface
+  // says "that repo holds nothing on this". Trimming for size would forge that sentence, and
+  // most easily against the local repo: when a peer outscores it, the local group sorts last and
+  // its rows are the first to go. The reader would be told their own repo knows nothing about a
+  // subject it had just answered on.
+  //
+  // So a group's final row is never dropped, only shortened. At most one row per group survives
+  // beyond the ceiling, which is a bounded overrun and the honest one: a short page is visible,
+  // a fabricated miss is not.
   let omitted = 0;
-  while (text.length > MAX_RESPONSE_CHARS && kept.length > 1) {
-    kept.pop();
+  const isLastOfGroup = (index: number) =>
+    kept.filter(entry => entry.repo === kept[index].repo).length === 1;
+  for (let index = kept.length - 1; index >= 0 && text.length > MAX_RESPONSE_CHARS; index--) {
+    if (kept.length <= 1 || isLastOfGroup(index)) continue;
+    kept.splice(index, 1);
     omitted += 1;
     text = serialize();
   }
@@ -610,7 +645,7 @@ export function registerTools(
       }
       
       else if (name === 'knowl_query') {
-        const { id, query, category, status, tags, limit, includeEvidence, explain, asOf, repos } = args as any;
+        const { id, query, category, status, tags, limit, includeEvidence, explain, asOf, repos, scope } = args as any;
         // Fetch-by-id: the second half of progressive disclosure. Truncation with no way to read
         // the rest is not disclosure, it is loss with a warning label -- 262 of 639 atoms on a
         // real store exceed the content ceiling and no tool could return them whole. A parameter
@@ -746,7 +781,7 @@ export function registerTools(
         // Federation is reached only from here. Peers are deliberately absent from
         // configuredNamespaces so implicit context assembly cannot fan out.
         const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
-        let skippedRepos: FederatedResult['skipped'] = [];
+        let federated: FederatedResult | null = null;
         let resolvedItems: Array<KnowledgeItem & { repo?: string; explanation?: unknown }> = items as any;
         if (active) {
           // Federation selects from every repo including this one and scores the union in a
@@ -754,7 +789,7 @@ export function registerTools(
           // local items would score them by different rules than the peers' -- and recency,
           // which normalizes against the candidate set it is given, would make every repo's
           // newest item equally recent.
-          const federated = await queryFederated({
+          federated = await queryFederated({
             workspace: active,
             query: query ?? '',
             category: category as KnowledgeCategory,
@@ -762,11 +797,15 @@ export function registerTools(
             tags,
             limit: limit ?? 3,
             repos,
+            scope,
             vector,
           });
-          skippedRepos = federated.skipped;
-          resolvedItems = federated.items;
+          // Everything downstream of the payload -- the kin block, the abstention verdict, the
+          // demand ledger -- asks questions about the result set rather than about its shape, so
+          // they keep reading one flat list.
+          resolvedItems = flattenGroups(federated);
         }
+        const skippedRepos: FederatedResult['skipped'] = federated?.skipped ?? [];
 
         const withStaleStatus = async (itemId: string) => Promise.all((await listEvidenceForItem(itemId)).map(async evidence => ({
           ...evidence,
@@ -826,14 +865,33 @@ export function registerTools(
             ...(explain && item.explanation ? { explanation: item.explanation } : {}),
           };
         };
-        const payload = includeEvidence
-          ? await Promise.all(resolvedItems.map(async item => (isForeign(item)
-            ? compact(item)
-            : { ...compact(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
-          : resolvedItems.map(compact);
-        // The notice is a separate block so the first block stays a bare JSON array for
-        // every existing caller.
-        const { text: payloadText, shortened, omitted: omittedResults } = boundQueryPayload(payload);
+        // Inside a group the key already names the repo, so the per-row field is noise. It stays
+        // on a flat row, which has no key to say it.
+        const compactInGroup = (item: any) => {
+          const { repo: _repo, ...rest } = compact(item);
+          return rest;
+        };
+        const rowsOf = async (rows: typeof resolvedItems, shaper: (item: any) => Record<string, unknown>) => (
+          includeEvidence
+            ? await Promise.all(rows.map(async item => (isForeign(item)
+              ? shaper(item)
+              : { ...shaper(item), evidence: boundedEvidence(await withStaleStatus(item.id)) })))
+            : rows.map(shaper)
+        );
+        // `compactInGroup` only where there is a key to carry the name. A flat response is a bare
+        // array whatever produced it, so its rows keep `repo` exactly as before.
+        const shaper = federated?.shape === 'grouped' ? compactInGroup : compact;
+        const payloadGroups = federated
+          ? await Promise.all(federated.groups.map(async group => ({
+            repo: group.repo,
+            rows: await rowsOf(group.items, shaper),
+          })))
+          : [{ repo: '', rows: await rowsOf(resolvedItems, compact) }];
+        // The notice is a separate block so the first block stays parseable on its own: a bare
+        // JSON array for every existing caller, an object keyed by repo when a linked repo
+        // contributed a row.
+        const { text: payloadText, shortened, omitted: omittedResults } =
+          boundQueryPayload(payloadGroups as Array<{ repo: string; rows: Record<string, unknown>[] }>, federated?.shape ?? 'flat');
         const blocks: { type: 'text'; text: string }[] = [{ type: 'text', text: payloadText }];
         if (shortened > 0 || omittedResults > 0) {
           const what = [
@@ -845,6 +903,32 @@ export function registerTools(
             text: `RESPONSE BOUNDED: ${what}, to keep this response under ${MAX_RESPONSE_CHARS} characters. `
               + 'These were the weakest matches, not a scoping failure. Read any result whole with '
               + '`knowl_query` and its `id`; narrow the query or lower `limit` to see more of them at once.',
+          });
+        }
+        // This repo returned nothing and a linked one did. The shape already says so; this says
+        // the one thing a shape cannot, which is that a foreign fact describes a foreign repo.
+        //
+        // Only on the default path. A caller who asked for `scope: 'workspace'` or named `repos`
+        // requested exactly this and does not need to be told what they asked for.
+        if (federated && !scope && !repos?.length
+          && federated.groups[0]?.items.length === 0 && federated.groups.length > 1) {
+          const answering = federated.groups.slice(1).map(group => group.repo);
+          blocks.push({
+            type: 'text',
+            text: `LOCAL MISS: ${federated.groups[0].repo} (this repo) returned nothing for this query. `
+              + `Everything above is from ${answering.join(', ')} and describes ${answering.length > 1 ? 'those repos' : 'that repo'}, not this one. `
+              + 'Verify against this repo before applying it, and treat this as a miss if it does not transfer.',
+          });
+        }
+        // A linked repo matched and won no slot. Names and counts, never content: the knowledge
+        // stays findable without the response being able to substitute it for this repo's own.
+        if (federated?.unshown.length) {
+          const described = federated.unshown.map(entry => `${entry.repo} (${entry.matches})`).join(', ');
+          const names = federated.unshown.map(entry => `"${entry.repo}"`).join(', ');
+          blocks.push({
+            type: 'text',
+            text: `WORKSPACE: linked repos also hold matches not shown here: ${described}. `
+              + `Re-query with repos: [${names}] to read them.`,
           });
         }
         if (skippedRepos.length) {
@@ -983,6 +1067,24 @@ export function registerTools(
               ...(resolvedItems.some(item => (item.explanation as { abstained?: boolean } | undefined)?.abstained)
                 ? { abstained: true }
                 : {}),
+              // Whether this repo put anything on the page at all -- the quantity grouping
+              // actually changes, and nothing measured it before. Read from the local group's
+              // occupancy rather than from a score, for the same reason the grouping decision
+              // is: no threshold can separate a weak local answer from no local answer, but
+              // "did it contribute a row" is a count and counts do not need calibrating.
+              //
+              // Only where the local repo was searched. Under `repos: ['b']` it was not, and
+              // recording `false` would say this repo failed to answer a question it was never
+              // asked -- the same absent-versus-unsearched conflation `skipped` exists to avoid.
+              ...(federated?.groups.some(group => group.repo === active.repo)
+                ? { localAnswered: (federated.groups.find(group => group.repo === active.repo)?.items.length ?? 0) > 0 }
+                : {}),
+              // A narrowed read, marked so it is not counted as an open one. The event is
+              // recorded either way -- the guard above is `active && query`, which a local scope
+              // still satisfies -- so the ledger's volume is unaffected and only its
+              // interpretation needed the flag.
+              ...(scope ? { scope } : {}),
+              ...(repos?.length ? { repos } : {}),
             },
           }, config);
         }

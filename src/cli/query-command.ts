@@ -3,7 +3,7 @@ import { loadConfig } from '../core/config.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { rankKnowledge, type RankOptions } from '../store/agent-query.js';
 import { queryKnowledgeBase } from '../store/queries.js';
-import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
+import { flattenGroups, queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 
 /**
@@ -16,10 +16,33 @@ import { resolveWorkspace } from '../workspace/resolve.js';
  */
 export const CLI_QUERY_LIMIT = 20;
 
+export type CliQueryItem = KnowledgeItem & { repo?: string; score?: number; abstained?: boolean };
+
 export type CliQueryResult = {
-  items: Array<KnowledgeItem & { repo?: string; score?: number; abstained?: boolean }>;
+  /**
+   * The flattened view, in group order.
+   *
+   * Kept beside `groups` rather than replaced by it because most callers -- and most of this
+   * command's tests -- ask about ranking rather than layout, and a derived field cannot drift
+   * from the thing it is derived from.
+   */
+  items: CliQueryItem[];
+  /**
+   * The same partition the MCP surface returns, for the same reason: a human reading a flat
+   * list cannot see which repo answered either. Local first when empty, otherwise ordered by
+   * each group's best row.
+   */
+  groups: Array<{ repo: string; items: CliQueryItem[] }>;
+  /** Linked repos that matched and won no slot, by name and count. Never content. */
+  unshown: FederatedResult['unshown'];
+  shape: 'flat' | 'grouped';
   skipped: FederatedResult['skipped'];
 };
+
+/** The single-group shape both non-federated paths return: no workspace, or `--as-of`. */
+function flat(items: CliQueryItem[]): CliQueryResult {
+  return { items, groups: [{ repo: '', items }], unshown: [], shape: 'flat', skipped: [] };
+}
 
 /**
  * The ranker's own numbers, put on the item the way `knowl_query` puts them on its response.
@@ -68,10 +91,9 @@ export async function runCliQuery(input: {
   // query across repos has no defined semantics, and the ranker has no notion of a point in
   // time -- so this path is deliberately the old one.
   if (input.asOf) {
-    const items = await queryKnowledgeBase(input.projectId, {
+    return flat(await queryKnowledgeBase(input.projectId, {
       query: input.query, limit: input.limit, asOf: input.asOf,
-    });
-    return { items, skipped: [] };
+    }));
   }
 
   const config = await loadConfig(input.projectRoot).catch(() => null);
@@ -97,9 +119,18 @@ export async function runCliQuery(input: {
     const federated = await queryFederated({
       workspace: active, query: input.query ?? '', limit, vector,
     });
-    return { items: federated.items.map(withRankerVerdict), skipped: federated.skipped };
+    const groups = federated.groups.map(group => ({
+      repo: group.repo,
+      items: group.items.map(withRankerVerdict),
+    }));
+    return {
+      items: groups.flatMap(group => group.items),
+      groups,
+      unshown: federated.unshown,
+      shape: federated.shape,
+      skipped: federated.skipped,
+    };
   }
 
-  const ranked = await rankKnowledge(input.projectId, { query: input.query, limit, vector });
-  return { items: ranked.map(withRankerVerdict), skipped: [] };
+  return flat((await rankKnowledge(input.projectId, { query: input.query, limit, vector })).map(withRankerVerdict));
 }

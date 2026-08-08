@@ -7,7 +7,7 @@ import * as repo from '../../src/store/repository.js';
 import { createKnowledgeItem } from '../../src/store/repository.js';
 import { reindexKnowledgeEmbeddings } from '../../src/store/vector-index.js';
 import { createLocalEmbeddingProvider } from '../../src/ai/embeddings.js';
-import { queryFederated } from '../../src/workspace/federated-query.js';
+import { flattenGroups, queryFederated } from '../../src/workspace/federated-query.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
@@ -114,8 +114,8 @@ describe('cross-repo ranking with a shared embedding identity', () => {
 
       // The recorded weakness, resolved: the answer that actually answers the question
       // ranks first even though it lives in another repo and a local item also matched.
-      expect(federated.items[0].repo).toBe('server');
-      expect(federated.items[0].title).toBe('Auth token TTL');
+      expect(flattenGroups(federated)[0].repo).toBe('server');
+      expect(flattenGroups(federated)[0].title).toBe('Auth token TTL');
     } finally {
       await closeDb();
     }
@@ -132,7 +132,7 @@ describe('cross-repo ranking with a shared embedding identity', () => {
         workspace: active, query, limit: 5, vector: await vectorConfig(query),
       });
 
-      expect(federated.items.some(item => item.repo === 'server' && item.title === 'Auth token TTL')).toBe(true);
+      expect(flattenGroups(federated).some(item => item.repo === 'server' && item.title === 'Auth token TTL')).toBe(true);
     } finally {
       await closeDb();
     }
@@ -147,7 +147,7 @@ describe('cross-repo ranking with a shared embedding identity', () => {
         workspace: active, query, limit: 5, vector: await vectorConfig(query),
       });
       // Reordering, not exclusion: the local note is still there, just no longer first.
-      expect(federated.items.some(item => item.repo === 'web')).toBe(true);
+      expect(flattenGroups(federated).some(item => item.repo === 'web')).toBe(true);
     } finally {
       await closeDb();
     }

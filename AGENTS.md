@@ -99,8 +99,10 @@ Casual conversation, a single memory lookup, and trivial non-resumable work do n
 
 ### Linked repositories
 
-- When this repo is in a workspace, `knowl_query` results carry a `repo` field naming the repo that produced each item. A fact from another repo describes **that** repo unless it says otherwise; do not apply it here without checking.
-- Restrict a search to one repo with `knowl_query` `repos: ["<name>"]`. It matches the repo that owns an item.
+- When this repo is in a workspace, read the **shape** of a `knowl_query` result first. A bare JSON array means every row belongs to this repo. An object keyed by repo name means at least one row does **not** — and a fact from another repo describes **that** repo unless it says otherwise, so verify before applying it here.
+- An empty array under this repo's own key means this repo holds nothing on the subject. Read the other keys as background, not as an answer, and treat it as a miss if what they say does not transfer.
+- Narrow with `scope: "local"` (this repo alone, always a bare array) or `scope: "workspace"` (every sharing repo, always keyed). `repos: ["<name>"]` restricts to named repos and matches the repo that owns an item; it wins if both are given.
+- A `WORKSPACE:` notice names linked repos that matched but were not shown, with counts. Re-query with `repos` to read them.
 - Whether a new write is shared is this repo's recorded default, not a fixed rule: joining a linked workspace sets it to workspace visibility, while `--default-visibility repo` keeps writes private. `knowl workspace set` with no flags prints the current value.
 - Knowledge already written privately stays private until someone runs `knowl workspace promote`. Only the owning repo can promote, update, or retire its own items.
 

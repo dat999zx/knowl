@@ -524,15 +524,34 @@ program.command('query').argument('[query]').description('Search project memory 
     // The ranking used to differ on both axes: this command read queryKnowledgeBase directly
     // while knowl_query used the shared ranker, and the workspace branch used the ranker while
     // the solo branch did not -- the same command disagreeing with itself.
-    const { items, skipped } = await runCliQuery({
+    const { items, groups, unshown, shape, skipped } = await runCliQuery({
       projectRoot: root, projectId: project.id, query, limit, asOf,
     });
 
-    console.log(JSON.stringify(items, null, 2));
+    // Keyed by repo the moment a linked repo contributes a row, and a bare array otherwise --
+    // the same rule the MCP surface follows, so a human and an agent are told the same thing in
+    // the same way. An empty group under this repo's own name is what says it holds nothing.
+    if (shape === 'grouped') {
+      console.log(JSON.stringify(Object.fromEntries(groups.map(group => [group.repo, group.items])), null, 2));
+      const mine = groups.find(group => group.items.length === 0);
+      if (mine) {
+        console.error(`Note: "${mine.repo}" (this repo) returned nothing. The results above belong to `
+          + `${groups.filter(group => group.items.length).map(group => `"${group.repo}"`).join(', ')} `
+          + 'and describe those repos, not this one.');
+      }
+    } else {
+      console.log(JSON.stringify(items, null, 2));
+    }
     // The floor's verdict, said out loud. Results below it are printed rather than withheld,
     // so without this line a weak page looks exactly like a strong one.
     if (items.some((item: { abstained?: boolean }) => item.abstained)) {
       console.error('Note: every result scored below the relevance floor — this store probably does not hold the answer. Read "score" and judge.');
+    }
+    // Names and counts, never content: the knowledge stays findable without this line being
+    // able to stand in for it.
+    if (unshown.length) {
+      const described = unshown.map(entry => `"${entry.repo}" (${entry.matches})`).join(', ');
+      console.error(`Note: linked repos also hold matches not shown here: ${described}. Re-run with --limit raised to see more.`);
     }
     for (const skip of skipped) {
       console.error(`Note: linked repo "${skip.repo}" was not searched (${skip.reason}).`);

@@ -5,7 +5,7 @@ import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
-import { queryFederated } from '../../src/workspace/federated-query.js';
+import { flattenGroups, queryFederated } from '../../src/workspace/federated-query.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
@@ -72,7 +72,7 @@ describe('kin divergence on the read path', () => {
     await updateRepoSettings({ workspaceName: 'ws', repoName: 'api', settings: { kin: 'services' } });
 
     const result = await federate('session store');
-    const fromWeb = result.items.find(item => item.repo === 'web');
+    const fromWeb = flattenGroups(result).find(item => item.repo === 'web');
 
     expect(fromWeb).toBeDefined();
     expect(fromWeb!.kinDivergent).toBe(true);
@@ -84,7 +84,7 @@ describe('kin divergence on the read path', () => {
     await updateRepoSettings({ workspaceName: 'ws', repoName: 'web', settings: { kin: 'services' } });
 
     const result = await federate('session store');
-    const fromWeb = result.items.find(item => item.repo === 'web');
+    const fromWeb = flattenGroups(result).find(item => item.repo === 'web');
 
     expect(fromWeb).toBeDefined();
     expect(fromWeb!.kinDivergent).toBeUndefined();
@@ -97,7 +97,7 @@ describe('kin divergence on the read path', () => {
     await updateRepoSettings({ workspaceName: 'ws', repoName: 'api', settings: { kin: 'services' } });
 
     const result = await federate('session');
-    const mine = result.items.filter(item => item.repo === 'api');
+    const mine = flattenGroups(result).filter(item => item.repo === 'api');
 
     expect(mine.length).toBeGreaterThan(0);
     expect(mine.every(item => item.kinDivergent === undefined)).toBe(true);
@@ -106,7 +106,7 @@ describe('kin divergence on the read path', () => {
   it('leaves results unmarked when no repo declares kin at all', async () => {
     const result = await federate('session store');
 
-    expect(result.items.length).toBeGreaterThan(0);
-    expect(result.items.every(item => item.kinDivergent === undefined)).toBe(true);
+    expect(flattenGroups(result).length).toBeGreaterThan(0);
+    expect(flattenGroups(result).every(item => item.kinDivergent === undefined)).toBe(true);
   });
 });
