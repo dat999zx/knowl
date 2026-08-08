@@ -3,6 +3,35 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### `knowl doctor` asks the registry every time
+
+The update check caches for a day, which is right for `knowl status` — run in passing, and a
+day-old answer costs nothing. It is wrong for `doctor`, whose entire job is to report what is true
+right now. Measured on the day 3.4.0 shipped: the cache was written at 05:14Z, 3.4.0 published at
+10:18Z, and `doctor` went on reporting a healthy 3.3.0 for the rest of the day with no way to make
+it look again. A diagnostic that cannot be refreshed is one you stop believing.
+
+`doctor` now passes `ttlMs: 0`. It costs at most the existing 2s fetch timeout on a command that
+is already deliberate and slow, fails silently offline like every other caller, and still writes
+the shared cache so the next `knowl status` benefits from the fresh answer. `status` is unchanged.
+
+### `docs:check` catches drift in KNOWL.md and AGENTS.md
+
+Both files are generated from `src/core/knowl-guidance.ts` by `installKnowlProjectGuidance`, and
+nothing verified them: the region check covered `README.md` and `docs/reference.md` only. The gap
+let two separate stale-guidance commits through in one day. One was a `knowl` command run against
+a stale `dist/`, which rewrote both files from an older build and silently reverted bullets that
+had just landed; the other edited `KNOWL.md` and left `AGENTS.md` behind, with `docs:check`
+reporting "regions are current" while the two files disagreed with each other and with the source.
+
+`npm run docs:check` now fails on that drift and `npm run docs:generate` repairs it. Compared from
+`src/`, never from `dist/` — a stale build is the failure being caught, so trusting the build to
+detect it would close the loop on itself. The comparison and the write both match each file's own
+line endings, because `installKnowlProjectGuidance` writes LF unconditionally and a checkout with
+`core.autocrlf` would otherwise report drift on every run that git cannot see.
+
 ## 3.4.0 — 2026-08-08
 
 ### Retrieved text renders as data, not as live markdown
