@@ -901,6 +901,15 @@ export function registerTools(
               + transcriptRoute,
           });
         }
+        // The data/instruction boundary for THIS surface lives in the tool description, not in
+        // a block here. Three tests pin the block count -- one is named "says nothing when the
+        // results already fit" -- and they encode a real convention: an extra block reports an
+        // anomaly (bounded, scope, floor), so a banner on every response is both a contract
+        // break and the kind of boilerplate a reader learns to skip. A standing property of the
+        // tool belongs in the tool's description, where it is stated once and costs nothing per
+        // call. The JSON payload is already structurally contained -- a body is an escaped
+        // string -- so the declaration was the only thing missing, and that is where it goes.
+        //
         // What one repo actually asks the others for, recorded after the answer is built.
         //
         // Every workspace query, not only the weak ones. The obvious design logs "queries the

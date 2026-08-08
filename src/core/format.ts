@@ -1,6 +1,7 @@
 import { KnowledgeCommit, KnowledgeItem } from './types.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, MAX_SUMMARY_ITEM_CHARS, truncateText } from './token-budget.js';
 import { renderSkillsSection, selectSurfacedSkills } from './skill-surface.js';
+import { fenceUntrusted, inlineUntrusted, UNTRUSTED_NOTICE_BRIEF } from './untrusted.js';
 
 /**
  * Formats a hierarchical knowledge object into clean readable markdown.
@@ -14,8 +15,12 @@ export function formatHierarchyToMarkdown(hierarchy: {
 }, options: { maxChars?: number; maxItemChars?: number } = {}): string {
   const maxChars = options.maxChars ?? DEFAULT_CONTEXT_MAX_CHARS;
   const maxItemChars = options.maxItemChars ?? MAX_SUMMARY_ITEM_CHARS;
-  const itemText = (value: string) => truncateText(value, maxItemChars);
-  let md = `# KNOWL — PROJECT BRAIN STATE\n\n`;
+  // Truncate first, then contain. The other order lets a body whose fence run sits past the
+  // ceiling pick the fence length for text that is then cut away.
+  const itemText = (value: string) => inlineUntrusted(truncateText(value, maxItemChars));
+  // Multi-line bodies keep their shape, inside a container they cannot close.
+  const itemBlock = (value: string) => fenceUntrusted(truncateText(value, maxItemChars));
+  let md = `# KNOWL — PROJECT BRAIN STATE\n\n${UNTRUSTED_NOTICE_BRIEF}\n\n`;
 
   // Goals & Constraints
   const goals = hierarchy.knowledge.filter(x => x.category === 'goal');
@@ -50,7 +55,7 @@ export function formatHierarchyToMarkdown(hierarchy: {
   if (arch.length === 0) md += `No active architecture specifications.\n\n`;
   else {
     arch.forEach(a => {
-      md += `### ${itemText(a.title)}\n${itemText(a.content)}\n\n`;
+      md += `### ${itemText(a.title)}\n${itemBlock(a.content)}\n\n`;
     });
   }
 
@@ -58,7 +63,7 @@ export function formatHierarchyToMarkdown(hierarchy: {
   if (decisions.length === 0) md += `No active decisions recorded.\n\n`;
   else {
     decisions.forEach(d => {
-      md += `### ${itemText(d.title)} (ID: ${d.id})\n${itemText(d.content)}\n`;
+      md += `### ${itemText(d.title)} (ID: ${d.id})\n${itemBlock(d.content)}\n`;
       if (d.reasoning) md += `**Reasoning:** ${itemText(d.reasoning)}\n`;
       if (d.alternatives && d.alternatives.length > 0) {
         md += `**Alternatives considered:** ${itemText(d.alternatives.join(', '))}\n`;
@@ -81,7 +86,7 @@ export function formatHierarchyToMarkdown(hierarchy: {
   if (hierarchy.skills.length === 0) md += `No skills learned yet.\n\n`;
   else {
     hierarchy.skills.forEach(s => {
-      md += `### ${itemText(s.title)} (ID: ${s.id})\n${itemText(s.content)}\n\n`;
+      md += `### ${itemText(s.title)} (ID: ${s.id})\n${itemBlock(s.content)}\n\n`;
     });
   }
 
@@ -139,7 +144,10 @@ export function formatRecentContextToMarkdown(context: {
 }, options: { maxChars?: number; maxItemChars?: number; includeTags?: boolean; includeCommitDetails?: boolean; workspace?: WorkspaceContext } = {}): string {
   const maxChars = options.maxChars ?? DEFAULT_CONTEXT_MAX_CHARS;
   const maxItemChars = options.maxItemChars ?? MAX_SUMMARY_ITEM_CHARS;
-  let md = '# KNOWL - RECENT SESSION CONTEXT\n\n';
+  // The notice leads, and must: this card is injected at session bootstrap with no human in
+  // the loop, and the `truncateText` at the bottom of this function would drop a trailing
+  // notice on exactly the largest payloads.
+  let md = `# KNOWL - RECENT SESSION CONTEXT\n\n${UNTRUSTED_NOTICE_BRIEF}\n\n`;
 
   // Absent produces byte-identical output, the same rule formatWorkspaceBlock already holds
   // for an unlinked project.
@@ -162,10 +170,13 @@ export function formatRecentContextToMarkdown(context: {
     md += 'No recent active knowledge recorded.\n\n';
   } else {
     for (const item of context.items) {
-      md += `- **${item.title}** (${item.category}, updated ${item.updatedAt})\n`;
-      md += `  ${truncateText(item.content, maxItemChars)}\n`;
+      // Every one of these is stored text on a line of its own inside a list. A body carrying
+      // a newline used to break out to column 0, where an ATX heading or a fence opener is
+      // live markdown; collapsing the line breaks removes the line start it would need.
+      md += `- **${inlineUntrusted(item.title)}** (${item.category}, updated ${item.updatedAt})\n`;
+      md += `  ${inlineUntrusted(truncateText(item.content, maxItemChars))}\n`;
       if (options.includeTags && item.tags && item.tags.length > 0) {
-        md += `  Tags: ${item.tags.join(', ')}\n`;
+        md += `  Tags: ${inlineUntrusted(item.tags.join(', '))}\n`;
       }
     }
     md += '\n';
@@ -176,7 +187,8 @@ export function formatRecentContextToMarkdown(context: {
     md += 'No recent knowledge commits recorded.\n';
   } else {
     for (const commit of context.commits) {
-      md += `- ${commit.createdAt}: ${commit.message}\n`;
+      // A commit message is caller-supplied too, and reaches this card unreviewed.
+      md += `- ${commit.createdAt}: ${inlineUntrusted(commit.message)}\n`;
       if (options.includeCommitDetails && commit.changes.length > 0) md += `  Changes: ${commit.changes.length}\n`;
     }
   }
