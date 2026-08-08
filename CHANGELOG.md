@@ -98,6 +98,49 @@ repo's `KNOWL.md` said knowledge stays private until someone promotes it; it now
 the repo's recorded default and names the command that prints it, because that sentence is what an
 agent consults before deciding a write is safe. The README and `docs/reference.md` said the same
 thing on the front page and did not document the flag at all.
+### Workspace results say which repo they came from, in the shape of the response
+
+Asking a repo about something it has never touched returned a linked repo's answer in a shape
+indistinguishable from its own. Local and peer rows were fused into one flat list, so the `repo`
+field on each row was the only thing saying whose answer it was — a quiet field in a JSON array,
+set against a standing instruction to use a relevant hit immediately. The field lost.
+
+`knowl_query` and `knowl query` now return results **partitioned by owning repo**. A bare array
+means every row is this repo's. An object keyed by repo name means at least one is not, and an
+empty array under this repo's own key is the response saying it holds nothing on the subject. A
+notice can be skimmed past; a response whose structure is wrong for "this repo's answer" cannot be
+read as one.
+
+New `scope` parameter: `local` searches this repo alone and always returns a bare array,
+`workspace` searches every sharing repo and always returns a keyed object. `repos` still restricts
+to named repos and wins if both are given. An explicit scope **fixes** the shape rather than
+deriving it, so a caller who asked for a partitioned view can write a parser against it.
+
+Two notices ride alongside. `LOCAL MISS` fires when this repo returned nothing and a linked one
+did, and says the thing a shape cannot — that a foreign fact describes a foreign repo. `WORKSPACE:`
+names linked repos that matched and won no slot, by count, never by content, so shared knowledge
+stays findable without the notice being able to stand in for it.
+
+**Ranking is unchanged.** `scoreCandidates` is untouched and is not called differently: the same
+single-union pass decides which rows reach the page, with the same global alpha, page-wide semantic
+rescale and per-corpus lexical normalization. Only the layout changed. Measured on
+`cross-repo-archetypes.json`, **18 of 20 cells are byte-identical**; two moved by roughly one case
+each (positional polyglot-services MRR 0.9 → 0.8916, semantic monorepo-split Recall@3 1.0 → 0.9722)
+because grouping cannot interleave — see `docs/evals/grouping-rebaseline.md`.
+
+An ownership-priority variant, where the local repo filled every slot before any peer, was
+implemented and measured first. It collapsed Recall@3 on all five archetypes — asymmetric-trio
+1.0 → 0.361 — because `perRepoCap` admits ten candidates per repo whatever their quality, so a
+local repo nearly always holds `limit` weak matches and peers never reach the page. That is the
+answer leaving the page rather than ranking lower, and it is why attribution lives in the response
+shape instead.
+
+The demand ledger records `localAnswered` — how often this repo is asked something only a
+neighbour holds, which nothing measured before — and marks a narrowed read with `scope`.
+
+**Breaking for callers that assume an array:** a workspace query returns an object whenever a
+linked repo contributed a row. Repos with no workspace are entirely unaffected and still return
+the bare array they always have.
 
 ### A cross-repo evaluation suite that spans more than one workspace shape
 
