@@ -30,6 +30,23 @@ The JSON surface takes the rule in the `knowl_query` description instead of a pe
 that response's block count is a contract, where an extra block reports an anomaly, and JSON
 already contains bodies structurally.
 
+### The provenance prior scores the absence of a claim
+
+`provenance === 'inferred'` never matched. Censused across five real stores — 1,014 active items
+— 72.9% leave provenance unset, 26.2% say `observed`, 0.9% `user_stated`, and zero say
+`inferred`. The multiplier had not fired once.
+
+Worse than dead, the incentive ran backwards: unset scored exactly as well as `observed`, so
+saying nothing about where a claim came from was free, and labelling your own inference honestly
+was the only way to lose rank. It now keys on the absence of a grounding claim, so `observed` and
+`user_stated` earn full credit while silence and an honest `inferred` sit together one notch
+below. Order-neutral on any corpus with uniform provenance, including both eval suites, so no
+measured number moves.
+
+The `knowl_store` and `knowl_ingest_atoms` schemas say so, which is the point: the field's whole
+purpose is to be filled in, and the description is the only place a writer learns what filling it
+in is worth.
+
 ### `workspace add` shares by default in a linked workspace
 
 **Breaking-ish, for new links only.** A repo joining a `linked` workspace now gets

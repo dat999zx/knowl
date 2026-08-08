@@ -195,7 +195,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
               provenance: {
                 type: 'string',
                 enum: ['observed', 'user_stated', 'inferred'],
-                description: 'How this came to be believed: observed (execution or direct inspection), user_stated (the human said so), or inferred (concluded without direct evidence). Inferred items rank lower until confirmed by use.',
+                description: 'How this came to be believed: observed (execution or direct inspection), user_stated (the human said so), or inferred (concluded without direct evidence). Claiming observed or user_stated ranks an item above one that claims nothing, and leaving this unset scores exactly the same as an honest inferred -- silence buys no rank, so say which it was.',
               },
               conflictKey: { type: 'string', description: 'Optional normalized semantic identity key.' },
               conflictScope: { type: 'object', description: 'Optional scope for the conflict key.' },
@@ -243,7 +243,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
                     provenance: {
                       type: 'string',
                       enum: ['observed', 'user_stated', 'inferred'],
-                      description: 'How this came to be believed: observed (execution or direct inspection), user_stated (the human said so), or inferred (concluded without direct evidence). Inferred items rank lower until confirmed by use.',
+                      description: 'How this came to be believed: observed (execution or direct inspection), user_stated (the human said so), or inferred (concluded without direct evidence). Claiming observed or user_stated ranks an item above one that claims nothing, and leaving this unset scores exactly the same as an honest inferred -- silence buys no rank, so say which it was.',
                     },
                     steps: { type: 'array', items: { type: 'string' } },
                     supersedes: { type: 'string', minLength: 1, description: 'Id of an active item this atom replaces; it is marked superseded (retired but still queryable), not deleted.' },
