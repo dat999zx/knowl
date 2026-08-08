@@ -26,6 +26,15 @@ card, the skill rows inside it, the mid-turn skill nudge, the pending-session ha
 parked resume brief. The handoff's `errorMessage` is the sharpest of them — a string from an
 external host process, landing in the first thing a fresh session reads.
 
+Also the `knowl://category/{name}` resource, the mid-turn change card, the parked-work listing
+and both transcript tools. Three of those sat in modules that were already **partly** contained —
+`resources.ts` had fixed its other two routes, `resume-points.ts` had contained the brief but not
+the listing that renders the same goal, and `change-card.ts` had been collapsing whitespace in
+`renderSignature` while leaving `item.title` on the line beside it. The transcript tools hold the
+least reviewed text knowl has: a transcript row is whatever a past session happened to say, tool
+output and fetched pages included, and the search response keeps speaking in knowl's own voice
+below the hits.
+
 The JSON surface takes the rule in the `knowl_query` description instead of a per-response block:
 that response's block count is a contract, where an extra block reports an anomaly, and JSON
 already contains bodies structurally.

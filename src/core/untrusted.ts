@@ -32,6 +32,20 @@
  * it from a stored item title, `renderSkillUseNudge` interrupts mid-turn,
  * `formatPendingHandoffContext` opens a session, and `formatResumeBrief` replays a parked one.
  * Every one of them interpolates stored or host-supplied text and every one calls in here.
+ *
+ * Applying that rule twice found five more, and the shape of the misses is worth recording
+ * because it is what the rule is for. Three were **half-contained modules**: `resources.ts` fixed
+ * `knowl://brain` and `knowl://recent` by delegating to the formatters above and left
+ * `knowl://category/{name}`, which builds its own markdown, raw; `resume-points.ts` contained the
+ * brief and left the listing that renders the same goal; `change-card.ts` had collapsed
+ * whitespace in `renderSignature` since it was written and left `item.title` on the line beside
+ * it. Being partly right is what makes a module easy to skip on the next pass.
+ *
+ * The other two are the transcript tools, and they hold the least reviewed text knowl has. A
+ * stored atom was at least written by something that meant to write an atom; a transcript row is
+ * whatever a past session happened to say, including tool output and fetched pages, replayed
+ * verbatim. `handleTranscriptSearch` also keeps speaking after the hits -- its coverage lines and
+ * `knowl_store` nudge are knowl's own voice, and an uncontained body sits directly above them.
  */
 
 /**

@@ -1,3 +1,4 @@
+import { inlineUntrusted } from '../core/untrusted.js';
 import type { ChangeSummary } from '../store/change-watermark.js';
 
 const MAX_ITEM_LINES = 5;
@@ -90,13 +91,24 @@ function describeLocator(locator: string): LocatorView {
  * newline inside a signature would silently turn one budgeted line into several.
  */
 function renderSignature(signature: string): string {
-  const flat = signature.replace(/\s+/g, ' ').trim();
+  const flat = inlineUntrusted(signature);
   return flat.length > MAX_TITLE_LENGTH ? `${flat.slice(0, MAX_TITLE_LENGTH - 1)}…` : flat;
 }
 
 /**
  * Titles only, never content. A title is the routing information the agent needs —
  * "do I care about this?" — and content is what knowl_query is for.
+ *
+ * A title is stored text, and this card rides `PostToolUse`/`additionalContext` into the middle
+ * of a turn with no human in the loop -- the same channel and the same exposure as
+ * `renderSkillUseNudge`. `renderSignature` two functions up has collapsed whitespace since it was
+ * written, for the narrower reason that a newline turns one budgeted line into several; the same
+ * newline in a title also reaches column 0, where `## SYSTEM` or a fence opener is live markdown.
+ * Both now go through the one helper that states why.
+ *
+ * Collapsed before the slice, not after: `inlineUntrusted` only ever shortens, so the
+ * `MAX_TITLE_LENGTH` cap still bounds the line, and slicing first would leave a newline in
+ * whatever survived the cut.
  */
 function renderKnowledgeStanza(summary: ChangeSummary): string {
   const shown = summary.items.slice(0, MAX_ITEM_LINES);
@@ -105,7 +117,7 @@ function renderKnowledgeStanza(summary: ChangeSummary): string {
     // The repo tag is not decoration: a fact from another repo describes that repo, so
     // an agent that cannot tell where a change landed cannot tell whether it applies here.
     const repo = item.repo ? `[${item.repo}] ` : '';
-    return `- ${repo}${item.category}${action}: ${item.title.slice(0, MAX_TITLE_LENGTH)}`;
+    return `- ${repo}${item.category}${action}: ${inlineUntrusted(item.title).slice(0, MAX_TITLE_LENGTH)}`;
   });
   const remaining = summary.count - shown.length;
   if (remaining > 0) lines.push(`- +${remaining} more`);
