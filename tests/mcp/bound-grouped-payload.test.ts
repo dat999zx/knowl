@@ -60,4 +60,32 @@ describe('boundQueryPayload', () => {
 
     expect(JSON.parse(text)).toHaveLength(1);
   });
+
+  it('never empties a group that had rows, which would forge the miss signal', () => {
+    // The local group sorts last whenever a peer outscores it, so it is the first to be dropped
+    // for size -- and an empty array under a repo's name is how this surface says "that repo
+    // holds nothing". Trimming must not be able to write that sentence. Sized so excerpting
+    // every body still overruns the ceiling, forcing the drop loop to run.
+    const { text, omitted } = boundQueryPayload([
+      { repo: 'b', rows: [row('peer1', 6_000), row('peer2', 6_000), row('peer3', 6_000)] },
+      { repo: 'a', rows: [row('local', 6_000)] },
+    ], 'grouped');
+    const parsed = JSON.parse(text);
+
+    expect(parsed.a).toHaveLength(1);
+    expect(parsed.b.length).toBeGreaterThanOrEqual(1);
+    expect(omitted).toBeGreaterThanOrEqual(0);
+  });
+
+  it('drops from a multi-row group rather than from a single-row one', () => {
+    const { text } = boundQueryPayload([
+      { repo: 'a', rows: [row('local', 200)] },
+      { repo: 'b', rows: Array.from({ length: 40 }, (_, i) => row(`peer${i}`, 2_000)) },
+    ], 'grouped');
+    const parsed = JSON.parse(text);
+
+    expect(parsed.a).toHaveLength(1);
+    expect(parsed.b.length).toBeLessThan(40);
+    expect(parsed.b.length).toBeGreaterThanOrEqual(1);
+  });
 });

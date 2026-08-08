@@ -287,9 +287,24 @@ export function boundQueryPayload(
     text = serialize();
   }
 
+  // Dropping must never empty a group that had rows.
+  //
+  // The keys are rebuilt from `groups` on every serialize, so a group whose last row is popped
+  // comes back as `[]` -- and an empty array under a repo's name is exactly how this surface
+  // says "that repo holds nothing on this". Trimming for size would forge that sentence, and
+  // most easily against the local repo: when a peer outscores it, the local group sorts last and
+  // its rows are the first to go. The reader would be told their own repo knows nothing about a
+  // subject it had just answered on.
+  //
+  // So a group's final row is never dropped, only shortened. At most one row per group survives
+  // beyond the ceiling, which is a bounded overrun and the honest one: a short page is visible,
+  // a fabricated miss is not.
   let omitted = 0;
-  while (text.length > MAX_RESPONSE_CHARS && kept.length > 1) {
-    kept.pop();
+  const isLastOfGroup = (index: number) =>
+    kept.filter(entry => entry.repo === kept[index].repo).length === 1;
+  for (let index = kept.length - 1; index >= 0 && text.length > MAX_RESPONSE_CHARS; index--) {
+    if (kept.length <= 1 || isLastOfGroup(index)) continue;
+    kept.splice(index, 1);
     omitted += 1;
     text = serialize();
   }

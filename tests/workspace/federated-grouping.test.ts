@@ -171,15 +171,34 @@ describe('federated grouping', () => {
     expect(result.groups.map(group => group.repo)).toEqual(['b', 'a']);
   }, 120_000);
 
-  it('reports a peer match that won no slot, by name and count only', async () => {
-    // Two matching rows in the peer, one slot. The row that misses is named and counted, never
-    // quoted -- content in a pointer would reintroduce exactly the silent substitution that
-    // grouping exists to remove.
+  it('says nothing about a peer that is already represented on the page', async () => {
+    // `perRepoCap` admits ten candidates per repo whatever their quality against a default limit
+    // of three, so counting every unshown candidate fires this notice on nearly every query --
+    // and points at rows the ranker had already placed below everything shown. A peer with a row
+    // on the page is visible and needs no pointer.
     await addItems(B, 'b', [
       { title: 'Deploy also needs a changelog', content: 'Deployment requires a changelog entry.', visibility: 'workspace' },
+      { title: 'Deploy rollback steps', content: 'Deployment rollback is documented here.', visibility: 'workspace' },
     ]);
-    const result = await federate('deployment', 1);
+    const result = await federate('deployment', 5);
 
+    expect(result.groups.some(group => group.repo === 'b' && group.items.length > 0)).toBe(true);
+    expect(result.unshown).toEqual([]);
+  }, 120_000);
+
+  it('reports a peer that reached the page with nothing at all, by name and count only', async () => {
+    // The case a pointer is actually for: the peer matched, won no slot, and so is invisible --
+    // indistinguishable from a repo that holds nothing on the subject. Local covers four query
+    // terms and the peer's row covers one, so at limit 1 local takes the page deterministically.
+    //
+    // Named and counted, never quoted: content in a pointer would reintroduce exactly the silent
+    // substitution that grouping exists to remove.
+    await addItems(B, 'b', [
+      { title: 'Tokens are mentioned here', content: 'Tokens appear once, in an unrelated note.', visibility: 'workspace' },
+    ]);
+    const result = await federate('auth tokens expire locally', 1);
+
+    expect(result.groups.map(group => group.repo)).toEqual(['a']);
     expect(result.unshown).toEqual([{ repo: 'b', matches: 1 }]);
   }, 120_000);
 

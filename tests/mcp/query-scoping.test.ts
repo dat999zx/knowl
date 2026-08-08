@@ -153,13 +153,14 @@ describe('knowl_query scoping', () => {
     expect(parsed[0].repo).toBe('a');
   }, 120_000);
 
-  it('points at a peer that matched but won no slot, without quoting it', async () => {
-    // Two matching peer rows against one slot, so exactly one is left unshown and the pointer
-    // has something to point at.
+  it('points at a peer that reached the page with nothing, without quoting it', async () => {
+    // The peer matches one query term and local matches four, so at limit 1 local takes the page
+    // and the peer is invisible -- the only case where "there is more over there" is news, and
+    // the only case the pointer now fires on.
     await initDb(B);
     const projectId = (await repo.createProject(B, 'b')).id;
     const extra = await storeKnowledgeItemDeduped(projectId, {
-      category: 'decision', title: 'Deploy also needs a changelog', content: 'Deployment requires a changelog entry.',
+      category: 'decision', title: 'Tokens are mentioned here', content: 'Tokens appear once, in an unrelated note.',
     });
     await getClient().execute({
       sql: 'UPDATE knowledge_items SET visibility = ?, origin_repo = ? WHERE id = ?',
@@ -167,7 +168,7 @@ describe('knowl_query scoping', () => {
     });
     await closeDb();
 
-    const response = await query({ query: 'deployment tag push', limit: 1 });
+    const response = await query({ query: 'auth tokens expire locally', limit: 1 });
     const pointer = response.content
       .map((block: any) => block.text as string)
       .find((text: string) => text.startsWith('WORKSPACE:'));
@@ -177,8 +178,8 @@ describe('knowl_query scoping', () => {
     // Names and counts only. Asserted against the pointer block alone, not the whole response:
     // the row that DID win a slot carries its content legitimately, so a whole-response check
     // would fail on the payload and prove nothing about the pointer.
-    expect(pointer).not.toContain('changelog entry');
-    expect(pointer).not.toContain('triggered by pushing');
+    expect(pointer).not.toContain('appear once');
+    expect(pointer).not.toContain('unrelated note');
   }, 120_000);
 
   it('is grouped under scope workspace even when only local answers', async () => {

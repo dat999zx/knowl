@@ -130,6 +130,23 @@ describe('federated scope', () => {
     expect(result.shape).toBe('grouped');
   }, 120_000);
 
+  it('gives a named repo an empty key when it holds nothing, rather than an empty object', async () => {
+    // Asking about `b` by name and getting `{}` back cannot be told apart from asking and
+    // getting no response at all. The contract this surface teaches is that an empty array
+    // under a repo's name means that repo holds nothing -- a named repo has to honour it.
+    const result = await federate('nothing matches this query at all', 5, { repos: ['b'] });
+
+    expect(result.groups).toEqual([{ repo: 'b', items: [] }]);
+  }, 120_000);
+
+  it('does not key a response by peers the caller never named', async () => {
+    // The counterpart. Every linked repo getting a key on every default-path query would drown
+    // the signal in repos nobody asked about.
+    const result = await federate('auth tokens expire', 5);
+
+    expect(result.groups.map(group => group.repo)).toEqual(['a']);
+  }, 120_000);
+
   it('lets repos win when both are passed', async () => {
     // More specific of the two. Refusing a benign combination would cost a caller their answer
     // over a preference.

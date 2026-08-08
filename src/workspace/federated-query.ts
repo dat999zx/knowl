@@ -84,22 +84,31 @@ function skipReasonFor(error: unknown): SkipReason {
 }
 
 /**
- * Peers that matched and won no slot, by name and count.
+ * Peers that matched and reached the page with **nothing at all**, by name and count.
  *
- * Counted from the candidate set rather than from the scored page, because the page is capped at
- * `limit` and the question is what did NOT reach it. Bounded by `perRepoCap`, so a peer holding
- * more matches than the cap undercounts -- the safe direction for a pointer whose only claim is
- * "there is more over there".
+ * Deliberately not "peers with candidates below the fold". `perRepoCap` admits ten candidates per
+ * repo whatever their quality and the MCP default `limit` is three, so counting every unshown
+ * candidate fires this on very nearly every federated query -- and each firing points at rows the
+ * ranker had already placed below everything shown. A notice that always fires is one a reader
+ * stops seeing, and this one asks for a second query, so the noise is not free.
+ *
+ * A peer with even one row on the page is already visible and needs no pointer. A peer with none
+ * is invisible: the reader cannot tell it from a repo that holds nothing, and that is the only
+ * case where "there is more over there" is news.
+ *
+ * Counted from the candidate set rather than the page, because the page is what did reach the
+ * reader. Bounded by `perRepoCap`, so a peer holding more than the cap undercounts -- the safe
+ * direction for a pointer that only claims something exists.
  */
 function countUnshown(
   candidates: Array<{ item: { id: string }; repo: string }>,
   page: ScoredCandidate[],
   localRepo: string,
 ): Array<{ repo: string; matches: number }> {
-  const shown = new Set(page.map(entry => entry.item.id));
+  const onPage = new Set(page.map(entry => entry.repo ?? localRepo));
   const counts = new Map<string, number>();
   for (const candidate of candidates) {
-    if (shown.has(candidate.item.id) || candidate.repo === localRepo) continue;
+    if (candidate.repo === localRepo || onPage.has(candidate.repo)) continue;
     counts.set(candidate.repo, (counts.get(candidate.repo) ?? 0) + 1);
   }
   return [...counts].map(([repo, matches]) => ({ repo, matches }));
@@ -273,22 +282,25 @@ export async function queryFederated(input: {
   // row, so nothing here overturns relevance. What grouping changes is only whether a reader can
   // see who owns each row without reading a field.
   //
-  // Seeded only when this repo was actually searched. Under `repos: ['b']` it was not, and an
-  // empty group under its name would say "your repo has nothing on this" when the truth is
-  // "your repo was not asked" -- the same conflation between absent and unsearched that the
-  // `skipped` list exists to prevent one level up.
   const localSearched = !wanted || wanted.has(input.workspace.repo);
-  const groups: FederatedGroup[] = localSearched ? [{ repo: input.workspace.repo, items: [] }] : [];
-  const byRepo = new Map<string, FederatedGroup>(
-    localSearched ? [[input.workspace.repo, groups[0]]] : [],
-  );
+
+  // Group order is first-appearance order in `scored`, which IS the ranker's order.
+  //
+  // Not a sort on each group's best score, which an earlier version did and which quietly
+  // undoes near-duplicate demotion: `scoreCandidates` returns `[...kept, ...deferred]`, so a row
+  // the ranker deliberately pushed to the back keeps the high score it was demoted *despite*.
+  // Read that score and a repo whose only row is a demoted duplicate sorts above a repo the
+  // ranker placed ahead of it -- most reachable between kin forks, where paraphrases survive the
+  // `byContent` dedup above. Walking the list preserves the verdict without re-deriving it.
+  const withRows: FederatedGroup[] = [];
+  const byRepo = new Map<string, FederatedGroup>();
   for (const entry of scored) {
     const repo = entry.repo ?? input.workspace.repo;
     let group = byRepo.get(repo);
     if (!group) {
       group = { repo, items: [] };
       byRepo.set(repo, group);
-      groups.push(group);
+      withRows.push(group);
     }
     group.items.push({
       ...entry.item,
@@ -298,19 +310,32 @@ export async function queryFederated(input: {
     });
   }
 
-  // Groups in relevance order, except an EMPTY local group, which is pinned first.
+  // A searched repo that found nothing still gets a key, because an empty array under a repo's
+  // name is the response saying that repo holds nothing -- the whole miss signal.
   //
-  // Two things are being kept apart. A group that holds rows earns its place by its best row,
-  // exactly as a row does -- pushing a peer's better answer below this repo's weaker one would
-  // reorder the ranker's verdict under the reader, and reading order is what MRR measures. An
-  // empty local group ranks nowhere at all, so pinning it first costs no position and is the
-  // whole "your repo has nothing on this" signal.
-  // Each group's first row is its best -- groups are built by walking `scored` in order -- so
-  // the group's rank is that row's score.
-  const bestOf = (group: FederatedGroup) =>
-    (group.items[0]?.explanation as { finalScore?: number } | undefined)?.finalScore ?? -Infinity;
-  const ordered = groups.filter(group => group.items.length > 0).sort((left, right) => bestOf(right) - bestOf(left));
-  const emptyLocal = groups.find(group => group.items.length === 0);
+  // This repo whenever it was searched, and any repo the caller named: asking about `b` by name
+  // and getting `{}` back cannot be told apart from asking and getting no response at all. NOT
+  // every linked peer on the default path -- that would key every query by every repo in the
+  // workspace and drown the signal in repos nobody asked about. A name that matches no repo is
+  // reported in `skipped` instead; it was never searched, and an empty group would claim it was.
+  const emptied: FederatedGroup[] = [];
+  const ensureKey = (repo: string) => {
+    if (byRepo.has(repo)) return;
+    const group: FederatedGroup = { repo, items: [] };
+    byRepo.set(repo, group);
+    emptied.push(group);
+  };
+  if (localSearched) ensureKey(input.workspace.repo);
+  for (const name of named ?? []) {
+    if (name !== input.workspace.repo && input.workspace.peers.some(peer => peer.name === name)) {
+      ensureKey(name);
+    }
+  }
+
+  // Empty groups first, this repo's ahead of any other -- `ensureKey` adds it first. They rank
+  // nowhere, so the position costs nothing, and a reader asking "did MY repo answer" finds the
+  // answer without scanning.
+  const groups = [...emptied, ...withRows];
 
   // An explicit scope FIXES the shape; only the default path derives it from what was found.
   //
@@ -323,10 +348,5 @@ export async function queryFederated(input: {
     ? (input.scope === 'local' && !named ? 'flat' : 'grouped')
     : (groups.length > 1 ? 'grouped' : 'flat');
 
-  return {
-    groups: emptyLocal ? [emptyLocal, ...ordered] : ordered,
-    unshown,
-    shape,
-    skipped,
-  };
+  return { groups, unshown, shape, skipped };
 }
