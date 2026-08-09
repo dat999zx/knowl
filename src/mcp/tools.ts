@@ -44,6 +44,7 @@ import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from 
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
 import { CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
 import { teamUpdateNotice } from '../cloud/team-update.js';
+import { maybeAutoSync } from '../cloud/auto-sync.js';
 
 /**
  * Ceilings for the handlers. The ones the SCHEMAS quote live beside the schemas, in
@@ -791,6 +792,12 @@ export function registerTools(
         // Federation is reached only from here. Peers are deliberately absent from
         // configuredNamespaces so implicit context assembly cannot fan out.
         const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
+
+        // Deliberately not awaited: the answer below comes from the replica already on disk,
+        // and this only decides what the next query sees. Awaiting a round trip here would put
+        // it back on a path queried several times a turn.
+        if (projectRoot && config) maybeAutoSync({ projectRoot, config });
+
         let federated: FederatedResult | null = null;
         let resolvedItems: Array<KnowledgeItem & { repo?: string; explanation?: unknown }> = items as any;
         if (active) {
