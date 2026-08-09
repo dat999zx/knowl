@@ -38,6 +38,29 @@ export async function cloudStatus(projectRoot: string, config: ProjectConfig): P
     await closeDb();
   }
 
+  return composeStatus(pointer, projectRoot, staged);
+}
+
+/**
+ * The same report, for a caller that already holds a database context -- an MCP request.
+ *
+ * `cloudStatus` above owns the process-wide context and must never be reached from one: its
+ * `closeDb` would leave every LATER tool call in that server with no database, surfacing in a
+ * different request from the one that caused it. See constraint `defde27f6f234535`.
+ */
+export async function cloudStatusInRequest(projectRoot: string, config: ProjectConfig): Promise<CloudStatus> {
+  const pointer = config.cloud;
+  if (!pointer) return { connected: false };
+
+  // The caller's context answers this; nothing is opened and nothing is closed.
+  return composeStatus(pointer, projectRoot, await listStaged(pointer.workspaceId));
+}
+
+async function composeStatus(
+  pointer: NonNullable<ProjectConfig['cloud']>,
+  projectRoot: string,
+  staged: Awaited<ReturnType<typeof listStaged>>,
+): Promise<CloudStatus> {
   // A replica that cannot be opened at all reads as "never synced" rather than failing the
   // whole report -- the same choice `cloudDoctorChecks` makes, for the same reason.
   const state = await withTeamStore(pointer.workspaceId, projectRoot, () => readSyncState())
@@ -86,10 +109,11 @@ export function formatCloudStatus(status: CloudStatus): string {
   lines.push(status.gate.ok
     ? '           Ready to send. Run knowl cloud push.'
     : `           ${status.gate.detail}`);
-  // Only while something is staged, so the warning still means something when it appears. The
-  // server has a retire verb and no client path wires it, so a confirmation that omits this is
-  // a confirmation that misleads.
-  lines.push('           Publishing cannot be undone from here yet.');
+  // Only while something is staged, so the warning still means something when it appears. It no
+  // longer says publishing cannot be undone -- `knowl cloud retract` wires the server's delete
+  // verb -- but undoing is a hard delete plus a tombstone that bars the id forever, which is a
+  // different thing from a mistake being cheap.
+  lines.push('           Sending is irreversible: knowl cloud retract removes an atom for good.');
 
   return lines.join('\n');
 }

@@ -5,10 +5,18 @@ import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { withTeamStore } from '../../src/cloud/team-store.js';
 import { writeSyncState } from '../../src/cloud/sync-state.js';
 import { teamUpdateNotice } from '../../src/cloud/team-update.js';
+import { cloudStatusInRequest } from '../../src/cloud/status.js';
+import { stagePublishInRequest } from '../../src/cloud/publish.js';
+import type { ProjectConfig } from '../../src/core/types.js';
 
 const HOME = path.resolve('./.knowl-ambient-home');
 const ROOT = path.resolve('./.knowl-ambient-root');
 const WS = 'ws-ambient';
+
+const CONNECTED: ProjectConfig = {
+  version: 1,
+  cloud: { apiHost: 'https://api.knowl.test', workspaceId: WS, workspaceName: 'Team', repo: 'github.com/acme/app' },
+};
 
 /** The project's own database, read through whatever context is currently active. */
 const localItemCount = async (): Promise<number> =>
@@ -63,6 +71,54 @@ describe('the replica never disturbs the caller\'s database context', () => {
       const update = await teamUpdateNotice({ workspaceId: WS, configRoot: ROOT, seenSeq: null });
 
       expect(update?.seq).toBe('7');
+      expect(await localItemCount()).toBe(0);
+    } finally {
+      await closeDb();
+    }
+  });
+
+  // The `knowl_cloud` tool reaches these two. Their `cloudStatus`/`stagePublish` siblings own
+  // the process-wide context and call `closeDb`, which from inside a request would leave every
+  // LATER tool call in that server with no database at all -- in a different request, with
+  // nothing in the error pointing back. These variants must open and close nothing.
+  it('reports cloud status from inside a live context without stealing it', async () => {
+    await initDb(ROOT);
+    try {
+      const status = await cloudStatusInRequest(ROOT, CONNECTED);
+
+      expect(status.connected).toBe(true);
+      if (status.connected) {
+        expect(status.workspace).toBe('Team');
+        expect(status.staged).toBe(0);
+      }
+      expect(await localItemCount()).toBe(0);
+    } finally {
+      await closeDb();
+    }
+  });
+
+  it('stages from inside a live context without stealing it', async () => {
+    await initDb(ROOT);
+    try {
+      const result = await stagePublishInRequest({
+        projectRoot: ROOT,
+        config: CONNECTED,
+        categories: ['decision'],
+      });
+
+      expect(result.status).toBe('staged');
+      expect(await localItemCount()).toBe(0);
+    } finally {
+      await closeDb();
+    }
+  });
+
+  it('says not-connected without touching the database when there is no cloud pointer', async () => {
+    await initDb(ROOT);
+    try {
+      expect(await cloudStatusInRequest(ROOT, { version: 1 })).toEqual({ connected: false });
+      expect(await stagePublishInRequest({ projectRoot: ROOT, config: { version: 1 } }))
+        .toEqual({ status: 'not-connected' });
       expect(await localItemCount()).toBe(0);
     } finally {
       await closeDb();

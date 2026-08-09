@@ -42,9 +42,15 @@ import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withN
 import { isTranscriptSearchEnabled } from '../transcripts/config.js';
 import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
-import { CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
+import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
 import { teamUpdateNotice } from '../cloud/team-update.js';
 import { maybeAutoSync } from '../cloud/auto-sync.js';
+import { cloudStatusInRequest } from '../cloud/status.js';
+import { stagePublishInRequest } from '../cloud/publish.js';
+import { loadConfig } from '../core/config.js';
+
+export const CLOUD_DISCONNECTED_MESSAGE =
+  'This repository is not connected to a cloud workspace. Ask the user to run `knowl cloud connect` (and `knowl login` first if they are not signed in).';
 
 /**
  * Ceilings for the handlers. The ones the SCHEMAS quote live beside the schemas, in
@@ -220,6 +226,10 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
     tools.push(...IMPACT_TOOLS);
   }
 
+  if (config?.cloud) {
+    tools.push(...CLOUD_TOOL_DEFINITIONS);
+  }
+
   return orderForSelection(tools);
 }
 
@@ -231,7 +241,8 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
  * to know their shape even when listing does not offer them.
  */
 const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
-  [...knowlToolDefinitions(null), ...TRANSCRIPT_TOOL_DEFINITIONS, ...IMPACT_TOOLS].map(tool => [tool.name, tool.inputSchema]),
+  [...knowlToolDefinitions(null), ...TRANSCRIPT_TOOL_DEFINITIONS, ...IMPACT_TOOLS, ...CLOUD_TOOL_DEFINITIONS]
+    .map(tool => [tool.name, tool.inputSchema]),
 );
 
 /** What a shortened result keeps of its body: enough to judge relevance, not to answer from. */
@@ -1561,6 +1572,55 @@ export function registerTools(
             }),
           }],
         };
+      }
+
+      // Re-checks its own gate rather than trusting the listing, for the reason above.
+      else if (name === 'knowl_cloud') {
+        // Fail closed if EITHER the captured config or the file on disk says disconnected:
+        // the captured one is the server's own view, and disk must be able to disconnect
+        // without waiting for a restart. See constraint 9a234a5626d5449f.
+        const live = projectRoot ? await loadConfig(projectRoot).catch(() => null) : null;
+        if (!config?.cloud || !live?.cloud || !projectRoot) {
+          return { content: [{ type: 'text', text: CLOUD_DISCONNECTED_MESSAGE }] };
+        }
+
+        const { action, ids, categories, apply } = args as any;
+
+        if (action === 'stage') {
+          // The request-safe variant. `stagePublish` owns the process-wide database context and
+          // would close it here, breaking every LATER tool call. See constraint defde27f6f234535.
+          const result = await stagePublishInRequest({
+            projectRoot,
+            config: live,
+            ids: Array.isArray(ids) && ids.length ? ids.map(String) : undefined,
+            categories: Array.isArray(categories) && categories.length
+              ? categories.map(String) as KnowledgeCategory[]
+              : undefined,
+            apply: apply === true,
+          });
+
+          if (result.status === 'not-connected') {
+            return { content: [{ type: 'text', text: CLOUD_DISCONNECTED_MESSAGE }] };
+          }
+
+          return {
+            content: [{
+              type: 'text',
+              text: compactMcpJson({
+                action: 'stage',
+                applied: result.applied,
+                items: result.items.map(item => ({ id: item.id, category: item.category, title: item.title })),
+                ...(result.skippedForeign > 0 ? { skippedForeign: result.skippedForeign } : {}),
+                next: result.applied
+                  ? 'Staged, and nothing has been sent. Ask the user to run `knowl cloud push` -- it is irreversible and cannot be undone from here.'
+                  : 'Dry run: nothing was written. Re-call with apply: true only if the user asked for this publication.',
+              }),
+            }],
+          };
+        }
+
+        const status = await cloudStatusInRequest(projectRoot, live);
+        return { content: [{ type: 'text', text: compactMcpJson({ action: 'status', ...status }) }] };
       }
 
       // A name the server does not serve is a malformed request, which the spec groups with

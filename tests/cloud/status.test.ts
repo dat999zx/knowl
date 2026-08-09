@@ -105,17 +105,20 @@ describe('cloudStatus', () => {
     expect(text).toContain('feature/rollback');
   });
 
-  it('says publishing cannot be undone whenever anything is staged', async () => {
-    // A product requirement, not a nicety. The server has a retire verb; no client path wires
-    // it, so a confirmation that omits this is a confirmation that misleads.
+  it('warns that sending is irreversible whenever anything is staged', async () => {
+    // A product requirement, not a nicety. `knowl cloud retract` now wires the server's delete
+    // verb, so this no longer says publishing cannot be undone -- but undoing means a hard delete
+    // and a tombstone barring the id forever, which is not the same as a mistake being cheap.
     await stagePublish({ projectRoot: CLONE, config: connected, ids: [id], apply: true });
-    expect(formatCloudStatus(await cloudStatus(CLONE, connected))).toMatch(/cannot be undone/i);
+    const text = formatCloudStatus(await cloudStatus(CLONE, connected));
+    expect(text).toMatch(/irreversible/i);
+    expect(text).toContain('knowl cloud retract');
   });
 
   it('says nothing about irreversibility when nothing is staged', async () => {
     // The warning has to mean something. Printed on every run it becomes furniture, and the one
     // time it matters nobody reads it.
-    expect(formatCloudStatus(await cloudStatus(CLONE, connected))).not.toMatch(/cannot be undone/i);
+    expect(formatCloudStatus(await cloudStatus(CLONE, connected))).not.toMatch(/irreversible/i);
   });
 
   it('makes no network call', async () => {

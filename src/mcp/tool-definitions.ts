@@ -80,6 +80,47 @@ export const TRANSCRIPT_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
 ];
 
+/**
+ * Registered only when this repo is connected to a cloud workspace.
+ *
+ * One tool rather than four, for the reason `knowl_impact` is one: every registered tool costs
+ * guidance-card space in every session of every user, so a capability earns a name, not a verb.
+ *
+ * It deliberately stops at the local half of publishing. `push` sends to the team and is gated on
+ * default-branch state the agent cannot see the whole of. `retract` exists now and is worse to
+ * call by mistake, not better: it hard-deletes the row and writes a tombstone that bars the id
+ * forever. `connect`, `login` and `pull` are likewise operator actions: two need a browser, and
+ * pulling already happens on its own. Staging is the half that is safe from every vantage, so it
+ * is the half exposed.
+ */
+export const CLOUD_TOOL_DEFINITIONS: ToolDefinition[] = [
+        {
+          name: 'knowl_cloud',
+          description: 'Check this repo\'s cloud workspace connection, or stage knowledge for publication to the team. `status` is local-only and instant -- use it before telling a user anything about what is or is not shared, because sync also runs on its own and the answer changes without you. `stage` records the intent to publish and sends nothing; it is a dry run unless you pass apply. It cannot send, retract, pull, connect or sign in: those are the user\'s to run (`knowl cloud push`, `knowl cloud retract`, `knowl cloud pull`, `knowl cloud connect`, `knowl login`). Relay the command rather than trying to work around it. Both directions are irreversible: a push cannot be recalled except by a retract, and a retract is a hard delete that bars the id forever.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              action: {
+                type: 'string', enum: ['status', 'stage'],
+                description: 'status (default): connection, role, staged count, last sync, and what a push is currently waiting for. stage: record the intent to publish.',
+              },
+              ids: {
+                type: 'array', items: { type: 'string' }, maxItems: 50,
+                description: 'stage only. Item ids to stage, as returned by knowl_query. Naming ids re-stages an atom that was already pushed, which is how a correction is sent; a category sweep deliberately leaves those alone.',
+              },
+              categories: {
+                type: 'array', items: { type: 'string', enum: KNOWLEDGE_CATEGORIES }, maxItems: 20,
+                description: 'stage only. Stage every not-yet-published item in these categories. Ignored when ids is given.',
+              },
+              apply: {
+                type: 'boolean',
+                description: 'stage only. False (the default) reports what would be staged and writes nothing. Only pass true when the user asked for this specific publication -- staging is what a later push sends, and undoing that push means destroying the atom outright.',
+              },
+            },
+          },
+        },
+];
+
 /** Every tool the server always offers, in listing order. */
 export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
@@ -257,7 +298,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
                   required: ['category', 'title', 'content'],
                 },
                 minItems: 1,
-                description: 'Structured knowledge atoms extracted by the MCP client model.',
+                description: 'Structured knowledge atoms extracted by the MCP client model. Every field means exactly what the same field means on knowl_store.',
               },
               commitMessage: {
                 type: 'string',
@@ -269,7 +310,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_decide',
-          description: 'Record a specific project decision directly into the knowledge base without requiring Knowl AI configuration. When this decision reverses or replaces an earlier one, pass that item id as `supersedes` so the superseded decision is retired in the same write; never leave two active decisions contradicting each other. The result reports any decision left active beside this one and the exact call to retire it.',
+          description: 'Record a confirmed project decision -- what was chosen, why, and what was rejected. Use this rather than knowl_store when the reasoning and the alternatives are the point; reasoning is required here and optional there. Record only settled decisions, not options still under discussion. Needs no Knowl AI configuration. When this decision reverses or replaces an earlier one, pass that item id as `supersedes` so the superseded decision is retired in the same write; never leave two active decisions contradicting each other. The result reports any decision left active beside this one and the exact call to retire it.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -374,22 +415,22 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_timeline',
-          description: 'Inspect immutable assertions for one knowledge item when its history is needed.',
-          inputSchema: { type: 'object', properties: { itemId: { type: 'string', minLength: 1 } }, required: ['itemId'] },
+          description: 'Read one item\'s immutable assertion history: what it claimed, when, and what superseded it. Use when memory looks contradictory or you need to know whether a fact changed -- knowl_query answers what it says now, this answers how it got there.',
+          inputSchema: { type: 'object', properties: { itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID, as returned by knowl_query.' } }, required: ['itemId'] },
         },
         {
           name: 'knowl_conflicts',
-          description: 'Inspect active exclusive conflict identities when a conflict must be resolved.',
+          description: 'List active exclusive conflict identities -- keys where two items claim the same thing and only one may be true. Use when a write reports an overlapping item left active, or when memory gives contradictory answers. Resolve with knowl_update, never by storing a third item.',
           inputSchema: { type: 'object', properties: {} },
         },
         {
           name: 'knowl_context',
-          description: 'Compose a diversified token-budgeted context pack.',
+          description: 'Fill an explicit token budget with diversified project context. Use only when you have a budget to fill -- briefing a subagent, or packing a fixed-size prompt. For a specific question use knowl_query instead: this spreads across categories to fill the budget rather than ranking for one subject, so it is deliberately broader and less precise.',
           inputSchema: {
             type: 'object',
             properties: {
-              query: { type: 'string', maxLength: 500 },
-              task: { type: 'string', maxLength: 500 },
+              query: { type: 'string', maxLength: 500, description: 'Words naming the subject to centre the pack on. Omit to pack the project\'s standing context.' },
+              task: { type: 'string', maxLength: 500, description: 'What the context is for, in a phrase. Steers selection when query is broad or absent.' },
               tokenBudget: { type: 'integer', minimum: 100, maximum: MAX_CONTEXT_TOKEN_BUDGET, description: `Token ceiling for the pack, 100-${MAX_CONTEXT_TOKEN_BUDGET}.` },
               explain: { type: 'boolean', description: 'Include excluded-item diagnostics.' },
             },
@@ -398,12 +439,12 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_synthesize',
-          description: 'Create or refresh one deterministic evidence-backed project understanding. This never runs automatically on normal writes.',
-          inputSchema: { type: 'object', properties: { scope: { type: 'string', minLength: 1 } }, required: ['scope'] },
+          description: 'Create or refresh one deterministic evidence-backed project understanding. Use only for a scope the user explicitly asked to have synthesised -- never as background tidy-up, and never to summarise a session. This never runs automatically on normal writes.',
+          inputSchema: { type: 'object', properties: { scope: { type: 'string', minLength: 1, description: 'The subject to synthesise, named explicitly, e.g. "retrieval ranking". One scope per call.' } }, required: ['scope'] },
         },
         {
           name: 'knowl_evidence_list',
-          description: 'Inspect evidence linked to one knowledge item when source support must be checked.',
+          description: 'List the evidence linked to one knowledge item. Use before relying on an item that is low-confidence, contested, or old enough that its support matters more than its claim.',
           inputSchema: {
             type: 'object',
             properties: { itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID.' } },
@@ -426,10 +467,13 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_session_finish',
-          description: 'Finish and optionally promote an explicitly owned manual memory session; never a hook-owned session.',
+          description: 'Finish and optionally promote a manual memory session you explicitly own. Never call this for a hook-owned session: when verified lifecycle hooks are active they finalize it themselves, and finishing it here closes a session out from under them.',
           inputSchema: {
             type: 'object', properties: {
-              sessionId: { type: 'string', minLength: 1, description: 'Memory session ID.' }, status: { type: 'string', enum: ['finished', 'failed'] }, summary: { type: 'string' }, promote: { type: 'boolean' },
+              sessionId: { type: 'string', minLength: 1, description: 'Memory session ID you started and own.' },
+              status: { type: 'string', enum: ['finished', 'failed'], description: 'How the session ended. failed still records what was learned.' },
+              summary: { type: 'string', description: 'Durable summary of what the session established.' },
+              promote: { type: 'boolean', description: 'Whether to promote the session\'s captures into project memory. Defaults to false.' },
             }, required: ['sessionId', 'status'],
           },
         },
@@ -598,7 +642,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         {
           name: 'knowl_skill_read',
-          description: 'Read one learned skill package from `.knowl/skills/<name>/`, including `skill.json` and `SKILL.md`.',
+          description: 'Read one learned skill package from `.knowl/skills/<name>/`, including `skill.json` and `SKILL.md`. Read a skill before running it, so knowl_skill_run executes an entrypoint you have seen rather than one you guessed at.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -642,8 +686,8 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
                 items: {
                   type: 'object',
                   properties: {
-                    path: { type: 'string', minLength: 1 },
-                    content: { type: 'string' },
+                    path: { type: 'string', minLength: 1, description: 'Package-relative path, e.g. `run.ps1`.' },
+                    content: { type: 'string', description: 'Full file contents.' },
                   },
                   required: ['path', 'content'],
                 },

@@ -650,6 +650,7 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 | `knowl cloud pull` | Fetch team knowledge into the local replica |
 | `knowl publish [--id <ids...>] [--category <list>] [--apply]` | Stage knowledge for publication. Dry run without `--apply` |
 | `knowl cloud push` | Send staged knowledge, once its code is on the default branch |
+| `knowl cloud retract <id> --reason <text>` | Remove a published atom for good. Works from any branch |
 | `knowl cloud status` | What is connected, how stale the replica is, and what is staged |
 
 ### Pointing at a different server
@@ -694,6 +695,42 @@ indistinguishable from the code having been deleted.
 Only atoms this repository wrote can be published. A reader is refused before anything is sent.
 A version conflict names the atom and stops rather than overwriting; a detected secret fails the
 whole batch and is never retried in altered form.
+
+#### Taking something back
+
+```
+knowl cloud retract <id> --reason "leaked a customer name"
+```
+
+`knowl cloud retract` removes a published atom from the workspace. The server deletes the row and
+writes a tombstone in one transaction, then refuses every later publish of that id; teammates lose
+it on their next sync. It cannot be undone, and the id can never be used again — this is for
+knowledge that must not remain readable, not for knowledge that stopped being true. Supersede that
+instead, which keeps the lineage.
+
+**It is the one upward path with no branch gate, deliberately.** Publishing and drift reports are
+gated because they assert something about code only you have. A removal is true from every vantage,
+and the case that brings you here is a secret sitting in a shared workspace right now — answering
+that with "switch to the default branch and pull first" would hold the leak open for the length of
+a rebase.
+
+`--reason` is required and stored on the tombstone. `expectedVersion` comes from the local ledger,
+so if a colleague edited the atom after you published it the retraction stops with a conflict
+rather than destroying an edit you never read.
+
+#### From an agent
+
+Once a repository is connected, the MCP server offers one more tool:
+
+- **`knowl_cloud`** — `action: "status"` reports the connection, your role, how many atoms are
+  staged, when the replica last synced, and what a push is currently waiting for. It touches no
+  network, so it answers instantly and offline. `action: "stage"` is `knowl publish`: it records
+  an intent and is a dry run unless you pass `apply: true`.
+
+It stops there deliberately. Sending, pulling, connecting and signing in stay yours to run —
+sending because it is irreversible and gated on a branch state the agent cannot see the whole of,
+the other three because two need a browser and pulling already happens on its own. Asked to send,
+the agent relays the command instead.
 
 ### Staying current
 

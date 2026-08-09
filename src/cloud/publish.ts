@@ -44,33 +44,59 @@ export async function stagePublish(input: {
 
   await initDb(input.projectRoot);
   try {
-    const { items, skippedForeign } = await selectOwnedItems({
-      repoName: pointer.repo,
-      categories: input.categories,
-      ids: input.ids,
-    });
-
-    if (input.apply && items.length > 0) {
-      // Swallowed on purpose, and only here. The branch is what the push's refusal quotes back,
-      // not what it decides on -- `checkPublishGate` re-reads git itself and reports being
-      // unable to run it as its own verdict. Failing to record an intent because git is missing
-      // would refuse the one half of publishing that is safe from every vantage.
-      let branch: string | null = null;
-      try { branch = currentBranchOf(input.projectRoot); } catch { branch = null; }
-
-      // Naming ids is a deliberate act about items the caller has in hand, and it is the only
-      // way to send a correction, so it re-stages what was already pushed. A category sweep
-      // means "publish what is not published yet" and leaves those alone -- otherwise every
-      // `knowl publish --category decision --apply` would re-send the whole category, spending a
-      // version bump and a server-side embedding job per atom on identical content.
-      const stage = input.ids?.length ? restageForPublish : stageForPublish;
-      await stage(items.map(item => item.id), pointer.workspaceId, branch);
-    }
-
-    return { status: 'staged', items, applied: Boolean(input.apply) && items.length > 0, skippedForeign };
+    return await stageInContext(input, pointer);
   } finally {
     await closeDb();
   }
+}
+
+/**
+ * The same staging, for a caller that already holds a database context -- an MCP request.
+ *
+ * `stagePublish` owns the process-wide context and must never be reached from one: its
+ * `closeDb` would leave every LATER tool call in that server with no database. See constraint
+ * `defde27f6f234535`.
+ */
+export async function stagePublishInRequest(input: {
+  projectRoot: string;
+  config: ProjectConfig;
+  ids?: string[];
+  categories?: KnowledgeCategory[];
+  apply?: boolean;
+}): Promise<StageResult> {
+  const pointer = input.config.cloud;
+  if (!pointer) return { status: 'not-connected' };
+  return stageInContext(input, pointer);
+}
+
+async function stageInContext(
+  input: { projectRoot: string; ids?: string[]; categories?: KnowledgeCategory[]; apply?: boolean },
+  pointer: NonNullable<ProjectConfig['cloud']>,
+): Promise<StageResult> {
+  const { items, skippedForeign } = await selectOwnedItems({
+    repoName: pointer.repo,
+    categories: input.categories,
+    ids: input.ids,
+  });
+
+  if (input.apply && items.length > 0) {
+    // Swallowed on purpose, and only here. The branch is what the push's refusal quotes back,
+    // not what it decides on -- `checkPublishGate` re-reads git itself and reports being
+    // unable to run it as its own verdict. Failing to record an intent because git is missing
+    // would refuse the one half of publishing that is safe from every vantage.
+    let branch: string | null = null;
+    try { branch = currentBranchOf(input.projectRoot); } catch { branch = null; }
+
+    // Naming ids is a deliberate act about items the caller has in hand, and it is the only
+    // way to send a correction, so it re-stages what was already pushed. A category sweep
+    // means "publish what is not published yet" and leaves those alone -- otherwise every
+    // `knowl publish --category decision --apply` would re-send the whole category, spending a
+    // version bump and a server-side embedding job per atom on identical content.
+    const stage = input.ids?.length ? restageForPublish : stageForPublish;
+    await stage(items.map(item => item.id), pointer.workspaceId, branch);
+  }
+
+  return { status: 'staged', items, applied: Boolean(input.apply) && items.length > 0, skippedForeign };
 }
 
 export type PushResult =
