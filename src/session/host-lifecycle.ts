@@ -53,6 +53,7 @@ import { bootstrapAgentSession } from '../store/context-bootstrap.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
 import { describeAutoDrift, runAutoDriftCheckBestEffort, type AutoDriftResult } from '../store/drift-auto.js';
+import { describeObservedUsePromotions, promoteByObservedUseBestEffort } from '../store/tier.js';
 
 // Emit the mid-turn continuation reminder after this many consecutive non-Knowl
 // tool calls; any Knowl tool call resets the counter to zero.
@@ -706,8 +707,16 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // A read-set with nothing collecting it grows for as long as the repository is used.
     await sweepReadSetsBestEffort(plusHoursIso(-READ_SET_RETENTION_HOURS));
     await closeInactiveHostSessionBindings();
-    // Detection only: names what moved and the command to review it, mutating nothing.
+    // Detection only: names what moved and the command to review it, leaving `freshness` alone.
     const drift = await runAutoDriftCheckBestEffort(projectId, input.projectRoot);
+    // Strictly after drift, and only when drift actually ran. `checked` is false on the run
+    // that learns a baseline and on the re-baseline after a rebase -- both skip a window of
+    // history -- and null outside a git repository or after a thrown check. In every one of
+    // those cases nothing was in a position to contradict an item this session, which is
+    // exactly the state where "nothing is drifting" must not be read as evidence of health.
+    // A project with no git history therefore never promotes on observed use, which is the
+    // same falsifiability rule as `affected_paths`, applied to the repository instead.
+    const standing = drift?.checked ? await promoteByObservedUseBestEffort(projectId) : null;
     const started = await bootstrapWithHandoff(projectId, input, 'session', true);
     // The warning is charged against the cap first — the same rule the subagent card
     // follows. Prepending it to an already-budgeted block pushed the session past the size
@@ -717,9 +726,13 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // only one survives truncation it should be the one saying the instructions on disk cannot be
     // trusted -- an agent acting on stale guidance gets the subsequent work wrong, where a missed
     // drift notice costs it a re-read.
+    // Standing last of the three: it reports something the store already did successfully,
+    // where the other two are warnings that the work ahead may be built on bad ground. If the
+    // cap drops a line, drop this one.
     const warning = truncateText([
       await staleGuidanceWarningBestEffort(input.projectRoot),
       describeAutoDrift(drift),
+      describeObservedUsePromotions(standing),
     ].filter(Boolean).join('\n\n'), DEFAULT_CONTEXT_MAX_CHARS);
     const recentBudget = warning
       ? Math.max(0, DEFAULT_CONTEXT_MAX_CHARS - warning.length - 2)

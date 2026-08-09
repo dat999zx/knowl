@@ -32,6 +32,9 @@ const SCHEMA_PINS: Record<number, string> = {
   // gate would have refused, recorded while it refuses nothing. Additive again, so
   // `KNOWL_SCHEMA_VERSION` again does not move.
   4: '4592e436daefd236d1f15554d1a2db3a',
+  // 5 adds `knowledge_items.last_drift_at`, the stored drift observation standing promotion
+  // reads. One nullable column, no backfill, so `KNOWL_SCHEMA_VERSION` again does not move.
+  5: 'b4aceb35414d23bf1240b4b1679bee78',
 };
 
 let root: string;
