@@ -31,7 +31,7 @@ describe('sync state', () => {
 
   it('round-trips a watermark', async () => {
     await inStore('roundtrip', () => writeSyncState({
-      apiHost: 'https://api.knowl.dev',
+      apiHost: 'https://api.knowl.test',
       since: '42',
       cursor: null,
       lastSyncedAt: '2026-08-09T12:00:00.000Z',
@@ -40,7 +40,7 @@ describe('sync state', () => {
     }));
 
     expect(await inStore('roundtrip', () => readSyncState())).toEqual({
-      apiHost: 'https://api.knowl.dev',
+      apiHost: 'https://api.knowl.test',
       since: '42',
       cursor: null,
       lastSyncedAt: '2026-08-09T12:00:00.000Z',
@@ -64,7 +64,7 @@ describe('sync state', () => {
     // a number it comes back as ...992, and a watermark one short skips a commit forever.
     const huge = '9007199254740993';
     await inStore('bigint', () => writeSyncState({
-      apiHost: 'https://api.knowl.dev',
+      apiHost: 'https://api.knowl.test',
       since: huge,
       cursor: null,
       lastSyncedAt: null,

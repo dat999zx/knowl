@@ -9,8 +9,8 @@ import {
 } from '../../src/cloud/credentials.js';
 
 const HOME = path.resolve('./.knowl-credentials-home');
-const HOST = 'https://api.knowl.dev';
-const OTHER = 'https://staging.knowl.dev';
+const HOST = 'https://api.knowl.test';
+const OTHER = 'https://staging.knowl.test';
 
 const credential = (token: string) => ({
   accessToken: token,
@@ -48,7 +48,7 @@ describe('cloud credential store', () => {
   });
 
   it('treats trailing slashes and case as the same host', async () => {
-    await writeCredential('https://API.knowl.dev/', credential('a'));
+    await writeCredential('https://API.knowl.test/', credential('a'));
     expect(await readCredential(HOST)).toEqual(credential('a'));
   });
 

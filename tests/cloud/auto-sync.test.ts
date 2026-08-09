@@ -11,7 +11,7 @@ const WS = 'ws-auto';
 const NOW = Date.parse('2026-08-09T12:00:00.000Z');
 
 const syncedAt = (iso: string | null) => withTeamStore(WS, ROOT, () => writeSyncState({
-  apiHost: 'https://api.knowl.dev', since: '1', cursor: null, lastSyncedAt: iso, lastError: null,
+  apiHost: 'https://api.knowl.test', since: '1', cursor: null, lastSyncedAt: iso, lastError: null,
 }));
 
 describe('shouldAutoSync', () => {

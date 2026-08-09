@@ -10,7 +10,7 @@ import type { SyncAtom, SyncPage } from '../../src/cloud/sync-contract.js';
 
 const HOME = path.resolve('./.knowl-sync-home');
 const ROOT = path.resolve('./.knowl-sync-root');
-const HOST = 'https://api.knowl.dev';
+const HOST = 'https://api.knowl.test';
 
 const wipe = (dir: string) =>
   fs.rm(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 25 }).catch(() => {});

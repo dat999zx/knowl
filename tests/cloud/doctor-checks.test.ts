@@ -9,7 +9,7 @@ import type { ProjectConfig } from '../../src/core/types.js';
 
 const HOME = path.resolve('./.knowl-doctor-home');
 const ROOT = path.resolve('./.knowl-doctor-root');
-const HOST = 'https://api.knowl.dev';
+const HOST = 'https://api.knowl.test';
 const NOW = Date.parse('2026-08-09T12:00:00.000Z');
 
 const pointer = (workspaceId: string): ProjectConfig => ({

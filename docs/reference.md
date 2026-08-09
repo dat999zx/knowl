@@ -652,6 +652,18 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 | `knowl cloud push` | Send staged knowledge, once its code is on the default branch |
 | `knowl cloud status` | What is connected, how stale the replica is, and what is staged |
 
+### Pointing at a different server
+
+Every command takes `--api <host>`, and `knowl cloud connect` records the host in the repository's
+config, so `pull`, `push` and `status` remember it afterwards. `knowl login` is per-machine rather
+than per-repository and remembers nothing, so for a self-hosted or tunnelled server set it once:
+
+```bash
+export KNOWL_API_HOST=https://knowl.example.internal
+```
+
+`--api` still wins where it is given. Unset, the default is the hosted service.
+
 ### Identity and connection
 
 A repository is identified by its **normalized git remote**, not its directory name, so two

@@ -9,7 +9,7 @@ import type { SyncPage } from '../../src/cloud/sync-contract.js';
 
 const HOME = path.resolve('./.knowl-pull-home');
 const ROOT = path.resolve('./.knowl-pull-root');
-const HOST = 'https://api.knowl.dev';
+const HOST = 'https://api.knowl.test';
 
 const wipe = (dir: string) =>
   fs.rm(dir, { recursive: true, force: true, maxRetries: 2, retryDelay: 25 }).catch(() => {});

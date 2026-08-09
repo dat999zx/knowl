@@ -6,7 +6,7 @@ import { credentialLockPath, ensureAccessToken } from '../../src/cloud/token.js'
 import { acquireLock } from '../../src/cloud/file-lock.js';
 
 const HOME = path.resolve('./.knowl-token-home');
-const HOST = 'https://api.knowl.dev';
+const HOST = 'https://api.knowl.test';
 
 const NOW = Date.parse('2026-08-09T12:00:00.000Z');
 const iso = (offsetMs: number) => new Date(NOW + offsetMs).toISOString();

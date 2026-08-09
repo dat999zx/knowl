@@ -65,7 +65,7 @@ export async function runConnect(input: ConnectInput): Promise<ConnectResult> {
 
   const pointer: CloudPointer = {
     // Normalized, because unlike a credential key this value is written into a committed file
-    // and read by every teammate who clones. `--api https://API.knowl.dev/` would otherwise
+    // and read by every teammate who clones. `--api https://API.knowl.cloud/` would otherwise
     // travel verbatim while every lookup against it normalized, leaving config disagreeing
     // with itself about the name of the same deployment.
     apiHost: normalizeApiHost(input.apiHost),
