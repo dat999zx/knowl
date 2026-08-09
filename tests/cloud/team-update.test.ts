@@ -10,7 +10,7 @@ const ROOT = path.resolve('./.knowl-team-update-root');
 const WS = 'ws-notice';
 
 const setWatermark = (since: string | null) => withTeamStore(WS, ROOT, () => writeSyncState({
-  apiHost: 'https://api.knowl.dev', since, cursor: null,
+  apiHost: 'https://api.knowl.test', since, cursor: null,
   lastSyncedAt: '2026-08-09T12:00:00.000Z', lastError: null,
 }));
 

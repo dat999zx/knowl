@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CloudApiError, createCloudApi, type FetchLike } from '../../src/cloud/api-client.js';
 
-const HOST = 'https://api.knowl.dev';
+const HOST = 'https://api.knowl.test';
 
 function stubFetch(handler: (url: string, init?: RequestInit) => { status: number; body: unknown }): {
   fetchImpl: FetchLike;
@@ -44,7 +44,7 @@ describe('cloud api client', () => {
     expect(result.intervalSeconds).toBe(5);
     expect(result.expiresAt).toBe('2099-01-01T00:00:00.000Z');
     expect(result.verificationUri).toBeUndefined();
-    expect(calls[0].url).toBe('https://api.knowl.dev/v1/auth/device');
+    expect(calls[0].url).toBe('https://api.knowl.test/v1/auth/device');
     expect(calls[0].init?.method).toBe('POST');
   });
 
@@ -170,8 +170,8 @@ describe('cloud api client', () => {
   it('trims a trailing slash off the host rather than producing a double slash', async () => {
     const { fetchImpl, calls } = stubFetch(() => ({ status: 200, body: { workspaces: [] } }));
 
-    await createCloudApi({ apiHost: 'https://api.knowl.dev/', fetchImpl }).listWorkspaces('t');
+    await createCloudApi({ apiHost: 'https://api.knowl.test/', fetchImpl }).listWorkspaces('t');
 
-    expect(calls[0].url).toBe('https://api.knowl.dev/v1/workspaces');
+    expect(calls[0].url).toBe('https://api.knowl.test/v1/workspaces');
   });
 });

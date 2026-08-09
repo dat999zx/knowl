@@ -38,7 +38,7 @@ describe('the replica never disturbs the caller\'s database context', () => {
 
       await withTeamStore(WS, ROOT, async () => {
         await writeSyncState({
-          apiHost: 'https://api.knowl.dev', since: '7', cursor: null,
+          apiHost: 'https://api.knowl.test', since: '7', cursor: null,
           lastSyncedAt: '2026-08-09T12:00:00.000Z', lastError: null,
         });
       });
@@ -54,7 +54,7 @@ describe('the replica never disturbs the caller\'s database context', () => {
     // `teamUpdateNotice` is called while `knowl_query` is assembling its response, with the
     // project database still ambient and more work to do after it returns.
     await withTeamStore(WS, ROOT, () => writeSyncState({
-      apiHost: 'https://api.knowl.dev', since: '7', cursor: null,
+      apiHost: 'https://api.knowl.test', since: '7', cursor: null,
       lastSyncedAt: '2026-08-09T12:00:00.000Z', lastError: null,
     }));
 

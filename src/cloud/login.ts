@@ -1,7 +1,39 @@
 import { createCloudApi, type CloudApi, type DeviceAuthorization } from './api-client.js';
 import { clearCredential, readCredential, writeCredential } from './credentials.js';
 
-export const DEFAULT_API_HOST = 'https://api.knowl.dev';
+/**
+ * The hosted deployment, under the project's own domain.
+ *
+ * It said `api.knowl.dev` for one release cycle, which is a domain the project does not own.
+ * That is worse than a dead default: anyone who registered it would receive the device-code
+ * request from every `knowl login` run without `--api`, hand back a token the client would
+ * store, and then receive everything that client published. No attack on us required -- just a
+ * registration and a user who took the default.
+ *
+ * A default host must therefore always name a domain the project controls.
+ */
+const HOSTED_API_HOST = 'https://api.knowl.cloud';
+
+/**
+ * Machine-wide override, for a self-hosted or tunnelled server.
+ *
+ * `--api` already exists per command, and `knowl cloud connect` records the host in the repo's
+ * config so `pull`, `push` and `status` remember it. Neither helps `knowl login`, which is
+ * per-machine rather than per-repo and so has nowhere to remember anything -- which meant
+ * retyping the flag on every login against a self-hosted server.
+ *
+ * An environment variable rather than a new config file, matching `KNOWL_HOME`: this is
+ * machine-level state that belongs to the operator, not to any repository, and the repo already
+ * reads exactly one of those.
+ *
+ * Resolved on call rather than frozen in a constant. Commander still evaluates it once, while it
+ * builds the command table, so a variable exported before `knowl` starts is honoured and one
+ * changed mid-process is not -- which is the whole of what a CLI needs.
+ */
+export function defaultApiHost(): string {
+  const override = process.env.KNOWL_API_HOST?.trim();
+  return override || HOSTED_API_HOST;
+}
 
 export type LoginInput = {
   apiHost: string;

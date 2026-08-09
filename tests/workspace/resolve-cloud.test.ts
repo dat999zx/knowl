@@ -11,7 +11,7 @@ const ROOT = path.resolve('./.knowl-resolve-cloud-root');
 const cloudOnly: ProjectConfig = {
   version: 1,
   cloud: {
-    apiHost: 'https://api.knowl.dev', workspaceId: 'ws-9', workspaceName: 'Acme',
+    apiHost: 'https://api.knowl.test', workspaceId: 'ws-9', workspaceName: 'Acme',
     repo: 'github.com/acme/web', remote: 'origin',
   },
 };

@@ -9,7 +9,7 @@ import type { CloudApi } from '../../src/cloud/api-client.js';
 
 const HOME = path.resolve('./.knowl-connect-home');
 const REPO = path.resolve('./.knowl-connect-repo');
-const HOST = 'https://api.knowl.dev';
+const HOST = 'https://api.knowl.test';
 
 // Distinctive values on purpose. The "no credential in config" assertion below is a substring
 // search, and a one-character token like 'a' matches the "a" in "apiHost" -- an assertion that
@@ -153,7 +153,7 @@ describe('runConnect', () => {
 
     const result = await runConnect({
       projectRoot: REPO,
-      apiHost: 'https://API.knowl.dev/',
+      apiHost: 'https://API.knowl.test/',
       api: api([{ id: 'w1', name: 'Acme', role: 'editor' }]),
     });
 

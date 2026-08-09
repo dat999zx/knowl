@@ -42,7 +42,7 @@ import { formatSweepReport, sweepRepos } from './upgrade-all.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './config/service.js';
 import { runConfigUi } from './config/ui.js';
-import { DEFAULT_API_HOST, runLogin, runLogout } from '../cloud/login.js';
+import { defaultApiHost, runLogin, runLogout } from '../cloud/login.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
 import { pushStaged, stagePublish } from '../cloud/publish.js';
@@ -608,7 +608,7 @@ function parseDefaultVisibility(value: string | undefined): 'workspace' | 'repo'
 program
   .command('login')
   .description('Sign in to a Knowl Cloud workspace')
-  .option('--api <host>', 'API host', DEFAULT_API_HOST)
+  .option('--api <host>', 'API host (defaults to $KNOWL_API_HOST, else the hosted service)', defaultApiHost())
   .action(async options => {
     try {
       const result = await runLogin({
@@ -637,7 +637,7 @@ program
 program
   .command('logout')
   .description('Clear stored Knowl Cloud credentials')
-  .option('--api <host>', 'API host', DEFAULT_API_HOST)
+  .option('--api <host>', 'API host (defaults to $KNOWL_API_HOST, else the hosted service)', defaultApiHost())
   .action(async options => {
     const { wasLoggedIn } = await runLogout(options.api);
     console.log(wasLoggedIn ? `Signed out of ${options.api}.` : `Not signed in to ${options.api}.`);
@@ -684,7 +684,7 @@ const cloudCommand = program.command('cloud').description('Connect this reposito
 cloudCommand
   .command('connect')
   .description('Point this repository at a cloud workspace (publishes nothing)')
-  .option('--api <host>', 'API host', DEFAULT_API_HOST)
+  .option('--api <host>', 'API host (defaults to $KNOWL_API_HOST, else the hosted service)', defaultApiHost())
   .option('--workspace <id>', 'Workspace id, when you belong to more than one')
   .option('--remote <name>', 'Git remote to derive repo identity from', 'origin')
   .action(async options => {

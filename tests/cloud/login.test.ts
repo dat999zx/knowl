@@ -2,12 +2,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readCredential, writeCredential } from '../../src/cloud/credentials.js';
-import { runLogin, runLogout } from '../../src/cloud/login.js';
+import { defaultApiHost, runLogin, runLogout } from '../../src/cloud/login.js';
 import type { CloudApi, DeviceAuthorization } from '../../src/cloud/api-client.js';
 import { CloudApiError } from '../../src/cloud/api-client.js';
 
 const HOME = path.resolve('./.knowl-login-home');
-const HOST = 'https://api.knowl.dev';
+const HOST = 'https://api.knowl.test';
 
 /** The instant the expiry test advances its clock towards. Fifteen minutes, like the server's. */
 const CODE_EXPIRES_AT = new Date(Date.parse('2026-08-09T12:00:00.000Z') + 900_000).toISOString();
@@ -123,6 +123,34 @@ describe('runLogin', () => {
       onPrompt: () => {},
       sleep: async () => {},
     })).rejects.toBeInstanceOf(CloudApiError);
+  });
+});
+
+describe('defaultApiHost', () => {
+  afterEach(() => { delete process.env.KNOWL_API_HOST; });
+
+  it('names a domain the project owns', () => {
+    // The constant said `api.knowl.dev` once, which the project does not own. A default host is
+    // where an unconfigured `knowl login` sends its device request and, moments later, whatever
+    // that host answers with -- so pointing it at a registrable domain belonging to nobody is a
+    // credential hand-off waiting for someone to buy it.
+    delete process.env.KNOWL_API_HOST;
+    expect(defaultApiHost()).toBe('https://api.knowl.cloud');
+  });
+
+  it('is overridden by KNOWL_API_HOST, for a self-hosted or tunnelled server', () => {
+    // `--api` covers one command and `knowl cloud connect` records the host per repo, but
+    // `knowl login` is per-machine and remembers nothing -- so without this, every login against
+    // a self-hosted server retypes the flag.
+    process.env.KNOWL_API_HOST = 'https://knowl.internal.example';
+    expect(defaultApiHost()).toBe('https://knowl.internal.example');
+  });
+
+  it('ignores an empty or whitespace-only override rather than producing a hostless URL', () => {
+    // An exported-but-empty variable is the ordinary state of a shell profile someone edited and
+    // half-reverted. Treating it as a host sends every request to `/v1/...` with no origin.
+    process.env.KNOWL_API_HOST = '   ';
+    expect(defaultApiHost()).toBe('https://api.knowl.cloud');
   });
 });
 
