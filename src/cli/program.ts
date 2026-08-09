@@ -45,6 +45,7 @@ import { runConfigUi } from './config/ui.js';
 import { DEFAULT_API_HOST, runLogin, runLogout } from '../cloud/login.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
+import { stagePublish } from '../cloud/publish.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -634,6 +635,42 @@ program
   .action(async options => {
     const { wasLoggedIn } = await runLogout(options.api);
     console.log(wasLoggedIn ? `Signed out of ${options.api}.` : `Not signed in to ${options.api}.`);
+  });
+
+program
+  .command('publish')
+  .description('Stage knowledge for publication to the connected cloud workspace')
+  .option('--id <ids...>', 'Item ids to stage')
+  .option('--category <list>', 'Comma-separated categories (quote the list on Windows)')
+  .option('--apply', 'Actually stage; without this the command is a dry run')
+  .action(async options => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      const result = await stagePublish({
+        projectRoot: root,
+        config,
+        ids: options.id,
+        categories: options.category?.split(',').map((entry: string) => entry.trim()),
+        apply: options.apply,
+      });
+
+      if (result.status === 'not-connected') {
+        console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
+        process.exit(1);
+      }
+      for (const item of result.items) console.log(`  ${item.category}  ${item.title}`);
+      if (result.skippedForeign > 0) {
+        console.log(`${result.skippedForeign} item(s) belong to another repo and can only be published from it.`);
+      }
+      console.log(result.applied
+        ? `Staged ${result.items.length} item(s). Run knowl cloud push to send them.`
+        : `${result.items.length} item(s) would be staged. Re-run with --apply.`);
+      if (result.applied) console.log('Publishing cannot be undone from here yet.');
+    } catch (error: any) {
+      console.error(`Publish failed: ${error.message}`);
+      process.exit(1);
+    }
   });
 
 const cloudCommand = program.command('cloud').description('Connect this repository to a Knowl Cloud workspace');
