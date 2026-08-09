@@ -137,6 +137,27 @@ export async function recordPushed(
 }
 
 /**
+ * Record that the server accepted a retraction.
+ *
+ * `remote_version` is cleared with it, and that is the load-bearing half. The row is kept rather
+ * than deleted so `knowl cloud status` can say this machine retracted the atom instead of
+ * silently forgetting it ever published one -- but a version left behind would be a claim about
+ * a server-side row that no longer exists, and the next `knowl publish --id` naming this atom
+ * would send it as `expectedVersion` and be refused by a tombstone it could not see.
+ *
+ * Re-staging deliberately clears `retracted_at` (see `restageForPublish`): retracting is not a
+ * ban on the id, it is the removal of what was there. The server disagrees and refuses the
+ * republish, which is the safer of the two and the one that wins.
+ */
+export async function recordRetracted(itemId: string, workspace: string): Promise<void> {
+  await getClient().execute({
+    sql: `UPDATE cloud_published SET retracted_at = ?, remote_version = NULL
+          WHERE item_id = ? AND remote_workspace = ?`,
+    args: [new Date().toISOString(), itemId, workspace],
+  });
+}
+
+/**
  * The version to send as `expectedVersion`, or null on a first publish.
  *
  * Scoped to the workspace because one atom may be published to more than one, and a version
