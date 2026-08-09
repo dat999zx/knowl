@@ -15,6 +15,7 @@ import { fingerprintProfile, resolveVectorProfile } from '../core/vector-profile
 import { auditKnowledgeStore } from '../store/integrity.js';
 import { assertKnowledgeDatabasePresent } from './database-presence.js';
 import { createAgentRegistry } from './agents/registry.js';
+import { cloudDoctorChecks } from '../cloud/doctor-checks.js';
 import type { DoctorRemedy } from './doctor-remedy.js';
 
 type DoctorStatus = 'OK' | 'WARN' | 'FAIL';
@@ -45,6 +46,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
 
     const config = await loadConfig(root);
     checks.push({ status: 'OK', message: 'Config loaded' });
+    checks.push(...await cloudDoctorChecks(config));
     checks.push({
       status: config.search?.vector?.provider ? 'OK' : 'WARN',
       message: config.search?.vector?.provider
