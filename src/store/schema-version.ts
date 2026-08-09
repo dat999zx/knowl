@@ -58,7 +58,16 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * reasoning as level 3: one new table, no altered column, no backfill, so `KNOWL_SCHEMA_VERSION`
  * stays at 1 and no installed build is locked out of a database it can still read completely.
  */
-export const KNOWL_MIGRATION_LEVEL = 4;
+/*
+ * Level 5 adds `knowledge_items.last_drift_at` -- when the automatic drift check last saw an
+ * item's cited files move, and NULL once somebody revisited it. One nullable column, no
+ * backfill (an existing row has no recorded observation, and inventing one would refuse
+ * promotion for items nothing has actually contradicted), so `KNOWL_SCHEMA_VERSION` stays at
+ * 1. The bump is what makes `ensureFreshnessColumns` run on databases that already exist:
+ * without it, every installed store would skip the column and standing promotion there would
+ * fall back to the ungated behaviour this column was added to prevent.
+ */
+export const KNOWL_MIGRATION_LEVEL = 5;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

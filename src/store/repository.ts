@@ -387,6 +387,22 @@ export async function updateKnowledgeItem(
     const tierIsReset = !tierIsSetExplicitly
       && (updates.content !== undefined || updates.title !== undefined);
 
+    // `last_drift_at` records that the automatic check saw this item's files move and that
+    // nobody has looked at it since; this is the "since". Any of these five means somebody
+    // did look: the claim was rewritten, the paths it cites were changed, it was re-anchored
+    // to a commit, or its freshness was deliberately set -- which is what `knowl pr check`
+    // and `knowl_update` do at the two ends of a review.
+    //
+    // Deliberately NOT every update. `updated_at` moves on visibility promotion, supersession
+    // and status changes too, and clearing on those would let a workspace-promote silently
+    // discharge a drift observation nobody reviewed. It is also not `tierSince`: a review that
+    // only refreshes freshness leaves that alone, which would leave the item blocked forever.
+    const reviewed = updates.title !== undefined
+      || updates.content !== undefined
+      || updates.affectedPaths !== undefined
+      || updates.sourceCommit !== undefined
+      || updates.freshness !== undefined;
+
     const dbUpdates = {
       ...updates,
       ...(updates.affectedPaths !== undefined ? { affectedPaths } : {}),
@@ -401,6 +417,7 @@ export async function updateKnowledgeItem(
       ...((tierIsSetExplicitly || tierIsReset) && updates.tierSince === undefined
         ? { tierSince: now }
         : {}),
+      ...(reviewed ? { lastDriftAt: null } : {}),
       ...(updates.conflictKey !== undefined ? { conflictKey } : {}),
       ...(updates.conflictScope !== undefined ? { conflictScope } : {}),
       version: nextVersion,

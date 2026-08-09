@@ -104,11 +104,11 @@ export const OBSERVED_USE_MIN_DAYS = 3;
 export const OBSERVED_USE_MIN_QUESTIONS = 3;
 
 /**
- * Ceiling on promotions per run. Measured on a real 748-item store, the gate below selects
- * roughly 69 items on its first pass over an unpromoted corpus; applying all of them at one
- * session start is the corpus-wide standing change that `drift-auto.ts` deliberately refused
- * to make. Ten a run drains a backlog over a week of sessions and keeps any single run's
- * blast radius reviewable.
+ * Ceiling on promotions per run. Measured 2026-08-09 on this project's own store (697 active
+ * items), the gate below selects 85 on its first pass over an unpromoted corpus; applying all
+ * of them at one session start is the corpus-wide standing change that `drift-auto.ts`
+ * deliberately refused to make. Ten a run drains a backlog over a week of sessions and keeps
+ * any single run's blast radius reviewable.
  */
 export const OBSERVED_USE_MAX_PER_RUN = 10;
 
@@ -122,12 +122,17 @@ export type ObservedUseResult = {
  * Promote items the store has watched earn their place, without waiting for anyone to say so.
  *
  * WHY THIS EXISTS. `applyFeedbackToTier` is reachable only from `knowl_feedback`, a voluntary
- * call an agent has to choose to make. Measured 2026-08-09 on this project's own store: the
- * standing feature shipped 2026-07-31, every feedback event on record predates it (19 rows,
- * last one 2026-07-23), and in the nine days since it shipped the store served roughly 1,800
- * retrievals and received zero feedback events. 748 items, all `asserted`, zero promotions
- * ever recorded. The ladder was not too steep; its only input never arrived. Standing has to
- * be derived from what the store observes, not from what a caller volunteers.
+ * call an agent has to choose to make, and it is called at a rate that cannot clear its own
+ * threshold. Measured 2026-08-09 on this project's own store: 31 feedback events in total
+ * against 4,432 retrievals, 6 of them in the nine days since the standing feature shipped on
+ * 2026-07-31, spread across six different items. VERIFY_THRESHOLD is 2, and exactly one item
+ * in the corpus has ever accumulated two confirmations against a single standing — that one
+ * on 2026-07-30, before this code existed. 697 active items, all `asserted`, and not one
+ * `Promote to verified` commit in 788.
+ *
+ * So the mechanism is not broken and the ladder is not too steep: at roughly one confirmation
+ * per 143 retrievals, scattered one-per-item, a two-event threshold is essentially never met.
+ * Standing has to be derived from what the store observes, not from what a caller volunteers.
  *
  * WHY IT CANNOT BE RECURRENCE ALONE. Retrieval count is not ground truth — an item can be
  * surfaced a hundred times and be wrong, and promoting on that is precisely the confidence
@@ -140,20 +145,23 @@ export type ObservedUseResult = {
  * to fail and has not. Anything that ever caused a correction is excluded outright, on the
  * same "one proof of wrongness outweighs any history of usefulness" rule applied above.
  *
- * `driftingItemIds` closes the hole stored freshness leaves. The session-start drift check is
- * detection only — by deliberate design, it names what moved without flipping anything — so
- * an item whose files changed this morning still reads `fresh` until somebody runs
- * `knowl pr check` by hand. Resting the gate on that would make this feature depend on the
- * same voluntary act it exists to stop depending on, so the caller passes the live detection
- * result and anything currently drifting is refused regardless of what the column says.
+ * `last_drift_at` closes the hole stored freshness leaves, and it has to be a stored column
+ * rather than the live candidate list. The session-start drift check is detection only — by
+ * deliberate design it names what moved without flipping `freshness` — so an item whose files
+ * changed this morning still reads `fresh` until somebody runs `knowl pr check` by hand, which
+ * is the same voluntary act this feature exists to stop depending on. But the live list only
+ * covers the one session that happened to straddle the commit: the watermark then advances,
+ * the next session computes no candidates at all, and an item refused an hour ago sails
+ * through unchanged. Measured on this store, 12 of the 85 items the recurrence gate selects
+ * cite `package.json`, `CHANGELOG.md` or `.github/workflows/cd.yml`, all reading `fresh`
+ * immediately after a release commit touched exactly those files. So the observation is
+ * persisted when it is made and cleared when somebody revisits the item (see
+ * `updateKnowledgeItem`), and a stamped item is refused for as long as it stays unexamined.
  *
  * Demotion is untouched and stays immediate, unconditional and uncapped. This path only
  * ever moves items up, and only ever by one step.
  */
-export async function promoteByObservedUse(
-  projectId: string,
-  driftingItemIds: readonly string[] = [],
-): Promise<ObservedUseResult> {
+export async function promoteByObservedUse(projectId: string): Promise<ObservedUseResult> {
   // Counted from `tier_since` for the same reason the feedback path counts from it: a reset
   // means the item no longer makes the claim its earlier retrievals were about.
   const rows = (await getClient().execute({
@@ -168,6 +176,7 @@ export async function promoteByObservedUse(
             AND ki.freshness = 'fresh'
             AND ki.affected_paths IS NOT NULL
             AND ki.affected_paths != '[]'
+            AND ki.last_drift_at IS NULL
             AND NOT EXISTS (
               SELECT 1 FROM knowledge_access bad
               WHERE bad.knowledge_item_id = ki.id
@@ -185,12 +194,9 @@ export async function promoteByObservedUse(
   // Ordered here rather than in SQL so the cap and the deferred count read off one list.
   // Most-recurring first, id as the tiebreak, so a run is deterministic and a backlog drains
   // in a stable order instead of reshuffling every session.
-  const drifting = new Set(driftingItemIds);
   const ranked = rows
     .map(row => ({ id: String(row.id), days: Number(row.days) }))
-    .filter(candidate => !drifting.has(candidate.id))
     .sort((a, b) => b.days - a.days || a.id.localeCompare(b.id));
-  if (ranked.length === 0) return { promoted: [], deferred: 0 };
   const selected = ranked.slice(0, OBSERVED_USE_MAX_PER_RUN);
 
   const promoted: TierChange[] = [];
@@ -220,16 +226,16 @@ export async function promoteByObservedUse(
     }
   });
 
-  return { promoted, deferred: ranked.length - promoted.length };
+  // Against `selected`, not `promoted`. An item the re-read disqualified was retired or
+  // edited under us -- it is not eligible and no later run will take it, so counting it here
+  // would have the session line promise a backlog that does not exist.
+  return { promoted, deferred: ranked.length - selected.length };
 }
 
 /** Hooks must never fail the host: a failed promotion pass reads as "nothing promoted". */
-export async function promoteByObservedUseBestEffort(
-  projectId: string,
-  driftingItemIds: readonly string[] = [],
-): Promise<ObservedUseResult | null> {
+export async function promoteByObservedUseBestEffort(projectId: string): Promise<ObservedUseResult | null> {
   try {
-    return await promoteByObservedUse(projectId, driftingItemIds);
+    return await promoteByObservedUse(projectId);
   } catch {
     return null;
   }

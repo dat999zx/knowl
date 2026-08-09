@@ -51,6 +51,7 @@ const SCHEMA_STATEMENTS = [
     confidence REAL NOT NULL DEFAULT 1.0,
     tier TEXT NOT NULL DEFAULT 'asserted',
     tier_since TEXT,
+    last_drift_at TEXT,
     provenance TEXT,
     conflict_key TEXT, conflict_scope TEXT, conflict_exclusive INTEGER NOT NULL DEFAULT 0,
     superseded_by_id TEXT,
@@ -588,6 +589,11 @@ async function ensureFreshnessColumns(client: Client): Promise<void> {
   }
   if (!columns.includes('content_hash')) {
     await client.execute('ALTER TABLE knowledge_items ADD COLUMN content_hash TEXT;');
+  }
+  if (!columns.includes('last_drift_at')) {
+    // Left NULL rather than backfilled: an existing row has no recorded drift observation,
+    // and inventing one would refuse promotion for items nothing has actually contradicted.
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN last_drift_at TEXT;');
   }
   if (!columns.includes('freshness')) {
     await client.execute(`ALTER TABLE knowledge_items ADD COLUMN freshness TEXT NOT NULL DEFAULT '${DEFAULT_FRESHNESS}';`);

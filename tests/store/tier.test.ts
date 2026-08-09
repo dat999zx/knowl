@@ -338,15 +338,40 @@ describe('standing earned by observed use', () => {
     expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
   });
 
-  it('refuses an item whose files moved this session, whatever the freshness column says', async () => {
+  it('refuses an item whose files have moved, whatever the freshness column says', async () => {
     const item = await seedItem('Drifting fact');
     await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET last_drift_at = ? WHERE id = ?',
+      args: [new Date().toISOString(), item.id],
+    });
     // Detection does not flip freshness, so the column still reads fresh — which is exactly
-    // the state that would wrongly promote if the live drift result were not consulted.
+    // the state that would wrongly promote if the drift observation were not consulted.
     expect((await repo.getKnowledgeItem(item.id))?.freshness).toBe('fresh');
 
-    expect((await promoteByObservedUse(projectId, [item.id])).promoted).toEqual([]);
-    expect((await promoteByObservedUse(projectId, [])).promoted).toHaveLength(1);
+    expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
+  });
+
+  // The regression the live-candidate-list version could not catch. Auto-drift advances its
+  // watermark as soon as it has reported a window, so the session after the one that saw the
+  // change computes no candidates at all — and the item still reads `fresh`, because
+  // detection deliberately never flipped it. Anything reading the in-session list promotes
+  // here; only a stored observation still refuses.
+  it('keeps refusing after the drift window has passed, until someone reviews the item', async () => {
+    const item = await seedItem('Long-drifting fact');
+    await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET last_drift_at = ? WHERE id = ?',
+      args: [new Date().toISOString(), item.id],
+    });
+
+    // Sessions later. No drift candidates anywhere, nothing flagged, freshness untouched.
+    expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
+    expect((await promoteByObservedUse(projectId)).promoted).toEqual([]);
+
+    // A review discharges the observation, and only then does use count again.
+    await repo.updateKnowledgeItem(item.id, { freshness: 'fresh' });
+    expect((await promoteByObservedUse(projectId)).promoted).toHaveLength(1);
   });
 
   it('refuses an item already flagged needs_review', async () => {

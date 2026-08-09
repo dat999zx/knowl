@@ -8,6 +8,8 @@ import { DEFAULT_CONTEXT_MAX_CHARS } from '../../src/core/token-budget.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { describeAutoDrift, runAutoDriftCheck } from '../../src/store/drift-auto.js';
 import { handleHostLifecycleEvent } from '../../src/session/host-lifecycle.js';
+import { recordKnowledgeAccess } from '../../src/store/access-feedback.js';
+import { OBSERVED_USE_MIN_DAYS } from '../../src/store/tier.js';
 import * as repo from '../../src/store/repository.js';
 
 const ROOT = path.resolve('.knowl-drift-auto-test');
@@ -54,7 +56,7 @@ describe('automatic drift check', () => {
 
   it('learns the baseline on first run and reports nothing', async () => {
     const first = await runAutoDriftCheck(projectId, ROOT);
-    expect(first).toEqual({ checked: false, candidateCount: 0, candidateTitles: [], candidateIds: [] });
+    expect(first).toEqual({ checked: false, candidateCount: 0, candidateTitles: [] });
 
     const second = await runAutoDriftCheck(projectId, ROOT);
     expect(second?.checked).toBe(true);
@@ -79,20 +81,59 @@ describe('automatic drift check', () => {
     expect(result?.checked).toBe(true);
     expect(result?.candidateCount).toBe(1);
     expect(result?.candidateTitles).toEqual(['Billing module']);
-    // Ids carry every candidate, not just the titled few — standing promotion consumes this
-    // list to refuse an item whose files moved, and a truncated list would let one slip past.
-    expect(result?.candidateIds).toEqual([item.id]);
 
     // Detection only: freshness is untouched on both candidate and bystander.
     const rows = await getClient().execute({
-      sql: 'SELECT id, freshness FROM knowledge_items WHERE id IN (?, ?)',
-      args: [item.id, bystander.id],
+      sql: 'SELECT id, freshness, last_drift_at FROM knowledge_items WHERE id IN (?, ?) ORDER BY id = ? DESC',
+      args: [item.id, bystander.id, item.id],
     });
     for (const row of rows.rows) expect(String(row.freshness)).toBe('fresh');
+    // ...but the observation itself is recorded, on the candidate only. This is the whole
+    // difference between a warning and a fact a later pass can act on.
+    expect(rows.rows[0].last_drift_at).toBeTruthy();
+    expect(rows.rows[1].last_drift_at).toBeNull();
 
     // Watermark advanced: the same window is not reported twice.
     const repeat = await runAutoDriftCheck(projectId, ROOT);
     expect(repeat?.candidateCount).toBe(0);
+
+    // And the stamp survives that advance. The window is gone, the warning was said once,
+    // and the only remaining trace that this item's files moved is the column.
+    const after = (await getClient().execute({
+      sql: 'SELECT last_drift_at FROM knowledge_items WHERE id = ?',
+      args: [item.id],
+    })).rows[0];
+    expect(after.last_drift_at).toBeTruthy();
+  });
+
+  it('clears the stamp when the item is reviewed, and not when it is merely touched', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Reviewable fact',
+      content: 'Something about src/reviewable.ts.',
+      affectedPaths: ['src/reviewable.ts'],
+    });
+    const stamp = async (): Promise<unknown> => (await getClient().execute({
+      sql: 'SELECT last_drift_at FROM knowledge_items WHERE id = ?',
+      args: [item.id],
+    })).rows[0].last_drift_at;
+
+    await commitFile('src/reviewable.ts', 'export const a = 1;\n', 'add reviewable');
+    await runAutoDriftCheck(projectId, ROOT); // baseline past creation
+    await commitFile('src/reviewable.ts', 'export const a = 2;\n', 'change reviewable');
+    await runAutoDriftCheck(projectId, ROOT);
+    expect(await stamp()).toBeTruthy();
+
+    // A lifecycle-only write is not a review. Visibility, status and supersession all move
+    // `updated_at`, and discharging a drift observation on one of those would clear the block
+    // without anybody having read the item.
+    await repo.updateKnowledgeItem(item.id, { visibility: 'workspace' });
+    expect(await stamp()).toBeTruthy();
+
+    // Setting freshness is the review verb at both ends: `pr check` flags, `knowl_update`
+    // clears. Either way somebody has now looked.
+    await repo.updateKnowledgeItem(item.id, { freshness: 'fresh' });
+    expect(await stamp()).toBeNull();
   });
 
   it('re-baselines quietly when the watermark commit no longer resolves', async () => {
@@ -101,7 +142,7 @@ describe('automatic drift check', () => {
       args: ['0000000000000000000000000000000000000000', ROOT],
     });
     const result = await runAutoDriftCheck(projectId, ROOT);
-    expect(result).toEqual({ checked: false, candidateCount: 0, candidateTitles: [], candidateIds: [] });
+    expect(result).toEqual({ checked: false, candidateCount: 0, candidateTitles: [] });
   });
 
   it('returns null outside a git repository', async () => {
@@ -119,16 +160,54 @@ describe('automatic drift check', () => {
 
   it('renders the warning with the pinned review command, only when something matched', () => {
     expect(describeAutoDrift(null)).toBeUndefined();
-    expect(describeAutoDrift({ checked: true, candidateCount: 0, candidateTitles: [], candidateIds: [], sinceCommit: 'abc' })).toBeUndefined();
+    expect(describeAutoDrift({ checked: true, candidateCount: 0, candidateTitles: [], sinceCommit: 'abc' })).toBeUndefined();
     const warning = describeAutoDrift({
       checked: true, candidateCount: 4, candidateTitles: ['Billing module', 'Rate limits'],
-      candidateIds: ['a', 'b', 'c', 'd'],
       sinceCommit: 'abcdef0123456789',
     });
     expect(warning).toContain('4 knowledge item(s)');
     expect(warning).toContain('"Billing module"');
     expect(warning).toContain('…');
     expect(warning).toContain('knowl pr check --since abcdef012345');
+  });
+
+  // The other half of the same rule. `affected_paths` is required because an item with none
+  // can never be contradicted; a run where drift could not be computed is that same state one
+  // level up — nothing this session was in a position to contradict anything — so "no
+  // candidates" must not be read as "everything is clean".
+  it('promotes nothing on a session where the drift check could not compare anything', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Otherwise eligible fact',
+      content: 'A claim about src/eligible.ts.',
+      affectedPaths: ['src/eligible.ts'],
+    });
+    const since = Date.parse((await repo.getKnowledgeItem(item.id))!.tierSince!);
+    for (let day = 0; day < OBSERVED_USE_MIN_DAYS; day++) {
+      await recordKnowledgeAccess({
+        itemId: item.id,
+        query: `question ${day}`,
+        surface: 'mcp',
+        rank: 0,
+        retrievedAt: new Date(since + day * 86_400_000 + 60_000).toISOString(),
+      });
+    }
+
+    // Drop the watermark: the next check re-baselines and reports `checked: false`, exactly
+    // as it does after a rebase rewrites the commit it was pinned to.
+    await getClient().execute({ sql: 'DELETE FROM drift_state WHERE project_root = ?', args: [ROOT] });
+    await handleHostLifecycleEvent(projectId, hook({
+      externalSessionId: `drift-baseline-${Date.now()}`,
+      title: 'Agent session',
+    }));
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+
+    // The very next session has a watermark to compare against, so the same item now earns it.
+    await handleHostLifecycleEvent(projectId, hook({
+      externalSessionId: `drift-baselined-${Date.now()}`,
+      title: 'Agent session',
+    }));
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('verified');
   });
 
   it('charges the drift warning against the context budget instead of overflowing it', async () => {

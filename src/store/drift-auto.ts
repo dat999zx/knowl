@@ -8,12 +8,6 @@ export type AutoDriftResult = {
   candidateCount: number;
   /** Up to the first few candidate titles, for the session-start warning. */
   candidateTitles: string[];
-  /**
-   * Every candidate's id, not just the titled few. Detection does not flip `freshness`, so
-   * stored freshness alone cannot tell a later pass in this same session that an item's files
-   * just moved. Standing promotion reads this to refuse anything currently drifting.
-   */
-  candidateIds: string[];
   /** The watermark the diff ran from; absent when nothing was compared. */
   sinceCommit?: string;
 };
@@ -37,6 +31,10 @@ const WARNING_TITLE_LIMIT = 3;
  * ranking damage and a warning that cries wolf. So the automatic path names what moved
  * and the exact command to review it, and flipping freshness stays a deliberate act.
  *
+ * "Detection only" is about `freshness`, not about writing nothing: each candidate's
+ * `last_drift_at` is stamped (see `recordDriftObservation`). Nothing reads that column at
+ * retrieval time, so it costs none of the ranking damage the paragraph above refuses.
+ *
  * The watermark is the last git commit a check ran against, keyed by project root.
  * rowid-style head tracking (change-watermark.ts) does not work here: the thing that
  * moves is the git history, not the knowledge log. It advances even when candidates go
@@ -55,13 +53,13 @@ export async function runAutoDriftCheck(projectId: string, projectRoot: string):
   })).rows[0];
   const watermark = row ? String(row.last_checked_commit) : null;
 
-  if (watermark === current) return { checked: true, candidateCount: 0, candidateTitles: [], candidateIds: [], sinceCommit: watermark };
+  if (watermark === current) return { checked: true, candidateCount: 0, candidateTitles: [], sinceCommit: watermark };
 
   // First run learns the baseline and reports nothing: diffing from the repository's
   // root commit would announce most of the store as drift candidates in one wall.
   if (!watermark) {
     await writeWatermark(projectRoot, current);
-    return { checked: false, candidateCount: 0, candidateTitles: [], candidateIds: [] };
+    return { checked: false, candidateCount: 0, candidateTitles: [] };
   }
 
   let changedFiles: string[];
@@ -71,12 +69,11 @@ export async function runAutoDriftCheck(projectId: string, projectRoot: string):
     // The watermark commit no longer exists — rebase, aggressive gc, a rewritten branch.
     // Re-baseline rather than guess; the next real change is caught from the new baseline.
     await writeWatermark(projectRoot, current);
-    return { checked: false, candidateCount: 0, candidateTitles: [], candidateIds: [] };
+    return { checked: false, candidateCount: 0, candidateTitles: [] };
   }
 
   let candidateCount = 0;
   let candidateTitles: string[] = [];
-  let candidateIds: string[] = [];
   if (changedFiles.length > 0) {
     const result = await checkKnowledgeDrift(projectId, {
       sinceCommit: watermark,
@@ -86,11 +83,41 @@ export async function runAutoDriftCheck(projectId: string, projectRoot: string):
     });
     candidateCount = result.candidates.length;
     candidateTitles = result.candidates.slice(0, WARNING_TITLE_LIMIT).map(candidate => candidate.title);
-    candidateIds = result.candidates.map(candidate => candidate.itemId);
+    await recordDriftObservation(result.candidates.map(candidate => candidate.itemId));
   }
 
   await writeWatermark(projectRoot, current);
-  return { checked: true, candidateCount, candidateTitles, candidateIds, sinceCommit: watermark };
+  return { checked: true, candidateCount, candidateTitles, sinceCommit: watermark };
+}
+
+/** Ids per `UPDATE`, so one window cannot outgrow the driver's bound-parameter limit. */
+const DRIFT_STAMP_CHUNK = 250;
+
+/**
+ * Record that these items' files moved, so a later pass can still tell.
+ *
+ * This is the one thing detection has to leave behind, and it is why the watermark advancing
+ * is survivable. `freshness` stays untouched for the measured reason above; `last_drift_at`
+ * is a separate column nothing reads at retrieval time, so recording an observation costs no
+ * ranking and no warning volume. Without it the only trace of a window is the one warning
+ * line, and the very next session — which finds `watermark === current` and computes no
+ * candidates at all — has no way to know that an item reading `fresh` is a claim about files
+ * that changed this morning and that nobody has looked at since.
+ *
+ * Chunked because a single window can match a third of the store, and the candidate list is
+ * bound by the corpus rather than by anything this function controls.
+ */
+async function recordDriftObservation(itemIds: string[]): Promise<void> {
+  if (itemIds.length === 0) return;
+  const now = new Date().toISOString();
+  const client = getClient();
+  for (let start = 0; start < itemIds.length; start += DRIFT_STAMP_CHUNK) {
+    const chunk = itemIds.slice(start, start + DRIFT_STAMP_CHUNK);
+    await client.execute({
+      sql: `UPDATE knowledge_items SET last_drift_at = ? WHERE id IN (${chunk.map(() => '?').join(', ')})`,
+      args: [now, ...chunk],
+    });
+  }
 }
 
 /** Hooks must never fail the host: any error reads as "no drift information this session". */
