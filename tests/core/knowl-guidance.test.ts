@@ -34,12 +34,12 @@ const EXPECTED_CLAUDE_CARD = [
   'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
   'Route by what you need; the tool list names them:',
   '- retrieval: knowl_query first. Recent context only without bootstrap or for a refresh, broad state for status, a packed context only when a token budget is given.',
-  '- durable memory: store one verified atom, batch several, record a confirmed decision, or correct a stale one. Correct rather than duplicate.',
+  '- durable memory: store one verified atom, batch several, record a confirmed decision or a stated goal, or correct a stale one. Correct rather than duplicate.',
   '- audit: inspect history, evidence or conflicts when needed; record feedback only after actual use or correction.',
   '- skills: read a matching skill before running a trusted entrypoint; create one only on explicit request.',
   '- special: raw-source ingest only on an explicit request, never silent chat; synthesis only for an explicit scope; preview garbage collection first and apply only after approval.',
   '- leaving work: one baton the next session here consumes once, or a key the user keeps and hands back any time later, from anywhere.',
-  'During work, store or update verified durable findings; never raw transcripts, secrets, or routine command noise.',
+  'During work, store durable findings and stated intent — a goal counts before it settles; never raw transcripts, secrets, or routine command noise.',
 ].join('\n');
 
 const namesIn = (text: string) => [...new Set(text.match(/\bknowl_[a-z_]+\b/g) ?? [])].sort();
@@ -127,8 +127,8 @@ describe('canonical Knowl agent guidance', () => {
     // (see 'does not grow when a tool is added'), so a new tool inside an existing group should
     // leave both numbers untouched. If adding a tool changes them, something re-introduced the
     // inventory the card stopped carrying.
-    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_737);
-    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_788);
+    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_787);
+    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_838);
     for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS]) {
       expect(card.length).toBeLessThan(2_000);
       expect(card.slice(0, 512)).toContain('knowl_query');
@@ -165,6 +165,35 @@ describe('canonical Knowl agent guidance', () => {
     for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_SUBAGENT_BOOTSTRAP_CARD]) {
       expect(card).toMatch(/words that name the subject/);
     }
+  });
+
+  /**
+   * Storage guidance must name stated intent, not only verified findings.
+   *
+   * Grounded in a live failure, not taste: an agent following these cards faithfully skipped
+   * storing two strategy conversations (2026-08-10) — the user's declared plan for a whole
+   * venture — because every storage cue said "verified" and a conversation verifies nothing.
+   * The user had to notice the gap and request the save manually. The goal category and
+   * user_stated provenance exist for exactly this content; guidance that never mentions them
+   * teaches agents to leave intent unstored until it is too late to recover.
+   *
+   * Pinned for the same reason the keyword-cap test above is: "verified durable findings" is
+   * precisely the kind of tight phrase someone re-introduces while shortening a line to buy
+   * room, and the omission it causes is invisible until a user is annoyed.
+   */
+  it('names stated intent as storable in every storage cue that reaches an agent', () => {
+    for (const surface of [
+      KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS,
+      KNOWL_CLAUDE_PROMPT_REMINDER, KNOWL_CLAUDE_CONTINUATION_REMINDER,
+    ]) {
+      expect(surface).toMatch(/stated (intent|goal)/);
+    }
+    // The full guidance names the mechanism, not just the class: which category, which
+    // provenance, and the recovery test that decides.
+    expect(renderFullKnowlGuidance()).toContain('user_stated');
+    expect(renderFullKnowlGuidance()).toContain('could a fresh session recover this from memory alone?');
+    // The subagent card is deliberately absent from this list: a subagent receives a bounded
+    // task, not a user conversation, so findings-only is its correct storable class.
   });
 
   it('changes only the lifecycle mode line between compact renderings', () => {

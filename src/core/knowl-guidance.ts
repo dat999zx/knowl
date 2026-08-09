@@ -63,7 +63,7 @@ const REQUIRED_WORKFLOW = `### Required workflow
 2. Skip a new query only when directly relevant active lifecycle context, a same-request query, or manual \`knowl_task_start\` relevant memory already answers it.
 3. Use a relevant active hit immediately. Inspect files only after a miss, conflict, stale/low-confidence memory, or explicit verification request.
 4. Query again before switching to a distinct subtask or project area.
-5. Store or update verified durable findings during work and before the final answer; never store raw transcripts, secrets, or debugging noise.
+5. Store or update durable knowledge during work and before the final answer — verified findings, and stated intent (goals, plans, direction the user voiced) stored as goals with user_stated provenance even while unsettled. The test: could a fresh session recover this from memory alone? Never store raw transcripts, secrets, or debugging noise.
 6. If Knowl MCP tools are unavailable, stop and tell the user instead of silently bypassing Knowl.`;
 
 const LIFECYCLE_MODES = `### Lifecycle modes
@@ -147,7 +147,7 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
     'Route by what you need; the tool list names them:',
     '- retrieval: knowl_query first. Recent context only without bootstrap or for a refresh, broad state for status, a packed context only when a token budget is given.',
-    '- durable memory: store one verified atom, batch several, record a confirmed decision, or correct a stale one. Correct rather than duplicate.',
+    '- durable memory: store one verified atom, batch several, record a confirmed decision or a stated goal, or correct a stale one. Correct rather than duplicate.',
     '- audit: inspect history, evidence or conflicts when needed; record feedback only after actual use or correction.',
     '- skills: read a matching skill before running a trusted entrypoint; create one only on explicit request.',
     '- special: raw-source ingest only on an explicit request, never silent chat; synthesis only for an explicit scope; preview garbage collection first and apply only after approval.',
@@ -155,7 +155,12 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     // am stopping go?" -- and the distinction between them is the part worth the characters.
     '- leaving work: one baton the next session here consumes once, or a key the user keeps and hands back any time later, from anywhere.',
     ...(options.transcripts ? [TRANSCRIPT_ROUTE_LINE] : []),
-    'During work, store or update verified durable findings; never raw transcripts, secrets, or routine command noise.',
+    // "Stated intent" is here because its absence was a measured failure, not a style choice:
+    // an agent following this card faithfully skipped storing two strategy conversations,
+    // because every storage cue said "verified" and a conversation verifies nothing. Intent is
+    // durable before it is settled — that is what the goal category and user_stated provenance
+    // exist for — and the omission taught agents the opposite.
+    'During work, store durable findings and stated intent — a goal counts before it settles; never raw transcripts, secrets, or routine command noise.',
   ].join('\n');
 }
 
@@ -172,7 +177,7 @@ export function mcpServerInstructions(config: ProjectConfig | null): string {
   if (!config || !isTranscriptSearchEnabled(config)) return KNOWL_MCP_SERVER_INSTRUCTIONS;
   return renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE, { transcripts: true });
 }
-export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with the words that name the subject before repository files or commands. Store or update verified durable findings. Claude hooks own lifecycle; do not start the manual task loop.';
+export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with the words that name the subject before repository files or commands. Store durable findings and stated goals. Claude hooks own lifecycle; do not start the manual task loop.';
 
 // Short per-prompt reminder (UserPromptSubmit). The full tool routing lives in
 // KNOWL.md and the MCP initialize instructions, so the per-prompt card only needs
@@ -180,7 +185,7 @@ export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the 
 export const KNOWL_CLAUDE_PROMPT_REMINDER = [
   'KNOWL — project memory is active.',
   'For any project question or new subtask, call knowl_query BEFORE reading files, using the words that name the subject and no padding; use a relevant active hit directly and inspect files only on a miss, conflict, or stale/low-confidence result.',
-  'Store or update verified durable decisions, facts, state, and constraints as you go with knowl_store / knowl_decide / knowl_update; never store secrets or routine noise.',
+  'Store durable decisions, facts, state, constraints, and stated goals as you go with knowl_store / knowl_decide / knowl_update — intent counts before it settles; never store secrets or routine noise.',
   'Claude hooks own the lifecycle — do not call knowl_task_start/checkpoint/finish. Full tool routing is in KNOWL.md.',
 ].join(' ');
 

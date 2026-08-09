@@ -73,7 +73,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 2. Skip a new query only when directly relevant active lifecycle context, a same-request query, or manual `knowl_task_start` relevant memory already answers it.
 3. Use a relevant active hit immediately. Inspect files only after a miss, conflict, stale/low-confidence memory, or explicit verification request.
 4. Query again before switching to a distinct subtask or project area.
-5. Store or update verified durable findings during work and before the final answer; never store raw transcripts, secrets, or debugging noise.
+5. Store or update durable knowledge during work and before the final answer — verified findings, and stated intent (goals, plans, direction the user voiced) stored as goals with user_stated provenance even while unsettled. The test: could a fresh session recover this from memory alone? Never store raw transcripts, secrets, or debugging noise.
 6. If Knowl MCP tools are unavailable, stop and tell the user instead of silently bypassing Knowl.
 
 ### Lifecycle modes
