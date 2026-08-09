@@ -43,6 +43,7 @@ import { isTranscriptSearchEnabled } from '../transcripts/config.js';
 import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
 import { CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
+import { teamUpdateNotice } from '../cloud/team-update.js';
 
 /**
  * Ceilings for the handlers. The ones the SCHEMAS quote live beside the schemas, in
@@ -54,6 +55,15 @@ const MAX_SKILLS_LISTED = 30;
 const MAX_SKILL_PURPOSE_CHARS = 200;
 const MAX_TRIGGERS_LISTED = 5;
 const MAX_TRIGGER_CHARS = 80;
+
+/**
+ * The team watermark this process has already told the agent about.
+ *
+ * Per-process rather than persisted: the notice is about what changed during THIS session, and
+ * a value surviving a restart would make the first query of every session silent about a
+ * replica that had moved while the agent was away.
+ */
+let seenTeamSeq: string | null = null;
 
 
 // The write engine never discards content, so a write can leave memory in one of two
@@ -992,6 +1002,24 @@ export function registerTools(
               + transcriptRoute,
           });
         }
+        // Last of the notices, because it is the only one that asks the agent to do something
+        // rather than to interpret what it just got.
+        //
+        // `teamUpdateNotice` reads the replica through `withDbPath`, never `initDbPath`, so the
+        // global context this server opened once at startup survives the call. A helper that
+        // closed it would break the NEXT tool call rather than this one.
+        if (active?.cloud && projectRoot) {
+          const update = await teamUpdateNotice({
+            workspaceId: active.cloud.workspaceId,
+            configRoot: projectRoot,
+            seenSeq: seenTeamSeq,
+          });
+          if (update) {
+            seenTeamSeq = update.seq;
+            blocks.push({ type: 'text', text: update.notice });
+          }
+        }
+
         // No provenance block here, deliberately: the block count above is a contract where an
         // extra block reports an anomaly, and the JSON payload already contains bodies
         // structurally. The declaration lives in the `knowl_query` description instead.

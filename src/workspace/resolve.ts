@@ -4,7 +4,9 @@ import type { ProjectConfig } from '../core/types.js';
 import { loadConfig } from '../core/config.js';
 import { resolveStorage } from '../store/storage-roles.js';
 import { embeddingIdentityFromConfig } from '../store/embedding-identity.js';
-import { teamStorePath } from '../cloud/team-store.js';
+// From `core/`, not from `cloud/`: `cloud` is a layer above `workspace`, so naming the
+// replica's own module here would be an upward import. See `core/paths.ts`.
+import { teamStorePath } from '../core/paths.js';
 import { createManifest, readManifest, WorkspaceManifest } from './manifest.js';
 import { workspaceManifestPath } from './paths.js';
 import { isLinked } from './membership.js';

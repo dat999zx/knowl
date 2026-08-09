@@ -1,23 +1,18 @@
 import fs from 'node:fs/promises';
-import path from 'node:path';
-import { knowlHome } from '../core/paths.js';
+import { teamStoreDir, teamStorePath } from '../core/paths.js';
 import { releaseClient } from '../store/connection-pool.js';
-import { closeDb, getClient, initDbPath, withDbPath } from '../store/database.js';
+import { getClient, withDbPath } from '../store/database.js';
+import { resolveStorage } from '../store/storage-roles.js';
 
 /**
- * One replica per cloud workspace, under `cloud/` rather than `workspaces/`.
+ * Re-exported so every caller still reaches the replica's location through `cloud/`.
  *
- * `workspaces/` holds OSS workspace manifests keyed by a name matching `^[a-z0-9][a-z0-9-]*$`,
- * which a cloud workspace id also matches -- so sharing the tree would let a cloud replica and
- * a local workspace occupy the same directory with no error at either end.
+ * The declarations themselves live in `core/paths.ts`: `workspace/resolve.ts` needs to name the
+ * replica's file, and `cloud/` sits above `workspace/` in the layer order, so that import would
+ * be upward. Moving the path down is what the boundary test asks for; leaving the re-export
+ * here is what keeps this module the obvious place to look.
  */
-export function teamStoreDir(workspaceId: string): string {
-  return path.join(knowlHome(), 'cloud', workspaceId);
-}
-
-export function teamStorePath(workspaceId: string): string {
-  return path.join(teamStoreDir(workspaceId), 'knowledge.db');
-}
+export { teamStoreDir, teamStorePath };
 
 /**
  * The watermark lives INSIDE the replica, not beside it.
@@ -42,14 +37,25 @@ CREATE TABLE IF NOT EXISTS cloud_sync_state (
 /**
  * `configRoot` is the *project's* root, not the replica's.
  *
- * `initDbPath` resolves the embedding profile from the config root, and the replica must be
- * embedded under the same profile as the repo that reads it -- otherwise its vectors are in a
- * space the local ranker filters out, and the replica silently contributes nothing.
+ * The embedding profile is resolved from the config root, and the replica must be embedded
+ * under the same profile as the repo that reads it -- otherwise its vectors are in a space the
+ * local ranker filters out, and the replica silently contributes nothing.
+ *
+ * The project's own database is opened as the OUTER scope purely to carry that config root
+ * inward. `withDbPath` keeps the caller's config root when one is already active and otherwise
+ * derives it from the database's own path -- and the replica lives at
+ * `<knowlHome>/cloud/<id>/knowledge.db`, so deriving would name `<knowlHome>` and pick up a
+ * profile belonging to nobody.
+ *
+ * Both scopes are `withDbPath`, and that is the load-bearing detail rather than a stylistic
+ * one. `initDbPath`/`closeDb` operate on the process-wide GLOBAL context, and the MCP server
+ * establishes that context exactly once at startup (`server.ts`) and relies on it for the whole
+ * of its life. A helper that opened the replica globally and closed it afterwards would leave
+ * every later tool call in that process with no database at all -- so this must never be
+ * reachable from a query, and `withDbPath` is scoped precisely so that it is not.
  */
 export async function openTeamStore(workspaceId: string, configRoot: string): Promise<void> {
-  await fs.mkdir(teamStoreDir(workspaceId), { recursive: true });
-  await initDbPath(teamStorePath(workspaceId), { configRoot });
-  await getClient().execute(CREATE_SYNC_STATE);
+  await withTeamStore(workspaceId, configRoot, async () => {});
 }
 
 export async function withTeamStore<T>(
@@ -57,12 +63,12 @@ export async function withTeamStore<T>(
   configRoot: string,
   run: () => Promise<T>,
 ): Promise<T> {
-  await openTeamStore(workspaceId, configRoot);
-  try {
-    return await withDbPath(teamStorePath(workspaceId), run);
-  } finally {
-    await closeDb();
-  }
+  await fs.mkdir(teamStoreDir(workspaceId), { recursive: true });
+  return withDbPath(resolveStorage(configRoot).knowledge, async () =>
+    withDbPath(teamStorePath(workspaceId), async () => {
+      await getClient().execute(CREATE_SYNC_STATE);
+      return run();
+    }));
 }
 
 /**
@@ -97,10 +103,10 @@ const WIPE = [
  * behind or throw.
  */
 export async function dropTeamStore(workspaceId: string, configRoot: string): Promise<void> {
-  // `closeDb` only releases the pool when a global context is set, so after a `withTeamStore`
-  // has unwound it does nothing at all. `releaseClient` names the file directly, closing both
-  // its read-only and writable views and checkpointing the writable one.
-  await closeDb();
+  // `releaseClient` names the file directly, closing both its read-only and writable views and
+  // checkpointing the writable one. Deliberately NOT `closeDb`: that releases the whole pool
+  // and clears the process-wide global context, which here belongs to whoever called us -- the
+  // MCP server opens its database once at startup and never reopens it.
   await releaseClient(teamStorePath(workspaceId));
 
   const removed = await fs

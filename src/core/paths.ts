@@ -17,3 +17,23 @@ export function knowlHome(): string {
   const override = process.env.KNOWL_HOME;
   return override ? path.resolve(override) : path.join(os.homedir(), '.knowl');
 }
+
+/**
+ * One cloud replica per workspace, under `cloud/` rather than `workspaces/`.
+ *
+ * `workspaces/` holds OSS workspace manifests keyed by a name matching `^[a-z0-9][a-z0-9-]*$`,
+ * which a cloud workspace id also matches -- so sharing the tree would let a cloud replica and
+ * a local workspace occupy the same directory with no error at either end.
+ *
+ * These live in `core/` rather than beside the replica's code for the same reason `knowlHome`
+ * does: `workspace/resolve.ts` has to name the replica's file to report whether it is present,
+ * and `cloud/` sits ABOVE `workspace/` in the layer order, so reaching up for it is forbidden.
+ * A path is not a cloud idea -- what `cloud/` owns is the database at the end of it.
+ */
+export function teamStoreDir(workspaceId: string): string {
+  return path.join(knowlHome(), 'cloud', workspaceId);
+}
+
+export function teamStorePath(workspaceId: string): string {
+  return path.join(teamStoreDir(workspaceId), 'knowledge.db');
+}
