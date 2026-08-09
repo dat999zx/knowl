@@ -71,6 +71,12 @@ export const SNAPSHOT_TABLE_POLICY: Readonly<Record<string, SnapshotTablePolicy>
   // silently reset the precision denominator to zero while leaving the findings they point at in
   // place, so the next reading would be taken over a sample that no longer matches the history.
   impact_gate_shadow: 'preserved',
+  // What THIS machine has staged for, and pushed to, a cloud workspace. The server's copy is the
+  // truer one and a snapshot cannot roll it back, so restoring an older ledger would only make
+  // this machine forget the `remote_version` every republish needs -- turning the next publish
+  // into a conflict -- or re-stage atoms the server already holds. Machine-local state, exactly
+  // like `drift_state`.
+  cloud_published: 'preserved',
 
   // --- derived, trigger-maintained ---------------------------------------------------------
   knowledge_items_fts: 'rebuilt',

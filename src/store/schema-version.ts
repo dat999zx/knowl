@@ -58,7 +58,14 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * reasoning as level 3: one new table, no altered column, no backfill, so `KNOWL_SCHEMA_VERSION`
  * stays at 1 and no installed build is locked out of a database it can still read completely.
  */
-export const KNOWL_MIGRATION_LEVEL = 4;
+/*
+ * Level 5 adds `cloud_published` -- what this machine has staged for, and pushed to, a cloud
+ * workspace. Additive on the same reasoning as levels 3 and 4: one new table, no altered column
+ * and no backfill. What the bump buys is that a database created before the cloud client existed
+ * still gets the table, since the gate is the only thing that decides whether `SCHEMA_STATEMENTS`
+ * runs at all.
+ */
+export const KNOWL_MIGRATION_LEVEL = 5;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

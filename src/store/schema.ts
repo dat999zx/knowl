@@ -250,3 +250,19 @@ export const impactFindings = sqliteTable('impact_findings', {
   index('idx_impact_findings_affected').on(table.affectedKind, table.affectedId, table.resolution),
   uniqueIndex('idx_impact_findings_unique_open').on(table.causeLocator, table.affectedId).where(sql`resolution IS NULL`),
 ]);
+
+/**
+ * What this machine has staged for, and pushed to, a cloud workspace. See `bootstrap.ts` for
+ * why publication is a ledger rather than a third `visibility` value.
+ */
+export const cloudPublished = sqliteTable('cloud_published', {
+  itemId: text('item_id').notNull(),
+  remoteWorkspace: text('remote_workspace').notNull(),
+  /** The server's version. NULL until a push is confirmed; every republish sends it back. */
+  remoteVersion: integer('remote_version'),
+  stagedAt: text('staged_at').notNull(),
+  /** What the gate is waiting for when it refuses. NULL when git could not say. */
+  stagedOnBranch: text('staged_on_branch'),
+  pushedAt: text('pushed_at'),
+  retractedAt: text('retracted_at'),
+}, (table) => [primaryKey({ columns: [table.itemId, table.remoteWorkspace] })]);

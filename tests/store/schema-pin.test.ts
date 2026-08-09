@@ -32,6 +32,9 @@ const SCHEMA_PINS: Record<number, string> = {
   // gate would have refused, recorded while it refuses nothing. Additive again, so
   // `KNOWL_SCHEMA_VERSION` again does not move.
   4: '4592e436daefd236d1f15554d1a2db3a',
+  // 5 adds `cloud_published` -- what this machine has staged for, and pushed to, a cloud
+  // workspace. Additive again, so `KNOWL_SCHEMA_VERSION` again does not move.
+  5: '6ab2cff26adb1c04de4dc645e86dae62',
 };
 
 let root: string;
