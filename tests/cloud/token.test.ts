@@ -2,7 +2,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readCredential, writeCredential } from '../../src/cloud/credentials.js';
-import { ensureAccessToken } from '../../src/cloud/token.js';
+import { credentialLockPath, ensureAccessToken } from '../../src/cloud/token.js';
+import { acquireLock } from '../../src/cloud/file-lock.js';
 
 const HOME = path.resolve('./.knowl-token-home');
 const HOST = 'https://api.knowl.dev';
@@ -85,8 +86,28 @@ describe('ensureAccessToken', () => {
   });
 
   it('re-reads under the lock, so the winner never refreshes an already-rotated token', async () => {
-    // Without the re-read, a caller that waited for the lock refreshes the token the previous
-    // holder just rotated away -- which the server reads as replay.
+    // The replay that logs the user out. Another process won the lock, refreshed, wrote and
+    // released -- all between our read and our acquisition. We now hold the lock with a
+    // `current` whose refresh token the server has already retired, and sending it is read as
+    // theft: the whole session is revoked mid-work.
+    //
+    // Staged through `onBeforeLock` because that window is the only one the re-read guards,
+    // and it cannot be produced by a losing caller -- see the seam's comment in token.ts.
+    await writeCredential(HOST, stored('a', iso(-1_000)));
+    let refreshes = 0;
+
+    const result = await ensureAccessToken({
+      apiHost: HOST,
+      refresh: async () => { refreshes += 1; return stored('c', iso(3_600_000)); },
+      now: () => NOW,
+      onBeforeLock: async () => { await writeCredential(HOST, stored('b', iso(3_600_000))); },
+    });
+
+    expect(refreshes).toBe(0);
+    expect(result?.accessToken).toBe('b');
+  });
+
+  it('does not refresh again once an earlier call already rotated the token', async () => {
     await writeCredential(HOST, stored('a', iso(-1_000)));
     let refreshes = 0;
 
@@ -103,6 +124,26 @@ describe('ensureAccessToken', () => {
 
     expect(refreshes).toBe(1);
     expect(second?.accessToken).toBe('b');
+  });
+
+  it('a loser that never sees a usable token gives up rather than refreshing behind the winner', async () => {
+    // The poll path, which is what the previous version of the re-read test was really
+    // exercising. The winner dies holding the lock; the loser must report no token, not
+    // refresh a token somebody else may be mid-rotation on.
+    await writeCredential(HOST, stored('a', iso(-1_000)));
+    let refreshes = 0;
+
+    const external = await acquireLock(credentialLockPath());
+    const result = await ensureAccessToken({
+      apiHost: HOST,
+      refresh: async () => { refreshes += 1; return stored('c', iso(3_600_000)); },
+      now: () => NOW,
+      waitMs: 150,
+    });
+    await external!();
+
+    expect(result).toBeNull();
+    expect(refreshes).toBe(0);
   });
 
   it('leaves the stored credential alone when refresh fails', async () => {

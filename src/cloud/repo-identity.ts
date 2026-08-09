@@ -12,6 +12,17 @@ export type RepoIdentity = {
 export class NoGitRemoteError extends Error {}
 
 /**
+ * Git could not be run at all -- distinct from git running and reporting no remote.
+ *
+ * `spawnSync` reports a missing binary as `status: null` with `error` set, and `status !== 0`
+ * is true for `null`. So a machine without git on PATH, or a spawn refused by a sandbox, read
+ * as "this repository has no remote" and the user was told to add one they already have.
+ * This repo has shipped that same collapse before, in `fileContentHash`, where every read
+ * error mapped to "gone" and an antivirus lock became "the file you read is deleted".
+ */
+export class GitUnavailableError extends Error {}
+
+/**
  * One identity per repository, whatever URL form the clone used.
  *
  * Host and path are both lowercased. GitHub, GitLab and Bitbucket all treat repository
@@ -59,6 +70,14 @@ function parseAsUrl(value: string): { host: string; pathname: string } | null {
 
 function git(cwd: string, args: string[]): string | null {
   const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  // Checked before the status, and separately from it: "git could not run" is a different
+  // fact from "git ran and said no", and only the second one is about this repository.
+  if (result.error) {
+    throw new GitUnavailableError(
+      `Could not run git: ${result.error.message}. ` +
+      'Knowl derives a cloud repository identity from the git remote, so git has to be on PATH.',
+    );
+  }
   if (result.status !== 0) return null;
   return result.stdout.trim() || null;
 }

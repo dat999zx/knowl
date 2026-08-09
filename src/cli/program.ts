@@ -662,6 +662,11 @@ cloudCommand
         console.error('Ask a workspace owner to invite you, or create one in the web console.');
         process.exit(1);
       }
+      if (result.status === 'unknown-workspace') {
+        console.error(`No workspace with id "${result.workspaceId}". You belong to:`);
+        for (const entry of result.workspaces) console.error(`  ${entry.id}  ${entry.name} (${entry.role})`);
+        process.exit(1);
+      }
       if (result.status === 'ambiguous') {
         console.error('You belong to more than one workspace. Re-run with --workspace <id>:');
         for (const entry of result.workspaces) console.error(`  ${entry.id}  ${entry.name} (${entry.role})`);

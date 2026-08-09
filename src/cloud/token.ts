@@ -15,6 +15,17 @@ export type EnsureTokenInput = {
   now?: () => number;
   skewMs?: number;
   waitMs?: number;
+  /**
+   * Test seam, and the only way to reach the re-read below.
+   *
+   * That re-read guards one interleaving: another process wins the lock, refreshes, writes and
+   * releases, all between OUR first read and OUR acquisition -- so we hold the lock with a
+   * `current` that has already been rotated. A caller that LOSES the lock cannot stand in for
+   * this, because the poll loop tests the same `usable` predicate the re-read does and
+   * therefore always returns first. Without a seam here the line is unreachable in-process and
+   * deleting it changes no test, which is exactly how it was found missing.
+   */
+  onBeforeLock?: () => Promise<void>;
 };
 
 export function credentialLockPath(): string {
@@ -49,6 +60,8 @@ export async function ensureAccessToken(input: EnsureTokenInput): Promise<CloudC
   const current = await readCredential(input.apiHost);
   if (!current) return null;
   if (usable(current, now(), skewMs)) return current;
+
+  if (input.onBeforeLock) await input.onBeforeLock();
 
   const release = await acquireLock(credentialLockPath());
   if (!release) {

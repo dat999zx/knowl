@@ -3,6 +3,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  GitUnavailableError,
   NoGitRemoteError,
   normalizeRemoteUrl,
   resolveRepoIdentity,
@@ -95,5 +96,21 @@ describe('resolveRepoIdentity', () => {
     await makeGitRepo(REPO, {});
 
     expect(() => resolveRepoIdentity(REPO)).toThrow(NoGitRemoteError);
+  });
+
+  it('says git is missing rather than blaming a remote that is really there', async () => {
+    // spawnSync reports a missing binary as status null with `error` set, and `status !== 0`
+    // is true for null. Without checking `error` first, a machine with no git on PATH is told
+    // to add a remote it already has.
+    await makeGitRepo(REPO, { origin: 'git@github.com:acme/web.git' });
+    const realPath = process.env.PATH;
+    process.env.PATH = '';
+
+    try {
+      expect(() => resolveRepoIdentity(REPO)).toThrow(GitUnavailableError);
+      expect(() => resolveRepoIdentity(REPO)).not.toThrow(NoGitRemoteError);
+    } finally {
+      process.env.PATH = realPath;
+    }
   });
 });

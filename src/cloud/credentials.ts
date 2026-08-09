@@ -40,16 +40,39 @@ async function readFileOrEmpty(): Promise<CredentialFile> {
   }
 }
 
+/** Distinguishes two writes in flight in one process; the pid alone does not. */
+let temporaryCounter = 0;
+
 async function writeFileAtomically(file: CredentialFile): Promise<void> {
   const target = credentialsPath();
   await fs.mkdir(path.dirname(target), { recursive: true });
   // Same directory, so the rename is on one filesystem and therefore atomic. A temp file in
   // the OS temp dir can land on another volume, where rename degrades to copy-then-delete
   // and a reader can observe a half-written file.
-  const temporary = `${target}.${process.pid}.tmp`;
+  const temporary = `${target}.${process.pid}.${temporaryCounter++}.tmp`;
   await fs.writeFile(temporary, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
   if (process.platform !== 'win32') await fs.chmod(temporary, 0o600);
   await fs.rename(temporary, target);
+}
+
+/**
+ * One read-modify-write at a time within this process.
+ *
+ * Every mutation rewrites the whole file, so two overlapping writes both read the same
+ * starting state and the later rename discards the earlier host outright -- logging in to
+ * staging silently forgets production. Chained rather than locked because these are ordinary
+ * in-process awaits; the cross-process case that actually costs a session, refresh-token
+ * rotation, is serialized separately by `credentialLockPath` in `token.ts`.
+ *
+ * The chain absorbs rejections so one failed write cannot wedge every write after it, while
+ * the caller still sees its own error.
+ */
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+function serialized<T>(operation: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(operation, operation);
+  writeQueue = run.then(() => undefined, () => undefined);
+  return run;
 }
 
 export async function readCredential(apiHost: string): Promise<CloudCredential | null> {
@@ -58,13 +81,17 @@ export async function readCredential(apiHost: string): Promise<CloudCredential |
 }
 
 export async function writeCredential(apiHost: string, credential: CloudCredential): Promise<void> {
-  const file = await readFileOrEmpty();
-  file.hosts[normalizeApiHost(apiHost)] = credential;
-  await writeFileAtomically(file);
+  await serialized(async () => {
+    const file = await readFileOrEmpty();
+    file.hosts[normalizeApiHost(apiHost)] = credential;
+    await writeFileAtomically(file);
+  });
 }
 
 export async function clearCredential(apiHost: string): Promise<void> {
-  const file = await readFileOrEmpty();
-  delete file.hosts[normalizeApiHost(apiHost)];
-  await writeFileAtomically(file);
+  await serialized(async () => {
+    const file = await readFileOrEmpty();
+    delete file.hosts[normalizeApiHost(apiHost)];
+    await writeFileAtomically(file);
+  });
 }

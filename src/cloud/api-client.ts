@@ -30,9 +30,24 @@ export type CloudApi = {
   listWorkspaces(accessToken: string): Promise<CloudWorkspace[]>;
 };
 
-export function createCloudApi(options: { apiHost: string; fetchImpl?: FetchLike }): CloudApi {
+/**
+ * A black-holed connection must fail, not hang.
+ *
+ * The dropped latency budget was about live retrieval queries, and that reasoning never
+ * covered auth: `knowl login` and `knowl cloud connect` are foreground commands with a person
+ * waiting on them, and a TCP connection that is accepted and then never answered produces no
+ * output and no error until the user gives up.
+ */
+const DEFAULT_TIMEOUT_MS = 30_000;
+
+export function createCloudApi(options: {
+  apiHost: string;
+  fetchImpl?: FetchLike;
+  timeoutMs?: number;
+}): CloudApi {
   const host = normalizeApiHost(options.apiHost);
   const doFetch = options.fetchImpl ?? ((url, init) => fetch(url, init));
+  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   async function request<T>(
     pathname: string,
@@ -42,11 +57,22 @@ export function createCloudApi(options: { apiHost: string; fetchImpl?: FetchLike
     if (init.body !== undefined) headers['content-type'] = 'application/json';
     if (init.accessToken) headers.authorization = `Bearer ${init.accessToken}`;
 
-    const response = await doFetch(`${host}${pathname}`, {
-      method: init.method,
-      headers,
-      body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    });
+    let response: Response;
+    try {
+      response = await doFetch(`${host}${pathname}`, {
+        method: init.method,
+        headers,
+        body: init.body === undefined ? undefined : JSON.stringify(init.body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error: any) {
+      // Reported as a CloudApiError so every caller has one error type to handle, and as 408
+      // so a timeout is distinguishable from a refusal the server actually issued.
+      if (error?.name === 'TimeoutError') {
+        throw new CloudApiError(408, `${pathname} timed out after ${timeoutMs}ms`, 'timeout');
+      }
+      throw error;
+    }
 
     // A non-JSON body is a proxy or gateway answering, not the API. Reporting the status is
     // more useful than a parse error that names neither the endpoint nor the code.

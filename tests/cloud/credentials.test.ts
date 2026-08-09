@@ -73,6 +73,19 @@ describe('cloud credential store', () => {
     expect(await readCredential(HOST)).toEqual(credential('a'));
   });
 
+  it('keeps both hosts when two writes race inside one process', async () => {
+    // Each write is a read-modify-write of one shared file. Unserialized, both read the same
+    // empty file and the second rename discards the first host entirely -- and both wrote
+    // through a temp path named only for the pid, so they were clobbering that too.
+    await Promise.all([
+      writeCredential(HOST, credential('prod')),
+      writeCredential(OTHER, credential('staging')),
+    ]);
+
+    expect((await readCredential(HOST))?.accessToken).toBe('prod');
+    expect((await readCredential(OTHER))?.accessToken).toBe('staging');
+  });
+
   it('writes atomically, leaving no partial file behind', async () => {
     await writeCredential(HOST, credential('a'));
     const entries = await fs.readdir(path.dirname(credentialsPath()));

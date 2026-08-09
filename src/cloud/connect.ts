@@ -1,6 +1,6 @@
 import { loadConfig, saveConfig } from '../core/config.js';
 import { createCloudApi, type CloudApi, type CloudRole, type CloudWorkspace } from './api-client.js';
-import { readCredential } from './credentials.js';
+import { normalizeApiHost, readCredential } from './credentials.js';
 import { resolveRepoIdentity } from './repo-identity.js';
 
 export type CloudPointer = {
@@ -23,6 +23,7 @@ export type ConnectResult =
   | { status: 'connected'; pointer: CloudPointer; role: CloudRole }
   | { status: 'not-logged-in' }
   | { status: 'no-workspaces' }
+  | { status: 'unknown-workspace'; workspaceId: string; workspaces: CloudWorkspace[] }
   | { status: 'ambiguous'; workspaces: CloudWorkspace[] };
 
 /**
@@ -46,16 +47,28 @@ export async function runConnect(input: ConnectInput): Promise<ConnectResult> {
   // them together would tell someone with no workspaces to pick one from an empty list.
   if (workspaces.length === 0) return { status: 'no-workspaces' };
 
-  const chosen = input.workspaceId
-    ? workspaces.find(entry => entry.id === input.workspaceId)
-    : workspaces.length === 1 ? workspaces[0] : undefined;
+  // A named id that matches nothing is its own answer, not ambiguity. Folding it in told a
+  // user who had just typed `--workspace` to re-run with `--workspace`, and said "you belong
+  // to more than one workspace" to someone who belongs to exactly one -- the same collapse
+  // that `no-workspaces` was split out to avoid.
+  let chosen: CloudWorkspace | undefined;
+  if (input.workspaceId) {
+    chosen = workspaces.find(entry => entry.id === input.workspaceId);
+    if (!chosen) return { status: 'unknown-workspace', workspaceId: input.workspaceId, workspaces };
+  } else if (workspaces.length === 1) {
+    chosen = workspaces[0];
+  }
 
   // Guessing between several workspaces would silently publish a team's knowledge into
   // another team's store, which there is no unpublish for.
   if (!chosen) return { status: 'ambiguous', workspaces };
 
   const pointer: CloudPointer = {
-    apiHost: input.apiHost,
+    // Normalized, because unlike a credential key this value is written into a committed file
+    // and read by every teammate who clones. `--api https://API.knowl.dev/` would otherwise
+    // travel verbatim while every lookup against it normalized, leaving config disagreeing
+    // with itself about the name of the same deployment.
+    apiHost: normalizeApiHost(input.apiHost),
     workspaceId: chosen.id,
     workspaceName: chosen.name,
     repo: identity.identity,

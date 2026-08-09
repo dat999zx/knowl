@@ -147,6 +147,51 @@ describe('runConnect', () => {
     expect(result).toMatchObject({ status: 'connected', role: 'reader' });
   });
 
+  it('commits a normalized api host, since the pointer travels to every teammate', async () => {
+    await makeRepo('git@github.com:acme/web.git');
+    await writeCredential(HOST, credential);
+
+    const result = await runConnect({
+      projectRoot: REPO,
+      apiHost: 'https://API.knowl.dev/',
+      api: api([{ id: 'w1', name: 'Acme', role: 'editor' }]),
+    });
+
+    expect(result).toMatchObject({ status: 'connected' });
+    expect((await loadConfig(REPO)).cloud?.apiHost).toBe(HOST);
+  });
+
+  it('names a workspace id that matches nothing instead of calling it ambiguous', async () => {
+    // A typo'd --workspace used to fall through to "you belong to more than one workspace,
+    // re-run with --workspace <id>" -- advice the user had just followed. It also fired when
+    // they belonged to exactly one.
+    await makeRepo('git@github.com:acme/web.git');
+    await writeCredential(HOST, credential);
+
+    const result = await runConnect({
+      projectRoot: REPO,
+      apiHost: HOST,
+      workspaceId: 'w-typo',
+      api: api([{ id: 'w1', name: 'Acme', role: 'editor' }]),
+    });
+
+    expect(result).toMatchObject({ status: 'unknown-workspace', workspaceId: 'w-typo' });
+  });
+
+  it('leaves config untouched when the named workspace does not exist', async () => {
+    await makeRepo('git@github.com:acme/web.git');
+    await writeCredential(HOST, credential);
+
+    await runConnect({
+      projectRoot: REPO,
+      apiHost: HOST,
+      workspaceId: 'w-typo',
+      api: api([{ id: 'w1', name: 'Acme', role: 'editor' }]),
+    });
+
+    expect((await loadConfig(REPO)).cloud).toBeUndefined();
+  });
+
   it('refuses a repo with no git remote', async () => {
     await makeRepo(null);
     await writeCredential(HOST, credential);

@@ -101,6 +101,33 @@ describe('cloud api client', () => {
     expect((calls[1].init?.headers as Record<string, string>)?.authorization).toBe('Bearer token-1');
   });
 
+  it('gives up on a connection that never answers instead of hanging the command', async () => {
+    // A person is waiting on `knowl login`. A socket that is accepted and then black-holed
+    // produces no output and no error, forever, unless something aborts it.
+    const fetchImpl: FetchLike = (_url, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject((init.signal as AbortSignal).reason));
+    });
+
+    const api = createCloudApi({ apiHost: HOST, fetchImpl, timeoutMs: 25 });
+
+    await expect(api.listWorkspaces('t')).rejects.toMatchObject({
+      name: 'CloudApiError',
+      status: 408,
+      code: 'timeout',
+    });
+  });
+
+  it('passes an abort signal on every request, including the unauthenticated one', async () => {
+    const { fetchImpl, calls } = stubFetch(() => ({
+      status: 200,
+      body: { deviceCode: 'd', userCode: 'u', verificationUri: 'v', intervalSeconds: 5, expiresInSeconds: 900 },
+    }));
+
+    await createCloudApi({ apiHost: HOST, fetchImpl }).startDeviceAuthorization();
+
+    expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
+  });
+
   it('trims a trailing slash off the host rather than producing a double slash', async () => {
     const { fetchImpl, calls } = stubFetch(() => ({ status: 200, body: { workspaces: [] } }));
 
