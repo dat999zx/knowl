@@ -179,13 +179,24 @@ here would compile while producing a manifest `queryFederated` cannot read:
  * repo yields no kin, which is the correct answer: a cloud workspace is a team, not a fork
  * lineage, and calling colleagues' repos kin would attach a divergence warning to every row.
  */
-function synthesizedManifest(workspaceId: string, repo: string): WorkspaceManifest {
-  return createManifest(workspaceId, [{ name: repo }]);
+function synthesizedManifest(workspaceId: string, repo: string, config: ProjectConfig): WorkspaceManifest {
+  return {
+    ...createManifest(workspaceId, embeddingIdentityFromConfig(config)),
+    repos: [{ name: repo }],
+  };
 }
 ```
 
-If `createManifest`'s signature does not match, construct the object literally against the
-`WorkspaceManifest` type — but do not reach for `as`.
+Two things this gets right that are easy to get wrong:
+
+`createManifest(name, embedding)` takes **no repo list** — it returns `repos: []`, so the entry
+is spread on afterwards.
+
+The embedding identity is **this repo's own, never null.** `openTeamStore` embeds the replica
+under the project's config root, so the replica genuinely does share this repo's vector space —
+this is a statement of fact, not a convenience. Passing null makes `workspaceDoctorChecks`
+compare null against a configured local identity and warn that the two are invisible to each
+other, which is advice to realign with a workspace that does not exist.
 
 Replace the body of `resolveWorkspace`:
 
@@ -643,10 +654,20 @@ describe('the replica never reaches auto-injected context', () => {
 Run: `npm.cmd test -- tests/cloud/injection-guard.test.ts`
 Expected: PASS immediately. These pin an invariant that already holds — that is the point. A guard written after the violation is a guard written too late.
 
-- [ ] **Step 3: Prove the first guard can fail**
+- [ ] **Step 3: Prove the guards can fail**
 
-Temporarily add the replica to `configuredNamespaces` in `src/store/namespaces.ts` — return an extra descriptor with `databasePath: teamStorePath(config.cloud.workspaceId)` when `config.cloud` is set. Run the test.
-Expected: both the namespace guard and the composed-context guard FAIL. Revert the change and confirm they pass again. A guard that cannot fail is not protecting anything.
+**Mutate `defaultNamespaces`, not `configuredNamespaces`.** `composeContext` calls
+`queryLayeredKnowledge(root, query, defaultNamespaces(root), ...)` — it passes its descriptors
+explicitly and never consults `configuredNamespaces` at all. Mutating the latter fails only the
+namespace guard and leaves the composed-context guard green, which reads as "the end-to-end
+assertion is satisfied" when it has simply not been exercised.
+
+In `src/store/namespaces.ts`, temporarily have `defaultNamespaces` append a descriptor pointing
+at `teamStorePath(...)` for a hard-coded workspace id matching the test's. Run the test.
+
+Expected: **all three** guards FAIL, including the poison string appearing in the context pack.
+Revert and confirm they pass again. A guard that cannot fail is not protecting anything — and a
+mutation aimed at the wrong function is how a guard comes to look proven when it is not.
 
 - [ ] **Step 4: Commit**
 

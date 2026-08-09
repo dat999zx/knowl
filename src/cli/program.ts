@@ -45,7 +45,7 @@ import { runConfigUi } from './config/ui.js';
 import { DEFAULT_API_HOST, runLogin, runLogout } from '../cloud/login.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
-import { stagePublish } from '../cloud/publish.js';
+import { pushStaged, stagePublish } from '../cloud/publish.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -749,6 +749,45 @@ cloudCommand
       }
     } catch (error: any) {
       console.error(`Pull failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+cloudCommand
+  .command('push')
+  .description('Send staged knowledge, once its code is on the default branch')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      const result = await pushStaged({ projectRoot: root, config });
+
+      if (result.status === 'not-connected') {
+        console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
+        process.exit(1);
+      }
+      if (result.status === 'not-logged-in') {
+        console.error('Not signed in. Run knowl login first.');
+        process.exit(1);
+      }
+      if (result.status === 'forbidden') {
+        console.error(`You are a ${result.role} in this workspace, which cannot publish.`);
+        process.exit(1);
+      }
+      if (result.status === 'gated') {
+        console.error(`${result.staged} item(s) stay staged. ${result.detail}`);
+        process.exit(1);
+      }
+
+      console.log(`Published ${result.created} new and ${result.updated} updated item(s).`);
+      for (const outcome of result.conflicts) {
+        console.log(`  conflict  ${outcome.id} -- the workspace has a newer version. Pull, re-read, and publish again.`);
+      }
+      for (const outcome of result.foreign) {
+        console.log(`  ${outcome.status}  ${outcome.id} -- retrying will not help; these stay staged.`);
+      }
+    } catch (error: any) {
+      console.error(`Push failed: ${error.message}`);
       process.exit(1);
     }
   });

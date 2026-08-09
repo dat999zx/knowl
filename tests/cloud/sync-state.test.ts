@@ -36,6 +36,7 @@ describe('sync state', () => {
       cursor: null,
       lastSyncedAt: '2026-08-09T12:00:00.000Z',
       lastError: null,
+      role: 'editor',
     }));
 
     expect(await inStore('roundtrip', () => readSyncState())).toEqual({
@@ -44,7 +45,18 @@ describe('sync state', () => {
       cursor: null,
       lastSyncedAt: '2026-08-09T12:00:00.000Z',
       lastError: null,
+      role: 'editor',
     });
+  });
+
+  it('reads a role the write never mentioned as unknown, not as permission', async () => {
+    // A replica synced by a build older than the column has no role recorded. Unknown is not
+    // denied -- the push proceeds and lets the server decide -- but it must not read as a role.
+    await inStore('no-role', () => writeSyncState({
+      apiHost: 'https://a', since: '1', cursor: null, lastSyncedAt: null, lastError: null,
+    } as never));
+
+    expect((await inStore('no-role', () => readSyncState()))?.role).toBeNull();
   });
 
   it('keeps `since` a string, so a bigint above 2^53 survives the round trip', async () => {

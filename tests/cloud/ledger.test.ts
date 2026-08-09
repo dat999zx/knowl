@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeDb, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import {
-  listPushed, listStaged, publishedVersion, recordPushed, stageForPublish,
+  listPushed, listStaged, publishedVersion, recordPushed, restageForPublish, stageForPublish,
 } from '../../src/cloud/ledger.js';
 
 const ROOT = path.resolve('./.knowl-ledger-root');
@@ -51,6 +51,20 @@ describe('publication ledger', () => {
 
     expect(await listStaged(WS)).toEqual([]);
     expect((await listPushed(WS)).map(row => row.itemId)).toEqual(['a1']);
+  });
+
+  it('re-stages a pushed item on request, without losing the version a republish needs', async () => {
+    // The deliberate half of the pair above. A sweep leaves a published atom alone; naming its
+    // id is the only way to send a correction, so it has to un-push the row -- and keep
+    // `remote_version`, because dropping it would make the republish arrive with no
+    // `expectedVersion`, which the server treats as a conflict by design.
+    await stageForPublish(['a1'], WS, 'main');
+    await recordPushed('a1', WS, 3);
+
+    await restageForPublish(['a1'], WS, 'main');
+
+    expect((await listStaged(WS)).map(row => row.itemId)).toEqual(['a1']);
+    expect(await publishedVersion('a1', WS)).toBe(3);
   });
 
   it('remembers the remote version, which every republish needs', async () => {

@@ -58,6 +58,44 @@ export async function stageForPublish(
   return staged;
 }
 
+/**
+ * Stage again, deliberately, something this machine has already pushed.
+ *
+ * The distinction from `stageForPublish` is who asked. A sweep (`--category decision`) means
+ * "publish the decisions that are not published", so an already-pushed atom is not part of the
+ * request and re-sending it would spend a version bump and an embedding job on identical content.
+ * Naming an id (`--id abc`) means "publish this", about an item the caller has in hand -- the
+ * only way to send a correction, and the request is meaningless if it silently does nothing.
+ *
+ * `remote_version` is deliberately NOT cleared. It is the only copy of that number on this
+ * machine, and the republish this call exists to enable is exactly what needs it: dropping it
+ * would make the next push arrive with no `expectedVersion`, which the server treats as a
+ * conflict by design.
+ */
+export async function restageForPublish(
+  itemIds: string[],
+  workspace: string,
+  branch: string | null,
+): Promise<number> {
+  if (itemIds.length === 0) return 0;
+  const stagedAt = new Date().toISOString();
+  let staged = 0;
+  for (const itemId of itemIds) {
+    const result = await getClient().execute({
+      sql: `INSERT INTO cloud_published (item_id, remote_workspace, staged_at, staged_on_branch)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT (item_id, remote_workspace) DO UPDATE SET
+              staged_at = excluded.staged_at,
+              staged_on_branch = excluded.staged_on_branch,
+              pushed_at = NULL,
+              retracted_at = NULL`,
+      args: [itemId, workspace, stagedAt, branch],
+    });
+    staged += Number(result.rowsAffected ?? 0);
+  }
+  return staged;
+}
+
 /** Staged and not yet sent. This is exactly what a push has to work through. */
 export async function listStaged(workspace: string): Promise<PublishedRecord[]> {
   const result = await getClient().execute({

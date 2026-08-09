@@ -70,6 +70,69 @@ export type SyncAtom = {
   assertions?: unknown[];
 };
 
+/**
+ * What travels up. `PublishItemSchema` on the server, mirrored to exactly the fields this client
+ * can produce -- nothing here is invented locally, so a field the server adds is simply not sent.
+ */
+export type PublishItem = {
+  id: string;
+  category: string;
+  title: string;
+  content: string;
+  reasoning?: string | null;
+  alternatives?: string[] | null;
+  tags?: string[] | null;
+  source?: string | null;
+  sourceCommit?: string | null;
+  affectedPaths?: string[] | null;
+  contentHash?: string | null;
+  lifecycleHash?: string | null;
+  status?: string;
+  freshness?: string;
+  confidence?: number;
+  provenance?: string | null;
+  conflictKey?: string | null;
+  conflictScope?: Record<string, unknown> | null;
+  conflictExclusive?: boolean;
+  steps?: string[];
+  /**
+   * The version this client believes is current. **Omitted, never null, on a first publish** --
+   * a first publish has no remote version to be stale against, and sending one would be a claim
+   * about a row that does not exist. On a republish it is mandatory: the server treats a
+   * republish without it as a conflict, deliberately, so an older client cannot acquire
+   * overwrite rights by not knowing the field exists.
+   */
+  expectedVersion?: number;
+};
+
+/**
+ * One outcome per atom, because the batch commits in one transaction and reports per item -- a
+ * single stale atom must not discard the rest.
+ *
+ * `foreign_origin` is separate from `conflict` and the distinction is the point: a conflict tells
+ * the client to re-read and retry, and here a retry would fail identically forever. `tombstoned`
+ * is separate for the same reason.
+ */
+export type PublishOutcome =
+  | { id: string; status: 'created'; version: number }
+  | { id: string; status: 'updated'; version: number }
+  | { id: string; status: 'conflict'; currentVersion: number }
+  | { id: string; status: 'foreign_origin'; originRepo: string }
+  | { id: string; status: 'deleted' }
+  | { id: string; status: 'tombstoned'; deletedAt: string };
+
+/**
+ * The two verbs this client sends on the update endpoint, and their asymmetry is deliberate.
+ *
+ * `needsReview` takes no version and bumps none: a drift report is an observation about an atom,
+ * not a revision of it, so a report is never dropped for arriving mid-edit. `reviewed` is a
+ * positive claim about specific content, so it takes `expectedVersion` and refuses to vouch for
+ * text the caller did not read.
+ */
+export type UpdateItemBody =
+  | { op: 'needsReview'; reason: string; observedAtCommit?: string }
+  | { op: 'reviewed'; expectedVersion: number; sourceCommit: string; note?: string };
+
 export type SyncRow =
   | { op: 'upsert'; seq: string; item: SyncAtom }
   | { op: 'delete'; seq: string; id: string; deletedAt: string };

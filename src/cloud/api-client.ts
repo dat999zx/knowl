@@ -1,6 +1,8 @@
 import { normalizeApiHost } from './credentials.js';
 import type { CloudCredential } from './credentials.js';
-import { parseSyncPage, type SyncPage } from './sync-contract.js';
+import {
+  parseSyncPage, type PublishItem, type PublishOutcome, type SyncPage, type UpdateItemBody,
+} from './sync-contract.js';
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -36,6 +38,18 @@ export type CloudApi = {
     cursor: string | null;
     limit?: number;
   }): Promise<SyncPage>;
+  publishItems(input: {
+    workspaceId: string;
+    accessToken: string;
+    originRepo: string;
+    items: PublishItem[];
+  }): Promise<{ outcomes: PublishOutcome[]; commitId: string | null }>;
+  updateItem(input: {
+    workspaceId: string;
+    accessToken: string;
+    itemId: string;
+    body: UpdateItemBody;
+  }): Promise<{ outcome: PublishOutcome | null }>;
 };
 
 /**
@@ -59,7 +73,7 @@ export function createCloudApi(options: {
 
   async function request<T>(
     pathname: string,
-    init: { method: 'GET' | 'POST'; body?: unknown; accessToken?: string },
+    init: { method: 'GET' | 'POST' | 'PATCH'; body?: unknown; accessToken?: string },
   ): Promise<{ status: number; body: T }> {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (init.body !== undefined) headers['content-type'] = 'application/json';
@@ -144,6 +158,38 @@ export function createCloudApi(options: {
       );
       if (status !== 200) fail('/sync', status, body as { code?: string; message?: string });
       return parseSyncPage(body);
+    },
+
+    /**
+     * A version conflict comes back **200 with a conflict outcome**, not 409.
+     *
+     * The batch commits in one transaction but reports per atom, so one body routinely carries
+     * created atoms beside conflicting ones, and there is no honest status for "two of these
+     * landed and one did not". A non-200 here is therefore a refusal of the whole request --
+     * a 403 for role, a 422 for a detected secret -- and every one of those is terminal.
+     */
+    async publishItems(input) {
+      const { status, body } = await request<{ outcomes: PublishOutcome[]; commitId: string | null }>(
+        `/v1/workspaces/${encodeURIComponent(input.workspaceId)}/knowledge`,
+        {
+          method: 'POST',
+          accessToken: input.accessToken,
+          body: { originRepo: input.originRepo, items: input.items },
+        },
+      );
+      if (status !== 200) fail('/knowledge', status, body as { code?: string; message?: string });
+      return { outcomes: body.outcomes ?? [], commitId: body.commitId ?? null };
+    },
+
+    /** `needsReview` answers `{ outcome: null }` -- it records an observation, not a revision. */
+    async updateItem(input) {
+      const { status, body } = await request<{ outcome: PublishOutcome | null }>(
+        `/v1/workspaces/${encodeURIComponent(input.workspaceId)}` +
+        `/knowledge/${encodeURIComponent(input.itemId)}`,
+        { method: 'PATCH', accessToken: input.accessToken, body: input.body },
+      );
+      if (status !== 200) fail('/knowledge/:itemId', status, body as { code?: string; message?: string });
+      return { outcome: body.outcome ?? null };
     },
   };
 }

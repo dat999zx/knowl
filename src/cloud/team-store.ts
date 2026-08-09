@@ -31,8 +31,18 @@ CREATE TABLE IF NOT EXISTS cloud_sync_state (
   since TEXT,
   cursor TEXT,
   last_synced_at TEXT,
-  last_error TEXT
+  last_error TEXT,
+  role TEXT
 )`;
+
+/**
+ * `role` was added after the first replicas existed, and `CREATE TABLE IF NOT EXISTS` will not
+ * add a column to one that already has the table. A duplicate-column error is the success case
+ * on every replica created since -- there is no `IF NOT EXISTS` for a column in SQLite, and
+ * probing `PRAGMA table_info` first would be a second round trip to learn what the failure
+ * already says.
+ */
+const ADD_ROLE_COLUMN = 'ALTER TABLE cloud_sync_state ADD COLUMN role TEXT';
 
 /**
  * `configRoot` is the *project's* root, not the replica's.
@@ -67,6 +77,7 @@ export async function withTeamStore<T>(
   return withDbPath(resolveStorage(configRoot).knowledge, async () =>
     withDbPath(teamStorePath(workspaceId), async () => {
       await getClient().execute(CREATE_SYNC_STATE);
+      await getClient().execute(ADD_ROLE_COLUMN).catch(() => {});
       return run();
     }));
 }

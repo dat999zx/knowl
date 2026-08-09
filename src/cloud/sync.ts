@@ -65,6 +65,10 @@ async function traverse(input: SyncInput): Promise<SyncResult | typeof RESYNC_RE
     let upserted = 0;
     let deleted = 0;
     let pages = 0;
+    // Carried across pages rather than read from the last one alone: a traversal that fails
+    // mid-flight still knows the role every page it did receive agreed on, and the failure
+    // writer below has to record something. Starts at whatever the replica already believed.
+    let role = state?.role ?? null;
 
     for (;;) {
       let page;
@@ -84,9 +88,12 @@ async function traverse(input: SyncInput): Promise<SyncResult | typeof RESYNC_RE
           cursor: state?.cursor ?? null,
           lastSyncedAt: state?.lastSyncedAt ?? null,
           lastError: String(error?.message ?? error),
+          role,
         });
         throw error;
       }
+
+      role = page.role;
 
       // Not an empty page: the server is refusing our watermark as older than retention.
       // Reading it as "nothing changed" would advance past commits never delivered and leave
@@ -118,6 +125,7 @@ async function traverse(input: SyncInput): Promise<SyncResult | typeof RESYNC_RE
       cursor: complete ? null : cursor,
       lastSyncedAt: new Date().toISOString(),
       lastError: null,
+      role,
     });
 
     return {

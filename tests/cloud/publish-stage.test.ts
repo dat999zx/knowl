@@ -123,6 +123,30 @@ describe('stagePublish', () => {
     expect(await staged()).toEqual([ids.decision]);
   });
 
+  it('re-stages an already-pushed item when its id is named, so a correction can be sent', async () => {
+    // Naming an id is a deliberate act about an item the caller has in hand, and it is the only
+    // route a correction has. Doing nothing here would make `knowl publish --id x --apply`
+    // report success and send nothing.
+    await stage({ ids: [ids.decision], apply: true });
+    await execute(`UPDATE cloud_published SET pushed_at = '2026-01-01T00:00:00.000Z', remote_version = 4`);
+
+    await stage({ ids: [ids.decision], apply: true });
+
+    expect(await staged()).toEqual([ids.decision]);
+  });
+
+  it('leaves an already-pushed item alone on a category sweep', async () => {
+    // A sweep means "publish the decisions that are not published". Re-staging what is already
+    // up there would spend a version bump and a server-side embedding job per atom on identical
+    // content, every time anyone ran the command.
+    await stage({ categories: ['decision'], apply: true });
+    await execute(`UPDATE cloud_published SET pushed_at = '2026-01-01T00:00:00.000Z', remote_version = 4`);
+
+    await stage({ categories: ['decision'], apply: true });
+
+    expect(await staged()).toEqual([]);
+  });
+
   it('does not change visibility', async () => {
     // Decision ee191dd7db024bec: publication state lives in the ledger, and `visibility` keeps
     // meaning "readable by linked local repos on this machine" exactly as before.
