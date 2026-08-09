@@ -1,7 +1,18 @@
+﻿import type { InValue } from '@libsql/client';
 import { getClient } from '../store/database.js';
 import type { SyncAtom, SyncRow } from './sync-contract.js';
 
 export type ApplyOutcome = { upserted: number; deleted: number };
+
+/**
+ * One statement, in the shape both `batch` and this module's own bookkeeping need.
+ *
+ * `args: unknown[]` does not satisfy libSQL's `InArgs`, so `batch` refused the array outright.
+ * Typing it as `InStatement[]` instead would compile and then break the deleted-row count below,
+ * which reads `.sql` off each entry -- `InStatement` may be a bare string. Naming the narrower
+ * shape keeps both true at once.
+ */
+type Statement = { sql: string; args: InValue[] };
 
 const json = (value: unknown): string | null =>
   value === undefined || value === null ? null : JSON.stringify(value);
@@ -68,7 +79,7 @@ function upsertStatement(item: SyncAtom) {
 export async function applySyncRows(rows: SyncRow[]): Promise<ApplyOutcome> {
   if (rows.length === 0) return { upserted: 0, deleted: 0 };
 
-  const statements: Array<{ sql: string; args: unknown[] }> = [];
+  const statements: Statement[] = [];
   let upserted = 0;
 
   for (const row of rows) {

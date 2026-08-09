@@ -71,10 +71,20 @@ export function createCloudApi(options: {
   const doFetch = options.fetchImpl ?? ((url, init) => fetch(url, init));
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
+  /**
+   * The error shape every endpoint may answer with, alongside its own.
+   *
+   * Carried in `request`'s RETURN type, not only in the cast inside it. Annotating the return as
+   * plain `T` erased the intersection at the boundary, so every caller handed its body to `fail`
+   * -- whose parameter is all-optional, and therefore a weak type -- and TypeScript refused it
+   * for having no property in common. Four call sites, one missing type argument.
+   */
+  type ApiErrorBody = { code?: string; message?: string };
+
   async function request<T>(
     pathname: string,
     init: { method: 'GET' | 'POST' | 'PATCH'; body?: unknown; accessToken?: string },
-  ): Promise<{ status: number; body: T }> {
+  ): Promise<{ status: number; body: T & ApiErrorBody }> {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (init.body !== undefined) headers['content-type'] = 'application/json';
     if (init.accessToken) headers.authorization = `Bearer ${init.accessToken}`;
@@ -98,11 +108,11 @@ export function createCloudApi(options: {
 
     // A non-JSON body is a proxy or gateway answering, not the API. Reporting the status is
     // more useful than a parse error that names neither the endpoint nor the code.
-    const body = await response.json().catch(() => ({})) as T & { code?: string; message?: string };
+    const body = await response.json().catch(() => ({})) as T & ApiErrorBody;
     return { status: response.status, body };
   }
 
-  function fail(pathname: string, status: number, body: { code?: string; message?: string }): never {
+  function fail(pathname: string, status: number, body: ApiErrorBody): never {
     throw new CloudApiError(status, body.message ?? `${pathname} failed with ${status}`, body.code);
   }
 
