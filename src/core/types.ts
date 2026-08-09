@@ -280,6 +280,20 @@ export interface ProjectConfig {
     global?: { enabled?: boolean; path?: string };
   };
   /**
+   * Pointer to a Knowl Cloud workspace. Never a credential -- this file is deliberately
+   * force-committable so the pointer travels with a clone, and `isConfigTrackedByGit`
+   * exists for that case. Credentials live in `knowlHome()/credentials.json`.
+   */
+  cloud?: {
+    apiHost: string;
+    workspaceId: string;
+    workspaceName?: string;
+    /** Normalized git remote identity this repo publishes under. */
+    repo: string;
+    /** Which remote it was derived from, so a fork's choice stays inspectable. */
+    remote?: string;
+  };
+  /**
    * Live change-impact detection: what a session read, whether that code moved underneath
    * it, and findings an agent can pull and adjudicate. Off by default for two separate
    * reasons. Refusing the write itself is a separate switch, `gate` below, for a separate

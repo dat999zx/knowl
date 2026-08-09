@@ -43,6 +43,7 @@ import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embed
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './config/service.js';
 import { runConfigUi } from './config/ui.js';
 import { DEFAULT_API_HOST, runLogin, runLogout } from '../cloud/login.js';
+import { runConnect } from '../cloud/connect.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -632,6 +633,47 @@ program
   .action(async options => {
     const { wasLoggedIn } = await runLogout(options.api);
     console.log(wasLoggedIn ? `Signed out of ${options.api}.` : `Not signed in to ${options.api}.`);
+  });
+
+const cloudCommand = program.command('cloud').description('Connect this repository to a Knowl Cloud workspace');
+
+cloudCommand
+  .command('connect')
+  .description('Point this repository at a cloud workspace (publishes nothing)')
+  .option('--api <host>', 'API host', DEFAULT_API_HOST)
+  .option('--workspace <id>', 'Workspace id, when you belong to more than one')
+  .option('--remote <name>', 'Git remote to derive repo identity from', 'origin')
+  .action(async options => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const result = await runConnect({
+        projectRoot: root,
+        apiHost: options.api,
+        workspaceId: options.workspace,
+        remote: options.remote,
+      });
+
+      if (result.status === 'not-logged-in') {
+        console.error('Not signed in. Run knowl login first.');
+        process.exit(1);
+      }
+      if (result.status === 'no-workspaces') {
+        console.error('You are signed in but do not belong to any workspace yet.');
+        console.error('Ask a workspace owner to invite you, or create one in the web console.');
+        process.exit(1);
+      }
+      if (result.status === 'ambiguous') {
+        console.error('You belong to more than one workspace. Re-run with --workspace <id>:');
+        for (const entry of result.workspaces) console.error(`  ${entry.id}  ${entry.name} (${entry.role})`);
+        process.exit(1);
+      }
+
+      console.log(`Connected ${result.pointer.repo} to ${result.pointer.workspaceName} as ${result.role}.`);
+      console.log('Nothing has been published. Use knowl publish to share knowledge.');
+    } catch (error: any) {
+      console.error(`Connect failed: ${error.message}`);
+      process.exit(1);
+    }
   });
 
 const workspaceCommand = program.command('workspace').description('Link several repositories so agents can read across them');
