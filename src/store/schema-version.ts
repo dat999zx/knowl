@@ -57,15 +57,40 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * precision can be measured before anything is allowed to block. Additive on exactly the same
  * reasoning as level 3: one new table, no altered column, no backfill, so `KNOWL_SCHEMA_VERSION`
  * stays at 1 and no installed build is locked out of a database it can still read completely.
+ *
  */
 /*
- * Level 5 adds `cloud_published` -- what this machine has staged for, and pushed to, a cloud
+ * Level 5 adds `knowledge_items.last_drift_at` -- when the automatic drift check last saw an
+ * item's cited files move, and NULL once somebody revisited it. One nullable column, no
+ * backfill (an existing row has no recorded observation, and inventing one would refuse
+ * promotion for items nothing has actually contradicted), so `KNOWL_SCHEMA_VERSION` stays at
+ * 1. The bump is what makes `ensureFreshnessColumns` run on databases that already exist:
+ * without it, every installed store would skip the column and standing promotion there would
+ * fall back to the ungated behaviour this column was added to prevent.
+ *
+ * Level 6 adds `knowledge_forget_log` -- what was true about an item at the instant it was
+ * destroyed, kept apart from `knowledge_tombstones` because tombstones ride in portable exports
+ * and merge by upsert, so usage numbers there would both leave the machine and be overwritable
+ * by a peer. Additive on the same reasoning as levels 3 and 4: one new table, no altered column,
+ * no backfill. A backfill is not merely skipped but impossible -- the deciding numbers for every
+ * past deletion were discarded at the moment of deletion, which is the defect the table fixes.
+ *
+ * The bump is load-bearing rather than bookkeeping. Every delete now writes a forget-log row in
+ * the same transaction as its tombstone, so a store already stamped at level 5 by an installed
+ * build would skip `SCHEMA_STATEMENTS`, never create the table, and fail every delete -- and,
+ * inside `applyKnowledgeGc`'s single transaction, roll back the whole collection run.
+ *
+ * Level 7 adds `cloud_published` -- what this machine has staged for, and pushed to, a cloud
  * workspace. Additive on the same reasoning as levels 3 and 4: one new table, no altered column
  * and no backfill. What the bump buys is that a database created before the cloud client existed
  * still gets the table, since the gate is the only thing that decides whether `SCHEMA_STATEMENTS`
  * runs at all.
+ *
+ * It is 7 rather than 5 because two other additive levels reached `main` while this branch was
+ * open. The number is a changelog position, not a claim about this table, so it moves freely --
+ * what must not move is an already-published level's meaning.
  */
-export const KNOWL_MIGRATION_LEVEL = 5;
+export const KNOWL_MIGRATION_LEVEL = 7;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

@@ -40,6 +40,17 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
    * standing reset, so their whole history is still theirs to count.
    */
   tierSince: text('tier_since'),
+  /**
+   * When the automatic drift check last saw this item's cited files move, and NULL once
+   * somebody has revisited the item since. Deliberately NOT `freshness`: flipping that would
+   * do the corpus-wide ranking damage `drift-auto.ts` measured and refused, whereas this
+   * column changes nothing an agent reads. Standing promotion is its only consumer.
+   *
+   * Store-internal, so it is absent from `KnowledgeItem` and from every export: it records
+   * what THIS machine's git history did to the item, which is not a portable property of the
+   * claim. An imported copy starts unstamped and earns its own observation here.
+   */
+  lastDriftAt: text('last_drift_at'),
   /** 'observed' | 'user_stated' | 'inferred'; NULL on rows written before the column existed. */
   provenance: text('provenance'),
   conflictKey: text('conflict_key'), conflictScope: text('conflict_scope', { mode: 'json' }).$type<Record<string, unknown>>(), conflictExclusive: integer('conflict_exclusive', { mode: 'boolean' }).notNull().default(false),

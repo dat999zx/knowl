@@ -51,6 +51,7 @@ const SCHEMA_STATEMENTS = [
     confidence REAL NOT NULL DEFAULT 1.0,
     tier TEXT NOT NULL DEFAULT 'asserted',
     tier_since TEXT,
+    last_drift_at TEXT,
     provenance TEXT,
     conflict_key TEXT, conflict_scope TEXT, conflict_exclusive INTEGER NOT NULL DEFAULT 0,
     superseded_by_id TEXT,
@@ -161,6 +162,40 @@ const SCHEMA_STATEMENTS = [
     id TEXT PRIMARY KEY,
     deleted_at TEXT NOT NULL,
     reason TEXT
+  );`,
+
+  /**
+   * The forget log: what was true about an item at the instant it was destroyed. See
+   * `forget-log.ts` for why this is not the tombstone -- the short version is that tombstones
+   * ride in portable exports and merge by upsert, so usage numbers put there would both leak
+   * off the machine and be overwritable by a peer.
+   *
+   * No foreign key to `knowledge_items` on purpose: the row it describes is already gone, and
+   * `ON DELETE CASCADE` would destroy the record at the exact moment it became the only copy.
+   * A TEXT id rather than AUTOINCREMENT, matching every other table here, so no
+   * `sqlite_sequence` appears for `snapshot-table-ownership` to trip over.
+   *
+   * `origin_repo` is copied off the item rather than resolved from the caller's workspace,
+   * because it answers "whose item was this" and not "who ran the collection". Several repos
+   * share one database in workspace v2, so without it "which of MY items were taken" is not a
+   * question this table can answer -- and the column has to exist from the start, since a row
+   * written without it can never be attributed afterwards. NULL outside a workspace.
+   */
+  `CREATE TABLE IF NOT EXISTS knowledge_forget_log (
+    id TEXT PRIMARY KEY,
+    knowledge_item_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    tier TEXT,
+    status TEXT,
+    origin_repo TEXT,
+    deleted_at TEXT NOT NULL,
+    policy TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    retrieval_count INTEGER NOT NULL DEFAULT 0,
+    last_retrieved_at TEXT,
+    age_days INTEGER,
+    bytes INTEGER
   );`,
 
   `CREATE TABLE IF NOT EXISTS skill_steps (
@@ -621,6 +656,11 @@ async function ensureFreshnessColumns(client: Client): Promise<void> {
   }
   if (!columns.includes('content_hash')) {
     await client.execute('ALTER TABLE knowledge_items ADD COLUMN content_hash TEXT;');
+  }
+  if (!columns.includes('last_drift_at')) {
+    // Left NULL rather than backfilled: an existing row has no recorded drift observation,
+    // and inventing one would refuse promotion for items nothing has actually contradicted.
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN last_drift_at TEXT;');
   }
   if (!columns.includes('freshness')) {
     await client.execute(`ALTER TABLE knowledge_items ADD COLUMN freshness TEXT NOT NULL DEFAULT '${DEFAULT_FRESHNESS}';`);

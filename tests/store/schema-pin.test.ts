@@ -32,9 +32,18 @@ const SCHEMA_PINS: Record<number, string> = {
   // gate would have refused, recorded while it refuses nothing. Additive again, so
   // `KNOWL_SCHEMA_VERSION` again does not move.
   4: '4592e436daefd236d1f15554d1a2db3a',
-  // 5 adds `cloud_published` -- what this machine has staged for, and pushed to, a cloud
-  // workspace. Additive again, so `KNOWL_SCHEMA_VERSION` again does not move.
-  5: '6ab2cff26adb1c04de4dc645e86dae62',
+  // 5 adds `knowledge_items.last_drift_at`, the stored drift observation standing promotion
+  // reads. One nullable column, no backfill, so `KNOWL_SCHEMA_VERSION` again does not move.
+  5: 'b4aceb35414d23bf1240b4b1679bee78',
+  // 6 adds `knowledge_forget_log`: the deciding numbers behind a deletion, which the tombstone
+  // could not carry because it is exported and upsert-merged. Additive again, so
+  // `KNOWL_SCHEMA_VERSION` again does not move.
+  6: '5f36731e329b1d86976f39f439f7ff39',
+  // 7 adds `cloud_published` -- what this machine has staged for, and pushed to, a cloud
+  // workspace. Additive again, so `KNOWL_SCHEMA_VERSION` again does not move. It landed at 7
+  // rather than 5 because two other additive levels reached main first; the fingerprint is
+  // recomputed here rather than carried over, since a level-7 schema holds all three tables.
+  7: 'b847bdb205a1ee63b1ff3b612c794c89',
 };
 
 let root: string;

@@ -317,7 +317,18 @@ export async function applyKnowledgeGc(
       if (!before) continue;
 
       if (candidate.action === 'purge') {
-        await repo.deleteKnowledgeItem(candidate.itemId, tx);
+        // The reason and the retrieval evidence exist here and nowhere else. Before the forget
+        // log they died with this call: the tombstone got the literal `'purged'`, so the store
+        // remembered that something went and never why, and no collection threshold could be
+        // checked against what it actually took.
+        const summary = access.get(candidate.itemId);
+        await repo.deleteKnowledgeItem(candidate.itemId, tx, {
+          policy: 'gc:purge',
+          reason: candidate.reason,
+          retrievalCount: summary?.retrievalCount ?? 0,
+          lastRetrievedAt: summary?.lastRetrievedAt ?? null,
+          bytes: candidate.beforeBytes,
+        });
         changes.push({
           itemId: candidate.itemId,
           action: 'delete',

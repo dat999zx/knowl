@@ -41,7 +41,15 @@ export function formatHierarchyToMarkdown(hierarchy: {
   if (hierarchy.state.length === 0) md += `No active state updates recorded.\n\n`;
   else {
     hierarchy.state.forEach(s => {
-      md += `${itemText(s.title).padEnd(20)} = ${itemText(s.content)}\n`;
+      // The bold label is containment, not decoration, and this is the one line in the file that
+      // used to lack it. `inlineUntrusted` is documented as safe "in a heading, a list item or a
+      // table cell" -- every one of which supplies a prefix -- because collapsing line breaks
+      // stops a body FORMING a block construct, not a body that already BEGINS with one. This
+      // line rendered a stored title at column 0, so a title of `# ...` was a live H1 in the
+      // agent's context, indistinguishable from knowl's own voice. Every neighbouring section
+      // already led with `- **`; only this one did not. The `padEnd(20)` that stood here bought
+      // nothing to weigh against it: real titles are sentences, so it aligned almost nothing.
+      md += `- **${itemText(s.title)}** = ${itemText(s.content)}\n`;
     });
     md += `\n`;
   }
@@ -117,9 +125,17 @@ export type WorkspaceContext = {
  * code repo with private internals when all you have is a name.
  */
 function workspaceSection(workspace: WorkspaceContext): string {
+  // Manifest fields, and manifest fields reach this card unreviewed. `normalizeRepoEntry` is not
+  // the defence: it is documented never to reject, because `discoverRepos` reads every manifest
+  // on the machine and one bad entry must not take down a machine-wide command. So `name` is
+  // whatever string is in the file and only `role` happens to be collapsed there. Containing at
+  // the render site is the rule this module already follows everywhere else, and it is a no-op
+  // on well-formed values -- a newline in `name` was otherwise a live heading at column 0.
   const line = (repo: WorkspaceContextRepo, isSelf: boolean): string => {
-    const parts = [`- ${repo.name}${isSelf ? ' (this repo)' : ''}${repo.kin ? ` [kin: ${repo.kin}]` : ''}`];
-    if (repo.role) parts.push(repo.role);
+    const name = inlineUntrusted(repo.name);
+    const kin = repo.kin ? inlineUntrusted(repo.kin) : '';
+    const parts = [`- ${name}${isSelf ? ' (this repo)' : ''}${kin ? ` [kin: ${kin}]` : ''}`];
+    if (repo.role) parts.push(inlineUntrusted(repo.role));
     parts.push(repo.defaultVisibility === 'workspace' ? 'new writes are workspace-visible' : 'new writes stay private');
     return parts.join(' — ');
   };
@@ -128,7 +144,7 @@ function workspaceSection(workspace: WorkspaceContext): string {
     name: workspace.repo, role: workspace.selfRole, defaultVisibility: workspace.selfDefaultVisibility,
   };
   return [
-    `## Workspace: ${workspace.name}`,
+    `## Workspace: ${inlineUntrusted(workspace.name)}`,
     '',
     line(self, true),
     ...workspace.peers.map(peer => line(peer, false)),
@@ -174,7 +190,16 @@ export function formatRecentContextToMarkdown(context: {
       // a newline used to break out to column 0, where an ATX heading or a fence opener is
       // live markdown; collapsing the line breaks removes the line start it would need.
       md += `- **${inlineUntrusted(item.title)}** (${item.category}, updated ${item.updatedAt})\n`;
-      md += `  ${inlineUntrusted(truncateText(item.content, maxItemChars))}\n`;
+      // The `— ` is containment, and two spaces were not. CommonMark allows a block construct up
+      // to THREE spaces of indentation, so this line's two-space indent neutralised nothing: a
+      // stored body BEGINNING with `# `, `---`, `> ` or a fence opener rendered as live markdown
+      // here, in the bootstrap card, injected with no human in the loop. `inlineUntrusted` was
+      // doing its job -- it stops a body FORMING a line start, and this body never needed to,
+      // because the formatter handed it one. Any literal non-marker character closes it; the em
+      // dash is the continuation idiom `renderSkillRow` already uses in this same card. It costs
+      // two characters against a budget the notice argument weighed in hundreds, on the three
+      // items `getRecentContext` returns.
+      md += `  — ${inlineUntrusted(truncateText(item.content, maxItemChars))}\n`;
       if (options.includeTags && item.tags && item.tags.length > 0) {
         md += `  Tags: ${inlineUntrusted(item.tags.join(', '))}\n`;
       }

@@ -323,12 +323,11 @@ describe('change-impact schema', () => {
     expect(String(rows.rows[0].target_path)).toBe('src/a.ts');
   });
 
-  it('keeps the migration level at or past 4 with the schema version pinned to 1', () => {
-    // `>=`, not `===`. This suite's stake is that the impact tables have a migration to arrive
-    // by -- level 4 -- and that later additive work does not silently undo it. Pinning the exact
-    // number here made every unrelated additive table fail this file, which says nothing about
-    // change impact; `tests/store/schema-pin.test.ts` is what enforces that a schema change
-    // bumps the level at all.
+  it('keeps this schema at or above its migration level with the schema version pinned to 1', () => {
+    // `>=`, not `===`. The impact tables arrived at level 4 and every later additive change
+    // moves the level past it, so an equality here fails on the next unrelated column and
+    // teaches whoever adds it to edit this line rather than read it. What is actually being
+    // guarded is that level 4 still runs, which an equality does not say any better.
     expect(KNOWL_MIGRATION_LEVEL).toBeGreaterThanOrEqual(4);
     // Additive tables never move the compatibility floor: raising it locks out installed builds
     // that would otherwise read this database perfectly well.
