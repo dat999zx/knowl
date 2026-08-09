@@ -42,6 +42,7 @@ import { formatSweepReport, sweepRepos } from './upgrade-all.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './config/service.js';
 import { runConfigUi } from './config/ui.js';
+import { DEFAULT_API_HOST, runLogin, runLogout } from '../cloud/login.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -598,6 +599,40 @@ function parseDefaultVisibility(value: string | undefined): 'workspace' | 'repo'
   if (value === 'workspace' || value === 'repo') return value;
   throw new Error(`--default-visibility must be "repo" or "workspace", not "${value}".`);
 }
+
+program
+  .command('login')
+  .description('Sign in to a Knowl Cloud workspace')
+  .option('--api <host>', 'API host', DEFAULT_API_HOST)
+  .action(async options => {
+    try {
+      const result = await runLogin({
+        apiHost: options.api,
+        onPrompt: authorization => {
+          console.log(`\nOpen ${authorization.verificationUri} and enter this code:\n`);
+          console.log(`    ${authorization.userCode}\n`);
+          console.log('Waiting for approval...');
+        },
+      });
+      if (result.status === 'expired') {
+        console.error('The code expired before it was approved. Run knowl login again.');
+        process.exit(1);
+      }
+      console.log(`Signed in to ${options.api}.`);
+    } catch (error: any) {
+      console.error(`Login failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('logout')
+  .description('Clear stored Knowl Cloud credentials')
+  .option('--api <host>', 'API host', DEFAULT_API_HOST)
+  .action(async options => {
+    const { wasLoggedIn } = await runLogout(options.api);
+    console.log(wasLoggedIn ? `Signed out of ${options.api}.` : `Not signed in to ${options.api}.`);
+  });
 
 const workspaceCommand = program.command('workspace').description('Link several repositories so agents can read across them');
 
