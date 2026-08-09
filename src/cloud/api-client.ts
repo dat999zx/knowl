@@ -1,5 +1,6 @@
 import { normalizeApiHost } from './credentials.js';
 import type { CloudCredential } from './credentials.js';
+import { parseSyncPage, type SyncPage } from './sync-contract.js';
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -28,6 +29,13 @@ export type CloudApi = {
   pollForToken(deviceCode: string): Promise<CloudCredential | 'pending'>;
   refresh(refreshToken: string): Promise<CloudCredential>;
   listWorkspaces(accessToken: string): Promise<CloudWorkspace[]>;
+  fetchSyncPage(input: {
+    workspaceId: string;
+    accessToken: string;
+    since: string | null;
+    cursor: string | null;
+    limit?: number;
+  }): Promise<SyncPage>;
 };
 
 /**
@@ -120,6 +128,22 @@ export function createCloudApi(options: {
       });
       if (status !== 200) fail('/v1/workspaces', status, body);
       return body.workspaces ?? [];
+    },
+
+    async fetchSyncPage(input) {
+      const query = new URLSearchParams();
+      // Omitted entirely on a first sync -- an absent `since` is what selects snapshot mode,
+      // and sending `since=0` would ask for a delta from a commit that never existed.
+      if (input.since !== null) query.set('since', input.since);
+      if (input.cursor !== null) query.set('cursor', input.cursor);
+      query.set('limit', String(input.limit ?? 100));
+
+      const { status, body } = await request<unknown>(
+        `/v1/workspaces/${encodeURIComponent(input.workspaceId)}/sync?${query.toString()}`,
+        { method: 'GET', accessToken: input.accessToken },
+      );
+      if (status !== 200) fail('/sync', status, body as { code?: string; message?: string });
+      return parseSyncPage(body);
     },
   };
 }
