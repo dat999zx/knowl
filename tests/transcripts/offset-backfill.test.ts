@@ -297,11 +297,27 @@ describe('the backfill inside a budget', () => {
     await regressToNoOffsets();
     await openTranscriptDb(dbPath);
 
-    // A second, unindexed session, and a budget that expires inside the walk.
-    await fs.writeFile(sessionFile('b'), many(400).join(''));
+    // The second session is sized in BATCHES, not in lines, and that is the whole point.
+    // `indexOneFile` tests the deadline between committed WRITE_BATCHes of 200, so what decides
+    // whether a budget survives the walk is how many batches the machine can commit inside it --
+    // and the earlier 400-line version of this file was two batches, which a macOS runner
+    // finishes inside 30 ms. It then reported `complete: true`, correctly went on to fill
+    // offsets, and failed here. Not a flake in the usual sense: it was reproducible on that
+    // runner and green on every other, which is the shape a wall-clock premise makes.
+    //
+    // 100 batches instead. Measured 2026-08-09 on the slowest machine in the matrix's class,
+    // this indexer commits 1.26 batches per 30 ms, so completing the file inside the budget
+    // needs a machine roughly 79x faster. That is not a wider guess at the same race -- it moves
+    // the premise from "one batch is slower than 30 ms", which is false on fast hardware, to
+    // "a hundred SQLite write transactions are", which no runner makes true.
+    const CONTENT_BATCHES = 100;
+    await fs.writeFile(sessionFile('b'), many(CONTENT_BATCHES * 200).join(''));
     const result = await pass(Date.now() + 30);
 
+    // The precondition -- content genuinely still un-indexed when the pass returned...
     expect(result.complete).toBe(false);
+    // ...and the guarantee that hangs off it. `regressToNoOffsets` above left real work for the
+    // backfill, so this is zero because the rule held, not because there was nothing to do.
     expect(result.offsetsFilled).toBe(0);
   }, 30_000);
 });
