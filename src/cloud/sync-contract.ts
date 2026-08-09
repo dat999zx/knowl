@@ -73,7 +73,44 @@ export type SyncAtom = {
 /**
  * What travels up. `PublishItemSchema` on the server, mirrored to exactly the fields this client
  * can produce -- nothing here is invented locally, so a field the server adds is simply not sent.
+ *
+ * "Can produce" is the whole test, and it is easy to under-read. `evidence`, `assertions` and
+ * `tier` were absent from this type for one release while the local store held all three and the
+ * server accepted all three -- so every published atom arrived uncited, un-asserted, and at the
+ * server's default tier, with nothing red anywhere. A field belongs here the moment the local
+ * schema has it, not when someone notices it missing.
  */
+export type PublishEvidence = {
+  id: string;
+  /** `type`, never `kind`. The wire and the local column agree; this client did not, once. */
+  type: string;
+  locator: string;
+  contentHash?: string | null;
+  excerpt?: string | null;
+  observedAt: string;
+  metadata?: Record<string, unknown> | null;
+  /**
+   * From the `knowledge_evidence` LINK row, not from `evidence`.
+   *
+   * The same citation can support one atom and contradict another, so the relationship belongs
+   * to the pairing rather than to the evidence -- reading it off the evidence row would give
+   * every atom citing a file the first one's verdict.
+   */
+  relationship: string;
+};
+
+/** A time-bounded sub-claim. `validTo: null` is an interval still open, not an unknown one. */
+export type PublishAssertion = {
+  id: string;
+  content: string;
+  validFrom: string;
+  validTo?: string | null;
+  recordedAt: string;
+  replacedAt?: string | null;
+  confidence: number;
+  sourceEvidenceId?: string | null;
+};
+
 export type PublishItem = {
   id: string;
   category: string;
@@ -94,7 +131,16 @@ export type PublishItem = {
   conflictKey?: string | null;
   conflictScope?: Record<string, unknown> | null;
   conflictExclusive?: boolean;
+  /**
+   * Earned, not asserted -- promoted from real retrievals since `tier_since`.
+   *
+   * Omitting it lets the server apply its default, which discards the one quality signal this
+   * client measures rather than accepts, at the exact moment of sharing.
+   */
+  tier?: string;
   steps?: string[];
+  evidence?: PublishEvidence[];
+  assertions?: PublishAssertion[];
   /**
    * The version this client believes is current. **Omitted, never null, on a first publish** --
    * a first publish has no remote version to be stale against, and sending one would be a claim

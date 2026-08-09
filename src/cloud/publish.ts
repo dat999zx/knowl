@@ -1,4 +1,4 @@
-import type { KnowledgeCategory, ProjectConfig } from '../core/types.js';
+﻿import type { KnowledgeCategory, ProjectConfig } from '../core/types.js';
 import { closeDb, getClient, initDb } from '../store/database.js';
 import { selectOwnedItems, type PromoteTarget } from '../workspace/promote.js';
 import { createCloudApi, type CloudApi } from './api-client.js';
@@ -7,7 +7,9 @@ import {
 } from './ledger.js';
 import { checkPublishGate, currentBranchOf } from './publish-gate.js';
 import { readSyncState } from './sync-state.js';
-import type { PublishItem, PublishOutcome } from './sync-contract.js';
+import { listAssertions } from '../store/assertions.js';
+import { listEvidenceForItem } from '../store/evidence-repository.js';
+import type { PublishAssertion, PublishEvidence, PublishItem, PublishOutcome } from './sync-contract.js';
 import { withTeamStore } from './team-store.js';
 import { ensureAccessToken } from './token.js';
 
@@ -76,7 +78,22 @@ export type PushResult =
   | { status: 'not-logged-in' }
   | { status: 'gated'; reason: string; detail: string; staged: number }
   | { status: 'forbidden'; role: string }
-  | { status: 'pushed'; created: number; updated: number; conflicts: PublishOutcome[]; foreign: PublishOutcome[] };
+  | {
+    status: 'pushed';
+    created: number;
+    updated: number;
+    /** Stale locally. A retry after re-reading can succeed, which is why these are their own field. */
+    conflicts: PublishOutcome[];
+    /**
+     * Refused in a way no retry improves: `foreign_origin`, and `deleted`/`tombstoned` should the
+     * server ever answer with them.
+     *
+     * Named for the verdict rather than for `foreign_origin`, which is only the variant reachable
+     * today -- a bucket named after one of its members tells the next reader the wrong thing about
+     * the others the moment retraction is wired.
+     */
+    rejected: PublishOutcome[];
+  };
 
 /** The contract's own cap. An unbounded batch is an unbounded transaction on the server. */
 const MAX_BATCH = 200;
@@ -111,7 +128,7 @@ export async function pushStaged(input: {
     // refusal about nothing -- it would tell a developer on a feature branch to go and pull, for
     // a push that had no work in it either way.
     if (staged.length === 0) {
-      return { status: 'pushed', created: 0, updated: 0, conflicts: [], foreign: [] };
+      return { status: 'pushed', created: 0, updated: 0, conflicts: [], rejected: [] };
     }
 
     const verdict = checkPublishGate(input.projectRoot);
@@ -145,13 +162,13 @@ export async function pushStaged(input: {
       if (item) items.push(item);
     }
     if (items.length === 0) {
-      return { status: 'pushed', created: 0, updated: 0, conflicts: [], foreign: [] };
+      return { status: 'pushed', created: 0, updated: 0, conflicts: [], rejected: [] };
     }
 
     let created = 0;
     let updated = 0;
     const conflicts: PublishOutcome[] = [];
-    const foreign: PublishOutcome[] = [];
+    const rejected: PublishOutcome[] = [];
 
     for (let start = 0; start < items.length; start += MAX_BATCH) {
       // A thrown CloudApiError propagates. The secret case in particular must NOT be caught and
@@ -175,11 +192,11 @@ export async function pushStaged(input: {
         // is to re-read, not to insist; `foreign_origin` and `tombstoned` mean a retry cannot
         // succeed at all, which is exactly why the server reports them separately.
         if (outcome.status === 'conflict') conflicts.push(outcome);
-        else foreign.push(outcome);
+        else rejected.push(outcome);
       }
     }
 
-    return { status: 'pushed', created, updated, conflicts, foreign };
+    return { status: 'pushed', created, updated, conflicts, rejected };
   } finally {
     await closeDb();
   }
@@ -196,13 +213,49 @@ export async function pushStaged(input: {
 async function loadPublishItem(itemId: string, workspace: string): Promise<PublishItem | null> {
   const result = await getClient().execute({
     sql: `SELECT id, category, title, content, reasoning, alternatives, tags, source, source_commit,
-                 affected_paths, content_hash, lifecycle_hash, status, freshness, confidence,
+                 affected_paths, content_hash, lifecycle_hash, status, freshness, confidence, tier,
                  provenance, conflict_key, conflict_scope, conflict_exclusive
           FROM knowledge_items WHERE id = ?`,
     args: [itemId],
   });
   const row = result.rows[0] as Record<string, unknown> | undefined;
   if (!row) return null;
+
+  // Citations travel with the atom. `sync-apply.ts` has always written them on the way DOWN, so
+  // leaving them out here made the pipe one-directional: every atom this client published arrived
+  // at the team store uncited, and nothing anywhere went red about it.
+  //
+  // Failing soft, like `steps` below: an atom that reaches the team without its citations is worth
+  // more than one that never leaves because a join failed.
+  const evidence: PublishEvidence[] = await listEvidenceForItem(itemId).then(
+    rows => rows.map(entry => ({
+      id: entry.id,
+      type: entry.type,
+      locator: entry.locator,
+      contentHash: entry.contentHash ?? null,
+      excerpt: entry.excerpt ?? null,
+      observedAt: entry.observedAt,
+      metadata: (entry.metadata ?? null) as Record<string, unknown> | null,
+      relationship: entry.relationship,
+    })),
+    () => [],
+  );
+
+  // `knowledgeItemId` is dropped deliberately: the assertion rides inside the atom that owns it,
+  // so repeating the owner on the wire would be a second source of truth for the same fact.
+  const assertions: PublishAssertion[] = await listAssertions(itemId).then(
+    rows => rows.map(entry => ({
+      id: entry.id,
+      content: entry.content,
+      validFrom: entry.validFrom,
+      validTo: entry.validTo ?? null,
+      recordedAt: entry.recordedAt,
+      replacedAt: entry.replacedAt ?? null,
+      confidence: entry.confidence,
+      sourceEvidenceId: entry.sourceEvidenceId ?? null,
+    })),
+    () => [],
+  );
 
   const steps = await getClient().execute({
     sql: 'SELECT instruction FROM skill_steps WHERE knowledge_item_id = ? ORDER BY step_order',
@@ -236,7 +289,12 @@ async function loadPublishItem(itemId: string, workspace: string): Promise<Publi
     conflictKey: row.conflict_key === null || row.conflict_key === undefined ? null : String(row.conflict_key),
     conflictScope: parseJson<Record<string, unknown>>(row.conflict_scope),
     conflictExclusive: Number(row.conflict_exclusive) === 1,
+    // Omitted when absent rather than sent as null: the schema treats each as optional, and an
+    // empty array would assert "this atom has no citations" where "none recorded" is the truth.
+    ...(row.tier === null || row.tier === undefined ? {} : { tier: String(row.tier) }),
     ...(steps.length > 0 ? { steps } : {}),
+    ...(evidence.length > 0 ? { evidence } : {}),
+    ...(assertions.length > 0 ? { assertions } : {}),
     ...(expectedVersion === null ? {} : { expectedVersion }),
   };
 }

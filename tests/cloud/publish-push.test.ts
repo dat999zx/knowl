@@ -1,4 +1,4 @@
-import fs from 'node:fs/promises';
+﻿import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -8,6 +8,9 @@ import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
+import { createEvidence, linkKnowledgeEvidence } from '../../src/store/evidence-repository.js';
+import { listAssertions } from '../../src/store/assertions.js';
+import { applySyncRows } from '../../src/cloud/sync-apply.js';
 import { pushStaged, stagePublish } from '../../src/cloud/publish.js';
 import { listStaged, publishedVersion, stageForPublish } from '../../src/cloud/ledger.js';
 import { dropTeamStore, withTeamStore } from '../../src/cloud/team-store.js';
@@ -251,7 +254,7 @@ describe('pushStaged', () => {
       api: fakeApi([{ id: ids.decision, status: 'foreign_origin', originRepo: 'github.com/acme/api' }]),
     });
 
-    expect((result as any).foreign).toHaveLength(1);
+    expect((result as any).rejected).toHaveLength(1);
     expect((result as any).conflicts).toHaveLength(0);
   });
 
@@ -286,5 +289,121 @@ describe('pushStaged', () => {
     expect(sizes.every(size => size <= 200)).toBe(true);
     // 250 staged bulk ids plus the decision the fixture already staged.
     expect(sizes.reduce((a, b) => a + b, 0)).toBe(251);
+  });
+
+  it('sends evidence, and the citation survives a round trip into a replica', async () => {
+    // The v1 design requires evidence to cross with a published item, and `sync-apply.ts` already
+    // writes it on the way DOWN -- so omitting it here is a one-directional pipe that leaves every
+    // atom this client publishes uncited, with nothing going red to say so.
+    //
+    // Asserted by round trip rather than against the schema. Comparing a hand-built payload to a
+    // type proves the type; it proves nothing about what the loader actually reads.
+    await initDb(CLONE);
+    const evidence = await createEvidence({
+      type: 'file',
+      locator: 'src/deploy.ts',
+      contentHash: 'sha256:deploy',
+      excerpt: 'rollbackToTag()',
+      observedAt: '2026-08-09T10:00:00.000Z',
+      metadata: { line: 42 },
+    });
+    await linkKnowledgeEvidence({
+      knowledgeItemId: ids.decision, evidenceId: evidence.id, relationship: 'supports',
+    });
+    await closeDb();
+
+    await stagePublish({ projectRoot: CLONE, config: connected, ids: [ids.decision], apply: true });
+
+    let body: any;
+    await pushStaged({
+      projectRoot: CLONE, config: connected,
+      api: fakeApi([{ id: ids.decision, status: 'created', version: 1 }], sent => { body = sent; }),
+    });
+
+    const sent = body.items.find((item: any) => item.id === ids.decision);
+    expect(sent.evidence).toHaveLength(1);
+    expect(sent.evidence[0]).toMatchObject({
+      id: evidence.id,
+      // `type`, never `kind` -- the name the wire and the local column agree on, and the one the
+      // sync fixtures already caught this client getting wrong once.
+      type: 'file',
+      locator: 'src/deploy.ts',
+      excerpt: 'rollbackToTag()',
+      // Carried from the LINK row, not from `evidence` -- the same citation can support one atom
+      // and contradict another.
+      relationship: 'supports',
+    });
+
+    // The other half of the round trip: what was sent has to be what a replica can apply.
+    const applied = await withTeamStore(WS, CLONE, async () => {
+      await applySyncRows([{
+        op: 'upsert',
+        seq: '1',
+        item: {
+          ...sent,
+          originRepo: 'github.com/acme/web', authorUserId: 'u1', supersededById: null,
+          version: 1, visibility: 'workspace', review: null,
+          publishedAt: '2026-08-09T10:00:00.000Z',
+          createdAt: '2026-08-09T10:00:00.000Z',
+          updatedAt: '2026-08-09T10:00:00.000Z',
+        },
+      }]);
+      const rows = await getClient().execute(
+        'SELECT e.locator, ke.relationship FROM evidence e JOIN knowledge_evidence ke ON ke.evidence_id = e.id',
+      );
+      return rows.rows.map(row => `${row.locator}:${row.relationship}`);
+    });
+
+    expect(applied).toEqual(['src/deploy.ts:supports']);
+  });
+
+  it('sends the tier the atom earned, rather than letting the server default it', async () => {
+    // Tier is EARNED -- promoted from real retrievals since `tier_since`. Dropping it discards the
+    // quality signal at the exact moment of sharing, and it is the signal the publish policy in
+    // the spec is built on.
+    await initDb(CLONE);
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET tier = ? WHERE id = ?',
+      args: ['verified', ids.decision],
+    });
+    await closeDb();
+
+    await stagePublish({ projectRoot: CLONE, config: connected, ids: [ids.decision], apply: true });
+
+    let body: any;
+    await pushStaged({
+      projectRoot: CLONE, config: connected,
+      api: fakeApi([{ id: ids.decision, status: 'created', version: 1 }], sent => { body = sent; }),
+    });
+
+    expect(body.items.find((item: any) => item.id === ids.decision).tier).toBe('verified');
+  });
+
+  it('sends assertions, so a time-bounded sub-claim is not lost on the way up', async () => {
+    // No assertion is created here, and that is the point: `storeKnowledgeItemDeduped` opens one
+    // for every atom it writes. So this was not an exotic field lost on unusual items -- every
+    // atom this client published was arriving with its open interval stripped.
+    await initDb(CLONE);
+    const [existing] = await listAssertions(ids.decision);
+    expect(existing, 'fixture atom should already carry an open assertion').toBeDefined();
+    await closeDb();
+
+    await stagePublish({ projectRoot: CLONE, config: connected, ids: [ids.decision], apply: true });
+
+    let body: any;
+    await pushStaged({
+      projectRoot: CLONE, config: connected,
+      api: fakeApi([{ id: ids.decision, status: 'created', version: 1 }], sent => { body = sent; }),
+    });
+
+    const sent = body.items.find((item: any) => item.id === ids.decision);
+    expect(sent.assertions).toHaveLength(1);
+    // `validTo: null` is an interval still open, not an unknown one -- the distinction the
+    // assertion table exists to carry, and the one a dropped field erases.
+    expect(sent.assertions[0]).toMatchObject({ id: existing.id, validTo: null });
+    expect(typeof sent.assertions[0].validFrom).toBe('string');
+    // `knowledgeItemId` is the local link and has no place on the wire: the assertion rides inside
+    // the atom that owns it, so repeating the owner would be a second source of truth for it.
+    expect(sent.assertions[0].knowledgeItemId).toBeUndefined();
   });
 });
