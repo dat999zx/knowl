@@ -1,0 +1,14 @@
+{
+  "cursor": null,
+  "mode": "delta",
+  "nextSeq": "2",
+  "role": "reader",
+  "rows": [
+    {
+      "deletedAt": "2026-08-09T00:00:00.000Z",
+      "id": "a",
+      "op": "delete",
+      "seq": "2"
+    }
+  ]
+}

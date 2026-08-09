@@ -1,0 +1,53 @@
+{
+  "cursor": null,
+  "mode": "delta",
+  "nextSeq": "3",
+  "role": "reader",
+  "rows": [
+    {
+      "deletedAt": "2026-08-09T00:00:00.000Z",
+      "id": "b",
+      "op": "delete",
+      "seq": "2"
+    },
+    {
+      "item": {
+        "affectedPaths": null,
+        "alternatives": null,
+        "assertions": [],
+        "authorUserId": "00000000-0000-0000-0000-0000000000e1",
+        "category": "fact",
+        "confidence": 1,
+        "conflictExclusive": false,
+        "conflictKey": null,
+        "conflictScope": null,
+        "content": "Content c",
+        "contentHash": null,
+        "createdAt": "2026-08-09T00:00:00.000Z",
+        "evidence": [],
+        "freshness": "fresh",
+        "id": "c",
+        "lifecycleHash": null,
+        "originRepo": "acme/platform",
+        "provenance": null,
+        "publishedAt": "2026-08-09T00:00:00.000Z",
+        "reasoning": null,
+        "review": null,
+        "source": null,
+        "sourceCommit": null,
+        "status": "active",
+        "steps": [],
+        "supersededById": null,
+        "tags": null,
+        "tier": "asserted",
+        "tierSince": null,
+        "title": "Atom c",
+        "updatedAt": "2026-08-09T00:00:00.000Z",
+        "version": 1,
+        "visibility": "workspace"
+      },
+      "op": "upsert",
+      "seq": "3"
+    }
+  ]
+}
