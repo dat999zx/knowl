@@ -1,9 +1,10 @@
 import path from 'node:path';
-import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql as drizzleSql } from 'drizzle-orm';
 import { getDb, withClientTransaction } from './database.js';
 import type { DbConnection } from './database.js';
 import * as schema from './schema.js';
 import { recordTombstone } from './tombstones.js';
+import { FORGET_LOG_POLICY_MANUAL, recordForgetLogEntry } from './forget-log.js';
 import { normalizeConflictKey, normalizeConflictScope } from './conflicts.js';
 import {
   Project,
@@ -577,18 +578,102 @@ export async function createKnowledgeCommit(
   }
 }
 
-export async function deleteKnowledgeItem(id: string, dbConnection?: DbConnection): Promise<void> {
+/**
+ * `forget` carries what the caller knew and this function cannot: which policy fired, the
+ * sentence explaining it, and the retrieval evidence that policy decided against. Optional so
+ * an ordinary delete still works, defaulted so a caller that supplies nothing still leaves a
+ * usable record rather than none.
+ */
+export type ForgetContext = {
+  policy?: string;
+  reason?: string;
+  retrievalCount?: number;
+  lastRetrievedAt?: string | null;
+  bytes?: number | null;
+};
+
+export async function deleteKnowledgeItem(
+  id: string,
+  dbConnection?: DbConnection,
+  forget?: ForgetContext,
+): Promise<void> {
   const conn = dbConnection || getDb();
   try {
+    // Read before the delete: the forget log records what was true at the instant of
+    // destruction, and after the delete there is nothing left to read it from —
+    // `knowledge_access` cascades away with the item.
+    const doomed = await getKnowledgeItem(id, conn);
+    const observed = forget?.retrievalCount === undefined ? await readAccessEvidence(id, conn) : null;
+    const deletedAt = new Date().toISOString();
+
     await conn
       .delete(schema.knowledgeItems)
       .where(eq(schema.knowledgeItems.id, id));
     // Written through the same connection — and therefore the same transaction when GC
     // passes one — so a purge can never lose its tombstone.
-    await recordTombstone(id, new Date().toISOString(), 'purged', conn);
+    //
+    // The literal `'purged'` stays. This string is written into every portable export and
+    // merged by upsert on import, so widening it would change what leaves the machine and what
+    // a peer can overwrite. The real reason goes to the local-only forget log instead.
+    await recordTombstone(id, deletedAt, 'purged', conn);
+
+    if (doomed) {
+      await recordForgetLogEntry({
+        itemId: id,
+        title: doomed.title,
+        category: doomed.category,
+        tier: doomed.tier ?? null,
+        status: doomed.status ?? null,
+        deletedAt,
+        policy: forget?.policy ?? FORGET_LOG_POLICY_MANUAL,
+        reason: forget?.reason ?? 'Deleted without a recorded reason',
+        retrievalCount: forget?.retrievalCount ?? observed?.retrievalCount ?? 0,
+        lastRetrievedAt: forget?.lastRetrievedAt ?? observed?.lastRetrievedAt ?? null,
+        ageDays: daysBetween(doomed.updatedAt, deletedAt),
+        bytes: forget?.bytes ?? Buffer.byteLength(doomed.content ?? '', 'utf8'),
+      }, conn);
+    }
   } catch (error: any) {
     throw new DatabaseError(`Failed to delete knowledge item: ${error.message}`);
   }
+}
+
+/**
+ * The retrieval evidence for one item, read on the delete path when the caller did not supply
+ * it. GC already holds a whole-store summary and passes it, so this only runs for deletes that
+ * arrive without one.
+ *
+ * It exists because defaulting to zero was worse than recording nothing: verified against a copy
+ * of a real store, deleting the three MOST-retrieved items produced three log rows all reading
+ * `retrievals=0`. An audit trail that states a false number is not a weaker audit trail, it is a
+ * misleading one, and it would have been read as evidence those items were dead.
+ */
+async function readAccessEvidence(
+  id: string,
+  conn: any,
+): Promise<{ retrievalCount: number; lastRetrievedAt: string | null }> {
+  try {
+    const rows = await conn.all(drizzleSql`
+      SELECT COUNT(*) AS retrieval_count, MAX(retrieved_at) AS last_retrieved_at
+      FROM knowledge_access
+      WHERE knowledge_item_id = ${id} AND surface != 'feedback'
+    `);
+    const row = rows?.[0];
+    return {
+      retrievalCount: Number(row?.retrieval_count ?? 0),
+      lastRetrievedAt: row?.last_retrieved_at ? String(row.last_retrieved_at) : null,
+    };
+  } catch {
+    // Never fail a delete because its audit row could not be enriched.
+    return { retrievalCount: 0, lastRetrievedAt: null };
+  }
+}
+
+function daysBetween(from: string, to: string): number | null {
+  const start = Date.parse(from);
+  const end = Date.parse(to);
+  if (Number.isNaN(start) || Number.isNaN(end)) return null;
+  return Math.max(0, Math.floor((end - start) / 86_400_000));
 }
 
 export async function getKnowledgeCommits(projectId: string, limit = 50, dbConnection?: DbConnection): Promise<KnowledgeCommit[]> {
