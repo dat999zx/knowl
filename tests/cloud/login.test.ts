@@ -1,0 +1,149 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { readCredential, writeCredential } from '../../src/cloud/credentials.js';
+import { runLogin, runLogout } from '../../src/cloud/login.js';
+import type { CloudApi, DeviceAuthorization } from '../../src/cloud/api-client.js';
+import { CloudApiError } from '../../src/cloud/api-client.js';
+
+const HOME = path.resolve('./.knowl-login-home');
+const HOST = 'https://api.knowl.dev';
+
+/** The instant the expiry test advances its clock towards. Fifteen minutes, like the server's. */
+const CODE_EXPIRES_AT = new Date(Date.parse('2026-08-09T12:00:00.000Z') + 900_000).toISOString();
+
+/**
+ * The server's real shape: an absolute `expiresAt`, and no `verificationUri`.
+ *
+ * This fixture used to carry `expiresInSeconds: 900` and a URL, neither of which the server
+ * sends. That is what made the deadline `now() + NaN` in production while every test here passed
+ * -- the fake was written from what the client wanted rather than from what the server returns.
+ */
+const authorization: DeviceAuthorization = {
+  deviceCode: 'dev-1',
+  userCode: 'ABCD-EFGH',
+  intervalSeconds: 5,
+  expiresAt: CODE_EXPIRES_AT,
+};
+
+const credential = {
+  accessToken: 'a',
+  refreshToken: 'r',
+  expiresAt: '2099-01-01T00:00:00.000Z',
+  sessionId: 'sess-1',
+};
+
+function fakeApi(polls: Array<'pending' | typeof credential | CloudApiError>): CloudApi {
+  const queue = [...polls];
+  return {
+    startDeviceAuthorization: async () => authorization,
+    pollForToken: async () => {
+      const next = queue.shift();
+      if (next instanceof CloudApiError) throw next;
+      return next ?? 'pending';
+    },
+    refresh: async () => credential,
+    listWorkspaces: async () => [],
+  };
+}
+
+describe('runLogin', () => {
+  beforeEach(async () => {
+    process.env.KNOWL_HOME = HOME;
+    await fs.rm(HOME, { recursive: true, force: true }).catch(() => {});
+  });
+  afterEach(async () => {
+    delete process.env.KNOWL_HOME;
+    await fs.rm(HOME, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('shows the user the code before polling, not after', async () => {
+    // The code is what the user types into the browser. Printing it after the first poll
+    // means the first interval elapses before they can see what to do.
+    const seen: string[] = [];
+
+    await runLogin({
+      apiHost: HOST,
+      api: fakeApi([credential]),
+      onPrompt: auth => seen.push(auth.userCode),
+      sleep: async () => {},
+    });
+
+    expect(seen).toEqual(['ABCD-EFGH']);
+  });
+
+  it('stores the credential once approved', async () => {
+    const result = await runLogin({
+      apiHost: HOST,
+      api: fakeApi(['pending', 'pending', credential]),
+      onPrompt: () => {},
+      sleep: async () => {},
+    });
+
+    expect(result).toEqual({ status: 'authorized', sessionId: 'sess-1' });
+    expect(await readCredential(HOST)).toEqual(credential);
+  });
+
+  it('waits the interval the server advertised, not one of its own choosing', async () => {
+    // The server computes its rate limit from this number. Polling faster earns a 429 on the
+    // tenth of twelve polls, while the user is still reading the code.
+    const waits: number[] = [];
+
+    await runLogin({
+      apiHost: HOST,
+      api: fakeApi(['pending', credential]),
+      onPrompt: () => {},
+      sleep: async ms => { waits.push(ms); },
+    });
+
+    expect(waits).toEqual([5_000]);
+  });
+
+  it('gives up when the device code expires instead of polling forever', async () => {
+    // The clock advances by the interval on every poll and the deadline is the server's own
+    // `expiresAt`, so this reaches it in 180 polls. It is the one test that would run forever
+    // against a deadline the client could not compute -- which is exactly what shipped.
+    let elapsed = 0;
+    const result = await runLogin({
+      apiHost: HOST,
+      api: fakeApi(Array.from({ length: 500 }, () => 'pending' as const)),
+      onPrompt: () => {},
+      sleep: async ms => { elapsed += ms; },
+      now: () => Date.parse('2026-08-09T12:00:00.000Z') + elapsed,
+    });
+
+    expect(result).toEqual({ status: 'expired' });
+    expect(await readCredential(HOST)).toBeNull();
+  });
+
+  it('propagates a real error rather than treating it as pending', async () => {
+    await expect(runLogin({
+      apiHost: HOST,
+      api: fakeApi([new CloudApiError(429, 'slow down', 'rate_limited')]),
+      onPrompt: () => {},
+      sleep: async () => {},
+    })).rejects.toBeInstanceOf(CloudApiError);
+  });
+});
+
+describe('runLogout', () => {
+  beforeEach(async () => {
+    process.env.KNOWL_HOME = HOME;
+    await fs.rm(HOME, { recursive: true, force: true }).catch(() => {});
+  });
+  afterEach(async () => {
+    delete process.env.KNOWL_HOME;
+    await fs.rm(HOME, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('reports that there was nothing to clear', async () => {
+    expect(await runLogout(HOST)).toEqual({ wasLoggedIn: false });
+  });
+
+  it('clears the stored credential', async () => {
+    await writeCredential(HOST, credential);
+
+    expect(await runLogout(HOST)).toEqual({ wasLoggedIn: true });
+    expect(await readCredential(HOST)).toBeNull();
+  });
+});

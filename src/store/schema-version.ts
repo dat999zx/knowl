@@ -79,8 +79,18 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * the same transaction as its tombstone, so a store already stamped at level 5 by an installed
  * build would skip `SCHEMA_STATEMENTS`, never create the table, and fail every delete -- and,
  * inside `applyKnowledgeGc`'s single transaction, roll back the whole collection run.
+ *
+ * Level 7 adds `cloud_published` -- what this machine has staged for, and pushed to, a cloud
+ * workspace. Additive on the same reasoning as levels 3 and 4: one new table, no altered column
+ * and no backfill. What the bump buys is that a database created before the cloud client existed
+ * still gets the table, since the gate is the only thing that decides whether `SCHEMA_STATEMENTS`
+ * runs at all.
+ *
+ * It is 7 rather than 5 because two other additive levels reached `main` while this branch was
+ * open. The number is a changelog position, not a claim about this table, so it moves freely --
+ * what must not move is an already-published level's meaning.
  */
-export const KNOWL_MIGRATION_LEVEL = 6;
+export const KNOWL_MIGRATION_LEVEL = 7;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

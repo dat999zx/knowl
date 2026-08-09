@@ -4,29 +4,45 @@ import { hashKnowledgeLifecycle } from '../store/freshness.js';
 import { isImportedOrigin } from '../store/portability.js';
 import { createKnowledgeCommit } from '../store/repository.js';
 
-export type PromoteTarget = { id: string; title: string; category: string };
+/**
+ * The three lifecycle fields ride along because promotion has to rewrite `lifecycle_hash` from
+ * them, and re-reading the row to get them would open a window in which it changed underneath.
+ * Publication ignores them, which costs nothing.
+ */
+export type PromoteTarget = {
+  id: string;
+  title: string;
+  category: string;
+  status: string;
+  freshness: string;
+  supersededById: string | null;
+};
 export type PromoteResult = { items: PromoteTarget[]; applied: boolean; skippedForeign: number };
 
 /**
- * Backfill existing knowledge into workspace visibility.
+ * Which of these items this repo may speak for, and how many it may not.
  *
- * Category routing governs future writes only, so without this, linking shares nothing a
- * team already learned -- including the cross-repo decision that motivates the feature and
- * that already exists in someone's repo today.
+ * Extracted from `promoteItems` so publication can apply the identical ownership rules without
+ * its side effect -- promotion flips `visibility`, which cloud publication must not touch
+ * (decision `ee191dd7db024bec`). The two callers differ in exactly one way, `requireVisibility`,
+ * and everything else including every refusal message is one implementation. Rewording the
+ * refusals per caller would make one of the two wrong: they name `--category`, `--id` and the
+ * Windows `cmd.exe` comma-splitting trap, and those are the same traps either way.
  *
- * Promotion is a one-column update: it does not touch `content_hash`, create rows, or move
- * anything between databases. Only items this repo originated can be promoted, because
- * publishing another repo's knowledge is that repo's decision. There is deliberately no
- * `demote`: retracting something other repos have already read needs a mechanism this
- * design does not have.
+ * Reads the ambient database. The caller owns opening it.
  */
-export async function promoteItems(input: {
-  projectRoot: string;
+export async function selectOwnedItems(input: {
   repoName: string;
   categories?: KnowledgeCategory[];
   ids?: string[];
-  apply?: boolean;
-}): Promise<PromoteResult> {
+  /**
+   * Promotion only ever promotes unpromoted rows, so it passes `'repo'`. Publication must be
+   * able to stage a row already at `workspace` visibility, because sharing with linked local
+   * repos and publishing to a company workspace are different acts an item may do in either
+   * order.
+   */
+  requireVisibility?: 'repo';
+}): Promise<{ items: PromoteTarget[]; skippedForeign: number }> {
   const byCategory = input.categories?.length ? input.categories : null;
   const byId = input.ids?.length ? input.ids : null;
   if (!byCategory && !byId) {
@@ -46,9 +62,9 @@ export async function promoteItems(input: {
     );
   }
 
-  await initDb(input.projectRoot);
-  try {
+  {
     const client = getClient();
+    const visibilityClause = input.requireVisibility ? `visibility = '${input.requireVisibility}' AND ` : '';
     const selector = byId
       ? { clause: `id IN (${byId.map(() => '?').join(', ')})`, args: [...byId] as string[] }
       : { clause: `category IN (${byCategory!.map(() => '?').join(', ')})`, args: [...byCategory!] as string[] };
@@ -65,7 +81,7 @@ export async function promoteItems(input: {
     const foreign = await client.execute({
       sql: `SELECT COUNT(*) AS n FROM knowledge_items
             WHERE ${selector.clause} AND status = 'active'
-              AND visibility = 'repo' AND origin_repo IS NOT NULL AND origin_repo <> ?`,
+              AND ${visibilityClause}origin_repo IS NOT NULL AND origin_repo <> ?`,
       args: [...selector.args, input.repoName],
     });
 
@@ -124,16 +140,55 @@ export async function promoteItems(input: {
     const rows = await client.execute({
       sql: `SELECT id, title, category, status, freshness, superseded_by_id FROM knowledge_items
             WHERE ${selector.clause} AND status = 'active'
-              AND visibility = 'repo' AND (origin_repo IS NULL OR origin_repo = ?)
+              AND ${visibilityClause}(origin_repo IS NULL OR origin_repo = ?)
             ORDER BY updated_at DESC`,
       args: [...selector.args, input.repoName],
     });
 
-    const items: PromoteTarget[] = rows.rows.map(row => ({
-      id: String(row.id),
-      title: String(row.title),
-      category: String(row.category),
-    }));
+    return {
+      items: rows.rows.map(row => ({
+        id: String(row.id),
+        title: String(row.title),
+        category: String(row.category),
+        status: String(row.status),
+        freshness: String(row.freshness),
+        supersededById: row.superseded_by_id === null ? null : String(row.superseded_by_id),
+      })),
+      skippedForeign: Number(foreign.rows[0]?.n ?? 0),
+    };
+  }
+}
+
+/**
+ * Backfill existing knowledge into workspace visibility.
+ *
+ * Category routing governs future writes only, so without this, linking shares nothing a
+ * team already learned -- including the cross-repo decision that motivates the feature and
+ * that already exists in someone's repo today.
+ *
+ * Promotion is a one-column update: it does not touch `content_hash`, create rows, or move
+ * anything between databases. Only items this repo originated can be promoted, because
+ * publishing another repo's knowledge is that repo's decision. There is deliberately no
+ * `demote`: retracting something other repos have already read needs a mechanism this
+ * design does not have.
+ */
+export async function promoteItems(input: {
+  projectRoot: string;
+  repoName: string;
+  categories?: KnowledgeCategory[];
+  ids?: string[];
+  apply?: boolean;
+}): Promise<PromoteResult> {
+  await initDb(input.projectRoot);
+  try {
+    const client = getClient();
+    const { items, skippedForeign } = await selectOwnedItems({
+      repoName: input.repoName,
+      categories: input.categories,
+      ids: input.ids,
+      // Promotion only ever promotes unpromoted rows.
+      requireVisibility: 'repo',
+    });
 
     if (input.apply && items.length > 0) {
       // Promotion changes two of the five fields the lifecycle hash covers, and it is raw
@@ -148,21 +203,21 @@ export async function promoteItems(input: {
       // move -- the content genuinely did not change, and that is the invariant that keeps
       // re-import idempotent.
       const promotedAt = new Date().toISOString();
-      for (const row of rows.rows) {
+      for (const item of items) {
         await client.execute({
           sql: 'UPDATE knowledge_items SET visibility = ?, origin_repo = ?, lifecycle_hash = ?, updated_at = ? WHERE id = ?',
           args: [
             'workspace',
             input.repoName,
             hashKnowledgeLifecycle({
-              status: String(row.status),
-              freshness: String(row.freshness),
-              supersededById: row.superseded_by_id === null ? null : String(row.superseded_by_id),
+              status: item.status,
+              freshness: item.freshness,
+              supersededById: item.supersededById,
               originRepo: input.repoName,
               visibility: 'workspace',
             }),
             promotedAt,
-            String(row.id),
+            item.id,
           ],
         });
       }
@@ -181,11 +236,7 @@ export async function promoteItems(input: {
       );
     }
 
-    return {
-      items,
-      applied: Boolean(input.apply) && items.length > 0,
-      skippedForeign: Number(foreign.rows[0]?.n ?? 0),
-    };
+    return { items, applied: Boolean(input.apply) && items.length > 0, skippedForeign };
   } finally {
     await closeDb();
   }

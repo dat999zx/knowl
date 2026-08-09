@@ -18,6 +18,14 @@ export type FederatedItem = KnowledgeItem & {
    * convention actually gets applied to the wrong repo.
    */
   kinDivergent?: true;
+  /**
+   * This row came from the cloud replica rather than from a store on disk.
+   *
+   * Attached for the same reason as `kinDivergent`: the response shape, not a field, is what
+   * tells a reader where a row came from -- and "a colleague published this" is a different
+   * provenance from "this is in a repo you have checked out".
+   */
+  remote?: true;
 };
 export type SkipReason = 'absent' | 'unreadable' | 'schema-too-new' | 'unknown';
 
@@ -68,7 +76,7 @@ export function flattenGroups(result: FederatedResult): FederatedItem[] {
 
 const DEFAULT_PER_REPO_CAP = 10;
 
-type RepoCandidate = Candidate & { repo: string };
+type RepoCandidate = Candidate & { repo: string; remote?: true };
 
 /**
  * A checked-out peer with no database is `absent`, not `unreadable`.
@@ -152,6 +160,14 @@ export async function queryFederated(input: {
   scope?: 'local' | 'workspace';
   perRepoCap?: number;
   /**
+   * Candidate budget for the replica, separately from `perRepoCap`.
+   *
+   * One local peer is one repo; the replica is every repo in the workspace at once. Giving it
+   * the same budget as a single peer under-samples a corpus that is an order of magnitude
+   * larger, and the ranker cannot promote a candidate it never saw.
+   */
+  cloudCap?: number;
+  /**
    * The local vector config, including the query embedding when one was produced.
    *
    * A workspace pins one embedding identity (`assertSafeToLink`), so the peer's vectors live
@@ -210,6 +226,41 @@ export async function queryFederated(input: {
       for (const candidate of found) candidates.push({ ...candidate, repo: peer.name });
     } catch (error) {
       skipped.push({ repo: peer.name, reason: skipReasonFor(error) });
+    }
+  }
+
+  // The replica is read exactly like a peer -- same `openPeerStore`, same `selectCandidates`,
+  // same scoring -- because it is embedded under this project's own profile. What differs is
+  // attribution: a peer's rows are all that peer's, while every replica row carries its own
+  // `originRepo`, so the repo label is read per row rather than per store.
+  //
+  // Deliberately not filtered on `visibility`. The replica holds only what the server chose to
+  // publish, so a repo-private row appearing here is a server bug, and filtering it silently
+  // would hide the one symptom. Task 4 asserts the invariant instead.
+  if (input.workspace.cloud && (!wanted || wanted.has(input.workspace.cloud.workspaceId))) {
+    const replica = input.workspace.cloud;
+    if (!replica.present) {
+      skipped.push({ repo: replica.workspaceId, reason: 'absent' });
+    } else {
+      try {
+        const store = await openPeerStore(replica.databasePath);
+        const found = await selectCandidates('local', {
+          ...selection,
+          limit: input.cloudCap ?? cap * 3,
+        }, store);
+        for (const candidate of found) {
+          candidates.push({
+            ...candidate,
+            // Falls back to the workspace id only when the server sent no owner, which it
+            // should never do. Labelling those with this repo's own name would be worse than
+            // an odd-looking group: it would claim authorship.
+            repo: candidate.item.originRepo ?? replica.workspaceId,
+            remote: true,
+          });
+        }
+      } catch (error) {
+        skipped.push({ repo: replica.workspaceId, reason: skipReasonFor(error) });
+      }
     }
   }
 
@@ -272,6 +323,13 @@ export async function queryFederated(input: {
       : [],
   );
 
+  // Which group names came from the replica. Read from the candidates rather than re-derived,
+  // because the same repo name can only ever arrive from one side: a checked-out peer is
+  // named by the manifest and a replica row by its `originRepo`.
+  const remoteRepos = new Set(
+    [...byContent.values()].filter(candidate => candidate.remote).map(candidate => candidate.repo),
+  );
+
   const unshown = countUnshown([...byContent.values()], scored, input.workspace.repo);
 
   // Local first and always present, including when it holds nothing. An empty group under this
@@ -307,6 +365,7 @@ export async function queryFederated(input: {
       repo,
       explanation: entry.explanation,
       ...(kinRepos.has(repo) ? { kinDivergent: true as const } : {}),
+      ...(remoteRepos.has(repo) ? { remote: true as const } : {}),
     });
   }
 
@@ -346,7 +405,9 @@ export async function queryFederated(input: {
   const explicit = named || input.scope;
   const shape: FederatedResult['shape'] = explicit
     ? (input.scope === 'local' && !named ? 'flat' : 'grouped')
-    : (groups.length > 1 ? 'grouped' : 'flat');
+    // A flat array reads as "this repo's answer". Any remote row makes that false however few
+    // groups there are, so the replica forces the grouped shape on its own.
+    : (groups.length > 1 || remoteRepos.size > 0 ? 'grouped' : 'flat');
 
   return { groups, unshown, shape, skipped };
 }

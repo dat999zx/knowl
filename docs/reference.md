@@ -29,6 +29,7 @@ which parts of a restore are deliberately not restored.
 | [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-optional-off-by-default) · [Host behavior](#host-and-subagent-behavior) |
 | [Evidence, code, drift](#evidence-code-intelligence-and-drift) | [Evidence and symbols](#evidence-and-symbols) · [PR drift and feedback](#pull-request-drift-and-retrieval-feedback) |
 | [Workspaces](#workspaces) | [Federation and ownership](#federation-and-ownership) · [Ownership stamping](#ownership) |
+| [Knowl Cloud](#knowl-cloud) | [Identity and connection](#identity-and-connection) · [Publishing and the default branch](#publishing-tracks-the-default-branch-not-your-working-tree) · [Staying current](#staying-current) |
 | [Learned skills and synthesis](#learned-skills-and-synthesis) | [File-backed skills](#file-backed-skills) · [Deterministic synthesis](#deterministic-synthesis) |
 | [Portability and maintenance](#portability-and-maintenance) | [Export and import](#jsonl-export-and-import) · [Garbage collection](#garbage-collection) · [Snapshots, audit, doctor](#snapshots-audit-and-doctor) |
 | [Local viewer](#local-viewer) · [Architecture](#architecture-and-security-boundaries) | Inspector, component diagram, security boundaries, [write durability](#write-durability) |
@@ -628,6 +629,70 @@ claim on the name and reclaims it by re-linking, while every other repository is
 `origin_repo` is stamped when an atom is created, so every write made while linked is owned and
 promotable. Joining additionally backfills the rows that already existed, which are by definition
 the joining repository's own.
+
+## Knowl Cloud
+
+A hosted workspace shares knowledge across a team. It is entirely opt-in: a repository that never
+runs `knowl cloud connect` behaves exactly as it did before, and nothing here costs it anything.
+
+**Agents read a local replica, never the server.** Connecting syncs the team's published knowledge
+into a machine-local database under `~/.knowl/cloud/<workspace>/`, and queries search that copy
+alongside your own. No search request leaves the machine, so retrieval stays as fast offline as
+on, and your query text is never sent anywhere. The web console is what queries the server live.
+
+The replica is a replica: deleting it is always safe, and the next pull rebuilds it from scratch.
+
+| Command | Purpose |
+| --- | --- |
+| `knowl login [--api <host>]` | Sign in once, by device code. The credential lives in `~/.knowl`, never in `.knowl/config.json` |
+| `knowl logout [--api <host>]` | Clear the stored credential |
+| `knowl cloud connect [--workspace <id>] [--remote <name>]` | Point this repository at a workspace. Publishes nothing |
+| `knowl cloud pull` | Fetch team knowledge into the local replica |
+| `knowl publish [--id <ids...>] [--category <list>] [--apply]` | Stage knowledge for publication. Dry run without `--apply` |
+| `knowl cloud push` | Send staged knowledge, once its code is on the default branch |
+| `knowl cloud status` | What is connected, how stale the replica is, and what is staged |
+
+### Identity and connection
+
+A repository is identified by its **normalized git remote**, not its directory name, so two
+people who cloned to different paths publish to the same place. A repository with no remote is
+refused: there is no stable identity to publish under. In a fork, `origin` is your fork and
+`upstream` is the team's — `--remote` picks, and the choice is recorded in config.
+
+The pointer written into `.knowl/config.json` holds the API host, workspace and repo identity and
+**never a credential**. That file is deliberately committable, so a teammate clones, runs
+`knowl login`, and is in. Someone who clones without membership still gets a fully working local
+Knowl; the team half simply reports itself unavailable.
+
+### Publishing tracks the default branch, not your working tree
+
+Local knowledge describes the tree in front of you. Team knowledge has to describe the branch
+everyone shares, so publishing is two-phase, in the shape of git's own index and commit:
+
+```
+knowl publish --category decision --apply   # stage: any time, any branch
+knowl cloud push                            # send: only from an up-to-date default branch
+```
+
+`knowl publish` records an intent and sends nothing. `knowl cloud push` refuses from a feature
+branch, because an atom describing code only you have would be false for everyone else — and
+there is no unpublish. It also refuses from a checkout behind its remote, because being behind is
+indistinguishable from the code having been deleted.
+
+Only atoms this repository wrote can be published. A reader is refused before anything is sent.
+A version conflict names the atom and stops rather than overwriting; a detected secret fails the
+whole batch and is never retried in altered form.
+
+### Staying current
+
+Team knowledge arriving is a notification, not a wait. Queries answer from the replica
+immediately, a refresh runs in the background, and a `TEAM UPDATE:` notice tells the agent when
+something landed that it may want to re-query for. `knowl cloud pull` forces the refresh when you
+know a colleague has just published.
+
+Drift travels the same gate. When a local check finds a published atom's code has moved, it is
+reported upward from the default branch only, and the workspace sees it — so one person noticing
+protects everyone.
 
 ## Learned skills and synthesis
 

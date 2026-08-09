@@ -42,6 +42,11 @@ import { formatSweepReport, sweepRepos } from './upgrade-all.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './config/service.js';
 import { runConfigUi } from './config/ui.js';
+import { DEFAULT_API_HOST, runLogin, runLogout } from '../cloud/login.js';
+import { runConnect } from '../cloud/connect.js';
+import { runPull } from '../cloud/pull.js';
+import { pushStaged, stagePublish } from '../cloud/publish.js';
+import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -599,6 +604,213 @@ function parseDefaultVisibility(value: string | undefined): 'workspace' | 'repo'
   if (value === 'workspace' || value === 'repo') return value;
   throw new Error(`--default-visibility must be "repo" or "workspace", not "${value}".`);
 }
+
+program
+  .command('login')
+  .description('Sign in to a Knowl Cloud workspace')
+  .option('--api <host>', 'API host', DEFAULT_API_HOST)
+  .action(async options => {
+    try {
+      const result = await runLogin({
+        apiHost: options.api,
+        onPrompt: authorization => {
+          // The server does not send `verificationUri` yet. Naming the API host is a worse
+          // instruction than a real approval URL and a far better one than "Open undefined",
+          // which is what printing the absent field produced.
+          const where = authorization.verificationUri ?? `${options.api} (approve in the web console)`;
+          console.log(`\nOpen ${where} and enter this code:\n`);
+          console.log(`    ${authorization.userCode}\n`);
+          console.log('Waiting for approval...');
+        },
+      });
+      if (result.status === 'expired') {
+        console.error('The code expired before it was approved. Run knowl login again.');
+        process.exit(1);
+      }
+      console.log(`Signed in to ${options.api}.`);
+    } catch (error: any) {
+      console.error(`Login failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('logout')
+  .description('Clear stored Knowl Cloud credentials')
+  .option('--api <host>', 'API host', DEFAULT_API_HOST)
+  .action(async options => {
+    const { wasLoggedIn } = await runLogout(options.api);
+    console.log(wasLoggedIn ? `Signed out of ${options.api}.` : `Not signed in to ${options.api}.`);
+  });
+
+program
+  .command('publish')
+  .description('Stage knowledge for publication to the connected cloud workspace')
+  .option('--id <ids...>', 'Item ids to stage')
+  .option('--category <list>', 'Comma-separated categories (quote the list on Windows)')
+  .option('--apply', 'Actually stage; without this the command is a dry run')
+  .action(async options => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      const result = await stagePublish({
+        projectRoot: root,
+        config,
+        ids: options.id,
+        categories: options.category?.split(',').map((entry: string) => entry.trim()),
+        apply: options.apply,
+      });
+
+      if (result.status === 'not-connected') {
+        console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
+        process.exit(1);
+      }
+      for (const item of result.items) console.log(`  ${item.category}  ${item.title}`);
+      if (result.skippedForeign > 0) {
+        console.log(`${result.skippedForeign} item(s) belong to another repo and can only be published from it.`);
+      }
+      console.log(result.applied
+        ? `Staged ${result.items.length} item(s). Run knowl cloud push to send them.`
+        : `${result.items.length} item(s) would be staged. Re-run with --apply.`);
+      if (result.applied) console.log('Publishing cannot be undone from here yet.');
+    } catch (error: any) {
+      console.error(`Publish failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+const cloudCommand = program.command('cloud').description('Connect this repository to a Knowl Cloud workspace');
+
+cloudCommand
+  .command('connect')
+  .description('Point this repository at a cloud workspace (publishes nothing)')
+  .option('--api <host>', 'API host', DEFAULT_API_HOST)
+  .option('--workspace <id>', 'Workspace id, when you belong to more than one')
+  .option('--remote <name>', 'Git remote to derive repo identity from', 'origin')
+  .action(async options => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const result = await runConnect({
+        projectRoot: root,
+        apiHost: options.api,
+        workspaceId: options.workspace,
+        remote: options.remote,
+      });
+
+      if (result.status === 'not-logged-in') {
+        console.error('Not signed in. Run knowl login first.');
+        process.exit(1);
+      }
+      if (result.status === 'no-workspaces') {
+        console.error('You are signed in but do not belong to any workspace yet.');
+        console.error('Ask a workspace owner to invite you, or create one in the web console.');
+        process.exit(1);
+      }
+      if (result.status === 'unknown-workspace') {
+        console.error(`No workspace with id "${result.workspaceId}". You belong to:`);
+        for (const entry of result.workspaces) console.error(`  ${entry.id}  ${entry.name} (${entry.role})`);
+        process.exit(1);
+      }
+      if (result.status === 'ambiguous') {
+        console.error('You belong to more than one workspace. Re-run with --workspace <id>:');
+        for (const entry of result.workspaces) console.error(`  ${entry.id}  ${entry.name} (${entry.role})`);
+        process.exit(1);
+      }
+
+      console.log(`Connected ${result.pointer.repo} to ${result.pointer.workspaceName} as ${result.role}.`);
+      console.log('Nothing has been published. Use knowl publish to share knowledge.');
+    } catch (error: any) {
+      console.error(`Connect failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+cloudCommand
+  .command('pull')
+  .description('Fetch team knowledge into this machine\'s local replica')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      const result = await runPull({ projectRoot: root, config });
+
+      if (result.status === 'not-connected') {
+        console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
+        process.exit(1);
+      }
+      if (result.status === 'not-logged-in') {
+        console.error('Not signed in. Run knowl login first.');
+        process.exit(1);
+      }
+
+      const { sync } = result;
+      console.log(
+        `Pulled ${sync.upserted} update(s) and ${sync.deleted} deletion(s) over ${sync.pages} page(s).`,
+      );
+      if (sync.status === 'incomplete') {
+        console.log('The traversal did not finish; run knowl cloud pull again to resume.');
+      }
+      if (sync.status === 'resynced') {
+        console.log('The local replica was older than the server retains, so it was rebuilt from scratch.');
+      }
+    } catch (error: any) {
+      console.error(`Pull failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+cloudCommand
+  .command('push')
+  .description('Send staged knowledge, once its code is on the default branch')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      const result = await pushStaged({ projectRoot: root, config });
+
+      if (result.status === 'not-connected') {
+        console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
+        process.exit(1);
+      }
+      if (result.status === 'not-logged-in') {
+        console.error('Not signed in. Run knowl login first.');
+        process.exit(1);
+      }
+      if (result.status === 'forbidden') {
+        console.error(`You are a ${result.role} in this workspace, which cannot publish.`);
+        process.exit(1);
+      }
+      if (result.status === 'gated') {
+        console.error(`${result.staged} item(s) stay staged. ${result.detail}`);
+        process.exit(1);
+      }
+
+      console.log(`Published ${result.created} new and ${result.updated} updated item(s).`);
+      for (const outcome of result.conflicts) {
+        console.log(`  conflict  ${outcome.id} -- the workspace has a newer version. Pull, re-read, and publish again.`);
+      }
+      for (const outcome of result.rejected) {
+        console.log(`  ${outcome.status}  ${outcome.id} -- retrying will not help; these stay staged.`);
+      }
+    } catch (error: any) {
+      console.error(`Push failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+cloudCommand
+  .command('status')
+  .description('Report the workspace, the replica and what is staged (makes no network call)')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      console.log(formatCloudStatus(await cloudStatus(root, config)));
+    } catch (error: any) {
+      console.error(`Status failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
 
 const workspaceCommand = program.command('workspace').description('Link several repositories so agents can read across them');
 

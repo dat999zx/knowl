@@ -1,0 +1,88 @@
+{
+  "cursor": null,
+  "mode": "snapshot",
+  "nextSeq": "2",
+  "role": "reader",
+  "rows": [
+    {
+      "item": {
+        "affectedPaths": [
+          "src/deploy.ts"
+        ],
+        "alternatives": [
+          "Deploy by hand"
+        ],
+        "assertions": [
+          {
+            "confidence": 0.9,
+            "content": "The budget is four attempts",
+            "id": "s1",
+            "recordedAt": "2026-08-09T00:00:00.000Z",
+            "replacedAt": null,
+            "sourceEvidenceId": "e1",
+            "validFrom": "2026-08-09T00:00:00.000Z",
+            "validTo": null
+          }
+        ],
+        "authorUserId": "00000000-0000-0000-0000-0000000000e1",
+        "category": "skill",
+        "confidence": 0.9,
+        "conflictExclusive": true,
+        "conflictKey": "deploy-procedure",
+        "conflictScope": {
+          "repo": "acme/platform"
+        },
+        "content": "How to deploy",
+        "contentHash": "sha256:content",
+        "createdAt": "2026-08-09T00:00:00.000Z",
+        "evidence": [
+          {
+            "contentHash": "sha256:evidence",
+            "excerpt": "const N = 4;",
+            "id": "e1",
+            "locator": "src/deploy.ts",
+            "metadata": {
+              "line": 12
+            },
+            "observedAt": "2026-08-09T00:00:00.000Z",
+            "relationship": "supports",
+            "type": "file"
+          }
+        ],
+        "freshness": "needs_review",
+        "id": "full",
+        "lifecycleHash": "sha256:lifecycle",
+        "originRepo": "acme/platform",
+        "provenance": "observed",
+        "publishedAt": "2026-08-09T00:00:00.000Z",
+        "reasoning": "Measured against the staging queue.",
+        "review": {
+          "observedAtCommit": "def456",
+          "reason": "src/deploy.ts moved",
+          "reportedAt": "2026-08-09T00:00:00.000Z",
+          "reportedBy": "00000000-0000-0000-0000-0000000000d1"
+        },
+        "source": "runbook",
+        "sourceCommit": "abc123",
+        "status": "active",
+        "steps": [
+          "build",
+          "push"
+        ],
+        "supersededById": null,
+        "tags": [
+          "deploy",
+          "ops"
+        ],
+        "tier": "verified",
+        "tierSince": null,
+        "title": "Deploy",
+        "updatedAt": "2026-08-09T00:00:00.000Z",
+        "version": 1,
+        "visibility": "workspace"
+      },
+      "op": "upsert",
+      "seq": "2"
+    }
+  ]
+}

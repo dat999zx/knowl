@@ -39,6 +39,11 @@ const SCHEMA_PINS: Record<number, string> = {
   // could not carry because it is exported and upsert-merged. Additive again, so
   // `KNOWL_SCHEMA_VERSION` again does not move.
   6: '5f36731e329b1d86976f39f439f7ff39',
+  // 7 adds `cloud_published` -- what this machine has staged for, and pushed to, a cloud
+  // workspace. Additive again, so `KNOWL_SCHEMA_VERSION` again does not move. It landed at 7
+  // rather than 5 because two other additive levels reached main first; the fingerprint is
+  // recomputed here rather than carried over, since a level-7 schema holds all three tables.
+  7: 'b847bdb205a1ee63b1ff3b612c794c89',
 };
 
 let root: string;

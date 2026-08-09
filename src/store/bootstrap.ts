@@ -333,6 +333,39 @@ const SCHEMA_STATEMENTS = [
     resolved_at TEXT
   );`,
 
+  /**
+   * What this machine has staged for, and pushed to, a cloud workspace.
+   *
+   * Publication is deliberately NOT a third value of `visibility` (decision `ee191dd7db024bec`):
+   * `repo` and `workspace` describe who may read an item on this machine, and folding "the
+   * company can read it" into that column would make one field answer two unrelated questions,
+   * with no way to be at workspace visibility locally and unpublished remotely.
+   *
+   * Two-phase, matching git's index-then-commit. `staged_at` records an intent, formed on any
+   * branch at any time; `pushed_at` records that the server accepted it. `staged_on_branch` sits
+   * between them because the push is gated on the default branch and the refusal has to be able
+   * to say what it is waiting for -- an atom staged on a feature branch describes code nobody
+   * else has yet, and there is no unpublish.
+   *
+   * `remote_version` is the only place on this machine that the server's version number lives,
+   * and every republish needs it: a republish with no `expectedVersion` is treated as a conflict
+   * deliberately, so an older client cannot acquire overwrite rights by not knowing the field
+   * exists.
+   *
+   * The primary key is `(item_id, remote_workspace)` because one atom can in principle be
+   * published to more than one workspace, and a version from one is meaningless to the other.
+   */
+  `CREATE TABLE IF NOT EXISTS cloud_published (
+    item_id TEXT NOT NULL,
+    remote_workspace TEXT NOT NULL,
+    remote_version INTEGER,
+    staged_at TEXT NOT NULL,
+    staged_on_branch TEXT,
+    pushed_at TEXT,
+    retracted_at TEXT,
+    PRIMARY KEY (item_id, remote_workspace)
+  );`,
+
   `CREATE INDEX IF NOT EXISTS idx_ki_cat_status ON knowledge_items(category, status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_status ON knowledge_items(status);`,
   `CREATE INDEX IF NOT EXISTS idx_ki_updated ON knowledge_items(updated_at);`,

@@ -22,7 +22,13 @@ const LAYERS: string[][] = [
   // Direct consumers of the store that no other feature layer sits beneath.
   ['ai', 'workspace', 'skills', 'code'],
   // Feature layers built on the above.
-  ['session', 'pipeline', 'transcripts', 'viewer'],
+  //
+  // `cloud` sits here rather than one layer down even though today it imports only `core`.
+  // Plan B syncs team knowledge into a local store and joins it to federation, so it will need
+  // `store` and `workspace` -- and placing it beside `workspace` would make that edge sideways
+  // and therefore forbidden. Filing it a layer too high costs nothing; a layer too low costs a
+  // move later, at the moment the rule would otherwise be argued with.
+  ['session', 'pipeline', 'transcripts', 'viewer', 'cloud'],
   // Entry points. Everything is allowed to be reached from here.
   ['cli', 'mcp'],
 ];
