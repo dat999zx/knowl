@@ -3,13 +3,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { sql } from 'drizzle-orm';
-import { closeDb, getDb, initDb } from '../../src/store/database.js';
+import { closeDb, getClient, getDb, initDb } from '../../src/store/database.js';
+import { bootstrapSchema } from '../../src/store/bootstrap.js';
 import * as repo from '../../src/store/repository.js';
 import { recordKnowledgeAccess } from '../../src/store/access-feedback.js';
 import { applyKnowledgeGc } from '../../src/store/gc.js';
 import { listForgetLog, pruneForgetLog } from '../../src/store/forget-log.js';
 import { listTombstones, pruneTombstones } from '../../src/store/tombstones.js';
 import { exportKnowledge } from '../../src/store/portability.js';
+import { MAX_PREVIEW_CHARS } from '../../src/core/token-budget.js';
 
 const ROOT = path.resolve('./.knowl-forget-log-test');
 
@@ -76,6 +78,93 @@ describe('forget log', () => {
   // The whole point of a separate table. Tombstones prune at 90 days on every GC run because a
   // tombstone older than an export round has no job left; a forget-log row's job is to still be
   // there months later when somebody asks whether a threshold was ever right.
+  /**
+   * The three fields Lethe's `forget_log.py` (MIT) carries and a first pass built from its README
+   * did not: a groupable code, the survivor as a column, and a snapshot of what went. None of the
+   * three is visible in that README.
+   */
+  it('names the rule in a code and the survivor in a column, not only in a sentence', async () => {
+    const { first, second } = await seedDuplicatePair(projectId, 'Absorbed fact', 'Collapsed into its twin.');
+    await applyKnowledgeGc(projectId);
+
+    const [entry] = await listForgetLog();
+    const survivor = entry.itemId === first.id ? second.id : first.id;
+
+    // Groupable without parsing English.
+    expect(entry.reasonCode).toBe('gc:duplicate');
+    // Followable without parsing English.
+    expect(entry.mergedIntoId).toBe(survivor);
+    expect(entry.reason).toContain(survivor);
+  });
+
+  it('keeps a snapshot of what was destroyed, since the item itself is gone', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Vanished', content: 'The body nobody can read back afterwards.',
+    });
+    await repo.deleteKnowledgeItem(item.id);
+
+    const [entry] = await listForgetLog();
+    expect(entry.contentPreview).toBe('The body nobody can read back afterwards.');
+    expect(await repo.getKnowledgeItem(item.id)).toBeNull();
+  });
+
+  it('bounds that snapshot so the audit trail cannot undo the reclamation', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Enormous', content: 'x'.repeat(5000),
+    });
+    await repo.deleteKnowledgeItem(item.id);
+
+    const [entry] = await listForgetLog();
+    expect(entry.contentPreview!.length).toBeLessThanOrEqual(MAX_PREVIEW_CHARS);
+    // The real size is still recorded, so bounding the preview loses no information about cost.
+    expect(entry.bytes).toBe(5000);
+  });
+
+  it('defaults the code rather than leaving a delete uncategorised', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Uncoded', content: 'Deleted with no context at all.',
+    });
+    await repo.deleteKnowledgeItem(item.id);
+
+    expect((await listForgetLog())[0].reasonCode).toBe('delete:unspecified');
+  });
+
+  /**
+   * The upgrade path, which is the whole reason this is level 7 rather than an amendment of 6.
+   * A store created at level 6 already has the table, so `CREATE TABLE IF NOT EXISTS` does
+   * nothing for it — without the ALTER pass the columns exist only on databases created after
+   * this change, and every older store fails its next delete inside the single transaction
+   * `applyKnowledgeGc` runs, taking the whole collection run with it.
+   */
+  it('adds its columns to a store that already had the level-6 table', async () => {
+    const db = getDb() as any;
+    // Reproduce a level-6 store: the table as it shipped, without the detail columns.
+    await db.run(sql`DROP TABLE knowledge_forget_log`);
+    await db.run(sql`CREATE TABLE knowledge_forget_log (
+      id TEXT PRIMARY KEY, knowledge_item_id TEXT NOT NULL, title TEXT NOT NULL,
+      category TEXT NOT NULL, tier TEXT, status TEXT, origin_repo TEXT,
+      deleted_at TEXT NOT NULL, policy TEXT NOT NULL, reason TEXT NOT NULL,
+      retrieval_count INTEGER NOT NULL DEFAULT 0, last_retrieved_at TEXT,
+      age_days INTEGER, bytes INTEGER
+    )`);
+    // Rewind the gate too, or none of this runs: `bootstrapSchema` skips `SCHEMA_STATEMENTS` and
+    // every ensure-pass when the stamp already reads current, which is the whole mechanism level 7
+    // exists to trip. Without this the test passes a no-op and proves nothing.
+    await db.run(sql`PRAGMA application_id = 6`);
+
+    await bootstrapSchema(getClient());
+
+    // A delete against the upgraded store succeeds and records the new detail.
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Post-upgrade', content: 'Deleted after the columns landed.',
+    });
+    await repo.deleteKnowledgeItem(item.id);
+
+    const [entry] = await listForgetLog();
+    expect(entry.reasonCode).toBe('delete:unspecified');
+    expect(entry.contentPreview).toBe('Deleted after the columns landed.');
+  });
+
   it('outlives the tombstone that pruning removes', async () => {
     await seedDuplicatePair(projectId, 'Prunable fact', 'Collected then forgotten about.');
     await applyKnowledgeGc(projectId);

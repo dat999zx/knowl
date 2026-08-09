@@ -3,6 +3,7 @@ import { getDb, withClientTransaction } from './database.js';
 import type { DbConnection } from './database.js';
 import * as repo from './repository.js';
 import { pruneTombstones } from './tombstones.js';
+import { FORGET_REASON_DUPLICATE } from './forget-log.js';
 import { getAccessSummary, KnowledgeAccessSummary } from './access-feedback.js';
 import { carriesNothingNew, KnowledgePayload } from './knowledge-writer.js';
 import { CommitChange, KnowledgeCategory, KnowledgeItem } from '../core/types.js';
@@ -324,7 +325,13 @@ export async function applyKnowledgeGc(
         const summary = access.get(candidate.itemId);
         await repo.deleteKnowledgeItem(candidate.itemId, tx, {
           policy: 'gc:purge',
+          // The code is what a query groups by; `reason` stays the human sentence beside it.
+          // Duplicate collection is currently the only rule that purges — a second one adds a
+          // code rather than another sentence nothing can aggregate.
+          reasonCode: FORGET_REASON_DUPLICATE,
           reason: candidate.reason,
+          // Previously recoverable only by parsing it back out of `Duplicate of <id>`.
+          mergedIntoId: candidate.duplicateOfId ?? null,
           retrievalCount: summary?.retrievalCount ?? 0,
           lastRetrievedAt: summary?.lastRetrievedAt ?? null,
           bytes: candidate.beforeBytes,
