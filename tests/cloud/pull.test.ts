@@ -53,7 +53,7 @@ describe('runPull', () => {
 
   it('syncs when connected and signed in', async () => {
     await writeCredential(HOST, {
-      accessToken: 'a', refreshToken: 'r', userId: 'u',
+      accessToken: 'a', refreshToken: 'r', sessionId: 'sess-1',
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
 

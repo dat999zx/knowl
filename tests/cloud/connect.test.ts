@@ -18,7 +18,7 @@ const credential = {
   accessToken: 'ACCESS-TOKEN-9f3c1e',
   refreshToken: 'REFRESH-TOKEN-7b20da',
   expiresAt: '2099-01-01T00:00:00.000Z',
-  userId: 'user-1',
+  sessionId: 'sess-1',
 };
 
 function api(workspaces: Array<{ id: string; name: string; role: 'owner' | 'admin' | 'editor' | 'reader' }>): CloudApi {

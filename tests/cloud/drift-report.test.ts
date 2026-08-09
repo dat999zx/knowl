@@ -83,7 +83,7 @@ describe('reporting upward', () => {
     await closeDb();
 
     await writeCredential(API_HOST, {
-      accessToken: 'at', refreshToken: 'rt', userId: 'u1',
+      accessToken: 'at', refreshToken: 'rt', sessionId: 'sess-1',
       expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
     });
   });

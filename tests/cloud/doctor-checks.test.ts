@@ -62,7 +62,7 @@ describe('cloudDoctorChecks', () => {
   it('reports OK when connected, signed in and synced', async () => {
     const config = pointer('w-ok');
     await writeCredential(HOST, {
-      accessToken: 'a', refreshToken: 'r', userId: 'u',
+      accessToken: 'a', refreshToken: 'r', sessionId: 'sess-1',
       expiresAt: new Date(NOW + 3_600_000).toISOString(),
     });
     await synced('w-ok');
@@ -79,7 +79,7 @@ describe('cloudDoctorChecks', () => {
     // problem would make doctor cry wolf on every run more than an hour after login.
     const config = pointer('w-expired');
     await writeCredential(HOST, {
-      accessToken: 'a', refreshToken: 'r', userId: 'u',
+      accessToken: 'a', refreshToken: 'r', sessionId: 'sess-1',
       expiresAt: new Date(NOW - 3_600_000).toISOString(),
     });
     await synced('w-expired');
@@ -93,7 +93,7 @@ describe('cloudDoctorChecks', () => {
     // WARN rather than FAIL: the repo is correctly configured and one command away from
     // working, so this is a next step rather than a fault.
     await writeCredential(HOST, {
-      accessToken: 'a', refreshToken: 'r', userId: 'u',
+      accessToken: 'a', refreshToken: 'r', sessionId: 'sess-1',
       expiresAt: new Date(NOW + 3_600_000).toISOString(),
     });
 
@@ -108,7 +108,7 @@ describe('cloudDoctorChecks', () => {
     // Still WARN, not FAIL: the replica remains readable, just older than the caller may
     // assume, and saying why is the whole point of recording the error.
     await writeCredential(HOST, {
-      accessToken: 'a', refreshToken: 'r', userId: 'u',
+      accessToken: 'a', refreshToken: 'r', sessionId: 'sess-1',
       expiresAt: new Date(NOW + 3_600_000).toISOString(),
     });
     await synced('w-failed', 'network down');

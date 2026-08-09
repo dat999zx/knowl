@@ -9,19 +9,28 @@ import { CloudApiError } from '../../src/cloud/api-client.js';
 const HOME = path.resolve('./.knowl-login-home');
 const HOST = 'https://api.knowl.dev';
 
+/** The instant the expiry test advances its clock towards. Fifteen minutes, like the server's. */
+const CODE_EXPIRES_AT = new Date(Date.parse('2026-08-09T12:00:00.000Z') + 900_000).toISOString();
+
+/**
+ * The server's real shape: an absolute `expiresAt`, and no `verificationUri`.
+ *
+ * This fixture used to carry `expiresInSeconds: 900` and a URL, neither of which the server
+ * sends. That is what made the deadline `now() + NaN` in production while every test here passed
+ * -- the fake was written from what the client wanted rather than from what the server returns.
+ */
 const authorization: DeviceAuthorization = {
   deviceCode: 'dev-1',
   userCode: 'ABCD-EFGH',
-  verificationUri: 'https://knowl.dev/device',
   intervalSeconds: 5,
-  expiresInSeconds: 900,
+  expiresAt: CODE_EXPIRES_AT,
 };
 
 const credential = {
   accessToken: 'a',
   refreshToken: 'r',
   expiresAt: '2099-01-01T00:00:00.000Z',
-  userId: 'user-1',
+  sessionId: 'sess-1',
 };
 
 function fakeApi(polls: Array<'pending' | typeof credential | CloudApiError>): CloudApi {
@@ -71,7 +80,7 @@ describe('runLogin', () => {
       sleep: async () => {},
     });
 
-    expect(result).toEqual({ status: 'authorized', userId: 'user-1' });
+    expect(result).toEqual({ status: 'authorized', sessionId: 'sess-1' });
     expect(await readCredential(HOST)).toEqual(credential);
   });
 
@@ -91,6 +100,9 @@ describe('runLogin', () => {
   });
 
   it('gives up when the device code expires instead of polling forever', async () => {
+    // The clock advances by the interval on every poll and the deadline is the server's own
+    // `expiresAt`, so this reaches it in 180 polls. It is the one test that would run forever
+    // against a deadline the client could not compute -- which is exactly what shipped.
     let elapsed = 0;
     const result = await runLogin({
       apiHost: HOST,

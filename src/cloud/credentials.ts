@@ -5,9 +5,19 @@ import { knowlHome } from '../core/paths.js';
 export type CloudCredential = {
   accessToken: string;
   refreshToken: string;
-  /** ISO-8601. Compared against `Date.now()` plus a skew window before every request. */
+  /**
+   * ISO-8601. Compared against `Date.now()` plus a skew window before every request.
+   *
+   * The server calls this `accessExpiresAt` on the wire; `api-client.ts` maps it. Reading the
+   * body unmapped left this `undefined`, which `Date.parse` turns into NaN and `usable()` reads
+   * as expired -- a refresh before every request, against a server that revokes on replay.
+   */
   expiresAt: string;
-  userId: string;
+  /**
+   * The server's own handle on this session. It sends no user id, so this is what identifies
+   * the login -- and it is what a future `knowl cloud sessions` would revoke by.
+   */
+  sessionId: string;
 };
 
 type CredentialFile = { version: 1; hosts: Record<string, CloudCredential> };

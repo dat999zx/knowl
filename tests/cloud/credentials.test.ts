@@ -16,7 +16,7 @@ const credential = (token: string) => ({
   accessToken: token,
   refreshToken: `${token}-refresh`,
   expiresAt: '2099-01-01T00:00:00.000Z',
-  userId: 'user-1',
+  sessionId: 'sess-1',
 });
 
 describe('cloud credential store', () => {

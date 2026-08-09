@@ -1,3 +1,4 @@
+import { hostname } from 'node:os';
 import { normalizeApiHost } from './credentials.js';
 import type { CloudCredential } from './credentials.js';
 import {
@@ -6,14 +7,57 @@ import {
 
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * Mirrors the server's `DeviceAuthorizationResponse` exactly. It did not, once.
+ *
+ * This type was written against a hand-built fake rather than against the server, and got two
+ * fields wrong in ways nothing could catch: `expiresInSeconds` where the server sends an absolute
+ * `expiresAt`, so the login deadline computed as `now() + NaN` and never elapsed; and a
+ * `verificationUri` the server does not send at all, so the prompt read "Open undefined". The
+ * whole suite was green, because the fake supplied both.
+ */
 export type DeviceAuthorization = {
   deviceCode: string;
   userCode: string;
-  verificationUri: string;
   /** The server derives its own rate limit from this, so the client must honour it. */
   intervalSeconds: number;
-  expiresInSeconds: number;
+  /** ISO-8601 instant, not a duration. The server sends when it expires, not how long it lasts. */
+  expiresAt: string;
+  /**
+   * Where the user approves the code. **Not currently sent by the server**, which is the open
+   * half of this mismatch: only the deployment knows its own web origin, so the client cannot
+   * derive it and should not guess. Optional until the server sends it; the prompt falls back to
+   * naming the API host rather than printing `undefined`.
+   */
+  verificationUri?: string;
 };
+
+/**
+ * The wire shape of a minted session, which is NOT `CloudCredential`.
+ *
+ * The server calls the expiry `accessExpiresAt` and sends a `sessionId`; the stored credential
+ * calls it `expiresAt` and has no use for the session id. Returning the body unmapped left every
+ * stored credential with `expiresAt: undefined` -- `Date.parse` gives NaN, `usable()` is false
+ * forever, and the client refreshes on every single request. With rotation on, that is not just
+ * waste: it is a refresh storm against a server that revokes a session on a replayed token.
+ *
+ * Mapped in one place so the two names cannot drift apart again silently.
+ */
+type TokenResponseBody = {
+  sessionId: string;
+  accessToken: string;
+  refreshToken: string;
+  accessExpiresAt: string;
+};
+
+function toCredential(body: TokenResponseBody): CloudCredential {
+  return {
+    accessToken: body.accessToken,
+    refreshToken: body.refreshToken,
+    expiresAt: body.accessExpiresAt,
+    sessionId: body.sessionId,
+  };
+}
 
 export type CloudRole = 'owner' | 'admin' | 'editor' | 'reader';
 export type CloudWorkspace = { id: string; name: string; role: CloudRole };
@@ -124,25 +168,30 @@ export function createCloudApi(options: {
     },
 
     async pollForToken(deviceCode) {
-      const { status, body } = await request<CloudCredential>('/v1/auth/token', {
+      const { status, body } = await request<TokenResponseBody>('/v1/auth/token', {
         method: 'POST',
-        body: { grantType: 'device_code', deviceCode },
+        // `device`, not `device_code`. The server's discriminator is its own, not OAuth's, and
+        // sending the OAuth spelling was refused outright -- so this exchange could never have
+        // succeeded against a real server. `name` is what the device list shows; without it the
+        // row reads "CLI" for every machine a person has ever signed in from.
+        body: { grantType: 'device', deviceCode, name: hostname() },
       });
       // Not yet approved is the expected steady state of a poll, not a failure. The loop has
       // to tell it apart from a real error or it would abandon a login the user is mid-way
       // through completing.
       if (status === 428) return 'pending';
       if (status !== 200) fail('/v1/auth/token', status, body);
-      return body;
+      return toCredential(body);
     },
 
     async refresh(refreshToken) {
-      const { status, body } = await request<CloudCredential>('/v1/auth/token', {
+      const { status, body } = await request<TokenResponseBody>('/v1/auth/token', {
         method: 'POST',
-        body: { grantType: 'refresh_token', refreshToken },
+        // `refresh`, not `refresh_token` -- same discriminator, same refusal.
+        body: { grantType: 'refresh', refreshToken },
       });
       if (status !== 200) fail('/v1/auth/token', status, body);
-      return body;
+      return toCredential(body);
     },
 
     async listWorkspaces(accessToken) {

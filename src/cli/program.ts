@@ -613,7 +613,11 @@ program
       const result = await runLogin({
         apiHost: options.api,
         onPrompt: authorization => {
-          console.log(`\nOpen ${authorization.verificationUri} and enter this code:\n`);
+          // The server does not send `verificationUri` yet. Naming the API host is a worse
+          // instruction than a real approval URL and a far better one than "Open undefined",
+          // which is what printing the absent field produced.
+          const where = authorization.verificationUri ?? `${options.api} (approve in the web console)`;
+          console.log(`\nOpen ${where} and enter this code:\n`);
           console.log(`    ${authorization.userCode}\n`);
           console.log('Waiting for approval...');
         },

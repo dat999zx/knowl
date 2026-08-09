@@ -25,12 +25,16 @@ describe('cloud api client', () => {
     // so a self-chosen interval earns a 429 while the user is still reading the code.
     const { fetchImpl, calls } = stubFetch(() => ({
       status: 200,
+      // The server's real `DeviceAuthorizationResponse`: an absolute `expiresAt`, and no
+      // `verificationUri` at all. This fixture used to carry `expiresInSeconds` and a URL,
+      // because it was written from the client's wishes rather than from the server -- so the
+      // login deadline computed as NaN and the prompt printed "Open undefined", with every
+      // test green.
       body: {
         deviceCode: 'dev-1',
         userCode: 'ABCD-EFGH',
-        verificationUri: 'https://knowl.dev/device',
         intervalSeconds: 5,
-        expiresInSeconds: 900,
+        expiresAt: '2099-01-01T00:00:00.000Z',
       },
     }));
 
@@ -38,6 +42,8 @@ describe('cloud api client', () => {
 
     expect(result.userCode).toBe('ABCD-EFGH');
     expect(result.intervalSeconds).toBe(5);
+    expect(result.expiresAt).toBe('2099-01-01T00:00:00.000Z');
+    expect(result.verificationUri).toBeUndefined();
     expect(calls[0].url).toBe('https://api.knowl.dev/v1/auth/device');
     expect(calls[0].init?.method).toBe('POST');
   });
@@ -51,14 +57,19 @@ describe('cloud api client', () => {
     expect(result).toBe('pending');
   });
 
-  it('returns the credential once approved', async () => {
+  it('maps the wire token response onto the stored credential', async () => {
+    // The server calls the expiry `accessExpiresAt` and sends a `sessionId`; the stored
+    // credential calls it `expiresAt` and has no user id. Returning the body unmapped left
+    // `expiresAt` undefined, `Date.parse` gave NaN, `usable()` read every credential as expired,
+    // and the client refreshed before every single request -- against a server that revokes a
+    // session when it sees a refresh token replayed.
     const { fetchImpl } = stubFetch(() => ({
       status: 200,
       body: {
+        sessionId: 'sess-1',
         accessToken: 'a',
         refreshToken: 'r',
-        expiresAt: '2099-01-01T00:00:00.000Z',
-        userId: 'user-1',
+        accessExpiresAt: '2099-01-01T00:00:00.000Z',
       },
     }));
 
@@ -68,7 +79,35 @@ describe('cloud api client', () => {
       accessToken: 'a',
       refreshToken: 'r',
       expiresAt: '2099-01-01T00:00:00.000Z',
-      userId: 'user-1',
+      sessionId: 'sess-1',
+    });
+  });
+
+  it('sends the grant types the server actually discriminates on', async () => {
+    // Every other test here asserted what the client DOES WITH a response. None asserted what it
+    // SENDS, so `grantType: 'device_code'` and `'refresh_token'` -- the OAuth spellings, not this
+    // server's -- shipped against a discriminator that accepts only `device` and `refresh`. Both
+    // calls were refused outright by a live server while the whole suite stayed green: no login
+    // could ever complete, and no token could ever refresh.
+    const { fetchImpl, calls } = stubFetch(() => ({
+      status: 200,
+      body: { sessionId: 's', accessToken: 'a', refreshToken: 'r', accessExpiresAt: '2099-01-01T00:00:00.000Z' },
+    }));
+    const api = createCloudApi({ apiHost: HOST, fetchImpl });
+
+    await api.pollForToken('dev-1');
+    await api.refresh('rt-1');
+
+    const first = JSON.parse(String(calls[0].init?.body));
+    expect(first.grantType).toBe('device');
+    expect(first.deviceCode).toBe('dev-1');
+    // The device list shows this. Absent, every machine a person signs in from reads "CLI".
+    expect(typeof first.name).toBe('string');
+    expect(first.name.length).toBeGreaterThan(0);
+
+    expect(JSON.parse(String(calls[1].init?.body))).toMatchObject({
+      grantType: 'refresh',
+      refreshToken: 'rt-1',
     });
   });
 
@@ -89,7 +128,7 @@ describe('cloud api client', () => {
     const { fetchImpl, calls } = stubFetch(url =>
       url.endsWith('/workspaces')
         ? { status: 200, body: { workspaces: [{ id: 'w1', name: 'Acme', role: 'editor' }] } }
-        : { status: 200, body: { deviceCode: 'd', userCode: 'u', verificationUri: 'v', intervalSeconds: 5, expiresInSeconds: 900 } },
+        : { status: 200, body: { deviceCode: 'd', userCode: 'u', intervalSeconds: 5, expiresAt: '2099-01-01T00:00:00.000Z' } },
     );
     const api = createCloudApi({ apiHost: HOST, fetchImpl });
 
@@ -120,7 +159,7 @@ describe('cloud api client', () => {
   it('passes an abort signal on every request, including the unauthenticated one', async () => {
     const { fetchImpl, calls } = stubFetch(() => ({
       status: 200,
-      body: { deviceCode: 'd', userCode: 'u', verificationUri: 'v', intervalSeconds: 5, expiresInSeconds: 900 },
+      body: { deviceCode: 'd', userCode: 'u', intervalSeconds: 5, expiresAt: '2099-01-01T00:00:00.000Z' },
     }));
 
     await createCloudApi({ apiHost: HOST, fetchImpl }).startDeviceAuthorization();

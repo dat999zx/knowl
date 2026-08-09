@@ -15,7 +15,7 @@ const stored = (accessToken: string, expiresAt: string) => ({
   accessToken,
   refreshToken: 'refresh-1',
   expiresAt,
-  userId: 'user-1',
+  sessionId: 'sess-1',
 });
 
 describe('ensureAccessToken', () => {
