@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { withTeamStore } from '../../src/cloud/team-store.js';
+import { teamStorePath, withTeamStore } from '../../src/cloud/team-store.js';
+import { releaseClient } from '../../src/store/connection-pool.js';
 import { applySyncRows } from '../../src/cloud/sync-apply.js';
 import { queryFederated } from '../../src/workspace/federated-query.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
@@ -103,6 +104,13 @@ describe('federation with the cloud replica', () => {
     // The rule every peer already follows: a store this process cannot read costs the caller
     // a notice, never their answer.
     await seedReplica();
+    // Released before the file is corrupted, and this is the whole test rather than tidiness.
+    // Seeding pools a connection to the replica; overwriting the file underneath it leaves that
+    // handle serving the pages it already has. On Windows the pool had let go by this point and
+    // the next open read the garbage, so the assertion passed; on Linux and macOS it had not, the
+    // query answered from the live handle, and nothing was skipped. The test was measuring pool
+    // state on one platform and file contents on another.
+    await releaseClient(teamStorePath(WS));
     await fs.writeFile(path.join(HOME, 'cloud', WS, 'knowledge.db'), 'not a database', 'utf8');
 
     const result = await run();

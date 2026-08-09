@@ -1,4 +1,4 @@
-﻿import { Command } from 'commander';
+import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -239,7 +239,7 @@ function printUpgradeStatus(result: UpgradeResult) {
 
 program
   .name('knowl')
-  .description('KNOWL â€” A Knowledge Operating System for AI Agents')
+  .description('KNOWL — A Knowledge Operating System for AI Agents')
   .version(PACKAGE_VERSION);
 
 // --- 1. INIT COMMAND ---
@@ -300,7 +300,7 @@ program
 
       if (isExisting) {
         const result = await upgradeExistingRepository(cwd, name);
-        console.log(`â†» Existing KNOWL project detected â€” upgrading, then checking agent setup: ${knowlDir}`);
+        console.log(`↻ Existing KNOWL project detected — upgrading, then checking agent setup: ${knowlDir}`);
         printUpgradeStatus(result);
         const flow = await runAgentInitFlow(cwd, {
           agentNames: agents,
@@ -336,15 +336,15 @@ program
       const guidanceStatus = await installKnowlProjectGuidance(cwd);
       const gitignoreStatus = await installKnowlGitignoreEntry(cwd);
 
-      console.log(`ðŸŽ‰ Successfully initialized KNOWL repository!`);
-      console.log(`ðŸ“‚ Created: ${knowlDir}`);
+      console.log(`🎉 Successfully initialized KNOWL repository!`);
+      console.log(`📂 Created: ${knowlDir}`);
       printProjectGuidanceStatus(guidanceStatus);
       if (gitignoreStatus === 'created') {
         console.log(`Created .gitignore with .knowl/ entry.`);
       } else if (gitignoreStatus === 'updated') {
         console.log(`Updated .gitignore with .knowl/ entry.`);
       }
-      console.log(`âš™ï¸  Local project store ready.`);
+      console.log(`⚙️  Local project store ready.`);
 
       // Fetch the embedding model now. Write-time embedding never downloads, so without
       // this every item written before the first query stays invisible to semantic search.
@@ -352,7 +352,7 @@ program
       const warmMessage = formatWarmResult(warm);
       if (warmMessage) console.log(warmMessage);
 
-      console.log(`ðŸ‘‰ Run "knowl status" to see repository status.`);
+      console.log(`👉 Run "knowl status" to see repository status.`);
       const flow = await runAgentInitFlow(cwd, {
         agentNames: agents,
         yes: options.yes,
@@ -361,7 +361,7 @@ program
       console.log(formatAgentInitSummary(flow.results));
       process.exitCode = flow.exitCode;
     } catch (error: any) {
-      console.error(`âŒ Error initializing KNOWL: ${error.message}`);
+      console.error(`❌ Error initializing KNOWL: ${error.message}`);
       process.exit(1);
     }
   });
@@ -403,7 +403,7 @@ program
 
       await closeDb();
     } catch (error: any) {
-      console.error(`âŒ Error reading status: ${error.message}`);
+      console.error(`❌ Error reading status: ${error.message}`);
       process.exit(1);
     }
   });
@@ -426,7 +426,7 @@ program
 
       await closeDb();
     } catch (error: any) {
-      console.error(`âŒ Error fetching project state: ${error.message}`);
+      console.error(`❌ Error fetching project state: ${error.message}`);
       process.exit(1);
     }
   });
@@ -551,7 +551,7 @@ program.command('query').argument('[query]').description('Search project memory 
     // The floor's verdict, said out loud. Results below it are printed rather than withheld,
     // so without this line a weak page looks exactly like a strong one.
     if (items.some((item: { abstained?: boolean }) => item.abstained)) {
-      console.error('Note: every result scored below the relevance floor â€” this store probably does not hold the answer. Read "score" and judge.');
+      console.error('Note: every result scored below the relevance floor — this store probably does not hold the answer. Read "score" and judge.');
     }
     // Names and counts, never content: the knowledge stays findable without this line being
     // able to stand in for it.
@@ -1319,7 +1319,7 @@ program
     let tags = options.tags;
 
     if (!title || !content) {
-      console.log('ðŸ“ INTERACTIVE DECISION RECORDING');
+      console.log('📝 INTERACTIVE DECISION RECORDING');
       console.log('Fill in the fields below to record a decision:\n');
       
       const readline = await import('node:readline/promises');
@@ -1332,14 +1332,14 @@ program
         if (!title) {
           title = await rl.question('Title: ');
           if (!title.trim()) {
-            console.error('âŒ Title is required.');
+            console.error('❌ Title is required.');
             process.exit(1);
           }
         }
         if (!content) {
           content = await rl.question('Content: ');
           if (!content.trim()) {
-            console.error('âŒ Content is required.');
+            console.error('❌ Content is required.');
             process.exit(1);
           }
         }
@@ -1392,36 +1392,36 @@ program
         if (mergeResult.unresolvedContradictions.length > 0) {
           const decision = await recordDecisionDirect(project.id, atom, `Record decision (fallback): ${title}`, config);
           console.log(decision.action === 'duplicate'
-            ? `â„¹ï¸ Already recorded verbatim, nothing written. ID: ${decision.item.id}`
-            : `âœ… Recorded decision successfully! ID: ${decision.item.id}`);
+            ? `ℹ️ Already recorded verbatim, nothing written. ID: ${decision.item.id}`
+            : `✅ Recorded decision successfully! ID: ${decision.item.id}`);
           for (const line of formatCrossRepoNotice(decision.crossRepo)) console.log(line);
-          if (decision.superseded) console.log(`ðŸ”„ Superseded older decision: ${decision.superseded.id}`);
-          if (decision.nearDuplicate) console.log(`âš ï¸ Left active beside "${decision.nearDuplicate.title}" (${decision.nearDuplicate.id}) â€” run \`knowl supersede ${decision.nearDuplicate.id} ${decision.item.id}\` if it replaces that one.`);
+          if (decision.superseded) console.log(`🔄 Superseded older decision: ${decision.superseded.id}`);
+          if (decision.nearDuplicate) console.log(`⚠️ Left active beside "${decision.nearDuplicate.title}" (${decision.nearDuplicate.id}) — run \`knowl supersede ${decision.nearDuplicate.id} ${decision.item.id}\` if it replaces that one.`);
         } else if (mergeResult.supersededIds.length > 0) {
           const newId = mergeResult.insertedIds[0];
-          console.log(`âœ… Recorded decision successfully! ID: ${newId}`);
-          console.log(`ðŸ”„ Superseded older conflicting decision(s): ${mergeResult.supersededIds.join(', ')}`);
+          console.log(`✅ Recorded decision successfully! ID: ${newId}`);
+          console.log(`🔄 Superseded older conflicting decision(s): ${mergeResult.supersededIds.join(', ')}`);
         } else if (mergeResult.updatedIds.length > 0) {
-          console.log(`âœ… Recorded decision successfully! ID: ${mergeResult.updatedIds[0]} (updated)`);
+          console.log(`✅ Recorded decision successfully! ID: ${mergeResult.updatedIds[0]} (updated)`);
         } else if (mergeResult.insertedIds.length > 0) {
-          console.log(`âœ… Recorded decision successfully! ID: ${mergeResult.insertedIds[0]}`);
+          console.log(`✅ Recorded decision successfully! ID: ${mergeResult.insertedIds[0]}`);
         } else {
-          console.log(`â„¹ï¸ Decision was identified as a duplicate and skipped.`);
+          console.log(`ℹ️ Decision was identified as a duplicate and skipped.`);
         }
       } else {
-        console.log(`âš ï¸ No AI provider configured or API keys found. Falling back to direct insertion without conflict detection.`);
+        console.log(`⚠️ No AI provider configured or API keys found. Falling back to direct insertion without conflict detection.`);
         const decision = await recordDecisionDirect(project.id, atom, `Record decision: ${title}`, config);
         console.log(decision.action === 'duplicate'
-          ? `â„¹ï¸ Already recorded verbatim, nothing written. ID: ${decision.item.id}`
-          : `âœ… Recorded decision successfully! ID: ${decision.item.id}`);
+          ? `ℹ️ Already recorded verbatim, nothing written. ID: ${decision.item.id}`
+          : `✅ Recorded decision successfully! ID: ${decision.item.id}`);
         for (const line of formatCrossRepoNotice(decision.crossRepo)) console.log(line);
-        if (decision.superseded) console.log(`ðŸ”„ Superseded older decision: ${decision.superseded.id}`);
-        if (decision.nearDuplicate) console.log(`âš ï¸ Left active beside "${decision.nearDuplicate.title}" (${decision.nearDuplicate.id}) â€” run \`knowl supersede ${decision.nearDuplicate.id} ${decision.item.id}\` if it replaces that one.`);
+        if (decision.superseded) console.log(`🔄 Superseded older decision: ${decision.superseded.id}`);
+        if (decision.nearDuplicate) console.log(`⚠️ Left active beside "${decision.nearDuplicate.title}" (${decision.nearDuplicate.id}) — run \`knowl supersede ${decision.nearDuplicate.id} ${decision.item.id}\` if it replaces that one.`);
       }
 
       await closeDb();
     } catch (error: any) {
-      console.error(`âŒ Error recording decision: ${error.message}`);
+      console.error(`❌ Error recording decision: ${error.message}`);
       process.exit(1);
     }
   });
@@ -1451,15 +1451,15 @@ program
       const hierarchy = await getHierarchicalKnowledge(project.id);
       const contextMarkdown = formatHierarchyToMarkdown(hierarchy);
 
-      console.log(`ðŸ¤” Thinking...`);
+      console.log(`🤔 Thinking...`);
       const answer = await askQuestion(question, contextMarkdown);
-      console.log(`â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
       console.log(answer);
-      console.log(`â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
       await closeDb();
     } catch (error: any) {
-      console.error(`âŒ Error asking question: ${error.message}`);
+      console.error(`❌ Error asking question: ${error.message}`);
       process.exit(1);
     }
   });
@@ -1490,16 +1490,16 @@ program
       const { runPipeline } = await import('../pipeline/pipeline.js');
       initAI(config.ai!);
 
-      console.log(`ðŸŒ€ Processing text through KNOWL pipeline...`);
+      console.log(`🌀 Processing text through KNOWL pipeline...`);
       const result = await runPipeline(project.id, text, config, {
         autoResolveContradictions: options.autoResolve,
         commitMessage: options.message || 'Ingest via CLI',
       });
 
-      console.log(`â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
-      console.log(`ðŸ“ PIPELINE INGESTION REPORT`);
-      console.log(`â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
-      console.log(`Filter Status:   ${result.passedFilter ? 'ðŸŸ¢ PASSED' : 'ðŸ”´ BLOCKED'}`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`📁 PIPELINE INGESTION REPORT`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+      console.log(`Filter Status:   ${result.passedFilter ? '🟢 PASSED' : '🔴 BLOCKED'}`);
       if (!result.passedFilter) {
         console.log(`Filter Reason:   ${result.filterReason}`);
       } else {
@@ -1511,22 +1511,22 @@ program
           console.log(`  Superseded:    ${result.mergeResult.supersededIds.length}`);
 
           if (result.mergeResult.unresolvedContradictions.length > 0) {
-            console.log(`â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
-            console.log(`âš ï¸  UNRESOLVED CONTRADICTIONS`);
+            console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+            console.log(`⚠️  UNRESOLVED CONTRADICTIONS`);
             for (const c of result.mergeResult.unresolvedContradictions) {
               console.log(`  Atom: "${c.atom.title}" (${c.atom.category})`);
               console.log(`  Conflict: ${c.compareResult?.reason}`);
-              console.log(`  ðŸ‘‰ Re-run with --auto-resolve to overwrite the old decision,`);
+              console.log(`  👉 Re-run with --auto-resolve to overwrite the old decision,`);
               console.log(`     or update the item manually using its ID.`);
             }
           }
         }
       }
-      console.log(`â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”`);
+      console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
       await closeDb();
     } catch (error: any) {
-      console.error(`âŒ Ingestion failed: ${error.message}`);
+      console.error(`❌ Ingestion failed: ${error.message}`);
       process.exit(1);
     }
   });
@@ -1605,7 +1605,7 @@ configCommand.action(async () => {
       ? `Saved ${result.changes.length} change${result.changes.length === 1 ? '' : 's'} to .knowl/config.json`
       : 'No changes written');
   } catch (error: any) {
-    console.error(`âŒ Configuration error: ${error.message}`);
+    console.error(`❌ Configuration error: ${error.message}`);
     process.exitCode = 1;
   }
 });
@@ -1618,7 +1618,7 @@ configCommand
       const value = await getConfigValue(await findProjectRoot(process.cwd()), key);
       console.log(typeof value === 'string' ? value : JSON.stringify(value));
     } catch (error: any) {
-      console.error(`âŒ Configuration error: ${error.message}`);
+      console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
     }
   });
@@ -1648,7 +1648,7 @@ configCommand
       const teardown = describeTranscriptTeardown(await applyTranscriptConfigTransition(root, before, after));
       if (teardown) console.log(teardown);
     } catch (error: any) {
-      console.error(`âŒ Configuration error: ${error.message}`);
+      console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
     }
   });
@@ -1683,7 +1683,7 @@ configCommand
       console.log('Run `knowl reindex --vectors` to rebuild embeddings with it.');
       await announceProfileChange(root, before, await loadConfig(root));
     } catch (error: any) {
-      console.error(`âŒ Configuration error: ${error.message}`);
+      console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
     }
   });
@@ -1717,7 +1717,7 @@ configCommand
       const teardown = describeTranscriptTeardown(await applyTranscriptConfigTransition(root, before, afterReset));
       if (teardown) console.log(teardown);
     } catch (error: any) {
-      console.error(`âŒ Configuration error: ${error.message}`);
+      console.error(`❌ Configuration error: ${error.message}`);
       process.exitCode = 1;
     }
   });
@@ -1929,7 +1929,7 @@ program
 // --- 11. UPGRADE COMMAND ---
 program
   .command('upgrade')
-  .description('Refresh project files only (config, schema, guidance, .gitignore) â€” no agent setup. `knowl init` runs this plus agent registration.')
+  .description('Refresh project files only (config, schema, guidance, .gitignore) — no agent setup. `knowl init` runs this plus agent registration.')
   .option('--all', 'Upgrade and repair every Knowl repository on this machine')
   .option('--root <dir...>', 'With --all, also scan these directories for repositories not yet known')
   .option('--reindex', 'With --all, also re-embed items missing vector coverage (slow)')
@@ -1985,7 +1985,7 @@ program
       // the process on Windows instead of reporting a status.
       if (results.some(result => !result.ready)) process.exitCode = 1;
     } catch (error: any) {
-      console.error(`âŒ Error upgrading KNOWL: ${error.message}`);
+      console.error(`❌ Error upgrading KNOWL: ${error.message}`);
       process.exit(1);
     }
   });
@@ -2806,13 +2806,13 @@ program
   .description('Start the Model Context Protocol (MCP) server for KNOWL')
   .action(async () => {
     try {
-      console.error(`ðŸš€ Starting KNOWL MCP Server...`);
+      console.error(`🚀 Starting KNOWL MCP Server...`);
       // Imported here, not at module scope: the MCP SDK costs ~530ms to load and only this
       // command needs it, so every other CLI invocation was paying for it.
       const { startMcpServer } = await import('../mcp/server.js');
       await startMcpServer();
     } catch (error: any) {
-      console.error(`âŒ Failed to start MCP Server: ${error.message}`);
+      console.error(`❌ Failed to start MCP Server: ${error.message}`);
       process.exit(1);
     }
   });
