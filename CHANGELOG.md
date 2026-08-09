@@ -3,6 +3,118 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 4.0.0 — 2026-08-09
+
+Knowl learns to work with a team. Forty-five commits, almost all of them one feature: a cloud
+client that lets several checkouts share one body of project memory, and lets an agent on any of
+them answer from what a colleague wrote.
+
+**Why a major.** Nothing here breaks: `KNOWL_SCHEMA_VERSION` is held at `1`, the migration to
+level 7 is additive, and every existing command behaves as it did. The number marks the change in
+what Knowl *is* — memory that had never left the machine now has a way to leave it — rather than a
+compatibility break you need to plan around.
+
+### Knowl Cloud
+
+A workspace is a shared store several repositories publish into. The commands:
+
+```
+knowl login                                 # device-code flow, per-host credentials
+knowl cloud connect                         # point this repo at a workspace; publishes nothing
+knowl publish --category decision --apply   # stage: any time, any branch
+knowl cloud push                            # send: only from an up-to-date default branch
+knowl cloud pull                            # fetch team knowledge into the local replica
+knowl cloud status                          # what is connected, staged, and holding it up
+```
+
+Team knowledge lands in a **per-workspace replica** under `knowlHome()/cloud/`, with its sync
+watermark stored inside the replica rather than beside it — so deleting the replica is a complete
+reset, and a watermark can never outlive the data it describes. Queries read the replica directly
+and attribute every row to the repository that wrote it, so a fact from someone else's codebase
+never reads as a fact about yours.
+
+**Retrieval never waits on the network.** A query answers from the local replica immediately and a
+refresh runs in the background; when something new has landed, the next query carries a
+`TEAM UPDATE:` notice telling the agent it may want to look again. There is no path where a remote
+call sits on the retrieval hot path.
+
+### Publishing is two-phase, and the gate is the interesting half
+
+`knowl publish` *stages* an intent and sends nothing. The network push happens only once the code
+an atom describes is on the default branch, and only from a checkout that is not behind its remote.
+
+Both halves are deliberate. An atom describing code only you have would be false for everyone else,
+and being behind the remote is indistinguishable from the code having been deleted — so the client
+stays silent rather than reporting a local truth as a shared one. Only code-coupled atoms are
+gated: "we chose Postgres" is true when decided and pushes immediately. The gate keys on evidence,
+never on category, and it lives entirely in the client because only the client can see the graph.
+
+### `knowl cloud retract` takes something back
+
+```
+knowl cloud retract <id> --reason "leaked a customer name"
+```
+
+The workspace copy is deleted and a tombstone written in one transaction; the id can never be
+published again, and teammates lose the atom on their next sync. This is for knowledge that must
+not remain readable. Knowledge that merely stopped being true should be superseded, which keeps
+the lineage.
+
+**It is the one upward path with no branch gate.** Publishing and drift reports are gated because
+they assert something about code only you have; a removal is true from every vantage, and the case
+that brings you here is a secret sitting in a shared workspace right now. Answering that with
+"switch to the default branch and pull first" would hold the leak open for the length of a rebase.
+
+`expectedVersion` comes from the local ledger, so if a colleague edited the atom after you
+published it the retraction stops with a conflict rather than destroying an edit you never read.
+
+### An agent can see what is shared
+
+New MCP tool `knowl_cloud`, offered only to a repository that is connected. `status` reports the
+connection, your role, what is staged and what a push is waiting for, with no network call.
+`stage` records an intent and is a dry run unless asked otherwise.
+
+It stops there deliberately: sending, retracting, pulling, connecting and signing in stay yours to
+run, and the agent relays the command instead. Both directions across the network are irreversible,
+and neither is a decision to make on an agent's initiative.
+
+### Every MCP tool now says when to use it
+
+The guidance card was shrunk on the assumption that `tools/list` already teaches routing. Auditing
+all 31 tools showed several that never did — `knowl_context` described what it composed but not
+when to reach for it, and left two arguments undocumented; `knowl_conflicts` said to use it "when a
+conflict must be resolved" without saying how you would learn one exists. Nine tools gained a
+trigger, and the batch writer now says its fields mean what `knowl_store`'s mean rather than
+repeating ten descriptions.
+
+### Also in this release
+
+- **`knowl gc` records why an item was destroyed**, not just that it was, in a forget log with a
+  level of its own, an owner, and a way to read it.
+- **Standing knowledge promotes on observed use**, because the feedback channel it previously
+  depended on never fired.
+- **Three live prompt injections closed** in the untrusted-content gate — cases the gate drove but
+  could not itself see — with the containment guarantee now pinned by a test so a new formatter
+  cannot outgrow it.
+- **`knowl doctor` reports cloud connection and replica lag.**
+
+### The hosted service is not reachable yet
+
+The cloud client ships to every user whether they connect or not, which is deliberate and matches
+`gh` and `vercel`. **But there is no deployed server behind the default host.** `knowl login` and
+`knowl cloud connect` will fail with a connection error until there is; everything above was
+verified against a local server, including a two-checkout run proving an atom written on one
+machine reaching another. Point `KNOWL_API_HOST` at your own instance if you are running one.
+
+Related, and worth knowing before you rely on it: the production browser approval path has never
+been exercised, and retrieval counts do not yet flow upward, so team-scale decay has no input.
+
+### Upgrading
+
+Nothing to do. The migration to level 7 adds one table (`cloud_published`) and runs on first use;
+`KNOWL_SCHEMA_VERSION` stays at `1`, so a store written by this version is still readable by the
+last. If you do not connect to a workspace, nothing in this release changes how Knowl behaves.
+
 ## 3.4.1 — 2026-08-08
 
 ### The guidance check is line-ending agnostic

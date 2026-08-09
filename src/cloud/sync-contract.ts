@@ -168,16 +168,26 @@ export type PublishOutcome =
   | { id: string; status: 'tombstoned'; deletedAt: string };
 
 /**
- * The two verbs this client sends on the update endpoint, and their asymmetry is deliberate.
+ * The three verbs this client sends on the update endpoint, and their asymmetry is deliberate.
  *
  * `needsReview` takes no version and bumps none: a drift report is an observation about an atom,
  * not a revision of it, so a report is never dropped for arriving mid-edit. `reviewed` is a
  * positive claim about specific content, so it takes `expectedVersion` and refuses to vouch for
  * text the caller did not read.
+ *
+ * `delete` is the destructive one and takes `expectedVersion` for the sharper version of the same
+ * reason: deleting an atom a colleague edited since you read it destroys a correction you never
+ * saw. The server hard-deletes the row and writes a tombstone in one transaction, then refuses
+ * every later publish of that id, so this cannot be undone from either side. `reason` is required
+ * and stored on the tombstone -- a deletion nobody can explain later is its own problem.
+ *
+ * This is a strict subset of the server's patch union, which also carries `transfer`. A verb
+ * absent here is one this client has no path for, not one the server lacks.
  */
 export type UpdateItemBody =
   | { op: 'needsReview'; reason: string; observedAtCommit?: string }
-  | { op: 'reviewed'; expectedVersion: number; sourceCommit: string; note?: string };
+  | { op: 'reviewed'; expectedVersion: number; sourceCommit: string; note?: string }
+  | { op: 'delete'; expectedVersion: number; reason: string };
 
 export type SyncRow =
   | { op: 'upsert'; seq: string; item: SyncAtom }

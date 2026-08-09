@@ -46,6 +46,7 @@ import { defaultApiHost, runLogin, runLogout } from '../cloud/login.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
 import { pushStaged, stagePublish } from '../cloud/publish.js';
+import { retractItem } from '../cloud/retract.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
@@ -672,7 +673,7 @@ program
       console.log(result.applied
         ? `Staged ${result.items.length} item(s). Run knowl cloud push to send them.`
         : `${result.items.length} item(s) would be staged. Re-run with --apply.`);
-      if (result.applied) console.log('Publishing cannot be undone from here yet.');
+      if (result.applied) console.log('Once pushed, removing it again takes knowl cloud retract, which is irreversible.');
     } catch (error: any) {
       console.error(`Publish failed: ${error.message}`);
       process.exit(1);
@@ -794,6 +795,48 @@ cloudCommand
       }
     } catch (error: any) {
       console.error(`Push failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+cloudCommand
+  .command('retract <id>')
+  .description('Remove a published atom from the workspace. Irreversible, and works from any branch')
+  .requiredOption('--reason <text>', 'Why it is being removed; stored on the tombstone')
+  .action(async (id, options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      const result = await retractItem({ projectRoot: root, config, itemId: id, reason: options.reason });
+
+      if (result.status === 'not-connected') {
+        console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
+        process.exit(1);
+      }
+      if (result.status === 'not-logged-in') {
+        console.error('Not signed in. Run knowl login first.');
+        process.exit(1);
+      }
+      if (result.status === 'forbidden') {
+        console.error(`You are a ${result.role} in this workspace, which cannot remove knowledge.`);
+        process.exit(1);
+      }
+      if (result.status === 'not-published') {
+        console.error(`${id} was never pushed from this machine, so there is nothing in the workspace to remove.`);
+        process.exit(1);
+      }
+      if (result.status === 'conflict') {
+        console.error(
+          `${id} changed in the workspace after this machine published it (now version ${result.currentVersion}).`,
+        );
+        console.error('Run knowl cloud pull, read what it says now, and retract again if it should still go.');
+        process.exit(1);
+      }
+
+      console.log(`Removed ${id} from the workspace. Teammates lose it on their next sync.`);
+      console.log('This cannot be undone, and the id can never be published again.');
+    } catch (error: any) {
+      console.error(`Retract failed: ${error.message}`);
       process.exit(1);
     }
   });

@@ -9,8 +9,11 @@ import { CloudApiError } from '../../src/cloud/api-client.js';
 const HOME = path.resolve('./.knowl-login-home');
 const HOST = 'https://api.knowl.test';
 
-/** The instant the expiry test advances its clock towards. Fifteen minutes, like the server's. */
-const CODE_EXPIRES_AT = new Date(Date.parse('2026-08-09T12:00:00.000Z') + 900_000).toISOString();
+/** Fifteen minutes, like the server's. */
+const CODE_LIFETIME_MS = 900_000;
+
+/** The instant the expiry test's injected clock starts from, and the only pinned date here. */
+const EXPIRY_TEST_EPOCH = Date.parse('2026-08-09T12:00:00.000Z');
 
 /**
  * The server's real shape: an absolute `expiresAt`, and no `verificationUri`.
@@ -18,12 +21,24 @@ const CODE_EXPIRES_AT = new Date(Date.parse('2026-08-09T12:00:00.000Z') + 900_00
  * This fixture used to carry `expiresInSeconds: 900` and a URL, neither of which the server
  * sends. That is what made the deadline `now() + NaN` in production while every test here passed
  * -- the fake was written from what the client wanted rather than from what the server returns.
+ *
+ * The deadline is computed per run rather than pinned to a date. It was pinned to
+ * 2026-08-09T12:15:00Z, which every test compared against the real `Date.now()`: the suite
+ * passed until the wall clock reached that instant and then failed for everyone, permanently,
+ * with no code change. Only the expiry test below pins an instant, and only because it supplies
+ * the clock that reads it.
  */
 const authorization: DeviceAuthorization = {
   deviceCode: 'dev-1',
   userCode: 'ABCD-EFGH',
   intervalSeconds: 5,
-  expiresAt: CODE_EXPIRES_AT,
+  expiresAt: new Date(Date.now() + CODE_LIFETIME_MS).toISOString(),
+};
+
+/** Reached in 180 polls of 5s from `EXPIRY_TEST_EPOCH`, on the clock that test injects. */
+const expiringAuthorization: DeviceAuthorization = {
+  ...authorization,
+  expiresAt: new Date(EXPIRY_TEST_EPOCH + CODE_LIFETIME_MS).toISOString(),
 };
 
 const credential = {
@@ -33,10 +48,13 @@ const credential = {
   sessionId: 'sess-1',
 };
 
-function fakeApi(polls: Array<'pending' | typeof credential | CloudApiError>): CloudApi {
+function fakeApi(
+  polls: Array<'pending' | typeof credential | CloudApiError>,
+  auth: DeviceAuthorization = authorization,
+): CloudApi {
   const queue = [...polls];
   return {
-    startDeviceAuthorization: async () => authorization,
+    startDeviceAuthorization: async () => auth,
     pollForToken: async () => {
       const next = queue.shift();
       if (next instanceof CloudApiError) throw next;
@@ -106,10 +124,10 @@ describe('runLogin', () => {
     let elapsed = 0;
     const result = await runLogin({
       apiHost: HOST,
-      api: fakeApi(Array.from({ length: 500 }, () => 'pending' as const)),
+      api: fakeApi(Array.from({ length: 500 }, () => 'pending' as const), expiringAuthorization),
       onPrompt: () => {},
       sleep: async ms => { elapsed += ms; },
-      now: () => Date.parse('2026-08-09T12:00:00.000Z') + elapsed,
+      now: () => EXPIRY_TEST_EPOCH + elapsed,
     });
 
     expect(result).toEqual({ status: 'expired' });

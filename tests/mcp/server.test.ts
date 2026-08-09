@@ -6,6 +6,8 @@ import * as repo from '../../src/store/repository.js';
 import { startMemorySession, appendMemorySessionEvent } from '../../src/store/session-repository.js';
 import { createEvidence, linkKnowledgeEvidence } from '../../src/store/evidence-repository.js';
 import { createMcpServer } from '../../src/mcp/server.js';
+import { knowlToolDefinitions } from '../../src/mcp/tools.js';
+import { CLOUD_TOOL_DEFINITIONS } from '../../src/mcp/tool-definitions.js';
 import { ProjectConfig } from '../../src/core/types.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS } from '../../src/core/token-budget.js';
 import { approveSkill } from '../../src/skills/trust.js';
@@ -274,10 +276,40 @@ describe('MCP Server Layer', () => {
     expect(byName.get('knowl_recent')).toContain('only when lifecycle bootstrap is unavailable');
     expect(byName.get('knowl_task_start')).toContain('manual work loop');
     expect(byName.get('knowl_task_start')).toContain('Never use for a hook-owned session');
-    expect(byName.get('knowl_session_finish')).toContain('never a hook-owned session');
+    expect(byName.get('knowl_session_finish')).toContain('Never call this for a hook-owned session');
     expect(byName.get('knowl_ingest')).toContain('never silently ingest the current conversation');
     expect(byName.get('knowl_skill_create')).toContain('explicitly requested');
     expect(byName.get('knowl_gc_apply')).toContain('explicit user approval');
+  });
+
+  it('offers knowl_cloud only to a repository that is connected to a workspace', () => {
+    const disconnected = knowlToolDefinitions(MOCK_CONFIG).map(tool => tool.name);
+    expect(disconnected).not.toContain('knowl_cloud');
+
+    const connected = knowlToolDefinitions({
+      ...MOCK_CONFIG,
+      cloud: { apiHost: 'https://api.knowl.test', workspaceId: 'ws-1', repo: 'github.com/acme/app' },
+    }).map(tool => tool.name);
+    expect(connected).toContain('knowl_cloud');
+  });
+
+  it('refuses knowl_cloud when the repository is not connected, rather than answering "unknown tool"', async () => {
+    // A client holding a cached tool list can still call it after a disconnect, so dispatch
+    // re-checks the gate instead of trusting the listing.
+    const res = await runRpcRequest('tools/call', { name: 'knowl_cloud', arguments: { action: 'status' } });
+    expect(res.error).toBeUndefined();
+    expect(res.result.content[0].text).toContain('not connected to a cloud workspace');
+  });
+
+  it('tells the agent that sending is the user\'s to run, not its own', async () => {
+    const res = await runRpcRequest('tools/list');
+    const byName = new Map(res.result.tools.map((tool: any) => [tool.name, tool.description]));
+    // Not listed here (MOCK_CONFIG has no cloud), so assert against the definition itself:
+    // publishing is irreversible and the agent must relay the command rather than route around it.
+    const cloud = CLOUD_TOOL_DEFINITIONS[0];
+    expect(byName.has('knowl_cloud')).toBe(false);
+    expect(cloud.description).toContain('knowl cloud push');
+    expect(cloud.description).toContain('irreversible');
   });
 
   it('should list tools', async () => {
