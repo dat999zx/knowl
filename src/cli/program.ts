@@ -46,6 +46,7 @@ import { DEFAULT_API_HOST, runLogin, runLogout } from '../cloud/login.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
 import { pushStaged, stagePublish } from '../cloud/publish.js';
+import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -788,6 +789,20 @@ cloudCommand
       }
     } catch (error: any) {
       console.error(`Push failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+cloudCommand
+  .command('status')
+  .description('Report the workspace, the replica and what is staged (makes no network call)')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      console.log(formatCloudStatus(await cloudStatus(root, config)));
+    } catch (error: any) {
+      console.error(`Status failed: ${error.message}`);
       process.exit(1);
     }
   });

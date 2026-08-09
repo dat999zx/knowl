@@ -1,6 +1,10 @@
 import type { ProjectConfig } from '../core/types.js';
 import type { DoctorCheck } from '../cli/doctor-report.js';
+import { withDbPath } from '../store/database.js';
+import { resolveStorage } from '../store/storage-roles.js';
 import { readCredential } from './credentials.js';
+import { listStaged } from './ledger.js';
+import { checkPublishGate } from './publish-gate.js';
 import { readSyncState } from './sync-state.js';
 import { withTeamStore } from './team-store.js';
 
@@ -53,12 +57,40 @@ export async function cloudDoctorChecks(
     }];
   }
 
+  return [
+    {
+      status: state.lastError ? 'WARN' : 'OK',
+      message:
+        `Cloud: ${pointer.repo} → ${pointer.workspaceName ?? pointer.workspaceId} ` +
+        `(${pointer.apiHost}${fresh ? '' : ', access token will refresh on next use'}` +
+        `, synced ${state.lastSyncedAt}${state.lastError ? `, last attempt failed: ${state.lastError}` : ''})`,
+      ...(state.lastError ? { fix: 'Run knowl cloud pull' } : {}),
+    },
+    ...await stagedCheck(pointer.workspaceId, projectRoot),
+  ];
+}
+
+/**
+ * Staged work that the gate is currently refusing to send.
+ *
+ * A developer who staged on a feature branch and moved on has no other prompt -- the atoms are
+ * in a table nobody reads, and the push they were waiting for is a command they have to
+ * remember to run. Reported through doctor because doctor is a command they already run.
+ *
+ * Silent when nothing is staged, and silent when the gate would pass: a WARN that fires on the
+ * happy path is furniture, and the one time it matters nobody reads it.
+ */
+async function stagedCheck(workspaceId: string, projectRoot: string): Promise<DoctorCheck[]> {
+  const staged = await withDbPath(resolveStorage(projectRoot).knowledge, () => listStaged(workspaceId))
+    .catch(() => []);
+  if (staged.length === 0) return [];
+
+  const verdict = checkPublishGate(projectRoot);
+  if (verdict.ok) return [];
+
   return [{
-    status: state.lastError ? 'WARN' : 'OK',
-    message:
-      `Cloud: ${pointer.repo} → ${pointer.workspaceName ?? pointer.workspaceId} ` +
-      `(${pointer.apiHost}${fresh ? '' : ', access token will refresh on next use'}` +
-      `, synced ${state.lastSyncedAt}${state.lastError ? `, last attempt failed: ${state.lastError}` : ''})`,
-    ...(state.lastError ? { fix: 'Run knowl cloud pull' } : {}),
+    status: 'WARN',
+    message: `Cloud: ${staged.length} item(s) staged but not sent. ${verdict.detail}`,
+    fix: 'Run knowl cloud status',
   }];
 }
