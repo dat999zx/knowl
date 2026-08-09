@@ -164,6 +164,40 @@ const SCHEMA_STATEMENTS = [
     reason TEXT
   );`,
 
+  /**
+   * The forget log: what was true about an item at the instant it was destroyed. See
+   * `forget-log.ts` for why this is not the tombstone -- the short version is that tombstones
+   * ride in portable exports and merge by upsert, so usage numbers put there would both leak
+   * off the machine and be overwritable by a peer.
+   *
+   * No foreign key to `knowledge_items` on purpose: the row it describes is already gone, and
+   * `ON DELETE CASCADE` would destroy the record at the exact moment it became the only copy.
+   * A TEXT id rather than AUTOINCREMENT, matching every other table here, so no
+   * `sqlite_sequence` appears for `snapshot-table-ownership` to trip over.
+   *
+   * `origin_repo` is copied off the item rather than resolved from the caller's workspace,
+   * because it answers "whose item was this" and not "who ran the collection". Several repos
+   * share one database in workspace v2, so without it "which of MY items were taken" is not a
+   * question this table can answer -- and the column has to exist from the start, since a row
+   * written without it can never be attributed afterwards. NULL outside a workspace.
+   */
+  `CREATE TABLE IF NOT EXISTS knowledge_forget_log (
+    id TEXT PRIMARY KEY,
+    knowledge_item_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    tier TEXT,
+    status TEXT,
+    origin_repo TEXT,
+    deleted_at TEXT NOT NULL,
+    policy TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    retrieval_count INTEGER NOT NULL DEFAULT 0,
+    last_retrieved_at TEXT,
+    age_days INTEGER,
+    bytes INTEGER
+  );`,
+
   `CREATE TABLE IF NOT EXISTS skill_steps (
     id TEXT PRIMARY KEY,
     knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,

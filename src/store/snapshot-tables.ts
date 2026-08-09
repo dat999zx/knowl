@@ -41,6 +41,12 @@ export const SNAPSHOT_TABLE_POLICY: Readonly<Record<string, SnapshotTablePolicy>
   // A tombstone records that someone deliberately deleted an item. Restoring older knowledge
   // is not a statement that they changed their mind, so the delete stands.
   knowledge_tombstones: 'preserved',
+  // The forget log, for the tombstone's reason and one of its own. Restoring cannot un-delete
+  // anything, so the record of what was destroyed still holds. The reason of its own is that
+  // `restored` would empty it and refill it from the snapshot, erasing every deletion made
+  // since -- which is precisely the window someone asking "was that threshold right?" is
+  // asking about. An audit trail a restore can silently truncate is not one.
+  knowledge_forget_log: 'preserved',
   // Sessions and their events belong to hosts that are running now. A restored session is a
   // session no host is in.
   memory_sessions: 'preserved',

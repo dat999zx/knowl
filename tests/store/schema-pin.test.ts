@@ -35,6 +35,10 @@ const SCHEMA_PINS: Record<number, string> = {
   // 5 adds `knowledge_items.last_drift_at`, the stored drift observation standing promotion
   // reads. One nullable column, no backfill, so `KNOWL_SCHEMA_VERSION` again does not move.
   5: 'b4aceb35414d23bf1240b4b1679bee78',
+  // 6 adds `knowledge_forget_log`: the deciding numbers behind a deletion, which the tombstone
+  // could not carry because it is exported and upsert-merged. Additive again, so
+  // `KNOWL_SCHEMA_VERSION` again does not move.
+  6: '5f36731e329b1d86976f39f439f7ff39',
 };
 
 let root: string;

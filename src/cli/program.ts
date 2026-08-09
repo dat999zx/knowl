@@ -50,6 +50,7 @@ import { formatWarmResult, warmEmbeddingModel } from './warm-embeddings.js';
 import { parseAgentNames } from './agents/registry.js';
 import { reindexKnowledgeEmbeddings } from '../store/vector-index.js';
 import { applyKnowledgeGc, previewKnowledgeGc, isHot } from '../store/gc.js';
+import { listForgetLog, pruneForgetLog } from '../store/forget-log.js';
 import { getAccessSummary } from '../store/access-feedback.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } from '../store/work-loop.js';
 import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince } from '../store/drift.js';
@@ -1846,6 +1847,71 @@ program
     } catch (error: any) {
       console.error(`Error running GC: ${error.message}`);
       process.exit(1);
+    }
+  });
+
+/**
+ * The read side of the forget log. Recording why an item was destroyed and then offering no way
+ * to read it back would leave the collection policy exactly as unfalsifiable as it was before
+ * the table existed -- the numbers would merely be unreachable in SQLite instead of unreachable
+ * in a discarded local variable.
+ *
+ * Listing, not pruning, is the default. The whole argument for a table separate from
+ * `knowledge_tombstones` is that these rows are kept when tombstones are dropped, so the
+ * destructive mode has to be asked for by name.
+ */
+program
+  .command('forget-log')
+  .description('Show why knowledge items were destroyed, newest first')
+  .option('--limit <n>', 'How many entries to show (default 20, max 1000)')
+  .option('--repo <name>', 'Only entries for items owned by this workspace repo')
+  .option('--prune-days <days>', 'Instead of listing, delete entries older than this many days')
+  .option('--json', 'Emit JSON instead of text')
+  .action(async (options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+
+      const pruneDays = numericOption(options.pruneDays, '--prune-days', { min: 0 });
+      if (pruneDays !== undefined) {
+        const removed = await pruneForgetLog(pruneDays);
+        console.log(options.json ? JSON.stringify({ pruned: removed }) : `Pruned ${removed} forget-log entries.`);
+        await closeDb();
+        return;
+      }
+
+      const entries = await listForgetLog({
+        limit: numericOption(options.limit, '--limit', { min: 1 }) ?? 20,
+        originRepo: options.repo,
+      });
+
+      if (options.json) {
+        console.log(JSON.stringify({ entries }));
+        await closeDb();
+        return;
+      }
+
+      console.log('KNOWL FORGET LOG');
+      if (entries.length === 0) {
+        console.log(options.repo
+          ? `No recorded deletions for repo "${options.repo}".`
+          : 'No recorded deletions. Entries appear here once `knowl gc --apply` purges something.');
+      }
+      for (const entry of entries) {
+        const owner = entry.originRepo ? ` [${entry.originRepo}]` : '';
+        console.log(`- ${entry.deletedAt} ${entry.policy} ${entry.itemId}${owner} ${entry.title}`);
+        console.log(`  Reason: ${entry.reason}`);
+        // The retrieval numbers are the point: a purge of something still being read is the
+        // finding a threshold review is looking for, and it is invisible in a plain count.
+        const lastSeen = entry.lastRetrievedAt ? `, last ${entry.lastRetrievedAt}` : '';
+        const age = entry.ageDays === null ? '' : `, ${entry.ageDays}d old`;
+        const size = entry.bytes === null ? '' : `, ${entry.bytes} bytes`;
+        console.log(`  Retrievals: ${entry.retrievalCount}${lastSeen}${age}${size}`);
+      }
+
+      await closeDb();
+    } catch (error: any) {
+      reportCommandFailure(options.json, 'Error reading the forget log', error);
     }
   });
 
