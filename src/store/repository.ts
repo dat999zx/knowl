@@ -624,6 +624,9 @@ export async function deleteKnowledgeItem(
         category: doomed.category,
         tier: doomed.tier ?? null,
         status: doomed.status ?? null,
+        // The item's owner, not the caller's repo: in a shared workspace store this row is the
+        // only remaining evidence of whose knowledge was destroyed.
+        originRepo: doomed.originRepo ?? null,
         deletedAt,
         policy: forget?.policy ?? FORGET_LOG_POLICY_MANUAL,
         reason: forget?.reason ?? 'Deleted without a recorded reason',

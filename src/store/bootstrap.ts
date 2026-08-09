@@ -174,6 +174,12 @@ const SCHEMA_STATEMENTS = [
    * `ON DELETE CASCADE` would destroy the record at the exact moment it became the only copy.
    * A TEXT id rather than AUTOINCREMENT, matching every other table here, so no
    * `sqlite_sequence` appears for `snapshot-table-ownership` to trip over.
+   *
+   * `origin_repo` is copied off the item rather than resolved from the caller's workspace,
+   * because it answers "whose item was this" and not "who ran the collection". Several repos
+   * share one database in workspace v2, so without it "which of MY items were taken" is not a
+   * question this table can answer -- and the column has to exist from the start, since a row
+   * written without it can never be attributed afterwards. NULL outside a workspace.
    */
   `CREATE TABLE IF NOT EXISTS knowledge_forget_log (
     id TEXT PRIMARY KEY,
@@ -182,6 +188,7 @@ const SCHEMA_STATEMENTS = [
     category TEXT NOT NULL,
     tier TEXT,
     status TEXT,
+    origin_repo TEXT,
     deleted_at TEXT NOT NULL,
     policy TEXT NOT NULL,
     reason TEXT NOT NULL,

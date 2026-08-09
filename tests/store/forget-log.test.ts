@@ -175,6 +175,45 @@ describe('forget log', () => {
     expect(entry.policy).toBe('gc:purge');
   });
 
+  /**
+   * Several repos share one database in workspace v2, so a log that cannot say whose item was
+   * destroyed cannot answer the question it exists for. The owner is copied off the item, not
+   * resolved from whoever ran the collection, and it has to be written at deletion — after it,
+   * there is nothing left to attribute the row from.
+   */
+  it('carries the owning repo off the item, so a shared store can say whose knowledge went', async () => {
+    const db = getDb() as any;
+    const mine = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Owned by alpha', content: 'Alpha wrote this.',
+    });
+    const theirs = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Owned by beta', content: 'Beta wrote this.',
+    });
+    await db.run(sql`UPDATE knowledge_items SET origin_repo = 'alpha' WHERE id = ${mine.id}`);
+    await db.run(sql`UPDATE knowledge_items SET origin_repo = 'beta' WHERE id = ${theirs.id}`);
+
+    await repo.deleteKnowledgeItem(mine.id);
+    await repo.deleteKnowledgeItem(theirs.id);
+
+    const scoped = await listForgetLog({ originRepo: 'alpha' });
+    expect(scoped.map(entry => entry.title)).toEqual(['Owned by alpha']);
+    expect(scoped[0].originRepo).toBe('alpha');
+
+    // Unfiltered by default: scoping silently to one repo would report "nothing was collected"
+    // while a neighbour took the rest, which is the blind spot this table exists to close.
+    expect(await listForgetLog()).toHaveLength(2);
+  });
+
+  it('leaves the owner null outside a workspace rather than inventing one', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Unowned', content: 'No workspace here.',
+    });
+    await repo.deleteKnowledgeItem(item.id);
+
+    expect((await listForgetLog())[0].originRepo).toBeNull();
+    expect(await listForgetLog({ originRepo: 'alpha' })).toHaveLength(0);
+  });
+
   it('survives the item it describes — no cascade takes the only remaining copy', async () => {
     const item = await repo.createKnowledgeItem(projectId, {
       category: 'fact', title: 'Gone entirely', content: 'Nothing references this any more.',

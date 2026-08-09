@@ -765,6 +765,26 @@ Flags adjust these thresholds, and `--ignore-access` disregards access heat for 
 archival. Review the preview before applying it; GC does not infer semantic equivalence across
 different content.
 
+### The forget log
+
+Every destroyed item leaves one append-only row recording what was true at the instant of
+destruction: the policy that fired, its reason in words, and the retrieval evidence that policy
+decided against. That makes a collection threshold checkable after the fact — you can ask which
+items were taken while they were still being retrieved.
+
+```bash
+knowl forget-log
+knowl forget-log --limit 100 --json
+knowl forget-log --repo web            # only items owned by that workspace repo
+knowl forget-log --prune-days 365
+```
+
+This is a separate table from `knowledge_tombstones` and it never leaves the machine. A tombstone
+rides in every portable export and merges by upsert on import, so retrieval numbers there would
+both publish local telemetry and let a peer's import overwrite this machine's audit trail.
+Tombstones are pruned after 90 days on every GC run; forget-log rows are kept until
+`--prune-days` asks for them to go, because the question they answer arrives months late.
+
 ### Snapshots, audit, and doctor
 
 ```bash
@@ -1233,6 +1253,7 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 | `knowl reindex --transcripts [--budget <minutes>]` | Build or update the optional session transcript index; resumable, so a budget is a stopping point rather than a rollback |
 | `knowl resume [key]` | Resume a parked workstream from its key, or list what is parked here |
 | `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access] [--tombstone-days N]` | Preview or apply duplicate, archive, compression, and tombstone maintenance |
+| `knowl forget-log [--limit N] [--repo <name>] [--json] [--prune-days N]` | Show why knowledge items were destroyed — policy, reason, and the retrieval evidence it overruled — or prune those records |
 | `knowl pr check --since <commit> [--dry-run]` | Find drift candidates and, unless dry-run, mark them for review |
 | `knowl view [--port <port>]` | Start the local GET-only viewer |
 | `knowl serve` | Start the stdio MCP server |

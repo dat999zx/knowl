@@ -31,6 +31,12 @@ export type ForgetLogEntry = {
   /** Standing and status as they stood at deletion, not as some later import believes them. */
   tier: string | null;
   status: string | null;
+  /**
+   * The repo that OWNED the item, copied off it at deletion -- not the repo that ran the
+   * collection. Several repos share one database in workspace v2, so this is what makes
+   * "which of my items were taken" answerable. NULL outside a workspace.
+   */
+  originRepo: string | null;
   deletedAt: string;
   /** Which mechanism destroyed it. `reason` says why in words; this says who. */
   policy: string;
@@ -61,28 +67,38 @@ export async function recordForgetLogEntry(
   const conn = (dbConnection ?? getDb()) as any;
   await conn.run(sql`
     INSERT INTO knowledge_forget_log (
-      id, knowledge_item_id, title, category, tier, status, deleted_at,
+      id, knowledge_item_id, title, category, tier, status, origin_repo, deleted_at,
       policy, reason, retrieval_count, last_retrieved_at, age_days, bytes
     ) VALUES (
       ${generateId()}, ${entry.itemId}, ${entry.title}, ${entry.category},
-      ${entry.tier ?? null}, ${entry.status ?? null}, ${entry.deletedAt},
+      ${entry.tier ?? null}, ${entry.status ?? null}, ${entry.originRepo ?? null},
+      ${entry.deletedAt},
       ${entry.policy}, ${entry.reason}, ${entry.retrievalCount},
       ${entry.lastRetrievedAt ?? null}, ${entry.ageDays ?? null}, ${entry.bytes ?? null}
     )
   `);
 }
 
-/** Newest first: the question this answers is almost always "what just went missing". */
+/**
+ * Newest first: the question this answers is almost always "what just went missing".
+ *
+ * Unfiltered by default even in a shared workspace database. Scoping silently to the calling
+ * repo would make an audit trail that answers "nothing was collected" when a neighbour took
+ * fifty items, which is the failure this table exists to rule out. Pass `originRepo` to narrow
+ * deliberately.
+ */
 export async function listForgetLog(
-  options: { limit?: number } = {},
+  options: { limit?: number; originRepo?: string } = {},
   dbConnection?: DbConnection,
 ): Promise<ForgetLogEntry[]> {
   const conn = (dbConnection ?? getDb()) as any;
   const limit = Math.max(1, Math.min(options.limit ?? 50, 1000));
+  const repo = options.originRepo;
   const rows = await conn.all(sql`
-    SELECT knowledge_item_id, title, category, tier, status, deleted_at,
+    SELECT knowledge_item_id, title, category, tier, status, origin_repo, deleted_at,
            policy, reason, retrieval_count, last_retrieved_at, age_days, bytes
     FROM knowledge_forget_log
+    WHERE ${repo === undefined ? sql`1 = 1` : sql`origin_repo = ${repo}`}
     ORDER BY deleted_at DESC, rowid DESC
     LIMIT ${limit}
   `);
@@ -92,6 +108,7 @@ export async function listForgetLog(
     category: String(row.category),
     tier: row.tier === null || row.tier === undefined ? null : String(row.tier),
     status: row.status === null || row.status === undefined ? null : String(row.status),
+    originRepo: row.origin_repo === null || row.origin_repo === undefined ? null : String(row.origin_repo),
     deletedAt: String(row.deleted_at),
     policy: String(row.policy),
     reason: String(row.reason),

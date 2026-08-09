@@ -38,7 +38,7 @@ const SCHEMA_PINS: Record<number, string> = {
   // 6 adds `knowledge_forget_log`: the deciding numbers behind a deletion, which the tombstone
   // could not carry because it is exported and upsert-merged. Additive again, so
   // `KNOWL_SCHEMA_VERSION` again does not move.
-  6: 'PENDING',
+  6: '5f36731e329b1d86976f39f439f7ff39',
 };
 
 let root: string;
