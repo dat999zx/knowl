@@ -44,6 +44,7 @@ import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setCo
 import { runConfigUi } from './config/ui.js';
 import { DEFAULT_API_HOST, runLogin, runLogout } from '../cloud/login.js';
 import { runConnect } from '../cloud/connect.js';
+import { runPull } from '../cloud/pull.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -677,6 +678,40 @@ cloudCommand
       console.log('Nothing has been published. Use knowl publish to share knowledge.');
     } catch (error: any) {
       console.error(`Connect failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+cloudCommand
+  .command('pull')
+  .description('Fetch team knowledge into this machine\'s local replica')
+  .action(async () => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      const result = await runPull({ projectRoot: root, config });
+
+      if (result.status === 'not-connected') {
+        console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
+        process.exit(1);
+      }
+      if (result.status === 'not-logged-in') {
+        console.error('Not signed in. Run knowl login first.');
+        process.exit(1);
+      }
+
+      const { sync } = result;
+      console.log(
+        `Pulled ${sync.upserted} update(s) and ${sync.deleted} deletion(s) over ${sync.pages} page(s).`,
+      );
+      if (sync.status === 'incomplete') {
+        console.log('The traversal did not finish; run knowl cloud pull again to resume.');
+      }
+      if (sync.status === 'resynced') {
+        console.log('The local replica was older than the server retains, so it was rebuilt from scratch.');
+      }
+    } catch (error: any) {
+      console.error(`Pull failed: ${error.message}`);
       process.exit(1);
     }
   });

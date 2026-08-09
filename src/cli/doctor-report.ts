@@ -46,7 +46,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
 
     const config = await loadConfig(root);
     checks.push({ status: 'OK', message: 'Config loaded' });
-    checks.push(...await cloudDoctorChecks(config));
+    checks.push(...await cloudDoctorChecks(config, root));
     checks.push({
       status: config.search?.vector?.provider ? 'OK' : 'WARN',
       message: config.search?.vector?.provider
