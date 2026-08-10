@@ -124,6 +124,21 @@ jobs:
 
       - run: npm run typecheck
       - run: npm run lint
+
+      # `benchmarks/` has its own tsconfig and its own vitest config, so neither `npm run
+      # typecheck` nor `npm test` reaches it -- and nothing else did either. The directory went
+      # unchecked long enough that `typecheck:bench` was failing on main with two errors nobody
+      # could see, and the invariant suite that exists to stop an untrustworthy number shipping
+      # was a gate that never ran.
+      #
+      # Both live in this job rather than a new one for the reason stated at the top: they are
+      # ubuntu, cheap (the bench suite is under a second) and share the `npm ci` already paid
+      # for. A failing step still names itself.
+      - name: Benchmark types
+        run: npm run typecheck:bench
+      - name: Benchmark invariants
+        run: npm run test:bench
+
       - run: npm run build
       - name: Generated documentation is current
         run: npm run docs:check
