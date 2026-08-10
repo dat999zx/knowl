@@ -4,9 +4,9 @@ import os from 'node:os';
 import path from 'node:path';
 import type { CollectionResult } from './collect.js';
 import type { NativeCollectionResult } from './native-collect.js';
-import type { NativeCaptureScore } from './native-score.js';
+import type { NativeCaptureScore, NativeHistoryScore } from './native-score.js';
 import type { AdapterMetadata } from './protocol.js';
-import type { MetricValue, RetrievalScore } from './score.js';
+import type { MetricValue, RetrievalQueryScore, RetrievalScore } from './score.js';
 import type { BenchmarkBundle } from './schema.js';
 
 export type ScoredSystemRun = {
@@ -23,6 +23,32 @@ type MetricSummary = {
   numerators: number[];
   denominators: number[];
 };
+
+/** The columns every emitted result row carries, whatever produced it. */
+type ResultIdentity = {
+  datasetId: string;
+  system: string;
+  version: string;
+  mode: string;
+  run: number;
+};
+
+/**
+ * A result row is either a scored one or the N/A placeholder standing in for a system that
+ * produced nothing, and the two shapes share only `ResultIdentity`.
+ *
+ * Naming the union is what makes the branch legal rather than merely tidy. `flatMap` infers its
+ * element type `U` from the callback's return, so a callback returning `Scored[] | NotApplicable[]`
+ * fixes `U` from the first branch and then rejects the second for missing every metric field --
+ * which is what `typecheck:bench` was failing on. Annotating `U` up front admits both.
+ */
+type NormalizedResultRow =
+  | (ResultIdentity & RetrievalQueryScore)
+  | (ResultIdentity & { questionId: string; notApplicableReason: string });
+
+type NativeResultRow =
+  | (ResultIdentity & NativeHistoryScore)
+  | (ResultIdentity & { historyId: string; notApplicableReason: string });
 
 function median(values: number[]): number | null {
   if (!values.length) return null;
@@ -127,7 +153,7 @@ export async function writeBenchmarkReport(input: {
     seed: run.seed,
     ...prediction,
   }))));
-  const normalizedResults = input.systems.flatMap(system => {
+  const normalizedResults = input.systems.flatMap<NormalizedResultRow>(system => {
     if (system.scores.length) {
       return system.scores.flatMap((score, runIndex) => score.perQuery.map(result => ({
         datasetId: manifest.datasetId,
@@ -148,7 +174,7 @@ export async function writeBenchmarkReport(input: {
       notApplicableReason: system.collection.reason ?? 'no normalized result was collected',
     }))).flat();
   });
-  const nativeResults = input.systems.flatMap(system => {
+  const nativeResults = input.systems.flatMap<NativeResultRow>(system => {
     if (system.nativeScores.length) {
       return system.nativeScores.flatMap((score, runIndex) => score.perHistory.map(result => ({
         datasetId: manifest.datasetId,
