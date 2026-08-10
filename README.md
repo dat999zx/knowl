@@ -227,7 +227,7 @@ installed guidance asks agents to follow is short:
 
 1. Query memory with the words that name the subject **before** reading repository files.
 2. Use an active hit directly; inspect files only on a miss, conflict, or stale result.
-3. Store verified durable findings as you go, and correct contradicted memory rather than
+3. Store durable findings and stated goals as you go, and correct contradicted memory rather than
    duplicating it.
 
 In practice that looks like this — a new session, no context, nothing pasted in:

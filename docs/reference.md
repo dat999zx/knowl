@@ -1382,7 +1382,7 @@ Run `knowl serve` to expose Knowl over stdio MCP. The recommended agent flow is:
    Another on-subject term retrieves better and an off-subject one retrieves worse, so do not pad
    a query to reach a length and do not trim a real term to shorten it.
 3. Verify misses, conflicts, or stale results against the repository.
-4. Store verified durable findings and update contradicted memory promptly.
+4. Store durable findings and stated goals, and update contradicted memory promptly.
 5. Use manual task tools only when verified lifecycle hooks are unavailable.
 
 ### Tools
