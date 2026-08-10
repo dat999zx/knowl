@@ -3,6 +3,77 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 4.1.0 — 2026-08-10
+
+The first release after 4.0.0 met a real cloud workspace, and the first thing it found was that
+publishing could not work at all from the repo that wrote the feature.
+
+### `knowl publish` could never stage anything from a linked repo
+
+A repository has two names and both are correct. Local workspace membership stamps `origin_repo`
+with the member name from the manifest; `knowl cloud connect` records the git remote identity,
+because that is the bucket the server keys publications on. Staging asked the ownership question
+with the second and compared it against the first, so **every atom in the repo came back foreign** —
+not some of them, every one. Staging four categories on a real store returned 0 items and
+`skippedForeign: 566`.
+
+A repo that was both linked into a local workspace and connected to a cloud workspace could not
+publish anything by any route: the `--id` path and the category sweep share the filter, and there is
+no `--repo` override on `cloud connect` to work around it. Repos that never joined a local workspace
+were unaffected, which is why a green suite and a working end-to-end test both missed it —
+`origin_repo` is `NULL` there, and the ownership clause claims `NULL` regardless.
+
+The push payload never changed and was never wrong; only the local question was asked with the wrong
+name. Both `knowl publish` and the `knowl_cloud` MCP tool are fixed together, and two tests now pin
+the linked-and-connected combination, including that a peer member still counts foreign — so the fix
+cannot decay into turning the ownership check off.
+
+### The forget log says which rule fired, what survived, and what was destroyed
+
+`knowl gc` recorded *why* it destroyed an item as prose, and prose cannot be aggregated. Three
+additions, all read out of Lethe's `forget_log.py` rather than its README:
+
+- **`reason_code`** — a closed set beside the sentence, never replacing it, so "how many were merged
+  versus collected cold" is a `GROUP BY` instead of a regex over English.
+- **`merged_into_id`** — the survivor as a column. Duplicate collection recorded the winner only
+  inside the sentence `Duplicate of <id>`; now `knowl forget-log` prints it.
+- **A bounded preview of what was destroyed** — because a purge is a hard delete, and judging
+  whether a rule was right usually means seeing what it took. `bytes` still records the real size,
+  so bounding the preview loses nothing about cost.
+
+`KNOWL_MIGRATION_LEVEL` moves 7 → 8. The change is additive and `KNOWL_SCHEMA_VERSION` stays at `1`,
+so older builds still read the database.
+
+### Stated intent is storable, and every storage cue said otherwise
+
+An agent following Knowl's own guidance skipped storing two consecutive strategy conversations — a
+user's declared plan for an entire venture — and the user had to notice the gap and ask. The agent
+was complying, not misbehaving: every storage cue on every surface said "verified durable findings",
+a conversation verifies nothing, so the filter said skip, twice, consistently.
+
+The `goal` category and `user_stated` provenance exist for exactly that content and the guidance
+never mentioned either. Every surface now names the mechanism and carries a decision rule an agent
+can actually run — *could a fresh session recover this from memory alone?* The exclusions are
+untouched: transcripts, secrets, routine noise. This widens the storable class surgically; it does
+not say "save more". A test asserts every cue that reaches an agent names stated intent, because
+"verified durable findings" is exactly the phrase someone re-introduces while shortening a line.
+
+The subagent bootstrap card deliberately stays findings-only: a subagent receives a bounded task,
+not a user conversation.
+
+### Benchmarks are gated, and so is what CodeQL reads
+
+- **Benchmark invariants** now run before any CR number is trusted, including the check that matters
+  most and is the least obvious: each `supersede-off` baseline must leak strictly more than its
+  `supersede-on` counterpart. A win measured against a contaminated baseline is not a win, and that
+  contamination is invisible in any single results file. Mutation-verified — every check was made to
+  fail on purpose before being trusted.
+- **`benchmarks/` joins CI.** It sat outside every gate, which is how two type errors lived on main.
+- **CodeQL analyses shipped code only**, so alerts describe what users run.
+
+Dependency updates: `hono`, `@hono/node-server`, `postcss`, `fast-uri`, `ip-address`, `tsx`, and the
+CodeQL actions.
+
 ## 4.0.0 — 2026-08-09
 
 Knowl learns to work with a team. Forty-five commits, almost all of them one feature: a cloud
