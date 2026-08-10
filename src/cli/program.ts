@@ -57,6 +57,7 @@ import { parseAgentNames } from './agents/registry.js';
 import { reindexKnowledgeEmbeddings } from '../store/vector-index.js';
 import { applyKnowledgeGc, previewKnowledgeGc, isHot } from '../store/gc.js';
 import { listForgetLog, pruneForgetLog } from '../store/forget-log.js';
+import { truncateText } from '../core/token-budget.js';
 import { getAccessSummary } from '../store/access-feedback.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } from '../store/work-loop.js';
 import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince } from '../store/drift.js';
@@ -2155,7 +2156,16 @@ program
       for (const entry of entries) {
         const owner = entry.originRepo ? ` [${entry.originRepo}]` : '';
         console.log(`- ${entry.deletedAt} ${entry.policy} ${entry.itemId}${owner} ${entry.title}`);
-        console.log(`  Reason: ${entry.reason}`);
+        // Sentence first, code after. The code is what a tally groups by, but that happens over
+        // `--json` or SQL, where the field is already there; a human reading this list wants the
+        // sentence that says which item this was.
+        const survivor = entry.mergedIntoId ? ` -> ${entry.mergedIntoId}` : '';
+        console.log(`  Reason: ${entry.reason} [${entry.reasonCode}]${survivor}`);
+        // The body, because the item is gone: judging whether a rule was right usually means
+        // seeing what it took, and this row is the only copy anyone reads.
+        if (entry.contentPreview) {
+          console.log(`  Was: ${truncateText(entry.contentPreview, 160)}`);
+        }
         // The retrieval numbers are the point: a purge of something still being read is the
         // finding a threshold review is looking for, and it is invisible in a plain count.
         const lastSeen = entry.lastRetrievedAt ? `, last ${entry.lastRetrievedAt}` : '';

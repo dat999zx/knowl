@@ -4,7 +4,13 @@ import { getDb, withClientTransaction } from './database.js';
 import type { DbConnection } from './database.js';
 import * as schema from './schema.js';
 import { recordTombstone } from './tombstones.js';
-import { FORGET_LOG_POLICY_MANUAL, recordForgetLogEntry } from './forget-log.js';
+import {
+  FORGET_LOG_POLICY_MANUAL,
+  FORGET_REASON_MANUAL,
+  recordForgetLogEntry,
+  type ForgetReasonCode,
+} from './forget-log.js';
+import { MAX_PREVIEW_CHARS, truncateText } from '../core/token-budget.js';
 import { normalizeConflictKey, normalizeConflictScope } from './conflicts.js';
 import {
   Project,
@@ -586,7 +592,10 @@ export async function createKnowledgeCommit(
  */
 export type ForgetContext = {
   policy?: string;
+  reasonCode?: ForgetReasonCode;
   reason?: string;
+  /** The survivor, when this item was collected as a duplicate of another. */
+  mergedIntoId?: string | null;
   retrievalCount?: number;
   lastRetrievedAt?: string | null;
   bytes?: number | null;
@@ -629,7 +638,12 @@ export async function deleteKnowledgeItem(
         originRepo: doomed.originRepo ?? null,
         deletedAt,
         policy: forget?.policy ?? FORGET_LOG_POLICY_MANUAL,
+        reasonCode: forget?.reasonCode ?? FORGET_REASON_MANUAL,
         reason: forget?.reason ?? 'Deleted without a recorded reason',
+        mergedIntoId: forget?.mergedIntoId ?? null,
+        // Bounded on purpose: enough to judge the decision, not so much that the audit trail
+        // undoes the reclamation the collection was for.
+        contentPreview: truncateText(doomed.content ?? '', MAX_PREVIEW_CHARS),
         retrievalCount: forget?.retrievalCount ?? observed?.retrievalCount ?? 0,
         lastRetrievedAt: forget?.lastRetrievedAt ?? observed?.lastRetrievedAt ?? null,
         ageDays: daysBetween(doomed.updatedAt, deletedAt),

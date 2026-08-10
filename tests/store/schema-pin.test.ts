@@ -44,6 +44,12 @@ const SCHEMA_PINS: Record<number, string> = {
   // rather than 5 because two other additive levels reached main first; the fingerprint is
   // recomputed here rather than carried over, since a level-7 schema holds all three tables.
   7: 'b847bdb205a1ee63b1ff3b612c794c89',
+  // 8 widens `knowledge_forget_log` with `reason_code`, `merged_into_id` and `content_preview`.
+  // A level of its own rather than an amendment of 6: 6 shipped on main, so a store already
+  // stamped at it skips `SCHEMA_STATEMENTS` entirely and would never get these columns --
+  // the same failure mode that made the forget log claim 6 instead of 5 in the first place.
+  // 8 rather than 7 because `cloud_published` took 7 while this branch was open.
+  8: 'e96218e9fbe0594d73078033d718af4f',
 };
 
 let root: string;

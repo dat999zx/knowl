@@ -191,7 +191,10 @@ const SCHEMA_STATEMENTS = [
     origin_repo TEXT,
     deleted_at TEXT NOT NULL,
     policy TEXT NOT NULL,
+    reason_code TEXT NOT NULL DEFAULT 'unspecified',
     reason TEXT NOT NULL,
+    merged_into_id TEXT,
+    content_preview TEXT,
     retrieval_count INTEGER NOT NULL DEFAULT 0,
     last_retrieved_at TEXT,
     age_days INTEGER,
@@ -642,6 +645,31 @@ async function ensureQualityColumns(client: Client): Promise<void> {
   }
 }
 
+/**
+ * The forget log's detail columns, for a store that already has the table from level 6.
+ *
+ * `CREATE TABLE IF NOT EXISTS` is a no-op there, so without this the columns would exist only on
+ * databases created after level 7 and every older store would fail its next delete -- inside the
+ * single transaction `applyKnowledgeGc` runs, taking the whole collection run with it.
+ *
+ * Nothing is backfilled. A row written at level 6 genuinely has no survivor and no snapshot, and
+ * `reason_code` falls to its `'unspecified'` default, which is the honest description of a
+ * deletion recorded before the codes existed rather than a guess at which rule fired.
+ */
+async function ensureForgetLogColumns(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'knowledge_forget_log'))) return;
+  const columns = await tableColumns(client, 'knowledge_forget_log');
+  if (!columns.includes('reason_code')) {
+    await client.execute("ALTER TABLE knowledge_forget_log ADD COLUMN reason_code TEXT NOT NULL DEFAULT 'unspecified';");
+  }
+  if (!columns.includes('merged_into_id')) {
+    await client.execute('ALTER TABLE knowledge_forget_log ADD COLUMN merged_into_id TEXT;');
+  }
+  if (!columns.includes('content_preview')) {
+    await client.execute('ALTER TABLE knowledge_forget_log ADD COLUMN content_preview TEXT;');
+  }
+}
+
 async function ensureFreshnessColumns(client: Client): Promise<void> {
   if (!(await tableExists(client, 'knowledge_items'))) {
     return;
@@ -1038,6 +1066,7 @@ export async function bootstrapSchema(
     await executeAll(client, SCHEMA_STATEMENTS);
     await ensureFreshnessColumns(client);
     await ensureQualityColumns(client);
+    await ensureForgetLogColumns(client);
     await ensureConflictColumns(client);
     await ensureOwnershipColumns(client);
     await ensureMemorySessionColumns(client);

@@ -40,7 +40,28 @@ export type ForgetLogEntry = {
   deletedAt: string;
   /** Which mechanism destroyed it. `reason` says why in words; this says who. */
   policy: string;
+  /**
+   * The RULE that fired, as an enumerated code, beside the human sentence rather than replacing
+   * it. Taken from Lethe's `forget_log.py` (MIT), which keeps its reasons as module constants
+   * because they are "part of the public ForgetLog contract -- anyone reading the log needs to
+   * know what the strings mean". A log whose only reason is prose cannot be aggregated: "how many
+   * were merged versus collected cold" should be a GROUP BY, not a regex over English.
+   */
+  reasonCode: ForgetReasonCode;
   reason: string;
+  /**
+   * For a duplicate collection, the item that absorbed this one. Recoverable before only by
+   * parsing it back out of the `Duplicate of <id>` sentence; a column makes "what was merged
+   * into X" answerable, and `knowl forget-log` can print the survivor.
+   */
+  mergedIntoId: string | null;
+  /**
+   * A bounded snapshot of what was destroyed, because by the time anyone reads this row the item
+   * is gone -- a purge is a hard delete. Judging whether a policy was right usually means seeing
+   * the thing it took. Bounded at MAX_PREVIEW_CHARS so the audit trail cannot quietly undo the
+   * reclamation the collection was for; the commit log still holds the whole `before` item.
+   */
+  contentPreview: string | null;
   /** The retrieval evidence the policy decided against. Zero is a finding, not a gap. */
   retrievalCount: number;
   lastRetrievedAt: string | null;
@@ -49,6 +70,16 @@ export type ForgetLogEntry = {
   bytes: number | null;
 };
 
+/**
+ * The rules that can destroy an item, as a closed set.
+ *
+ * Public contract, deliberately: a new collection rule adds a code here rather than inventing
+ * another English sentence nothing can group by.
+ */
+export type ForgetReasonCode = 'gc:duplicate' | 'delete:unspecified' | 'unspecified';
+
+export const FORGET_REASON_DUPLICATE = 'gc:duplicate';
+export const FORGET_REASON_MANUAL = 'delete:unspecified';
 export const FORGET_LOG_POLICY_MANUAL = 'delete';
 
 function generateId(): string {
@@ -68,12 +99,15 @@ export async function recordForgetLogEntry(
   await conn.run(sql`
     INSERT INTO knowledge_forget_log (
       id, knowledge_item_id, title, category, tier, status, origin_repo, deleted_at,
-      policy, reason, retrieval_count, last_retrieved_at, age_days, bytes
+      policy, reason_code, reason, merged_into_id, content_preview,
+      retrieval_count, last_retrieved_at, age_days, bytes
     ) VALUES (
       ${generateId()}, ${entry.itemId}, ${entry.title}, ${entry.category},
       ${entry.tier ?? null}, ${entry.status ?? null}, ${entry.originRepo ?? null},
       ${entry.deletedAt},
-      ${entry.policy}, ${entry.reason}, ${entry.retrievalCount},
+      ${entry.policy}, ${entry.reasonCode}, ${entry.reason},
+      ${entry.mergedIntoId ?? null}, ${entry.contentPreview ?? null},
+      ${entry.retrievalCount},
       ${entry.lastRetrievedAt ?? null}, ${entry.ageDays ?? null}, ${entry.bytes ?? null}
     )
   `);
@@ -96,7 +130,8 @@ export async function listForgetLog(
   const repo = options.originRepo;
   const rows = await conn.all(sql`
     SELECT knowledge_item_id, title, category, tier, status, origin_repo, deleted_at,
-           policy, reason, retrieval_count, last_retrieved_at, age_days, bytes
+           policy, reason_code, reason, merged_into_id, content_preview,
+           retrieval_count, last_retrieved_at, age_days, bytes
     FROM knowledge_forget_log
     WHERE ${repo === undefined ? sql`1 = 1` : sql`origin_repo = ${repo}`}
     ORDER BY deleted_at DESC, rowid DESC
@@ -111,7 +146,14 @@ export async function listForgetLog(
     originRepo: row.origin_repo === null || row.origin_repo === undefined ? null : String(row.origin_repo),
     deletedAt: String(row.deleted_at),
     policy: String(row.policy),
+    reasonCode: String(row.reason_code ?? 'unspecified') as ForgetReasonCode,
     reason: String(row.reason),
+    mergedIntoId: row.merged_into_id === null || row.merged_into_id === undefined
+      ? null
+      : String(row.merged_into_id),
+    contentPreview: row.content_preview === null || row.content_preview === undefined
+      ? null
+      : String(row.content_preview),
     retrievalCount: Number(row.retrieval_count ?? 0),
     lastRetrievedAt: row.last_retrieved_at === null || row.last_retrieved_at === undefined
       ? null

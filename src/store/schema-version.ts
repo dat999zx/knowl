@@ -90,7 +90,24 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * open. The number is a changelog position, not a claim about this table, so it moves freely --
  * what must not move is an already-published level's meaning.
  */
-export const KNOWL_MIGRATION_LEVEL = 7;
+/*
+ * Level 8 widens `knowledge_forget_log` with `reason_code`, `merged_into_id` and
+ * `content_preview` -- the rule that fired as a groupable code, the item that absorbed a
+ * duplicate, and a bounded snapshot of what was destroyed. Three nullable-or-defaulted columns,
+ * no backfill: rows written at level 6 keep `reason_code` at its `'unspecified'` default and
+ * carry no survivor or snapshot, because neither was recorded at the time.
+ *
+ * A level of its own rather than an amendment of 6, for exactly the reason 6 could not amend 5:
+ * 6 has shipped on main, so a store already stamped at it skips `SCHEMA_STATEMENTS` entirely,
+ * never gets these columns, and then fails every insert into the table -- inside the single
+ * transaction `applyKnowledgeGc` runs, taking the whole collection run down with it.
+ *
+ * It is 8 rather than 7 because `cloud_published` took 7 while this branch was open, and two
+ * branches claiming one level is worse than a merge conflict: both compile, both stamp the same
+ * `application_id`, and whichever migrates first tells the other's gate there is nothing to do --
+ * so the second table is silently never created on any store the first one touched.
+ */
+export const KNOWL_MIGRATION_LEVEL = 8;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {
