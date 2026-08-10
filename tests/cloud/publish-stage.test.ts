@@ -105,6 +105,42 @@ describe('stagePublish', () => {
     expect(await staged()).toEqual([ids.decision]);
   });
 
+  it('owns items stamped with the local workspace repo name, not the cloud identity', async () => {
+    // Two names for the same repo, and they are both correct: a repo linked into a local
+    // workspace stamps `origin_repo` with its member name ("web"), while `cloud connect`
+    // records the git identity ("github.com/acme/web") because that is what the server keys
+    // publications on. Comparing the second against the first made every item foreign, so a
+    // repo that was both linked locally and connected to cloud could never publish anything.
+    await execute("UPDATE knowledge_items SET origin_repo = 'web'");
+
+    const result = await stagePublish({
+      projectRoot: ROOT,
+      config: { ...connected, workspace: { workspace: 'acme', repo: 'web' } },
+      categories: ['decision'],
+      apply: true,
+    });
+
+    expect(result).toMatchObject({ status: 'staged', applied: true, skippedForeign: 0 });
+    expect(await staged()).toEqual([ids.decision]);
+  });
+
+  it('still counts a peer repo foreign when the local workspace name is in play', async () => {
+    // The fix must not turn the ownership check off. `api` is another member of the same
+    // local workspace, and its items stay unpublishable from here.
+    await execute(`UPDATE knowledge_items SET origin_repo = 'web'`);
+    await execute(`UPDATE knowledge_items SET origin_repo = 'api' WHERE id = '${ids.fact}'`);
+
+    const result = await stagePublish({
+      projectRoot: ROOT,
+      config: { ...connected, workspace: { workspace: 'acme', repo: 'web' } },
+      categories: ['decision', 'fact'],
+      apply: true,
+    });
+
+    expect(result).toMatchObject({ skippedForeign: 1 });
+    expect(await staged()).toEqual([ids.decision]);
+  });
+
   it('stages from a feature branch, because the gate belongs to the push', async () => {
     // Staging is an intent and can be formed at any time. Only sending is gated -- refusing to
     // stage would mean the work has to be remembered by a human until the merge lands.

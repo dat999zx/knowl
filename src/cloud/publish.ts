@@ -70,11 +70,26 @@ export async function stagePublishInRequest(input: {
 }
 
 async function stageInContext(
-  input: { projectRoot: string; ids?: string[]; categories?: KnowledgeCategory[]; apply?: boolean },
+  input: {
+    projectRoot: string;
+    config: ProjectConfig;
+    ids?: string[];
+    categories?: KnowledgeCategory[];
+    apply?: boolean;
+  },
   pointer: NonNullable<ProjectConfig['cloud']>,
 ): Promise<StageResult> {
   const { items, skippedForeign } = await selectOwnedItems({
-    repoName: pointer.repo,
+    // The local name, not `pointer.repo`. A repo has two of them and both are right: local
+    // workspace membership stamps `origin_repo` with the member name from the manifest
+    // ("web"), while `cloud connect` records the git identity ("github.com/acme/web")
+    // because that is the bucket the server keys publications on -- which is why the push
+    // below still sends `pointer.repo`. Asking the ownership question with the cloud name
+    // compared the two namespaces against each other, so every item in a locally-linked repo
+    // came back foreign and such a repo could never publish anything at all. Outside a
+    // workspace `origin_repo` is NULL, which `selectOwnedItems` claims regardless, so the
+    // fallback only has to be a name nothing is stamped with.
+    repoName: input.config.workspace?.repo ?? pointer.repo,
     categories: input.categories,
     ids: input.ids,
   });
