@@ -1,0 +1,34 @@
+name: knowl
+
+# `security-and-quality` rather than the default `security` suite, kept from the inline
+# `queries:` this file replaced. The wider suite adds every maintainability query, which is
+# how dead imports and trivial conditionals get caught -- worth having, provided the tab it
+# writes into stays readable. That proviso is what `paths-ignore` below is for.
+queries:
+  - uses: security-and-quality
+
+# What ships is `dist/`, built from `src/`. Nothing under `tests/` or `scripts/` is published
+# -- `package.json`'s `files` array is `dist`, `README.md`, `CHANGELOG.md` -- so a finding
+# there describes code no user can reach.
+#
+# This is not a way of being quieter about real problems. It is that the findings these paths
+# produce are, by construction, the behaviour the files exist to have:
+#
+#   - `tests/cli/windows-spawn.test.ts` raises `js/indirect-command-line-injection` twice
+#     because it spawns `cmd` on purpose -- that is the thing under test.
+#   - Sixteen `js/insecure-temporary-file` alerts come from fixtures building predictable
+#     paths under a temp root. A test that could not predict its own fixture path could not
+#     assert against it.
+#   - `scripts/e2e-*.ts` are developer end-to-end drivers that read a file and make a request,
+#     which is `js/file-access-to-http` by definition.
+#
+# Nineteen of the twenty-eight alerts open on 2026-08-10 were in these two directories. Alerts
+# that can only ever be dismissed teach people to stop opening the tab, and then the nine that
+# matter are unread too. Scope is the honest fix; dismissing nineteen findings one at a time,
+# again every time a fixture moves, is not.
+#
+# `src/` and `benchmarks/` stay in scope. If a helper moves out of `tests/` into either, it is
+# scanned again the moment it lands.
+paths-ignore:
+  - tests
+  - scripts

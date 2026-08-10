@@ -31,7 +31,10 @@ jobs:
         uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           languages: javascript-typescript
-          queries: security-and-quality
+          # The query suite moved into the config file, because `paths-ignore` has nowhere else
+          # to live -- `init` takes no such input. Both settings describe one decision (what is
+          # analysed, and with what), so they belong in one place.
+          config-file: ./.github/codeql/codeql-config.yml
 
       # No build step: this project is TypeScript compiled by tsup, and CodeQL analyses the
       # sources directly for javascript-typescript. Building first would analyse the bundle

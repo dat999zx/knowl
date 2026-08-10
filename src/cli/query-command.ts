@@ -3,7 +3,7 @@ import { loadConfig } from '../core/config.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { rankKnowledge, type RankOptions } from '../store/agent-query.js';
 import { queryKnowledgeBase } from '../store/queries.js';
-import { flattenGroups, queryFederated, type FederatedResult } from '../workspace/federated-query.js';
+import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 
 /**
