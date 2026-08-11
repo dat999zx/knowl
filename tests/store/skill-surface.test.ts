@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { matchSkillForCommand, renderSkillUseNudge } from '../../src/store/skill-surface.js';
-import { renderSkillsSection, selectSurfacedSkills } from '../../src/core/skill-surface.js';
+import { renderSkillsSection, selectSurfacedSkills, toPeerSurfacedSkills } from '../../src/core/skill-surface.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
 
 // `skillSourcePath` writes `.knowl/skills/<name>/SKILL.md`, so fixtures say so too: a
@@ -77,6 +77,88 @@ describe('selectSurfacedSkills', () => {
 
   it('returns an empty array for no input rather than throwing', () => {
     expect(selectSurfacedSkills([], 1_000)).toEqual([]);
+  });
+});
+
+describe('peer skills on the session-start card', () => {
+  // The regression this whole path exists to prevent: a peer's package carries the same
+  // `.knowl/skills/...` source a local one does, so deriving runnability from `source` marks
+  // another repo's skill runnable here -- and `knowl_skill_run` resolves against the local root.
+  it('never marks a peer skill runnable, however its source reads', () => {
+    const [peer] = toPeerSurfacedSkills([{ repo: 'duckprep', item: item({ title: 'mascot-art' }) }]);
+
+    expect(peer).toMatchObject({ name: 'mascot-art', runnable: false, repo: 'duckprep' });
+  });
+
+  it('keeps a peer row out of the mid-turn nudge even if something marks it runnable', () => {
+    const forced = { name: 'verify-bench', purpose: 'run the suite', runnable: true, repo: 'duckprep' };
+
+    expect(matchSkillForCommand('npm run verify-bench', [forced])).toBeNull();
+  });
+
+  it('names the owning repo in the row, and says the skill is not runnable from here', () => {
+    const rendered = renderSkillsSection(toPeerSurfacedSkills([
+      { repo: 'duckprep', item: item({ title: 'mascot-art', content: 'Purpose: style-anchored generation.' }) },
+    ]));
+
+    expect(rendered).toContain('- **mascot-art** (in duckprep, not runnable here) — style-anchored generation.');
+  });
+
+  it('prices the peer label, so the section still fits the budget it was given', () => {
+    const peers = toPeerSurfacedSkills(Array.from({ length: 40 }, (_, index) => ({
+      repo: 'a-very-long-linked-repository-name',
+      item: item({ id: `p${index}`, title: `peer-skill-${index}` }),
+    })));
+
+    const skills = selectSurfacedSkills([], 300, peers);
+
+    expect(renderSkillsSection(skills).length).toBeLessThanOrEqual(300);
+    expect(skills.length).toBeGreaterThan(0);
+  });
+
+  it('orders every local skill ahead of every peer skill', () => {
+    const locals = Array.from({ length: 3 }, (_, index) => item({ id: `l${index}`, title: `local-${index}` }));
+    const peers = toPeerSurfacedSkills([{ repo: 'duckprep', item: item({ title: 'peer-only' }) }]);
+
+    const skills = selectSurfacedSkills(locals, 1_000, peers);
+
+    expect(skills.findIndex(skill => skill.repo)).toBe(skills.length - 1);
+  });
+
+  it("degrades to today's card when local skills already spend the budget", () => {
+    // Nine local rows at 30 characters each overrun a 300-character section on their own, so
+    // the peer row never reaches the card. A repo rich in its own tooling loses nothing.
+    const locals = Array.from({ length: 9 }, (_, index) => item({ id: `l${index}`, title: `local-${index}` }));
+    const peers = toPeerSurfacedSkills([{ repo: 'duckprep', item: item({ title: 'peer-only' }) }]);
+
+    const skills = selectSurfacedSkills(locals, 300, peers);
+
+    expect(skills.every(skill => !skill.repo)).toBe(true);
+    expect(renderSkillsSection(skills).length).toBeLessThanOrEqual(300);
+  });
+
+  it('shows a peer skill when the local store has room for it', () => {
+    const peers = toPeerSurfacedSkills([{ repo: 'duckprep', item: item({ title: 'peer-only' }) }]);
+
+    const skills = selectSurfacedSkills([item({ title: 'local-one' })], 1_000, peers);
+
+    expect(skills.map(skill => skill.name)).toEqual(['local-one', 'peer-only']);
+  });
+
+  it('drops a peer skill whose name a local skill already occupies', () => {
+    const peers = toPeerSurfacedSkills([{ repo: 'duckprep', item: item({ title: 'Shared-Name' }) }]);
+
+    const skills = selectSurfacedSkills([item({ title: 'shared-name' })], 1_000, peers);
+
+    expect(skills).toHaveLength(1);
+    expect(skills[0].repo).toBeUndefined();
+  });
+
+  it('ignores a peer row that is not an active skill', () => {
+    expect(toPeerSurfacedSkills([
+      { repo: 'duckprep', item: item({ category: 'fact' }) },
+      { repo: 'duckprep', item: item({ status: 'superseded' }) },
+    ])).toEqual([]);
   });
 });
 

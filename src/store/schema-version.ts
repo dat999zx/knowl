@@ -107,7 +107,24 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * `application_id`, and whichever migrates first tells the other's gate there is nothing to do --
  * so the second table is silently never created on any store the first one touched.
  */
-export const KNOWL_MIGRATION_LEVEL = 8;
+/*
+ * Level 9 adds `capture_outcomes` -- one row per conversation, counting the turns it produced and
+ * the durable writes it made, so a repo can see how often a session talks and stores nothing.
+ * Additive on the same reasoning as levels 3, 4 and 7: one new table, no altered column, no
+ * backfill.
+ *
+ * A backfill is impossible rather than merely skipped, and for the same shape of reason level 6
+ * gives. The counters are incremented on the events that cause them, and `memory_session_events`
+ * expires roughly two days out -- so history far enough back to be worth backfilling is already
+ * gone, and inventing zeros for it would report every past conversation as having stored nothing.
+ *
+ * The bump is what makes an existing store get the table at all. Without it a database stamped at
+ * level 8 skips `SCHEMA_STATEMENTS`, never creates `capture_outcomes`, and every counter write
+ * silently no-ops -- which this subsystem is built to survive (it swallows its own errors, by
+ * design, because it runs inside a hook), so the failure would present as a repository that
+ * simply always reports zero sessions rather than as anything breaking.
+ */
+export const KNOWL_MIGRATION_LEVEL = 9;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

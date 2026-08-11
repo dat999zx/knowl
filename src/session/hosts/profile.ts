@@ -56,6 +56,21 @@ export interface HostProfile {
    * channel: whatever the agent needs in order to recover has to be inside this string.
    */
   denyToolCall?: (reason: string) => HostOutput | undefined;
+  /**
+   * The host's envelope for speaking to the agent as it stops, if it has one.
+   *
+   * Capability by return value again, and absent for every host whose stop channel is not
+   * confirmed. Note what this necessarily is on the hosts that do have it: **there is no
+   * non-blocking way to reach a model at stop time.** A stop hook either withholds the stop and
+   * hands back a reason, which costs a turn, or it says nothing at all -- and a session-end hook
+   * fires after the model is gone, so it can reach a log and never the agent.
+   *
+   * That is why this is a separate member from `midTurnContext` rather than a reuse of it. A
+   * mid-turn card is free: it rides an event the agent was already getting. This is not free, so
+   * a caller has to choose it deliberately, and the only caller does so behind a config that
+   * defaults to off.
+   */
+  stopContext?: (reason: string) => HostOutput | undefined;
 }
 
 export const hostString = (value: unknown): string | undefined =>

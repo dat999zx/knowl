@@ -3,6 +3,85 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+Two halves of the same gap: memory that is present but never surfaced, and memory that is never
+written at all.
+
+### A linked repo's skills now reach the session-start card
+
+Workspace visibility governed *query* reach but not *ambient* reach. `bootstrapAgentSession` filled
+its "Available skills" section from `listActiveSkillItems`, which reads the local store only — so a
+sibling repo's workspace-visible skill could be found by an agent that already knew to ask for it,
+which is precisely the agent that does not know the tooling exists. The knowledge most worth sharing
+across a workspace is reusable tooling, and that is the kind nobody queries for by name.
+
+Peer skills now ride the same card as pointers, labelled with the repo that owns them
+(`- **mascot-art** (in duckprep, not runnable here) — …`), local rows first, inside the existing
+750-character budget. A repo with enough of its own skills degrades to exactly the previous card.
+
+Two things that had to be right, and were not free:
+
+- **A peer skill is forced non-runnable rather than derived as one.** `toSurfacedSkills` reads
+  runnability off `source.startsWith('.knowl/skills/')`, and a peer's package carries exactly that
+  source — it is a real package, just not under this root. Left to the derivation, peer rows came
+  back `runnable: true`, and two things believe that field: `knowl_skill_run` resolves against the
+  local root, and `matchSkillForCommand` filters on it, so a peer row could have won the mid-turn
+  slot and told the agent to run something unreachable. Trust is the deeper reason —
+  `assertSkillApproved` is per-repo, so running a peer's bytes from here spends an approval nobody
+  gave.
+- **The repo label is priced by the function that renders it.** `selectSurfacedSkills` charges
+  `renderSkillRow(skill).length`; a label appended at the render site would have priced one string
+  and emitted another.
+
+`listActiveSkillItems` is untouched: it runs on every command tool event and is index-scoped for
+that reason, so bootstrap got its own peer lookup rather than a widened hot path.
+
+### The write path can now see what it failed to store
+
+Knowl's write path is all admission control — secret validation, categories, conflict keys, dedup —
+and every one of those gates decides what gets *in*. Nothing noticed what should have got in and did
+not. The read side had been growing exactly that telemetry (`knowledge_access` records
+retrieved-but-never-used); the write side had no twin, and its only detector was a person noticing
+afterwards and asking for the save by hand.
+
+`capture_outcomes` now records, per conversation, how many turns it produced and how many durable
+writes it made. `knowl status` reports it:
+
+```
+🔍 CAPTURE HEALTH
+  Sessions recorded:     88
+  Stored nothing:        79
+  ...and ran long enough to count: 31 (35%)
+```
+
+Measurement runs unconditionally; `capture.nudge` decides only what is done with the answer, and
+defaults to `off`. `shadow` records the nudge it would have sent. `enforce` withholds one stop and
+asks the agent to store what it learned. That is the same `off → shadow → enforce` ladder
+`impact.gate` climbs, for the same reason: the number a decision to intervene rests on cannot be
+measured by something already intervening.
+
+Four design points worth stating, because each is a place the obvious version is wrong:
+
+- **Turns, not tool events.** The sessions this exists to catch are strategy conversations — long on
+  turns, short on tool calls — so any threshold counted in tool events would have excluded exactly
+  them.
+- **Keyed on the conversation, not a memory session.** A Claude turn binds its own memory session and
+  `Stop` closes it, so the next turn gets a fresh one; a counter keyed that way reports one turn
+  forever however long the conversation runs.
+- **`finalizeMemorySession` reporting `skipped` is not "stored nothing".** It means automatic
+  promotion found no candidate, which is true of nearly every conversation and says nothing about
+  what the agent stored by hand. Reading it as silence would have fired on the sessions that did
+  everything right.
+- **There is no non-blocking channel at stop.** A stop hook either withholds the stop and hands back
+  a reason, or is not heard; `SessionEnd` fires once the model is gone. So `enforce` costs a turn,
+  which is why it is claimed once per conversation before delivery — a block keyed on "stored
+  nothing" is a condition the agent may rightly decline to clear, and without the one-shot it would
+  fire on every subsequent stop forever.
+
+Reads do not count as writes: a session that queried diligently and stored nothing is the case this
+measures.
+
 ## 4.1.0 — 2026-08-10
 
 The first release after 4.0.0 met a real cloud workspace, and the first thing it found was that

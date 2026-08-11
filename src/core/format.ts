@@ -1,6 +1,6 @@
 import { KnowledgeCommit, KnowledgeItem } from './types.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, MAX_SUMMARY_ITEM_CHARS, truncateText } from './token-budget.js';
-import { renderSkillsSection, selectSurfacedSkills } from './skill-surface.js';
+import { renderSkillsSection, selectSurfacedSkills, toPeerSurfacedSkills } from './skill-surface.js';
 import { fenceUntrusted, inlineUntrusted, UNTRUSTED_NOTICE_BRIEF } from './untrusted.js';
 
 /**
@@ -157,6 +157,11 @@ export function formatRecentContextToMarkdown(context: {
   items: KnowledgeItem[];
   commits: KnowledgeCommit[];
   skills?: KnowledgeItem[];
+  /**
+   * Linked repos' workspace-visible skills, structurally typed so `core` stays at the bottom of
+   * the dependency graph -- `workspace/peer-skills.ts` produces this shape and imports downward.
+   */
+  peerSkills?: Array<{ repo: string; item: KnowledgeItem }>;
 }, options: { maxChars?: number; maxItemChars?: number; includeTags?: boolean; includeCommitDetails?: boolean; workspace?: WorkspaceContext } = {}): string {
   const maxChars = options.maxChars ?? DEFAULT_CONTEXT_MAX_CHARS;
   const maxItemChars = options.maxItemChars ?? MAX_SUMMARY_ITEM_CHARS;
@@ -179,7 +184,15 @@ export function formatRecentContextToMarkdown(context: {
   const skillBudget = Math.floor(Math.min(maxChars, DEFAULT_CONTEXT_MAX_CHARS) * 0.25);
   // Rendered by the same module that priced it, so the section can never exceed the budget
   // selection thought it was spending.
-  md += renderSkillsSection(selectSurfacedSkills(context.skills ?? [], skillBudget));
+  //
+  // Peers are passed in beside the local rows rather than concatenated into them, because the
+  // two are mapped differently: a peer row is a pointer whose `runnable` is forced false, and
+  // deriving it from `source` the way a local row does would mark it runnable.
+  md += renderSkillsSection(selectSurfacedSkills(
+    context.skills ?? [],
+    skillBudget,
+    toPeerSurfacedSkills(context.peerSkills ?? []),
+  ));
 
   md += '## Recent Active Knowledge\n\n';
   if (context.items.length === 0) {

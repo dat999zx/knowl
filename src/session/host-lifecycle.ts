@@ -7,6 +7,17 @@ import { hostProfile } from './hosts/index.js';
 import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
 import { loadConfig } from '../core/config.js';
 import { isImpactEnabled } from '../store/impact-config.js';
+import { captureNudgeMode } from '../store/capture-config.js';
+import {
+  claimSilenceNudge,
+  conversationKey,
+  isDurableWriteTool,
+  readCaptureOutcome,
+  recordDurableWrite,
+  recordSessionTurn,
+  renderSilenceNudge,
+  shouldNudgeForSilence,
+} from '../store/capture-outcome.js';
 import { detectCertainImpactBestEffort, markFindingsDelivered, openFindingsForSession } from './impact.js';
 import {
   recordReadsBestEffort, releaseReadSetBestEffort, repoRelativePath, sweepReadSetsBestEffort,
@@ -639,6 +650,63 @@ async function releaseSessionReadSet(sessionId: string): Promise<void> {
   await releaseReadSetBestEffort(sessionId);
 }
 
+/**
+ * Whether to tell this session it has stored nothing, and the envelope to say it in.
+ *
+ * **Fired at a turn boundary, not at session end, and that is forced rather than chosen.** The
+ * natural home would be session finish -- it knows the session is over and owns capture. But
+ * `SessionEnd` fires after the model is gone, so nothing said there can reach an agent, and the
+ * only channel that reaches one at stop time withholds the stop. So this fires at the first turn
+ * boundary where the silence has become meaningful (`MIN_SUBSTANTIVE_TURNS`), which is also the
+ * last moment the agent can still act on it. Once.
+ *
+ * **Three modes, one verdict**, following `shouldRefuseWrite`: `off` does not compute it,
+ * `shadow` computes it and records what it would have said, `enforce` delivers it. Shadow is
+ * where this is expected to sit -- the measurement it produces is what a decision to enforce
+ * would have to be made on, and that measurement cannot be taken by something already blocking.
+ *
+ * **The claim is spent before the message is delivered.** See `claimSilenceNudge`: a block keyed
+ * on "this session stored nothing" is a condition the agent may reasonably decline to clear, so
+ * without a one-shot it would fire on every subsequent stop forever.
+ *
+ * **Fail open, without exception.** No config, an unknown host, a host with no stop channel, a
+ * broken store -- every one of them returns undefined and the stop proceeds. This runs in front
+ * of every stop in every session of every repo that turns it on, and the failure mode of a nudge
+ * that does not fire is a missed note, while the failure mode of a stop that will not complete is
+ * somebody's session.
+ *
+ * Hosts that bind one memory session per turn never reach the floor, because their `turns` count
+ * resets with each session. In practice that makes this a Claude-only signal today, which is also
+ * the only host whose stop channel is verified.
+ */
+async function evaluateSilenceNudge(input: NormalizedHostHook): Promise<Record<string, unknown> | undefined> {
+  try {
+    const config = await loadConfig(input.projectRoot).catch(() => null);
+    const mode = captureNudgeMode(config ?? undefined);
+    if (mode === 'off') return undefined;
+
+    const conversation = conversationKey(input);
+    const outcome = await readCaptureOutcome(conversation);
+    if (!shouldNudgeForSilence(outcome)) return undefined;
+
+    if (mode === 'shadow') {
+      await claimSilenceNudge(conversation, 'shadow');
+      return undefined;
+    }
+
+    // Checked before the claim is spent: a host that cannot deliver would otherwise consume the
+    // session's one nudge and deliver nothing, so turning the feature on for an unsupported host
+    // would look identical to it firing.
+    const profile = hostProfile(input.host);
+    if (!profile.stopContext) return undefined;
+    if (!await claimSilenceNudge(conversation, 'enforce')) return undefined;
+
+    return profile.stopContext(renderSilenceNudge());
+  } catch {
+    return undefined;
+  }
+}
+
 async function finalizeFailedStop(projectId: string, input: NormalizedHostHook, sessionId: string) {
   await finishMemorySession(
     sessionId,
@@ -824,6 +892,12 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       const type = input.event === 'checkpoint' ? 'checkpoint' : input.type;
       if (!type) throw new Error('Normalized host session event requires a type.');
       await captureMemorySessionEvent(started.session.id, type, input.payload);
+      // Write-side attribution, recorded on the event that causes it rather than recovered at
+      // finalization: session event rows expire about two days out, so a count derived from them
+      // later reads zero when it means "I no longer know". Keyed on the conversation and not on
+      // `started.session.id`, which is turn-scoped and would scatter one conversation's writes
+      // across a row per turn.
+      if (isDurableWriteTool(input.knowlToolName)) await recordDurableWrite(conversationKey(input));
       // Runs for `checkpoint` events too -- a host that reports a tool under that event still
       // read or wrote the file it named -- but never for a failed one: a tool that failed
       // returned no contents, so a read-set row from it would record a belief the agent was
@@ -918,6 +992,11 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     }
     if (!session) return { accepted: false, reason: 'event-loss' };
 
+    // One assistant turn ended. Counted here rather than at session end because this is the only
+    // event that fires per turn, and turns -- not tool events -- are what tell a working
+    // conversation apart from a single question answered.
+    await recordSessionTurn(conversationKey(input));
+
     // gpt-5.5 often share one session binding across turns. Normal Stop only closes the turn
     // binding. Hard failures finish the session and record a host-scoped handoff.
     if (hostProfile(input.host).sharesSessionBinding && sessionBinding?.id === session.id) {
@@ -927,8 +1006,9 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
         await closeHostSessionBinding(bindingKey(input, 'session'));
         return { accepted: true, sessionId: session.id, promotion: result.promotion, handoff: result.handoff };
       }
+      const silence = await evaluateSilenceNudge(input);
       await closeHostSessionBinding(key);
-      return { accepted: true, sessionId: session.id };
+      return { accepted: true, sessionId: session.id, ...(silence ? { hostOutput: silence } : {}) };
     }
 
     if (input.status === 'failed') {
@@ -944,8 +1024,15 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // left live for other sessions' detectors to keep finding.
     await releaseSessionReadSet(session.id);
     const promotion = await finalizeMemorySession(projectId, session.id);
+    // Also evaluated here, and this is the path that actually carries it for Claude. The branch
+    // above needs the turn's memory session to *be* the session binding's, which only holds when
+    // a turn started before anything bound the session; the ordinary `SessionStart` then
+    // `UserPromptSubmit` sequence gives the turn its own, so a normal Claude stop lands here.
+    // Keying the counters on the conversation rather than on either memory session is what lets
+    // one verdict serve both paths.
+    const silence = await evaluateSilenceNudge(input);
     await closeHostSessionBinding(key);
-    return { accepted: true, sessionId: session.id, promotion };
+    return { accepted: true, sessionId: session.id, promotion, ...(silence ? { hostOutput: silence } : {}) };
   }
 
   const key = bindingKey(input, 'session');

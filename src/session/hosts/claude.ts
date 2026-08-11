@@ -90,4 +90,16 @@ export const claudeProfile: HostProfile = {
       },
     };
   },
+  // Claude Code's documented Stop shape: a top-level `decision`/`reason` pair, not the
+  // `hookSpecificOutput` envelope the other two use. `block` withholds the stop and shows the
+  // model the reason, which is the only way anything reaches an agent at stop time -- `SessionEnd`
+  // fires once the model is already gone.
+  //
+  // So this necessarily costs a turn, and the caller treats it as expensive: it is claimed
+  // once per session against `capture_outcomes.nudged` before it is ever returned, because a
+  // block keyed on a condition the agent may rightly decline to clear would otherwise repeat
+  // forever.
+  stopContext(reason) {
+    return { decision: 'block', reason };
+  },
 };

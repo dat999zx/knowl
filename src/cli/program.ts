@@ -18,6 +18,8 @@ import { recordDecisionDirect } from '../store/knowledge-actions.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { formatHierarchyToMarkdown } from '../core/format.js';
 import { formatStatusReport } from './status-report.js';
+import { captureHealth } from '../store/capture-outcome.js';
+import { captureNudgeMode } from '../store/capture-config.js';
 import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory } from '../core/types.js';
 import { createManifest, isValidRepoName, readManifest, writeManifest } from '../workspace/manifest.js';
 import { knowlHome, listKnownWorkspaces, workspaceManifestPath } from '../workspace/paths.js';
@@ -396,6 +398,8 @@ program
         supersededItems,
         deprecatedItems,
         commits,
+        capture: await captureHealth(),
+        captureNudgeMode: captureNudgeMode(config),
       }));
 
       if (isUpdateCheckEnabled(config)) {

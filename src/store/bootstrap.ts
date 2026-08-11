@@ -476,6 +476,32 @@ const SCHEMA_STATEMENTS = [
   // so the measurement survives -- but only if the session is recorded where GC cannot reach it.
   `CREATE UNIQUE INDEX IF NOT EXISTS idx_impact_gate_shadow_finding ON impact_gate_shadow(finding_id);`,
 
+  // The write side's negative signal: one row per session, counting what it did rather than what
+  // it stored. `memory_sessions` cannot hold this -- those rows carry an `expires_at` about two
+  // days out, and the question this answers ("how often does this repo talk and store nothing")
+  // is asked over months. Not swept by GC for the same reason.
+  //
+  // `turns` rather than an event count, and the distinction is the whole design: the sessions
+  // worth catching are conversations, which are long on turns and short on tool events, so any
+  // threshold counted in tool events would exclude precisely them.
+  //
+  // `nudged` is a claim, not a log. It is written before the nudge is delivered so a session can
+  // be spoken to at most once -- in `enforce` the delivery is a blocked stop, and a block keyed
+  // on "stored nothing" would otherwise fire on every subsequent stop, with no action available
+  // to the agent that clears it.
+  // Keyed on the *conversation* -- host, project root and the host's own session id -- and not on
+  // a memory session, which is the one identity that cannot work here. A Claude turn binds its own
+  // memory session and `Stop` closes it, so the next turn gets a fresh one; a counter keyed that
+  // way reads `turns: 1` forever no matter how long the conversation runs. The host's session id
+  // is stable across turns by construction and needs no extra lookup on the tool path.
+  `CREATE TABLE IF NOT EXISTS capture_outcomes (
+    conversation TEXT PRIMARY KEY,
+    observed_at TEXT NOT NULL,
+    turns INTEGER NOT NULL DEFAULT 0,
+    durable_writes INTEGER NOT NULL DEFAULT 0,
+    nudged TEXT
+  );`,
+
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
     VALUES (new.id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));

@@ -77,6 +77,18 @@ export const SNAPSHOT_TABLE_POLICY: Readonly<Record<string, SnapshotTablePolicy>
   // silently reset the precision denominator to zero while leaving the findings they point at in
   // place, so the next reading would be taken over a sample that no longer matches the history.
   impact_gate_shadow: 'preserved',
+  // Capture health: turns produced and durable writes made, per conversation. Preserved on both
+  // of the reasons above at once.
+  //
+  // It is a measurement, like `impact_gate_shadow`, and rolling it back would restate a number
+  // somebody is deciding against -- a repo watching its silent-session rate to judge whether to
+  // arm the nudge would see that rate jump on a restore that had nothing to do with capture.
+  //
+  // And it describes conversations that happened, like `memory_sessions`. A restore does not
+  // un-hold them. `nudged` is the sharper case: it is a spent one-shot, and refilling this table
+  // from a week-old snapshot would clear the flag on conversations that were already nudged --
+  // re-arming a stop-blocking interrupt against sessions that had answered it.
+  capture_outcomes: 'preserved',
   // What THIS machine has staged for, and pushed to, a cloud workspace. The server's copy is the
   // truer one and a snapshot cannot roll it back, so restoring an older ledger would only make
   // this machine forget the `remote_version` every republish needs -- turning the next publish

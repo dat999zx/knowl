@@ -1,0 +1,26 @@
+import type { ProjectConfig } from '../core/types.js';
+
+export type CaptureNudgeMode = 'off' | 'shadow' | 'enforce';
+
+const NUDGE_MODES: readonly CaptureNudgeMode[] = ['off', 'shadow', 'enforce'];
+
+/**
+ * How a session that stored nothing should be handled, resolved in one place.
+ *
+ * Anything unrecognised is `off`, following `impactGateMode`'s rule and for the same reason
+ * stated in its own terms: `enforce` blocks a stop, which spends a turn the person did not ask
+ * for, and `config.json` is a file people edit by hand. A typo must fail towards silence.
+ *
+ * The argument is optional because the callers sit on the lifecycle path, where the config is
+ * only present once a project root has resolved -- making each of them write
+ * `config ? captureNudgeMode(config) : 'off'` is how one of them eventually writes the negation
+ * by mistake.
+ *
+ * Note what this does *not* gate: the counting. `capture_outcomes` is written whatever this
+ * returns, because measurement before mechanism is the whole point -- a repo that never turns
+ * the nudge on should still be able to answer "how often does this happen here?".
+ */
+export function captureNudgeMode(config?: ProjectConfig): CaptureNudgeMode {
+  const mode = config?.capture?.nudge;
+  return NUDGE_MODES.includes(mode as CaptureNudgeMode) ? mode as CaptureNudgeMode : 'off';
+}
