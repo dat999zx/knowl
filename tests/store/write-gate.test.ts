@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gitArgs } from '../git-identity.js';
 import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
 import { listCodeSymbols, indexFile } from '../../src/code/symbol-index.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
@@ -75,8 +76,9 @@ const AT = '2026-08-05T00:00:00.000Z';
 let testRoot = '';
 let testIndex = 0;
 
+// Identity on every invocation, never `git config` -- see `tests/git-identity.ts`.
 function git(...args: string[]): void {
-  const result = spawnSync('git', args, { cwd: testRoot, encoding: 'utf-8', stdio: 'pipe' });
+  const result = spawnSync('git', gitArgs(args), { cwd: testRoot, encoding: 'utf-8', stdio: 'pipe' });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr ?? ''}`);
 }
 
@@ -156,8 +158,6 @@ beforeEach(async () => {
   await fs.mkdir(path.join(testRoot, '.knowl'), { recursive: true });
 
   git('init', '-q', '.');
-  git('config', 'user.email', 'lane-l@example.test');
-  git('config', 'user.name', 'lane l');
   // The store lives inside the repo it indexes, so it has to be ignored.
   await write('.gitignore', '.knowl/\n');
   await write(SOURCE, V1);

@@ -2,17 +2,21 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { GIT_IDENTITY_FLAGS } from '../git-identity.js';
 import { collectSessionGitEvidence } from '../../src/store/session-evidence.js';
 
 const ROOT = path.resolve('./.knowl-session-evidence-test');
 
+// Identity on every invocation, never `git config` -- see `tests/git-identity.ts`.
+const git = (args: string) => execSync(`git ${GIT_IDENTITY_FLAGS} ${args}`, { cwd: ROOT });
+
 describe('session evidence', () => {
   beforeAll(async () => {
     await fs.rm(ROOT, { recursive: true, force: true }); await fs.mkdir(path.join(ROOT, 'src'), { recursive: true });
-    execSync('git init', { cwd: ROOT }); execSync('git config user.email test@example.test', { cwd: ROOT }); execSync('git config user.name Test', { cwd: ROOT });
+    git('init');
     await fs.writeFile(path.join(ROOT, 'src', 'app.ts'), 'export const version = 1;\n');
     await fs.writeFile(path.join(ROOT, '.env'), 'SECRET=value\n');
-    execSync('git add .', { cwd: ROOT }); execSync('git commit -m base', { cwd: ROOT });
+    git('add .'); git('commit -m base');
     await fs.writeFile(path.join(ROOT, 'src', 'app.ts'), 'export const version = 2;\n');
     await fs.writeFile(path.join(ROOT, '.env'), 'SECRET=changed\n');
     await fs.writeFile(path.join(ROOT, 'src', 'asset.bin'), Buffer.from([0, 1, 2]));
