@@ -72,6 +72,49 @@ export const TRANSCRIPT_SCHEMA_STATEMENTS = [
   );`,
 
   `CREATE INDEX IF NOT EXISTS idx_transcript_vectors_fingerprint ON transcript_vectors(fingerprint);`,
+
+  // Atoms distilled from a transcript, staged rather than promoted.
+  //
+  // **In the transcripts database rather than the knowledge store, deliberately.** These are
+  // speculative until a human says otherwise: an unreviewed thousand-row corpus sitting in
+  // `knowledge_items` would be answering every future query while nobody had yet decided any of
+  // it was true. Here they are derived data beside the thing they were derived from, they never
+  // reach a query, and they cost the main store no schema level, no snapshot policy and no space
+  // in an export.
+  //
+  // The consequence is accepted rather than overlooked: turning transcript search off deletes the
+  // index and these with it. They are regenerable from the transcripts by construction, which is
+  // the property that makes staging them here safe.
+  `CREATE TABLE IF NOT EXISTS transcript_candidates (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    source_path TEXT NOT NULL,
+    harness TEXT NOT NULL DEFAULT 'claude',
+    category TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    reasoning TEXT,
+    tags TEXT,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    status TEXT NOT NULL DEFAULT 'pending',
+    extracted_at TEXT NOT NULL,
+    decided_at TEXT,
+    promoted_item_id TEXT
+  );`,
+
+  `CREATE INDEX IF NOT EXISTS idx_transcript_candidates_status ON transcript_candidates(status);`,
+  `CREATE INDEX IF NOT EXISTS idx_transcript_candidates_session ON transcript_candidates(session_id);`,
+
+  // One row per session that extraction has finished with, so a second run resumes instead of
+  // paying the model again for work already done. Distinct from `transcript_files.bytes_indexed`:
+  // that watermark tracks what has been *indexed*, and extraction is a separate, far more
+  // expensive pass over the same rows that a user may never run at all.
+  `CREATE TABLE IF NOT EXISTS transcript_extractions (
+    session_id TEXT PRIMARY KEY,
+    extracted_at TEXT NOT NULL,
+    candidate_count INTEGER NOT NULL DEFAULT 0,
+    chars_sent INTEGER NOT NULL DEFAULT 0
+  );`,
 ];
 
 /**

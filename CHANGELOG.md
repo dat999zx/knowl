@@ -5,8 +5,55 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
-Two halves of the same gap: memory that is present but never surfaced, and memory that is never
-written at all. Plus a second harness's transcripts, which were sitting on disk unread.
+Memory that is present but never surfaced, memory that is never written at all, a second harness's
+transcripts sitting on disk unread — and the cold start, where a fresh install has an archive of
+past sessions beside an empty store and no way across.
+
+### Transcripts can become knowledge, through a review step
+
+The index made past sessions searchable and put nothing in the store, so a fresh `knowl init`
+stayed empty until somebody wrote to it. `knowl transcripts extract` distils indexed sessions into
+staged candidates; `knowl transcripts candidates`, `approve` and `discard` decide what becomes
+memory.
+
+**Nothing is promoted by extraction.** Candidates land in `transcript_candidates` and stop there.
+A first run over a real archive produces on the order of a thousand atoms, and an unreviewed corpus
+of that size would be answering every future query while nobody had yet decided any of it was true.
+Approval is the act that puts an atom in front of a query, and it is separate, explicit, and per
+candidate.
+
+**It costs the operator money, and the command says so before spending any.** `extract` prints the
+session count, the character estimate and the provider it would call, then stops unless `--yes` is
+passed. The default limit is 10 sessions, not the archive. A session that has been extracted is
+watermarked so a rerun never pays for it twice — including one that yielded nothing, since the
+sessions most likely to yield nothing are the short ones and they would otherwise dominate the bill.
+A session whose extraction *fails* is deliberately not watermarked: a provider hiccup is not a
+verdict about that session.
+
+Three bugs found by building it, each fixed:
+
+- **Approval was secretly AI-dependent.** It went through `runDecisionPipeline`, whose `runVerify`
+  calls the model to adjudicate against existing items in the same category. That works on an empty
+  store and throws `AI provider has not been initialized` on the second atom of the first bulk run.
+  It now uses `storeKnowledgeAtomsDeduped`, the same writer `knowl_ingest_atoms` uses — which also
+  turned out to be the path that persists `provenance`.
+- **A bogus category reached the store.** A `not-a-category` atom was written to `knowledge_items`
+  intact, where every reader downstream assumes the enum. Validated at promotion now.
+- **Secret patterns were not being passed.** Approval called the writer without `config.security`,
+  running the weakest available validation on the one input most likely to contain a key — a
+  transcript is a recording of a working session, and working sessions paste credentials.
+
+Promoted atoms carry `provenance: 'inferred'` and `source: transcript:<harness>:<session>`. They
+were distilled by a model from a conversation nobody re-read at approval time; claiming `observed`
+would rank them above knowledge somebody actually verified.
+
+### A query miss now names the cold start
+
+`NO CONFIDENT MATCH` already pointed at `knowl_transcript_search` where transcripts were enabled.
+Where they are *not*, it said nothing — so an empty store could sit beside hundreds of indexable
+sessions and never mention it. It now names the config (not the tool, which that build genuinely
+does not expose), and only when an archive is actually on disk. The probe is two `stat` calls and
+opens no file: it runs at the moment a query has decided memory is empty.
 
 ### Codex sessions are indexed alongside Claude Code's
 
