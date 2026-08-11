@@ -9,12 +9,12 @@ Valuable project knowledge includes:
 - Project goals or product requirements (e.g. "We must support offline usage").
 - Constraints or rules (e.g. "No cloud APIs allowed").
 - Evolving project state updates (e.g. "Starting implementation of JWT auth flow").
-- Successfully resolved debugging procedures or skills (e.g. "To fix Maven db errors, run clean install and rebuild database").
+- Successfully resolved debugging procedures or skills, and diagnoses whose cause will recur such as an environment quirk or a config trap (e.g. "To fix Maven db errors, run clean install and rebuild database").
 
 You MUST reject (pass = false) the following:
 - Conversational filler, greetings, general pleasantries (e.g. "Hi", "Thanks", "How are you?").
-- Typographical mistakes, syntax corrections, or temporary coding errors that are immediately fixed.
-- Failed attempts, dead-end brainstorming, or intermediate debugging noise (e.g. "Wait, it didn't work. Let me try X instead... No, that failed too").
+- Typographical mistakes, syntax corrections, or one-off coding errors whose cause cannot recur.
+- Failed attempts, dead-end brainstorming, or in-progress debugging that never reached a cause (e.g. "Wait, it didn't work. Let me try X instead... No, that failed too").
 - Sensitive data, credentials, secrets, passwords, or API keys (e.g. "My key is sk-12345...").
 
 Analyze the input text carefully and decide whether it should pass the filter.
@@ -37,7 +37,7 @@ Rules for Extraction:
 1. Ignore conversational noise (e.g. "Sure, let's do this", "Okay, I modified...").
 2. Extract the CORE information in clean markdown.
 3. If the input contains a skill/procedure, make sure to extract the ordered "steps" to reproduce/execute that skill.
-4. Extract only validated facts/decisions. Do not extract temporary debugging errors or brainstorming that was rejected.
+4. Extract validated facts and decisions, stated goals, and resolved diagnoses — a failure whose cause was found and whose fix transfers to the next occurrence is a 'skill', with the trigger and fix as steps. Do not extract transient failures that taught nothing, failed attempts along the way, or brainstorming that was rejected.
 5. Create separate atoms if the input contains distinct pieces of knowledge (e.g. a tech choice AND a project state update).
 `;
 

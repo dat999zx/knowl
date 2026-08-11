@@ -72,8 +72,8 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 1. For every project-specific request, call `knowl_query` before repository files or commands, using the words that name the subject: another on-subject term retrieves better, an off-subject one retrieves worse, so do not pad the query and do not trim a real term to shorten it.
 2. Skip a new query only when directly relevant active lifecycle context, a same-request query, or manual `knowl_task_start` relevant memory already answers it.
 3. Use a relevant active hit immediately. Inspect files only after a miss, conflict, stale/low-confidence memory, or explicit verification request.
-4. Query again before switching to a distinct subtask or project area.
-5. Store or update durable knowledge during work and before the final answer — verified findings, and stated intent (goals, plans, direction the user voiced) stored as goals with user_stated provenance even while unsettled. The test: could a fresh session recover this from memory alone? Never store raw transcripts, secrets, or debugging noise.
+4. Query again before switching to a distinct subtask or project area, and before choosing how to build something new — existing tooling and pipelines are project knowledge, and in a linked workspace they often live in a sibling repo, so leave method queries unscoped.
+5. Store or update durable knowledge during work and before the final answer — verified findings, stated intent (goals, plans, direction the user voiced) stored as goals with user_stated provenance even while unsettled, and resolved diagnoses stored as skills when the cause will recur (an environment quirk, a config trap — not a typo). The test: could a fresh session recover this from memory alone? Never store raw transcripts, secrets, or transient debugging noise.
 6. If Knowl MCP tools are unavailable, stop and tell the user instead of silently bypassing Knowl.
 
 ### Lifecycle modes
@@ -102,6 +102,7 @@ Casual conversation, a single memory lookup, and trivial non-resumable work do n
 - When this repo is in a workspace, read the **shape** of a `knowl_query` result first. A bare JSON array means every row belongs to this repo. An object keyed by repo name means at least one row does **not** — and a fact from another repo describes **that** repo unless it says otherwise, so verify before applying it here.
 - An empty array under this repo's own key means this repo holds nothing on the subject. Read the other keys as background, not as an answer, and treat it as a miss if what they say does not transfer.
 - Narrow with `scope: "local"` (this repo alone, always a bare array) or `scope: "workspace"` (every sharing repo, always keyed). `repos: ["<name>"]` restricts to named repos and matches the repo that owns an item; it wins if both are given.
+- Method questions — "how do we generate X", "is there a script for Y" — belong to the whole workspace: query them unscoped before building new tooling; a sibling repo's pipeline answers them more often than this repo's files do.
 - A `WORKSPACE:` notice names linked repos that matched but were not shown, with counts. Re-query with `repos` to read them.
 - Whether a new write is shared is this repo's recorded default, not a fixed rule: joining a linked workspace sets it to workspace visibility, while `--default-visibility repo` keeps writes private. `knowl workspace set` with no flags prints the current value.
 - Knowledge already written privately stays private until someone runs `knowl workspace promote`. Only the owning repo can promote, update, or retire its own items.
