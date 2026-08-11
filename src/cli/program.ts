@@ -89,7 +89,17 @@ import { synthesizeKnowledge } from '../store/synthesis.js';
 import { startViewer } from '../viewer/server.js';
 import { createAgentReminderOutput } from './agents/reminder.js';
 import { rebuildTranscriptIndex } from '../transcripts/backfill.js';
-import { closeTranscriptDbs } from '../transcripts/database.js';
+import { closeTranscriptDbs, openTranscriptDb } from '../transcripts/database.js';
+import { isTranscriptSearchEnabled } from '../transcripts/config.js';
+import { resolveStorage } from '../store/storage-roles.js';
+import {
+  countCandidates,
+  DEFAULT_EXTRACT_LIMIT,
+  extractCandidates,
+  listCandidates,
+  planExtraction,
+} from '../transcripts/extract-candidates.js';
+import { approveCandidates, discardCandidates } from '../transcripts/approve-candidates.js';
 import { applyTranscriptConfigTransition, describeTranscriptTeardown } from '../transcripts/teardown.js';
 
 // Load environment variables (.env file)
@@ -1803,6 +1813,149 @@ program
       }
     } catch (error: any) {
       console.error(`Error reindexing: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+// --- 8b. TRANSCRIPT CANDIDATE COMMANDS ---
+//
+// Extraction and approval are separate commands because they are separate decisions, and because
+// only one of them costs money. `extract` runs the configured model over whole sessions and stages
+// what it finds; nothing it writes can be retrieved. `approve` is the act that puts an atom in
+// front of every future query, and it names what it is promoting.
+const transcripts = program
+  .command('transcripts')
+  .description('Distil indexed session transcripts into reviewable knowledge candidates');
+
+/** The transcripts index for the current project, or a readable error saying how to build one. */
+async function openCandidateStore(root: string) {
+  const config = await loadConfig(root);
+  if (!isTranscriptSearchEnabled(config)) {
+    throw new Error(
+      'Transcript search is not enabled for this repository. Set search.transcripts.enabled to true (knowl config), then run knowl reindex --transcripts.',
+    );
+  }
+  const dbPath = resolveStorage(root).transcripts;
+  return { config, db: await openTranscriptDb(dbPath) };
+}
+
+transcripts
+  .command('extract')
+  .description('Run the configured model over unextracted sessions and stage what it finds')
+  .option('--limit <n>', `Sessions to extract in this run (default ${DEFAULT_EXTRACT_LIMIT})`, parseInt)
+  .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', parseFloat)
+  .option('--yes', 'Skip the cost estimate and run')
+  .action(async (options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const { config, db } = await openCandidateStore(root);
+      const plan = await planExtraction(db, { limit: options.limit });
+
+      if (plan.sessions.length === 0) {
+        console.log(plan.done > 0
+          ? `Nothing to extract: all ${plan.done} indexed session(s) have been extracted.`
+          : 'Nothing to extract. Run knowl reindex --transcripts first.');
+        await closeTranscriptDbs();
+        return;
+      }
+
+      // Printed before anything is sent, and gated behind --yes. This spends the operator's API
+      // quota on their own archive; the size of that is theirs to see before it happens, not
+      // after. `remaining` is stated too, so a run that covers a tenth of the archive cannot read
+      // as having covered it.
+      console.log(`Extract ${plan.sessions.length} session(s), about ${Math.round(plan.chars / 1000)}k characters, using ${config.ai?.provider}/${config.ai?.model}.`);
+      console.log(`${plan.pending} session(s) await extraction; ${plan.done} already done.`);
+      if (!options.yes) {
+        console.log('This calls your configured model and spends your quota. Re-run with --yes to proceed.');
+        await closeTranscriptDbs();
+        return;
+      }
+
+      const deadline = options.budget !== undefined ? Date.now() + options.budget * 60_000 : undefined;
+      const result = await extractCandidates(db, config, { limit: options.limit, deadline });
+
+      console.log(`Extracted ${result.sessionsExtracted} session(s) into ${result.candidates} candidate(s).`);
+      if (result.empty > 0) console.log(`${result.empty} session(s) yielded nothing and will not be retried.`);
+      if (result.remaining > 0) console.log(`${result.remaining} session(s) still unextracted. Run again to continue.`);
+      console.log('Review them with knowl transcripts candidates; nothing is stored until you approve it.');
+      await closeTranscriptDbs();
+    } catch (error: any) {
+      console.error(`Error extracting: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+transcripts
+  .command('candidates')
+  .description('List staged candidates awaiting a decision')
+  .option('--status <status>', 'pending, approved or discarded', 'pending')
+  .option('--limit <n>', 'Maximum rows to show', parseInt)
+  .action(async (options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const { db } = await openCandidateStore(root);
+      const counts = await countCandidates(db);
+      const rows = await listCandidates(db, { status: options.status, limit: options.limit });
+
+      if (rows.length === 0) {
+        console.log(`No ${options.status} candidates.`);
+      } else {
+        for (const row of rows) {
+          console.log(`[${row.id}] ${row.category.padEnd(12)} ${row.title}`);
+          console.log(`    ${row.content.replace(/\s+/g, ' ').slice(0, 160)}`);
+          console.log(`    from ${row.harness} session ${row.sessionId}, confidence ${row.confidence.toFixed(2)}`);
+        }
+      }
+      const summary = Object.entries(counts).map(([status, n]) => `${n} ${status}`).join(', ');
+      if (summary) console.log(`\n${summary}.`);
+      await closeTranscriptDbs();
+    } catch (error: any) {
+      console.error(`Error listing candidates: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+transcripts
+  .command('approve [ids...]')
+  .description('Promote staged candidates into the knowledge store')
+  .option('--all', 'Approve every pending candidate')
+  .action(async (ids: string[], options) => {
+    try {
+      if (!options.all && (!ids || ids.length === 0)) {
+        throw new Error('Name the candidate ids to approve, or pass --all.');
+      }
+      const root = await findProjectRoot(process.cwd());
+      const { config, db } = await openCandidateStore(root);
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not registered in the database.');
+
+      const result = await approveCandidates(db, project.id, config, { ids, all: options.all });
+      console.log(`Approved ${result.approved} candidate(s).`);
+      if (result.deduped > 0) console.log(`${result.deduped} merged into knowledge the store already held.`);
+      for (const failure of result.failed) console.log(`Failed ${failure.id}: ${failure.reason}`);
+      await closeTranscriptDbs();
+    } catch (error: any) {
+      console.error(`Error approving: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+transcripts
+  .command('discard [ids...]')
+  .description('Reject staged candidates, so a rerun does not ask again')
+  .option('--all', 'Discard every pending candidate')
+  .action(async (ids: string[], options) => {
+    try {
+      if (!options.all && (!ids || ids.length === 0)) {
+        throw new Error('Name the candidate ids to discard, or pass --all.');
+      }
+      const root = await findProjectRoot(process.cwd());
+      const { db } = await openCandidateStore(root);
+      console.log(`Discarded ${await discardCandidates(db, { ids, all: options.all })} candidate(s).`);
+      await closeTranscriptDbs();
+    } catch (error: any) {
+      console.error(`Error discarding: ${error.message}`);
       process.exit(1);
     }
   });

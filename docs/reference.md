@@ -457,6 +457,52 @@ Workspace peers may opt in with `share: true`, which lets linked repositories op
 read-only. Sharing is re-checked on every read, so revoking it revokes previously issued
 locators too.
 
+Both Claude Code and Codex archives are discovered. They are found by different mechanisms
+because they are laid out differently: Claude Code names a directory after the project
+(`~/.claude/projects/<encoded-root>/`), while Codex partitions by date
+(`~/.codex/sessions/YYYY/MM/DD/`) and records the project inside each file as
+`session_meta.payload.cwd`. Every Codex candidate is therefore opened, with a bounded header read.
+
+### `knowl transcripts` — turning sessions into candidates
+
+Searching a transcript answers a question. This turns one into memory. Extraction runs the
+configured model over indexed sessions and **stages** what it finds; nothing reaches the knowledge
+store until you approve it.
+
+```bash
+knowl transcripts extract --limit 10        # prints the estimate, then stops
+knowl transcripts extract --limit 10 --yes  # actually runs
+knowl transcripts candidates                # review what was staged
+knowl transcripts approve <id>...           # promote, or --all
+knowl transcripts discard <id>...           # reject, or --all
+```
+
+**Extraction spends your model quota, so it tells you first.** `extract` prints the session count,
+the character estimate and the provider it would call, and does nothing without `--yes`. The
+default is 10 sessions, not the archive. It requires `ai.provider` and `ai.model`; without them,
+distil a session yourself with `knowl_transcript_read` and store the result through
+`knowl_ingest_atoms`, which needs no AI configuration.
+
+**Nothing is promoted automatically, and that is the point.** A first run over a real archive
+produces on the order of a thousand atoms. An unreviewed corpus that size would be answering every
+future query while nobody had yet decided any of it was true, so approval is a separate, explicit
+act — one candidate at a time, each passing the same secret validation, confidence range and dedup
+checks that every other write does.
+
+Runs are resumable and never pay twice. An extracted session is watermarked, including one that
+yielded nothing — short sessions yield nothing most often and would otherwise dominate the bill. A
+session whose extraction *failed* is deliberately left unwatermarked, because a provider error is
+not a verdict about that session. Long sessions are truncated from the start, keeping the tail,
+where a session's conclusions are.
+
+Promoted atoms carry `provenance: inferred` and `source: transcript:<harness>:<session>`. A model
+distilled them from a conversation nobody re-read at approval time; calling that `observed` would
+rank it above knowledge somebody actually verified.
+
+Candidates live in `.knowl/transcripts.db`, not the knowledge store, so speculative rows never
+reach a query and disabling transcript search discards them with the index. They are regenerable
+from the transcripts, which is what makes that safe.
+
 ### Host and subagent behavior
 
 | Host | MCP | Automatic lifecycle | Subagent lifecycle | Current session behavior or limit |

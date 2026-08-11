@@ -40,6 +40,7 @@ import { resumeInstruction } from '../session/resume-keys.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
 import { isTranscriptSearchEnabled } from '../transcripts/config.js';
+import { hasIndexableArchive } from '../transcripts/paths.js';
 import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
 import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
@@ -1011,9 +1012,17 @@ export function registerTools(
           // agent has decided memory is empty, and transcript search is the thing that can
           // still answer -- but it is off by default, so an unconditional mention would send
           // callers to a tool their build does not expose.
+          //
+          // Where it is off, the next move is not a tool but a decision, and staying silent about
+          // it is the cold start: an empty store sits beside an archive of past sessions on disk
+          // and nothing ever says so. Named as the config rather than the tool, because the tool
+          // genuinely is not exposed in that build -- and only when an archive is actually there,
+          // so a machine with no sessions is never told to index them.
           const transcriptRoute = config && isTranscriptSearchEnabled(config)
             ? ' Before you do, try `knowl_transcript_search` with the same words: past sessions are indexed separately from knowledge items and are not searched by this tool.'
-            : '';
+            : (projectRoot && await hasIndexableArchive(projectRoot).catch(() => false)
+              ? ' This machine holds past agent sessions for this repository that are not indexed. Enabling `search.transcripts.enabled` and running `knowl reindex --transcripts` makes them searchable.'
+              : '');
           blocks.push({
             type: 'text',
             text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `score` and judge. If none of them answers the question, treat this as a miss and go to the files.'

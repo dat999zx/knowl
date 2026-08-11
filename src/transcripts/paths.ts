@@ -516,6 +516,27 @@ export async function scanTranscriptArchive(
   return { files: found, degraded };
 }
 
+/**
+ * Whether either harness has an archive on this machine that this repo could index.
+ *
+ * **Two `stat` calls and no file is opened**, which is the entire design constraint. This answers
+ * a question asked at the one moment a query has decided memory is empty, so it must cost
+ * approximately nothing and must never throw. It reports *existence*, never a count: counting
+ * Codex sessions means opening every file to read its `cwd`, and that is a scan, not a probe.
+ *
+ * The Claude check is repo-specific because its archive is keyed by project. The Codex check is
+ * not -- the directory is shared across every project -- so this can answer true where a repo has
+ * no Codex sessions of its own. That asymmetry is accepted: the notice it drives suggests turning
+ * a feature on, and the cost of suggesting it to somebody with nothing to index is one line of
+ * text, while the cost of staying silent is the cold start this exists to fix.
+ */
+export async function hasIndexableArchive(projectRoot: string): Promise<boolean> {
+  const exists = (target: string) => fs.access(target).then(() => true, () => false);
+  const claudeDir = path.join(defaultProjectsDir(), encodeProjectDir(path.resolve(projectRoot)));
+  if (await exists(claudeDir)) return true;
+  return exists(defaultCodexSessionsDir());
+}
+
 /** The file list alone, for callers with nothing to decide about a degraded scan. */
 export async function discoverTranscriptFiles(
   projectRoot: string,
