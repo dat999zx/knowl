@@ -84,7 +84,7 @@ export function describeWriteReconciliation(result: {
   superseded?: { id: string; title: string };
   nearDuplicate?: { id: string; title: string };
   crossRepo?: Array<{ repo: string; id: string; title: string; kind: 'conflict' | 'duplicate'; kin?: boolean; role?: string }>;
-  governingDecision?: { id: string; title: string; score: number; via: 'calibrated' | 'z-score' };
+  governingDecision?: { id: string; title: string; score: number; via: string };
 }): string {
   const notes: string[] = [];
   if (result.superseded) {

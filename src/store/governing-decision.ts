@@ -18,13 +18,14 @@
  * off -- the same lesson as the secret validator's false positive. `knowl_store` never fails
  * because of this module.
  *
- * WHY THE THRESHOLD IS PER PROFILE. A cosine means different things in different embedding
- * spaces: median similarity between UNRELATED items measured 0.838 under granite, 0.735 under bge
- * and 0.510 under arctic. One shared constant would fire on nearly everything under granite. A
- * scale-free z-score does transfer, but it discriminates worse in every model (AUC 0.960-0.977
- * against 0.982-0.992), because normalising against the pool's own spread discards the absolute
- * signal -- a write in a dense topic region gets its z deflated even when the match is strong. So
- * the calibrated constant is primary and the z-score is the fallback for uncalibrated profiles.
+ * WHY NEITHER A COSINE NOR A CONSTANT. The first version compared a raw cosine to a constant
+ * fitted per embedding profile. On a labelled set whose negatives were drawn UNIFORMLY from the
+ * real write population that was the WEAKEST option measured -- AUC 0.836, and 0% recall at the
+ * fire rate it shipped at. An earlier evaluation scored it 0.972, but that set was stratified
+ * across score bands, which over-selects exactly the pairs an absolute threshold handles well.
+ * The scoring and the gate both changed as a result, and the reasoning lives in `guard-stats.ts`:
+ * CSLS to stop broad "hub" decisions winning every write, and a percentile of this store's own
+ * distribution so no constant is fitted to any particular corpus.
  */
 
 import { KnowledgeItem } from '../core/types.js';
@@ -32,64 +33,30 @@ import { getConfigRoot } from './database.js';
 import { buildKnowledgeEmbeddingText } from './vector-index.js';
 import { searchKnowledgeEmbeddings } from './vector.js';
 import { resolveWriteEmbedder } from './write-embedding.js';
+import { CSLS_K, MIN_POOL_FOR_Z, guardStats } from './guard-stats.js';
 
 export type GoverningDecision = {
   id: string;
   title: string;
-  /** Cosine between the write and the decision, for the caller's own reporting. */
+  /** The CSLS score that cleared the gate, for the caller's own reporting. */
   score: number;
   /** Which rule admitted it, so a surprising notice can be explained without re-running it. */
-  via: 'calibrated' | 'z-score';
+  via: 'csls-percentile';
 };
 
 /**
- * How many standard deviations above the pool's own mean a top match must sit when the profile
- * has no calibrated constant.
- *
- * 3.32 is where a single threshold across granite, bge and arctic pooled maximised accuracy
- * (90.7%, TPR 90.6%, FPR 9.2%). It is deliberately the weaker path: on any profile that has a
- * constant, that constant is 5-6 accuracy points better.
- */
-const FALLBACK_Z = 3.32;
-
-/**
- * Below this many decisions the fallback abstains outright, because the threshold above is not
- * reachable in a small pool and would otherwise be a silent no-op that LOOKS like a working gate.
- *
- * A z-score has a hard ceiling set by the sample size: one value above n-1 identical others
- * scores at most sqrt(n-1). That is exactly 3.0 at n=10, so on a store with ten decisions
- * NOTHING can ever clear 3.32 — not even a perfect match against a pool of complete strangers.
- * Solving sqrt(n-1) >= 3.32 puts the arithmetic floor at n = 13, and sitting on the floor would
- * mean only a flawless outlier ever fires. 25 gives a ceiling of sqrt(24) = 4.90, enough headroom
- * for a realistic match, and is still far below the pools of 82 the threshold was calibrated on.
- *
- * Found by a test asserting that a clear outlier clears the bar: it did not, at z = 2.99. The
- * failure was arithmetic rather than a bad fixture, and without the explicit floor the guard
- * would have shipped looking correct while being inert on every young repository.
- */
-const MIN_POOL_FOR_Z = 25;
-
-/**
  * The pool is capped rather than unbounded. A store with thousands of decisions would otherwise
- * make every write pay for scoring all of them, and the guard only ever reports the top one --
- * beyond the first page the extra rows change nothing but the mean used by the fallback.
+ * make every write pay for scoring all of them, and the guard only ever reports the top one.
  */
 const POOL_LIMIT = 200;
 
 /**
- * Exported for its own test. The fallback is the path an UNCALIBRATED profile takes, so it is
- * the one nobody exercises by hand and the one that must not quietly fire on everything: it is
- * reached exactly when there is no measured constant to check it against.
+ * Mean of the k highest values. Exported for its own test because it is the CSLS scaling term,
+ * and a wrong k or a wrong mean silently changes which decision wins without failing anything.
  */
-export function zScore(scores: number[], top: number): number {
-  if (scores.length < 2) return 0;
-  const mean = scores.reduce((sum, s) => sum + s, 0) / scores.length;
-  const variance = scores.reduce((sum, s) => sum + (s - mean) ** 2, 0) / scores.length;
-  const sd = Math.sqrt(variance);
-  // A pool with no spread cannot say anything about how unusual its top hit is. Returning 0
-  // abstains rather than dividing by an epsilon and manufacturing a huge z from rounding.
-  if (sd < 1e-9) return 0;
-  return (top - mean) / sd;
+export function meanTopK(values: number[], k: number): number {
+  const top = [...values].sort((a, b) => b - a).slice(0, k);
+  return top.length ? top.reduce((sum, v) => sum + v, 0) / top.length : 0;
 }
 
 /**
@@ -111,7 +78,7 @@ export async function governingDecisionForWrite(
     const embedder = await resolveWriteEmbedder();
     if (!embedder) return undefined;
 
-    const [{ loadConfig }, { fingerprintProfile, resolveVectorProfile, governingDecisionThresholdFor }] =
+    const [{ loadConfig }, { fingerprintProfile, resolveVectorProfile }] =
       await Promise.all([
         import('../core/config.js'),
         import('../core/vector-profile.js'),
@@ -124,30 +91,37 @@ export async function governingDecisionForWrite(
     const [vector] = await embedder.embed([buildKnowledgeEmbeddingText(item)], { maxBatch: 1 });
     if (!vector || vector.length === 0) return undefined;
 
+    const fingerprint = fingerprintProfile(resolveVectorProfile(config));
     const hits = await searchKnowledgeEmbeddings(projectId, {
       vector: Array.from(vector),
       category: 'decision',
       status: 'active',
-      profileFingerprint: fingerprintProfile(resolveVectorProfile(config)),
+      profileFingerprint: fingerprint,
       limit: POOL_LIMIT,
     });
 
     const pool = hits.filter(hit => hit.item.id !== (self?.id ?? item.id));
-    if (pool.length === 0) return undefined;
+    if (pool.length < MIN_POOL_FOR_Z) return undefined;
 
-    const top = pool[0];
-    const threshold = governingDecisionThresholdFor(config);
+    // No statistics, no opinion. A corpus too small or too fresh to have a score distribution
+    // cannot say whether this match is unusual, and guessing would fire on noise.
+    const stats = await guardStats(fingerprint);
+    if (!stats) return undefined;
 
-    if (threshold !== null) {
-      if (top.score < threshold) return undefined;
-      return { id: top.item.id, title: top.item.title, score: top.score, via: 'calibrated' };
+    // CSLS re-ranks the raw-cosine shortlist rather than the whole store: the scaling can only
+    // demote, and a decision outside the top of the cosine ranking cannot be promoted past one
+    // inside it by a bounded correction. rWrite comes from this write's own neighbourhood.
+    const rWrite = meanTopK(pool.map(hit => hit.score), CSLS_K);
+    let best: { hit: (typeof pool)[number]; score: number } | null = null;
+    for (const hit of pool) {
+      const hub = stats.hub.get(hit.item.id);
+      if (hub === undefined) continue;         // indexed under another profile; not comparable
+      const scaled = 2 * hit.score - rWrite - hub;
+      if (!best || scaled > best.score) best = { hit, score: scaled };
     }
 
-    // Uncalibrated profile. Ask the scale-free question instead of guessing a constant, because
-    // a cosine that means "unrelated" in one space means "same subject" in another.
-    if (pool.length < MIN_POOL_FOR_Z) return undefined;
-    if (zScore(pool.map(hit => hit.score), top.score) < FALLBACK_Z) return undefined;
-    return { id: top.item.id, title: top.item.title, score: top.score, via: 'z-score' };
+    if (!best || best.score < stats.threshold) return undefined;
+    return { id: best.hit.item.id, title: best.hit.item.title, score: best.score, via: 'csls-percentile' };
   } catch {
     return undefined;
   }
