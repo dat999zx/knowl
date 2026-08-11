@@ -24,7 +24,9 @@ connection of two things that already exist.
 ## 2. Scope boundary
 
 **In:** the cloud namespace, cloud knowledge lifecycle, status consolidation, CLI/MCP parity,
-one-leaf flattening, two new config settings.
+one-leaf flattening, one new project-config setting (`cloud.autoStage`), one machine-local consent
+store (auto-push, §6.2), a `cloud_excluded` table and an explicit stage state on `cloud_published`
+(§5.2–§5.3).
 
 **Out, and named in §11 with evidence:** the `session` / `task` / `agent-event` overlap, `knowl
 ask`, the three retention surfaces, the transcripts CLI/MCP name split, aliases, and full
@@ -121,6 +123,20 @@ error path that has to be provoked on purpose.
 not optional decoration: once staging is automatic, an edit made without intent to share has no
 other exit short of pushing it.
 
+**It must never be implemented as `DELETE FROM cloud_published`.** That row holds `remote_version`,
+which is the only copy of the server's version on this machine, and knowl-cloud treats a republish
+arriving without `expectedVersion` as a conflict *by design*, so that an older client cannot acquire
+overwrite rights by not knowing the field exists. Decision `ba85bbbc98964d68` records that neither
+staging path ever clears it. Deleting the row to unstage a correction would therefore make the atom
+unpushable afterwards. The state model in §5.3 exists to make this representable.
+
+**Two intents, two commands**, because collapsing them would guess:
+
+- `knowl cloud unstage <id>` — not this time. Clears the pending stage; a later qualifying change
+  re-stages normally.
+- `knowl cloud unstage <id> --forever` — never. Writes the exclusion state, equivalent to having
+  stored the atom with `--local`. Reversed by naming the id to `knowl cloud stage`.
+
 ---
 
 ## 4. Cloud knowledge lifecycle: local verbs are the only verbs
@@ -201,20 +217,62 @@ it would permanently conflate two different audiences — my other local repos, 
 behind one verb. Concretely, 171 items on this machine already sit at `workspace` visibility; making
 that the trigger would queue every one of them for the company the moment a repo connects.
 
-### 5.2 Exclusions live in the ledger too
+### 5.2 Exclusions are a sibling table, and staging becomes an explicit state
 
-`knowl store --local` writes an exclusion row into `cloud_published`. An excluded atom never
-auto-stages and is skipped by a category sweep.
+An earlier draft put exclusions in `cloud_published` as rows with no `pushed_at` and no
+`retracted_at`. **That does not work**, for three independent reasons found in review:
 
-**Naming its id explicitly still stages it.** An explicit act about an item in hand outranks a
-standing policy — the same asymmetry decision `ba85bbbc98964d68` already draws between naming ids
-and sweeping categories.
+1. `listStaged` selects exactly `pushed_at IS NULL AND retracted_at IS NULL`
+   (`src/cloud/ledger.ts:99`), so every exclusion row would read as *staged* and be pushed.
+2. `staged_at` is `NOT NULL` (`src/store/bootstrap.ts:361`), which an exclusion has no honest value
+   for.
+3. The primary key is `(item_id, remote_workspace)`. **`knowl store --local` before a repo is
+   connected has no workspace to key on at all** — and "never share this" is a statement about the
+   atom, not about one workspace.
 
-The ledger is the right home. It is machine-local state like `drift_state` and, per
-`ee191dd7db024bec`, must not travel in portable exports. An exclusion is exactly that kind of local
-policy: it says nothing about the atom's content and should not follow it to another machine.
+**Exclusions therefore live in their own table**, workspace-independent:
 
-### 5.3 No backfill on connect
+```
+cloud_excluded(item_id PRIMARY KEY, excluded_at NOT NULL, reason)
+```
+
+Machine-local like `cloud_published` and `drift_state`, and excluded from portable export for the
+same reason: it is local policy that says nothing about the atom's content and must not follow it to
+another machine.
+
+**Naming an excluded atom's id to `knowl cloud stage` still stages it.** An explicit act about an
+item in hand outranks a standing policy — the same asymmetry `ba85bbbc98964d68` already draws
+between naming ids and sweeping categories.
+
+### 5.3 The staging state must be explicit, because `pushed_at` cannot carry it
+
+`restageForPublish` currently signals "staged again" by setting `pushed_at = NULL`
+(`ba85bbbc98964d68`). That destroys the record of when the atom was last pushed, so **there is no
+value for `unstage` to restore** — which is why unstage cannot be expressed at all against today's
+schema without either deleting the row (losing `remote_version`, §3.6) or guessing.
+
+`cloud_published` gains an explicit stage state, and `pushed_at` stops being overloaded as a flag:
+
+| state | meaning | `pushed_at` | `remote_version` |
+| --- | --- | --- | --- |
+| `pending` | queued for the next push | preserved if ever pushed | preserved |
+| `clear` | nothing queued | last successful push, or null | preserved |
+| — (`retracted_at` set) | destroyed in the workspace | preserved | cleared, per `22d3a20b85134c22` |
+
+Transitions: stage / auto-stage / re-stage → `pending`. A successful push → `clear`, stamping
+`pushed_at`. `unstage` → `clear`, touching nothing else. `unstage --forever` → `clear` plus a
+`cloud_excluded` row.
+
+**The invariant that makes this correct: `remote_version` is written once by a successful push and
+cleared only by retraction.** No unstage, re-stage or exclusion path may touch it. It is the only
+copy of the server's version on this machine, and knowl-cloud treats a republish without
+`expectedVersion` as a conflict by design.
+
+`listStaged` becomes `stage_state = 'pending' AND retracted_at IS NULL`. Exact column naming and the
+schema migration are the plan's to settle; the states, transitions and the `remote_version`
+invariant are not.
+
+### 5.4 No backfill on connect
 
 Auto-staging covers atoms written **after** connect. The existing store is never swept
 automatically.
@@ -230,27 +288,75 @@ act: `knowl cloud stage --all --apply`, or the existing category sweep.
 ### 6.1 `cloud.autoStage` — default on
 
 When a repo is connected, an atom written from that moment on is staged as it is written, unless it
-carries a ledger exclusion (§5.2). The existing store is not swept (§5.3).
+carries a `cloud_excluded` row (§5.2). The existing store is not swept (§5.4).
 
 `knowl cloud stage` remains, demoted from routine step to override: stage an excluded atom, sweep a
 category, or backfill.
 
 Turned off with `knowl config set cloud.autoStage false`, or `--no-auto-stage` at connect.
 
-**Why on by default.** Connecting is deliberate; nothing pre-existing is swept; all writes are
-already secret-validated; push is still gated on the default branch so nothing leaves from a feature
-branch; and `cloud status` plus `unstage` make the queue visible and reversible before anything is
-sent.
+**Why on by default.** Connecting is deliberate; nothing pre-existing is swept; push is still gated
+on the default branch so nothing leaves from a feature branch; and `cloud status` plus `unstage`
+make the queue visible and reversible before anything is sent.
+
+**A rationale removed in review, because it was false.** An earlier draft also claimed "all writes
+are already secret-validated." They are not. `src/store/repository.ts:143` states that import
+deliberately bypasses the guard — "it writes raw SQL precisely because a dump is foreign data that
+may predate any guard this build has, and refusing it would make someone's export unloadable." That
+exception is correct on its own terms and is exactly why import must be **excluded** from the
+auto-stage seam (§6.1.1), not a reason auto-staging is safe.
+
+#### 6.1.1 The seam is one post-commit hook, and its coverage is enumerated
+
+Auto-staging must fire in exactly one place, after the write commits, or it will both miss paths and
+leave a crash window in which an atom exists unstaged with nothing to notice.
+
+`createKnowledgeItem` (`src/store/repository.ts:141`) already describes itself as "the last door
+before the row … so the invariant is stated here rather than at each caller," and names merge,
+synthesis, session-handoff, work-loop and the CLI fixture path as arriving through it. **That is the
+seam**, plus the equivalent door on the update path.
+
+**Covered:** every mutation reaching the repository helpers, including the MCP write tools, `decide`,
+work-loop writes, merge, synthesis and session-handoff.
+
+**Excluded, deliberately, each with its reason:**
+
+- **Import** — bypasses the door by design (above). A dump is foreign data and may contain another
+  machine's local-only knowledge; auto-publishing it would launder someone's export into a team
+  workspace. `knowl cloud stage` after an import is the deliberate route.
+- **Workspace promotion** (`src/workspace/promote.ts`) — a one-column `visibility` update that moves
+  no rows, and per §5.1 sharing with linked local repos is a different audience from publishing to
+  the company. Promotion must not publish.
+- **Session-namespace writes** — transient by construction.
+
+**The crash window closes by ordering, not by a transaction.** The stage row is written after the
+item commits, so a crash between them leaves an unstaged atom rather than a staged phantom. That
+direction is recoverable and the other is not: `knowl cloud stage` can queue a missed atom, whereas
+a ledger row pointing at an item that was never committed would be pushed as a phantom. `knowl
+doctor` reports the drift.
 
 ### 6.2 `cloud.autoPush` — default off
 
 When on, a successful stage is followed by a push **if the publish gate is already open**. It never
 relaxes the gate.
 
-**Off by default, and only a human can turn it on.** Decision `9a2fe8a011d6423b` establishes that an
-agent may stage but only a human may send, because a push is irreversible and `retract` is a hard
-delete that bars the id forever. A config flag set by a person is how that decision is honoured
-rather than quietly overridden: the MCP surface cannot flip it.
+**Off by default, and consent is stored machine-locally — not in `.knowl/config.json`.** An earlier
+draft put it in project config. That is wrong: `src/core/types.ts:282` records that the config file
+is "deliberately force-committable so the pointer travels with a clone." Committing
+`cloud.autoPush: true` would enable irreversible automatic publishing for **every teammate who
+clones and for CI**, none of whom consented, from a file whose whole purpose is to travel. Decision
+`9a2fe8a011d6423b` — an agent may stage, only a human may send — would be satisfied on paper by one
+person's edit and violated in fact for everyone else.
+
+Consent therefore lives beside the credentials it is equivalent in weight to, under `knowlHome()`,
+keyed by workspace. It is per-machine, per-user, never committed, and never travels. Set with
+`knowl cloud autopush on|off`, not `knowl config set`.
+
+**Automatic push IS the confirmation, and that must be stated rather than left implicit.** §6.4
+requires every push to confirm. Turning autoPush on is the standing answer to that prompt for this
+machine, given once, deliberately, for a named workspace. It does not skip the snapshot binding in
+§6.4 — an automatic push still sends only what it computed, and a queue that changed underneath it
+is still refused rather than sent unseen.
 
 ### 6.3 Auto-pull already works and is merely invisible
 
@@ -268,6 +374,21 @@ last-synced and next-due. No change to the sync mechanism itself.
 prompt that cannot be answered must not block CI, and must not be silently treated as consent for an
 irreversible action.
 
+**The confirmation must bind to a snapshot, not to the queue.** `pushStaged` reads `listStaged`
+live (`src/cloud/publish.ts:164`). A long-lived MCP server is writing to that same queue
+concurrently — §6.1 makes that continuous rather than occasional — so between the prompt being drawn
+and the answer arriving, another process can stage new atoms or change the content of listed ones.
+Confirming a live read would send items and text that were never displayed. **This risk is created
+by auto-staging; it did not exist when staging was manual and rare.**
+
+So the prompt computes a snapshot — the exact item ids plus each one's `contentHash` and
+`lifecycleHash` — and the push sends **that snapshot and nothing else**. If any listed atom's hashes
+moved, or the set gained members, the push refuses and re-prompts with the new snapshot rather than
+sending. Atoms staged after the snapshot are simply not in this push; they are in the next one,
+which is the correct outcome and needs no special handling.
+
+The hashes are the same two §4.3 already relies on, so nothing new is computed.
+
 **Rationale, and a risk the plan must handle.** Auto-staging makes queues larger, and a push is
 irreversible. There is production evidence of what a large push does: knowl-cloud fact
 `f77ce73dcb914744` records a 237-atom publish against the live server where the first 200-atom batch
@@ -283,22 +404,60 @@ safe and idempotent; the confirmation makes the size visible before it is attemp
 
 ### 7.1 `knowl cloud status` is the one cloud answer
 
-It gains, in one report: **authentication identity** and token expiry (or "not signed in"),
-workspace and role, staged count split into new atoms and corrections, what a push is waiting on,
-and **auto-pull state** — last synced, next due, last error.
+It gains, in one report: **who is signed in** and token expiry (or "not signed in"), workspace and
+role, staged count split into new atoms and corrections, what a push is waiting on, and **auto-pull
+state** — last synced, next due, last error.
 
 No `whoami` command. A separate verb for one line of a report that people already run is how the
 surface grew.
 
-**The MCP path must stay local and instant.** `cloudStatus` (`src/cloud/status.ts:29`) and
-`cloudStatusInRequest` (`:51`) are split precisely because constraint `defde27f6f234535` establishes
-that `initDb`/`closeDb` inside an MCP request leaves every *later* tool call in that server with no
-database. Usage figures need a network call, so:
+#### 7.1.1 Identity is not locally knowable today, and must be cached at login
 
-- **CLI** does a best-effort usage fetch with a short timeout, degrading to `usage: unavailable`.
-- **MCP** stays strictly local, with no usage line and no network.
+An earlier draft promised an offline report containing the signed-in identity. **Nothing in the
+client can produce it.** `CloudCredential` (`src/cloud/credentials.ts:6`) holds an access token, a
+refresh token, an expiry and the server's session handle — and its own docblock states the server
+"sends no user id." `CloudApi` (`src/cloud/api-client.ts:73`) has no identity method; tokens are
+opaque. `listWorkspaces` needs the network and returns workspaces, not a user.
 
-The report is otherwise identical, and the split stays where it already is.
+**The server already answers this; the client never asks.** `GET /v1/me` exists in knowl-cloud
+(`src/http/server.ts:99` registers `identityRoutes` at that prefix) and returns
+`MeResponse = { user: { id, email, displayName }, orgs, workspaces }`
+(`packages/contract/src/identity.ts:4-28`). The gap is entirely on this side: `CloudApi` has no
+method for it.
+
+**Resolution: cache it once, read it forever.** `CloudApi` gains `me(accessToken)`. `knowl cloud
+login` calls it after the token lands and stores `email` / `displayName` into the credential file
+alongside the tokens. Every later read — CLI or MCP, online or offline — answers from that cache,
+which is the only shape that satisfies both "MCP stays offline" and "status says who you are."
+
+**No knowl-cloud change is required.** An earlier draft listed this as a cross-repo dependency and
+"the one item that cannot be built in this repo alone." That was wrong: the endpoint and the fields
+were already shipped.
+
+A credential written by 4.x has no cached identity. Status reports `signed in (identity unknown —
+run knowl cloud login)` rather than inventing one or fetching on a path that must not.
+
+#### 7.1.2 Host selection when the repo is not connected
+
+A disconnected repo has no `config.cloud` and therefore no `apiHost`, while credentials are keyed by
+host. Status resolves the host the same way `login` and `logout` already do — `defaultApiHost()`,
+i.e. `$KNOWL_API_HOST` or the hosted default — and reports that host's credential. If credentials
+exist for other hosts, it names the count and says which flag reaches them. No guessing between
+them.
+
+#### 7.1.3 What each caller reports
+
+`cloudStatus` (`src/cloud/status.ts:29`) and `cloudStatusInRequest` (`:51`) stay split, because
+constraint `defde27f6f234535` establishes that `initDb`/`closeDb` inside an MCP request leaves every
+*later* tool call in that server with no database.
+
+| | identity, workspace, staged, sync state | usage |
+| --- | --- | --- |
+| CLI | from cache, offline | best-effort fetch, short timeout, degrades to `usage: unavailable` |
+| MCP | from cache, offline | **omitted entirely** — no network on a live request |
+
+**The two reports are deliberately not identical**, and the difference is one line. Claiming
+otherwise is what made the earlier draft unbuildable.
 
 ### 7.2 `knowl status` gains a short cloud summary
 
@@ -308,17 +467,33 @@ leaves cloud state stranded.
 
 ---
 
-## 8. CLI/MCP parity
+## 8. Closing three MCP-only gaps
 
-Three MCP tools have no CLI counterpart. Each becomes a thin wrapper over the internals the MCP
-handler already calls:
+Three MCP tools have no CLI counterpart. Each gains one, over the internals the MCP handler already
+calls. **This is not full parity and the section no longer claims it** — the omissions are listed,
+because an unstated omission is what makes a "parity" claim wrong.
 
-- **`knowl store`** — `--category`, `--title`, content argument, plus `--tag`, `--path`,
-  `--confidence`, `--provenance`, and `--local` (§5.2). The most-used write in the system currently
-  cannot be performed by a human.
-- **`knowl park`** — mints the key and prints the paste-ready line. Pairs with the `knowl resume`
-  that already exists (`src/cli/program.ts:451`), closing a half-built pair.
-- **`knowl handoff`** — leaves the baton for the next session in this project.
+**`knowl store <content>`** — `--category` and `--title` required, plus `--tag`, `--path`,
+`--confidence`, `--provenance`, `--reasoning`, `--alternative`, `--source`, `--source-commit`,
+`--supersedes`, and `--local` (§5.2).
+
+*Deliberately omitted:* `conflictKey`, `conflictScope`, `conflictExclusive` (machine-oriented
+identity fields; a human typing a fact has no use for them), `namespace` (project is the only
+sensible CLI target; the others need configuration), and `steps` (skill-only — `knowl skill create`
+already owns that path). A plan may add them behind flags if a use appears; nothing here depends on
+their absence.
+
+**`knowl park`** — `--goal` required, matching the tool's `required: ['goal']`. Optional
+`--completed` (repeatable), `--next-action`, `--blocker`, `--artifact` (repeatable),
+`--verified` / `--unverified`. Mints the key and prints the paste-ready line. Completes the pair with
+the `knowl resume` that already exists (`src/cli/program.ts:451`).
+
+**`knowl handoff`** — `--goal` **and** `--next-action` both required, matching
+`required: ['goal', 'nextAction']`. Same optional set as `park`. Leaves the baton for the next
+session in this project.
+
+`sessionId` is omitted from both: it exists because an MCP client has no session of its own to
+report, which is not a problem a CLI invocation has.
 
 ---
 
@@ -370,6 +545,15 @@ Per knowl-cloud goal `a052496241be48a2`, the web app names CLI commands in six l
 `app-instrument-screens.spec.ts:68`). That repo's suite currently pins a command that does not exist
 at all. Any rename here reds knowl-cloud's CI until its copy and tests are updated in the same wave.
 
+### 10.4 Nothing else crosses the repo boundary
+
+An earlier draft listed a fifth item here: a knowl-cloud endpoint to supply the signed-in identity.
+It was withdrawn on inspection — `GET /v1/me` and the `email` / `displayName` fields already exist
+(§7.1.1), so that work is entirely client-side.
+
+**§10.1–§10.3 are therefore the complete list.** Only the web copy and its three e2e tests live
+outside this repo, and they are copy changes rather than capability work.
+
 ---
 
 ## 11. Deferred, with evidence
@@ -413,9 +597,18 @@ consolidate them, but a plan should name one canonical route in the docs.
 
 Beyond the standing gate (`npm.cmd run typecheck`, `lint`, `build`, `test`, `docs:check`):
 
-1. **No orphaned command strings.** Grep `src/`, `docs/` and both guidance files for every removed
-   name — `knowl login`, `knowl logout`, `knowl publish`, `knowl code `, `knowl eval retrieval`,
-   `knowl access report`, `knowl pr check`, `knowl evidence list`. Zero hits outside this spec.
+1. **No orphaned command strings — in live surfaces only.** Grep for every removed name (`knowl
+   login`, `knowl logout`, `knowl publish`, `knowl code `, `knowl eval retrieval`, `knowl access
+   report`, `knowl pr check`, `knowl evidence list`) across **`src/`** (error messages, help text,
+   MCP tool descriptions), **KNOWL.md and AGENTS.md**, **`README.md`**, and **`docs/reference.md`**.
+   Zero hits.
+
+   **`docs/superpowers/**` is excluded, and must be.** Seven plans and specs from July and August
+   name these commands as they existed when written — `2026-07-11-product-layer.md`,
+   `2026-08-09-cloud-client-plan-{a,b,d}.md` and others. They are a record of what was decided and
+   when. Rewriting them to match a later rename would falsify the history that makes them worth
+   keeping, and would silently edit the reasoning this spec itself cites. Historical documents are
+   allowed to describe history.
 2. **`login` short-circuit** proven with a stored valid credential: no device authorization is
    started. Covered by a test, not by inspection.
 3. **`connect` non-TTY** proven not to block.
@@ -426,10 +619,28 @@ Beyond the standing gate (`npm.cmd run typecheck`, `lint`, `build`, `test`, `doc
    regression §5.1 exists to prevent.
 5. **Re-stage predicate** — a change to content, status, freshness or supersede on a published atom
    queues a correction; a change moving neither hash queues nothing.
-6. **`cloudStatusInRequest` still opens and closes no database**, per `defde27f6f234535`. The three
-   cases in `tests/cloud/ambient-context.test.ts` must still pass unmodified.
-7. **`MAX_BATCH`** lowered, with the chosen number justified against the 200-atom measurement in
-   `f77ce73dcb914744`.
-8. **knowl-cloud CI green** on the paired copy and e2e-test change.
-</content>
-</invoke>
+6. **`remote_version` survives every non-retract path.** Push an atom, edit it, `unstage`, edit it
+   again, push: the second push must still carry `expectedVersion`. Assert the column directly, not
+   just the outcome — this is the invariant §5.3 exists to protect, and a regression here surfaces
+   as a server-side conflict far from its cause.
+7. **`unstage` versus `unstage --forever`.** After plain `unstage`, a later qualifying change
+   re-stages the atom. After `--forever`, it does not, and no category sweep picks it up — but
+   naming its id to `knowl cloud stage` still does.
+8. **Confirmation binds to a snapshot.** With a push prompt open, stage another atom and mutate a
+   listed one out of band. The push must send neither change: the added atom is absent, and the
+   mutated one causes a refusal and re-prompt rather than a silent send.
+9. **Auto-push consent never travels.** Enable it, then assert nothing in `.knowl/config.json`
+   changed — a fresh clone of the repo must have it off. This is the §6.2 failure mode and a test is
+   the only thing that stops it regressing back into project config.
+10. **The auto-stage seam covers what §6.1.1 lists and excludes what it excludes.** Specifically:
+    an import queues nothing, a `workspace promote` queues nothing, and a session-namespace write
+    queues nothing — while an MCP `knowl_store` and a `knowl decide` both do.
+11. **Identity is cached at login, and its absence is reported honestly.** `login` calls `me()` and
+    persists the result; a credential written without one reports `identity unknown`, never a
+    fabricated or re-fetched name, and the MCP path makes no network call while doing it.
+12. **`cloudStatusInRequest` still opens and closes no database**, per `defde27f6f234535`. The three
+    cases in `tests/cloud/ambient-context.test.ts` must still pass unmodified.
+13. **`MAX_BATCH`** lowered, with the chosen number justified against the 200-atom measurement in
+    `f77ce73dcb914744`.
+14. **knowl-cloud CI green** on the paired web-copy and e2e-test change (§10.3). No engine change is
+    expected there; if one becomes necessary, that is a signal the design drifted.
