@@ -50,6 +50,12 @@ const SCHEMA_PINS: Record<number, string> = {
   // the same failure mode that made the forget log claim 6 instead of 5 in the first place.
   // 8 rather than 7 because `cloud_published` took 7 while this branch was open.
   8: 'e96218e9fbe0594d73078033d718af4f',
+  // 9 adds `capture_outcomes` -- turns produced and durable writes made, per conversation, so a
+  // repo can measure how often a session talks and stores nothing. Additive again, so
+  // `KNOWL_SCHEMA_VERSION` again does not move. No backfill, and none is possible: the counters
+  // ride the events that cause them and `memory_session_events` expires in about two days, so
+  // any history worth backfilling is already gone.
+  9: 'e35a04dead1990c2af454fc44545e39a',
 };
 
 let root: string;

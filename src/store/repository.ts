@@ -539,6 +539,33 @@ export async function listActiveSkillItems(dbConnection?: DbConnection): Promise
   }
 }
 
+/**
+ * The active skill items a linked repo shares with its workspace.
+ *
+ * Deliberately a sibling of `listActiveSkillItems` rather than an option on it. That function
+ * runs on every command tool event and is index-scoped for that reason; a peer lookup belongs
+ * only to session-start bootstrap, and folding the two would put a peer database open on the
+ * mid-turn path. The visibility predicate is in the SQL, matching `queryFederated`: a peer's
+ * repo-private row is never read into this process at all.
+ */
+export async function listWorkspaceVisibleSkillItems(dbConnection?: DbConnection): Promise<KnowledgeItem[]> {
+  const conn = dbConnection || getDb();
+  try {
+    const result = await conn
+      .select()
+      .from(schema.knowledgeItems)
+      .where(and(
+        eq(schema.knowledgeItems.category, 'skill'),
+        eq(schema.knowledgeItems.status, 'active'),
+        eq(schema.knowledgeItems.visibility, 'workspace'),
+      ));
+
+    return result.map(mapRowToKnowledgeItem);
+  } catch (error: any) {
+    throw new DatabaseError(`Failed to list workspace-visible skill items: ${error.message}`);
+  }
+}
+
 export async function createKnowledgeCommit(
   projectId: string,
   message: string,

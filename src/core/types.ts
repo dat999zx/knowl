@@ -330,6 +330,32 @@ export interface ProjectConfig {
     gate?: 'off' | 'shadow' | 'enforce';
   };
   /**
+   * The write side's negative signal: sessions that talked and stored nothing.
+   *
+   * The write path has admission control -- secret validation, categories, conflict keys --
+   * deciding what gets *in*. Nothing detected what should have got in and did not, and the
+   * knowledge with no verification moment to trigger a save is exactly the most durable kind:
+   * declared intent. The only detector before this was a user noticing and asking.
+   *
+   * Measurement is unconditional and costs one counter per session; `nudge` decides only what
+   * is done with the answer. Deliberately absent from DEFAULT_CONFIG, for the reason `impact`
+   * and `search.transcripts` are: `upgradeConfigDefaults` merges defaults into every config on
+   * the machine, so a value written there would arm this in every repository at once.
+   */
+  capture?: {
+    /**
+     * `shadow` records the nudge it would have delivered and delivers nothing. `enforce` blocks
+     * the stop once, with the nudge as the reason, and never blocks that session again.
+     *
+     * A separate switch from measurement, and off by default, because the two carry different
+     * risk. Counting is invisible; blocking a stop takes a turn the person did not ask for, and
+     * a heuristic that fires on a session which stored plenty is the fatigue that teaches
+     * everyone to ignore the channel. Shadow is where this is expected to sit until the numbers
+     * say otherwise -- the same ladder `impact.gate` climbs.
+     */
+    nudge?: 'off' | 'shadow' | 'enforce';
+  };
+  /**
    * This repo's half of workspace membership. The other half is the workspace manifest
    * listing this repo; either alone is not membership, which is what makes linkage
    * un-forgeable by a cloned repository.

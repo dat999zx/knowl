@@ -3,6 +3,7 @@ import { DEFAULT_CONTEXT_MAX_CHARS } from '../core/token-budget.js';
 import { heartbeatMemorySession, startMemorySession } from './session-repository.js';
 import { getRecentContext } from './recent-context.js';
 import { listActiveSkillItems } from './repository.js';
+import type { PeerSkillItem } from '../workspace/peer-skills.js';
 
 export type AgentBootstrapInput = {
   projectId: string;
@@ -13,32 +14,39 @@ export type AgentBootstrapInput = {
 };
 
 /**
- * The active workspace, shaped for the context block, or undefined.
+ * The active workspace, shaped for the context block, plus the skills its peers share.
  *
  * Resolved from the open store's root rather than a passed-in path, because bootstrap is
  * given a project id and the root is what `resolveWorkspace` needs. Never fatal: a workspace
  * that cannot be read degrades to no section, exactly as an unlinked repo does.
+ *
+ * Both answers come from one resolve because they come from one workspace, and resolving twice
+ * would open every peer's manifest twice on a path that runs at the start of every session.
  */
-async function workspaceContext(): Promise<WorkspaceContext | undefined> {
+async function workspaceContext(): Promise<{ workspace?: WorkspaceContext; peerSkills: PeerSkillItem[] }> {
   try {
     const { getConfigRoot } = await import('./database.js');
     const { resolveWorkspace } = await import('../workspace/resolve.js');
     const { repoEntry } = await import('../workspace/repo-settings.js');
+    const { listPeerSkillItems } = await import('../workspace/peer-skills.js');
     const active = await resolveWorkspace(getConfigRoot());
-    if (!active) return undefined;
+    if (!active) return { peerSkills: [] };
 
     const self = repoEntry(active.manifest, active.repo);
     return {
-      name: active.name,
-      repo: active.repo,
-      selfRole: self?.role,
-      selfDefaultVisibility: self?.defaultVisibility,
-      peers: active.peers.map(peer => ({
-        name: peer.name, role: peer.role, kin: peer.kin, defaultVisibility: peer.defaultVisibility,
-      })),
+      workspace: {
+        name: active.name,
+        repo: active.repo,
+        selfRole: self?.role,
+        selfDefaultVisibility: self?.defaultVisibility,
+        peers: active.peers.map(peer => ({
+          name: peer.name, role: peer.role, kin: peer.kin, defaultVisibility: peer.defaultVisibility,
+        })),
+      },
+      peerSkills: await listPeerSkillItems(active),
     };
   } catch {
-    return undefined;
+    return { peerSkills: [] };
   }
 }
 
@@ -59,9 +67,13 @@ export async function bootstrapAgentSession(input: AgentBootstrapInput, options:
   // Skills are surfaced regardless of recency: getRecentContext returns only the three
   // most recent items of any category, so a skill created last month would never appear.
   const skills = await listActiveSkillItems();
-  const fallback = formatRecentContextToMarkdown({ ...recent, skills }, {
+  // Workspace visibility governed query reach but not ambient reach: a sibling repo's shared
+  // skill could be found only by an agent who already knew to ask for it, which is exactly the
+  // agent who does not know the tooling exists. Peers ride the same card, as pointers.
+  const { workspace, peerSkills } = await workspaceContext();
+  const fallback = formatRecentContextToMarkdown({ ...recent, skills, peerSkills }, {
     maxChars: Number.MAX_SAFE_INTEGER,
-    workspace: await workspaceContext(),
+    workspace,
   });
   const truncated = fallback.length > DEFAULT_CONTEXT_MAX_CHARS;
   return {

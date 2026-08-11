@@ -23,9 +23,10 @@ export type ConfigKey =
   | 'memory.global.enabled'
   | 'memory.global.path'
   | 'impact.enabled'
-  | 'impact.gate';
+  | 'impact.gate'
+  | 'capture.nudge';
 
-export type ConfigCategory = 'Search' | 'Security' | 'AI provider' | 'Memory namespaces' | 'Change impact';
+export type ConfigCategory = 'Search' | 'Security' | 'AI provider' | 'Memory namespaces' | 'Change impact' | 'Capture';
 
 /**
  * How a value should be asked for. Without this the UI had only `parse`, so every field
@@ -85,6 +86,10 @@ const AI_PROVIDERS = ['openai', 'anthropic', 'ollama', 'custom'] as const;
 // Ordered by how much they can cost the person running them, which is also the order they are
 // meant to be adopted in: nothing, then measurement, then refusal.
 const IMPACT_GATE_MODES = ['off', 'shadow', 'enforce'] as const;
+// The same three, in the same order and for the same reason. Kept as its own constant rather
+// than shared: they mean different things (one refuses a write, one withholds a stop), and a
+// shared list is how a fourth mode added for one of them silently becomes settable on the other.
+const CAPTURE_NUDGE_MODES = ['off', 'shadow', 'enforce'] as const;
 
 export const CONFIG_FIELDS: ConfigField[] = [
   // The preset leads the Search list: it is the one setting most people should touch,
@@ -225,6 +230,19 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: enumValue(IMPACT_GATE_MODES), defaultValue: 'off',
     label: 'Write gate',
     description: 'Before an edit lands on code this session read and has not seen since: shadow records what it would have refused and lets the write through, enforce refuses it and hands back what changed. Needs change impact detection on.',
+  },
+  {
+    // `defaultValue: 'off'` lives here and nowhere else, for the same reason as `impact.gate`
+    // above: the literal in DEFAULT_CONFIG would be merged into every config on the machine by
+    // `upgradeConfigDefaults`, which for this key means every repository the user has ever
+    // initialized starts withholding stops.
+    //
+    // Note what this key does *not* control: the counting. `knowl status` reports capture health
+    // whatever this says, because the number is what a decision to arm has to be made against.
+    key: 'capture.nudge', category: 'Capture', type: 'enum', values: CAPTURE_NUDGE_MODES,
+    parse: enumValue(CAPTURE_NUDGE_MODES), defaultValue: 'off',
+    label: 'Empty-session nudge',
+    description: 'When a conversation has run for several turns and stored nothing durable: shadow records the nudge it would have sent, enforce withholds the stop once and asks the agent to store what it learned. Measurement runs either way.',
   },
 ];
 

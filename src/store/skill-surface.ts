@@ -40,7 +40,12 @@ export function matchSkillForCommand(command: string, skills: SurfacedSkill[]): 
   const haystack = command.toLowerCase();
   const matches = skills.filter((skill) => {
     const name = skill.name.toLowerCase();
-    return skill.runnable
+    // Belt to `toPeerSurfacedSkills`'s braces. A peer row is already `runnable: false` and would
+    // fail the next test anyway, but this nudge ends in "Run it with knowl_skill_run" and that
+    // call resolves against the local root -- so the one row that must never reach it is checked
+    // for by name here rather than left to hold somewhere else.
+    return !skill.repo
+      && skill.runnable
       && name.length >= MIN_MATCHABLE_NAME_CHARS
       && appearsAsWord(haystack, name)
       && isSpecificEnough(haystack, name);
