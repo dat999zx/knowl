@@ -144,6 +144,47 @@ describe('Codex transcript discovery', () => {
     expect(found).toHaveLength(1);
   });
 
+  it('matches a worktree recorded under the un-resolved path, as the Claude half already did', async () => {
+    // The gap this closes. A `cwd` is whatever the agent's shell had, so it is the UN-resolved
+    // form -- and `git worktree list` answers canonically, which `realpath` cannot invert. On
+    // macOS that is `/var/folders/X` against git's `/private/var/folders/X-wt`; here it is built
+    // explicitly so the case is covered on every platform rather than only the one with a
+    // symlinked temp directory.
+    const real = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-real-'));
+    const link = path.join(path.dirname(real), `${path.basename(real)}-link`);
+    try {
+      // A junction on Windows, where an unprivileged symlink is refused; both resolve under
+      // `realpath`, which is all this needs.
+      await fs.symlink(real, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      return; // No link available on this machine; the behaviour is unobservable here.
+    }
+
+    try {
+      const repo = path.join(real, 'repo');
+      const worktree = path.join(real, 'repo-wt');
+      await fs.mkdir(repo, { recursive: true });
+      await fs.mkdir(worktree, { recursive: true });
+
+      // What the agent recorded: the sibling worktree, spelled through the link.
+      await writeSession('2026/03/22/rollout-2026-03-22T21-16-47-019d15e7-1111-7e93-886c-2429599f27cd.jsonl',
+        path.join(link, 'repo-wt'));
+
+      const found = await discoverTranscriptFiles(
+        // The project root as given (through the link) is what reveals the substitution; the
+        // worktree is supplied the way git reports it, canonically and only canonically.
+        path.join(link, 'repo'),
+        { projectsDir, codexSessionsDir, roots: [path.join(link, 'repo'), worktree] },
+      );
+
+      expect(found).toHaveLength(1);
+      expect(found[0].harness).toBe('codex');
+    } finally {
+      await fs.rm(link, { recursive: true, force: true }).catch(() => {});
+      await fs.rm(real, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
   it('skips a file with no readable header rather than claiming it', async () => {
     const target = path.join(codexSessionsDir, '2026/03/22/rollout-2026-03-22T21-16-47-019d15e7-eeee-7e93-886c-2429599f27cd.jsonl');
     await fs.mkdir(path.dirname(target), { recursive: true });

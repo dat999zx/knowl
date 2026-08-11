@@ -126,6 +126,41 @@ describe('approving a staged candidate', () => {
     // The failure stays pending: retryable, and never silently reported as a decision.
     expect((await listCandidates(db, { status: 'pending' })).map(row => row.id)).toEqual([bad]);
   });
+
+  /**
+   * `--all` does not mean all, and the number that says so.
+   *
+   * The cap is deliberate -- approval writes atoms one at a time and an unbounded run over a
+   * whole archive is worse -- but the first run over a real archive produces atoms on that
+   * order, so the cap lands on precisely the run it exists for. Reporting only "Approved N"
+   * reads as completion, and the operator who believes it stops with the rest unreviewed.
+   */
+  it('says how many are still pending when --all stops at its cap', async () => {
+    for (let index = 0; index < 5; index += 1) {
+      await stage(db, { title: `Atom ${index}`, content: `A distinct fact number ${index} worth keeping.` });
+    }
+
+    const first = await approveCandidates(db, projectId, DEFAULT_CONFIG, { all: true, limit: 2 });
+
+    expect(first.approved).toBe(2);
+    expect(first.remaining).toBe(3);
+
+    const second = await approveCandidates(db, projectId, DEFAULT_CONFIG, { all: true, limit: 10 });
+
+    expect(second.approved).toBe(3);
+    // Nothing left, and the caller can tell that apart from "I stopped early".
+    expect(second.remaining).toBe(0);
+  });
+
+  it('counts a failed candidate as still pending, because it is still a decision to make', async () => {
+    const bad = await stage(db, { category: 'not-a-category', title: 'Bad', content: 'Nonsense.' });
+    const good = await stage(db, { title: 'Fine', content: 'An ordinary fact that promotes cleanly.' });
+
+    const result = await approveCandidates(db, projectId, DEFAULT_CONFIG, { ids: [bad, good] });
+
+    expect(result.approved).toBe(1);
+    expect(result.remaining).toBe(1);
+  });
 });
 
 describe('the cold-start probe', () => {

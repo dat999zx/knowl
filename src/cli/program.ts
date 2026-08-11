@@ -99,7 +99,7 @@ import {
   listCandidates,
   planExtraction,
 } from '../transcripts/extract-candidates.js';
-import { approveCandidates, discardCandidates } from '../transcripts/approve-candidates.js';
+import { APPROVE_ALL_LIMIT, approveCandidates, discardCandidates } from '../transcripts/approve-candidates.js';
 import { applyTranscriptConfigTransition, describeTranscriptTeardown } from '../transcripts/teardown.js';
 
 // Load environment variables (.env file)
@@ -1940,7 +1940,7 @@ transcripts
 transcripts
   .command('approve [ids...]')
   .description('Promote staged candidates into the knowledge store')
-  .option('--all', 'Approve every pending candidate')
+  .option('--all', `Approve up to ${APPROVE_ALL_LIMIT} pending candidates`)
   .action(async (ids: string[], options) => {
     try {
       if (!options.all && (!ids || ids.length === 0)) {
@@ -1956,6 +1956,11 @@ transcripts
       console.log(`Approved ${result.approved} candidate(s).`);
       if (result.deduped > 0) console.log(`${result.deduped} merged into knowledge the store already held.`);
       for (const failure of result.failed) console.log(`Failed ${failure.id}: ${failure.reason}`);
+      // Said out loud, because `--all` stops at a cap and a first run over a real archive
+      // produces atoms on that order. "Approved 1000 candidate(s)" alone reads as finished.
+      if (result.remaining > 0) {
+        console.log(`${result.remaining} still pending. Run approve --all again to continue.`);
+      }
       await closeTranscriptDbs();
     } catch (error: any) {
       console.error(`Error approving: ${error.message}`);

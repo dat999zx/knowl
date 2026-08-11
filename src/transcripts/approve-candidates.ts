@@ -24,12 +24,28 @@ import { candidateToAtom, listCandidates, type ExtractionCandidate } from './ext
  * accept work that has already been paid for.
  */
 
+/** How many candidates one `--all` run promotes before stopping. */
+export const APPROVE_ALL_LIMIT = 1_000;
+
 export type ApprovalResult = {
   approved: number;
   /** Candidates the merge path folded into an item that already said this. */
   deduped: number;
   failed: { id: string; reason: string }[];
   itemIds: string[];
+  /**
+   * Candidates still `pending` when this run finished.
+   *
+   * Reported because `--all` does not mean all: it promotes `APPROVE_ALL_LIMIT` at most, and the
+   * first run over a real archive produces atoms on that order -- so the cap lands on precisely
+   * the run it was written for. Saying only "Approved 1000 candidate(s)" reads as completion, and
+   * the operator who believes it stops with the rest of their archive unreviewed and no signal
+   * that anything remains.
+   *
+   * Counts failures too, which are also still pending: what this number answers is "is there more
+   * to decide", and a candidate that refused to promote is exactly that.
+   */
+  remaining: number;
 };
 
 function parseTags(raw: unknown): string[] | null {
@@ -84,12 +100,12 @@ export async function approveCandidates(
   selection: { ids?: string[]; all?: boolean; limit?: number },
 ): Promise<ApprovalResult> {
   const targets = selection.all
-    ? (await listCandidates(db, { status: 'pending', limit: selection.limit ?? 1_000 }))
+    ? (await listCandidates(db, { status: 'pending', limit: selection.limit ?? APPROVE_ALL_LIMIT }))
       .map(candidate => candidate.id)
     : selection.ids ?? [];
 
   const candidates = await loadCandidates(db, targets);
-  const result: ApprovalResult = { approved: 0, deduped: 0, failed: [], itemIds: [] };
+  const result: ApprovalResult = { approved: 0, deduped: 0, failed: [], itemIds: [], remaining: 0 };
 
   for (const candidate of candidates) {
     try {
@@ -131,6 +147,12 @@ export async function approveCandidates(
       result.failed.push({ id: candidate.id, reason: (error as Error).message });
     }
   }
+
+  // Counted from the store after the run rather than derived from the cap, so it stays right
+  // whatever a concurrent extraction added and whatever failed.
+  result.remaining = Number((await db.execute(
+    `SELECT COUNT(*) AS n FROM transcript_candidates WHERE status = 'pending'`,
+  )).rows[0]?.n ?? 0);
 
   return result;
 }
