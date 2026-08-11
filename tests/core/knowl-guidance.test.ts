@@ -34,12 +34,12 @@ const EXPECTED_CLAUDE_CARD = [
   'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
   'Route by what you need; the tool list names them:',
   '- retrieval: knowl_query first. Recent context only without bootstrap or for a refresh, broad state for status, a packed context only when a token budget is given.',
-  '- durable memory: store one verified atom, batch several, record a confirmed decision, a stated goal, or a resolved diagnosis, or correct a stale one. Correct rather than duplicate.',
+  '- durable memory: store one verified atom, batch several, record a confirmed decision, a stated goal, or a recurring diagnosis, or correct a stale one. Correct rather than duplicate.',
   '- audit: inspect history, evidence or conflicts when needed; record feedback only after actual use or correction.',
   '- skills: read a matching skill before running a trusted entrypoint; create one only on explicit request.',
   '- special: raw-source ingest only on an explicit request, never silent chat; synthesis only for an explicit scope; preview garbage collection first and apply only after approval.',
   '- leaving work: one baton the next session here consumes once, or a key the user keeps and hands back any time later, from anywhere.',
-  'During work, store durable findings, stated intent, and resolved diagnoses — a goal counts before it settles; never raw transcripts, secrets, or routine command noise.',
+  'During work, store durable findings, stated intent, and recurring diagnoses — a goal counts before it settles; never raw transcripts, secrets, or routine command noise.',
 ].join('\n');
 
 const namesIn = (text: string) => [...new Set(text.match(/\bknowl_[a-z_]+\b/g) ?? [])].sort();
@@ -127,8 +127,8 @@ describe('canonical Knowl agent guidance', () => {
     // (see 'does not grow when a tool is added'), so a new tool inside an existing group should
     // leave both numbers untouched. If adding a tool changes them, something re-introduced the
     // inventory the card stopped carrying.
-    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_831);
-    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_882);
+    expect(KNOWL_CLAUDE_OPERATIONAL_CARD).toHaveLength(1_833);
+    expect(KNOWL_MCP_SERVER_INSTRUCTIONS).toHaveLength(1_884);
     for (const card of [KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS]) {
       expect(card.length).toBeLessThan(2_000);
       expect(card.slice(0, 512)).toContain('knowl_query');
@@ -180,14 +180,22 @@ describe('canonical Knowl agent guidance', () => {
    * Pinned for the same reason the keyword-cap test above is: "verified durable findings" is
    * precisely the kind of tight phrase someone re-introduces while shortening a line to buy
    * room, and the omission it causes is invisible until a user is annoyed.
+   *
+   * The diagnosis half is pinned with its qualifier, not just its class name. Recurrence is the
+   * axis that predicts value, and "resolved" is not it: a typo is resolved too, and rule 5
+   * excludes it by name. A cue reading only "resolved diagnoses" would summarise the rule as its
+   * own counterexample, so each surface has to say *which* diagnoses — the recurring ones. The
+   * compact cards get this wrong the moment someone drops an adjective to buy back characters,
+   * which is the same pressure that produced the original omission.
    */
   it('names stated intent and recurring diagnoses as storable in every storage cue that reaches an agent', () => {
+    const recurrence = /recurring diagnos|diagnosis whose cause will recur/;
     for (const surface of [
       KNOWL_CLAUDE_OPERATIONAL_CARD, KNOWL_MCP_SERVER_INSTRUCTIONS,
       KNOWL_CLAUDE_PROMPT_REMINDER, KNOWL_CLAUDE_CONTINUATION_REMINDER,
     ]) {
       expect(surface).toMatch(/stated (intent|goal)/);
-      expect(surface).toMatch(/diagnos/);
+      expect(surface).toMatch(recurrence);
     }
     // The full guidance names the mechanism, not just the class: which category, which
     // provenance, and the recovery test that decides.
@@ -196,7 +204,7 @@ describe('canonical Knowl agent guidance', () => {
     expect(renderFullKnowlGuidance()).toContain('resolved diagnoses stored as skills');
     // The subagent card stays intent-free — a subagent receives a bounded task, not a user
     // conversation — but it does debug, so diagnoses are in its storable class too.
-    expect(KNOWL_SUBAGENT_BOOTSTRAP_CARD).toMatch(/diagnos/);
+    expect(KNOWL_SUBAGENT_BOOTSTRAP_CARD).toMatch(recurrence);
   });
 
   it('changes only the lifecycle mode line between compact renderings', () => {

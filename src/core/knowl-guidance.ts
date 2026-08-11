@@ -148,7 +148,7 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
     'Route by what you need; the tool list names them:',
     '- retrieval: knowl_query first. Recent context only without bootstrap or for a refresh, broad state for status, a packed context only when a token budget is given.',
-    '- durable memory: store one verified atom, batch several, record a confirmed decision, a stated goal, or a resolved diagnosis, or correct a stale one. Correct rather than duplicate.',
+    '- durable memory: store one verified atom, batch several, record a confirmed decision, a stated goal, or a recurring diagnosis, or correct a stale one. Correct rather than duplicate.',
     '- audit: inspect history, evidence or conflicts when needed; record feedback only after actual use or correction.',
     '- skills: read a matching skill before running a trusted entrypoint; create one only on explicit request.',
     '- special: raw-source ingest only on an explicit request, never silent chat; synthesis only for an explicit scope; preview garbage collection first and apply only after approval.',
@@ -160,11 +160,13 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     // an agent following this card faithfully skipped storing two strategy conversations,
     // because every storage cue said "verified" and a conversation verifies nothing. Intent is
     // durable before it is settled — that is what the goal category and user_stated provenance
-    // exist for — and the omission taught agents the opposite. "Resolved diagnoses" joined it
+    // exist for — and the omission taught agents the opposite. "Recurring diagnoses" joined it
     // after the same failure in a third shape (2026-08-11): a fixed environment trap — the kind
     // that recurs — went unstored because "findings" read as build results, and the next
-    // session re-diagnosed it from scratch.
-    'During work, store durable findings, stated intent, and resolved diagnoses — a goal counts before it settles; never raw transcripts, secrets, or routine command noise.',
+    // session re-diagnosed it from scratch. The adjective is the rule, not decoration: rule 5
+    // excludes the typo, and a typo is a resolved diagnosis too, so a cue saying only "resolved"
+    // would summarise the rule as its own counterexample.
+    'During work, store durable findings, stated intent, and recurring diagnoses — a goal counts before it settles; never raw transcripts, secrets, or routine command noise.',
   ].join('\n');
 }
 
@@ -189,7 +191,7 @@ export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the 
 export const KNOWL_CLAUDE_PROMPT_REMINDER = [
   'KNOWL — project memory is active.',
   'For any project question or new subtask, call knowl_query BEFORE reading files, using the words that name the subject and no padding; use a relevant active hit directly and inspect files only on a miss, conflict, or stale/low-confidence result.',
-  'Store durable decisions, facts, state, constraints, stated goals, and resolved diagnoses as you go with knowl_store / knowl_decide / knowl_update — intent counts before it settles, a recurring cause once fixed; never store secrets or routine noise.',
+  'Store durable decisions, facts, state, constraints, stated goals, and recurring diagnoses as you go with knowl_store / knowl_decide / knowl_update — intent counts before it settles; never store secrets or routine noise.',
   'Claude hooks own the lifecycle — do not call knowl_task_start/checkpoint/finish. Full tool routing is in KNOWL.md.',
 ].join(' ');
 
