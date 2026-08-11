@@ -25,7 +25,7 @@ export function parseFrozenThreshold(raw: string, file: string): FrozenThreshold
   try {
     json = JSON.parse(raw);
   } catch (error) {
-    throw new Error(`${file} is not valid JSON: ${(error as Error).message}`);
+    throw new Error(`${file} is not valid JSON: ${(error as Error).message}`, { cause: error });
   }
 
   const parsed = FrozenThresholdSchema.safeParse(json);

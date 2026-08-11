@@ -254,56 +254,77 @@ export async function* streamProseFrom(
   let consumed = startByte;
   let line = startLine;
 
-  let stream: import('node:fs').ReadStream;
+  // A file that has been deleted, or that cannot be opened, yields nothing and reports the
+  // watermark it was given -- it must not throw at the caller.
+  //
+  // **The guard has to be around the iteration, not around `createReadStream`.** That call
+  // succeeds on a path that does not exist: `fs.ReadStream` opens lazily and reports ENOENT by
+  // emitting `error`, which rejects the `for await` below. Wrapping only the construction caught
+  // nothing a real archive produces, so a transcript deleted between discovery and this read
+  // aborted `knowl transcripts extract` mid-run -- after the model had been paid for the sessions
+  // before it -- and `backfillOffsets` with it, both under comments promising the opposite.
+  //
+  // Only the open is protected. A failure part-way through iteration is a truncated read of a
+  // file that IS there, and returning the watermark for it would commit the caller to a position
+  // past lines it never saw; that has to keep propagating.
+  const stream = createReadStream(filePath, { start: startByte });
+  let delivered = false;
+
   try {
-    stream = createReadStream(filePath, { start: startByte });
-  } catch {
-    return { bytesConsumed: startByte, linesConsumed: startLine };
-  }
+    for await (const chunk of stream) {
+      delivered = true;
+      carry = carry.length === 0 ? Buffer.from(chunk) : Buffer.concat([carry, Buffer.from(chunk)]);
+      let cursor = 0;
 
-  for await (const chunk of stream) {
-    carry = carry.length === 0 ? Buffer.from(chunk) : Buffer.concat([carry, Buffer.from(chunk)]);
-    let cursor = 0;
+      for (;;) {
+        const newline = carry.indexOf(0x0a, cursor);
+        if (newline === -1) break;
 
-    for (;;) {
-      const newline = carry.indexOf(0x0a, cursor);
-      if (newline === -1) break;
+        const lineStart = consumed + cursor;
+        // Safe to decode here: 0x0a cannot occur inside a multi-byte UTF-8 sequence, so a
+        // complete line is always a complete sequence of characters.
+        const raw = carry.subarray(cursor, newline).toString('utf8');
+        cursor = newline + 1;
+        line++;
 
-      const lineStart = consumed + cursor;
-      // Safe to decode here: 0x0a cannot occur inside a multi-byte UTF-8 sequence, so a
-      // complete line is always a complete sequence of characters.
-      const raw = carry.subarray(cursor, newline).toString('utf8');
-      cursor = newline + 1;
-      line++;
-
-      const trimmed = raw.trim();
-      if (trimmed) {
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(trimmed);
-        } catch {
-          // One unreadable line must not cost the rest of the file.
-          parsed = undefined;
-        }
-        const prose = parsed === undefined ? null : extractProse(parsed);
-        if (prose) {
-          yield {
-            message: { line, ...prose },
-            byteOffset: lineStart,
-            bytesConsumed: consumed + cursor,
-            linesConsumed: line,
-          };
-        } else if (parsed !== undefined && onNaming) {
-          // Naming entries are not prose and must not become messages -- they carry no line the
-          // reader would ever want to open. Surfaced by callback so no existing caller changes.
-          const naming = readSessionNaming(parsed);
-          if (naming) onNaming(naming);
+        const trimmed = raw.trim();
+        if (trimmed) {
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(trimmed);
+          } catch {
+            // One unreadable line must not cost the rest of the file.
+            parsed = undefined;
+          }
+          const prose = parsed === undefined ? null : extractProse(parsed);
+          if (prose) {
+            yield {
+              message: { line, ...prose },
+              byteOffset: lineStart,
+              bytesConsumed: consumed + cursor,
+              linesConsumed: line,
+            };
+          } else if (parsed !== undefined && onNaming) {
+            // Naming entries are not prose and must not become messages -- they carry no line the
+            // reader would ever want to open. Surfaced by callback so no existing caller changes.
+            const naming = readSessionNaming(parsed);
+            if (naming) onNaming(naming);
+          }
         }
       }
-    }
 
-    consumed += cursor;
-    carry = carry.subarray(cursor);
+      consumed += cursor;
+      carry = carry.subarray(cursor);
+    }
+  } catch (error) {
+    // Nothing arrived, so the stream failed to open: the file is gone, or is not ours to read.
+    // Report the watermark unmoved and let the caller carry on with the rest of the archive.
+    //
+    // A failure AFTER a chunk has been delivered is a different thing -- a truncated read of a
+    // file that is really there -- and returning a watermark for it would tell the caller it had
+    // seen lines it never did. That keeps propagating.
+    if (delivered) throw error;
+    return { bytesConsumed: startByte, linesConsumed: startLine };
   }
 
   // Past any trailing non-prose lines, which advanced the watermark without yielding.

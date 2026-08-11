@@ -100,6 +100,24 @@ describe('federation with the cloud replica', () => {
     expect((await run()).shape).toBe('grouped');
   });
 
+  it('accepts the workspace id as a repo name instead of calling it unknown', async () => {
+    // `repos: [WS]` is what narrows a query to the replica, and it works -- the rows come back.
+    // The name check was built from the manifest alone, so the same call also reported the id as
+    // a name that matched nothing: one response asserting both that the repo does not exist and
+    // that here is its knowledge.
+    await seedReplica();
+    const workspace = (await resolveWorkspace(ROOT, config))!;
+    await initDb(ROOT);
+    try {
+      const result = await queryFederated({ workspace, query: 'rollback procedure', limit: 5, repos: [WS] });
+
+      expect(result.groups.flatMap(group => group.items).length).toBeGreaterThan(0);
+      expect(result.skipped).toEqual([]);
+    } finally {
+      await closeDb();
+    }
+  });
+
   it('reports an unreadable replica as skipped rather than failing the query', async () => {
     // The rule every peer already follows: a store this process cannot read costs the caller
     // a notice, never their answer.

@@ -113,6 +113,37 @@ describe('Codex transcript discovery', () => {
     expect(found).toHaveLength(1);
   });
 
+  it('finds a non-ASCII cwd split across the bounded read', async () => {
+    // The fallback assembles the header from 8 KB reads, and a read boundary falls wherever
+    // 8,192 bytes land — routinely mid-character. Decoded chunk by chunk, the two halves of one
+    // multibyte sequence each become U+FFFD; when the split lands inside `cwd` the path comes
+    // back corrupt, matches no root, and the session is dropped with nothing said.
+    const root = path.resolve(process.platform === 'win32' ? 'd:\\coding\\côding' : '/coding/côding');
+    const target = path.join(codexSessionsDir, '2026/03/22/rollout-2026-03-22T21-16-47-019d15e7-ffff-7e93-886c-2429599f27cd.jsonl');
+    await fs.mkdir(path.dirname(target), { recursive: true });
+
+    // Padded so the accented character in `cwd` straddles byte 8,192 exactly.
+    let body: string | null = null;
+    for (let padding = 7_900; padding < 8_400 && body === null; padding++) {
+      const record = JSON.stringify({
+        type: 'session_meta',
+        payload: { base_instructions: { text: 'x'.repeat(padding) }, cwd: root },
+      });
+      let bytes = 0;
+      for (const character of record) {
+        const width = Buffer.byteLength(character, 'utf8');
+        if (width > 1 && bytes < 8_192 && bytes + width > 8_192) { body = record; break; }
+        bytes += width;
+      }
+    }
+    expect(body).not.toBeNull();
+    await fs.writeFile(target, `${body}\n`);
+
+    const found = await discoverTranscriptFiles(root, { projectsDir, codexSessionsDir });
+
+    expect(found).toHaveLength(1);
+  });
+
   it('skips a file with no readable header rather than claiming it', async () => {
     const target = path.join(codexSessionsDir, '2026/03/22/rollout-2026-03-22T21-16-47-019d15e7-eeee-7e93-886c-2429599f27cd.jsonl');
     await fs.mkdir(path.dirname(target), { recursive: true });

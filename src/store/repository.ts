@@ -104,11 +104,14 @@ export function mapRowToKnowledgeItem(row: typeof schema.knowledgeItems.$inferSe
   };
 }
 
-export async function createProject(rootPath: string, name: string, description?: string, dbConnection?: DbConnection): Promise<Project> {
+// The trailing parameters are the signature callers still pass, not fields this reads: a project
+// is derived from its root path alone. Underscored rather than deleted so the call sites keep
+// compiling and the shape stays legible to anyone reading a call.
+export async function createProject(rootPath: string, _name: string, _description?: string, _dbConnection?: DbConnection): Promise<Project> {
   return localProject(rootPath);
 }
 
-export async function getProjectByRootPath(rootPath: string, dbConnection?: DbConnection): Promise<Project | null> {
+export async function getProjectByRootPath(rootPath: string, _dbConnection?: DbConnection): Promise<Project | null> {
   return localProject(rootPath);
 }
 

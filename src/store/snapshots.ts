@@ -249,7 +249,8 @@ async function readSnapshotManifest(source: string): Promise<SnapshotManifest> {
   } catch (error: any) {
     throw new Error(error.code === 'ENOENT'
       ? `Snapshot manifest "${manifestPath}" was not found. Restore requires the manifest written beside the snapshot.`
-      : `Snapshot manifest "${manifestPath}" is unreadable: ${error.message}`);
+      : `Snapshot manifest "${manifestPath}" is unreadable: ${error.message}`,
+    { cause: error });
   }
 
   if (!Number.isInteger(manifest.schemaVersion) || manifest.schemaVersion > KNOWL_SCHEMA_VERSION) {

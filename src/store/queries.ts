@@ -36,7 +36,9 @@ export async function getActiveKnowledgeByCategory(
 /**
  * Fetch all active knowledge items hierarchically organized by layers.
  */
-export async function getHierarchicalKnowledge(projectId: string) {
+// One store holds one project, so the id narrows nothing here; it stays in the signature because
+// every other read in this module takes it and a lone exception reads as an oversight.
+export async function getHierarchicalKnowledge(_projectId: string) {
   const db = getDb();
   try {
     const results = await db

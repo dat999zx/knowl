@@ -11,7 +11,10 @@ export default tseslint.config(
   // empty catch blocks -- against generated third-party code nobody can fix. It is gitignored, so
   // CI's fresh checkout never has it and only local runs went red, which is the worst shape for a
   // signal to fail in: contributors learn the lint output is wrong and stop reading it.
-  { ignores: ['dist/**', 'node_modules/**', '.benchmark-dist/**', '.bridge-dist/**', 'benchmarks/**/dist/**', '.tmp/**', '.claude/**'] },
+  // `.verify-dist/**` is the same case as `.bridge-dist/**` above and was missed for the same
+  // reason: it is gitignored, so CI's fresh checkout never has it and only a developer who had
+  // run the verification bundle saw the extra findings.
+  { ignores: ['dist/**', 'node_modules/**', '.benchmark-dist/**', '.bridge-dist/**', '.verify-dist/**', 'benchmarks/**/dist/**', '.tmp/**', '.claude/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
@@ -32,7 +35,13 @@ export default tseslint.config(
       // meant to be used. Bundling that refactor into the commit that adds the linter would
       // make both unreviewable. CI gates on errors, so this stays visible without blocking,
       // and every NEW occurrence shows up in the same output.
-      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      // `ignoreRestSiblings` covers the omit idiom -- `const { secret, ...rest } = row` -- where
+      // the named binding exists in order NOT to appear in `rest`. It is load-bearing rather than
+      // dead: renaming it to `_secret` changes which key is dropped, so the underscore convention
+      // above is not available here and the alternative to this option is a lint exception at
+      // every use. tseslint's own recommended config turns it on for the same reason; naming the
+      // options object at all is what had switched it back off.
+      '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_', ignoreRestSiblings: true }],
       // Same reasoning, same backlog: 7 dead stores and 5 rethrows that drop the original
       // error as `cause`. Both are real and neither is mechanical.
       'no-useless-assignment': 'warn',
