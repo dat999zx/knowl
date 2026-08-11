@@ -78,4 +78,36 @@ describe('cross-repo advisory reaches the agent', () => {
     expect(note).not.toMatch(/lineage/i);
     expect(note).toContain('OVERLAPS linked repo "other"');
   });
+
+  describe('governing decision', () => {
+    const governed = () => describeWriteReconciliation({
+      item: { id: 'new-3' },
+      governingDecision: {
+        id: 'dec-1',
+        title: 'Do not strip MCP tool-argument descriptions — quality over token savings',
+        score: 0.93,
+        via: 'calibrated',
+      },
+    });
+
+    it('names the decision and its id, because a note you cannot look up is not actionable', () => {
+      expect(governed()).toContain('dec-1');
+      expect(governed()).toContain('Do not strip MCP tool-argument descriptions');
+    });
+
+    // The measured behaviour is that this retrieves a plausible-but-wrong decision a minority of
+    // the time, so the note has to read as a question. If it ever starts asserting that the
+    // decision governs, it will be confidently wrong on those and teach agents to discount it.
+    it('says the write stands and hedges rather than ruling', () => {
+      const note = governed();
+      expect(note).toMatch(/may already govern/i);
+      expect(note).toMatch(/nothing was blocked/i);
+      expect(note).toMatch(/if it is about something else, ignore/i);
+      expect(note).not.toMatch(/\brefused\b|\bblocked your\b|\bcannot store\b/i);
+    });
+
+    it('says nothing at all when no decision matched', () => {
+      expect(describeWriteReconciliation({ item: { id: 'new-4' } })).toBe('');
+    });
+  });
 });

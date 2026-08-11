@@ -84,6 +84,7 @@ export function describeWriteReconciliation(result: {
   superseded?: { id: string; title: string };
   nearDuplicate?: { id: string; title: string };
   crossRepo?: Array<{ repo: string; id: string; title: string; kind: 'conflict' | 'duplicate'; kin?: boolean; role?: string }>;
+  governingDecision?: { id: string; title: string; score: number; via: 'calibrated' | 'z-score' };
 }): string {
   const notes: string[] = [];
   if (result.superseded) {
@@ -106,6 +107,15 @@ export function describeWriteReconciliation(result: {
       ? ` That repo shares this repo's lineage, so a same-subject item is more likely a real divergence in convention than a coincidence of wording.`
       : '';
     notes.push(`${what}${describes}: item ${overlap.id} ("${overlap.title}"). You cannot retire or edit it from this repo -- it belongs to "${overlap.repo}". Your write stands; if the two genuinely disagree, raise it with whoever owns that repo.${lineage}`);
+  }
+  // Phrased as a question rather than a verdict, on purpose. The match is a similarity, and it
+  // was measured retrieving a plausible-but-WRONG decision even where a right one existed, so
+  // asserting "this governs your write" would be wrong ~1 time in 4 at the shipped threshold.
+  // The agent has the text of both and is the one that can tell. What it cannot do is consult a
+  // decision it never knew was there, which is the whole failure this note exists to end.
+  if (result.governingDecision) {
+    const { id, title } = result.governingDecision;
+    notes.push(`AN ACTIVE DECISION MAY ALREADY GOVERN THIS: ${id} ("${title}"). Your write stands and nothing was blocked. Read that decision before acting on this write: if it settles the same question, follow it or clear whatever bar it states for re-opening; if it is about something else, ignore this note.`);
   }
   return notes.length ? ` ${notes.join(' ')}` : '';
 }
@@ -634,6 +644,11 @@ export function registerTools(
           // being told only that something in the batch did.
           for (const overlap of outcome.crossRepo ?? []) {
             parts.push(`${overlap.kind === 'conflict' ? 'CONTRADICTS' : 'OVERLAPS'} linked repo "${overlap.repo}" item ${overlap.id} ("${overlap.title}") — you cannot retire or edit it from this repo`);
+          }
+          // Per atom for the same reason: five findings can fall under five different decisions,
+          // and "something in this batch is governed" is not actionable.
+          if (outcome.governingDecision) {
+            parts.push(`AN ACTIVE DECISION MAY ALREADY GOVERN THIS: ${outcome.governingDecision.id} ("${outcome.governingDecision.title}") — read it before acting on this atom; nothing was blocked`);
           }
           return parts.join('; ') + '.';
         });
