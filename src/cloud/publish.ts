@@ -99,7 +99,7 @@ async function stageInContext(
     // not what it decides on -- `checkPublishGate` re-reads git itself and reports being
     // unable to run it as its own verdict. Failing to record an intent because git is missing
     // would refuse the one half of publishing that is safe from every vantage.
-    let branch: string | null = null;
+    let branch: string | null;
     try { branch = currentBranchOf(input.projectRoot); } catch { branch = null; }
 
     // Naming ids is a deliberate act about items the caller has in hand, and it is the only

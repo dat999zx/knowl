@@ -85,7 +85,7 @@ async function resolveEmbedder(): Promise<KnowledgeEmbedder | null> {
 
   if (cache?.key === key) return cache.embedder;
 
-  let embedder: KnowledgeEmbedder | null = null;
+  let embedder: KnowledgeEmbedder | null;
   try {
     embedder = build ? await build() : null;
   } catch {

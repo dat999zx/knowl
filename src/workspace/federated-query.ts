@@ -189,7 +189,13 @@ export async function queryFederated(input: {
   // produce. Reported rather than raised: a request naming three repos and one typo should
   // still search the three, and the notice is what makes the fourth's absence visible.
   if (wanted) {
+    // The cloud workspace id belongs in here because it is a name `repos` accepts: the replica
+    // below is searched when it is named. Left out, naming it produced a response that both
+    // returned its rows and reported it unknown -- and `unknown` is the one notice that tells a
+    // caller their name matched nothing, so a response contradicting itself on that point is
+    // worse than either verdict alone.
     const known = new Set([input.workspace.repo, ...input.workspace.peers.map(peer => peer.name)]);
+    if (input.workspace.cloud) known.add(input.workspace.cloud.workspaceId);
     for (const name of wanted) {
       if (!known.has(name)) skipped.push({ repo: name, reason: 'unknown' });
     }

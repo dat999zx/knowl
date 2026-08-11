@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { access } from 'node:fs/promises';
 import type { Client } from '@libsql/client';
 import type { KnowledgeAtom, ProjectConfig } from '../core/types.js';
 import { hasAiConfigured } from '../core/config.js';
@@ -183,18 +184,30 @@ export async function extractCandidates(
     if (options.deadline !== undefined && Date.now() >= options.deadline) break;
     stopped += 1;
 
-    const text = await sessionText(session.path);
-    if (!text.trim()) {
-      await recordExtraction(db, session.sessionId, 0, 0);
-      empty += 1;
-      continue;
-    }
-
+    let text: string;
     let atoms: KnowledgeAtom[];
     try {
+      // Inside the guard with the model call, not before it. The read is the other thing here
+      // that can fail on a session, and for the same kind of reason -- a transcript deleted
+      // between indexing and now, an archive on a volume that went away. Outside, one such file
+      // ended the whole run, after the sessions before it had already been paid for.
+      text = await sessionText(session.path);
+      if (!text.trim()) {
+        // An empty read has two causes and they deserve opposite answers: a session that really
+        // holds no prose is finished with, while a transcript that is no longer on disk has not
+        // been judged at all. `readProseFrom` cannot tell them apart -- it reports an unreadable
+        // file as an empty one, which is right for the index pass and wrong here -- so the
+        // question is asked directly, and only in the ambiguous case. A throw here lands in the
+        // catch below and leaves the session unwatermarked, exactly like a provider failure.
+        await access(session.path);
+        await recordExtraction(db, session.sessionId, 0, 0);
+        empty += 1;
+        continue;
+      }
       atoms = await extractKnowledge(text);
     } catch {
-      // Unwatermarked on purpose: a provider hiccup is not a verdict about this session.
+      // Unwatermarked on purpose: a provider hiccup is not a verdict about this session, and
+      // neither is a file that could not be read this once.
       stopped -= 1;
       continue;
     }

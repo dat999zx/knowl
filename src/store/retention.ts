@@ -386,14 +386,14 @@ export async function adoptLegacyModelCache(
     const source = path.join(legacyDir, relative);
     const destination = path.join(sharedDir, relative);
 
-    let size = 0;
+    let size: number;
     try {
       size = (await fs.stat(source)).size;
     } catch {
       continue; // vanished under us
     }
 
-    let existing: Awaited<ReturnType<typeof fs.stat>> | null = null;
+    let existing: Awaited<ReturnType<typeof fs.stat>> | null;
     try {
       existing = await fs.stat(destination);
     } catch {

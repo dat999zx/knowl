@@ -120,6 +120,16 @@ describe('readProseFrom', () => {
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0].line).toBe(2);
   });
+
+  it('returns no messages for a file that is not there', async () => {
+    // `knowl transcripts extract` reads through here, one session at a time; a throw at this
+    // level ended the whole run on the first transcript that had been deleted since indexing.
+    await expect(readProseFrom(path.join(dir, 'absent.jsonl'), 0, 0)).resolves.toEqual({
+      messages: [],
+      bytesRead: 0,
+      linesRead: 0,
+    });
+  });
 });
 
 describe('streamProseFrom', () => {
@@ -189,5 +199,28 @@ describe('streamProseFrom', () => {
     for await (const chunk of streamProseFrom(file, 0, 0)) chunks.push(chunk);
 
     expect(chunks[0].message.text).toBe('π'.repeat(100_000));
+  });
+
+  it('reports the watermark it was given for a file that is not there', async () => {
+    // `createReadStream` succeeds on a missing path and reports ENOENT by emitting `error`, which
+    // rejects the iteration rather than the construction — so a guard around the construction
+    // alone caught nothing, and every caller inherited a throw where this promises silence.
+    const iterator = streamProseFrom(path.join(dir, 'never-written.jsonl'), 40, 7);
+
+    const next = await iterator.next();
+
+    expect(next.done).toBe(true);
+    expect(next.value).toEqual({ bytesConsumed: 40, linesConsumed: 7 });
+  });
+
+  it('reports the watermark it was given for a path that is a directory', async () => {
+    // The other shape of unreadable, and the one that is not ENOENT: something is there, and it
+    // is not a file. It must degrade the same way rather than throw EISDIR at the caller.
+    const iterator = streamProseFrom(dir, 0, 0);
+
+    const next = await iterator.next();
+
+    expect(next.done).toBe(true);
+    expect(next.value).toEqual({ bytesConsumed: 0, linesConsumed: 0 });
   });
 });

@@ -33,7 +33,7 @@ export function parseAnswerKey(ndjson: string): AnswerKey[] {
     try {
       json = JSON.parse(line);
     } catch (error) {
-      throw new Error(`Answer key line ${lineNumber} is not valid JSON: ${(error as Error).message}`);
+      throw new Error(`Answer key line ${lineNumber} is not valid JSON: ${(error as Error).message}`, { cause: error });
     }
 
     const parsed = AnswerKeySchema.safeParse(json);

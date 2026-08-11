@@ -12,7 +12,7 @@ async function corpusEvents(): Promise<Map<string, MemorySessionEvent[]>> {
   const bySession = new Map<string, MemorySessionEvent[]>();
   for (const row of rows) {
     const sessionId = String(row.session_id);
-    let payload: Record<string, unknown> = {};
+    let payload: Record<string, unknown>;
     try { payload = JSON.parse(String(row.payload)); } catch { payload = {}; }
     const event = {
       id: String(row.id),

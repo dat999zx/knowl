@@ -142,7 +142,12 @@ export function registerResources(
       // caller-supplied field, so the missing-argument route into it does not exist here --
       // but "statement text and bound parameters never leave the process" is the rule, and a
       // rule with one unguarded exit is the shape of the finding, not a fix for it.
-      throw new Error(`Error reading resource "${uri}": ${sanitizeToolErrorMessage(String(error?.message ?? error))}`);
+      // The cause is attached but never rendered: `sanitizeToolErrorMessage` decides what reaches
+      // the client, and this keeps the original for a local stack trace without widening that.
+      throw new Error(
+        `Error reading resource "${uri}": ${sanitizeToolErrorMessage(String(error?.message ?? error))}`,
+        { cause: error },
+      );
     }
   });
 }

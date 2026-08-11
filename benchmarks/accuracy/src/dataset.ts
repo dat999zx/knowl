@@ -33,7 +33,10 @@ function parseNdjson<T>(content: string, parse: (value: unknown) => T, filename:
     try {
       return parse(JSON.parse(line));
     } catch (error) {
-      throw new Error(`${filename}:${index + 1}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `${filename}:${index + 1}: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
     }
   });
 }

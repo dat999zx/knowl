@@ -26,7 +26,7 @@ import { resolveWorkspace } from '../src/workspace/resolve.js';
 import { closeDb, getClient, initDb } from '../src/store/database.js';
 import { storeKnowledgeItemDeduped } from '../src/store/knowledge-writer.js';
 import * as repo from '../src/store/repository.js';
-import { loadConfig, saveConfig } from '../src/core/config.js';
+import { loadConfig } from '../src/core/config.js';
 
 const API = 'http://localhost:3000';
 const OWNER_USER_ID = '00000000-0000-0000-0000-0000000000e1';

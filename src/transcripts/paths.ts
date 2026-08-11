@@ -99,9 +99,11 @@ async function codexSessionCwd(filePath: string): Promise<string | null> {
     handle = await fs.open(filePath, 'r');
     const buffer = Buffer.alloc(CODEX_META_PREFIX_BYTES);
     const { bytesRead } = await handle.read(buffer, 0, CODEX_META_PREFIX_BYTES, 0);
-    const prefix = buffer.subarray(0, bytesRead).toString('utf8');
+    // Copied, not aliased: `buffer` is reused by the fallback reads below, so a subarray of it
+    // would change under the bytes already collected.
+    const head = Buffer.from(buffer.subarray(0, bytesRead));
 
-    const matched = CWD_IN_PREFIX.exec(prefix);
+    const matched = CWD_IN_PREFIX.exec(head.toString('utf8'));
     if (matched) {
       try {
         const cwd = JSON.parse(matched[1]) as unknown;
@@ -115,18 +117,33 @@ async function codexSessionCwd(filePath: string): Promise<string | null> {
     // line is simply longer than the prefix before reaching `cwd`. Both are answered by reading
     // on to the end of the first line -- which must genuinely continue reading, not re-inspect
     // the prefix: a header larger than the prefix contains no newline inside it at all.
-    let line = prefix;
+    //
+    // **Accumulated as BYTES and decoded once at the end**, never chunk by chunk. A read boundary
+    // falls wherever 8 KB lands, which is routinely mid-character: decoding each chunk on its own
+    // turns the two halves of one multi-byte sequence into two U+FFFD, and when the split lands
+    // inside the `cwd` value itself the path comes back corrupted, matches no root, and every
+    // session under it is silently dropped from discovery. `parse.ts` splits on 0x0a before
+    // decoding for the same reason. Newlines are searched for in the bytes, which is safe: 0x0a
+    // cannot occur inside a multi-byte UTF-8 sequence.
+    const chunks: Buffer[] = [head];
+    // Only the newest chunk is searched each time: every earlier one has already been checked and
+    // held no newline, so rescanning them would make this quadratic in the header's size.
+    let tail = head;
     let offset = bytesRead;
-    while (!line.includes('\n') && offset < MAX_CODEX_META_BYTES && bytesRead > 0) {
+    while (tail.indexOf(0x0a) === -1 && offset < MAX_CODEX_META_BYTES) {
       const next = await handle.read(buffer, 0, CODEX_META_PREFIX_BYTES, offset);
       if (next.bytesRead === 0) break;
-      line += buffer.subarray(0, next.bytesRead).toString('utf8');
+      tail = Buffer.from(buffer.subarray(0, next.bytesRead));
+      chunks.push(tail);
       offset += next.bytesRead;
     }
 
-    const newline = line.indexOf('\n');
+    const whole = chunks.length === 1 ? head : Buffer.concat(chunks);
+    const newline = whole.indexOf(0x0a);
     try {
-      const record = JSON.parse(newline === -1 ? line : line.slice(0, newline)) as Record<string, unknown>;
+      const record = JSON.parse(
+        (newline === -1 ? whole : whole.subarray(0, newline)).toString('utf8'),
+      ) as Record<string, unknown>;
       const payload = record.payload as Record<string, unknown> | undefined;
       const cwd = payload?.cwd;
       return typeof cwd === 'string' && cwd ? cwd : null;
@@ -215,10 +232,23 @@ export function parseWorktreeList(stdout: string): string[] {
 }
 
 /** Windows and macOS paths compare case-insensitively; POSIX ones do not. */
+const CASE_INSENSITIVE_PATHS = process.platform === 'win32' || process.platform === 'darwin';
+
 const foldPath = (target: string) =>
-  process.platform === 'win32' || process.platform === 'darwin'
-    ? path.resolve(target).toLowerCase()
-    : path.resolve(target);
+  CASE_INSENSITIVE_PATHS ? path.resolve(target).toLowerCase() : path.resolve(target);
+
+/**
+ * The same case policy applied to a string that is *not* a whole path -- one character, or the
+ * leading fragment of one.
+ *
+ * Separate from `foldPath` because that one resolves, and resolving a fragment answers a different
+ * question than the caller asked: `path.resolve` of a single character returns it appended to the
+ * working directory, so `/` and `\` both come back as the drive root and compare equal, and a
+ * prefix with a trailing separator loses it. Neither of those changes the answer here today --
+ * both sides of every comparison come from `path.resolve` already, so the separators agree -- but
+ * it is true by luck rather than by construction, and it cost a `resolve` per character compared.
+ */
+const foldText = (text: string) => CASE_INSENSITIVE_PATHS ? text.toLowerCase() : text;
 
 const samePath = (left: string, right: string) => foldPath(left) === foldPath(right);
 
@@ -429,14 +459,17 @@ export async function scanTranscriptArchive(
     let shared = 0;
     while (
       shared < realGivenRoot.length && shared < givenRoot.length
-      && foldPath(realGivenRoot[realGivenRoot.length - 1 - shared]) === foldPath(givenRoot[givenRoot.length - 1 - shared])
+      && foldText(realGivenRoot[realGivenRoot.length - 1 - shared]) === foldText(givenRoot[givenRoot.length - 1 - shared])
     ) shared += 1;
     realHead = realGivenRoot.slice(0, realGivenRoot.length - shared);
     givenHead = givenRoot.slice(0, givenRoot.length - shared);
   }
   const uncanonicalise = (target: string): string | null => {
     if (!realHead) return null;
-    if (!foldPath(target).startsWith(foldPath(realHead))) return null;
+    // `foldText`, because `realHead` is a leading fragment rather than a path and the slice below
+    // indexes into `target` by its raw length -- a comparison that had normalised either side
+    // would be measuring a different string than the one being cut.
+    if (!foldText(target).startsWith(foldText(realHead))) return null;
     return givenHead + target.slice(realHead.length);
   };
 

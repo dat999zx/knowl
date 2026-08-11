@@ -179,6 +179,28 @@ describe('extraction', () => {
     expect(retried.sessionsExtracted).toBe(1);
   });
 
+  it('skips a session whose transcript has vanished and still extracts the rest', async () => {
+    // The archive is not this process's to keep: a transcript indexed last week can be gone by
+    // the time extraction reaches it. Reading it used to happen outside the per-session guard, so
+    // one deleted file ended the run with an ENOENT — after the sessions before it had already
+    // been paid for, and with no report of which one stopped it.
+    const gone = await seedSession(db, 'gone', ['ask', 'answer']);
+    await seedSession(db, 'alive', ['still here', 'and readable']);
+    await fs.rm(gone);
+    extractKnowledge.mockResolvedValue([
+      { category: 'fact', title: 'Survivor', content: 'Extracted after the gap.', confidence: 0.6 },
+    ]);
+
+    const result = await extractCandidates(db, AI_CONFIG);
+
+    expect(result.sessionsExtracted).toBe(1);
+    expect(result.candidates).toBe(1);
+    // Unwatermarked, exactly like a provider failure: the file being unreadable once is not a
+    // verdict about the session.
+    const done = await db.execute('SELECT session_id FROM transcript_extractions');
+    expect(done.rows.map(row => String(row.session_id))).toEqual(['alive']);
+  });
+
   it('sends the tail of a long session, where its conclusions are', async () => {
     const filler = 'x'.repeat(30_000);
     await seedSession(db, 'a', [filler, 'THE CONCLUSION AT THE END']);

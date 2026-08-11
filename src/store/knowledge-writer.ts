@@ -373,7 +373,7 @@ async function activeWorkspaceForWrite(): Promise<ActiveWorkspace | null> {
 
   if (workspaceCache?.root === root) return workspaceCache.workspace;
 
-  let workspace: ActiveWorkspace | null = null;
+  let workspace: ActiveWorkspace | null;
   try {
     const { resolveWorkspace } = await import('../workspace/resolve.js');
     workspace = await resolveWorkspace(root);

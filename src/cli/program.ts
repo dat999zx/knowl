@@ -1357,7 +1357,29 @@ program.command('import').argument('<path>').description('Load portable JSONL me
 
 program.command('synthesize').description('Summarize knowledge for a path or tag into one item').requiredOption('--scope <path-or-tag>').action(async options => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await synthesizeKnowledge(project.id, options.scope), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error synthesizing knowledge: ${error.message}`); process.exit(1); } });
 
-program.command('view').description('Serve the local knowledge viewer in a browser').option('--port <port>').action(async options => { try { const root = await findProjectRoot(process.cwd()); const viewer = await startViewer(root, { port: options.port === undefined ? 0 : Number(options.port) }); console.log(`Knowl viewer: ${viewer.browseUrl}`); const stop = async () => { await viewer.close(); process.exit(0); }; process.once('SIGINT', stop); process.once('SIGTERM', stop); } catch (error: any) { console.error(`Error starting viewer: ${error.message}`); process.exit(1); } });
+program
+  .command('view')
+  .description('Serve the local knowledge viewer in a browser')
+  .option('--port <port>')
+  .action(async options => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const viewer = await startViewer(root, { port: options.port === undefined ? 0 : Number(options.port) });
+      console.log(`Knowl viewer: ${viewer.browseUrl}`);
+
+      // The rejection is caught rather than left to the handler's caller, because a signal
+      // handler has no caller: Node invokes it with nothing awaiting the promise, so a `close()`
+      // that failed would surface as ERR_UNHANDLED_REJECTION and abort the process -- on the one
+      // path that exists to shut it down in order. Ctrl-C means stop the server either way, and
+      // an exit code that says "crashed" for a clean interrupt is worse than a lost close error.
+      const stop = () => { void viewer.close().catch(() => {}).then(() => process.exit(0)); };
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
+    } catch (error: any) {
+      console.error(`Error starting viewer: ${error.message}`);
+      process.exit(1);
+    }
+  });
 
 
 // --- 4. DECIDE COMMAND ---
@@ -2558,8 +2580,8 @@ taskCommand
       process.exit(1);
     }
 
-    let root = '';
-    let taskId = '';
+    let root: string;
+    let taskId: string;
     try {
       root = await findProjectRoot(process.cwd());
       await initDb(root);
