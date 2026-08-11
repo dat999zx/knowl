@@ -62,8 +62,8 @@ const REQUIRED_WORKFLOW = `### Required workflow
 1. For every project-specific request, call \`knowl_query\` before repository files or commands, using the words that name the subject: another on-subject term retrieves better, an off-subject one retrieves worse, so do not pad the query and do not trim a real term to shorten it.
 2. Skip a new query only when directly relevant active lifecycle context, a same-request query, or manual \`knowl_task_start\` relevant memory already answers it.
 3. Use a relevant active hit immediately. Inspect files only after a miss, conflict, stale/low-confidence memory, or explicit verification request.
-4. Query again before switching to a distinct subtask or project area.
-5. Store or update durable knowledge during work and before the final answer — verified findings, and stated intent (goals, plans, direction the user voiced) stored as goals with user_stated provenance even while unsettled. The test: could a fresh session recover this from memory alone? Never store raw transcripts, secrets, or debugging noise.
+4. Query again before switching to a distinct subtask or project area, and before choosing how to build something new — existing tooling and pipelines are project knowledge, and in a linked workspace they often live in a sibling repo, so leave method queries unscoped.
+5. Store or update durable knowledge during work and before the final answer — verified findings, stated intent (goals, plans, direction the user voiced) stored as goals with user_stated provenance even while unsettled, and resolved diagnoses stored as skills when the cause will recur (an environment quirk, a config trap — not a typo). The test: could a fresh session recover this from memory alone? Never store raw transcripts, secrets, or transient debugging noise.
 6. If Knowl MCP tools are unavailable, stop and tell the user instead of silently bypassing Knowl.`;
 
 const LIFECYCLE_MODES = `### Lifecycle modes
@@ -84,6 +84,7 @@ const WORKSPACE = `### Linked repositories
 - When this repo is in a workspace, read the **shape** of a \`knowl_query\` result first. A bare JSON array means every row belongs to this repo. An object keyed by repo name means at least one row does **not** — and a fact from another repo describes **that** repo unless it says otherwise, so verify before applying it here.
 - An empty array under this repo's own key means this repo holds nothing on the subject. Read the other keys as background, not as an answer, and treat it as a miss if what they say does not transfer.
 - Narrow with \`scope: "local"\` (this repo alone, always a bare array) or \`scope: "workspace"\` (every sharing repo, always keyed). \`repos: ["<name>"]\` restricts to named repos and matches the repo that owns an item; it wins if both are given.
+- Method questions — "how do we generate X", "is there a script for Y" — belong to the whole workspace: query them unscoped before building new tooling; a sibling repo's pipeline answers them more often than this repo's files do.
 - A \`WORKSPACE:\` notice names linked repos that matched but were not shown, with counts. Re-query with \`repos\` to read them.
 - Whether a new write is shared is this repo's recorded default, not a fixed rule: joining a linked workspace sets it to workspace visibility, while \`--default-visibility repo\` keeps writes private. \`knowl workspace set\` with no flags prints the current value.
 - Knowledge already written privately stays private until someone runs \`knowl workspace promote\`. Only the owning repo can promote, update, or retire its own items.`;
@@ -147,7 +148,7 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
     'Route by what you need; the tool list names them:',
     '- retrieval: knowl_query first. Recent context only without bootstrap or for a refresh, broad state for status, a packed context only when a token budget is given.',
-    '- durable memory: store one verified atom, batch several, record a confirmed decision or a stated goal, or correct a stale one. Correct rather than duplicate.',
+    '- durable memory: store one verified atom, batch several, record a confirmed decision, a stated goal, or a resolved diagnosis, or correct a stale one. Correct rather than duplicate.',
     '- audit: inspect history, evidence or conflicts when needed; record feedback only after actual use or correction.',
     '- skills: read a matching skill before running a trusted entrypoint; create one only on explicit request.',
     '- special: raw-source ingest only on an explicit request, never silent chat; synthesis only for an explicit scope; preview garbage collection first and apply only after approval.',
@@ -159,8 +160,11 @@ function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: b
     // an agent following this card faithfully skipped storing two strategy conversations,
     // because every storage cue said "verified" and a conversation verifies nothing. Intent is
     // durable before it is settled — that is what the goal category and user_stated provenance
-    // exist for — and the omission taught agents the opposite.
-    'During work, store durable findings and stated intent — a goal counts before it settles; never raw transcripts, secrets, or routine command noise.',
+    // exist for — and the omission taught agents the opposite. "Resolved diagnoses" joined it
+    // after the same failure in a third shape (2026-08-11): a fixed environment trap — the kind
+    // that recurs — went unstored because "findings" read as build results, and the next
+    // session re-diagnosed it from scratch.
+    'During work, store durable findings, stated intent, and resolved diagnoses — a goal counts before it settles; never raw transcripts, secrets, or routine command noise.',
   ].join('\n');
 }
 
@@ -177,7 +181,7 @@ export function mcpServerInstructions(config: ProjectConfig | null): string {
   if (!config || !isTranscriptSearchEnabled(config)) return KNOWL_MCP_SERVER_INSTRUCTIONS;
   return renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE, { transcripts: true });
 }
-export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with the words that name the subject before repository files or commands. Store durable findings and stated goals. Claude hooks own lifecycle; do not start the manual task loop.';
+export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with the words that name the subject before repository files or commands. Store durable findings, stated goals, and recurring diagnoses. Claude hooks own lifecycle; do not start the manual task loop.';
 
 // Short per-prompt reminder (UserPromptSubmit). The full tool routing lives in
 // KNOWL.md and the MCP initialize instructions, so the per-prompt card only needs
@@ -185,7 +189,7 @@ export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the 
 export const KNOWL_CLAUDE_PROMPT_REMINDER = [
   'KNOWL — project memory is active.',
   'For any project question or new subtask, call knowl_query BEFORE reading files, using the words that name the subject and no padding; use a relevant active hit directly and inspect files only on a miss, conflict, or stale/low-confidence result.',
-  'Store durable decisions, facts, state, constraints, and stated goals as you go with knowl_store / knowl_decide / knowl_update — intent counts before it settles; never store secrets or routine noise.',
+  'Store durable decisions, facts, state, constraints, stated goals, and resolved diagnoses as you go with knowl_store / knowl_decide / knowl_update — intent counts before it settles, a recurring cause once fixed; never store secrets or routine noise.',
   'Claude hooks own the lifecycle — do not call knowl_task_start/checkpoint/finish. Full tool routing is in KNOWL.md.',
 ].join(' ');
 
@@ -202,7 +206,7 @@ export const KNOWL_CLAUDE_PROMPT_REMINDER = [
 export const KNOWL_SUBAGENT_BOOTSTRAP_CARD = [
   'KNOWL — project memory is active for this subagent.',
   'Before reading repository files, call knowl_query with the words that name the subject and use a relevant active hit directly; inspect files only on a miss, conflict, or stale result.',
-  'Store verified durable findings with knowl_store or knowl_update before you return; never store secrets or routine noise.',
+  'Store durable findings — including a diagnosis whose cause will recur — with knowl_store or knowl_update before you return; never store secrets or routine noise.',
   'Do not call knowl_task_start/checkpoint/finish — the host session owns the lifecycle.',
   'If a result carries a repo field, that knowledge belongs to that repo and describes it, not necessarily this one.',
   'If the knowl tools are listed but not callable, load their schemas before calling them.',

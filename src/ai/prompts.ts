@@ -37,7 +37,7 @@ Rules for Extraction:
 1. Ignore conversational noise (e.g. "Sure, let's do this", "Okay, I modified...").
 2. Extract the CORE information in clean markdown.
 3. If the input contains a skill/procedure, make sure to extract the ordered "steps" to reproduce/execute that skill.
-4. Extract only validated facts/decisions. Do not extract temporary debugging errors or brainstorming that was rejected.
+4. Extract validated facts and decisions, stated goals, and resolved diagnoses — a failure whose cause was found and whose fix transfers to the next occurrence is a 'skill', with the trigger and fix as steps. Do not extract transient failures that taught nothing, failed attempts along the way, or brainstorming that was rejected.
 5. Create separate atoms if the input contains distinct pieces of knowledge (e.g. a tech choice AND a project state update).
 `;
 
