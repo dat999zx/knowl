@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { governingDecisionForWrite, zScore } from '../../src/store/governing-decision.js';
 import type { KnowledgeItem } from '../../src/core/types.js';
@@ -82,5 +83,29 @@ describe('zScore', () => {
 
   it('abstains rather than scoring a pool too small to have a distribution', () => {
     expect(zScore([0.9], 0.9)).toBe(0);
+  });
+});
+
+/**
+ * `scripts/calibrate-governing-decision.ts` refuses to fit a constant below its own
+ * `MIN_DECISIONS`, and this module abstains below `MIN_POOL_FOR_Z`. They are the same number for
+ * the same reason -- a pool that small has no distribution of false matches to separate from, and
+ * the z ceiling of sqrt(n-1) is not even reachable there.
+ *
+ * Two files holding one number is exactly how the preset list in `benchmark-embedding-models.mjs`
+ * drifted out of step with `PRESET_IDS` and quietly stopped measuring the shipped model. A comment
+ * asking to be kept in step is what allowed that. This makes the drift fail instead.
+ */
+describe('calibration floor', () => {
+  it('is the same number in the guard and in the script that fits its constant', async () => {
+    const [module, script] = await Promise.all([
+      readFile(new URL('../../src/store/governing-decision.ts', import.meta.url), 'utf-8'),
+      readFile(new URL('../../scripts/calibrate-governing-decision.ts', import.meta.url), 'utf-8'),
+    ]);
+    const inModule = module.match(/const MIN_POOL_FOR_Z = (\d+)/);
+    const inScript = script.match(/const MIN_DECISIONS = (\d+)/);
+    expect(inModule, 'MIN_POOL_FOR_Z not found -- governing-decision.ts was restructured').not.toBeNull();
+    expect(inScript, 'MIN_DECISIONS not found -- the calibration script was restructured').not.toBeNull();
+    expect(inScript![1]).toBe(inModule![1]);
   });
 });
