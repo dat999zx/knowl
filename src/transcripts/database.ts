@@ -21,7 +21,8 @@ export const TRANSCRIPT_SCHEMA_STATEMENTS = [
     display_name TEXT,
     name_kind INTEGER NOT NULL DEFAULT 0,
     opening TEXT,
-    anchor TEXT
+    anchor TEXT,
+    harness TEXT NOT NULL DEFAULT 'claude'
   );`,
 
   // No `body` column anywhere: a row is a pointer. The text stays in the .jsonl.
@@ -111,6 +112,16 @@ async function addNamingColumns(client: Client): Promise<void> {
   // rewrite detection without re-reading anything.
   if (!columns.includes('anchor')) {
     await client.execute('ALTER TABLE transcript_files ADD COLUMN anchor TEXT;');
+  }
+  // Which harness wrote the session. Defaulted rather than nullable, and defaulted to `claude`
+  // specifically: every row that predates this column was discovered through the Claude archive,
+  // because that was the only archive discovery could reach. So the default is not a guess
+  // standing in for unknown data -- it is the correct value for every existing row.
+  //
+  // No watermark reset, for the reason spelled out above `opening`: rows and watermark are one
+  // fact, and a migration that moves one without the other strands the index.
+  if (!columns.includes('harness')) {
+    await client.execute(`ALTER TABLE transcript_files ADD COLUMN harness TEXT NOT NULL DEFAULT 'claude';`);
   }
 
   const messageColumns = (await client.execute('PRAGMA table_info(transcript_messages)')).rows

@@ -6,7 +6,47 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 ## Unreleased
 
 Two halves of the same gap: memory that is present but never surfaced, and memory that is never
-written at all.
+written at all. Plus a second harness's transcripts, which were sitting on disk unread.
+
+### Codex sessions are indexed alongside Claude Code's
+
+`knowl reindex --transcripts` read one archive. Measured on the machine that wrote this: **125
+Claude sessions and 137 Codex sessions** for this repository — so more than half of its own history
+was invisible to transcript search, and a developer who had switched tools would have found the
+backfill quietly covering a fraction of their work while reporting success.
+
+Codex needs its own discovery rather than a wider glob, and this is the part worth knowing:
+
+- **Claude Code encodes the project in the directory name** (`d:\coding\knowl` → `d--coding-knowl`),
+  so finding this repo's sessions is a directory match.
+- **Codex partitions by date** (`~/.codex/sessions/YYYY/MM/DD/rollout-<iso>-<uuid>.jsonl`) and
+  records its project *inside* the file, as `session_meta.payload.cwd` on the first line.
+
+So every candidate file is opened. The read is bounded to 8 KB, because `cwd` is written before
+`base_instructions` — the system prompt, tens of kilobytes — and reading whole headers for a
+477-file archive would be tens of megabytes of I/O to answer a question the first few hundred bytes
+settle. A header that does not yield its `cwd` there falls back to reading on to the end of the
+line, capped at 2 MB.
+
+`response_item` records are read and `event_msg` is ignored. That is deduplication, not preference:
+Codex writes each assistant turn twice, once for its UI stream and once as the item that went to the
+model, and indexing both would put every assistant message in the index twice. `reasoning` items are
+dropped for the same reason Claude's `thinking` blocks are — they are not what was said — and here
+they arrive encrypted anyway. Parser dispatch is on the record's own shape, so no caller needs to
+know which archive a line came from.
+
+Two smaller things that follow:
+
+- `<environment_context>` joins the injected-opener list. It opens *every* Codex session, so without
+  it the session directory would title all of them with the same boilerplate.
+- **Redirecting one archive redirects both.** A caller that passes `projectsDir` no longer gets the
+  real `~/.codex` read underneath it. That is not hypothetical: the first version of this change
+  made eight existing discovery tests start returning 137 of this machine's real sessions beside
+  their three fixtures.
+
+`transcript_files` gains a `harness` column, defaulted to `claude` — not a guess standing in for
+unknown data, since every row that predates it was discovered through the only archive discovery
+could then reach. No watermark reset, so an existing index keeps working.
 
 ### A linked repo's skills now reach the session-start card
 

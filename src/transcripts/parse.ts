@@ -24,6 +24,13 @@ type Extracted = Omit<ProseMessage, 'line'>;
 export function extractProse(entry: unknown): Extracted | null {
   if (!entry || typeof entry !== 'object') return null;
   const record = entry as Record<string, unknown>;
+
+  // Dispatched on the record's own shape rather than on a harness passed down from discovery.
+  // The two are disjoint by construction -- Claude Code puts the role in `type`, Codex puts
+  // `response_item` there and the role inside `payload` -- so a record matches one reader or
+  // neither, and no caller has to know which archive a line came from.
+  if (record.type === 'response_item') return extractCodexProse(record);
+
   const role = record.type;
   if (role !== 'user' && role !== 'assistant') return null;
 
@@ -39,6 +46,53 @@ export function extractProse(entry: unknown): Extracted | null {
       if (!block || typeof block !== 'object') continue;
       const typed = block as Record<string, unknown>;
       if (typed.type === 'text' && typeof typed.text === 'string') text += typed.text;
+    }
+  }
+
+  text = text.trim();
+  if (!text) return null;
+
+  const timestamp = typeof record.timestamp === 'string' ? record.timestamp : null;
+  return { role, text, timestamp };
+}
+
+/**
+ * The prose in one Codex `response_item`, or null.
+ *
+ * **`response_item` is read and `event_msg` is ignored, and that is a deduplication rather than a
+ * preference.** Codex writes each assistant turn twice: once as `event_msg`/`agent_message` for
+ * its UI stream and once as the `response_item` that went to the model. Indexing both would put
+ * every assistant message in the index twice, and `response_item` is the one that matches the
+ * invariant the Claude reader already holds -- one record per conversational message.
+ *
+ * `reasoning` items are dropped for exactly the reason Claude's `thinking` blocks are: they are
+ * not what was said. Here they are also unreadable, arriving as `encrypted_content`.
+ *
+ * The `developer` role is dropped too. It carries the sandbox and permissions preamble the
+ * harness injects, which is identical across every session and is not a participant speaking.
+ */
+function extractCodexProse(record: Record<string, unknown>): Extracted | null {
+  const payload = record.payload;
+  if (!payload || typeof payload !== 'object') return null;
+  const typed = payload as Record<string, unknown>;
+  if (typed.type !== 'message') return null;
+
+  const role = typed.role;
+  if (role !== 'user' && role !== 'assistant') return null;
+
+  const content = typed.content;
+  let text = '';
+  if (typeof content === 'string') {
+    text = content;
+  } else if (Array.isArray(content)) {
+    for (const block of content) {
+      if (!block || typeof block !== 'object') continue;
+      const part = block as Record<string, unknown>;
+      // `input_text` on the way in, `output_text` on the way out. Both are the message; the
+      // distinction is direction, not kind.
+      if ((part.type === 'input_text' || part.type === 'output_text') && typeof part.text === 'string') {
+        text += part.text;
+      }
     }
   }
 
@@ -100,6 +154,11 @@ const INJECTED_OPENERS = new Set([
   'task-notification',
   'ide_opened_file',
   'ide_selection',
+  // Codex's equivalent, and it opens *every* session in that archive rather than 39% of them:
+  // the first user-role item is always `<environment_context>` naming the cwd, shell and date.
+  // Left in, every Codex session in the directory would be titled with the same boilerplate.
+  'environment_context',
+  'user_instructions',
 ]);
 
 /**
