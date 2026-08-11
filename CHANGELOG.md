@@ -3,11 +3,14 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 4.2.0 — 2026-08-11
 
 Memory that is present but never surfaced, memory that is never written at all, a second harness's
 transcripts sitting on disk unread — and the cold start, where a fresh install has an archive of
 past sessions beside an empty store and no way across.
+
+Then a sweep over the code that arrived with them, which found two ways a transcript could be lost
+without anything being said, and one way an ordinary `knowl init` could fail on Windows.
 
 ### Transcripts can become knowledge, through a review step
 
@@ -168,6 +171,75 @@ Four design points worth stating, because each is a place the obvious version is
 
 Reads do not count as writes: a session that queried diligently and stored nothing is the case this
 measures.
+
+### Two silent losses in the archive readers
+
+Both sat under comments promising the behaviour the code did not have, so neither was findable by
+reading intent.
+
+**A non-ASCII project path lost every Codex session.** The `session_meta` header is read in 8 KB
+chunks and each was decoded on its own, so a multi-byte character landing on a read boundary became
+two `U+FFFD`. Where the split fell inside the recorded `cwd`, the path came back corrupt, matched no
+root, and every session under it was dropped from discovery with nothing said —
+`D:\côding\knowl` read back as `D:\c<?><?>ding\knowl`. Bytes are accumulated and decoded once now,
+and newlines are found in the bytes, which is safe because `0x0a` cannot occur inside a multi-byte
+sequence.
+
+**One deleted transcript ended a whole extraction run.** `createReadStream` succeeds on a path that
+does not exist — `fs.ReadStream` opens lazily and reports `ENOENT` by emitting `error` — so a guard
+around the constructor caught nothing a real archive produces. `knowl transcripts extract` died on
+the first transcript deleted since indexing, mid-run and after the model had already been paid for
+the sessions before it. The guard is around the iteration now. A failure *after* a chunk has
+arrived is a truncated read of a file that is really there and still propagates: returning a
+watermark for it would tell the caller it had seen lines it never did.
+
+An unreadable file and an empty one are also told apart at extraction, so a transcript that is
+merely missing is no longer watermarked as "extracted, yielded nothing" — which would have retired
+a session permanently on the strength of one failed read.
+
+### The transcript pipeline says what it did, and matches a worktree the way the Claude half does
+
+**`approve --all` stops at 1,000 candidates and now says so.** A first run over a real archive
+produces atoms on that order, so the cap lands on precisely the run it exists for, and
+`Approved 1000 candidate(s).` reads as completion. It now reports how many remain, counted from the
+store after the run rather than derived from the cap. The cap itself is deliberate and stays:
+approval writes atoms one at a time through the deduping writer, and an unbounded run over a whole
+archive is the worse failure.
+
+**A Codex worktree recorded under an un-resolved path is matched.** A `cwd` is whatever the agent's
+shell had, while `git worktree list` answers canonically, and `realpath` only maps toward the real
+path — it cannot invert it. The Claude reader already derived that inverse substitution from the
+project root as given and as resolved; the Codex reader never got it, so a sibling worktree git
+names only as `/private/var/folders/X-wt` matched no session recorded in `/var/folders/X-wt`. Both
+readers share one derivation now, which is the fix rather than tidying beside it — keeping it
+inside one of them is what let them diverge.
+
+### Windows: an atomic write survives a scanner holding the file
+
+`EPERM: operation not permitted, rename '<file>.tmp' -> '<file>'` was the most frequent cause of a
+red Windows run here, and it is not only a test problem: every caller writes a file a user cares
+about, so the same moment makes an ordinary `knowl init` or `knowl config set` fail on a machine
+with an antivirus. Windows refuses a rename onto a path any other handle still holds, and the usual
+holder is a scanner reading the temporary file the write has just produced — so creating the file
+is itself what provokes the block.
+
+The rename retries: five attempts, linear 10 ms backoff, ~150 ms worst case. Narrow on purpose —
+only `EPERM`, `EACCES` and `EBUSY`, which mean "someone has it open right now". `ENOENT` means the
+staged file is gone, which is a bug rather than contention, and `ENOSPC` will not improve by asking
+again. The caller's own error is what escapes when the attempts run out.
+
+`credentials.ts` carried a second implementation of the same idea and is now a call to the shared
+one. They had already drifted: the shared helper flushes the handle before renaming and that one did
+not, so an interrupted credential write could leave an empty file where the other left none.
+
+### Smaller fixes
+
+- **`knowl view` stops on Ctrl-C instead of crashing.** The signal handler was an unawaited `async`
+  function, so a failing `close()` surfaced as `ERR_UNHANDLED_REJECTION` — on the one path that
+  exists to shut the process down in order.
+- **A federated query no longer contradicts itself.** Naming the cloud workspace in `repos:`
+  returned the replica's rows *and* reported the id as `unknown`, which is the notice whose whole
+  job is to say a name matched nothing.
 
 ## 4.1.0 — 2026-08-10
 
