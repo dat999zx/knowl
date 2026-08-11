@@ -143,7 +143,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
     key: 'search.transcripts.enabled', category: 'Search', type: 'boolean',
     parse: booleanValue, defaultValue: false,
     label: 'Transcript search',
-    description: 'Search this repo\'s past Claude Code sessions. Builds a separate index the first time you run `knowl reindex --transcripts`.',
+    description: 'Search this repo\'s past Claude Code and Codex sessions. Builds a separate index the first time you run `knowl reindex --transcripts`.',
   },
   {
     key: 'search.transcripts.share', category: 'Search', type: 'boolean',

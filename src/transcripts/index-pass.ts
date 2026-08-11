@@ -346,8 +346,8 @@ async function commitBatchOn(
     }
 
     await client.execute({
-      sql: `INSERT INTO transcript_files (path, session_id, parent_session_id, bytes_indexed, lines_indexed, size_at_index, updated_at, display_name, name_kind, opening, anchor)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      sql: `INSERT INTO transcript_files (path, session_id, parent_session_id, bytes_indexed, lines_indexed, size_at_index, updated_at, display_name, name_kind, opening, anchor, harness)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
               bytes_indexed = excluded.bytes_indexed,
               lines_indexed = excluded.lines_indexed,
@@ -357,7 +357,7 @@ async function commitBatchOn(
       args: [
         file.path, file.sessionId, file.parentSessionId,
         watermark.bytesConsumed, watermark.linesConsumed, size, new Date().toISOString(),
-        naming.displayName, naming.nameKind, naming.opening, anchor,
+        naming.displayName, naming.nameKind, naming.opening, anchor, file.harness,
       ],
     });
 
@@ -455,8 +455,8 @@ async function indexOneFile(
       // make the pair describe a file state that never existed.
       const finalAnchor = await anchorAt(file.path, next.value.bytesConsumed);
       await withWriteRetry(dbPath, client => client.execute({
-        sql: `INSERT INTO transcript_files (path, session_id, parent_session_id, bytes_indexed, lines_indexed, size_at_index, updated_at, display_name, name_kind, opening, anchor)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        sql: `INSERT INTO transcript_files (path, session_id, parent_session_id, bytes_indexed, lines_indexed, size_at_index, updated_at, display_name, name_kind, opening, anchor, harness)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
               ON CONFLICT(path) DO UPDATE SET
                 bytes_indexed = MAX(transcript_files.bytes_indexed, excluded.bytes_indexed),
                 lines_indexed = MAX(transcript_files.lines_indexed, excluded.lines_indexed),
@@ -467,7 +467,7 @@ async function indexOneFile(
         args: [
           file.path, file.sessionId, file.parentSessionId,
           next.value.bytesConsumed, next.value.linesConsumed, size, new Date().toISOString(),
-          naming.displayName, naming.nameKind, naming.opening, finalAnchor,
+          naming.displayName, naming.nameKind, naming.opening, finalAnchor, file.harness,
         ],
       }));
       return { indexed, rebuilt: rewritten, complete: true };

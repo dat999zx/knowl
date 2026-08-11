@@ -6,6 +6,16 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 
+/**
+ * Which agent harness wrote a transcript.
+ *
+ * Carried per file rather than inferred from the path at the point of use. The two archives are
+ * discovered by genuinely different mechanisms -- Claude Code's directory *is* the project, while
+ * Codex records its project inside the file -- so by the time a file reaches the indexer the
+ * knowledge of where it came from is not recoverable from its path without redoing that work.
+ */
+export type TranscriptHarness = 'claude' | 'codex';
+
 export type TranscriptFile = {
   /** Absolute path to the `.jsonl`. */
   path: string;
@@ -13,6 +23,7 @@ export type TranscriptFile = {
   sessionId: string;
   /** For a subagent transcript, the session that spawned it. Null for a main session. */
   parentSessionId: string | null;
+  harness: TranscriptHarness;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -30,6 +41,168 @@ export function encodeProjectDir(projectRoot: string): string {
 
 export function defaultProjectsDir(): string {
   return path.join(os.homedir(), '.claude', 'projects');
+}
+
+/**
+ * Codex CLI's session archive: `~/.codex/sessions/YYYY/MM/DD/rollout-<iso>-<uuid>.jsonl`.
+ *
+ * Partitioned by DATE, which is the whole reason Codex needs its own discovery path. Claude Code
+ * names a directory after the project, so finding this repo's sessions is a directory match;
+ * here every project's sessions are interleaved by the day they happened on, and the only record
+ * of which project a session belongs to is `session_meta.payload.cwd` inside the file.
+ */
+export function defaultCodexSessionsDir(): string {
+  return path.join(os.homedir(), '.codex', 'sessions');
+}
+
+/**
+ * How deep below the sessions root the date partitioning goes: `YYYY/MM/DD`.
+ *
+ * A bound rather than a shape assertion, following `MAX_SUBAGENT_DEPTH`. If Codex adds or drops a
+ * level the walk still finds the files; the bound only exists to stop an unbounded descent.
+ */
+const MAX_CODEX_DEPTH = 4;
+
+/**
+ * Bytes of a Codex transcript read to find its project.
+ *
+ * The first line is `session_meta`, and it is large -- it carries `base_instructions`, the whole
+ * system prompt, which runs to tens of kilobytes. Reading it whole for every file on every scan
+ * would be tens of megabytes of I/O to answer a question the first few hundred bytes settle:
+ * `cwd` is written before `base_instructions` in that payload. So the common path reads a bounded
+ * prefix, and only a file that does not yield its `cwd` there pays for a full line.
+ */
+const CODEX_META_PREFIX_BYTES = 8192;
+
+/**
+ * Ceiling on the fallback read, for a header that does not yield its `cwd` in the prefix.
+ *
+ * A bound is required rather than tidy: the fallback reads until it meets a newline, and a
+ * corrupt or truncated file may not contain one before its end. Two megabytes is far past any
+ * real `session_meta` -- the largest in a 477-file archive is tens of kilobytes -- so reaching it
+ * means the file is not what it claims to be, and the right answer is to give up on it.
+ */
+const MAX_CODEX_META_BYTES = 2 * 1024 * 1024;
+
+/** `"cwd":"<json string>"`, matched inside a prefix that may end mid-record. */
+const CWD_IN_PREFIX = /"cwd"\s*:\s*("(?:[^"\\]|\\.)*")/;
+
+/**
+ * The project root a Codex session was recorded against, or null.
+ *
+ * Two reads at most. The prefix regex handles every well-formed session file; the fallback parses
+ * a complete first line, for a file whose meta record is ordered differently than this archive's.
+ */
+async function codexSessionCwd(filePath: string): Promise<string | null> {
+  let handle: import('node:fs/promises').FileHandle | undefined;
+  try {
+    handle = await fs.open(filePath, 'r');
+    const buffer = Buffer.alloc(CODEX_META_PREFIX_BYTES);
+    const { bytesRead } = await handle.read(buffer, 0, CODEX_META_PREFIX_BYTES, 0);
+    const prefix = buffer.subarray(0, bytesRead).toString('utf8');
+
+    const matched = CWD_IN_PREFIX.exec(prefix);
+    if (matched) {
+      try {
+        const cwd = JSON.parse(matched[1]) as unknown;
+        if (typeof cwd === 'string' && cwd) return cwd;
+      } catch {
+        // Fall through to the whole-line parse below.
+      }
+    }
+
+    // No `cwd` in the prefix. Either the record is ordered with `base_instructions` first, or the
+    // line is simply longer than the prefix before reaching `cwd`. Both are answered by reading
+    // on to the end of the first line -- which must genuinely continue reading, not re-inspect
+    // the prefix: a header larger than the prefix contains no newline inside it at all.
+    let line = prefix;
+    let offset = bytesRead;
+    while (!line.includes('\n') && offset < MAX_CODEX_META_BYTES && bytesRead > 0) {
+      const next = await handle.read(buffer, 0, CODEX_META_PREFIX_BYTES, offset);
+      if (next.bytesRead === 0) break;
+      line += buffer.subarray(0, next.bytesRead).toString('utf8');
+      offset += next.bytesRead;
+    }
+
+    const newline = line.indexOf('\n');
+    try {
+      const record = JSON.parse(newline === -1 ? line : line.slice(0, newline)) as Record<string, unknown>;
+      const payload = record.payload as Record<string, unknown> | undefined;
+      const cwd = payload?.cwd;
+      return typeof cwd === 'string' && cwd ? cwd : null;
+    } catch {
+      return null;
+    }
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+}
+
+/** Every `.jsonl` under the date-partitioned sessions tree. */
+async function collectCodexFiles(dir: string, found: string[], depth: number): Promise<boolean> {
+  const entries = await readDir(dir);
+  // Null is "could not look", which is a degraded scan rather than an empty one -- the same
+  // distinction `readDir` exists to preserve for the Claude archive.
+  if (entries === null) return true;
+
+  let degraded = false;
+  for (const entry of entries) {
+    const full = path.join(dir, entry.name);
+    if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+      found.push(full);
+      continue;
+    }
+    if (entry.isDirectory() && depth < MAX_CODEX_DEPTH) {
+      degraded = await collectCodexFiles(full, found, depth + 1) || degraded;
+    }
+  }
+  return degraded;
+}
+
+/**
+ * This repo's Codex sessions, matched on the project each file records for itself.
+ *
+ * **Every file is opened, because there is no cheaper filter.** The path carries a date and a
+ * UUID and says nothing about the project, so the alternative to reading each header is not a
+ * faster match -- it is no match at all. The read is bounded (`CODEX_META_PREFIX_BYTES`) and the
+ * archive is small in file count; measured on a real 477-file archive this completes in about a
+ * second.
+ *
+ * Roots are compared with `foldPath`, which the Claude path already needs for the same reason and
+ * which matters more here: this archive records both `D:\coding\knowl` and `d:\coding\knowl` for
+ * one repository, because the drive letter's case follows however the agent was launched.
+ */
+async function scanCodexArchive(sessionsDir: string, roots: string[]): Promise<TranscriptScan> {
+  const paths: string[] = [];
+  const degraded = await collectCodexFiles(sessionsDir, paths, 0);
+
+  const wanted = new Set<string>();
+  for (const root of roots) {
+    const resolved = path.resolve(root);
+    wanted.add(foldPath(resolved));
+    const real = await fs.realpath(resolved).catch(() => null);
+    if (real) wanted.add(foldPath(real));
+  }
+
+  const files: TranscriptFile[] = [];
+  for (const filePath of paths) {
+    const cwd = await codexSessionCwd(filePath);
+    if (!cwd || !wanted.has(foldPath(cwd))) continue;
+    files.push({
+      path: filePath,
+      // `rollout-2026-03-22T21-16-47-019d15e7-....jsonl`. The UUID is the session id Codex uses
+      // in its own meta record; taking it from the name keeps this consistent with the Claude
+      // path, where the basename *is* the session id, and costs no second read.
+      sessionId: path.basename(filePath, '.jsonl').replace(/^rollout-\d{4}-\d{2}-\d{2}T[\d-]+?-(?=[0-9a-f]{8}-)/i, ''),
+      // Codex records no subagent transcripts in this archive: every file is a top-level session.
+      parentSessionId: null,
+      harness: 'codex',
+    });
+  }
+
+  return { files, degraded };
 }
 
 /** Every `worktree <path>` line from `git worktree list --porcelain`, in order. */
@@ -178,6 +351,7 @@ async function collectSubagentFiles(
         path: path.join(dir, entry.name),
         sessionId: entry.name.slice(0, -'.jsonl'.length),
         parentSessionId,
+        harness: 'claude',
       });
       continue;
     }
@@ -217,7 +391,7 @@ export type TranscriptScan = {
  */
 export async function scanTranscriptArchive(
   projectRoot: string,
-  options: { projectsDir?: string; roots?: string[] } = {},
+  options: { projectsDir?: string; codexSessionsDir?: string; roots?: string[] } = {},
 ): Promise<TranscriptScan> {
   const projectsDir = options.projectsDir ?? defaultProjectsDir();
   const rootSet = options.roots
@@ -294,6 +468,7 @@ export async function scanTranscriptArchive(
           path: path.join(repoPath, entry.name),
           sessionId: entry.name.slice(0, -'.jsonl'.length),
           parentSessionId: null,
+          harness: 'claude',
         });
         continue;
       }
@@ -310,6 +485,7 @@ export async function scanTranscriptArchive(
             path: path.join(nestedPath, nested.name),
             sessionId: nested.name.slice(0, -'.jsonl'.length),
             parentSessionId: entry.name,
+            harness: 'claude',
           });
           continue;
         }
@@ -319,13 +495,31 @@ export async function scanTranscriptArchive(
     }
   }
 
+  // Codex, discovered by its own mechanism and merged into one list. A harness that is simply
+  // not installed contributes nothing and is not a degradation: `collectCodexFiles` reports
+  // degraded only when a directory that exists could not be listed.
+  //
+  // **Redirecting one archive redirects both.** A caller that passes `projectsDir` is pointing
+  // discovery at a synthetic archive; letting the Codex half keep reading `~/.codex` would make
+  // that caller's results depend on whatever the developer running it happens to have on disk.
+  // That is not hypothetical -- it is what happened the first time this landed, and eight
+  // discovery tests started returning 137 of this repository's real sessions alongside their
+  // three fixtures. Production passes neither option and gets both real archives.
+  const codexSessionsDir = options.codexSessionsDir
+    ?? (options.projectsDir ? null : defaultCodexSessionsDir());
+  if (codexSessionsDir) {
+    const codex = await scanCodexArchive(codexSessionsDir, rootSet.roots);
+    found.push(...codex.files);
+    degraded = degraded || codex.degraded;
+  }
+
   return { files: found, degraded };
 }
 
 /** The file list alone, for callers with nothing to decide about a degraded scan. */
 export async function discoverTranscriptFiles(
   projectRoot: string,
-  options: { projectsDir?: string; roots?: string[] } = {},
+  options: { projectsDir?: string; codexSessionsDir?: string; roots?: string[] } = {},
 ): Promise<TranscriptFile[]> {
   return (await scanTranscriptArchive(projectRoot, options)).files;
 }
