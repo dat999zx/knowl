@@ -84,4 +84,24 @@ describe('git identity in fixtures', () => {
       ...offenders,
     ].join('\n')).toEqual([]);
   });
+
+  /**
+   * The environment carries an identity, so a call site that forgets one still commits.
+   *
+   * This is the half that a per-call-site convention cannot give you, and the gap cost a CI run:
+   * converting the suites that called `git config` left the git commands those same files ran
+   * *elsewhere* with no identity, and it passed locally because a developer's global
+   * `~/.gitconfig` supplies one. A CI runner has none, so `git commit` failed there with
+   * "Author identity unknown" on both ubuntu legs while every local run was green.
+   *
+   * Asserted in a worker rather than trusted from `setup`, because inheritance across the
+   * worker boundary is the property being relied on -- the same one `os.tmpdir()` depends on.
+   */
+  it('reaches the workers, so a call site that forgets one still commits', () => {
+    expect(process.env.GIT_AUTHOR_NAME).toBeTruthy();
+    expect(process.env.GIT_AUTHOR_EMAIL).toBeTruthy();
+    // Both halves: git requires AUTHOR and COMMITTER separately and refuses on either alone.
+    expect(process.env.GIT_COMMITTER_NAME).toBeTruthy();
+    expect(process.env.GIT_COMMITTER_EMAIL).toBeTruthy();
+  });
 });
