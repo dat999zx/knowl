@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { writeFileAtomic } from '../core/atomic-write.js';
 import { knowlHome } from '../core/paths.js';
 
 export type CloudCredential = {
@@ -50,19 +51,20 @@ async function readFileOrEmpty(): Promise<CredentialFile> {
   }
 }
 
-/** Distinguishes two writes in flight in one process; the pid alone does not. */
-let temporaryCounter = 0;
-
+/**
+ * The shared helper rather than a second implementation of it.
+ *
+ * These were two copies of one idea -- stage beside the target, then rename -- and they had
+ * drifted: `writeFileAtomic` flushes the handle before renaming and this did not, so an
+ * interrupted write here could leave an empty credentials file where the other left none. They
+ * also failed the same way on Windows, and the retry that fixes it belongs in one place, which
+ * is the whole reason for collapsing them rather than patching both.
+ *
+ * `mode` unconditionally: `writeFileAtomic` applies it at open and again after, and swallows the
+ * `chmod` failure, so the `platform !== 'win32'` guard this used to carry is already handled.
+ */
 async function writeFileAtomically(file: CredentialFile): Promise<void> {
-  const target = credentialsPath();
-  await fs.mkdir(path.dirname(target), { recursive: true });
-  // Same directory, so the rename is on one filesystem and therefore atomic. A temp file in
-  // the OS temp dir can land on another volume, where rename degrades to copy-then-delete
-  // and a reader can observe a half-written file.
-  const temporary = `${target}.${process.pid}.${temporaryCounter++}.tmp`;
-  await fs.writeFile(temporary, `${JSON.stringify(file, null, 2)}\n`, 'utf8');
-  if (process.platform !== 'win32') await fs.chmod(temporary, 0o600);
-  await fs.rename(temporary, target);
+  await writeFileAtomic(credentialsPath(), `${JSON.stringify(file, null, 2)}\n`, { mode: 0o600 });
 }
 
 /**
