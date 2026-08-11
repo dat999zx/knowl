@@ -190,17 +190,24 @@ async function collectCodexFiles(dir: string, found: string[], depth: number): P
  * Roots are compared with `foldPath`, which the Claude path already needs for the same reason and
  * which matters more here: this archive records both `D:\coding\knowl` and `d:\coding\knowl` for
  * one repository, because the drive letter's case follows however the agent was launched.
+ *
+ * `uncanonicalise` is taken rather than skipped, and its absence here was a real gap. A `cwd` is
+ * whatever the agent's shell had, so it is the UN-resolved form -- exactly what `realpath` cannot
+ * produce from git's canonical answer. Without it a sibling worktree that git names only as
+ * `/private/var/folders/X-wt` matched no Codex session recorded in `/var/folders/X-wt`, on the
+ * same platforms and for the same reason the Claude path already handled.
  */
-async function scanCodexArchive(sessionsDir: string, roots: string[]): Promise<TranscriptScan> {
+async function scanCodexArchive(
+  sessionsDir: string,
+  roots: string[],
+  uncanonicalise: Uncanonicalise,
+): Promise<TranscriptScan> {
   const paths: string[] = [];
   const degraded = await collectCodexFiles(sessionsDir, paths, 0);
 
   const wanted = new Set<string>();
   for (const root of roots) {
-    const resolved = path.resolve(root);
-    wanted.add(foldPath(resolved));
-    const real = await fs.realpath(resolved).catch(() => null);
-    if (real) wanted.add(foldPath(real));
+    for (const form of await rootSpellings(root, uncanonicalise)) wanted.add(foldPath(form));
   }
 
   const files: TranscriptFile[] = [];
@@ -251,6 +258,65 @@ const foldPath = (target: string) =>
 const foldText = (text: string) => CASE_INSENSITIVE_PATHS ? text.toLowerCase() : text;
 
 const samePath = (left: string, right: string) => foldPath(left) === foldPath(right);
+
+/** Maps a canonical path back to the form an agent on this machine would have recorded. */
+type Uncanonicalise = (target: string) => string | null;
+
+/**
+ * The inverse of `realpath` for this machine, or a function that always declines.
+ *
+ * `realpath` only maps TOWARD the real path, but an archive is often named for the UN-canonical
+ * one: on macOS an agent launched in `/var/folders/X` records `/var/folders/X`, while
+ * `git worktree list` reports its sibling worktree only as `/private/var/folders/X-wt`. No amount
+ * of resolving git's answer produces the form the agent wrote. What is needed is the inverse
+ * substitution, and the project root is what reveals it -- knowing `/private/var` stands for
+ * `/var` here lets every canonical root be expressed the way the agent would have written it.
+ *
+ * Derived from the one pair we can see both halves of: the project root as given and as resolved,
+ * by taking their longest common tail. What is left in front is the substitution -- `/private/var`
+ * for `/var` on macOS, `C:\Users\runneradmin` for `C:\Users\RUNNER~1` on Windows. A whole-path
+ * prefix would not do, because a worktree is a SIBLING of the repo rather than a child of it.
+ *
+ * Measured before it was relied on: without this, every worktree session went unindexed on macOS
+ * and Windows while ubuntu, whose paths are already canonical, saw nothing wrong for months.
+ */
+async function deriveUncanonicalise(projectRoot: string): Promise<Uncanonicalise> {
+  const givenRoot = path.resolve(projectRoot);
+  const realGivenRoot = await fs.realpath(givenRoot).catch(() => givenRoot);
+  if (foldPath(realGivenRoot) === foldPath(givenRoot)) return () => null;
+
+  let shared = 0;
+  while (
+    shared < realGivenRoot.length && shared < givenRoot.length
+    && foldText(realGivenRoot[realGivenRoot.length - 1 - shared]) === foldText(givenRoot[givenRoot.length - 1 - shared])
+  ) shared += 1;
+  const realHead = realGivenRoot.slice(0, realGivenRoot.length - shared);
+  const givenHead = givenRoot.slice(0, givenRoot.length - shared);
+
+  return (target: string) => {
+    // `foldText`, because `realHead` is a leading fragment rather than a path and the slice below
+    // indexes into `target` by its raw length -- a comparison that had normalised either side
+    // would be measuring a different string than the one being cut.
+    if (!foldText(target).startsWith(foldText(realHead))) return null;
+    return givenHead + target.slice(realHead.length);
+  };
+}
+
+/**
+ * Every spelling of one root an agent might have recorded: as given, as resolved, and as
+ * un-resolved.
+ *
+ * Shared by both archives rather than written twice, which is the point: the Claude half had all
+ * three and the Codex half had only the first two, so a sibling worktree that git names only
+ * canonically matched a Claude session and silently missed the Codex sessions beside it. The two
+ * differ only in what they do with the forms -- Claude encodes them into a directory name, Codex
+ * compares them against the `cwd` inside each file.
+ */
+async function rootSpellings(root: string, uncanonicalise: Uncanonicalise): Promise<string[]> {
+  const resolved = path.resolve(root);
+  const forms = [resolved, await fs.realpath(resolved).catch(() => null), uncanonicalise(resolved)];
+  return forms.filter((form): form is string => Boolean(form));
+}
 
 /**
  * The path with every symlink and short name resolved away, or the path itself if it cannot be.
@@ -451,33 +517,12 @@ export async function scanTranscriptArchive(
   // `/private/var` stands for `/var` on macOS, `C:\Users\runneradmin` for `C:\Users\RUNNER~1`
   // on Windows. A whole-path prefix would not do, because a worktree is a SIBLING of the repo
   // rather than a child of it.
-  const givenRoot = path.resolve(projectRoot);
-  const realGivenRoot = await fs.realpath(givenRoot).catch(() => givenRoot);
-  let realHead = '';
-  let givenHead = '';
-  if (foldPath(realGivenRoot) !== foldPath(givenRoot)) {
-    let shared = 0;
-    while (
-      shared < realGivenRoot.length && shared < givenRoot.length
-      && foldText(realGivenRoot[realGivenRoot.length - 1 - shared]) === foldText(givenRoot[givenRoot.length - 1 - shared])
-    ) shared += 1;
-    realHead = realGivenRoot.slice(0, realGivenRoot.length - shared);
-    givenHead = givenRoot.slice(0, givenRoot.length - shared);
-  }
-  const uncanonicalise = (target: string): string | null => {
-    if (!realHead) return null;
-    // `foldText`, because `realHead` is a leading fragment rather than a path and the slice below
-    // indexes into `target` by its raw length -- a comparison that had normalised either side
-    // would be measuring a different string than the one being cut.
-    if (!foldText(target).startsWith(foldText(realHead))) return null;
-    return givenHead + target.slice(realHead.length);
-  };
+  const uncanonicalise = await deriveUncanonicalise(projectRoot);
 
   const wanted = new Set<string>();
   for (const root of rootSet.roots) {
-    const resolvedRoot = path.resolve(root);
-    for (const form of [resolvedRoot, await fs.realpath(resolvedRoot).catch(() => null), uncanonicalise(resolvedRoot)]) {
-      if (form) wanted.add(encodeProjectDir(form).toLowerCase());
+    for (const form of await rootSpellings(root, uncanonicalise)) {
+      wanted.add(encodeProjectDir(form).toLowerCase());
     }
   }
   const found: TranscriptFile[] = [];
@@ -541,7 +586,7 @@ export async function scanTranscriptArchive(
   const codexSessionsDir = options.codexSessionsDir
     ?? (options.projectsDir ? null : defaultCodexSessionsDir());
   if (codexSessionsDir) {
-    const codex = await scanCodexArchive(codexSessionsDir, rootSet.roots);
+    const codex = await scanCodexArchive(codexSessionsDir, rootSet.roots, uncanonicalise);
     found.push(...codex.files);
     degraded = degraded || codex.degraded;
   }
