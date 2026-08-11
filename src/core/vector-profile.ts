@@ -19,16 +19,35 @@ export type PresetId =
   | 'custom';
 
 /**
- * `label`, `sizeMb`, `languages` and `contextTokens` are DOCUMENTATION, not runtime profile.
- * `presetProfile` strips all four before anything reaches `fingerprintProfile` -- folding one
- * in would change every stored embedding's fingerprint on upgrade and silently invalidate the
+ * `label`, `sizeMb`, `languages`, `contextTokens` and `governingDecisionThreshold` are all
+ * stripped by `presetProfile` before anything reaches `fingerprintProfile` -- folding one in
+ * would change every stored embedding's fingerprint on upgrade and silently invalidate the
  * whole index.
+ *
+ * The first four are pure documentation. The threshold is not -- it is read at run time -- but
+ * it describes how to READ distances in this space rather than how the vectors are produced,
+ * so it belongs on the same side of that line.
  */
 export type PresetDefinition = VectorProfile & {
   label: string;
   sizeMb: number;
   languages: string;
   contextTokens: number;
+  /**
+   * Cosine at or above which a top-1 match is reported as a governing decision.
+   *
+   * Necessarily PER PROFILE, because a cosine means different things in different embedding
+   * spaces. Measured 2026-08-12 over 82 decisions and 120 distractors from a real store: median
+   * similarity between UNRELATED items is 0.838 under granite, 0.735 under bge and 0.510 under
+   * arctic. A single shared constant would fire on almost everything under granite and almost
+   * nothing under arctic. A scale-free z-score does transfer, but it discriminates worse in every
+   * model (AUC 0.960-0.977 against 0.982-0.992), so it is the fallback for uncalibrated profiles
+   * rather than the primary path -- see `governing-decision.ts`.
+   *
+   * `undefined` means "not calibrated"; those profiles take the z-score fallback. Two presets are
+   * deliberately left undefined rather than guessed.
+   */
+  governingDecisionThreshold?: number;
 };
 
 /**
@@ -62,6 +81,7 @@ export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinitio
     sizeMb: 305,
     languages: 'English + multilingual',
     contextTokens: 8192,
+    governingDecisionThreshold: 0.698,
   },
   'granite-small-en-r2': {
     provider: 'local',
@@ -72,6 +92,7 @@ export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinitio
     sizeMb: 52,
     languages: 'English',
     contextTokens: 8192,
+    governingDecisionThreshold: 0.91,
   },
   'granite-97m-multilingual': {
     provider: 'local',
@@ -92,6 +113,7 @@ export const VECTOR_PRESETS: Record<Exclude<PresetId, 'custom'>, PresetDefinitio
     sizeMb: 34,
     languages: 'English',
     contextTokens: 512,
+    governingDecisionThreshold: 0.835,
   },
   'minilm-l6-en': {
     provider: 'local',
@@ -132,6 +154,28 @@ export const PRESET_IDS: readonly PresetId[] = [
  */
 export const DEFAULT_PRESET_ID: PresetId = 'granite-small-en-r2';
 
+/**
+ * The calibrated similarity gate for the profile a config is actually running, or `null` when
+ * that profile has never been calibrated.
+ *
+ * Resolves through the MODEL, not through the `preset` key, because a config written before
+ * presets existed names only a model, and a `custom` config may still name a model that happens
+ * to be one of the presets. Both should get the calibrated number rather than fall back.
+ *
+ * `null` is a real answer and not an error: it routes the caller to the scale-free fallback.
+ * Guessing a constant for an uncalibrated space would be worse than not having one, because a
+ * cosine that means "unrelated" in one model means "same subject" in another.
+ */
+export function governingDecisionThresholdFor(config: ProjectConfig): number | null {
+  const vector = config?.search?.vector as Record<string, unknown> | undefined;
+  const model = typeof vector?.model === 'string' ? vector.model : '';
+  const id = isPresetId(vector?.preset)
+    ? vector.preset
+    : (model ? matchPresetByModel(model) : null);
+  if (!id) return null;
+  return VECTOR_PRESETS[id].governingDecisionThreshold ?? null;
+}
+
 function isPresetId(value: unknown): value is Exclude<PresetId, 'custom'> {
   return typeof value === 'string' && value in VECTOR_PRESETS;
 }
@@ -162,8 +206,15 @@ function presetProfile(id: Exclude<PresetId, 'custom'>): VectorProfile {
   // Every documentation field is stripped here. One left in would reach `fingerprintProfile`,
   // change the fingerprint of every stored embedding, and invalidate the whole index on
   // upgrade -- for a number that only ever appears in a table.
+  //
+  // `governingDecisionThreshold` is stripped for the same reason and is the likelier trap,
+  // because unlike the other four it is a runtime value: it is READ at write time, so it looks
+  // like profile rather than documentation. It is not. It describes how to interpret distances
+  // in this space, never how the vectors are produced, so recalibrating it must not invalidate
+  // a single stored row. A test pins that.
   const {
-    label: _label, sizeMb: _sizeMb, languages: _languages, contextTokens: _contextTokens, ...profile
+    label: _label, sizeMb: _sizeMb, languages: _languages, contextTokens: _contextTokens,
+    governingDecisionThreshold: _governingDecisionThreshold, ...profile
   } = VECTOR_PRESETS[id];
   return profile;
 }

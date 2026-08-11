@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_PRESET_ID, PRESET_IDS, VECTOR_PRESETS, fingerprintProfile, resolveVectorProfile,
+  DEFAULT_PRESET_ID, PRESET_IDS, VECTOR_PRESETS, fingerprintProfile, governingDecisionThresholdFor, resolveVectorProfile,
 } from '../../src/core/vector-profile.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
@@ -103,6 +103,46 @@ describe('fingerprintProfile', () => {
   it('changes when pooling alone changes', () => {
     const base = { provider: 'local', model: 'a/b', dtype: 'q8', pooling: 'cls' } as const;
     expect(fingerprintProfile(base)).not.toBe(fingerprintProfile({ ...base, pooling: 'mean' }));
+  });
+
+  // The tests above use a synthetic profile, so they cannot see a preset gaining a field. This
+  // one pins the REAL fingerprint of a shipped preset against a value read out of a live store
+  // (`knowledge_embeddings.profile_fingerprint` on a 767-vector arctic corpus). If a future
+  // field reaches `presetProfile` without being stripped, every stored row silently stops
+  // matching its own profile and vector search goes quiet with no error anywhere. That is what
+  // adding `governingDecisionThreshold` would have done had it not been stripped.
+  it('does not move when a preset gains a non-profile field', () => {
+    expect(fingerprintProfile(resolveVectorProfile(config({ preset: 'arctic-embed-m-v2' }))))
+      .toBe('d3f842a52c03b8e1');
+  });
+});
+
+describe('governingDecisionThresholdFor', () => {
+  // Per profile, because a cosine means different things in different spaces: unrelated items
+  // sit at ~0.84 under granite and ~0.51 under arctic (measured 2026-08-12, 82 decisions and
+  // 120 distractors). One shared constant would fire on nearly everything under granite.
+  it('gives each calibrated preset its own constant', () => {
+    expect(governingDecisionThresholdFor(config({ preset: 'granite-small-en-r2' }))).toBe(0.91);
+    expect(governingDecisionThresholdFor(config({ preset: 'arctic-embed-m-v2' }))).toBe(0.698);
+    expect(governingDecisionThresholdFor(config({ preset: 'bge-small-en' }))).toBe(0.835);
+  });
+
+  it('resolves through a bare model string, like a config written before presets existed', () => {
+    expect(governingDecisionThresholdFor(
+      config({ model: 'onnx-community/granite-embedding-small-english-r2-ONNX' }),
+    )).toBe(0.91);
+  });
+
+  // Null is a real answer that routes the caller to the scale-free fallback. Guessing a
+  // constant for an uncalibrated space would be worse than having none, because the number
+  // that means "unrelated" in one model means "same subject" in another.
+  it('returns null for a preset nobody calibrated, rather than borrowing another one', () => {
+    expect(governingDecisionThresholdFor(config({ preset: 'minilm-l6-en' }))).toBeNull();
+    expect(governingDecisionThresholdFor(config({ preset: 'granite-97m-multilingual' }))).toBeNull();
+  });
+
+  it('returns null for an unknown model', () => {
+    expect(governingDecisionThresholdFor(config({ model: 'someone/unknown-model' }))).toBeNull();
   });
 });
 
