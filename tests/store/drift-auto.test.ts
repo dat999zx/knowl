@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { GIT_IDENTITY_FLAGS } from '../git-identity.js';
 import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
 import { DEFAULT_CONTEXT_MAX_CHARS } from '../../src/core/token-budget.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
@@ -14,7 +15,9 @@ import * as repo from '../../src/store/repository.js';
 
 const ROOT = path.resolve('.knowl-drift-auto-test');
 
-const git = (args: string) => execSync(`git ${args}`, { cwd: ROOT, encoding: 'utf-8' });
+// Identity on every invocation, never `git config` -- see `tests/git-identity.ts`. This suite is
+// the one that leaked: its values are what turned up in this repository's own `.git/config`.
+const git = (args: string) => execSync(`git ${GIT_IDENTITY_FLAGS} ${args}`, { cwd: ROOT, encoding: 'utf-8' });
 
 const commitFile = async (relPath: string, content: string, message: string): Promise<string> => {
   const filePath = path.join(ROOT, relPath);
@@ -42,8 +45,6 @@ describe('automatic drift check', () => {
     await fs.rm(ROOT, { recursive: true, force: true });
     await fs.mkdir(path.join(ROOT, '.knowl'), { recursive: true });
     git('init');
-    git('config user.email test@example.com');
-    git('config user.name Test');
     await commitFile('src/billing.ts', 'export const rate = 1;\n', 'add billing');
     await initDb(ROOT);
     projectId = (await repo.createProject(ROOT, 'Drift auto test')).id;

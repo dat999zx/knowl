@@ -2,6 +2,7 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gitArgs } from '../git-identity.js';
 import { CloudApiError, type CloudApi, type CloudRole } from '../../src/cloud/api-client.js';
 import type { PublishOutcome } from '../../src/cloud/sync-contract.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
@@ -20,7 +21,8 @@ import type { ProjectConfig } from '../../src/core/types.js';
 
 const API_HOST = 'https://api.push.test';
 
-const git = (cwd: string, args: string[]) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+// Identity on every invocation, never `git config` -- see `tests/git-identity.ts`.
+const git = (cwd: string, args: string[]) => spawnSync('git', gitArgs(args), { cwd, encoding: 'utf8' });
 
 /**
  * Fresh directories and a fresh workspace id per test, rather than one pair wiped between them.
@@ -115,12 +117,8 @@ describe('pushStaged', () => {
 
     await fs.mkdir(ORIGIN, { recursive: true });
     git(ORIGIN, ['init', '-q', '-b', 'main']);
-    git(ORIGIN, ['config', 'user.email', 'test@example.com']);
-    git(ORIGIN, ['config', 'user.name', 'Test']);
     await commitToOrigin('a.txt');
     git(process.cwd(), ['clone', '-q', ORIGIN, CLONE]);
-    git(CLONE, ['config', 'user.email', 'test@example.com']);
-    git(CLONE, ['config', 'user.name', 'Test']);
 
     await fs.mkdir(path.join(CLONE, '.knowl'), { recursive: true });
     await fs.writeFile(path.join(CLONE, '.knowl', 'config.json'), JSON.stringify({ version: 1 }), 'utf8');

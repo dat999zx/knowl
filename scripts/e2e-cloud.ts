@@ -58,18 +58,19 @@ async function main(): Promise<void> {
   const ORIGIN = path.resolve('./.knowl-e2e-origin');
   await fs.rm(ORIGIN, { recursive: true, force: true }).catch(() => {});
   await fs.mkdir(ORIGIN, { recursive: true });
-  const inOrigin = (args: string[]) => spawnSync('git', args, { cwd: ORIGIN, encoding: 'utf8' });
+  // Identity carried on each invocation rather than written with `git config`. These fixtures sit
+  // inside this repository, and `git config` searches upward when the fixture has no `.git` yet --
+  // so a run interrupted at the wrong moment leaves a bogus `user.email` in knowl's own config,
+  // and the next commit made here goes out authored by it. See `tests/git-identity.ts`.
+  const IDENTITY = ['-c', 'user.name=Knowl-E2E', '-c', 'user.email=e2e@example.test'];
+  const inOrigin = (args: string[]) => spawnSync('git', [...IDENTITY, ...args], { cwd: ORIGIN, encoding: 'utf8' });
   inOrigin(['init', '-q', '-b', 'main']);
-  inOrigin(['config', 'user.email', 'e2e@example.com']);
-  inOrigin(['config', 'user.name', 'E2E']);
   await fs.writeFile(path.join(ORIGIN, 'a.txt'), 'one', 'utf8');
   inOrigin(['add', '.']);
   inOrigin(['commit', '-qm', 'one']);
   spawnSync('git', ['clone', '-q', ORIGIN, ROOT], { encoding: 'utf8' });
 
-  const git = (args: string[]) => spawnSync('git', args, { cwd: ROOT, encoding: 'utf8' });
-  git(['config', 'user.email', 'e2e@example.com']);
-  git(['config', 'user.name', 'E2E']);
+  const git = (args: string[]) => spawnSync('git', [...IDENTITY, ...args], { cwd: ROOT, encoding: 'utf8' });
   // The refs are what the gate reads; the URL is only what identity is derived from. Rewriting it
   // after cloning gives a realistic `github.com/acme/e2e` without losing `origin/main`.
   git(['remote', 'set-url', 'origin', 'git@github.com:acme/e2e.git']);

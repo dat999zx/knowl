@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gitArgs } from '../git-identity.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
@@ -14,7 +15,8 @@ import type { ProjectConfig } from '../../src/core/types.js';
 
 const API_HOST = 'https://api.status.test';
 
-const git = (cwd: string, args: string[]) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+// Identity on every invocation, never `git config` -- see `tests/git-identity.ts`.
+const git = (cwd: string, args: string[]) => spawnSync('git', gitArgs(args), { cwd, encoding: 'utf8' });
 
 // Fresh directories per test, for the Windows reason `publish-push.test.ts` documents.
 let run = 0;
@@ -43,8 +45,6 @@ describe('cloudStatus', () => {
 
     await fs.mkdir(ORIGIN, { recursive: true });
     git(ORIGIN, ['init', '-q', '-b', 'main']);
-    git(ORIGIN, ['config', 'user.email', 'test@example.com']);
-    git(ORIGIN, ['config', 'user.name', 'Test']);
     await fs.writeFile(path.join(ORIGIN, 'a.txt'), 'one', 'utf8');
     git(ORIGIN, ['add', '.']);
     git(ORIGIN, ['commit', '-qm', 'one']);
