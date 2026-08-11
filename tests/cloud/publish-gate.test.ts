@@ -2,24 +2,22 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gitArgs } from '../git-identity.js';
 import { checkPublishGate, currentBranchOf } from '../../src/cloud/publish-gate.js';
 
 const ORIGIN = path.resolve('./.knowl-gate-origin');
 const CLONE = path.resolve('./.knowl-gate-clone');
 
-const git = (cwd: string, args: string[]) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+// Identity on every invocation, never `git config` -- see `tests/git-identity.ts`.
+const git = (cwd: string, args: string[]) => spawnSync('git', gitArgs(args), { cwd, encoding: 'utf8' });
 
 async function makeOriginAndClone(): Promise<void> {
   await fs.mkdir(ORIGIN, { recursive: true });
   git(ORIGIN, ['init', '-q', '-b', 'main']);
-  git(ORIGIN, ['config', 'user.email', 'test@example.com']);
-  git(ORIGIN, ['config', 'user.name', 'Test']);
   await fs.writeFile(path.join(ORIGIN, 'a.txt'), 'one', 'utf8');
   git(ORIGIN, ['add', '.']);
   git(ORIGIN, ['commit', '-qm', 'one']);
   git(process.cwd(), ['clone', '-q', ORIGIN, CLONE]);
-  git(CLONE, ['config', 'user.email', 'test@example.com']);
-  git(CLONE, ['config', 'user.name', 'Test']);
 }
 
 describe('checkPublishGate', () => {

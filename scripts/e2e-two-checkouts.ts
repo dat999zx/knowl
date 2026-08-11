@@ -44,7 +44,12 @@ function psql(sql: string): string {
   return result.stdout.trim();
 }
 
-const git = (cwd: string, args: string[]) => spawnSync('git', args, { cwd, encoding: 'utf8' });
+// Identity carried on each invocation rather than written with `git config`. These fixtures sit
+// inside this repository, and `git config` searches upward when the fixture has no `.git` yet --
+// so a run interrupted at the wrong moment leaves a bogus `user.email` in knowl's own config, and
+// the next commit made here goes out authored by it. See `tests/git-identity.ts`.
+const IDENTITY = ['-c', 'user.name=Knowl-E2E', '-c', 'user.email=e2e@example.test'];
+const git = (cwd: string, args: string[]) => spawnSync('git', [...IDENTITY, ...args], { cwd, encoding: 'utf8' });
 const step = (n: string, what: string) => console.log(`\n── ${n}. ${what}`);
 
 /** A clone with a real `origin/HEAD`, which is what the publish gate reads. */
@@ -52,14 +57,10 @@ async function makeCheckout(origin: string, clone: string, remoteUrl: string): P
   for (const dir of [origin, clone]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   await fs.mkdir(origin, { recursive: true });
   git(origin, ['init', '-q', '-b', 'main']);
-  git(origin, ['config', 'user.email', 'e2e@example.com']);
-  git(origin, ['config', 'user.name', 'E2E']);
   await fs.writeFile(path.join(origin, 'a.txt'), 'one', 'utf8');
   git(origin, ['add', '.']);
   git(origin, ['commit', '-qm', 'one']);
   spawnSync('git', ['clone', '-q', origin, clone], { encoding: 'utf8' });
-  git(clone, ['config', 'user.email', 'e2e@example.com']);
-  git(clone, ['config', 'user.name', 'E2E']);
   git(clone, ['remote', 'set-url', 'origin', remoteUrl]);
   await fs.mkdir(path.join(clone, '.knowl'), { recursive: true });
   await fs.writeFile(path.join(clone, '.knowl', 'config.json'), JSON.stringify({ version: 1 }), 'utf8');

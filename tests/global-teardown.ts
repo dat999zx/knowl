@@ -241,6 +241,31 @@ export async function setup(): Promise<void> {
     process.env[key] = runRoot;
   }
   process.env[RUN_ROOT_ENV] = runRoot;
+
+  // A git identity for every fixture repository, set the one way a call site cannot forget.
+  //
+  // **Not `git config`, ever.** `git config` with no `--file` searches upward for the repository
+  // the directory belongs to, so a fixture built at `path.resolve('./.knowl-...')` that has no
+  // `.git` yet -- the window between `git init` and the next line, or a run interrupted before
+  // it -- writes into THIS repository instead. That happened: knowl's own `.git/config` acquired
+  // `user.email = test@example.com` from a suite, the next commit went out authored by it,
+  // GitHub resolved the address to an unrelated person's account, and the CLA check failed
+  // against a stranger. See `tests/git-identity.ts` and the contract test beside it.
+  //
+  // **Here rather than at each call site, and that distinction cost a CI run.** Converting the
+  // thirteen suites that called `git config` to pass `-c` on their own helpers left the git
+  // commands those files run *elsewhere* with no identity at all -- and it passed locally,
+  // because a developer's global `~/.gitconfig` supplies one. CI runners have none, so
+  // `git commit` there failed with "Author identity unknown" on both ubuntu legs. These
+  // variables are inherited by every child process of every worker, so they reach the call sites
+  // nobody remembered, including ones not written yet.
+  //
+  // Both halves: git requires AUTHOR and COMMITTER separately, and setting only one still
+  // refuses the commit.
+  process.env.GIT_AUTHOR_NAME ??= 'Knowl-Test';
+  process.env.GIT_AUTHOR_EMAIL ??= 'knowl-test@example.test';
+  process.env.GIT_COMMITTER_NAME ??= 'Knowl-Test';
+  process.env.GIT_COMMITTER_EMAIL ??= 'knowl-test@example.test';
 }
 
 /** True when nothing has touched this directory for `minAgeMs`. */

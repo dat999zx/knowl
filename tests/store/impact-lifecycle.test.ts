@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gitArgs } from '../git-identity.js';
 import { NormalizedHostHook } from '../../src/cli/agents/host-hook.js';
 import { renderChangeCard } from '../../src/session/change-card.js';
 import { listCodeSymbols } from '../../src/code/symbol-index.js';
@@ -66,8 +67,9 @@ let testIndex = 0;
 let projectId = '';
 let eventIndex = 0;
 
+// Identity on every invocation, never `git config` -- see `tests/git-identity.ts`.
 function git(...args: string[]): void {
-  const result = spawnSync('git', args, { cwd: testRoot, encoding: 'utf-8', stdio: 'pipe' });
+  const result = spawnSync('git', gitArgs(args), { cwd: testRoot, encoding: 'utf-8', stdio: 'pipe' });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr ?? ''}`);
 }
 
@@ -140,8 +142,6 @@ beforeEach(async () => {
   await fs.mkdir(path.join(testRoot, '.knowl'), { recursive: true });
 
   git('init', '-q', '.');
-  git('config', 'user.email', 'lane-h@example.test');
-  git('config', 'user.name', 'lane h');
   // The store lives inside the repo it indexes; without this, `git check-ignore` would let the
   // database's own sidecar files into the index.
   await write('.gitignore', '.knowl/\n');

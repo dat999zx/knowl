@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { gitArgs } from '../git-identity.js';
 import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { indexFile, listCodeSymbols } from '../../src/code/symbol-index.js';
 import { detectCertainImpact } from '../../src/session/impact.js';
@@ -485,8 +486,9 @@ const BENIGN: Scenario[] = [
 let testRoot = '';
 let testIndex = 0;
 
+// Identity on every invocation, never `git config` -- see `tests/git-identity.ts`.
 function git(root: string, ...args: string[]): void {
-  const result = spawnSync('git', args, { cwd: root, encoding: 'utf-8', stdio: 'pipe' });
+  const result = spawnSync('git', gitArgs(args), { cwd: root, encoding: 'utf-8', stdio: 'pipe' });
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr ?? ''}`);
 }
 
@@ -540,8 +542,6 @@ beforeEach(async () => {
   await fs.rm(testRoot, { recursive: true, force: true }).catch(() => {});
   await fs.mkdir(path.join(testRoot, '.knowl'), { recursive: true });
   git(testRoot, 'init', '-q', '.');
-  git(testRoot, 'config', 'user.email', 'precision@example.test');
-  git(testRoot, 'config', 'user.name', 'precision');
   await write('.gitignore', '.knowl/\n');
   await initDb(testRoot);
 });

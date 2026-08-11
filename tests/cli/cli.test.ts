@@ -4,6 +4,7 @@ import { createClient } from '@libsql/client';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { GIT_IDENTITY_FLAGS } from '../git-identity.js';
 
 const TEST_DIR = path.join(os.tmpdir(), 'knowl-cli-test');
 const AGENTS_TEST_DIR = path.join(os.tmpdir(), 'knowl-cli-agents-test');
@@ -574,12 +575,12 @@ describe('CLI Integration', () => {
     await fs.mkdir(path.join(prDir, 'src'), { recursive: true });
 
     try {
-      execSync('git init', { cwd: prDir, encoding: 'utf-8' });
-      execSync('git config user.email knowl@example.test', { cwd: prDir, encoding: 'utf-8' });
-      execSync('git config user.name "Knowl Test"', { cwd: prDir, encoding: 'utf-8' });
+      // Identity on every invocation, never `git config` -- see `tests/git-identity.ts`.
+      const git = (args: string) => execSync(`git ${GIT_IDENTITY_FLAGS} ${args}`, { cwd: prDir, encoding: 'utf-8' });
+      git('init');
       await fs.writeFile(path.join(prDir, 'src', 'billing.ts'), 'export const version = 1;\n', 'utf-8');
-      execSync('git add src/billing.ts', { cwd: prDir, encoding: 'utf-8' });
-      execSync('git commit -m "base"', { cwd: prDir, encoding: 'utf-8' });
+      git('add src/billing.ts');
+      git('commit -m "base"');
       const baseCommit = execSync('git rev-parse HEAD', { cwd: prDir, encoding: 'utf-8' }).trim();
 
       execSync(`node "${CLI_PATH}" init --yes`, {
@@ -607,8 +608,8 @@ describe('CLI Integration', () => {
         });
 
         await fs.writeFile(path.join(prDir, 'src', 'billing.ts'), 'export const version = 2;\n', 'utf-8');
-        execSync('git add src/billing.ts', { cwd: prDir, encoding: 'utf-8' });
-        execSync('git commit -m "change billing"', { cwd: prDir, encoding: 'utf-8' });
+        git('add src/billing.ts');
+        git('commit -m "change billing"');
 
         const output = execSync(`node "${CLI_PATH}" pr check --since ${baseCommit}`, {
           cwd: prDir,
