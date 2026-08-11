@@ -608,8 +608,8 @@ describe('CLI Integration', () => {
         });
 
         await fs.writeFile(path.join(prDir, 'src', 'billing.ts'), 'export const version = 2;\n', 'utf-8');
-        execSync('git add src/billing.ts', { cwd: prDir, encoding: 'utf-8' });
-        execSync('git commit -m "change billing"', { cwd: prDir, encoding: 'utf-8' });
+        git('add src/billing.ts');
+        git('commit -m "change billing"');
 
         const output = execSync(`node "${CLI_PATH}" pr check --since ${baseCommit}`, {
           cwd: prDir,
