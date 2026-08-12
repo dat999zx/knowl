@@ -1,10 +1,12 @@
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   GitUnavailableError,
   NoGitRemoteError,
+  UnnameableProjectError,
   normalizeRemoteUrl,
   resolveRepoIdentity,
 } from '../../src/cloud/repo-identity.js';
@@ -92,10 +94,80 @@ describe('resolveRepoIdentity', () => {
     expect(identity.identity).toBe('github.com/acme/mono#packages/api');
   });
 
-  it('refuses a repo with no remote instead of inventing an identity', async () => {
+  /*
+   * This used to assert the opposite -- `refuses a repo with no remote instead of inventing an
+   * identity`. The premise was that a cloud workspace keys knowledge on the remote URL, so a repo
+   * without one has nothing stable to publish under. Both halves were wrong: the server validates
+   * `originRepo` as any non-empty string up to 200 characters and treats it as a label for
+   * grouping, and a folder name is stable for exactly as long as the folder is called that.
+   *
+   * What the refusal actually did was make git a condition of using the product, for people who
+   * pay by how much they store.
+   */
+  it('falls back to the directory name for a repo with no remote', async () => {
     await makeGitRepo(REPO, {});
 
+    const identity = resolveRepoIdentity(REPO);
+
+    expect(identity.identity).toBe('.knowl-identity-repo');
+    expect(identity.source).toBe('directory');
+    expect(identity.remoteName).toBeNull();
+  });
+
+  /*
+   * The fixture lives outside the checkout, and that is load-bearing rather than tidiness.
+   *
+   * `git config --get remote.origin.url` run in a directory with no `.git` SEARCHES UPWARD. A
+   * fixture under this repo would therefore be answered with knowl's own origin, and the test would
+   * pass by reading the developer's checkout instead of the directory it created. Same rule as
+   * `tests/cli/project-marker.test.ts`, which was red locally and green in CI for this reason.
+   */
+  it('names a plain directory that is not a git repository at all', async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-notes-'));
+    try {
+      const identity = resolveRepoIdentity(outside);
+
+      expect(identity.source).toBe('directory');
+      expect(identity.identity).toBe(path.basename(outside).toLowerCase());
+      expect(identity.remoteUrl).toBeNull();
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('takes an explicit name over anything git would have said', async () => {
+    // A repo WITH a usable remote, so this proves precedence rather than fallback.
+    await makeGitRepo(REPO, { origin: 'git@github.com:acme/web.git' });
+
+    const identity = resolveRepoIdentity(REPO, { repo: 'My Notes' });
+
+    // Lowercased and whitespace-collapsed, the same treatment a remote gets, so one project cannot
+    // end up with two identities depending on which route named it.
+    expect(identity.identity).toBe('my-notes');
+    expect(identity.source).toBe('explicit');
+    expect(identity.remoteName).toBeNull();
+  });
+
+  it('still refuses a remote that was named and is not there', async () => {
+    // The distinction the fallback must not swallow: a missing `origin` nobody asked about is a
+    // project with nowhere to push, but `--remote upstream` against a repo that has no `upstream`
+    // is a typo, and answering it with the folder name would file the knowledge somewhere silently.
+    await makeGitRepo(REPO, { origin: 'git@github.com:acme/web.git' });
+
+    expect(() => resolveRepoIdentity(REPO, { remote: 'upstream' })).toThrow(NoGitRemoteError);
+  });
+
+  it('refuses a remote it cannot reduce to an identity rather than renaming the project', async () => {
+    await makeGitRepo(REPO, { origin: 'not a url' });
+
     expect(() => resolveRepoIdentity(REPO)).toThrow(NoGitRemoteError);
+  });
+
+  it('refuses a name that the server would reject at push time', async () => {
+    await makeGitRepo(REPO, {});
+
+    expect(() => resolveRepoIdentity(REPO, { repo: '   ' })).toThrow(UnnameableProjectError);
+    expect(() => resolveRepoIdentity(REPO, { repo: 'x'.repeat(201) })).toThrow(UnnameableProjectError);
   });
 
   it('says git is missing rather than blaming a remote that is really there', async () => {
@@ -111,6 +183,23 @@ describe('resolveRepoIdentity', () => {
       expect(() => resolveRepoIdentity(REPO)).not.toThrow(NoGitRemoteError);
     } finally {
       process.env.PATH = realPath;
+    }
+  });
+
+  it('does not demand git from a project that is not a repository', async () => {
+    // The complement of the test above, and the reason the `.git` check exists. Missing git is a
+    // real problem for a repository whose remote cannot then be read, and no problem at all for a
+    // directory of notes -- refusing over a tool the project does not use would be the same
+    // overreach as refusing over a missing remote.
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-nogit-'));
+    const realPath = process.env.PATH;
+    process.env.PATH = '';
+
+    try {
+      expect(resolveRepoIdentity(outside).source).toBe('directory');
+    } finally {
+      process.env.PATH = realPath;
+      await fs.rm(outside, { recursive: true, force: true }).catch(() => {});
     }
   });
 });

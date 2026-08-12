@@ -1,15 +1,35 @@
+import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 export type RepoIdentity = {
-  /** `host[:port]/path`, plus `#subpath` when the project is not at the git root. */
+  /**
+   * What this project publishes under. `host[:port]/path` when derived from a remote, plus
+   * `#subpath` when the project sits below the git root; otherwise the name that was asked for,
+   * or the project directory's own.
+   */
   identity: string;
-  remoteName: string;
-  remoteUrl: string;
+  /**
+   * Which of the three routes decided it, recorded rather than re-derived later. A pointer saying
+   * only `notes` cannot answer "was that my folder name, or did somebody type it".
+   */
+  source: 'explicit' | 'remote' | 'directory';
+  /** Null unless the identity came from a remote. */
+  remoteName: string | null;
+  remoteUrl: string | null;
   subpath: string | null;
 };
 
+/**
+ * A remote was named and is not there.
+ *
+ * Only raised for a remote the caller ASKED for. A missing `origin` on a project nobody said
+ * anything about is not an error -- version control is not a condition of using this product.
+ */
 export class NoGitRemoteError extends Error {}
+
+/** No identity could be formed at all, so the caller has to say what to use. */
+export class UnnameableProjectError extends Error {}
 
 /**
  * Git could not be run at all -- distinct from git running and reporting no remote.
@@ -75,7 +95,8 @@ function git(cwd: string, args: string[]): string | null {
   if (result.error) {
     throw new GitUnavailableError(
       `Could not run git: ${result.error.message}. ` +
-      'Knowl derives a cloud repository identity from the git remote, so git has to be on PATH.',
+      'This project is a git repository, so Knowl would normally read its identity from a remote. ' +
+      'Put git on PATH, or pass --repo <name> to name the project yourself.',
     );
   }
   if (result.status !== 0) return null;
@@ -83,31 +104,61 @@ function git(cwd: string, args: string[]): string | null {
 }
 
 /**
- * Which remote, and therefore which bucket this repo publishes into.
+ * What this project publishes under, by one of three routes.
  *
- * `origin` by default and overridable, because in a fork workflow `origin` is the fork and
- * `upstream` is the team's. Whichever was used is recorded on the result and written into
- * config, so the answer stays inspectable rather than being re-derived differently later.
+ * A remote is the best answer WHEN THERE IS ONE: it is identical for everyone who clones, so a
+ * team lands in one bucket without anybody typing anything, and `#subpath` keeps a monorepo's
+ * packages apart. It was also, until this change, the ONLY answer — a project with no remote was
+ * refused outright, which made git a condition of using the cloud. It is not one. A directory of
+ * notes is a project; so is work that has never been pushed anywhere. People pay for how much they
+ * store, not for keeping it in a shape this tool recognises.
+ *
+ * So the remote is now a default rather than a requirement, and the routes are, in order:
+ * an explicit `--repo` name; the named-or-default remote; the project directory's own name.
  */
 export function resolveRepoIdentity(
   projectRoot: string,
-  options: { remote?: string } = {},
+  options: { remote?: string; repo?: string } = {},
 ): RepoIdentity {
-  const remoteName = options.remote ?? 'origin';
-  const remoteUrl = git(projectRoot, ['config', '--get', `remote.${remoteName}.url`]);
+  // Named outright, so no git runs at all -- the route for a project that is not a repository, or
+  // is one with nowhere to push. First, because a caller who says what they want should not have
+  // the answer overridden by whatever git happens to report.
+  if (options.repo !== undefined) {
+    return {
+      identity: sanitizeName(options.repo, 'The --repo name'),
+      source: 'explicit',
+      remoteName: null,
+      remoteUrl: null,
+      subpath: null,
+    };
+  }
+
+  // Asked-for versus assumed, and the difference decides whether a miss is an error. `--remote
+  // upstream` against a repo with no `upstream` is a typo worth reporting; no `origin` on a project
+  // nobody said anything about is just a project with nowhere to push.
+  const requested = options.remote;
+  const remoteName = requested ?? 'origin';
+  const remoteUrl = readRemote(projectRoot, remoteName);
+
   if (!remoteUrl) {
-    throw new NoGitRemoteError(
-      `No git remote "${remoteName}" in ${projectRoot}. ` +
-      'A cloud workspace keys published knowledge on the remote URL, so a repository with ' +
-      'no remote has no stable identity to publish under. Add a remote, or pass --remote ' +
-      'to name a different one.',
-    );
+    if (requested !== undefined) {
+      throw new NoGitRemoteError(
+        `No git remote "${requested}" in ${projectRoot}. ` +
+        'Check the name against `git remote -v`, drop the flag to use origin, or pass ' +
+        '--repo <name> to name this project without a remote.',
+      );
+    }
+    return fromDirectory(projectRoot);
   }
 
   const identity = normalizeRemoteUrl(remoteUrl);
   if (!identity) {
+    // The remote exists and cannot be reduced to an identity. Deliberately NOT replaced by the
+    // directory name: a project carrying a remote plainly means to publish under it, and quietly
+    // filing it somewhere else would put a team's knowledge in a bucket nobody is reading.
     throw new NoGitRemoteError(
-      `Could not read a repository identity from remote "${remoteName}" (${remoteUrl}).`,
+      `Could not read a repository identity from remote "${remoteName}" (${remoteUrl}). ` +
+      'Pass --repo <name> to name this project explicitly.',
     );
   }
 
@@ -118,8 +169,69 @@ export function resolveRepoIdentity(
 
   return {
     identity: subpath ? `${identity}#${subpath}` : identity,
+    source: 'remote',
     remoteName,
     remoteUrl,
     subpath,
   };
+}
+
+/**
+ * Reads a remote, treating "this is not a git repository" as an answer rather than a failure.
+ *
+ * The `.git` test is what keeps a missing git binary meaningful. `GitUnavailableError` exists so a
+ * machine without git is not told to add a remote it already has, and that is still right for a
+ * repository -- but a plain directory has no remote to be wrong about, and refusing to connect over
+ * a tool it does not need would be the same overreach as demanding a remote. So: a repository and
+ * no git, complain; no repository, fall through to the name.
+ */
+function readRemote(projectRoot: string, remoteName: string): string | null {
+  const looksLikeRepo = existsSync(path.join(projectRoot, '.git'));
+  try {
+    return git(projectRoot, ['config', '--get', `remote.${remoteName}.url`]);
+  } catch (error) {
+    if (error instanceof GitUnavailableError && !looksLikeRepo) return null;
+    throw error;
+  }
+}
+
+/**
+ * The project's own directory name.
+ *
+ * Stable for as long as the folder is called what it is called, which is all an identity has to be:
+ * the server treats this value as a label for grouping, not as a claim about anything. It is not
+ * unique across machines, so two people who each keep notes in `~/notes` and connect to one
+ * workspace share a bucket. That is visible in the connect output and fixed by naming one of them
+ * with `--repo`, which is a better trade than refusing to run.
+ */
+function fromDirectory(projectRoot: string): RepoIdentity {
+  const base = path.basename(path.resolve(projectRoot));
+  return {
+    identity: sanitizeName(base, `The project directory name ("${base}")`),
+    source: 'directory',
+    remoteName: null,
+    remoteUrl: null,
+    subpath: null,
+  };
+}
+
+/**
+ * Lowercased and whitespace-collapsed, matching what `normalizeRemoteUrl` does to a remote so the
+ * routes cannot produce two identities for one project. Length is bounded here because the server
+ * accepts 200 characters, and a value refused there would fail at push -- long after connect said
+ * yes, and with a message about a limit the user never saw.
+ */
+function sanitizeName(raw: string, subject: string): string {
+  const cleaned = raw.trim().toLowerCase().replace(/\s+/g, '-');
+  if (!cleaned) {
+    throw new UnnameableProjectError(
+      `${subject} is empty, so there is nothing to publish under. Pass --repo <name>.`,
+    );
+  }
+  if (cleaned.length > 200) {
+    throw new UnnameableProjectError(
+      `${subject} is ${cleaned.length} characters and the limit is 200. Pass a shorter --repo <name>.`,
+    );
+  }
+  return cleaned;
 }

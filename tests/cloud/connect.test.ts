@@ -192,15 +192,94 @@ describe('runConnect', () => {
     expect((await loadConfig(REPO)).cloud).toBeUndefined();
   });
 
-  it('refuses a repo with no git remote', async () => {
+  /*
+   * This asserted `refuses a repo with no git remote` until the requirement was dropped. Connecting
+   * used to be gated on git, for a product people pay for by how much they store; the server has
+   * only ever validated `originRepo` as a non-empty string and treats it as a label.
+   */
+  it('connects a repo with no git remote, naming it after the directory', async () => {
     await makeRepo(null);
     await writeCredential(HOST, credential);
 
-    await expect(runConnect({
+    const result = await runConnect({
       projectRoot: REPO,
       apiHost: HOST,
       api: api([{ id: 'w1', name: 'Acme', role: 'editor' }]),
-    })).rejects.toThrow(/no git remote/i);
+    });
+
+    expect(result.status).toBe('connected');
+    const pointer = (await loadConfig(REPO)).cloud;
+    expect(pointer?.repo).toBe(path.basename(REPO).toLowerCase());
+    // Absent, not 'origin': recording a remote it never read would make the pointer claim the
+    // identity is shared when it is one machine's folder name.
+    expect(pointer?.remote).toBeUndefined();
+  });
+
+  it('publishes under an explicit name when one is given', async () => {
+    await makeRepo(null);
+    await writeCredential(HOST, credential);
+
+    const result = await runConnect({
+      projectRoot: REPO,
+      apiHost: HOST,
+      repo: 'Team Notes',
+      api: api([{ id: 'w1', name: 'Acme', role: 'editor' }]),
+    });
+
+    expect(result.status).toBe('connected');
+    expect((await loadConfig(REPO)).cloud?.repo).toBe('team-notes');
+  });
+
+  /*
+   * The trap the fallback introduces, and the reason connect guards rather than just writing.
+   *
+   * Identity is derived, so adding a remote to a project that had none moves it — from the folder
+   * name to the remote URL — with nobody deciding to move it. Atoms already pushed stay filed under
+   * the old name, and the server refuses a write carrying a different origin as `foreign_origin`,
+   * so the next push half-fails with an ownership error rather than anything about renaming.
+   */
+  it('refuses to re-key a project whose identity has moved, and says how to keep it', async () => {
+    await makeRepo(null);
+    await writeCredential(HOST, credential);
+    await runConnect({
+      projectRoot: REPO,
+      apiHost: HOST,
+      repo: 'original-name',
+      api: api([{ id: 'w1', name: 'Acme', role: 'editor' }]),
+    });
+
+    const result = await runConnect({
+      projectRoot: REPO,
+      apiHost: HOST,
+      api: api([{ id: 'w1', name: 'Acme', role: 'editor' }]),
+    });
+
+    expect(result).toEqual({
+      status: 'identity-changed',
+      current: 'original-name',
+      next: path.basename(REPO).toLowerCase(),
+    });
+    // And the pointer is left exactly as it was, so the refusal costs nothing to recover from.
+    expect((await loadConfig(REPO)).cloud?.repo).toBe('original-name');
+  });
+
+  it('still re-connects when only the workspace changes', async () => {
+    // The ordinary reason to re-run connect. It must not be caught by the guard above, or changing
+    // workspace would require naming the repo you already publish as.
+    await makeRepo('git@github.com:acme/web.git');
+    await writeCredential(HOST, credential);
+    const workspaces = [
+      { id: 'w1', name: 'Acme', role: 'editor' as const },
+      { id: 'w2', name: 'Beta', role: 'editor' as const },
+    ];
+    await runConnect({ projectRoot: REPO, apiHost: HOST, workspaceId: 'w1', api: api(workspaces) });
+
+    const result = await runConnect({
+      projectRoot: REPO, apiHost: HOST, workspaceId: 'w2', api: api(workspaces),
+    });
+
+    expect(result.status).toBe('connected');
+    expect((await loadConfig(REPO)).cloud?.workspaceId).toBe('w2');
   });
 });
 

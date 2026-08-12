@@ -288,9 +288,16 @@ export interface ProjectConfig {
     apiHost: string;
     workspaceId: string;
     workspaceName?: string;
-    /** Normalized git remote identity this repo publishes under. */
+    /**
+     * What this project publishes under: a normalized remote identity when there is a remote,
+     * otherwise a name that was given or taken from the project directory. A label, not a claim
+     * about version control -- the server accepts any non-empty string here.
+     */
     repo: string;
-    /** Which remote it was derived from, so a fork's choice stays inspectable. */
+    /**
+     * Which remote it was derived from, so a fork's choice stays inspectable. Absent when the
+     * identity did not come from one, which is not the same as `origin`.
+     */
     remote?: string;
     /**
      * Stage new knowledge as it is written. Absent means on; only an explicit false disables it.
