@@ -591,7 +591,10 @@ knowl workspace init product
 knowl workspace add product
 knowl workspace status
 
-# Preview, then promote selected local knowledge.
+# Bare: pick from a list, with the categories worth sharing already ticked.
+knowl workspace promote
+
+# Or name them, which skips the picker and dry-runs until --apply.
 knowl workspace promote --category decision
 knowl workspace promote --category decision --apply
 ```
@@ -621,7 +624,7 @@ The shipped workspace commands are:
 | `knowl workspace list` | List workspaces known to this machine |
 | `knowl workspace status [--verbose]` | Show this repository's membership and peer health |
 | `knowl workspace remove <repo-name> [--export-first]` | Unlink the current repository, retiring its name if it still owns atoms |
-| `knowl workspace promote (--category <list> \| --id <id...>) [--apply]` | Preview or publish selected locally owned atoms |
+| `knowl workspace promote [--category <list> \| --id <id...>] [--apply]` | Share locally owned atoms with linked repos. Bare opens a picker with `decision, constraint, architecture, goal, skill` preticked and confirming applies; `--apply` is only needed on the flag path |
 | `knowl workspace repin-embedding [--yes]` | Move the workspace to this repository's embedding model and list the peers that must reindex |
 
 ### Federation and ownership
@@ -694,7 +697,7 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 | `knowl cloud logout [--api <host>]` | Clear the stored credential |
 | `knowl cloud connect [--workspace <id>] [--remote <name>] [--repo <name>]` | Point this project at a workspace. Publishes nothing |
 | `knowl cloud pull` | Fetch team knowledge into the local replica |
-| `knowl cloud stage [--id <ids...>] [--category <list>] [--apply]` | Stage knowledge for publication. Dry run without `--apply` |
+| `knowl cloud stage [--id <ids...>] [--category <list>] [--apply]` | Queue knowledge for the team. Bare opens the same picker; naming flags dry-runs until `--apply` |
 | `knowl cloud push` | Send staged knowledge, once its code is on the default branch |
 | `knowl cloud retract <id> --reason <text>` | Remove a published atom for good. Works from any branch |
 | `knowl cloud status` | What is connected, how stale the replica is, and what is staged |
