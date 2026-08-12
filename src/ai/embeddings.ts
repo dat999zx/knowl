@@ -26,17 +26,29 @@ const MAX_EMBED_BATCH = 32;
  *
  * Attention allocates `batch Ã— heads Ã— seq Ã— seq`, so the largest single allocation this
  * module can ever request is one clipped item on its own: arctic-embed-m-v2 has 12 heads
- * and fp32 scores, giving `2,560Â² Ã— 12 Ã— 4 bytes â‰ˆ 315 MB`. Nothing else here can exceed
+ * and fp32 scores, giving `2,048Â² Ã— 12 Ã— 4 bytes â‰ˆ 201 MB`. Nothing else here can exceed
  * that, because the batch budget below is far smaller.
  *
  * A CHARACTER clip cannot make that promise. The old limit was 8,000 characters, justified
  * in a comment as "roughly 2k tokens" -- true of English prose and wrong by 3x of the paths,
  * JSON and code that knowledge atoms are full of. Measured with arctic's own tokeniser,
  * 8,000 characters is 1,925 tokens of English and 6,283 of JSON, and the second one asks
- * for 1.8 GB in a single forward pass. 2,560 tokens clips 0 of the 470 real atoms
- * (p99 1,808 estimated tokens, longest 2,085).
+ * for 1.8 GB in a single forward pass.
+ *
+ * **2,048 rather than 2,560 since 2026-08-12, and it is a PARITY decision rather than a tuning
+ * one.** `knowl-cloud` clips here too, and a client-supplied vector is interchangeable with a
+ * server-supplied one only if the cut is identical as well as the text -- see
+ * `src/core/embed-recipe.ts`. 2,048 was chosen over raising the server to 2,560 because a
+ * forward pass is priced by tokens and both sides pay it on every embed forever, where the
+ * re-clip is once.
+ *
+ * The cost of the change, stated because it is not nothing: over the 470 real atoms measured
+ * above (p99 1,808 estimated tokens, longest 2,085), 2,560 clipped none and 2,048 clips the
+ * longest one. Every store built before this is stale for atoms in that range -- safe only
+ * because `fingerprintProfile` hashes `EMBED_RECIPE_VERSION`, so those rows stop matching and
+ * `knowl reindex --vectors` repairs them without `--force`.
  */
-const MAX_EMBED_TOKENS = 2_560;
+const MAX_EMBED_TOKENS = 2_048;
 
 /**
  * Budget for `items Ã— longestÂ²`, in TOKENS. A THROUGHPUT bound, not the memory one.
@@ -89,8 +101,24 @@ export function estimateTokens(text: string): number {
   return tokens;
 }
 
-/** Clip to `MAX_EMBED_TOKENS`, cutting on a segment boundary, and report what is left. */
-function clipToTokenBudget(text: string): { text: string; tokens: number } {
+/**
+ * Clip to `MAX_EMBED_TOKENS`, cutting on a segment boundary where one exists, and report what
+ * is left.
+ *
+ * **A first segment that alone exceeds the budget is cut mid-segment rather than dropped.**
+ * Cutting only on boundaries returns `capped.slice(0, 0)` in that case -- the EMPTY STRING --
+ * so the atom embeds as nothing and stores a meaningless vector, with no error anywhere.
+ *
+ * Reachable, and narrower than it looks. `MAX_EMBED_CHARS` pre-clips to 8,000 characters, and
+ * `segmentTokens` charges a letter run `ceil(len/4)`, so the most one can ever cost is 2,000
+ * tokens -- under the budget, so letters never reach this path. A DIGIT run is charged
+ * `ceil(len/3)` and costs 2,667, which does. Base64, minified JSON, hashes and spaceless
+ * numeric dumps are all ordinary atom content.
+ *
+ * Exported for tests. It is a pure string function, and reaching it through `embed()` would
+ * make a model download a prerequisite for asserting a slice.
+ */
+export function clipToTokenBudget(text: string): { text: string; tokens: number } {
   const capped = text.length > MAX_EMBED_CHARS ? text.slice(0, MAX_EMBED_CHARS) : text;
 
   let tokens = 0;
@@ -98,7 +126,20 @@ function clipToTokenBudget(text: string): { text: string; tokens: number } {
   let match: RegExpExecArray | null;
   while ((match = TOKEN_SEGMENT.exec(capped)) !== null) {
     const cost = segmentTokens(match[0]);
-    if (tokens + cost > MAX_EMBED_TOKENS) return { text: capped.slice(0, match.index), tokens };
+    if (tokens + cost > MAX_EMBED_TOKENS) {
+      if (match.index === 0) {
+        // Cut inside the segment, at the character count this segment's own rate charges the
+        // whole budget for. Derived from the segment rather than assumed, because letters and
+        // digits are charged at different rates and a fixed chars-per-token would be wrong for
+        // one of them.
+        const charsPerToken = match[0].length / cost;
+        return {
+          text: capped.slice(0, Math.max(1, Math.floor(MAX_EMBED_TOKENS * charsPerToken))),
+          tokens: MAX_EMBED_TOKENS,
+        };
+      }
+      return { text: capped.slice(0, match.index), tokens };
+    }
     tokens += cost;
   }
   return { text: capped, tokens };

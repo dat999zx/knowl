@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import path from 'node:path';
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
 import {
-  createLocalEmbeddingProvider, EMBEDDING_LIMITS, estimateTokens, getVectorSearchConfig, planEmbeddingBatches,
-  queryPrefixFor, resetLocalEmbeddingPipeline,
+  clipToTokenBudget, createLocalEmbeddingProvider, EMBEDDING_LIMITS, estimateTokens,
+  getVectorSearchConfig, planEmbeddingBatches, queryPrefixFor, resetLocalEmbeddingPipeline,
 } from '../../src/ai/embeddings.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
@@ -386,5 +386,51 @@ describe('query prefix', () => {
       .toBe('Represent this sentence for searching relevant passages: ');
     expect(queryPrefixFor('onnx-community/granite-embedding-small-english-r2-ONNX')).toBe('');
     expect(queryPrefixFor('')).toBe('');
+  });
+});
+
+describe('clipping to the token budget', () => {
+  it('clips at 2,048 tokens, the budget knowl-cloud also uses', () => {
+    // Parity, not tuning. A vector is interchangeable between the two repos only if the cut is
+    // identical as well as the text.
+    expect(EMBEDDING_LIMITS.maxTokens).toBe(2_048);
+  });
+
+  it('cuts mid-segment when the first segment alone exceeds the budget', () => {
+    // DIGITS, not letters, and that is the whole subtlety. `segmentTokens` charges letters
+    // ceil(len/4) and digits ceil(len/3), and MAX_EMBED_CHARS pre-clips to 8,000 -- so the most
+    // a letter run can ever cost is 2,000 tokens, which is UNDER the budget and never triggers
+    // this path. A digit run costs 2,667 and does. A letter probe here would pass without the
+    // fix and prove nothing.
+    const spaceless = '1'.repeat(9_000);
+
+    const clipped = clipToTokenBudget(spaceless);
+
+    expect(clipped.text.length).toBeGreaterThan(0);
+    expect(clipped.text.startsWith('111')).toBe(true);
+  });
+
+  it('reports the budget it charged for a mid-segment cut', () => {
+    const clipped = clipToTokenBudget('1'.repeat(9_000));
+    expect(clipped.tokens).toBe(EMBEDDING_LIMITS.maxTokens);
+  });
+
+  it('still cuts on a boundary when one is available inside the budget', () => {
+    // Two-letter words, not four. MAX_EMBED_CHARS pre-clips to 8,000 characters first, and
+    // `word ` is 5 chars costing 1 token -- so 8,000 characters of it is only 1,600 tokens and
+    // never reaches the budget at all. `ab ` is 3 chars costing 1 token, so 8,000 characters is
+    // ~2,666 tokens and the boundary cut actually fires.
+    const words = 'ab '.repeat(4_000);
+
+    const clipped = clipToTokenBudget(words);
+
+    expect(clipped.tokens).toBeLessThanOrEqual(EMBEDDING_LIMITS.maxTokens);
+    expect(clipped.text.length).toBeGreaterThan(0);
+    // Cut on a boundary: the text ends on a whole word, never mid-'ab'.
+    expect(clipped.text.trimEnd().endsWith('ab')).toBe(true);
+  });
+
+  it('leaves a text inside the budget untouched', () => {
+    expect(clipToTokenBudget('a short atom').text).toBe('a short atom');
   });
 });
