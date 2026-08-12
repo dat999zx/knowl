@@ -434,6 +434,25 @@ async function readDirSafe(dir: string): Promise<import('node:fs').Dirent[]> {
  */
 const MAX_SUBAGENT_DEPTH = 4;
 
+/**
+ * True for a directory, and for a symlink or Windows junction that points at one.
+ *
+ * `readdir(..., { withFileTypes: true })` returns lstat-like dirents, so `isDirectory()` is false
+ * for a link even when its target is a directory. Every guard below tested that alone, which made
+ * an archive reached through a junction invisible.
+ *
+ * Measured 2026-08-12 on a machine whose code had moved between drives:
+ * `~/.claude/projects/c--Code-knowl-cloud` was a junction to the real `d--Code-knowl-cloud`, and
+ * `knowl reindex --transcripts` indexed 0 of 30 transcripts while exiting 0. The entry's name
+ * matched `wanted` exactly -- it was dropped before the name was ever compared. Silent, because a
+ * repo with no transcripts is an ordinary state and looks identical to one that was skipped.
+ */
+async function isDirectoryLike(full: string, entry: import('node:fs').Dirent): Promise<boolean> {
+  if (entry.isDirectory()) return true;
+  if (!entry.isSymbolicLink()) return false;
+  return fs.stat(full).then(stat => stat.isDirectory(), () => false);
+}
+
 /** Every `.jsonl` in the `subagents/` subtree, at whatever depth the host put it. */
 async function collectSubagentFiles(
   dir: string,
@@ -451,7 +470,7 @@ async function collectSubagentFiles(
       });
       continue;
     }
-    if (entry.isDirectory() && depth < MAX_SUBAGENT_DEPTH) {
+    if ((await isDirectoryLike(path.join(dir, entry.name), entry)) && depth < MAX_SUBAGENT_DEPTH) {
       await collectSubagentFiles(path.join(dir, entry.name), parentSessionId, found, depth + 1);
     }
   }
@@ -529,7 +548,8 @@ export async function scanTranscriptArchive(
   let degraded = rootSet.degraded;
 
   for (const repoDir of await readDirSafe(projectsDir)) {
-    if (!repoDir.isDirectory() || !wanted.has(repoDir.name.toLowerCase())) continue;
+    if (!(await isDirectoryLike(path.join(projectsDir, repoDir.name), repoDir))
+      || !wanted.has(repoDir.name.toLowerCase())) continue;
     const repoPath = path.join(projectsDir, repoDir.name);
 
     // Checked rather than swallowed: a directory this repo owns that cannot be listed right now
@@ -553,7 +573,7 @@ export async function scanTranscriptArchive(
 
       // Only UUID-named directories hold subagent transcripts. `memory/` sits beside them
       // and contains no sessions.
-      if (!entry.isDirectory() || !UUID.test(entry.name)) continue;
+      if (!(await isDirectoryLike(path.join(repoPath, entry.name), entry)) || !UUID.test(entry.name)) continue;
       const nestedPath = path.join(repoPath, entry.name);
 
       for (const nested of await readDirSafe(nestedPath)) {
