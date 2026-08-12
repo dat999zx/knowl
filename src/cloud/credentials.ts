@@ -19,6 +19,15 @@ export type CloudCredential = {
    * the login -- and it is what a future `knowl cloud sessions` would revoke by.
    */
   sessionId: string;
+  /**
+   * Cached at login so `knowl cloud status` can say who you are offline.
+   *
+   * The server sends no user id with the token (see `sessionId` above), and the MCP status path
+   * is forbidden from making a network call -- so a value not captured at login is a value no
+   * later read can produce. Optional because a credential written by 4.x has none, and status
+   * says "identity unknown" rather than inventing one.
+   */
+  identity?: { email: string; displayName: string };
 };
 
 type CredentialFile = { version: 1; hosts: Record<string, CloudCredential> };

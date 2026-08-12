@@ -70,11 +70,15 @@ export class CloudApiError extends Error {
   }
 }
 
+/** What `knowl cloud status` prints for "signed in as". */
+export type CloudIdentity = { email: string; displayName: string };
+
 export type CloudApi = {
   startDeviceAuthorization(): Promise<DeviceAuthorization>;
   pollForToken(deviceCode: string): Promise<CloudCredential | 'pending'>;
   refresh(refreshToken: string): Promise<CloudCredential>;
   listWorkspaces(accessToken: string): Promise<CloudWorkspace[]>;
+  me(accessToken: string): Promise<CloudIdentity>;
   fetchSyncPage(input: {
     workspaceId: string;
     accessToken: string;
@@ -201,6 +205,17 @@ export function createCloudApi(options: {
       });
       if (status !== 200) fail('/v1/workspaces', status, body);
       return body.workspaces ?? [];
+    },
+
+    async me(accessToken) {
+      // Only the two display fields are kept. `orgs` and `workspaces` come back too, but caching
+      // them here would put a second, staler copy of the workspace list beside `listWorkspaces`.
+      const { status, body } = await request<{ user: CloudIdentity }>('/v1/me', {
+        method: 'GET',
+        accessToken,
+      });
+      if (status !== 200) fail('/v1/me', status, body);
+      return { email: body.user.email, displayName: body.user.displayName };
     },
 
     async fetchSyncPage(input) {
