@@ -14,7 +14,8 @@ export type CloudPointer = {
   workspaceId: string;
   workspaceName: string;
   repo: string;
-  remote: string;
+  /** Absent when the identity did not come from a remote, matching how config stores it. */
+  remote?: string;
 };
 
 export type ConnectInput = {
@@ -22,6 +23,8 @@ export type ConnectInput = {
   apiHost: string;
   workspaceId?: string;
   remote?: string;
+  /** Names the project outright: one with no remote, or one that wants a different label. */
+  repo?: string;
   api?: CloudApi;
 };
 
@@ -44,17 +47,38 @@ export type ConnectResult =
     repo: { provider: string; model: string; dtype: string; pooling: string; recipeVersion: number };
     differing: string[];
     itemCount: number;
-  };
+  }
+  | { status: 'identity-changed'; current: string; next: string };
 
 /**
- * Point a repository at a cloud workspace. Publishes nothing.
+ * Point a project at a cloud workspace. Publishes nothing.
  *
- * Identity is resolved BEFORE the network call, so a repository with no remote is refused
- * without spending a request or half-writing config. The pointer is written last, so a
- * failure anywhere leaves the repo exactly as it was.
+ * Identity is resolved BEFORE the network call, so a project that cannot be named at all is
+ * refused without spending a request or half-writing config. The pointer is written last, so a
+ * failure anywhere leaves the project exactly as it was.
  */
 export async function runConnect(input: ConnectInput): Promise<ConnectResult> {
-  const identity = resolveRepoIdentity(input.projectRoot, { remote: input.remote });
+  const identity = resolveRepoIdentity(input.projectRoot, {
+    remote: input.remote,
+    repo: input.repo,
+  });
+
+  /*
+   * Re-connecting must not silently re-key what this project publishes under.
+   *
+   * Identity is DERIVED, so it can move without anyone deciding to move it: add a remote to a
+   * project that had none and the answer goes from the folder name to the remote URL. Everything
+   * already pushed stays filed under the old name, and the server refuses a write carrying a
+   * different origin as `foreign_origin` -- so the next push half-fails on atoms this machine still
+   * believes it owns, with an error about ownership rather than about renaming.
+   *
+   * Changing workspace is the ordinary reason to re-run connect and does not trip this, because the
+   * identity does not change. `--repo <old-name>` is the way through when the rename is intended.
+   */
+  const existing = await loadConfig(input.projectRoot);
+  if (existing.cloud?.repo && existing.cloud.repo !== identity.identity) {
+    return { status: 'identity-changed', current: existing.cloud.repo, next: identity.identity };
+  }
 
   const credential = await readCredential(input.apiHost);
   if (!credential) return { status: 'not-logged-in' };
@@ -86,6 +110,10 @@ export async function runConnect(input: ConnectInput): Promise<ConnectResult> {
   // Before the pointer is written. Vectors are shared with the team, so a repo that embeds
   // differently would either be refused on every push or -- worse, if anything ever stopped
   // checking -- quietly poison the workspace's index.
+  //
+  // A second read rather than reusing the copy taken for the identity check above: the network
+  // calls between them are the slowest part of this function, and config is a file another
+  // process can have written meanwhile.
   const config = await loadConfig(input.projectRoot);
   const mismatch = await profileMismatch(chosen.id, credential.accessToken, api, config);
   if (mismatch) return mismatch;
@@ -99,7 +127,9 @@ export async function runConnect(input: ConnectInput): Promise<ConnectResult> {
     workspaceId: chosen.id,
     workspaceName: chosen.name,
     repo: identity.identity,
-    remote: identity.remoteName,
+    // Omitted rather than nulled when there is no remote, so the committed file carries no field
+    // claiming the identity came from one.
+    remote: identity.remoteName ?? undefined,
   };
 
   await saveConfig(input.projectRoot, { ...config, cloud: pointer });

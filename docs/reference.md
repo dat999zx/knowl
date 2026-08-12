@@ -692,7 +692,7 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 | --- | --- |
 | `knowl cloud login [--api <host>]` | Sign in once, by device code. The credential lives in `~/.knowl`, never in `.knowl/config.json` |
 | `knowl cloud logout [--api <host>]` | Clear the stored credential |
-| `knowl cloud connect [--workspace <id>] [--remote <name>]` | Point this repository at a workspace. Publishes nothing |
+| `knowl cloud connect [--workspace <id>] [--remote <name>] [--repo <name>]` | Point this project at a workspace. Publishes nothing |
 | `knowl cloud pull` | Fetch team knowledge into the local replica |
 | `knowl cloud stage [--id <ids...>] [--category <list>] [--apply]` | Stage knowledge for publication. Dry run without `--apply` |
 | `knowl cloud push` | Send staged knowledge, once its code is on the default branch |
@@ -713,10 +713,32 @@ export KNOWL_API_HOST=https://knowl.example.internal
 
 ### Identity and connection
 
-A repository is identified by its **normalized git remote**, not its directory name, so two
-people who cloned to different paths publish to the same place. A repository with no remote is
-refused: there is no stable identity to publish under. In a fork, `origin` is your fork and
-`upstream` is the team's — `--remote` picks, and the choice is recorded in config.
+A project publishes under one identity, resolved by the first of these that applies:
+
+1. `--repo <name>`, if you give one.
+2. Its **normalized git remote**, when it has one. This is the best answer available, because it is
+   identical for everyone who clones — two people who cloned to different paths publish to the same
+   place without anyone typing anything. In a fork, `origin` is yours and `upstream` is the team's;
+   `--remote` picks, and the choice is recorded in config. A project below the git root is qualified
+   with `#subpath`, so a monorepo's packages do not pool their knowledge.
+3. Its **directory name**.
+
+**Git is not required.** A folder of notes is a project, and so is work that has never been pushed
+anywhere; neither needs a remote, a `.git`, or git on `PATH`. The identity is a label the server
+groups by, not a claim about version control.
+
+A directory name is not unique across machines, so two people who each keep notes in `~/notes` and
+connect to one workspace would share a bucket. `knowl cloud connect` says when it fell back to the
+directory, and `--repo <name>` settles it.
+
+Because the identity is derived, it can move on its own — add a remote to a project that had none
+and the answer changes. `connect` refuses that rather than re-keying silently, because anything
+already pushed stays filed under the old name and the server rejects writes to it from a different
+one. Re-run with `--repo <old-name>` to keep publishing as before.
+
+Naming a remote that does not exist is still an error: `--remote upstream` on a repo without an
+`upstream` is a typo, and answering it with the directory name would file the knowledge somewhere
+nobody is looking.
 
 The pointer written into `.knowl/config.json` holds the API host, workspace and repo identity and
 **never a credential**. That file is deliberately committable, so a teammate clones, runs

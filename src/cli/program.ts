@@ -944,7 +944,11 @@ cloudCommand
   .description('Point this repository at a cloud workspace (publishes nothing)')
   .option('--api <host>', 'API host (defaults to $KNOWL_API_HOST, else the hosted service)', defaultApiHost())
   .option('--workspace <id>', 'Workspace id, when you belong to more than one')
-  .option('--remote <name>', 'Git remote to derive repo identity from', 'origin')
+  // No default value on purpose. Commander would then make `--remote origin` and no flag at all
+  // indistinguishable, and they mean different things: a remote you named and haven't got is a
+  // typo, while no origin on a project that was never pushed anywhere is not a problem.
+  .option('--remote <name>', 'Git remote to derive the project identity from (default: origin)')
+  .option('--repo <name>', 'Name this project yourself, for one with no git remote')
   .option('--no-auto-stage', 'Do not stage new knowledge automatically; stage it explicitly instead')
   .action(async options => {
     try {
@@ -954,6 +958,7 @@ cloudCommand
         apiHost: options.api,
         workspaceId: options.workspace as string | undefined,
         remote: options.remote,
+        repo: options.repo,
       };
 
       // Shared by both entry paths -- the first attempt and the one that follows a pick -- so a
@@ -968,6 +973,12 @@ cloudCommand
           }
         }
         console.log(`Connected ${connected.pointer.repo} to ${connected.pointer.workspaceName} as ${connected.role}.`);
+        // Only when nobody chose the name. Saying where it came from matters here because a folder
+        // name is not unique across machines, and the fix is a flag the user may not know exists.
+        if (!connected.pointer.remote && !options.repo) {
+          console.log('That name came from the project directory, as there is no git remote to read.');
+          console.log('Pass --repo <name> to publish under something else.');
+        }
         console.log(options.autoStage === false
           ? 'Nothing has been published, and new knowledge will not stage itself. Use knowl cloud stage.'
           : 'Nothing has been published. New knowledge stages itself; send it with knowl cloud push.');
@@ -1022,6 +1033,14 @@ cloudCommand
           + `Switch this repository to that model and re-embed its ${result.itemCount} item(s), `
           + 'then connect again.',
         );
+        process.exit(1);
+      }
+      if (result.status === 'identity-changed') {
+        console.error(`This project publishes as "${result.current}", but now resolves to "${result.next}".`);
+        console.error('Anything already pushed stays filed under the old name, and the server will');
+        console.error('refuse writes to it from a different one. To keep publishing as before:');
+        console.error(`  knowl cloud connect --repo ${result.current}`);
+        console.error('Re-run with the new name only if you mean to start a separate history.');
         process.exit(1);
       }
 
