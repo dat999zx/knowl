@@ -39,7 +39,7 @@ const EXCLUDED_DIRECTORIES = new Set(['.git', '.knowl', 'dist', 'node_modules'])
  * `Error: Invalid argument` with no mention of size. `src/cli/program.ts` (110 KB),
  * `src/mcp/tools.ts` (93 KB), `src/store/{agent-query,portability,bootstrap}.ts` and
  * `src/transcripts/index-pass.ts` are all over it, so the six largest files in this repo were
- * the six the index could not see, and `knowl code index` failed on the first one it reached.
+ * the six the index could not see, and `knowl index-code` failed on the first one it reached.
  *
  * The callback form has no such ceiling: tree-sitter asks for the next slice and we answer one
  * chunk at a time, so the buffer never has to hold more than this. A size rather than a guess

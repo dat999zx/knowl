@@ -35,7 +35,7 @@ function toRecord(row: Record<string, unknown>): PublishedRecord {
  *
  * `ON CONFLICT DO NOTHING` rather than an upsert, because re-staging must be a no-op and not a
  * reset: an atom already pushed carries the `remote_version` every republish needs, and a
- * second `knowl publish` naming it would otherwise blank that number and turn the next push
+ * second `knowl cloud stage` naming it would otherwise blank that number and turn the next push
  * into a conflict the user cannot explain.
  *
  * Returns how many rows were newly staged, which is not the same as how many ids were asked
@@ -150,7 +150,7 @@ export async function recordPushed(
  * `remote_version` is cleared with it, and that is the load-bearing half. The row is kept rather
  * than deleted so `knowl cloud status` can say this machine retracted the atom instead of
  * silently forgetting it ever published one -- but a version left behind would be a claim about
- * a server-side row that no longer exists, and the next `knowl publish --id` naming this atom
+ * a server-side row that no longer exists, and the next `knowl cloud stage --id` naming this atom
  * would send it as `expectedVersion` and be refused by a tombstone it could not see.
  *
  * Re-staging deliberately clears `retracted_at` (see `restageForPublish`): retracting is not a

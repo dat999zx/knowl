@@ -104,7 +104,7 @@ export type CloudApi = {
  * A black-holed connection must fail, not hang.
  *
  * The dropped latency budget was about live retrieval queries, and that reasoning never
- * covered auth: `knowl login` and `knowl cloud connect` are foreground commands with a person
+ * covered auth: `knowl cloud login` and `knowl cloud connect` are foreground commands with a person
  * waiting on them, and a TCP connection that is accepted and then never answered produces no
  * output and no error until the user gives up.
  */

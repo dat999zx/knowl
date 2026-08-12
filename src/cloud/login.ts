@@ -7,7 +7,7 @@ import { isCredentialUsable } from './token.js';
  *
  * It said `api.knowl.dev` for one release cycle, which is a domain the project does not own.
  * That is worse than a dead default: anyone who registered it would receive the device-code
- * request from every `knowl login` run without `--api`, hand back a token the client would
+ * request from every `knowl cloud login` run without `--api`, hand back a token the client would
  * store, and then receive everything that client published. No attack on us required -- just a
  * registration and a user who took the default.
  *
@@ -19,7 +19,7 @@ const HOSTED_API_HOST = 'https://api.knowl.cloud';
  * Machine-wide override, for a self-hosted or tunnelled server.
  *
  * `--api` already exists per command, and `knowl cloud connect` records the host in the repo's
- * config so `pull`, `push` and `status` remember it. Neither helps `knowl login`, which is
+ * config so `pull`, `push` and `status` remember it. Neither helps `knowl cloud login`, which is
  * per-machine rather than per-repo and so has nowhere to remember anything -- which meant
  * retyping the flag on every login against a self-hosted server.
  *

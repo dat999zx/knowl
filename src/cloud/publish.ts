@@ -133,7 +133,7 @@ async function stageInContext(
     // Naming ids is a deliberate act about items the caller has in hand, and it is the only
     // way to send a correction, so it re-stages what was already pushed. A category sweep
     // means "publish what is not published yet" and leaves those alone -- otherwise every
-    // `knowl publish --category decision --apply` would re-send the whole category, spending a
+    // `knowl cloud stage --category decision --apply` would re-send the whole category, spending a
     // version bump and a server-side embedding job per atom on identical content.
     const stage = input.ids?.length ? restageForPublish : stageForPublish;
     await stage(eligible.map(item => item.id), pointer.workspaceId, branch);

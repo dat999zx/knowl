@@ -51,7 +51,7 @@ import { stagePublishInRequest } from '../cloud/publish.js';
 import { loadConfig } from '../core/config.js';
 
 export const CLOUD_DISCONNECTED_MESSAGE =
-  'This repository is not connected to a cloud workspace. Ask the user to run `knowl cloud connect` (and `knowl login` first if they are not signed in).';
+  'This repository is not connected to a cloud workspace. Ask the user to run `knowl cloud connect` (and `knowl cloud login` first if they are not signed in).';
 
 /**
  * Ceilings for the handlers. The ones the SCHEMAS quote live beside the schemas, in

@@ -394,7 +394,7 @@ knowl state                            # the active memory, as a hierarchy
 knowl conflicts                        # items that contradict each other
 knowl timeline <item-id>               # every version an atom ever had
 knowl context --token-budget 1500      # a fixed-size briefing for an agent
-knowl pr check --since origin/main     # knowledge your diff may invalidate
+knowl pr --since origin/main     # knowledge your diff may invalidate
 knowl doctor                           # setup, retrieval, and registration
 ```
 
@@ -414,10 +414,10 @@ knowl doctor                           # setup, retrieval, and registration
   `knowl query "auth design" --as-of 2026-01-01T00:00:00Z`
 - **Evidence** — attach files, symbols, commits, tests, commands, or URLs to an atom. File and
   symbol evidence go stale *by themselves* when the code moves.
-- **Drift detection** — `knowl pr check --since origin/main` flags knowledge your diff may have
+- **Drift detection** — `knowl pr --since origin/main` flags knowledge your diff may have
   invalidated, before you merge it.
 - **Code intelligence** — incremental Tree-sitter index over `.ts` / `.tsx` / `.js` / `.jsx`, so
-  evidence can point at `symbol://` locators, not just line numbers. `knowl code index`
+  evidence can point at `symbol://` locators, not just line numbers. `knowl index-code`
 - **Secret-safe writes** — every write is screened for detected secrets, sensitive paths, and
   oversized content before it lands. Long-lived memory is the last place a credential should end up.
 
@@ -442,7 +442,7 @@ knowl doctor                           # setup, retrieval, and registration
 - **Token-budgeted context packs** — hand an agent a fixed-size briefing with constraints pinned
   first, so non-negotiable rules never get truncated away:
   `knowl context --query "auth rollout" --token-budget 1500`
-- **Usage feedback** — agents report whether a result helped, and `knowl access report` shows what
+- **Usage feedback** — agents report whether a result helped, and `knowl access` shows what
   is heavily used, what is stale, and what keeps causing corrections.
 
 → [Retrieval and context](docs/reference.md#retrieval-and-context)
@@ -559,7 +559,7 @@ loopback binding is the privacy boundary: do not put it behind a public proxy or
 and two resource URIs · the
 **complete CLI**, from `knowl status` to `knowl audit` · a **read-only integrity audit** ·
 **retrieval evaluation** you can run yourself against the checked-in governance and 500-case
-regression suites with `knowl eval retrieval`.
+regression suites with `knowl eval`.
 
 → [CLI reference](docs/reference.md#cli-reference) ·
 [MCP tools](docs/reference.md#mcp-tools-and-resources) ·

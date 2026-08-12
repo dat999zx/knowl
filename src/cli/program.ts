@@ -1031,7 +1031,7 @@ cloudCommand
         process.exit(1);
       }
       if (result.status === 'not-logged-in') {
-        console.error('Not signed in. Run knowl login first.');
+        console.error('Not signed in. Run knowl cloud login first.');
         process.exit(1);
       }
 
@@ -1139,7 +1139,7 @@ cloudCommand
         process.exit(1);
       }
       if (result.status === 'not-logged-in') {
-        console.error('Not signed in. Run knowl login first.');
+        console.error('Not signed in. Run knowl cloud login first.');
         process.exit(1);
       }
       if (result.status === 'forbidden') {
