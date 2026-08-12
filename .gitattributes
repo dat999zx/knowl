@@ -1,0 +1,19 @@
+# Line endings are decided here, not by each contributor's core.autocrlf.
+#
+# Without this file every checkout's autocrlf setting decides what lands, and a
+# contributor whose environment writes CRLF commits an entire file back changed --
+# PR #87 reported +3598/-3592 on src/cli/program.ts for six real added lines, and a
+# branch editing that file normally then conflicts on every line of it.
+#
+# `text=auto` lets git decide which files are text; `eol=lf` fixes what goes into a
+# commit. A CRLF working tree still works locally -- only the stored form is pinned.
+* text=auto eol=lf
+
+# Binaries git must never touch.
+*.png binary
+*.jpg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.onnx binary
