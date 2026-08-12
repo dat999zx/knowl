@@ -1009,6 +1009,21 @@ cloudCommand
         await reportConnected(confirmed);
         return;
       }
+      if (result.status === 'profile-mismatch') {
+        // Nothing has been written: the pointer is only saved once the profiles agree, so this
+        // repository is left exactly as it was rather than connected-but-unable-to-publish.
+        console.error(
+          `This workspace embeds with ${result.workspace.model} `
+          + `(${result.workspace.dtype}, ${result.workspace.pooling}, recipe ${result.workspace.recipeVersion}).\n`
+          + `This repository uses ${result.repo.model} `
+          + `(${result.repo.dtype}, ${result.repo.pooling}, recipe ${result.repo.recipeVersion}).\n`
+          + `Differing: ${result.differing.join(', ')}.\n\n`
+          + 'Vectors are shared with the team, so they must be built the same way.\n'
+          + `Switch this repository to that model and re-embed its ${result.itemCount} item(s), `
+          + 'then connect again.',
+        );
+        process.exit(1);
+      }
 
       await reportConnected(result);
     } catch (error: any) {

@@ -60,6 +60,22 @@ function toCredential(body: TokenResponseBody): CloudCredential {
 }
 
 export type CloudRole = 'owner' | 'admin' | 'editor' | 'reader';
+
+/**
+ * The profile a workspace's vectors are built with, as the server reports it.
+ *
+ * Five values, never a preset name: a name is only meaningful to whoever owns the table that
+ * expands it, and after 5.0 the server no longer owns one. `recipeVersion` is the field a
+ * model-only comparison cannot express -- it says what TEXT went into the model.
+ */
+export type WorkspaceProfile = {
+  provider: string;
+  model: string;
+  dtype: string;
+  pooling: string;
+  dimensions: number;
+  recipeVersion: number;
+};
 export type CloudWorkspace = { id: string; name: string; role: CloudRole };
 
 /** Carries the status so callers can branch: 401 means log in, 403 means not a member. */
@@ -98,6 +114,11 @@ export type CloudApi = {
     itemId: string;
     body: UpdateItemBody;
   }): Promise<{ outcome: PublishOutcome | null }>;
+  /** The profile this repo must match to publish. `reader` is enough to read it. */
+  workspaceProfile(input: {
+    workspaceId: string;
+    accessToken: string;
+  }): Promise<WorkspaceProfile>;
 };
 
 /**
@@ -253,6 +274,18 @@ export function createCloudApi(options: {
       );
       if (status !== 200) fail('/knowledge', status, body as { code?: string; message?: string });
       return { outcomes: body.outcomes ?? [], commitId: body.commitId ?? null };
+    },
+
+    async workspaceProfile(input) {
+      const { status, body } = await request<{ serving: WorkspaceProfile }>(
+        `/v1/workspaces/${encodeURIComponent(input.workspaceId)}/policy`,
+        { method: 'GET', accessToken: input.accessToken },
+      );
+      if (status !== 200) fail('/policy', status, body);
+      // `serving`, never `target`. Target is an in-flight admin state during a reindex, and a
+      // client that embedded against it would build vectors for a generation the workspace is
+      // not searching yet.
+      return body.serving;
     },
 
     /** `needsReview` answers `{ outcome: null }` -- it records an observation, not a revision. */
