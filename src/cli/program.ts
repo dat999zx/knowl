@@ -760,6 +760,36 @@ for (const [gone, replacement] of [
     });
 }
 
+/**
+ * Every failure in this group sets `process.exitCode` and returns. None of them calls
+ * `process.exit`, and that is deliberate.
+ *
+ * A cloud verb can have loaded the embedder before it fails: staging and pushing build vectors,
+ * connect compares profiles, pull decides what still needs embedding. Calling `process.exit(1)`
+ * there tears the process down while the runtime's async handle is mid-close, and libuv aborts on
+ * the way out:
+ *
+ *     Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 76
+ *
+ * The abort wins the race, so the shell sees **127** rather than 1. That is worse than an
+ * arbitrary wrong number, because 127 conventionally means "command not found" — so the first
+ * thing anyone debugging it checks is their PATH and their install, neither of which is the
+ * problem. Measured, not guessed: 3/3 aborts on `cloud push` against a mismatched workspace,
+ * while the same command on its success path exits 0 clean, which is what pins it to the exit
+ * and not to the command. `cloud retract`'s failure exits 1 clean because that path never loads
+ * the embedder, and a bare `cloud stage` refuses before loading it too.
+ *
+ * Setting `exitCode` lets the loop drain and the handles close on their own, and the process ends
+ * with 1 the way every other error path in this file already does.
+ *
+ * **The `return` is load-bearing.** `process.exit` stopped the command as a side effect; setting
+ * a code does not. Every conversion here is a guard with code after it, so dropping the return
+ * would carry on past a refusal — a worse bug than the one being fixed.
+ * `tests/cli/cloud-exit-codes.test.ts` holds that invariant.
+ *
+ * Scoped to this group on purpose. The other command groups exit from paths that never touch the
+ * embedder, and rewriting sixty-odd call sites to fix two would be a diff nobody can review.
+ */
 const cloudCommand = program.command('cloud').description('Publish to and read from a Knowl Cloud workspace');
 
 cloudCommand
@@ -790,12 +820,14 @@ cloudCommand
       }
       if (result.status === 'expired') {
         console.error('The code expired before it was approved. Run knowl cloud login again.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       console.log(`Signed in to ${options.api}.`);
     } catch (error: any) {
       console.error(`Login failed: ${error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
@@ -817,7 +849,8 @@ cloudCommand
       const credential = await readCredential(options.api);
       if (!credential) {
         console.error('Not signed in. Run knowl cloud login first.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       const workspaces = await createCloudApi({ apiHost: options.api })
         .listWorkspaces(credential.accessToken);
@@ -830,7 +863,8 @@ cloudCommand
       }
     } catch (error: any) {
       console.error(`Listing workspaces failed: ${error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
@@ -854,7 +888,8 @@ cloudCommand
 
       if (result.status === 'not-connected') {
         console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       for (const item of result.items) console.log(`  ${item.category}  ${item.title}`);
       if (result.skippedForeign > 0) {
@@ -882,7 +917,8 @@ cloudCommand
       }
     } catch (error: any) {
       console.error(`Staging failed: ${error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
@@ -893,13 +929,15 @@ cloudCommand
   .action(async (state: string) => {
     if (state !== 'on' && state !== 'off') {
       console.error('Expected on or off.');
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     const root = await findProjectRoot(process.cwd());
     const config = await loadConfig(root);
     if (!config.cloud) {
       console.error('This repository is not connected to a cloud workspace.');
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     await writeAutoPushConsent(config.cloud.workspaceId, state === 'on');
     const workspace = config.cloud.workspaceName ?? config.cloud.workspaceId;
@@ -921,7 +959,8 @@ cloudCommand
       const config = await loadConfig(root);
       if (!config.cloud) {
         console.error('This repository is not connected to a cloud workspace.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       await initDb(root);
       try {
@@ -936,7 +975,8 @@ cloudCommand
       }
     } catch (error: any) {
       console.error(`Unstage failed: ${error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
@@ -989,17 +1029,20 @@ cloudCommand
 
       if (result.status === 'not-logged-in') {
         console.error('Not signed in. Run knowl cloud login first.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'no-workspaces') {
         console.error('You are signed in but do not belong to any workspace yet.');
         console.error('Ask a workspace owner to invite you, or create one in the web console.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'unknown-workspace') {
         console.error(`No workspace with id "${result.workspaceId}". You belong to:`);
         for (const entry of result.workspaces) console.error(`  ${entry.id}  ${entry.name} (${entry.role})`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'ambiguous') {
         // The list is already in hand -- `runConnect` fetched it to discover the ambiguity -- so
@@ -1010,13 +1053,15 @@ cloudCommand
           // command gave before the picker existed.
           console.error('You belong to more than one workspace. Re-run with --workspace <id>:');
           for (const entry of result.workspaces) console.error(`  ${entry.id}  ${entry.name} (${entry.role})`);
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
         // Re-entered with the choice made, rather than writing the pointer here as well.
         const confirmed = await runConnect({ ...connectInput, workspaceId: chosen });
         if (confirmed.status !== 'connected') {
           console.error(`Connect failed after choosing a workspace: ${confirmed.status}`);
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
         await reportConnected(confirmed);
         return;
@@ -1038,13 +1083,15 @@ cloudCommand
         console.error('refuse writes to it from a different one. To keep publishing as before:');
         console.error(`  knowl cloud connect --repo ${result.current}`);
         console.error('Re-run with the new name only if you mean to start a separate history.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       await reportConnected(result);
     } catch (error: any) {
       console.error(`Connect failed: ${error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
@@ -1059,11 +1106,13 @@ cloudCommand
 
       if (result.status === 'not-connected') {
         console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'not-logged-in') {
         console.error('Not signed in. Run knowl cloud login first.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       const { sync } = result;
@@ -1078,7 +1127,8 @@ cloudCommand
       }
     } catch (error: any) {
       console.error(`Pull failed: ${error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
@@ -1107,7 +1157,8 @@ cloudCommand
           + 'embedding profile, so nothing was sent.\n'
           + 'Run `knowl reindex --vectors`, then push again.',
         );
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       if (snapshot.items.length > 0 && !options.yes) {
@@ -1115,7 +1166,8 @@ cloudCommand
           // A prompt that cannot be answered must not block CI, and silence must not be read
           // as consent for something irreversible.
           console.error(`${snapshot.items.length} item(s) would be sent. Re-run with --yes to confirm.`);
-          process.exit(1);
+          process.exitCode = 1;
+          return;
         }
         console.log(`About to send ${snapshot.items.length} item(s) to ${config.cloud?.workspaceName ?? 'the workspace'}:`);
         for (const entry of snapshot.items) console.log(`  ${entry.payload.category}  ${entry.payload.title}`);
@@ -1133,26 +1185,31 @@ cloudCommand
 
       if (result.status === 'not-connected') {
         console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'not-logged-in') {
         console.error('Not signed in. Run knowl cloud login first.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'snapshot-stale') {
         console.error('The queue changed while you were deciding, so nothing was sent.');
         if (result.changed.length > 0) console.error(`  ${result.changed.length} listed item(s) were edited.`);
         if (result.added.length > 0) console.error(`  ${result.added.length} new item(s) were staged.`);
         console.error('Run knowl cloud push again to see the current list.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'forbidden') {
         console.error(`You are a ${result.role} in this workspace, which cannot publish.`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'gated') {
         console.error(`${result.staged} item(s) stay staged. ${result.detail}`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'needs-embedding') {
         // Nothing is lost: they stay staged and go out on the next push. Said out loud because a
@@ -1162,7 +1219,8 @@ cloudCommand
           + 'so nothing was sent.\n'
           + `Run \`${result.remedy}\`, then push again.`,
         );
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       console.log(`Published ${result.created} new and ${result.updated} updated item(s).`);
@@ -1174,7 +1232,8 @@ cloudCommand
       }
     } catch (error: any) {
       console.error(`Push failed: ${error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
@@ -1190,33 +1249,39 @@ cloudCommand
 
       if (result.status === 'not-connected') {
         console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'not-logged-in') {
         console.error('Not signed in. Run knowl cloud login first.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'forbidden') {
         console.error(`You are a ${result.role} in this workspace, which cannot remove knowledge.`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'not-published') {
         console.error(`${id} was never pushed from this machine, so there is nothing in the workspace to remove.`);
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'conflict') {
         console.error(
           `${id} changed in the workspace after this machine published it (now version ${result.currentVersion}).`,
         );
         console.error('Run knowl cloud pull, read what it says now, and retract again if it should still go.');
-        process.exit(1);
+        process.exitCode = 1;
+        return;
       }
 
       console.log(`Removed ${id} from the workspace. Teammates lose it on their next sync.`);
       console.log('This cannot be undone, and the id can never be published again.');
     } catch (error: any) {
       console.error(`Retract failed: ${error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
@@ -1230,7 +1295,8 @@ cloudCommand
       console.log(formatCloudStatus(await cloudStatus(root, config)));
     } catch (error: any) {
       console.error(`Status failed: ${error.message}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   });
 
