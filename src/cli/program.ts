@@ -50,6 +50,7 @@ import { readCredential } from '../cloud/credentials.js';
 import { excludeFromPublish } from '../cloud/exclusions.js';
 import { unstagePublish } from '../cloud/ledger.js';
 import { writeAutoPushConsent } from '../cloud/consent.js';
+import { maybeAutoPush } from './auto-push.js';
 import { pickWorkspace } from './cloud-picker.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
@@ -779,6 +780,17 @@ cloudCommand
         ? `Staged ${result.items.length} item(s). Run knowl cloud push to send them.`
         : `${result.items.length} item(s) would be staged. Re-run with --apply.`);
       if (result.applied) console.log('Once pushed, removing it again takes knowl cloud retract, which is irreversible.');
+
+      if (result.applied) {
+        // Only with standing consent, an open gate and an unchanged snapshot. Reported when it
+        // fires, because a send that happened silently is the thing consent is trusted not to be.
+        const auto = await maybeAutoPush({ projectRoot: root, config });
+        if (auto.status === 'pushed') {
+          console.log(`Auto-push is on: sent ${auto.created} new and ${auto.updated} updated item(s).`);
+        } else if (auto.status === 'failed') {
+          console.error(`Auto-push did not send (${auto.detail}). Everything stays staged; run knowl cloud push.`);
+        }
+      }
     } catch (error: any) {
       console.error(`Staging failed: ${error.message}`);
       process.exit(1);
