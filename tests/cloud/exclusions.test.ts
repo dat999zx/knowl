@@ -44,4 +44,50 @@ describe('cloud_excluded', () => {
       args: ['item-1', '2026-08-11T00:00:01.000Z'],
     })).rejects.toThrow();
   });
+
+  it('excludes, reports, lists and clears', async () => {
+    const { clearExclusion, excludeFromPublish, isExcluded, listExcluded } =
+      await import('../../src/cloud/exclusions.js');
+
+    expect(await isExcluded('item-1')).toBe(false);
+
+    await excludeFromPublish('item-1', 'machine-local path');
+    expect(await isExcluded('item-1')).toBe(true);
+
+    const listed = await listExcluded();
+    expect(listed).toHaveLength(1);
+    expect(listed[0].itemId).toBe('item-1');
+    expect(listed[0].reason).toBe('machine-local path');
+    expect(listed[0].excludedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+
+    await clearExclusion('item-1');
+    expect(await isExcluded('item-1')).toBe(false);
+    expect(await listExcluded()).toEqual([]);
+  });
+
+  it('excluding twice is idempotent rather than an error', async () => {
+    const { excludeFromPublish, listExcluded } = await import('../../src/cloud/exclusions.js');
+
+    await excludeFromPublish('item-1', 'first');
+    await excludeFromPublish('item-1', 'second');
+
+    const listed = await listExcluded();
+    expect(listed).toHaveLength(1);
+    // The later reason wins: re-excluding is a restatement, and the newer explanation is the
+    // one the user just gave.
+    expect(listed[0].reason).toBe('second');
+  });
+
+  it('filterExcluded removes excluded ids and preserves order', async () => {
+    const { excludeFromPublish, filterExcluded } = await import('../../src/cloud/exclusions.js');
+
+    await excludeFromPublish('b');
+    expect(await filterExcluded(['a', 'b', 'c'])).toEqual(['a', 'c']);
+    expect(await filterExcluded([])).toEqual([]);
+  });
+
+  it('clearing an exclusion that was never set is a no-op, not an error', async () => {
+    const { clearExclusion } = await import('../../src/cloud/exclusions.js');
+    await expect(clearExclusion('never-seen')).resolves.toBeUndefined();
+  });
 });
