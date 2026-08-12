@@ -1009,6 +1009,21 @@ cloudCommand
         await reportConnected(confirmed);
         return;
       }
+      if (result.status === 'profile-mismatch') {
+        // Nothing has been written: the pointer is only saved once the profiles agree, so this
+        // repository is left exactly as it was rather than connected-but-unable-to-publish.
+        console.error(
+          `This workspace embeds with ${result.workspace.model} `
+          + `(${result.workspace.dtype}, ${result.workspace.pooling}, recipe ${result.workspace.recipeVersion}).\n`
+          + `This repository uses ${result.repo.model} `
+          + `(${result.repo.dtype}, ${result.repo.pooling}, recipe ${result.repo.recipeVersion}).\n`
+          + `Differing: ${result.differing.join(', ')}.\n\n`
+          + 'Vectors are shared with the team, so they must be built the same way.\n'
+          + `Switch this repository to that model and re-embed its ${result.itemCount} item(s), `
+          + 'then connect again.',
+        );
+        process.exit(1);
+      }
 
       await reportConnected(result);
     } catch (error: any) {
@@ -1066,6 +1081,19 @@ cloudCommand
       const snapshot = await computePushSnapshot({ projectRoot: root, config });
       const isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
+      // Before the prompt, not after it. `snapshot.items` omits atoms with no vector, so showing
+      // the prompt first would ask a user to confirm a shorter list than they staged and then
+      // refuse the push anyway. Nothing is lost either way -- they stay staged -- but being told
+      // now, with the command that fixes it, is the difference between an answer and a puzzle.
+      if (snapshot.unembedded.length > 0) {
+        console.error(
+          `${snapshot.unembedded.length} staged item(s) have no vector for this repository's `
+          + 'embedding profile, so nothing was sent.\n'
+          + 'Run `knowl reindex --vectors`, then push again.',
+        );
+        process.exit(1);
+      }
+
       if (snapshot.items.length > 0 && !options.yes) {
         if (!isTTY) {
           // A prompt that cannot be answered must not block CI, and silence must not be read
@@ -1108,6 +1136,16 @@ cloudCommand
       }
       if (result.status === 'gated') {
         console.error(`${result.staged} item(s) stay staged. ${result.detail}`);
+        process.exit(1);
+      }
+      if (result.status === 'needs-embedding') {
+        // Nothing is lost: they stay staged and go out on the next push. Said out loud because a
+        // push that quietly sent nothing would look like success.
+        console.error(
+          `${result.count} staged item(s) have no vector for this repository's embedding profile, `
+          + 'so nothing was sent.\n'
+          + `Run \`${result.remedy}\`, then push again.`,
+        );
         process.exit(1);
       }
 

@@ -1,8 +1,45 @@
 ﻿import type { InValue } from '@libsql/client';
 import { getClient } from '../store/database.js';
 import type { SyncAtom, SyncRow } from './sync-contract.js';
+import type { VectorProfile } from '../core/vector-profile.js';
+import { decodeVector, VectorDecodeError } from './vector-codec.js';
 
-export type ApplyOutcome = { upserted: number; deleted: number };
+/**
+ * The received vector, or null when there is nothing usable to store.
+ *
+ * A wrong-width or malformed vector is refused rather than stored: the replica's column has no
+ * width constraint, so it would sit there ranking as noise forever. Refusing it costs one local
+ * forward pass and is the recoverable direction.
+ */
+function decodeIfUsable(value: string | undefined, dimensions: number | null): Float32Array | null {
+  if (value === undefined) return null;
+  try {
+    // A null expectation still goes through the codec: base64 validity and a whole number of
+    // float32s are checked regardless, and only the width comparison is skipped.
+    const bytes = Buffer.from(value, 'base64');
+    return decodeVector(value, dimensions ?? bytes.byteLength / 4);
+  } catch (error) {
+    if (error instanceof VectorDecodeError) return null;
+    throw error;
+  }
+}
+
+/** float32 bytes, the packing `src/store/vector.ts` reads back. */
+function packVector(values: Float32Array): Uint8Array {
+  return new Uint8Array(values.buffer, values.byteOffset, values.byteLength);
+}
+
+export type ApplyOutcome = {
+  upserted: number;
+  deleted: number;
+  /**
+   * Ids that arrived WITHOUT a usable vector and still need embedding locally.
+   *
+   * Empty on the normal path. Non-empty while a workspace is mid-reindex, where the feed sends
+   * every row text-only by design -- which is the case `embedReplica` now exists to cover.
+   */
+  needEmbedding: string[];
+};
 
 /**
  * One statement, in the shape both `batch` and this module's own bookkeeping need.
@@ -76,10 +113,26 @@ function upsertStatement(item: SyncAtom) {
   };
 }
 
-export async function applySyncRows(rows: SyncRow[]): Promise<ApplyOutcome> {
-  if (rows.length === 0) return { upserted: 0, deleted: 0 };
+export async function applySyncRows(
+  rows: SyncRow[],
+  vectors?: {
+    profile: VectorProfile;
+    fingerprint: string;
+    /**
+     * The width this repository's own embeddings use, or null when it has none yet.
+     *
+     * knowl's presets do not record a dimension -- it appears only in their prose labels -- so
+     * the authoritative source is what this repo has actually produced. Null means there is
+     * nothing to be inconsistent with, so whatever the server sends is accepted; the client
+     * only connected because the two profiles match.
+     */
+    dimensions: number | null;
+  },
+): Promise<ApplyOutcome> {
+  if (rows.length === 0) return { upserted: 0, deleted: 0, needEmbedding: [] };
 
   const statements: Statement[] = [];
+  const needEmbedding: string[] = [];
   let upserted = 0;
 
   for (const row of rows) {
@@ -115,6 +168,33 @@ export async function applySyncRows(rows: SyncRow[]): Promise<ApplyOutcome> {
           args: [row.item.id, evidence.id, evidence.relationship ?? DEFAULT_RELATIONSHIP],
         });
       }
+      // A vector the server built with the profile it is serving. Stored under the LOCAL
+      // fingerprint, which is correct rather than a shortcut: this client only accepted the
+      // workspace because the two profiles match, so the vector genuinely belongs to the local
+      // space and must be filterable by local search like any other row.
+      //
+      // A malformed or wrong-width vector is not fatal -- the atom is already stored and text
+      // -searchable, so it falls back to being embedded locally rather than failing the page.
+      const decoded = vectors ? decodeIfUsable(row.item.vector, vectors.dimensions) : null;
+      if (decoded && vectors) {
+        statements.push({
+          sql: `INSERT INTO knowledge_embeddings
+                  (knowledge_item_id, provider, model, profile_fingerprint, dimensions, vector, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(knowledge_item_id) DO UPDATE SET
+                  provider = excluded.provider, model = excluded.model,
+                  profile_fingerprint = excluded.profile_fingerprint,
+                  dimensions = excluded.dimensions, vector = excluded.vector,
+                  updated_at = excluded.updated_at`,
+          args: [
+            row.item.id, vectors.profile.provider, vectors.profile.model, vectors.fingerprint,
+            decoded.length, packVector(decoded), new Date().toISOString(),
+          ],
+        });
+      } else {
+        needEmbedding.push(row.item.id);
+      }
+
       upserted += 1;
     } else {
       // Tolerated when it matches nothing: reachable on a first sync from a non-zero watermark
@@ -137,5 +217,5 @@ export async function applySyncRows(rows: SyncRow[]): Promise<ApplyOutcome> {
       ? total + Number(result.rowsAffected ?? 0)
       : total, 0);
 
-  return { upserted, deleted: deletedRows };
+  return { upserted, deleted: deletedRows, needEmbedding };
 }
