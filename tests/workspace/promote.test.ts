@@ -148,6 +148,20 @@ describe('promote', () => {
       .rejects.toThrow(/--category|--id/);
   });
 
+  it('names the command the user typed, not the other caller of the same selector', async () => {
+    // `knowl cloud stage` shares this selector, and the message used to hardcode "promote" --
+    // so a bare `stage` told the user to specify what to PROMOTE, naming a real but unrelated
+    // command. Naming the wrong command is worse than naming none.
+    const { selectOwnedItems } = await import('../../src/workspace/promote.js');
+
+    await expect(selectOwnedItems({ repoName: 'server', verb: 'promote' }))
+      .rejects.toThrow(/what to promote/);
+    await expect(selectOwnedItems({ repoName: 'server', verb: 'stage' }))
+      .rejects.toThrow(/what to stage/);
+    await expect(selectOwnedItems({ repoName: 'server', verb: 'stage' }))
+      .rejects.not.toThrow(/promote/);
+  });
+
   it('refuses an id that matches no item, so a truncated id is not silence', async () => {
     // Ids are exact here, and the listings a user copies from show them truncated. Passing a
     // prefix therefore matched nothing and printed "Nothing to promote." -- indistinguishable

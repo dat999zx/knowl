@@ -24,10 +24,15 @@ export type PromoteResult = { items: PromoteTarget[]; applied: boolean; skippedF
  *
  * Extracted from `promoteItems` so publication can apply the identical ownership rules without
  * its side effect -- promotion flips `visibility`, which cloud publication must not touch
- * (decision `ee191dd7db024bec`). The two callers differ in exactly one way, `requireVisibility`,
- * and everything else including every refusal message is one implementation. Rewording the
- * refusals per caller would make one of the two wrong: they name `--category`, `--id` and the
- * Windows `cmd.exe` comma-splitting trap, and those are the same traps either way.
+ * (decision `ee191dd7db024bec`).
+ *
+ * The callers differ in two ways and only two: `requireVisibility`, and the `verb` the bare-call
+ * refusal names. Every other refusal stays one implementation, because they name `--category`,
+ * `--id` and the Windows `cmd.exe` comma-splitting trap, which are the same traps either way.
+ *
+ * The bare-call refusal is the exception because it names the command itself, and the two are
+ * different commands with different consequences -- one shares with linked local repos, the other
+ * queues for the team.
  *
  * Reads the ambient database. The caller owns opening it.
  */
@@ -42,11 +47,25 @@ export async function selectOwnedItems(input: {
    * order.
    */
   requireVisibility?: 'repo';
+  /**
+   * The command the user actually typed, for the bare-call refusal.
+   *
+   * Two commands share this selector and they are not the same command: `knowl workspace promote`
+   * shares with linked local repos, `knowl cloud stage` queues for the team. The message used to
+   * hardcode "promote", so a bare `knowl cloud stage` told the user to specify what to *promote* --
+   * naming a real but unrelated command, which is worse than naming none. Sharing the selector is
+   * right; the message belongs to the caller.
+   */
+  verb?: string;
 }): Promise<{ items: PromoteTarget[]; skippedForeign: number }> {
   const byCategory = input.categories?.length ? input.categories : null;
   const byId = input.ids?.length ? input.ids : null;
   if (!byCategory && !byId) {
-    throw new Error('Specify what to promote with --category <list> or --id <id>. A bare promote would publish the whole repo.');
+    const verb = input.verb ?? 'share';
+    throw new Error(
+      `Specify what to ${verb} with --category <list> or --id <id>. `
+      + `A bare ${verb} would ${verb === 'stage' ? 'queue the whole repo for the team' : 'publish the whole repo'}.`,
+    );
   }
 
   // A category that cannot exist matches nothing, and "matched nothing" is also what a
@@ -183,6 +202,7 @@ export async function promoteItems(input: {
   try {
     const client = getClient();
     const { items, skippedForeign } = await selectOwnedItems({
+      verb: 'promote',
       repoName: input.repoName,
       categories: input.categories,
       ids: input.ids,

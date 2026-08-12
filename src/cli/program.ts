@@ -56,6 +56,7 @@ import { unstagePublish } from '../cloud/ledger.js';
 import { writeAutoPushConsent } from '../cloud/consent.js';
 import { maybeAutoPush } from './auto-push.js';
 import { pickWorkspace } from './cloud-picker.js';
+import { formatProfileMismatch } from './profile-mismatch.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
 import { computePushSnapshot, pushStaged, stagePublish } from '../cloud/publish.js';
@@ -1023,17 +1024,13 @@ cloudCommand
       if (result.status === 'profile-mismatch') {
         // Nothing has been written: the pointer is only saved once the profiles agree, so this
         // repository is left exactly as it was rather than connected-but-unable-to-publish.
-        console.error(
-          `This workspace embeds with ${result.workspace.model} `
-          + `(${result.workspace.dtype}, ${result.workspace.pooling}, recipe ${result.workspace.recipeVersion}).\n`
-          + `This repository uses ${result.repo.model} `
-          + `(${result.repo.dtype}, ${result.repo.pooling}, recipe ${result.repo.recipeVersion}).\n`
-          + `Differing: ${result.differing.join(', ')}.\n\n`
-          + 'Vectors are shared with the team, so they must be built the same way.\n'
-          + `Switch this repository to that model and re-embed its ${result.itemCount} item(s), `
-          + 'then connect again.',
-        );
-        process.exit(1);
+        console.error(formatProfileMismatch(result));
+        // `exitCode` rather than `exit(1)`: this path has loaded the embedder, and tearing the
+        // process down while its async handle is mid-close aborts with a native assertion
+        // (`UV_HANDLE_CLOSING`) that reports 127 -- which conventionally means "not found" and
+        // sends whoever debugs it somewhere else entirely. Letting the loop drain exits 1.
+        process.exitCode = 1;
+        return;
       }
       if (result.status === 'identity-changed') {
         console.error(`This project publishes as "${result.current}", but now resolves to "${result.next}".`);

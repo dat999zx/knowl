@@ -108,6 +108,7 @@ async function stageInContext(
     repoName: input.config.workspace?.repo ?? pointer.repo,
     categories: input.categories,
     ids: input.ids,
+    verb: 'stage',
   });
 
   // A sweep means "publish what is not published yet"; an excluded atom is one this machine was
