@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_PRESET_ID, PRESET_IDS, VECTOR_PRESETS, fingerprintProfile, resolveVectorProfile,
 } from '../../src/core/vector-profile.js';
@@ -129,5 +129,41 @@ describe('bench:embeddings preset list', () => {
     // against VECTOR_PRESETS rather than PRESET_IDS.
     expect(PRESET_IDS.filter(id => id !== 'custom').sort()).toEqual([...inScript].sort());
     expect(inScript).toContain(DEFAULT_PRESET_ID);
+  });
+});
+
+describe('the fingerprint covers the embedding recipe', () => {
+  const profile = { provider: 'local', model: 'm', dtype: 'q8', pooling: 'cls' } as const;
+
+  afterEach(() => { vi.resetModules(); vi.doUnmock('../../src/core/embed-recipe.js'); });
+
+  it('changes when the recipe version changes, so a recipe change invalidates stored vectors', async () => {
+    const before = fingerprintProfile(profile);
+
+    vi.resetModules();
+    vi.doMock('../../src/core/embed-recipe.js', () => ({
+      EMBED_RECIPE_VERSION: 2,
+      buildEmbedText: () => '',
+    }));
+    const { fingerprintProfile: withV2 } = await import('../../src/core/vector-profile.js');
+
+    // Without this, a recipe change produces different vectors under an UNCHANGED fingerprint,
+    // so search goes on scoring new query text against old-recipe vectors -- what
+    // `vector-index.ts` calls "staleness the fingerprint cannot see".
+    expect(withV2(profile)).not.toBe(before);
+  });
+
+  it('is stable for one profile at one recipe version', () => {
+    expect(fingerprintProfile(profile)).toBe(fingerprintProfile({ ...profile }));
+  });
+
+  it('still separates two models at the same recipe version', () => {
+    expect(fingerprintProfile({ ...profile, model: 'a' }))
+      .not.toBe(fingerprintProfile({ ...profile, model: 'b' }));
+  });
+
+  it('still separates two poolings, which is the difference nothing else would notice', () => {
+    expect(fingerprintProfile({ ...profile, pooling: 'cls' }))
+      .not.toBe(fingerprintProfile({ ...profile, pooling: 'mean' }));
   });
 });
