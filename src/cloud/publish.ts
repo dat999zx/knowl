@@ -5,6 +5,7 @@ import { createCloudApi, type CloudApi } from './api-client.js';
 import {
   listStaged, publishedVersion, recordPushed, restageForPublish, stageForPublish,
 } from './ledger.js';
+import { filterExcluded } from './exclusions.js';
 import { checkPublishGate, currentBranchOf } from './publish-gate.js';
 import { readSyncState } from './sync-state.js';
 import { listAssertions } from '../store/assertions.js';
@@ -15,7 +16,18 @@ import { ensureAccessToken } from './token.js';
 
 export type StageResult =
   | { status: 'not-connected' }
-  | { status: 'staged'; items: PromoteTarget[]; applied: boolean; skippedForeign: number };
+  | {
+    status: 'staged';
+    items: PromoteTarget[];
+    applied: boolean;
+    skippedForeign: number;
+    /**
+     * Excluded atoms a sweep passed over. Reported rather than silent for the same reason
+     * `skippedForeign` is: a sweep that quietly stages fewer atoms than the category holds is
+     * indistinguishable from a sweep that found nothing, and the remedy differs.
+     */
+    skippedExcluded: number;
+  };
 
 /**
  * Record the intent to publish. Sends nothing.
@@ -94,7 +106,23 @@ async function stageInContext(
     ids: input.ids,
   });
 
-  if (input.apply && items.length > 0) {
+  // A sweep means "publish what is not published yet"; an excluded atom is one this machine was
+  // told never to publish, so it is not a candidate. Naming an id deliberately overrides that --
+  // `knowl cloud unstage --forever` promises exactly this in its own output, and an exclusion
+  // that naming could not override would be irreversible without hand-editing SQLite.
+  //
+  // Applied before the `apply` branch so the dry run and the real run list the same atoms. A
+  // preview that showed an atom `--apply` would then skip is worse than no preview.
+  const namedIds = Boolean(input.ids?.length);
+  const eligible = namedIds
+    ? items
+    : await (async () => {
+      const allowed = new Set(await filterExcluded(items.map(item => item.id)));
+      return items.filter(item => allowed.has(item.id));
+    })();
+  const skippedExcluded = items.length - eligible.length;
+
+  if (input.apply && eligible.length > 0) {
     // Swallowed on purpose, and only here. The branch is what the push's refusal quotes back,
     // not what it decides on -- `checkPublishGate` re-reads git itself and reports being
     // unable to run it as its own verdict. Failing to record an intent because git is missing
@@ -108,10 +136,16 @@ async function stageInContext(
     // `knowl publish --category decision --apply` would re-send the whole category, spending a
     // version bump and a server-side embedding job per atom on identical content.
     const stage = input.ids?.length ? restageForPublish : stageForPublish;
-    await stage(items.map(item => item.id), pointer.workspaceId, branch);
+    await stage(eligible.map(item => item.id), pointer.workspaceId, branch);
   }
 
-  return { status: 'staged', items, applied: Boolean(input.apply) && items.length > 0, skippedForeign };
+  return {
+    status: 'staged',
+    items: eligible,
+    applied: Boolean(input.apply) && eligible.length > 0,
+    skippedForeign,
+    skippedExcluded,
+  };
 }
 
 export type PushResult =
