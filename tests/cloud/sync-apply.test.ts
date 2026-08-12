@@ -214,72 +214,72 @@ describe('applySyncRows', () => {
 
     expect(count).toBe(1);
   });
-});
 
-describe('vectors that arrive with a row', () => {
-  const PROFILE = { provider: 'local', model: 'granite', dtype: 'q8', pooling: 'cls' as const };
-  const CONTEXT = { profile: PROFILE, fingerprint: 'fp-local', dimensions: 4 };
-  const VECTOR = [0.25, -0.5, 0.75, 1];
+  describe('vectors that arrive with a row', () => {
+    const PROFILE = { provider: 'local', model: 'granite', dtype: 'q8', pooling: 'cls' as const };
+    const CONTEXT = { profile: PROFILE, fingerprint: 'fp-local', dimensions: 4 };
+    const VECTOR = [0.25, -0.5, 0.75, 1];
 
-  it('stores a received vector under the LOCAL fingerprint', async () => {
-    await inStore('vec-store', async () => {
-      const outcome = await applySyncRows(
-        [{ op: 'upsert', seq: '1', item: atom({ id: 'a', vector: encodeVector(VECTOR) }) }],
-        CONTEXT,
-      );
+    it('stores a received vector under the LOCAL fingerprint', async () => {
+      await inStore('vec-store', async () => {
+        const outcome = await applySyncRows(
+          [{ op: 'upsert', seq: '1', item: atom({ id: 'a', vector: encodeVector(VECTOR) }) }],
+          CONTEXT,
+        );
 
-      // Nothing left for the local embedder: the vector arrived and was kept.
-      expect(outcome.needEmbedding).toEqual([]);
+        // Nothing left for the local embedder: the vector arrived and was kept.
+        expect(outcome.needEmbedding).toEqual([]);
 
-      const row = await getClient().execute({
-        sql: 'SELECT profile_fingerprint, dimensions, vector FROM knowledge_embeddings WHERE knowledge_item_id = ?',
-        args: ['a'],
+        const row = await getClient().execute({
+          sql: 'SELECT profile_fingerprint, dimensions, vector FROM knowledge_embeddings WHERE knowledge_item_id = ?',
+          args: ['a'],
+        });
+        // The LOCAL fingerprint, not the server's: this client only connected because the profiles
+        // match, so the vector belongs to the local space and local search must be able to filter
+        // it like any other row.
+        expect(String(row.rows[0]!.profile_fingerprint)).toBe('fp-local');
+        expect(Number(row.rows[0]!.dimensions)).toBe(4);
+        expect(Array.from(decodeStored(row.rows[0]!.vector)!)).toEqual(VECTOR);
       });
-      // The LOCAL fingerprint, not the server's: this client only connected because the profiles
-      // match, so the vector belongs to the local space and local search must be able to filter
-      // it like any other row.
-      expect(String(row.rows[0]!.profile_fingerprint)).toBe('fp-local');
-      expect(Number(row.rows[0]!.dimensions)).toBe(4);
-      expect(Array.from(decodeStored(row.rows[0]!.vector)!)).toEqual(VECTOR);
     });
-  });
 
-  it('reports a row that arrived without one, rather than inventing a vector', async () => {
-    await inStore('vec-absent', async () => {
-      const outcome = await applySyncRows(
-        [{ op: 'upsert', seq: '1', item: atom({ id: 'b' }) }],
-        CONTEXT,
-      );
+    it('reports a row that arrived without one, rather than inventing a vector', async () => {
+      await inStore('vec-absent', async () => {
+        const outcome = await applySyncRows(
+          [{ op: 'upsert', seq: '1', item: atom({ id: 'b' }) }],
+          CONTEXT,
+        );
 
-      // Every row looks like this while a workspace is mid-reindex. Not a failure -- the atom is
-      // stored and text-searchable, and the local embedder closes the gap.
-      expect(outcome.needEmbedding).toEqual(['b']);
-    });
-  });
-
-  it('refuses a vector of the wrong width rather than storing noise', async () => {
-    await inStore('vec-width', async () => {
-      const outcome = await applySyncRows(
-        [{ op: 'upsert', seq: '1', item: atom({ id: 'c', vector: encodeVector([1, 2, 3, 4, 5, 6]) }) }],
-        CONTEXT,
-      );
-
-      // The replica's column has no width constraint, so a 6-dim vector in a 4-dim store would
-      // rank as noise forever. Falling back to a local embed is the recoverable direction.
-      expect(outcome.needEmbedding).toEqual(['c']);
-      const row = await getClient().execute({
-        sql: 'SELECT 1 FROM knowledge_embeddings WHERE knowledge_item_id = ?', args: ['c'],
+        // Every row looks like this while a workspace is mid-reindex. Not a failure -- the atom is
+        // stored and text-searchable, and the local embedder closes the gap.
+        expect(outcome.needEmbedding).toEqual(['b']);
       });
-      expect(row.rows).toHaveLength(0);
     });
-  });
 
-  it('stores nothing when the caller asked for no vectors, which is the pre-vector behaviour', async () => {
-    await inStore('vec-off', async () => {
-      const outcome = await applySyncRows(
-        [{ op: 'upsert', seq: '1', item: atom({ id: 'd', vector: encodeVector(VECTOR) }) }],
-      );
-      expect(outcome.needEmbedding).toEqual(['d']);
+    it('refuses a vector of the wrong width rather than storing noise', async () => {
+      await inStore('vec-width', async () => {
+        const outcome = await applySyncRows(
+          [{ op: 'upsert', seq: '1', item: atom({ id: 'c', vector: encodeVector([1, 2, 3, 4, 5, 6]) }) }],
+          CONTEXT,
+        );
+
+        // The replica's column has no width constraint, so a 6-dim vector in a 4-dim store would
+        // rank as noise forever. Falling back to a local embed is the recoverable direction.
+        expect(outcome.needEmbedding).toEqual(['c']);
+        const row = await getClient().execute({
+          sql: 'SELECT 1 FROM knowledge_embeddings WHERE knowledge_item_id = ?', args: ['c'],
+        });
+        expect(row.rows).toHaveLength(0);
+      });
+    });
+
+    it('stores nothing when the caller asked for no vectors, which is the pre-vector behaviour', async () => {
+      await inStore('vec-off', async () => {
+        const outcome = await applySyncRows(
+          [{ op: 'upsert', seq: '1', item: atom({ id: 'd', vector: encodeVector(VECTOR) }) }],
+        );
+        expect(outcome.needEmbedding).toEqual(['d']);
+      });
     });
   });
 });
