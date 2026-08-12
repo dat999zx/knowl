@@ -25,13 +25,15 @@
 
 | File | Responsibility |
 | --- | --- |
-| `src/cloud/api-client.ts` | Modify: add `me()` to `CloudApi` and its implementation |
-| `src/cloud/credentials.ts` | Modify: `CloudCredential` gains `identity?: { email: string; displayName: string }` |
+| `src/cloud/api-client.ts` | Modify: add `me()` and `usage()` to `CloudApi` and its implementation |
+| `src/cloud/credentials.ts` | Modify: `CloudCredential` gains `identity?: { email: string; displayName: string }`; add `listCredentialHosts()` |
+| `src/cloud/token.ts` | Modify: export `isCredentialUsable`, wrapping the private `usable` rather than copying it |
 | `src/cloud/login.ts` | Modify: short-circuit on a usable credential; fetch and cache identity |
 | `src/cloud/connect.ts` | Unchanged — its `ambiguous` result is already the picker's input |
 | `src/cli/cloud-picker.ts` | Create: the TTY picker and its non-TTY fallback |
-| `src/cloud/status.ts` | Modify: `CloudStatus` gains identity, staged split, sync detail; formatter follows |
-| `src/cli/program.ts` | Modify: move/rename commands; add `workspaces`, `unstage`; signposts for removed names |
+| `src/cloud/status.ts` | Modify: `CloudStatus` gains identity, staged split, sync detail and a real disconnected variant; formatter follows |
+| `src/cli/cloud-status-view.ts` | Create: the CLI-only view that adds best-effort usage, so `composeStatus` stays offline |
+| `src/cli/program.ts` | Modify: extract `buildProgram()`; move/rename commands; add `workspaces`, `unstage`; signposts for removed names |
 
 ---
 
@@ -111,14 +113,19 @@ Add to the returned implementation object, beside `listWorkspaces`:
     async me(accessToken) {
       // Only the two display fields are kept. `orgs` and `workspaces` come back too, but caching
       // them here would put a second, staler copy of the workspace list beside `listWorkspaces`.
-      const body = await request<{ user: { email: string; displayName: string } }>(
-        '/v1/me', { accessToken },
+      const { status, body } = await request<{ user: { email: string; displayName: string } }>(
+        '/v1/me', { method: 'GET', accessToken },
       );
+      if (status !== 200) fail('/v1/me', status, body);
       return { email: body.user.email, displayName: body.user.displayName };
     },
 ```
 
-Match the surrounding methods' use of the module's existing `request` helper — read `listWorkspaces` directly above and mirror its argument shape rather than hand-rolling a `fetch`.
+**Three details this snippet gets right that an earlier draft did not**, all of them non-negotiable because `request` is shared:
+
+- `request` returns `{ status, body }`, not the body (`src/cloud/api-client.ts:128-131`). Destructure it.
+- `method` is **required** on the init argument, and `'GET'` is not its default — the type is `{ method: 'GET' | 'POST' | 'PATCH'; ... }`.
+- The status check and `fail(...)` are what turn a 401 into a `CloudApiError` carrying the status. Without them a non-200 falls through to `body.user.email` on an empty object and throws `TypeError: Cannot read properties of undefined`. The second test below would still pass — `rejects.toThrow()` catches anything — so the test cannot be relied on to notice; mirror `listWorkspaces` directly above instead.
 
 In `src/cloud/credentials.ts`, add to `CloudCredential` after `sessionId`:
 
@@ -269,7 +276,27 @@ In `src/cloud/login.ts`, at the top of `runLogin`, before the existing `startDev
   }
 ```
 
-`usable` already exists in this module (it is what the refresh path uses to decide whether a token needs renewing); reuse it rather than re-deriving the expiry comparison. If it is not exported at module scope, hoist it — do not duplicate the skew-window logic, which `credentials.ts:10-16` documents as easy to get wrong.
+**`usable` is not in `login.ts` and takes three arguments.** It lives in `src/cloud/token.ts:35` as a module-private `usable(credential, now, skewMs)` — the refresh path's expiry test. Do not duplicate the skew-window logic; export a wrapper from `token.ts` beside it, so both callers share one definition of "this token is still good":
+
+```ts
+/**
+ * Is this credential still usable, on the same terms the refresh path applies?
+ *
+ * Exported for `runLogin`'s short-circuit. A second copy of this comparison in `login.ts` is
+ * how the two would drift: the skew window is the whole subtlety, and a login that judged a
+ * token good while `ensureAccessToken` judged it stale would short-circuit into a command
+ * that immediately refreshed anyway.
+ */
+export function isCredentialUsable(
+  credential: CloudCredential | null,
+  now: number = Date.now(),
+  skewMs: number = DEFAULT_SKEW_MS,
+): boolean {
+  return usable(credential, now, skewMs);
+}
+```
+
+and in `login.ts`, `import { isCredentialUsable } from './token.js';`, then `if (existing && isCredentialUsable(existing))`.
 
 After a successful `pollForToken`, before writing the credential:
 
@@ -451,7 +478,27 @@ git commit -m "feat(cli): a workspace picker that declines rather than blocks wi
   knowl cloud push / pull / retract <id> / status
   ```
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Extract `buildProgram()` first, as a refactor with no behaviour change**
+
+`src/cli/program.ts` has **no factory**. It builds at import time at module scope — `const cloudCommand = program.command('cloud')…` at line 698, `const workspaceCommand = …` at 873, and so on for every group. A test that asserts the command tree needs a fresh instance, and three test files across this plan and Plan D need one.
+
+Wrap the construction in `export function buildProgram(): Command`, returning the built root. Keep the existing module-level export so `src/index.ts` is untouched:
+
+```ts
+export const program = buildProgram();
+```
+
+Commit this on its own, before any command moves:
+
+```bash
+npm.cmd run build && node dist/index.js --help   # identical output to before
+git add src/cli/program.ts
+git commit -m "refactor(cli): build the program in a factory so the tree can be asserted"
+```
+
+Do not proceed until `--help` renders exactly as it did before. This step is a pure move; if the output changed, something was reordered.
+
+- [ ] **Step 2: Write the failing test**
 
 Create `tests/cli/cloud-commands.test.ts`:
 
@@ -459,44 +506,61 @@ Create `tests/cli/cloud-commands.test.ts`:
 import { describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
 
+/**
+ * `help` is filtered out on purpose. Whether Commander materialises an implicit help subcommand
+ * inside `.commands` is a version-dependent implementation detail, and pinning it here would
+ * make this file fail on a Commander bump that changed nothing about our command tree.
+ */
 function subcommandNames(path: string[]): string[] {
   let node: any = buildProgram();
   for (const name of path) node = node.commands.find((c: any) => c.name() === name);
-  return node.commands.map((c: any) => c.name()).sort();
+  return node.commands.map((c: any) => c.name()).filter((n: string) => n !== 'help').sort();
 }
 
 describe('the 5.0 cloud namespace', () => {
   it('holds every cloud verb', () => {
     expect(subcommandNames(['cloud'])).toEqual([
-      'connect', 'help', 'login', 'logout', 'pull', 'push',
+      'connect', 'login', 'logout', 'pull', 'push',
       'retract', 'stage', 'status', 'unstage', 'workspaces',
     ]);
   });
 
-  it('leaves no cloud verb at the top level', () => {
+  /**
+   * Help output, not `.commands`.
+   *
+   * The signposts below register `login`, `logout` and `publish` as HIDDEN top-level commands so
+   * a removed name can fail with a message that names its replacement. Commander keeps hidden
+   * commands in `.commands` — it only omits them from help — so asserting `.commands` does not
+   * contain them would contradict Step 4 and could never pass. What the user must not see is the
+   * help listing, and that is what this asserts.
+   */
+  it('lists no cloud verb in top-level help', () => {
+    const help = buildProgram().helpInformation();
+    for (const gone of ['login', 'logout', 'publish']) {
+      expect(help).not.toMatch(new RegExp(`^\\s+${gone}\\b`, 'm'));
+    }
+  });
+
+  it('still recognises the removed names, so they can signpost instead of saying "unknown command"', () => {
     const top = buildProgram().commands.map((c: any) => c.name());
-    expect(top).not.toContain('login');
-    expect(top).not.toContain('logout');
-    expect(top).not.toContain('publish');
+    for (const gone of ['login', 'logout', 'publish']) expect(top).toContain(gone);
   });
 
   it('keeps the local workspace group untouched', () => {
     expect(subcommandNames(['workspace'])).toEqual([
-      'add', 'demand', 'help', 'init', 'join', 'list',
+      'add', 'demand', 'init', 'join', 'list',
       'promote', 'remove', 'repin-embedding', 'set', 'status',
     ]);
   });
 });
 ```
 
-If `src/cli/program.ts` exports the built program rather than a `buildProgram()` factory, add the factory: the module currently builds at import time, and a test that asserts the tree needs a fresh instance. Keep the existing export so `src/index.ts` is unchanged.
-
-- [ ] **Step 2: Run it and watch it fail**
+- [ ] **Step 3: Run it and watch it fail**
 
 Run: `npm.cmd test -- tests/cli/cloud-commands.test.ts`
-Expected: FAIL — `stage`, `unstage` and `workspaces` are missing; `login`, `logout` and `publish` are still top-level.
+Expected: FAIL — `stage`, `unstage` and `workspaces` are missing, and top-level help still lists `login`, `logout` and `publish`.
 
-- [ ] **Step 3: Implement**
+- [ ] **Step 4: Implement**
 
 Move the three top-level command definitions inside the `cloudCommand` group. Mechanically: change `program\n  .command('login')` to `cloudCommand\n  .command('login')` and place it after the `const cloudCommand = ...` line; same for `logout`; rename `publish` to `stage` and move it likewise.
 
@@ -626,19 +690,19 @@ for (const [gone, replacement] of [
 }
 ```
 
-- [ ] **Step 4: Run it and watch it pass**
+- [ ] **Step 5: Run it and watch it pass**
 
 Run: `npm.cmd test -- tests/cli/cloud-commands.test.ts`
-Expected: PASS. The first case's expected array includes neither `login` nor `logout` at top level and lists all eleven cloud subcommands.
+Expected: PASS, all four cases — ten cloud subcommands, no removed name in top-level help, and the hidden signposts still resolvable.
 
-- [ ] **Step 5: Verify the help output renders**
+- [ ] **Step 6: Verify the help output renders**
 
 Run: `npm.cmd run build` then `node dist/index.js cloud --help`
-Expected: eleven subcommands, each with a description. Then `node dist/index.js publish` — expected: `knowl publish moved to \`knowl cloud stage\`.` and exit 1.
+Expected: ten subcommands, each with a description. Then `node dist/index.js publish` — expected: `knowl publish moved to \`knowl cloud stage\`.` and exit 1.
 
 This step exists because constraint "Verify CLI UI changes by rendering the output" applies: a command tree that compiles can still render wrongly.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add src/cli/program.ts tests/cli/cloud-commands.test.ts
@@ -664,8 +728,17 @@ git commit -m "feat(cli): every cloud verb under knowl cloud, and publish become
   stagedCorrections: number;
   nextSyncDueAt: string | null;
   ```
+- Produces: `CloudStatus` **disconnected** variant stops being `{ connected: false }` alone and gains
+  ```ts
+  apiHost: string;                 // what defaultApiHost() resolved to
+  signedIn: boolean;
+  identity: { email: string; displayName: string } | null;
+  otherCredentialHosts: number;    // credentials stored for hosts other than apiHost
+  ```
 
 **A correction is a staged row that has a `remoteVersion`** — it has been pushed before, so this is an update to something the team already has. Plan A is what makes that distinguishable; before `stage_state`, a pushed-then-restaged row was indistinguishable from a never-pushed one on the columns alone.
+
+**The disconnected variant is required by §7.1.2 and an earlier draft of this plan omitted it.** A disconnected repo has no `config.cloud` and therefore no `apiHost`, while credentials are keyed by host — so status resolves the host exactly as `login` and `logout` already do, via `defaultApiHost()` (`$KNOWL_API_HOST`, else the hosted default), and reports *that* host's credential. If credentials exist for other hosts it names the count and the flag that reaches them. It never guesses between them. Without this, "I ran `knowl login` and status still says nothing" is unanswerable in the one situation where the user most needs an answer.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -723,7 +796,43 @@ Append to `tests/cloud/status.test.ts`:
     // Never synced -> due now, not null. "I cannot tell" must not read as "not due".
     expect(status.nextSyncDueAt).not.toBeUndefined();
   });
+
+  it('answers "am I signed in" for a repo that is not connected to anything', async () => {
+    const { writeCredential } = await import('../../src/cloud/credentials.js');
+    await writeCredential(API_HOST, {
+      accessToken: 'a', refreshToken: 'r',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      sessionId: 's', identity: { email: 'dev@example.com', displayName: 'Dev' },
+    });
+
+    const { cloudStatus } = await import('../../src/cloud/status.js');
+    // No `cloud` block at all -- the repo has never run `knowl cloud connect`.
+    const status = await cloudStatus(ROOT, {} as any) as any;
+
+    expect(status.connected).toBe(false);
+    expect(status.apiHost).toBe(API_HOST);
+    expect(status.signedIn).toBe(true);
+    expect(status.identity).toEqual({ email: 'dev@example.com', displayName: 'Dev' });
+  });
+
+  it('names how many other hosts hold credentials, without guessing between them', async () => {
+    const { writeCredential } = await import('../../src/cloud/credentials.js');
+    await writeCredential('https://elsewhere.example.com', {
+      accessToken: 'a', refreshToken: 'r',
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(), sessionId: 's',
+    });
+
+    const { cloudStatus, formatCloudStatus } = await import('../../src/cloud/status.js');
+    const status = await cloudStatus(ROOT, {} as any) as any;
+
+    expect(status.signedIn).toBe(false);
+    expect(status.otherCredentialHosts).toBe(1);
+    // The remedy has to be in the output, or the count is a riddle.
+    expect(formatCloudStatus(status)).toContain('--api');
+  });
 ```
+
+`defaultApiHost()` reads `$KNOWL_API_HOST`; set it to `API_HOST` in this file's `beforeEach` (and restore it after) so these two cases do not depend on which build default is compiled in.
 
 Add `API_HOST` and a `configWithCloud()` helper to the file's existing scaffolding if they are not already there, matching the `ProjectConfig` shape the other cases in this file build.
 
@@ -788,6 +897,41 @@ and replace the staged line with the split:
 ```
 
 Apply the same six fields in `cloudStatusInRequest`'s path — it shares `composeStatus`, so this is free, but confirm it by reading the function rather than assuming.
+
+**Then the disconnected branch**, which is the early return `cloudStatus` takes when `config.cloud` is absent. It currently returns `{ connected: false }` and must answer the sign-in question instead:
+
+```ts
+  if (!config.cloud) {
+    // §7.1.2. Credentials are keyed by host and a disconnected repo names none, so resolve the
+    // host the same way `login` and `logout` do rather than inventing one or scanning for a
+    // "best" credential. Naming the count of others is the honest middle: enough for the user to
+    // know their token is somewhere, without this command picking a host on their behalf.
+    const apiHost = defaultApiHost();
+    const credential = await readCredential(apiHost).catch(() => null);
+    const hosts = await listCredentialHosts().catch(() => [] as string[]);
+    return {
+      connected: false,
+      apiHost,
+      signedIn: Boolean(credential),
+      identity: credential?.identity ?? null,
+      otherCredentialHosts: hosts.filter(host => host !== apiHost).length,
+    };
+  }
+```
+
+`listCredentialHosts()` does not exist yet. Add it to `src/cloud/credentials.ts` beside `readCredential`, returning the keys of the credential file and `[]` when the file is absent or unreadable — the same failure direction `readCredential` already takes. It must **not** return the credentials themselves: this is a count for a status line, and widening it to a list of tokens would put every stored token on a path that only needed to know how many there were.
+
+In `formatCloudStatus`, the disconnected branch gains two lines:
+
+```ts
+  // The remedy, not just the diagnosis. A count with no flag attached is a riddle.
+  if (status.otherCredentialHosts > 0) {
+    lines.push(
+      `Signed in to ${status.otherCredentialHosts} other host(s). ` +
+      'Reach them with --api <host>.',
+    );
+  }
+```
 
 - [ ] **Step 4: Run it and watch it pass**
 
@@ -902,9 +1046,116 @@ git commit -m "feat(cli): knowl status names the cloud instead of leaving it str
 
 ---
 
+### Task 7: Usage, on the CLI path only
+
+**Files:**
+- Modify: `src/cloud/api-client.ts` — add `usage()`
+- Modify: `src/cli/program.ts` — `cloud status` fetches it; nothing else does
+- Test: `tests/cloud/api-client.test.ts`, `tests/cloud/status.test.ts`
+
+**Interfaces:**
+- Produces:
+  ```ts
+  export type CloudCounter = { used: number; limit: number; enforcement: string };
+  export type CloudUsage = {
+    plan: string;
+    memoryOps: CloudCounter;
+    storedAtoms: CloudCounter;
+    aiOps: CloudCounter;
+  };
+  CloudApi.usage(input: { workspaceId: string; accessToken: string }): Promise<CloudUsage>;
+  ```
+
+**§7.1.3 requires this and an earlier draft of this plan had no task for it.** The table there is explicit: identity, workspace, staged and sync state come from cache offline on both paths, and **usage** is a best-effort fetch with a short timeout on the CLI path, degrading to `usage: unavailable` — and is **omitted entirely** on the MCP path, because a live tool request must not touch the network. The two reports differ by exactly this one line, and the spec says so.
+
+**The server already serves it.** knowl-cloud registers `GET /:id/usage` at `src/http/routes/governance.ts:51` under the workspaces prefix, responding with `UsageResponse` (`packages/contract/src/governance.ts:84`) — `plan` plus three `{ used, limit, enforcement }` counters. It is deliberately readable by any member down to `reader`, with the contract's own comment explaining why, so no role check is needed on this side.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+  it('usage() returns the four counters the server sends', async () => {
+    globalThis.fetch = (async (url: string | URL) => {
+      expect(String(url)).toBe('https://api.example.com/v1/workspaces/ws-1/usage');
+      return new Response(JSON.stringify({
+        plan: 'team',
+        memoryOps: { used: 10, limit: 100, enforcement: 'soft' },
+        storedAtoms: { used: 5, limit: 50, enforcement: 'hard' },
+        aiOps: { used: 0, limit: 10, enforcement: 'soft' },
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    }) as typeof fetch;
+
+    const { createCloudApi } = await import('../../src/cloud/api-client.js');
+    const usage = await createCloudApi({ apiHost: 'https://api.example.com' })
+      .usage({ workspaceId: 'ws-1', accessToken: 't' });
+
+    expect(usage.plan).toBe('team');
+    expect(usage.storedAtoms.used).toBe(5);
+  });
+```
+
+and in `tests/cloud/status.test.ts`, the case that matters more than the happy path:
+
+```ts
+  it('a status whose usage fetch fails still reports everything else', async () => {
+    globalThis.fetch = (async () => { throw new Error('offline'); }) as typeof fetch;
+
+    const { renderCloudStatusForCli } = await import('../../src/cli/cloud-status-view.js');
+    const output = await renderCloudStatusForCli(ROOT, configWithCloud());
+
+    expect(output).toContain('Usage:     unavailable');
+    expect(output).toContain('Workspace:');
+  });
+```
+
+- [ ] **Step 2: Run, fail, implement**
+
+`usage()` mirrors `listWorkspaces` exactly — `const { status, body } = await request<CloudUsage>(...)`, `method: 'GET'`, `if (status !== 200) fail(...)`.
+
+The fetch belongs in the **CLI action, not in `composeStatus`**. `composeStatus` is shared with `cloudStatusInRequest`, and a network call added there would be made by the MCP path too — which is the exact thing §7.1.3 forbids and the ambient-context tests would not catch, because they assert about the database rather than about `fetch`. Put it in a thin `src/cli/cloud-status-view.ts` that calls `cloudStatus`, then:
+
+```ts
+  // Best-effort, and short. Usage is the least important line in this report and the only one
+  // that can hang; three seconds is long enough for a healthy server and short enough that a
+  // dead one does not make `knowl cloud status` feel broken. Every failure -- offline, 403,
+  // timeout, a body that does not parse -- lands on the same word, because the user's next
+  // action is identical in all of them and naming the cause would imply it were actionable.
+  const usage = status.connected
+    ? await createCloudApi({ apiHost: pointer.apiHost, timeoutMs: 3_000 })
+        .usage({ workspaceId: pointer.workspaceId, accessToken: credential.accessToken })
+        .catch(() => null)
+    : null;
+```
+
+Render `Usage:     unavailable` when it is null, and `Usage:     42/1000 atoms, 10/100 memory ops (team)` when it is not.
+
+- [ ] **Step 3: Prove the MCP path never fetches**
+
+Add to `tests/cloud/ambient-context.test.ts`:
+
+```ts
+  it('cloudStatusInRequest makes no network call', async () => {
+    globalThis.fetch = (async () => { throw new Error('MCP status must not touch the network'); }) as typeof fetch;
+    const { cloudStatusInRequest } = await import('../../src/cloud/status.js');
+    await expect(cloudStatusInRequest(ROOT, configWithCloud())).resolves.toBeDefined();
+  });
+```
+
+This is the assertion that keeps the two reports different on purpose. Without it, the next person to "unify" the two paths reintroduces a network call on a live tool request and nothing fails.
+
+- [ ] **Step 4: Verify and commit**
+
+```bash
+npm.cmd run build
+npm.cmd test -- tests/cloud/api-client.test.ts tests/cloud/status.test.ts tests/cloud/ambient-context.test.ts
+node dist/index.js cloud status
+git add src/cloud/api-client.ts src/cli/cloud-status-view.ts src/cli/program.ts tests/cloud/
+git commit -m "feat(cloud): status reports usage on the CLI, and never from an MCP request"
+```
+
+---
+
 ## What Plan B deliberately does not do
 
 - **No auto-staging.** `cloud.autoStage`, the post-commit seam, machine-local auto-push consent and snapshot-bound confirmation are Plan C.
 - **No `knowl store --local`.** The flag that writes an exclusion is Plan D; `knowl cloud unstage --forever` (Task 4) is the only writer of `cloud_excluded` until then.
 - **No MCP description updates.** `src/mcp/tool-definitions.ts:99` still names `knowl login` after this plan and is corrected in Plan D, which owns the whole rename wave including knowl-cloud's web copy.
-</content>

@@ -27,26 +27,43 @@
 | File | Responsibility |
 | --- | --- |
 | `src/store/schema-version.ts` | Modify: bump `KNOWL_MIGRATION_LEVEL` to 10, with the changelog comment the file's convention requires |
-| `src/store/bootstrap.ts` | Modify: add `cloud_excluded` to `SCHEMA_STATEMENTS`; add `ensureLedgerStageState()` and wire it beside the other `ensure*` migrations |
+| `src/store/bootstrap.ts` | Modify: add `cloud_excluded` and `cloud_published.stage_state` to `SCHEMA_STATEMENTS`; add `ensureLedgerStageState()` and wire it beside the other `ensure*` migrations |
+| `src/store/schema.ts` | Modify: the Drizzle `cloudPublished` table gains `stageState`; add a `cloudExcluded` table |
+| `src/store/snapshot-tables.ts` | Modify: classify `cloud_excluded` as `preserved` |
+| `tests/store/schema-pin.test.ts` | Modify: add `SCHEMA_PINS[10]` |
 | `src/cloud/exclusions.ts` | Create: the `cloud_excluded` table's only reader and writer |
 | `src/cloud/ledger.ts` | Modify: move every function onto `stage_state`; add `unstagePublish` |
+| `src/cloud/publish.ts` | Modify: a category sweep filters exclusions; naming ids does not |
 | `tests/cloud/exclusions.test.ts` | Create |
 | `tests/cloud/ledger.test.ts` | Modify: existing cases plus the new state transitions |
-| `tests/store/migration-level-10.test.ts` | Create: backfill correctness against a store built at level 9 |
+| `tests/store/migration-level-10.test.ts` | Create: a real level-9 store upgrading, not a backfill called directly |
 
 Exclusions live in their own module rather than in `ledger.ts` because they are workspace-independent and `ledger.ts` is workspace-keyed throughout — mixing them is what would let an exclusion acquire a workspace by accident.
 
+**Both DDL changes land in Task 1, together.** An earlier draft added the table in Task 1 and the column in Task 3, which meant the schema shape moved twice and `SCHEMA_PINS[10]` — a hash over the whole schema — would have had to be computed, committed, and then immediately invalidated. Task 3 is now the migration for stores that already exist, which is a different question from what the schema is.
+
+## Three consequences of a schema change that this plan must not skip
+
+The repository enforces all three, and each fails in its own place:
+
+1. **`tests/store/schema-pin.test.ts:22`** keys `SCHEMA_PINS` by migration level and asserts `SCHEMA_PINS[KNOWL_MIGRATION_LEVEL]` is defined and matches a fresh bootstrap's fingerprint. Bumping to 10 without adding an entry fails on `toBeDefined()`.
+2. **`src/store/schema.ts`** carries the typed Drizzle mirror of every table. It is not generated; a column added only to `bootstrap.ts` exists in SQLite and not in the types.
+3. **`src/store/snapshot-tables.ts`** classifies every table, and `src/store/snapshots.ts:145` throws by name when restore would rewrite something the policy does not cover. A new table with no classification breaks restore rather than being ignored.
+
 ---
 
-### Task 1: The `cloud_excluded` table
+### Task 1: The level-10 schema
 
 **Files:**
-- Modify: `src/store/bootstrap.ts` — add one statement to `SCHEMA_STATEMENTS` near the `cloud_published` definition (currently line 361)
+- Modify: `src/store/bootstrap.ts` — add `cloud_excluded` to `SCHEMA_STATEMENTS` near the `cloud_published` definition (currently line 361), and add `stage_state` to `cloud_published` itself
 - Modify: `src/store/schema-version.ts:127` — `KNOWL_MIGRATION_LEVEL` 9 → 10
-- Test: `tests/cloud/exclusions.test.ts`
+- Modify: `src/store/schema.ts:269` — `cloudPublished` gains `stageState`; add `cloudExcluded`
+- Modify: `src/store/snapshot-tables.ts:97` — classify `cloud_excluded`
+- Test: `tests/cloud/exclusions.test.ts`, `tests/store/schema-pin.test.ts`
 
 **Interfaces:**
 - Produces: table `cloud_excluded(item_id TEXT PRIMARY KEY, excluded_at TEXT NOT NULL, reason TEXT)`
+- Produces: column `cloud_published.stage_state TEXT NOT NULL DEFAULT 'clear'`, values `'pending' | 'clear'`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -99,9 +116,15 @@ describe('cloud_excluded', () => {
 Run: `npm.cmd test -- tests/cloud/exclusions.test.ts`
 Expected: FAIL — `no such table: cloud_excluded`.
 
-- [ ] **Step 3: Add the table**
+- [ ] **Step 3: Add the table and the column**
 
-In `src/store/bootstrap.ts`, immediately after the `cloud_published` statement in `SCHEMA_STATEMENTS`:
+In `src/store/bootstrap.ts`, add `stage_state` to the `cloud_published` statement in `SCHEMA_STATEMENTS`, immediately after `retracted_at TEXT,` and before `PRIMARY KEY (item_id, remote_workspace)`:
+
+```ts
+    stage_state TEXT NOT NULL DEFAULT 'clear',
+```
+
+Then, immediately after the `cloud_published` statement:
 
 ```ts
   /**
@@ -144,16 +167,69 @@ In `src/store/schema-version.ts`, replace `export const KNOWL_MIGRATION_LEVEL = 
 export const KNOWL_MIGRATION_LEVEL = 10;
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [ ] **Step 4: Mirror both changes in the typed schema**
 
-Run: `npm.cmd test -- tests/cloud/exclusions.test.ts`
-Expected: PASS, both cases.
+`src/store/schema.ts` is the hand-maintained Drizzle mirror, not a generated file — a column that exists only in `bootstrap.ts` is invisible to every typed query. Add to `cloudPublished` (line 269), after `retractedAt`:
 
-- [ ] **Step 5: Commit**
+```ts
+  /** Explicit since level 10. `pending` is what a push works through; see `bootstrap.ts`. */
+  stageState: text('stage_state').notNull().default('clear'),
+```
+
+and add the new table beside it:
+
+```ts
+/**
+ * Atoms this machine will never publish. Keyed by item alone — see `bootstrap.ts` for why the
+ * workspace is deliberately absent.
+ */
+export const cloudExcluded = sqliteTable('cloud_excluded', {
+  itemId: text('item_id').primaryKey(),
+  excludedAt: text('excluded_at').notNull(),
+  reason: text('reason'),
+});
+```
+
+- [ ] **Step 5: Classify the new table for snapshots**
+
+In `src/store/snapshot-tables.ts`, beside `cloud_published: 'preserved'` (line 97):
+
+```ts
+  // Same reasoning as `cloud_published` directly above, and one more: an exclusion is a
+  // statement this machine made about what it will not share. Restoring a snapshot taken
+  // elsewhere must not be able to withdraw it.
+  cloud_excluded: 'preserved',
+```
+
+`src/store/snapshots.ts:145` throws by name when a restore would rewrite a table the policy does not classify, so omitting this breaks restore rather than defaulting to something sensible.
+
+- [ ] **Step 6: Re-pin the schema**
+
+Run: `npm.cmd test -- tests/store/schema-pin.test.ts`
+Expected: FAIL, with a message naming the fingerprint — `No pin recorded for migration level 10. Add one to SCHEMA_PINS: <hash>`.
+
+Take the hash **from that failure message**, not from anywhere else, and add it to `SCHEMA_PINS` in `tests/store/schema-pin.test.ts` following the file's comment convention:
+
+```ts
+  // 10 adds `cloud_excluded` and `cloud_published.stage_state`. The table is additive; the
+  // column is why the level moves rather than riding on level 7's `CREATE TABLE IF NOT EXISTS`,
+  // which is a no-op on every store that already has the ledger. `KNOWL_SCHEMA_VERSION` again
+  // does not move: an older build can still read a database with an extra column and an extra
+  // table it does not know about.
+  10: '<the hash the failure printed>',
+```
+
+Re-run until green. If the hash changes again later in this plan, the schema changed again and that is the signal to stop and ask why — Tasks 2 through 6 add no DDL.
+
+- [ ] **Step 7: Run the exclusions test and commit**
+
+Run: `npm.cmd test -- tests/cloud/exclusions.test.ts tests/store/schema-pin.test.ts`
+Expected: PASS.
 
 ```bash
-git add src/store/bootstrap.ts src/store/schema-version.ts tests/cloud/exclusions.test.ts
-git commit -m "feat(cloud): add cloud_excluded, keyed by item and not by workspace"
+git add src/store/bootstrap.ts src/store/schema-version.ts src/store/schema.ts \
+  src/store/snapshot-tables.ts tests/cloud/exclusions.test.ts tests/store/schema-pin.test.ts
+git commit -m "feat(cloud): the level-10 schema — cloud_excluded, and an explicit stage state"
 ```
 
 ---
@@ -330,16 +406,21 @@ git commit -m "feat(cloud): read and write publication exclusions"
 
 ---
 
-### Task 3: The `stage_state` column and its fail-safe backfill
+### Task 3: The fail-safe backfill for stores that already exist
 
 **Files:**
 - Modify: `src/store/bootstrap.ts` — add `ensureLedgerStageState()` beside `ensureForgetLogColumns` (near line 685), and call it at line 1095 with the other `ensure*` migrations
 - Test: `tests/store/migration-level-10.test.ts`
 
 **Interfaces:**
-- Produces: `cloud_published.stage_state TEXT NOT NULL DEFAULT 'clear'`, values `'pending' | 'clear'`
+- Consumes: the level-10 schema from Task 1
+- Produces: `ensureLedgerStageState` / `backfillLedgerStageState` in `bootstrap.ts`
 
-**The backfill direction is the whole point of this task.** Adding the column with `DEFAULT 'pending'` would mark every already-pushed row as queued, and the next push would re-send a machine's entire publication history. The default is `'clear'` and rows are promoted to `'pending'` only where the old predicate said they were staged — so a partially-applied or unmigrated row fails toward sending nothing, which is the recoverable direction.
+Task 1 gave **new** stores the column. This task is the whole reason the level moved: a database already stamped at 9 skips `SCHEMA_STATEMENTS` entirely, so `CREATE TABLE IF NOT EXISTS` and an edited `CREATE TABLE` body both reach it never.
+
+**The backfill direction is the other half of the point.** Adding the column with `DEFAULT 'pending'` would mark every already-pushed row as queued, and the next push would re-send a machine's entire publication history. The default is `'clear'` and rows are promoted to `'pending'` only where the old predicate said they were staged — so a partially-applied or unmigrated row fails toward sending nothing, which is the recoverable direction.
+
+**The test must upgrade a real level-9 database.** An earlier draft bootstrapped a *current* schema and then called `backfillLedgerStageState` by hand, which exercises the UPDATE and proves nothing about whether an existing store ever reaches it — the exact failure mode `KNOWL_MIGRATION_LEVEL` exists to catch. `readMigrationLevel` is `PRAGMA application_id` (`src/store/schema-version.ts:154`), so a level-9 store is reproducible: bootstrap, strip what level 10 added, rewind the stamp, and bootstrap again. `tests/store/schema-pin.test.ts:133` already uses this idiom for `lifecycle_hash`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -347,20 +428,40 @@ Create `tests/store/migration-level-10.test.ts`:
 
 ```ts
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
+import { createClient, type Client } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeDb, getClient, initDb } from '../../src/store/database.js';
+import { bootstrapSchema } from '../../src/store/bootstrap.js';
+import { readMigrationLevel } from '../../src/store/schema-version.js';
 
-const ROOT = path.resolve('./.knowl-migration-10-root');
+let root: string;
+let client: Client;
+
+/**
+ * A store as a level-9 build left it: the ledger without `stage_state`, and no `cloud_excluded`.
+ *
+ * Built by bootstrapping the current schema and removing what level 10 added, rather than by
+ * pasting level 9's DDL — a copy would drift from `bootstrap.ts` silently and start testing a
+ * schema no build ever wrote.
+ */
+async function makeLevel9Store(c: Client): Promise<void> {
+  await bootstrapSchema(c);
+  await c.execute('ALTER TABLE cloud_published DROP COLUMN stage_state');
+  await c.execute('DROP TABLE IF EXISTS cloud_excluded');
+  // Only the gate is rewound. `user_version` stays where a current build left it, which is what
+  // makes this a migration test rather than a compatibility one.
+  await c.execute('PRAGMA application_id = 9');
+}
 
 /** A ledger row as level 7 wrote it, with no `stage_state` at all. */
-async function insertLegacyRow(input: {
+async function insertLegacyRow(c: Client, input: {
   itemId: string;
   pushedAt: string | null;
   retractedAt: string | null;
   remoteVersion: number | null;
 }): Promise<void> {
-  await getClient().execute({
+  await c.execute({
     sql: `INSERT INTO cloud_published
             (item_id, remote_workspace, remote_version, staged_at, staged_on_branch, pushed_at, retracted_at)
           VALUES (?, 'ws-1', ?, '2026-08-01T00:00:00.000Z', 'main', ?, ?)`,
@@ -368,76 +469,94 @@ async function insertLegacyRow(input: {
   });
 }
 
-describe('migration level 10 backfill', () => {
+const stateOf = async (c: Client): Promise<Record<string, string>> => {
+  const rows = await c.execute('SELECT item_id, stage_state FROM cloud_published ORDER BY item_id');
+  return Object.fromEntries(rows.rows.map(row => [String(row.item_id), String(row.stage_state)]));
+};
+
+describe('a level-9 store upgrading to level 10', () => {
   beforeEach(async () => {
-    await fs.rm(ROOT, { recursive: true, force: true });
-    await fs.mkdir(ROOT, { recursive: true });
-    await initDb(ROOT);
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-mig10-'));
+    client = createClient({ url: `file:${path.join(root, 'knowl.db')}` });
+    await makeLevel9Store(client);
   });
 
   afterEach(async () => {
-    await closeDb();
-    await fs.rm(ROOT, { recursive: true, force: true });
+    try { client.close(); } catch { /* already closed */ }
+    await fs.rm(root, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('gets the column, the table and the stamp from one bootstrap', async () => {
+    expect(await readMigrationLevel(client)).toBe(9);
+
+    await bootstrapSchema(client);
+
+    const columns = await client.execute('PRAGMA table_info(cloud_published)');
+    expect(columns.rows.map(row => String(row.name))).toContain('stage_state');
+
+    const tables = await client.execute(
+      "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'cloud_excluded'",
+    );
+    expect(tables.rows).toHaveLength(1);
+    expect(await readMigrationLevel(client)).toBe(10);
   });
 
   it('maps the old three-column predicate onto explicit states', async () => {
-    await insertLegacyRow({ itemId: 'staged', pushedAt: null, retractedAt: null, remoteVersion: null });
-    await insertLegacyRow({ itemId: 'pushed', pushedAt: '2026-08-02T00:00:00.000Z', retractedAt: null, remoteVersion: 3 });
-    await insertLegacyRow({ itemId: 'retracted', pushedAt: '2026-08-02T00:00:00.000Z', retractedAt: '2026-08-03T00:00:00.000Z', remoteVersion: null });
+    await insertLegacyRow(client, { itemId: 'staged', pushedAt: null, retractedAt: null, remoteVersion: null });
+    await insertLegacyRow(client, { itemId: 'pushed', pushedAt: '2026-08-02T00:00:00.000Z', retractedAt: null, remoteVersion: 3 });
+    await insertLegacyRow(client, { itemId: 'retracted', pushedAt: '2026-08-02T00:00:00.000Z', retractedAt: '2026-08-03T00:00:00.000Z', remoteVersion: null });
 
-    const { backfillLedgerStageState } = await import('../../src/store/bootstrap.js');
-    await backfillLedgerStageState(getClient());
+    await bootstrapSchema(client);
 
-    const rows = await getClient().execute(
-      'SELECT item_id, stage_state FROM cloud_published ORDER BY item_id',
-    );
-    const states = Object.fromEntries(rows.rows.map(row => [String(row.item_id), String(row.stage_state)]));
-
-    expect(states).toEqual({ pushed: 'clear', retracted: 'clear', staged: 'pending' });
+    expect(await stateOf(client)).toEqual({ pushed: 'clear', retracted: 'clear', staged: 'pending' });
   });
 
   it('never promotes a pushed row to pending, because that would re-send published history', async () => {
-    await insertLegacyRow({ itemId: 'pushed', pushedAt: '2026-08-02T00:00:00.000Z', retractedAt: null, remoteVersion: 9 });
+    await insertLegacyRow(client, { itemId: 'pushed', pushedAt: '2026-08-02T00:00:00.000Z', retractedAt: null, remoteVersion: 9 });
 
-    const { backfillLedgerStageState } = await import('../../src/store/bootstrap.js');
-    await backfillLedgerStageState(getClient());
+    await bootstrapSchema(client);
 
-    const rows = await getClient().execute(
+    const rows = await client.execute(
       "SELECT COUNT(*) AS n FROM cloud_published WHERE stage_state = 'pending'",
     );
     expect(Number(rows.rows[0].n)).toBe(0);
   });
 
   it('preserves remote_version through the migration', async () => {
-    await insertLegacyRow({ itemId: 'pushed', pushedAt: '2026-08-02T00:00:00.000Z', retractedAt: null, remoteVersion: 42 });
+    await insertLegacyRow(client, { itemId: 'pushed', pushedAt: '2026-08-02T00:00:00.000Z', retractedAt: null, remoteVersion: 42 });
 
-    const { backfillLedgerStageState } = await import('../../src/store/bootstrap.js');
-    await backfillLedgerStageState(getClient());
+    await bootstrapSchema(client);
 
-    const rows = await getClient().execute(
+    const rows = await client.execute(
       "SELECT remote_version FROM cloud_published WHERE item_id = 'pushed'",
     );
     expect(Number(rows.rows[0].remote_version)).toBe(42);
   });
+
+  it('is idempotent — a second bootstrap re-stages nothing', async () => {
+    await insertLegacyRow(client, { itemId: 'pushed', pushedAt: '2026-08-02T00:00:00.000Z', retractedAt: null, remoteVersion: 1 });
+    await bootstrapSchema(client);
+
+    // Simulates the atom being unstaged after the upgrade. If the migration ran again it would
+    // read `pushed_at IS NULL AND retracted_at IS NULL` afresh -- it must not, because the column
+    // now exists and `ensureLedgerStageState` returns early.
+    await bootstrapSchema(client);
+
+    expect((await stateOf(client)).pushed).toBe('clear');
+  });
 });
 ```
+
+Note this test opens its own `@libsql` client rather than going through `initDb`/`closeDb`. It has to: `initDb` bootstraps on open, so there would be no pre-migration state to observe. `tests/store/schema-pin.test.ts` is the pattern to copy.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `npm.cmd test -- tests/store/migration-level-10.test.ts`
-Expected: FAIL — `backfillLedgerStageState` is not exported from `bootstrap.js`.
+Expected: FAIL — the first case reports no `stage_state` column after `bootstrapSchema`, because nothing migrates an existing store yet. If instead it fails on `ALTER TABLE ... DROP COLUMN stage_state`, Task 1 did not land and this task is being run out of order.
 
 - [ ] **Step 3: Write the implementation**
 
-In `src/store/bootstrap.ts`, add the `stage_state` column to the `cloud_published` statement in `SCHEMA_STATEMENTS` (so new stores get it directly):
-
-```ts
-    stage_state TEXT NOT NULL DEFAULT 'clear',
-```
-
-Place it immediately after `retracted_at TEXT,` and before `PRIMARY KEY (item_id, remote_workspace)`.
-
-Then add these two functions beside the other `ensure*` migrations (after `ensureForgetLogColumns`, around line 697):
+In `src/store/bootstrap.ts`, add these two functions beside the other `ensure*` migrations (after `ensureForgetLogColumns`, around line 697):
 
 ```ts
 /**
@@ -489,14 +608,14 @@ Wire it in beside the others, after line 1095 (`await ensureForgetLogColumns(cli
 
 - [ ] **Step 4: Run the test to verify it passes**
 
-Run: `npm.cmd test -- tests/store/migration-level-10.test.ts`
-Expected: PASS, all three cases.
+Run: `npm.cmd test -- tests/store/migration-level-10.test.ts tests/store/schema-pin.test.ts`
+Expected: PASS, all five migration cases plus the pin. The pin must **not** have moved — this task adds no DDL to `SCHEMA_STATEMENTS`, so a changed fingerprint here means the column was added twice.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add src/store/bootstrap.ts tests/store/migration-level-10.test.ts
-git commit -m "feat(cloud): give the ledger an explicit stage state, backfilled fail-safe"
+git commit -m "feat(cloud): migrate an existing ledger to the explicit stage state, fail-safe"
 ```
 
 ---
@@ -508,7 +627,7 @@ git commit -m "feat(cloud): give the ledger an explicit stage state, backfilled 
 - Test: `tests/cloud/ledger.test.ts`
 
 **Interfaces:**
-- Consumes: `cloud_published.stage_state` from Task 3; `filterExcluded` from Task 2
+- Consumes: `cloud_published.stage_state` from Task 1, migrated onto existing stores by Task 3
 - Produces:
   - `unstagePublish(itemId: string, workspace: string): Promise<boolean>` — true if a pending row was cleared
   - `PublishedRecord` gains `stageState: 'pending' | 'clear'`
@@ -686,13 +805,140 @@ git commit -m "feat(cloud): unstage clears state instead of deleting the row tha
 
 ---
 
-### Task 5: Prove the invariant end to end
+### Task 5: A category sweep honours exclusions; naming an id overrides them
+
+**Files:**
+- Modify: `src/cloud/publish.ts` — `stageInContext` (currently lines 82–115)
+- Test: `tests/cloud/publish.test.ts`
+
+**Interfaces:**
+- Consumes: `filterExcluded` (Task 2)
+- Produces: `StageResult`'s `staged` variant gains `skippedExcluded: number`
+
+**Without this task, `cloud_excluded` does not work.** `filterExcluded` was built in Task 2 for two callers — Plan C's auto-stage seam and the category sweep — and the sweep is here, in this plan, not in Plan C. `stageInContext` currently reads `selectOwnedItems` straight into `stageForPublish` with no exclusion check anywhere, so `knowl cloud stage --category fact --apply` would re-stage every atom the user had excluded, and `knowl store --local` (Plan D) would hold for exactly one sweep.
+
+**The asymmetry is deliberate and is already promised to the user.** Plan B's `unstage --forever` prints *"It will not be staged again automatically. Naming its id to `knowl cloud stage` still stages it."* So a sweep filters and an explicit id does not — otherwise an exclusion would be irreversible without hand-editing SQLite.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `tests/cloud/publish.test.ts`, reusing the file's existing scaffolding:
+
+```ts
+  it('a category sweep skips an excluded atom and says how many it skipped', async () => {
+    const { excludeFromPublish } = await import('../../src/cloud/exclusions.js');
+    const kept = await seedItem({ category: 'fact', title: 'kept' });
+    const excluded = await seedItem({ category: 'fact', title: 'excluded' });
+    await excludeFromPublish(excluded.id, 'test');
+
+    const { stagePublishInRequest } = await import('../../src/cloud/publish.js');
+    const result = await stagePublishInRequest({
+      projectRoot: ROOT, config: connected(), categories: ['fact'], apply: true,
+    }) as any;
+
+    expect(result.items.map((item: any) => item.id)).toEqual([kept.id]);
+    expect(result.skippedExcluded).toBe(1);
+    expect((await listStaged(WS)).map(row => row.itemId)).toEqual([kept.id]);
+  });
+
+  it('a dry run also omits the excluded atom, so the preview matches what --apply would do', async () => {
+    const { excludeFromPublish } = await import('../../src/cloud/exclusions.js');
+    const excluded = await seedItem({ category: 'fact', title: 'excluded' });
+    await excludeFromPublish(excluded.id, 'test');
+
+    const { stagePublishInRequest } = await import('../../src/cloud/publish.js');
+    const result = await stagePublishInRequest({
+      projectRoot: ROOT, config: connected(), categories: ['fact'],
+    }) as any;
+
+    expect(result.items).toEqual([]);
+    expect(result.skippedExcluded).toBe(1);
+  });
+
+  it('naming the id stages it anyway, because an exclusion must stay reversible', async () => {
+    const { excludeFromPublish } = await import('../../src/cloud/exclusions.js');
+    const excluded = await seedItem({ category: 'fact', title: 'excluded' });
+    await excludeFromPublish(excluded.id, 'test');
+
+    const { stagePublishInRequest } = await import('../../src/cloud/publish.js');
+    const result = await stagePublishInRequest({
+      projectRoot: ROOT, config: connected(), ids: [excluded.id], apply: true,
+    }) as any;
+
+    expect(result.skippedExcluded).toBe(0);
+    expect((await listStaged(WS)).map(row => row.itemId)).toEqual([excluded.id]);
+  });
+```
+
+Build `seedItem` and `connected()` from what the file already has; do not invent a shape.
+
+- [ ] **Step 2: Run it and watch it fail**
+
+Run: `npm.cmd test -- tests/cloud/publish.test.ts`
+Expected: FAIL — the excluded atom is staged, and `skippedExcluded` is undefined.
+
+- [ ] **Step 3: Implement**
+
+In `src/cloud/publish.ts`, add `filterExcluded` to the imports and extend the result type:
+
+```ts
+export type StageResult =
+  | { status: 'not-connected' }
+  | {
+    status: 'staged';
+    items: PromoteTarget[];
+    applied: boolean;
+    skippedForeign: number;
+    /**
+     * Excluded atoms a sweep passed over. Reported rather than silent for the same reason
+     * `skippedForeign` is: a sweep that quietly stages fewer atoms than the category holds is
+     * indistinguishable from a sweep that found nothing, and the remedy differs.
+     */
+    skippedExcluded: number;
+  };
+```
+
+In `stageInContext`, between `selectOwnedItems` and the `input.apply` block:
+
+```ts
+  // A sweep means "publish what is not published yet"; an excluded atom is one this machine was
+  // told never to publish, so it is not a candidate. Naming an id deliberately overrides that --
+  // `knowl cloud unstage --forever` promises exactly this in its own output, and an exclusion
+  // that naming could not override would be irreversible without hand-editing SQLite.
+  //
+  // Applied before the `apply` branch so the dry run and the real run list the same atoms. A
+  // preview that showed an atom `--apply` would then skip is worse than no preview.
+  const namedIds = Boolean(input.ids?.length);
+  const allowed = namedIds
+    ? items.map(item => item.id)
+    : await filterExcluded(items.map(item => item.id));
+  const allowedSet = new Set(allowed);
+  const eligible = namedIds ? items : items.filter(item => allowedSet.has(item.id));
+  const skippedExcluded = items.length - eligible.length;
+```
+
+Then use `eligible` in place of `items` for the rest of the function — both the `stage(...)` call and the returned `items` — and add `skippedExcluded` to the return.
+
+- [ ] **Step 4: Run it and watch it pass**
+
+Run: `npm.cmd test -- tests/cloud/publish.test.ts`
+Expected: PASS, including every pre-existing case. A pre-existing case that now fails is asserting on `items` for a store with no exclusions, where `eligible === items` — read the failure before touching it.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/cloud/publish.ts tests/cloud/publish.test.ts
+git commit -m "feat(cloud): a sweep does not re-stage what you excluded; naming it still does"
+```
+
+---
+
+### Task 6: Prove the invariant end to end
 
 **Files:**
 - Test: `tests/cloud/ledger-invariant.test.ts` (create)
 
 **Interfaces:**
-- Consumes: everything from Tasks 1–4
+- Consumes: everything from Tasks 1–5
 
 This is spec §12.6, written as its own task because it is the assertion the whole plan exists to make true, and it must fail loudly if any later plan regresses it. It asserts the column directly rather than only the outcome — a regression here otherwise surfaces as a server-side conflict far from its cause.
 
@@ -794,7 +1040,7 @@ git commit -m "test(cloud): pin the remote_version invariant across the whole ed
 ## What Plan A deliberately does not do
 
 - **No CLI changes.** `knowl cloud unstage`, `knowl store --local` and the rest of the surface are Plan B and Plan D. This plan makes them possible and stops there.
-- **No auto-staging.** The seam, `cloud.autoStage`, the machine-local auto-push consent and the snapshot-bound confirmation are Plan C, which consumes `filterExcluded` and `unstagePublish` from here.
+- **No auto-staging.** The seam, `cloud.autoStage`, the machine-local auto-push consent and the snapshot-bound confirmation are Plan C, which consumes `filterExcluded` and `unstagePublish` from here. The **manual** sweep's exclusion filter is Task 5 and belongs to this plan, because the sweep it guards already exists.
 - **No `visibility` change.** Per §5.1 and decision `ee191dd7db024bec`, that column keeps its exact meaning.
 
 ## Follow-on plans
@@ -803,5 +1049,4 @@ git commit -m "test(cloud): pin the remote_version invariant across the whole ed
 | --- | --- | --- |
 | **B — namespace and status** | Every cloud verb under `knowl cloud`, `publish`→`stage`, login short-circuit, connect picker, `workspaces`, status consolidation, `CloudApi.me()` and identity caching | A (status reports the staged split) |
 | **C — automatic staging** | The post-commit seam and its exclusions, `cloud.autoStage`, machine-local auto-push consent, snapshot-bound push confirmation, `MAX_BATCH` | A, B |
-| **D — surface cleanup** | `knowl store` / `park` / `handoff`, one-leaf flattening, MCP tool descriptions, guidance regeneration, knowl-cloud web copy and e2e tests | B (shares the rename wave) |
-</content>
+| **D — surface cleanup** | `knowl store` / `park` / `handoff`, one-leaf flattening, MCP tool descriptions, guidance regeneration, knowl-cloud web copy and e2e tests | B (shares the rename wave), **C** (`store --local` must beat the auto-stage seam) |

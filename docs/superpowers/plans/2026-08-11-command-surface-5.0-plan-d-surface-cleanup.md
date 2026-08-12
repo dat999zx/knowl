@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-08-11-command-surface-redesign-design.md` §8, §9, §10, §12.1.
 
-**Depends on:** Plan B (the renames this sweep propagates), Plan A (`excludeFromPublish`, for `store --local`).
+**Depends on:** Plan B (the renames this sweep propagates), Plan A (`excludeFromPublish`, for `store --local`), and **Plan C** — `store --local` has to beat the auto-stage seam, and the seam is Plan C's. Building this against A and B alone produces a `--local` flag that publishes the atom it was told to keep local.
 
 ## Global Constraints
 
@@ -29,7 +29,8 @@
 | `src/core/knowl-guidance.ts` | Modify: the generated KNOWL.md / AGENTS.md section |
 | `docs/reference.md` | Modify: the two-phase publishing section and the command tables |
 | `scripts/generate-docs.ts` | Modify if the coverage check enumerates command names |
-| knowl-cloud `web/` + 3 e2e specs | Modify: the six hardcoded command strings |
+| knowl-cloud `web/` | Modify: six `knowl workspace connect` sites and twelve `knowl login` sites |
+| knowl-cloud `web/tests/e2e/` | Modify: the two Playwright assertions that pin the wrong command — note the path is `web/tests/e2e/`, not `web/e2e/` |
 
 ---
 
@@ -111,26 +112,47 @@ program
   .action(async (content, options) => {
     try {
       const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
       await initDb(root);
       try {
-        const stored = await storeKnowledgeAtom(root, {
-          category: options.category,
-          title: options.title,
-          content,
-          tags: options.tag,
-          affectedPaths: options.path,
-          confidence: options.confidence,
-          provenance: options.provenance,
-          reasoning: options.reasoning,
-          alternatives: options.alternative,
-          source: options.source,
-          sourceCommit: options.sourceCommit,
-          supersedes: options.supersedes,
-        });
-        // Before anything can auto-stage it. `--local` is a statement about the atom, and an atom
-        // that reached the queue first would need unstaging as well as excluding.
-        if (options.local) await excludeFromPublish(stored.id, 'knowl store --local');
-        console.log(`Stored ${stored.category}: ${stored.title}`);
+        const project = await repo.getProjectByRootPath(root);
+        if (!project) throw new Error('Project not found in database.');
+
+        // The same ownership check the MCP handler makes at `src/mcp/tools.ts:554`. In a linked
+        // workspace, `supersedes` can name an item another repository owns, and only that repo
+        // may retire it -- so a CLI path without this check is a way to supersede a neighbour's
+        // knowledge that the tool path refuses.
+        await assertOwnedTargets([options.supersedes], root, config);
+
+        const result = await storeKnowledgeItemDeduped(
+          project.id,
+          {
+            category: options.category,
+            title: options.title,
+            content,
+            tags: options.tag,
+            affectedPaths: options.path,
+            confidence: options.confidence,
+            provenance: options.provenance,
+            reasoning: options.reasoning,
+            alternatives: options.alternative,
+            source: options.source,
+            sourceCommit: options.sourceCommit,
+            supersedes: options.supersedes,
+            // Read by the writer BEFORE the auto-stage seam fires. See the ordering note below.
+            local: Boolean(options.local),
+          },
+          `Store ${options.category}: ${options.title}`,
+          // Secret validation. The MCP handler passes this as the fourth argument; a CLI path
+          // that omitted it would be a way to write a secret that the tool path rejects.
+          config?.security,
+        );
+
+        if (result.action === 'duplicate') {
+          console.log(`Not stored — already held verbatim as ${result.item.id}.`);
+          return;
+        }
+        console.log(`Stored ${result.item.category}: ${result.item.title}`);
         if (options.local) console.log('Marked local. It will not be published.');
       } finally {
         await closeDb();
@@ -142,9 +164,49 @@ program
   });
 ```
 
-`storeKnowledgeAtom` is the name used here for whatever function `knowl_store`'s handler in `src/mcp/tools.ts` calls. **Read that handler and use its actual function and argument shape** — this task is a wrapper, and inventing a parallel writer is the one thing it must not do.
+**Three things this wrapper must not drop, all of which an earlier draft did.** They are what makes it a wrapper rather than a parallel writer:
 
-Ordering note for the `--local` line: exclusion must be written before the auto-stage seam can fire, which means before the write returns if the seam is inside the repository call. If Plan C wired the seam such that this ordering cannot hold, pass a `local` flag through to the writer instead of excluding afterwards.
+| Dropped | Where the MCP handler does it | Consequence of omitting |
+| --- | --- | --- |
+| `assertOwnedTargets([supersedes], projectRoot, config)` | `src/mcp/tools.ts:554` | In a linked workspace, the CLI could supersede an item owned by another repository |
+| `config?.security` as the fourth argument | `src/mcp/tools.ts:578` | Secret validation off on this path only |
+| `projectId`, not `root`, as the first argument | `src/mcp/tools.ts:558` | `storeKnowledgeItemDeduped(projectId, input, commitMessage, validationOptions)` — there is no `storeKnowledgeAtom`, and `root` is not a project id |
+
+`getProjectByRootPath` is how every other CLI action resolves the id (`src/cli/program.ts:393, 436, 540, …`). Read the handler at `src/mcp/tools.ts:548-595` and mirror it; the snippet above is that mirror, not a replacement for reading it.
+
+**The `--local` ordering, settled.** Excluding *after* the write returns does not work, and this is not a hypothetical: Plan C Task 2 fires `maybeAutoStage` inside `storeKnowledgeItemDeduped`, after its transaction commits but **before** it returns. So an atom stored with `--local` would be staged, and — with auto-push consent on — could be sent, before the exclusion was ever written. The atom would then need unstaging *and* excluding, and if it had already been pushed, retracting.
+
+So `--local` travels **into** the writer as a field on the input, and the writer excludes before it calls the seam:
+
+```ts
+  // `local` is a statement about the atom, so it has to be true before anything can act on the
+  // atom. Excluding after the write returns loses the race with the auto-stage seam a few lines
+  // above -- and losing it once, with auto-push on, is unrecoverable without a retraction.
+  if (input.local) await excludeFromPublish(item.id, 'knowl store --local');
+  await maybeAutoStage({ projectRoot, config, itemId: item.id, namespace, alreadyPublished: false });
+```
+
+Both calls sit after the transaction commits, in that order. `maybeAutoStage` already consults `filterExcluded` (Plan C Task 1), so the exclusion is all it takes — no second flag threaded into the gate.
+
+- [ ] **Step 3a: Pin the race, not just the outcome**
+
+Add a case that would pass under the broken ordering and fail under nothing else:
+
+```ts
+  it('--local excludes before the auto-stage seam can queue it', async () => {
+    await connectRepo(ROOT, WS);                       // auto-stage on by default
+    await runCli(['store', 'D:/coding path only on this box',
+      '--category', 'fact', '--title', 'Local path', '--local']);
+
+    const items = await queryKnowledgeBase(projectId, { status: 'active' });
+    const { isExcluded } = await import('../../src/cloud/exclusions.js');
+    expect(await isExcluded(items[0].id)).toBe(true);
+    // The assertion that matters: it was never queued, not merely excluded afterwards.
+    expect(await listStaged(WS)).toEqual([]);
+  });
+```
+
+The existing `--local excludes the atom from publication` case passes in a **disconnected** repo, where the seam never fires — so on its own it proves nothing about the ordering.
 
 - [ ] **Step 4: Run it and watch it pass**
 
@@ -247,20 +309,46 @@ program
   .option('--artifact <path...>', 'Files the next session should look at')
   .option('--verified', 'The work so far was checked')
   .option('--unverified', 'The work so far was not checked')
+  .option('--host <host>', 'Which host\'s hooks should deliver this baton', 'claude')
   .action(async options => {
     try {
       const root = await findProjectRoot(process.cwd());
-      await recordDeliberateHandoff(root, {
-        goal: options.goal,
-        nextAction: options.nextAction,
-        completed: options.completed,
-        blocker: options.blocker,
-        artifactRefs: options.artifact,
-        verificationStatus: options.verified ? 'verified' : options.unverified ? 'unverified' : undefined,
-      });
-      // One baton per project, and parking again replaces it -- say so, because the previous one
-      // is gone and nothing else will mention it.
-      console.log('Handed off. The next session in this project receives it once, then it is archived.');
+      // `recordDeliberateHandoff` writes through the knowledge store, so the database has to be
+      // open. `createResumePoint` does not need this -- it opens the resume store itself
+      // (`src/session/resume-points.ts:39`), which is why `park` above has no `initDb`.
+      await initDb(root);
+      try {
+        const project = await repo.getProjectByRootPath(root);
+        if (!project) throw new Error('Project not found in database.');
+
+        const { replacedPrevious } = await recordDeliberateHandoff(project.id, {
+          // Mirrors the MCP handler at `src/mcp/tools.ts:1401-1414`, including its reasoning: the
+          // baton is filed under the host whose hooks deliver it on session start, and the caller
+          // is not that host. `--host` exists for anyone running hooks under another one.
+          host: options.host,
+          projectRoot: root,
+          // The MCP path sends 'unknown' because an MCP client has no session of its own. A CLI
+          // invocation is not an unknown session, it is not a session -- so say that instead.
+          externalSessionId: 'cli',
+          taskState: {
+            goal: options.goal,
+            nextAction: options.nextAction,
+            completed: options.completed,
+            blocker: options.blocker,
+            artifactRefs: options.artifact,
+            verificationStatus: options.verified ? 'verified' : options.unverified ? 'unverified' : undefined,
+          },
+        });
+
+        // One baton per project, and parking again replaces it -- say so, because the previous
+        // one is gone and nothing else will mention it. The MCP handler says the same thing.
+        if (replacedPrevious) {
+          console.log('Replaced the previous unconsumed handoff — its goal, next action and blocker are gone.');
+        }
+        console.log('Handed off. The next session in this project receives it once, then it is archived.');
+      } finally {
+        await closeDb();
+      }
     } catch (error: any) {
       console.error(`Error handing off: ${error.message}`);
       process.exit(1);
@@ -268,7 +356,18 @@ program
   });
 ```
 
-Match `createResumePoint`'s and `recordDeliberateHandoff`'s real signatures by reading them; the brief shapes above are taken from the MCP schemas and the argument order may differ.
+**`recordDeliberateHandoff` does not take a project root and does not take a flat brief.** Its real signature (`src/session/session-handoff.ts:459`) is
+
+```ts
+recordDeliberateHandoff(
+  projectId: string,
+  input: { host: string; projectRoot: string; externalSessionId: string; sessionTitle?: string; taskState: HandoffTaskState },
+): Promise<{ itemId: string; handoff: PendingHandoff; replacedPrevious: boolean }>
+```
+
+so the six brief fields live **inside** `taskState` (`HandoffTaskState`, `:40-47`), and three arguments the CLI has to supply — `projectId`, `host`, `externalSessionId` — have no CLI source until this action provides one. `createResumePoint(projectDir, brief)` (`resume-points.ts:33`) genuinely does take the root as its first argument, so `park` above is correct as written and only `handoff` changes.
+
+Read both signatures before implementing rather than trusting this block.
 
 - [ ] **Step 4: Run, pass, render**
 
@@ -297,22 +396,45 @@ git commit -m "feat(cli): park and handoff stop being agent-only"
 - [ ] **Step 1: Write the failing test**
 
 ```ts
-  it('has no group that wraps a single leaf', () => {
+const subcommandsOf = (root: any, name: string): string[] | undefined => {
+  const node = root.commands.find((c: any) => c.name() === name);
+  return node && node.commands.map((c: any) => c.name()).filter((n: string) => n !== 'help');
+};
+
+  /**
+   * Four of these five keep their names and lose their depth; only `code` disappears.
+   *
+   * `knowl eval retrieval` becomes `knowl eval` — so `eval` must still EXIST at the top level,
+   * as a leaf. An earlier draft asserted it was `undefined` and then asserted it was present two
+   * lines later, which no implementation could satisfy. `code` is the exception because it wrapped
+   * *two* leaves, `index` and `symbols`, so it splits into two names rather than collapsing.
+   */
+  it.each(['eval', 'access', 'pr', 'evidence'])('%s is a leaf, not a group', name => {
+    expect(subcommandsOf(buildProgram(), name)).toEqual([]);
+  });
+
+  it('code is gone, and its two leaves are top-level commands', () => {
     const top = buildProgram();
-    for (const name of ['code', 'eval', 'access', 'pr', 'evidence']) {
-      expect(top.commands.find((c: any) => c.name() === name)).toBeUndefined();
-    }
+    expect(top.commands.find((c: any) => c.name() === 'code')).toBeUndefined();
     const names = top.commands.map((c: any) => c.name());
+    expect(names).toContain('index-code');
+    expect(names).toContain('symbols');
+  });
+
+  it('every flattened command has a description, because they are in top-level help now', () => {
+    const top = buildProgram();
     for (const name of ['index-code', 'symbols', 'eval', 'access', 'pr', 'evidence']) {
-      expect(names).toContain(name);
+      const node = top.commands.find((c: any) => c.name() === name);
+      expect(node?.description(), `${name} has no description`).toBeTruthy();
     }
   });
 
   it('keeps snapshot as a group, because create and restore are a pair', () => {
-    const snapshot = buildProgram().commands.find((c: any) => c.name() === 'snapshot');
-    expect(snapshot.commands.map((c: any) => c.name()).sort()).toEqual(['create', 'help', 'restore']);
+    expect(subcommandsOf(buildProgram(), 'snapshot')?.sort()).toEqual(['create', 'restore']);
   });
 ```
+
+`help` is filtered for the same reason as in Plan B's tree test: whether Commander materialises an implicit help subcommand inside `.commands` is a version detail, not something this plan decides.
 
 - [ ] **Step 2: Run, fail, implement**
 
@@ -412,11 +534,31 @@ git commit -m "fix(mcp): stop telling agents to run commands that no longer exis
 
 ### Task 5: knowl-cloud's web copy
 
-**Files (in `d:/coding/knowl-cloud`):**
-- Modify: `web/app/(marketing)/(site)/docs/page.tsx:55`, `web/app/(marketing)/(site)/page.tsx:120`, `web/app/(app)/onboarding/page.tsx:58`, `web/app/(app)/w/[ws]/repos/page.tsx:57` and `:98`, `web/components/ui/copy.tsx:11`
-- Modify: `web/e2e/app-onboarding.spec.ts:30`, `web/e2e/app-instrument-screens.spec.ts:68`
+**Files (in `d:/coding/knowl-cloud`), verified by grep on 2026-08-12:**
 
-**This repo's suite currently pins a command that has never existed.** Per knowl-cloud goal `a052496241be48a2`, the web documents `knowl workspace connect <workspace-id>`; the real command was `knowl cloud connect --workspace <id>` before this wave and is unchanged by it. So this task fixes a pre-existing bug and propagates the `publish` → `cloud stage` rename at the same time.
+`knowl workspace connect` — the command that never existed:
+- `web/app/(marketing)/(site)/docs/page.tsx:55`
+- `web/app/(marketing)/(site)/page.tsx:120`
+- `web/app/(app)/onboarding/page.tsx:58`
+- `web/app/(app)/w/[ws]/repos/page.tsx:57` and `:98`
+- `web/components/ui/copy.tsx:11` (a docblock, but it is the one that explains the component)
+
+`knowl login` — **real today, gone after Plan B**, and an earlier draft of this task missed every one of them:
+- `web/app/(marketing)/(site)/docs/page.tsx:68`
+- `web/app/(marketing)/(site)/page.tsx:121`
+- `web/app/(marketing)/(auth)/device/page.tsx:11` (docblock) and `:46`
+- `web/app/(app)/onboarding/page.tsx:13` (docblock) and `:68`
+- `web/app/(app)/w/[ws]/repos/page.tsx:55`
+- `web/components/auth/device-approval.tsx:35` and `:51`
+- `web/components/account/device-list.tsx:34` and `:84`
+- `web/app/auth/callback/route.ts:71` (docblock)
+- `web/tests/e2e/public-surfaces.spec.ts:38` (comment only — no assertion)
+
+e2e assertions that pin the wrong string — **two, not three**, and under `web/tests/e2e/`, not `web/e2e/`:
+- `web/tests/e2e/app-onboarding.spec.ts:30`
+- `web/tests/e2e/app-instrument-screens.spec.ts:68`
+
+**Two pre-existing bugs and one propagation, in one task.** Per knowl-cloud goal `a052496241be48a2` the web documents `knowl workspace connect <workspace-id>`, which has never been a command — and because `knowl workspace` *is* a real group for linking local repos, it fails with a confusing argument error rather than an unknown-command one. Separately, `knowl login` is real today and is removed by Plan B, so every site above becomes wrong the moment 5.0 ships. `knowl publish` does not appear in `web/` at all; there is nothing to propagate for that one.
 
 - [ ] **Step 1: Confirm the line numbers before editing**
 
@@ -425,42 +567,50 @@ cd d:/coding/knowl-cloud
 grep -rn "knowl workspace connect\|knowl publish\|knowl login" web/ | grep -v node_modules
 ```
 
-Line numbers from a goal written days ago may have moved. Use what the grep says.
+The list above was taken this way and is current as of this plan's revision; re-run it anyway, because these are two repositories moving independently.
 
-- [ ] **Step 2: Fix the three e2e assertions first**
+- [ ] **Step 2: Fix the two e2e assertions first**
 
-They currently assert the wrong string, so they pass today and will fail the moment the copy is right. Update them to the real command, run the suite, and watch them fail against the unfixed copy — that failure is the proof the assertions now test something.
+They assert the wrong string, so they pass today and will fail the moment the copy is right. Update them to the real command, then run Playwright and watch them fail against the unfixed copy — that failure is the proof the assertions now test something.
 
 ```bash
-npm run test --workspace @knowl-cloud/web
+npm run test:e2e --workspace @knowl-cloud/web
 ```
 
-- [ ] **Step 3: Fix the six copy sites**
+**`npm run test` is not this suite.** In `web/package.json`, `test` is `vitest run` and `test:e2e` is `cross-env … next build && playwright test`. An earlier draft ran `test` at every verification step, so the Playwright specs it was editing would never have executed once.
 
-`knowl workspace connect <workspace-id>` → `knowl cloud connect --workspace <id>`, and any `knowl publish` → `knowl cloud stage`.
+- [ ] **Step 3: Fix the copy sites**
+
+- `knowl workspace connect <workspace-id>` → `knowl cloud connect --workspace <id>`
+- `knowl login` → `knowl cloud login`
+
+Docblocks and comments included. They are what the next reader trusts, and one of them (`copy.tsx:11`) is the explanation of the component that renders the wrong command everywhere else.
 
 - [ ] **Step 4: Verify**
 
 ```bash
-npm run test --workspace @knowl-cloud/web
-npm run typecheck
+npm run typecheck --workspace @knowl-cloud/web
+npm run test --workspace @knowl-cloud/web        # vitest
+npm run test:e2e --workspace @knowl-cloud/web    # playwright — the suite this task edits
+npm run test                                      # the engine suite, at the repo root
 ```
 
-Expected: green. Per knowl-cloud constraint `8b4b2ec92d764ded`, the root Vitest run does **not** cover the web workspace — running only the engine suite is how a merge passed CI and still broke. Run both.
+Expected: green. Per knowl-cloud constraint `8b4b2ec92d764ded`, the root Vitest run does **not** cover the web workspace — running only the engine suite is how a merge passed CI and still broke. All four commands, not a subset.
 
 - [ ] **Step 5: Commit in knowl-cloud**
 
 ```bash
 git add web/
-git commit -m "fix(web): name the command that exists
+git commit -m "fix(web): name the commands that exist
 
-The onboarding copy documented `knowl workspace connect <id>`, which has
-never been a command -- and because `knowl workspace` is a real group for
+The onboarding copy documented \`knowl workspace connect <id>\`, which has
+never been a command -- and because \`knowl workspace\` is a real group for
 linking local repos, it failed with a confusing argument error rather than
-an unknown-command one. Three e2e tests asserted the wrong string, so the
-suite pinned the error in place.
+an unknown-command one. Two Playwright specs asserted the wrong string, so
+the suite pinned the error in place.
 
-Also propagates knowl 5.0's rename: publish is now `knowl cloud stage`."
+Also propagates knowl 5.0's rename: \`knowl login\` is now
+\`knowl cloud login\`, across eleven copy sites and four docblocks."
 ```
 
 ---
@@ -494,9 +644,13 @@ Expected: no cloud verb at top level; eleven under `cloud`; `workspace` unchange
 
 ```bash
 cd d:/coding/knowl-cloud
-npm run test
-npm run test --workspace @knowl-cloud/web
+npm run test                                      # engine
+npm run typecheck --workspace @knowl-cloud/web
+npm run test --workspace @knowl-cloud/web         # vitest
+npm run test:e2e --workspace @knowl-cloud/web     # playwright
 ```
+
+All four. `8b4b2ec92d764ded` records a merge that passed CI and still broke because only the first was run.
 
 - [ ] **Step 4: Store the outcome**
 
@@ -509,4 +663,3 @@ Record what shipped, the migration level, and any deviation from these four plan
 - **No `knowl ask` removal.** It is a deletion candidate (spec §11.2) but deleting a user-facing command deserves its own decision.
 - **No retention consolidation.** `transcripts approve/discard`, `gc` and `forget-log` remain three surfaces (§11.3).
 - **No aliases.** There are none today and 5.0 adds none (§11.6).
-</content>
