@@ -105,6 +105,43 @@ describe('discoverTranscriptFiles', () => {
     expect(found.map(f => f.sessionId)).toEqual(['aaa']);
   });
 
+  // Measured 2026-08-12 on a machine whose code had moved between drives. The archive directory
+  // `c--Code-knowl-cloud` was a junction to the real `d--Code-knowl-cloud`, and
+  // `knowl reindex --transcripts` reported "Indexed 0 transcript message(s)" and exited 0
+  // against 30 transcripts. `readdir(..., { withFileTypes: true })` returns lstat-like dirents,
+  // so `isDirectory()` is false for a link, and the guard dropped the entry BEFORE comparing its
+  // name -- which matched `wanted` exactly. Silent, because a project with no transcripts is an
+  // ordinary state and looks identical to one that was skipped.
+  it('follows an archive directory that is a symlink to the real one', async () => {
+    const real = path.join(projectsDir, 'real-archive');
+    await fs.mkdir(real, { recursive: true });
+    await fs.writeFile(path.join(real, 'linked.jsonl'), '{}\n');
+    // `junction` is the type Windows can create without elevation, and is what a drive move
+    // leaves behind; it is ignored on POSIX, where a plain dir symlink is made instead.
+    await fs.symlink(real, path.join(projectsDir, ENCODED), 'junction');
+
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
+
+    expect(found.map(f => f.sessionId)).toEqual(['linked']);
+  });
+
+  // The same dirent assumption guards the session-UUID descent, where it costs far more: by this
+  // file's own measurement subagent transcripts are ~90% of an archive, so a junctioned session
+  // directory silently drops most of the corpus rather than one file.
+  it('follows a session directory that is a symlink, keeping its subagent transcripts', async () => {
+    const uuid = '78aed75d-4bed-4d1a-a93e-f3fd3eab4fb4';
+    const realSession = path.join(projectsDir, 'real-session');
+    await fs.mkdir(path.join(realSession, 'subagents'), { recursive: true });
+    await fs.writeFile(path.join(realSession, 'subagents', 'sub-one.jsonl'), '{}\n');
+    await write(`${ENCODED}/parent.jsonl`);
+    await fs.symlink(realSession, path.join(projectsDir, ENCODED, uuid), 'junction');
+
+    const found = await discoverTranscriptFiles(ROOT, { projectsDir });
+
+    expect(found.map(f => f.sessionId).sort()).toEqual(['parent', 'sub-one']);
+    expect(found.find(f => f.sessionId === 'sub-one')?.parentSessionId).toBe(uuid);
+  });
+
   it('includes a worktree whose path is nowhere near the main root', async () => {
     await write(`${ENCODED}/main.jsonl`);
     await write(`${ENCODED_WORKTREE}/wt.jsonl`);
