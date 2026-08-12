@@ -106,15 +106,20 @@ describe('fingerprintProfile', () => {
   });
 
   // The tests above use a synthetic profile, so they cannot see a preset gaining a field. This
-  // one pins the REAL fingerprint of a shipped preset against a value read out of a live store
-  // (`knowledge_embeddings.profile_fingerprint` on a 767-vector arctic corpus). If a future
-  // field reaches `presetProfile` without being stripped, every stored row silently stops
-  // matching its own profile and vector search goes quiet with no error anywhere. That is what
-  // a per-profile similarity constant nearly did before it was stripped -- and then removed
-  // outright, once measurement showed a per-store percentile beat it.
+  // one pins the REAL fingerprint of a shipped preset. If a future field reaches
+  // `presetProfile` without being stripped, every stored row silently stops matching its own
+  // profile and vector search goes quiet with no error anywhere. That is what a per-profile
+  // similarity constant nearly did before it was stripped -- and then removed outright, once
+  // measurement showed a per-store percentile beat it.
+  //
+  // Two ways to move this literal, and only one of them is legitimate. `EMBED_RECIPE_VERSION`
+  // is deliberately part of the fingerprint, so bumping the recipe moves every fingerprint on
+  // purpose: that is the mechanism by which a recipe change invalidates its own rows. Update
+  // the value then, and only then. A move with no recipe bump behind it is the accident this
+  // test exists to catch -- do not paste the new hash in to make it green.
   it('does not move when a preset gains a non-profile field', () => {
     expect(fingerprintProfile(resolveVectorProfile(config({ preset: 'arctic-embed-m-v2' }))))
-      .toBe('d3f842a52c03b8e1');
+      .toBe('f0814d56c298a041');
   });
 });
 
