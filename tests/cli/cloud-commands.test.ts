@@ -16,7 +16,7 @@ function subcommandNames(path: string[]): string[] {
 describe('the 5.0 cloud namespace', () => {
   it('holds every cloud verb', () => {
     expect(subcommandNames(['cloud'])).toEqual([
-      'connect', 'login', 'logout', 'pull', 'push',
+      'autopush', 'connect', 'login', 'logout', 'pull', 'push',
       'retract', 'stage', 'status', 'unstage', 'workspaces',
     ]);
   });

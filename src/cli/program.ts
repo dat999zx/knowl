@@ -49,6 +49,7 @@ import { createCloudApi } from '../cloud/api-client.js';
 import { readCredential } from '../cloud/credentials.js';
 import { excludeFromPublish } from '../cloud/exclusions.js';
 import { unstagePublish } from '../cloud/ledger.js';
+import { writeAutoPushConsent } from '../cloud/consent.js';
 import { pickWorkspace } from './cloud-picker.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
@@ -785,6 +786,30 @@ cloudCommand
   });
 
 cloudCommand
+  .command('autopush')
+  .argument('<state>', 'on or off')
+  .description('Turn automatic pushing on or off, for this machine only')
+  .action(async (state: string) => {
+    if (state !== 'on' && state !== 'off') {
+      console.error('Expected on or off.');
+      process.exit(1);
+    }
+    const root = await findProjectRoot(process.cwd());
+    const config = await loadConfig(root);
+    if (!config.cloud) {
+      console.error('This repository is not connected to a cloud workspace.');
+      process.exit(1);
+    }
+    await writeAutoPushConsent(config.cloud.workspaceId, state === 'on');
+    const workspace = config.cloud.workspaceName ?? config.cloud.workspaceId;
+    console.log(state === 'on'
+      // Said plainly because the whole design turns on it: this is not a project setting and
+      // does not travel to anyone else.
+      ? `Automatic push enabled for ${workspace} on this machine.\nIt applies to you only — it is not committed and no teammate inherits it.`
+      : `Automatic push disabled for ${workspace}.`);
+  });
+
+cloudCommand
   .command('unstage')
   .argument('<id>', 'The item to take out of the queue')
   .description('Take an atom out of the push queue. Does not unpublish it')
@@ -820,6 +845,7 @@ cloudCommand
   .option('--api <host>', 'API host (defaults to $KNOWL_API_HOST, else the hosted service)', defaultApiHost())
   .option('--workspace <id>', 'Workspace id, when you belong to more than one')
   .option('--remote <name>', 'Git remote to derive repo identity from', 'origin')
+  .option('--no-auto-stage', 'Do not stage new knowledge automatically; stage it explicitly instead')
   .action(async options => {
     try {
       const root = await findProjectRoot(process.cwd());
@@ -832,9 +858,19 @@ cloudCommand
 
       // Shared by both entry paths -- the first attempt and the one that follows a pick -- so a
       // connection made through the picker reports exactly what a direct one does.
-      const reportConnected = (connected: Extract<Awaited<ReturnType<typeof runConnect>>, { status: 'connected' }>) => {
+      const reportConnected = async (connected: Extract<Awaited<ReturnType<typeof runConnect>>, { status: 'connected' }>) => {
+        // Written after the pointer, not before: `runConnect` writes config itself, so setting
+        // this first would be overwritten by the connect it is meant to qualify.
+        if (options.autoStage === false) {
+          const current = await loadConfig(root);
+          if (current.cloud) {
+            await saveConfig(root, { ...current, cloud: { ...current.cloud, autoStage: false } });
+          }
+        }
         console.log(`Connected ${connected.pointer.repo} to ${connected.pointer.workspaceName} as ${connected.role}.`);
-        console.log('Nothing has been published. Use knowl cloud stage to share knowledge.');
+        console.log(options.autoStage === false
+          ? 'Nothing has been published, and new knowledge will not stage itself. Use knowl cloud stage.'
+          : 'Nothing has been published. New knowledge stages itself; send it with knowl cloud push.');
       };
 
       const result = await runConnect(connectInput);
@@ -870,11 +906,11 @@ cloudCommand
           console.error(`Connect failed after choosing a workspace: ${confirmed.status}`);
           process.exit(1);
         }
-        reportConnected(confirmed);
+        await reportConnected(confirmed);
         return;
       }
 
-      reportConnected(result);
+      await reportConnected(result);
     } catch (error: any) {
       console.error(`Connect failed: ${error.message}`);
       process.exit(1);
