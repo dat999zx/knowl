@@ -801,15 +801,34 @@ rather than destroying an edit you never read.
 
 Once a repository is connected, the MCP server offers one more tool:
 
-- **`knowl_cloud`** — `action: "status"` reports the connection, your role, how many atoms are
-  staged, when the replica last synced, and what a push is currently waiting for. It touches no
-  network, so it answers instantly and offline. `action: "stage"` is `knowl cloud stage`: it records
-  an intent and is a dry run unless you pass `apply: true`.
+- **`knowl_cloud`** — `action: "status"` reports whether this machine is signed in and as whom,
+  the workspace and your role, how many atoms are queued split into new and corrections, when the
+  background pull is next due, and what a push is currently waiting for. It touches no network, so
+  it answers instantly and offline. `action: "stage"` is `knowl cloud stage`: it records an intent
+  and is a dry run unless you pass `apply: true`. `action: "unstage"` takes atoms back out of the
+  queue, and is always safe — it sends nothing and unpublishes nothing.
 
 It stops there deliberately. Sending, pulling, connecting and signing in stay yours to run —
 sending because it is irreversible and gated on a branch state the agent cannot see the whole of,
 the other three because two need a browser and pulling already happens on its own. Asked to send,
 the agent relays the command instead.
+
+Because knowledge stages itself as it is written, an agent needs a way to say "not this one" at
+write time: `knowl_store` takes `local: true`, the tool-side equivalent of `knowl store --local`,
+for knowledge that is only true of this machine.
+
+#### The local workspace, from an agent
+
+A repository linked into a local workspace offers one more tool:
+
+- **`knowl_workspace`** — `action: "status"` names the workspace, this repo's name in it, and every
+  linked repo with whether its database is present. `action: "demand"` reports what the linked
+  repos have queried each other for, most-repeated first — the readout that says which knowledge
+  this repo owes its peers.
+
+Read-only, on the same line the cloud tool draws. `knowl workspace promote` is absent because it
+shares in one step with no second command to complete, so it stays yours; linking and unlinking
+repos are machine setup and stay yours for the reason `knowl init` does.
 
 ### Staying current
 

@@ -554,7 +554,7 @@ loopback binding is the privacy boundary: do not put it behind a public proxy or
 ### Everything else
 
 <!-- generated:tool-count -->
-**27 MCP tools** (plus 3 when transcript search is on, and 1 when connected to a cloud workspace)
+**27 MCP tools** (plus 3 when transcript search is on, 1 when connected to a cloud workspace, and 1 when linked into a local workspace)
 <!-- /generated:tool-count -->
 and two resource URIs · the
 **complete CLI**, from `knowl status` to `knowl audit` · a **read-only integrity audit** ·

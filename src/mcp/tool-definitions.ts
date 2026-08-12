@@ -96,17 +96,17 @@ export const TRANSCRIPT_TOOL_DEFINITIONS: ToolDefinition[] = [
 export const CLOUD_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_cloud',
-          description: 'Check this repo\'s cloud workspace connection, or stage knowledge for publication to the team. `status` is local-only and instant -- use it before telling a user anything about what is or is not shared, because sync also runs on its own and the answer changes without you. `stage` records the intent to publish and sends nothing; it is a dry run unless you pass apply. It cannot send, retract, pull, connect or sign in: those are the user\'s to run (`knowl cloud push`, `knowl cloud retract`, `knowl cloud pull`, `knowl cloud connect`, `knowl cloud login`). Relay the command rather than trying to work around it. Both directions are irreversible: a push cannot be recalled except by a retract, and a retract is a hard delete that bars the id forever.',
+          description: 'Check this repo\'s cloud workspace connection, or change what is queued for the team. `status` is local-only and instant -- use it before telling a user anything about what is or is not shared, because knowledge is staged automatically as it is written and sync runs on its own, so the answer changes without you. `stage` records the intent to publish and sends nothing; it is a dry run unless you pass apply. `unstage` takes an atom back out of the queue and is always safe: it sends nothing and unpublishes nothing. It cannot send, retract, pull, connect or sign in: those are the user\'s to run (`knowl cloud push`, `knowl cloud retract`, `knowl cloud pull`, `knowl cloud connect`, `knowl cloud login`). Relay the command rather than trying to work around it. Both directions are irreversible: a push cannot be recalled except by a retract, and a retract is a hard delete that bars the id forever.',
           inputSchema: {
             type: 'object',
             properties: {
               action: {
-                type: 'string', enum: ['status', 'stage'],
-                description: 'status (default): connection, role, staged count, last sync, and what a push is currently waiting for. stage: record the intent to publish.',
+                type: 'string', enum: ['status', 'stage', 'unstage'],
+                description: 'status (default): whether this machine is signed in and as whom, the workspace and your role, how many atoms are queued split into new and corrections, when the background pull is next due, and what a push is currently waiting for. stage: record the intent to publish. unstage: take an atom back out of the queue.',
               },
               ids: {
                 type: 'array', items: { type: 'string' }, maxItems: 50,
-                description: 'stage only. Item ids to stage, as returned by knowl_query. Naming ids re-stages an atom that was already pushed, which is how a correction is sent; a category sweep deliberately leaves those alone.',
+                description: 'stage and unstage. Item ids, as returned by knowl_query. For stage, naming ids re-stages an atom that was already pushed, which is how a correction is sent; a category sweep deliberately leaves those alone. For unstage, these are the atoms to dequeue.',
               },
               categories: {
                 type: 'array', items: { type: 'string', enum: KNOWLEDGE_CATEGORIES }, maxItems: 20,
@@ -115,6 +115,44 @@ export const CLOUD_TOOL_DEFINITIONS: ToolDefinition[] = [
               apply: {
                 type: 'boolean',
                 description: 'stage only. False (the default) reports what would be staged and writes nothing. Only pass true when the user asked for this specific publication -- staging is what a later push sends, and undoing that push means destroying the atom outright.',
+              },
+              forever: {
+                type: 'boolean',
+                description: 'unstage only. Also exclude the atom, so nothing stages it again automatically. Use this for knowledge that is only true of this machine and was queued before anyone noticed; `local` on knowl_store is the way to say so at write time instead.',
+              },
+            },
+          },
+        },
+];
+
+/**
+ * The local multi-repo surface, read-only.
+ *
+ * Registered only when this repo is actually in a workspace, mirroring how the cloud tool gates
+ * on `config.cloud`: a tool that answers "you are not in a workspace" on every call is a tool
+ * every session pays for and no session uses.
+ *
+ * **Read-only, deliberately, and the line is the same one the cloud tool draws.** `promote` is
+ * absent even though it is the local analogue of publishing, because it is not the analogue of
+ * `stage` -- it shares immediately in one step, with no second command a human has to run. The
+ * rule is that an agent may record an intent and a human completes it, so a one-step share is
+ * the user's. `init`, `add`, `join`, `remove`, `set` and `repin-embedding` are machine setup and
+ * are absent for the same reason `knowl init` is.
+ */
+export const WORKSPACE_TOOL_DEFINITIONS: ToolDefinition[] = [
+        {
+          name: 'knowl_workspace',
+          description: 'Describe the local multi-repo workspace this repository belongs to: which repos are linked, which are present on this machine, and what they have been asking each other for. Use it when a query returned rows keyed by another repo and you need to know what that repo IS, or before deciding where knowledge belongs. Read-only: it links nothing, unlinks nothing and shares nothing. Linking repos and promoting knowledge to them are the user\'s to run (`knowl workspace add`, `knowl workspace promote`).',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              action: {
+                type: 'string', enum: ['status', 'demand'],
+                description: 'status (default): the workspace name, this repo\'s name in it, and every linked repo with whether its database is present. demand: what the linked repos have queried each other for, most-repeated first -- the readout that says which knowledge this repo owes its peers.',
+              },
+              limit: {
+                type: 'integer', minimum: 1, maximum: 50,
+                description: 'demand only. How many distinct questions to return; defaults to 20.',
               },
             },
           },
@@ -248,6 +286,10 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
                 description: 'Ordered steps when category is skill.',
               },
               namespace: { type: 'string', enum: ['session', 'project', 'organization', 'global'], description: 'Write target; project is default. Non-project namespaces must be configured.' },
+              local: {
+                type: 'boolean',
+                description: 'Never publish this atom to a cloud workspace. Pass true for knowledge that is only true of THIS machine -- an absolute path, an environment quirk, a fix that depends on local tooling. In a connected repo new knowledge is staged for the team automatically, so an atom that should not travel has to say so at write time; there is no other moment when you know. Reversed by naming its id to `knowl cloud stage`.',
+              },
             },
             required: ['category', 'title', 'content'],
           },

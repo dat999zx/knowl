@@ -20,7 +20,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS } from '../src/mcp/tool-definitions.js';
+import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS } from '../src/mcp/tool-definitions.js';
 import { DEFAULT_PRESET_ID, VECTOR_PRESETS } from '../src/core/vector-profile.js';
 import { stripManagedKnowlGuidance } from '../src/core/agents-guidance.js';
 import { renderManagedKnowlGuidanceSection } from '../src/core/knowl-guidance.js';
@@ -38,7 +38,7 @@ function contextLabel(tokens: number): string {
 /** Region id -> [file, body]. */
 const regions: Record<string, [string, string]> = {
   'tool-count': [README, [
-    `**${CORE_TOOL_DEFINITIONS.length} MCP tools** (plus ${TRANSCRIPT_TOOL_DEFINITIONS.length} when transcript search is on, and ${CLOUD_TOOL_DEFINITIONS.length} when connected to a cloud workspace)`,
+    `**${CORE_TOOL_DEFINITIONS.length} MCP tools** (plus ${TRANSCRIPT_TOOL_DEFINITIONS.length} when transcript search is on, ${CLOUD_TOOL_DEFINITIONS.length} when connected to a cloud workspace, and ${WORKSPACE_TOOL_DEFINITIONS.length} when linked into a local workspace)`,
   ].join('\n')],
 
   'embedding-presets': [REFERENCE, [
@@ -75,7 +75,7 @@ for (const [id, [file, body]] of Object.entries(regions)) {
  * happened three times before the counts were reconciled by hand.
  */
 const referenceText = fs.readFileSync(REFERENCE, 'utf8');
-for (const tool of [...CORE_TOOL_DEFINITIONS, ...TRANSCRIPT_TOOL_DEFINITIONS, ...CLOUD_TOOL_DEFINITIONS]) {
+for (const tool of [...CORE_TOOL_DEFINITIONS, ...TRANSCRIPT_TOOL_DEFINITIONS, ...CLOUD_TOOL_DEFINITIONS, ...WORKSPACE_TOOL_DEFINITIONS]) {
   if (!referenceText.includes(`\`${tool.name}\``)) {
     failures.push(`docs/reference.md documents no tool named ${tool.name}`);
   }

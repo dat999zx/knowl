@@ -43,11 +43,14 @@ import { isTranscriptSearchEnabled } from '../transcripts/config.js';
 import { hasIndexableArchive } from '../transcripts/paths.js';
 import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
-import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
+import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
 import { teamUpdateNotice } from '../cloud/team-update.js';
 import { maybeAutoSync } from '../cloud/auto-sync.js';
 import { cloudStatusInRequest } from '../cloud/status.js';
 import { stagePublishInRequest } from '../cloud/publish.js';
+import { excludeFromPublish } from '../cloud/exclusions.js';
+import { unstagePublish } from '../cloud/ledger.js';
+import { summarizeDemand } from '../workspace/demand-ledger.js';
 import { loadConfig } from '../core/config.js';
 
 export const CLOUD_DISCONNECTED_MESSAGE =
@@ -241,6 +244,12 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
     tools.push(...CLOUD_TOOL_DEFINITIONS);
   }
 
+  // Gated on membership rather than on a setting: a tool whose only answer is "you are not in a
+  // workspace" is paid for by every session and used by none.
+  if (config?.workspace) {
+    tools.push(...WORKSPACE_TOOL_DEFINITIONS);
+  }
+
   return orderForSelection(tools);
 }
 
@@ -252,7 +261,10 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
  * to know their shape even when listing does not offer them.
  */
 const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
-  [...knowlToolDefinitions(null), ...TRANSCRIPT_TOOL_DEFINITIONS, ...IMPACT_TOOLS, ...CLOUD_TOOL_DEFINITIONS]
+  [
+    ...knowlToolDefinitions(null), ...TRANSCRIPT_TOOL_DEFINITIONS, ...IMPACT_TOOLS,
+    ...CLOUD_TOOL_DEFINITIONS, ...WORKSPACE_TOOL_DEFINITIONS,
+  ]
     .map(tool => [tool.name, tool.inputSchema]),
 );
 
@@ -556,7 +568,7 @@ export function registerTools(
       }
 
       else if (name === 'knowl_store') {
-        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, provenance, steps, conflictKey, conflictScope, conflictExclusive, supersedes, namespace = 'project' } = args as any;
+        const { category, title, content, reasoning, alternatives, tags, source, sourceCommit, affectedPaths, confidence, provenance, steps, conflictKey, conflictScope, conflictExclusive, supersedes, namespace = 'project', local } = args as any;
 
         if (!KNOWLEDGE_CATEGORIES.includes(category)) {
           throw new Error(`Invalid knowledge category: ${category}`);
@@ -599,8 +611,20 @@ export function registerTools(
           };
         }
 
+        // After the write, which is the only order available: the id does not exist until the
+        // row does. The auto-stage seam may therefore have queued it a moment ago, so the
+        // exclusion is paired with an unstage rather than trusting it to have lost the race.
+        if (local === true) {
+          await excludeFromPublish(result.item.id, 'knowl_store local');
+          if (config?.cloud) await unstagePublish(result.item.id, config.cloud.workspaceId);
+        }
+
         return {
-          content: [{ type: 'text', text: `Successfully stored ${category} ${result.item.id}${describeWriteReconciliation(result)}` }],
+          content: [{
+            type: 'text',
+            text: `Successfully stored ${category} ${result.item.id}${describeWriteReconciliation(result)}`
+              + (local === true ? ' Marked local: it will not be published to the team.' : ''),
+          }],
         };
       }
 
@@ -1608,7 +1632,36 @@ export function registerTools(
           return { content: [{ type: 'text', text: CLOUD_DISCONNECTED_MESSAGE }] };
         }
 
-        const { action, ids, categories, apply } = args as any;
+        const { action, ids, categories, apply, forever } = args as any;
+
+        if (action === 'unstage') {
+          const targets = Array.isArray(ids) ? ids.map(String).filter(Boolean) : [];
+          if (targets.length === 0) {
+            return { isError: true, content: [{ type: 'text', text: 'unstage needs at least one id in `ids`.' }] };
+          }
+
+          // No `initDb`/`closeDb`: this runs inside a request that already holds the context,
+          // and closing it would leave every LATER tool call in this server with no database.
+          // See constraint defde27f6f234535.
+          const cleared: string[] = [];
+          for (const id of targets) {
+            if (await unstagePublish(id, live.cloud.workspaceId)) cleared.push(id);
+            if (forever === true) await excludeFromPublish(id, 'knowl_cloud unstage forever');
+          }
+
+          return {
+            content: [{
+              type: 'text',
+              text: compactMcpJson({
+                action: 'unstage',
+                unstaged: cleared,
+                notStaged: targets.filter(id => !cleared.includes(id)),
+                ...(forever === true ? { excluded: targets } : {}),
+                next: 'Nothing was sent and nothing was unpublished. These atoms are simply no longer queued.',
+              }),
+            }],
+          };
+        }
 
         if (action === 'stage') {
           // The request-safe variant. `stagePublish` owns the process-wide database context and
@@ -1645,6 +1698,49 @@ export function registerTools(
 
         const status = await cloudStatusInRequest(projectRoot, live);
         return { content: [{ type: 'text', text: compactMcpJson({ action: 'status', ...status }) }] };
+      }
+
+      else if (name === 'knowl_workspace') {
+        // Re-read from disk for the same reason the cloud tool does: a repo that left a
+        // workspace must stop answering as a member without waiting for a server restart.
+        const live = projectRoot ? await loadConfig(projectRoot).catch(() => null) : null;
+        const workspace = projectRoot ? await resolveWorkspace(projectRoot, live ?? undefined) : null;
+        if (!workspace) {
+          return { content: [{ type: 'text', text: 'This repository is not in a local workspace. `knowl workspace add` links one; there is nothing to report until then.' }] };
+        }
+
+        const { action, limit } = args as any;
+
+        if (action === 'demand') {
+          const summary = await summarizeDemand(workspace.name, Math.min(Number(limit) || 20, 50));
+          return {
+            content: [{
+              type: 'text',
+              text: compactMcpJson({
+                action: 'demand',
+                workspace: workspace.name,
+                total: summary.total,
+                byQueryingRepo: summary.byQueryingRepo,
+                topQuestions: summary.topQuestions,
+                next: summary.total === 0
+                  ? 'No cross-repo queries recorded yet, so nothing here says what the peers need.'
+                  : 'These are questions other repos asked. Knowledge answering them is worth writing where they can read it.',
+              }),
+            }],
+          };
+        }
+
+        return {
+          content: [{
+            type: 'text',
+            text: compactMcpJson({
+              action: 'status',
+              workspace: workspace.name,
+              thisRepo: workspace.repo,
+              peers: workspace.peers.map(peer => ({ name: peer.name, present: peer.present })),
+            }),
+          }],
+        };
       }
 
       // A name the server does not serve is a malformed request, which the spec groups with
