@@ -1,5 +1,6 @@
-import { createCloudApi, type CloudApi, type DeviceAuthorization } from './api-client.js';
+import { createCloudApi, type CloudApi, type CloudIdentity, type DeviceAuthorization } from './api-client.js';
 import { clearCredential, readCredential, writeCredential } from './credentials.js';
+import { isCredentialUsable } from './token.js';
 
 /**
  * The hosted deployment, under the project's own domain.
@@ -42,14 +43,32 @@ export type LoginInput = {
   onPrompt: (authorization: DeviceAuthorization) => void;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** Re-run the device flow even when this machine already holds a usable token. */
+  force?: boolean;
 };
 
-export type LoginResult = { status: 'authorized'; sessionId: string } | { status: 'expired' };
+export type LoginResult =
+  | { status: 'authorized'; sessionId: string }
+  | { status: 'already-signed-in'; identity: CloudIdentity | null }
+  | { status: 'expired' };
 
 export async function runLogin(input: LoginInput): Promise<LoginResult> {
   const api = input.api ?? createCloudApi({ apiHost: input.apiHost });
   const sleep = input.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const now = input.now ?? Date.now;
+
+  // Read before spending a round trip and a browser trip. This used to call
+  // `startDeviceAuthorization` unconditionally and only reach `readCredential` afterwards, so a
+  // user holding an unexpired token was sent through the whole device-code dance again.
+  //
+  // `isCredentialUsable` rather than a local expiry comparison: the skew window and the
+  // unparseable-expiry rule live in one place, and a second copy would drift silently.
+  if (!input.force) {
+    const existing = await readCredential(input.apiHost);
+    if (isCredentialUsable(existing, now())) {
+      return { status: 'already-signed-in', identity: existing?.identity ?? null };
+    }
+  }
 
   const authorization = await api.startDeviceAuthorization();
   input.onPrompt(authorization);
@@ -62,7 +81,11 @@ export async function runLogin(input: LoginInput): Promise<LoginResult> {
   for (;;) {
     const result = await api.pollForToken(authorization.deviceCode);
     if (result !== 'pending') {
-      await writeCredential(input.apiHost, result);
+      // Best-effort: a login that cannot fetch a display name has still signed the user in, and
+      // failing here would turn a working login into an error over a cosmetic field. Status
+      // reports "identity unknown" in that case.
+      const identity = await api.me(result.accessToken).catch(() => null);
+      await writeCredential(input.apiHost, identity ? { ...result, identity } : result);
       return { status: 'authorized', sessionId: result.sessionId };
     }
     // The server's interval, never ours. It derives its own per-address rate limit from this
