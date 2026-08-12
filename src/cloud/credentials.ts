@@ -101,6 +101,17 @@ export async function readCredential(apiHost: string): Promise<CloudCredential |
   return file.hosts[normalizeApiHost(apiHost)] ?? null;
 }
 
+/**
+ * Every host this machine holds a credential for.
+ *
+ * `knowl cloud status` uses it to say "you are signed in to two other hosts" when the one it
+ * resolved has none. Naming the count beats silently choosing between them, which is how a user
+ * ends up reading a report about a deployment they did not mean.
+ */
+export async function listCredentialHosts(): Promise<string[]> {
+  return Object.keys((await readFileOrEmpty()).hosts);
+}
+
 export async function writeCredential(apiHost: string, credential: CloudCredential): Promise<void> {
   await serialized(async () => {
     const file = await readFileOrEmpty();

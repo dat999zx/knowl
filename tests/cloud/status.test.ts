@@ -71,9 +71,80 @@ describe('cloudStatus', () => {
     for (const dir of [ORIGIN, CLONE]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   });
 
-  it('says the repo is not connected', async () => {
-    expect(await cloudStatus(CLONE, { version: 1 })).toEqual({ connected: false });
-    expect(formatCloudStatus({ connected: false })).toMatch(/not connected/i);
+  it('says the repo is not connected, and still answers the auth half', async () => {
+    // The disconnected variant carries auth because that is the one situation where "I ran
+    // knowl cloud login and status still says nothing" is otherwise unanswerable.
+    const status = await cloudStatus(CLONE, { version: 1 });
+
+    expect(status.connected).toBe(false);
+    expect(status).toMatchObject({ signedIn: false, identity: null });
+    expect(formatCloudStatus(status)).toMatch(/not connected/i);
+  });
+
+  it('splits staged atoms into new and corrections', async () => {
+    const { recordPushed, restageForPublish, stageForPublish } = await import('../../src/cloud/ledger.js');
+    await initDb(CLONE);
+    try {
+      await stageForPublish(['fresh'], WS, 'main');
+      await stageForPublish(['known'], WS, 'main');
+      await recordPushed('known', WS, 3);
+      await restageForPublish(['known'], WS, 'main');
+    } finally { await closeDb(); }
+
+    const status = await cloudStatus(CLONE, connected) as Extract<Awaited<ReturnType<typeof cloudStatus>>, { connected: true }>;
+
+    expect(status.staged).toBe(2);
+    expect(status.stagedNew).toBe(1);
+    expect(status.stagedCorrections).toBe(1);
+  });
+
+  it('reports the signed-in identity from the credential cache, without a network call', async () => {
+    const home = path.resolve(`./.knowl-status-home-${run}`);
+    process.env.KNOWL_HOME = home;
+    try {
+      const { writeCredential } = await import('../../src/cloud/credentials.js');
+      await writeCredential(API_HOST, {
+        accessToken: 'a', refreshToken: 'r',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+        sessionId: 's', identity: { email: 'dev@example.com', displayName: 'Dev' },
+      });
+
+      const original = globalThis.fetch;
+      globalThis.fetch = (() => { throw new Error('status must not reach the network'); }) as typeof fetch;
+      try {
+        const status = await cloudStatus(CLONE, connected);
+        expect(status.signedIn).toBe(true);
+        expect(status.identity).toEqual({ email: 'dev@example.com', displayName: 'Dev' });
+        expect(formatCloudStatus(status)).toContain('dev@example.com');
+      } finally { globalThis.fetch = original; }
+    } finally {
+      delete process.env.KNOWL_HOME;
+      await fs.rm(home, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('says identity unknown for a credential written before the cache existed', async () => {
+    const home = path.resolve(`./.knowl-status-home-old-${run}`);
+    process.env.KNOWL_HOME = home;
+    try {
+      const { writeCredential } = await import('../../src/cloud/credentials.js');
+      await writeCredential(API_HOST, {
+        accessToken: 'a', refreshToken: 'r',
+        expiresAt: '2099-01-01T00:00:00.000Z', sessionId: 's',
+      });
+
+      const status = await cloudStatus(CLONE, connected);
+      expect(status.identity).toBeNull();
+      expect(formatCloudStatus(status)).toMatch(/identity unknown/i);
+    } finally {
+      delete process.env.KNOWL_HOME;
+      await fs.rm(home, { recursive: true, force: true }).catch(() => {});
+    }
+  });
+
+  it('always names when the next auto-pull is due, because unknown must not read as not-due', async () => {
+    const status = await cloudStatus(CLONE, connected) as Extract<Awaited<ReturnType<typeof cloudStatus>>, { connected: true }>;
+    expect(status.nextSyncDueAt).not.toBeNull();
   });
 
   it('reports the workspace, the role and how stale the replica is', async () => {

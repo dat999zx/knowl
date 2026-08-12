@@ -116,7 +116,11 @@ describe('the replica never disturbs the caller\'s database context', () => {
   it('says not-connected without touching the database when there is no cloud pointer', async () => {
     await initDb(ROOT);
     try {
-      expect(await cloudStatusInRequest(ROOT, { version: 1 })).toEqual({ connected: false });
+      // `toMatchObject`, not `toEqual`: since 5.0 the disconnected report also carries the auth
+      // half (host, signedIn, identity, other-host count), read from the credential FILE. The
+      // property this case guards is the one asserted below -- that the database is untouched --
+      // and that is unchanged.
+      expect(await cloudStatusInRequest(ROOT, { version: 1 })).toMatchObject({ connected: false });
       expect(await stagePublishInRequest({ projectRoot: ROOT, config: { version: 1 } }))
         .toEqual({ status: 'not-connected' });
       expect(await localItemCount()).toBe(0);
