@@ -261,3 +261,29 @@ export async function promoteItems(input: {
     await closeDb();
   }
 }
+
+/**
+ * How many unpromoted rows this repo owns, per category.
+ *
+ * Every category is present, zeros included: the picker renders a row per category, because
+ * "nothing to promote here" has to be visible. A silently short list reads as a bug.
+ *
+ * Reads the ambient database. The caller owns opening it, like `selectOwnedItems`.
+ */
+export async function countPromotable(repoName: string): Promise<Record<KnowledgeCategory, number>> {
+  const rows = await getClient().execute({
+    // NULL origin means this repo wrote it -- the same claim `selectOwnedItems` makes, and for
+    // the same reason: every imported row is stamped, so NULL cannot be another store's.
+    sql: `SELECT category, COUNT(*) AS n FROM knowledge_items
+          WHERE status = 'active' AND visibility = 'repo'
+            AND (origin_repo IS NULL OR origin_repo = ?)
+          GROUP BY category`,
+    args: [repoName],
+  });
+  const counts = Object.fromEntries(KNOWLEDGE_CATEGORIES.map(category => [category, 0])) as Record<KnowledgeCategory, number>;
+  for (const row of rows.rows) {
+    const category = String(row.category) as KnowledgeCategory;
+    if (category in counts) counts[category] = Number(row.n);
+  }
+  return counts;
+}

@@ -1,4 +1,4 @@
-﻿import type { KnowledgeCategory, ProjectConfig } from '../core/types.js';
+﻿import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory, type ProjectConfig } from '../core/types.js';
 import { closeDb, getClient, initDb } from '../store/database.js';
 import { selectOwnedItems, type PromoteTarget } from '../workspace/promote.js';
 import { createCloudApi, type CloudApi } from './api-client.js';
@@ -607,4 +607,38 @@ function decodeStoredVector(value: unknown): number[] | null {
   const decoded = decodeStoredVectorValue(value);
   if (!decoded) return null;
   return Array.from(decoded);
+}
+
+/**
+ * How many rows a category sweep would stage, per category.
+ *
+ * Not the same question `countPromotable` asks. Promotion looks at `visibility`; staging looks at
+ * the ledger -- an atom already queued or already pushed is not a candidate -- and at
+ * `cloud_excluded`, because the sweep filters those out and a picker that offered them would
+ * promise something the sweep then silently drops.
+ *
+ * Reads the ambient database. The caller owns opening it.
+ */
+export async function countStageable(
+  workspaceId: string,
+  repoName: string,
+): Promise<Record<KnowledgeCategory, number>> {
+  const rows = await getClient().execute({
+    sql: `SELECT k.category AS category, COUNT(*) AS n
+          FROM knowledge_items k
+          LEFT JOIN cloud_published p
+            ON p.item_id = k.id AND p.remote_workspace = ?
+          WHERE k.status = 'active'
+            AND (k.origin_repo IS NULL OR k.origin_repo = ?)
+            AND (p.item_id IS NULL OR (p.stage_state <> 'pending' AND p.pushed_at IS NULL))
+            AND k.id NOT IN (SELECT item_id FROM cloud_excluded)
+          GROUP BY k.category`,
+    args: [workspaceId, repoName],
+  });
+  const counts = Object.fromEntries(KNOWLEDGE_CATEGORIES.map(category => [category, 0])) as Record<KnowledgeCategory, number>;
+  for (const row of rows.rows) {
+    const category = String(row.category) as KnowledgeCategory;
+    if (category in counts) counts[category] = Number(row.n);
+  }
+  return counts;
 }

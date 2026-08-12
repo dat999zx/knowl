@@ -76,6 +76,30 @@ describe('stagePublish', () => {
     } finally { await closeDb(); }
   };
 
+  it('counts what a sweep would stage, and stops counting what is already queued', async () => {
+    const { countStageable } = await import('../../src/cloud/publish.js');
+    await stage({ categories: ['decision'], apply: true });
+
+    await initDb(ROOT);
+    try {
+      const counts = await countStageable(WS, 'github.com/acme/web');
+      // The decision is queued now, so it is no longer a candidate.
+      expect(counts.decision).toBe(0);
+      expect(counts.fact).toBe(1);
+    } finally { await closeDb(); }
+  });
+
+  it('does not count an excluded atom, because a sweep would skip it anyway', async () => {
+    // A picker offering it would promise something the sweep then silently drops.
+    await exclude(ids.fact);
+
+    await initDb(ROOT);
+    try {
+      const { countStageable } = await import('../../src/cloud/publish.js');
+      expect((await countStageable(WS, 'github.com/acme/web')).fact).toBe(0);
+    } finally { await closeDb(); }
+  });
+
   it('a category sweep skips an excluded atom and says how many it skipped', async () => {
     await exclude(ids.fact);
 
