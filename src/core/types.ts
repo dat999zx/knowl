@@ -292,6 +292,14 @@ export interface ProjectConfig {
     repo: string;
     /** Which remote it was derived from, so a fork's choice stays inspectable. */
     remote?: string;
+    /**
+     * Stage new knowledge as it is written. Absent means on; only an explicit false disables it.
+     *
+     * Safe to keep in this committable file, unlike auto-push consent: staging sends nothing, is
+     * visible in `knowl cloud status`, and is reversible with `knowl cloud unstage`. Consent to
+     * send irreversibly is per-machine and lives under `knowlHome()` instead.
+     */
+    autoStage?: boolean;
   };
   /**
    * Live change-impact detection: what a session read, whether that code moved underneath
