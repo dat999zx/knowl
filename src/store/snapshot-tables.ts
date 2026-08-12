@@ -95,6 +95,10 @@ export const SNAPSHOT_TABLE_POLICY: Readonly<Record<string, SnapshotTablePolicy>
   // into a conflict -- or re-stage atoms the server already holds. Machine-local state, exactly
   // like `drift_state`.
   cloud_published: 'preserved',
+  // Same reasoning as `cloud_published` directly above, and one more: an exclusion is a
+  // statement this machine made about what it will not share. Restoring a snapshot taken
+  // elsewhere must not be able to withdraw it.
+  cloud_excluded: 'preserved',
 
   // --- derived, trigger-maintained ---------------------------------------------------------
   knowledge_items_fts: 'rebuilt',

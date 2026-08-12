@@ -366,7 +366,27 @@ const SCHEMA_STATEMENTS = [
     staged_on_branch TEXT,
     pushed_at TEXT,
     retracted_at TEXT,
+    stage_state TEXT NOT NULL DEFAULT 'clear',
     PRIMARY KEY (item_id, remote_workspace)
+  );`,
+
+  /**
+   * Atoms this machine will never publish, whatever else happens.
+   *
+   * Keyed by item alone and NOT by workspace, deliberately. "Never share this" is a statement
+   * about the atom -- a machine-local path, an environment quirk -- and `knowl store --local`
+   * runs in repositories that are not connected to any workspace at all, so there would be no
+   * workspace to key it under. A separate table rather than a state on `cloud_published` for
+   * the same reason: that table's primary key includes the workspace.
+   *
+   * Machine-local like the ledger itself, and excluded from portable export for the same
+   * reason (decision `ee191dd7db024bec`): it is local policy that says nothing about the
+   * atom's content and must not follow it to another machine.
+   */
+  `CREATE TABLE IF NOT EXISTS cloud_excluded (
+    item_id TEXT PRIMARY KEY,
+    excluded_at TEXT NOT NULL,
+    reason TEXT
   );`,
 
   `CREATE INDEX IF NOT EXISTS idx_ki_cat_status ON knowledge_items(category, status);`,
