@@ -400,7 +400,7 @@ export async function updateKnowledgeItem(
     // `last_drift_at` records that the automatic check saw this item's files move and that
     // nobody has looked at it since; this is the "since". Any of these five means somebody
     // did look: the claim was rewritten, the paths it cites were changed, it was re-anchored
-    // to a commit, or its freshness was deliberately set -- which is what `knowl pr check`
+    // to a commit, or its freshness was deliberately set -- which is what `knowl pr`
     // and `knowl_update` do at the two ends of a review.
     //
     // Deliberately NOT every update. `updated_at` moves on visibility promotion, supersession

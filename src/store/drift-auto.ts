@@ -148,5 +148,5 @@ export function describeAutoDrift(result: AutoDriftResult | null): string | unde
     ? ` (${result.candidateTitles.map(title => `"${title}"`).join(', ')}${result.candidateCount > result.candidateTitles.length ? ', …' : ''})`
     : '';
   const since = result.sinceCommit ? ` --since ${result.sinceCommit.slice(0, 12)}` : '';
-  return `DRIFT: ${result.candidateCount} knowledge item(s) reference files changed since the last session${names}. Verify before relying on them; review and apply with \`knowl pr check${since}\`.`;
+  return `DRIFT: ${result.candidateCount} knowledge item(s) reference files changed since the last session${names}. Verify before relying on them; review and apply with \`knowl pr${since}\`.`;
 }

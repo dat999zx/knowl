@@ -85,6 +85,38 @@ describe('formatStatusReport wiring', () => {
     expect(formatStatusReport({ ...base, workspace: null })).not.toContain('WORKSPACE');
     expect(formatStatusReport(base)).not.toContain('WORKSPACE');
   });
+
+  it('names the cloud workspace and the staged split when connected', () => {
+    // Same reason the workspace assertion above exists: cloud state was reachable from nowhere
+    // in the report a developer actually runs, so a connected repo with queued atoms said
+    // nothing at all.
+    const report = formatStatusReport({
+      ...base,
+      cloud: {
+        connected: true, workspace: 'Acme Core', role: 'owner',
+        lastSyncedAt: null, lastError: null,
+        staged: 3, stagedNew: 2, stagedCorrections: 1, stagedOnBranch: 'main',
+        gate: { ok: true, reason: 'ok', detail: '' } as never,
+        signedIn: true, identity: { email: 'd@e.com', displayName: 'Dev' },
+        tokenExpiresAt: null, nextSyncDueAt: null,
+      },
+    });
+
+    expect(report).toContain('CLOUD');
+    expect(report).toContain('Acme Core');
+    expect(report).toContain('2 new, 1 correction(s)');
+    expect(report).toContain('knowl cloud status');
+  });
+
+  it('renders no cloud block when the repo is not connected', () => {
+    const disconnected = formatStatusReport({
+      ...base,
+      cloud: { connected: false, apiHost: 'https://api.knowl.cloud', signedIn: false, identity: null, otherCredentialHosts: 0 },
+    });
+
+    expect(disconnected).not.toContain('CLOUD');
+    expect(formatStatusReport(base)).not.toContain('CLOUD');
+  });
 });
 
 describe('workspace doctor checks', () => {

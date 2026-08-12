@@ -68,6 +68,42 @@ describe('stagePublish', () => {
     finally { await closeDb(); }
   };
 
+  const exclude = async (itemId: string): Promise<void> => {
+    await initDb(ROOT);
+    try {
+      const { excludeFromPublish } = await import('../../src/cloud/exclusions.js');
+      await excludeFromPublish(itemId, 'test');
+    } finally { await closeDb(); }
+  };
+
+  it('a category sweep skips an excluded atom and says how many it skipped', async () => {
+    await exclude(ids.fact);
+
+    const result = await stage({ categories: ['decision', 'fact'], apply: true }) as any;
+
+    expect(result.items.map((item: any) => item.id)).toEqual([ids.decision]);
+    expect(result.skippedExcluded).toBe(1);
+    expect(await staged()).toEqual([ids.decision]);
+  });
+
+  it('a dry run also omits the excluded atom, so the preview matches what --apply would do', async () => {
+    await exclude(ids.fact);
+
+    const result = await stage({ categories: ['decision', 'fact'] }) as any;
+
+    expect(result.items.map((item: any) => item.id)).toEqual([ids.decision]);
+    expect(result.skippedExcluded).toBe(1);
+  });
+
+  it('naming the id stages it anyway, because an exclusion must stay reversible', async () => {
+    await exclude(ids.fact);
+
+    const result = await stage({ ids: [ids.fact], apply: true }) as any;
+
+    expect(result.skippedExcluded).toBe(0);
+    expect(await staged()).toEqual([ids.fact]);
+  });
+
   it('refuses when the repo is not connected', async () => {
     expect(await stagePublish({ projectRoot: ROOT, config: { version: 1 }, ids: [ids.decision] }))
       .toEqual({ status: 'not-connected' });
@@ -176,7 +212,10 @@ describe('stagePublish', () => {
     // up there would spend a version bump and a server-side embedding job per atom on identical
     // content, every time anyone ran the command.
     await stage({ categories: ['decision'], apply: true });
-    await execute(`UPDATE cloud_published SET pushed_at = '2026-01-01T00:00:00.000Z', remote_version = 4`);
+    // `stage_state` is set alongside `pushed_at` because that is what `recordPushed` does since
+    // level 10. Setting only `pushed_at` describes a row that was pushed and then re-staged --
+    // a real state, meaning a pending correction, which `listStaged` is right to return.
+    await execute(`UPDATE cloud_published SET pushed_at = '2026-01-01T00:00:00.000Z', remote_version = 4, stage_state = 'clear'`);
 
     await stage({ categories: ['decision'], apply: true });
 

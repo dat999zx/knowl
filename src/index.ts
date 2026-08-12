@@ -35,5 +35,8 @@ if (command === 'agent-hook' && !wantsHelp) {
   const { runAgentHook } = await import('./cli/agent-hook.js');
   await runAgentHook(process.argv[3], process.argv[4]);
 } else {
-  await import('./cli/program.js');
+  // Called rather than relying on an import-time side effect: parsing on import meant any test
+  // that imported the command tree consumed the test runner's argv and exited.
+  const { runProgram } = await import('./cli/program.js');
+  runProgram();
 }

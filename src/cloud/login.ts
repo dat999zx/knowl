@@ -1,12 +1,13 @@
-import { createCloudApi, type CloudApi, type DeviceAuthorization } from './api-client.js';
+import { createCloudApi, type CloudApi, type CloudIdentity, type DeviceAuthorization } from './api-client.js';
 import { clearCredential, readCredential, writeCredential } from './credentials.js';
+import { isCredentialUsable } from './token.js';
 
 /**
  * The hosted deployment, under the project's own domain.
  *
  * It said `api.knowl.dev` for one release cycle, which is a domain the project does not own.
  * That is worse than a dead default: anyone who registered it would receive the device-code
- * request from every `knowl login` run without `--api`, hand back a token the client would
+ * request from every `knowl cloud login` run without `--api`, hand back a token the client would
  * store, and then receive everything that client published. No attack on us required -- just a
  * registration and a user who took the default.
  *
@@ -18,7 +19,7 @@ const HOSTED_API_HOST = 'https://api.knowl.cloud';
  * Machine-wide override, for a self-hosted or tunnelled server.
  *
  * `--api` already exists per command, and `knowl cloud connect` records the host in the repo's
- * config so `pull`, `push` and `status` remember it. Neither helps `knowl login`, which is
+ * config so `pull`, `push` and `status` remember it. Neither helps `knowl cloud login`, which is
  * per-machine rather than per-repo and so has nowhere to remember anything -- which meant
  * retyping the flag on every login against a self-hosted server.
  *
@@ -42,14 +43,32 @@ export type LoginInput = {
   onPrompt: (authorization: DeviceAuthorization) => void;
   sleep?: (ms: number) => Promise<void>;
   now?: () => number;
+  /** Re-run the device flow even when this machine already holds a usable token. */
+  force?: boolean;
 };
 
-export type LoginResult = { status: 'authorized'; sessionId: string } | { status: 'expired' };
+export type LoginResult =
+  | { status: 'authorized'; sessionId: string }
+  | { status: 'already-signed-in'; identity: CloudIdentity | null }
+  | { status: 'expired' };
 
 export async function runLogin(input: LoginInput): Promise<LoginResult> {
   const api = input.api ?? createCloudApi({ apiHost: input.apiHost });
   const sleep = input.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
   const now = input.now ?? Date.now;
+
+  // Read before spending a round trip and a browser trip. This used to call
+  // `startDeviceAuthorization` unconditionally and only reach `readCredential` afterwards, so a
+  // user holding an unexpired token was sent through the whole device-code dance again.
+  //
+  // `isCredentialUsable` rather than a local expiry comparison: the skew window and the
+  // unparseable-expiry rule live in one place, and a second copy would drift silently.
+  if (!input.force) {
+    const existing = await readCredential(input.apiHost);
+    if (isCredentialUsable(existing, now())) {
+      return { status: 'already-signed-in', identity: existing?.identity ?? null };
+    }
+  }
 
   const authorization = await api.startDeviceAuthorization();
   input.onPrompt(authorization);
@@ -62,7 +81,11 @@ export async function runLogin(input: LoginInput): Promise<LoginResult> {
   for (;;) {
     const result = await api.pollForToken(authorization.deviceCode);
     if (result !== 'pending') {
-      await writeCredential(input.apiHost, result);
+      // Best-effort: a login that cannot fetch a display name has still signed the user in, and
+      // failing here would turn a working login into an error over a cosmetic field. Status
+      // reports "identity unknown" in that case.
+      const identity = await api.me(result.accessToken).catch(() => null);
+      await writeCredential(input.apiHost, identity ? { ...result, identity } : result);
       return { status: 'authorized', sessionId: result.sessionId };
     }
     // The server's interval, never ours. It derives its own per-address rate limit from this

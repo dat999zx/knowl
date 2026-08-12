@@ -366,7 +366,27 @@ const SCHEMA_STATEMENTS = [
     staged_on_branch TEXT,
     pushed_at TEXT,
     retracted_at TEXT,
+    stage_state TEXT NOT NULL DEFAULT 'clear',
     PRIMARY KEY (item_id, remote_workspace)
+  );`,
+
+  /**
+   * Atoms this machine will never publish, whatever else happens.
+   *
+   * Keyed by item alone and NOT by workspace, deliberately. "Never share this" is a statement
+   * about the atom -- a machine-local path, an environment quirk -- and `knowl store --local`
+   * runs in repositories that are not connected to any workspace at all, so there would be no
+   * workspace to key it under. A separate table rather than a state on `cloud_published` for
+   * the same reason: that table's primary key includes the workspace.
+   *
+   * Machine-local like the ledger itself, and excluded from portable export for the same
+   * reason (decision `ee191dd7db024bec`): it is local policy that says nothing about the
+   * atom's content and must not follow it to another machine.
+   */
+  `CREATE TABLE IF NOT EXISTS cloud_excluded (
+    item_id TEXT PRIMARY KEY,
+    excluded_at TEXT NOT NULL,
+    reason TEXT
   );`,
 
   `CREATE INDEX IF NOT EXISTS idx_ki_cat_status ON knowledge_items(category, status);`,
@@ -694,6 +714,46 @@ async function ensureForgetLogColumns(client: Client): Promise<void> {
   if (!columns.includes('content_preview')) {
     await client.execute('ALTER TABLE knowledge_forget_log ADD COLUMN content_preview TEXT;');
   }
+}
+
+/**
+ * The ledger's explicit staging state, for a store that already has the table from level 7.
+ *
+ * Split from `ensureLedgerStageState` so a test can exercise the backfill directly against rows
+ * it controls. The column add is the part that must not run twice; the UPDATE is idempotent.
+ */
+export async function backfillLedgerStageState(client: Client): Promise<void> {
+  // Exactly the predicate `listStaged` used before this column existed. A row that satisfied it
+  // was staged and unsent; everything else was pushed, retracted, or both.
+  await client.execute(
+    `UPDATE cloud_published SET stage_state = 'pending'
+     WHERE pushed_at IS NULL AND retracted_at IS NULL`,
+  );
+}
+
+/**
+ * Add `stage_state` and derive it from the columns that used to imply it.
+ *
+ * **The default is `'clear'` and that direction is load-bearing.** `DEFAULT 'pending'` would mark
+ * every already-pushed row as queued, and the next `knowl cloud push` would re-send this
+ * machine's entire publication history -- irreversibly, since the only way back is a retraction
+ * per atom. Defaulting to `'clear'` means a row this migration somehow misses sends nothing,
+ * which `knowl cloud stage` can repair; the other direction has no repair.
+ *
+ * `pushed_at` stops being overloaded once this lands: it goes back to meaning "when this was last
+ * successfully pushed" and is no longer nulled to signal a re-stage. That is what makes `unstage`
+ * expressible without deleting the row -- and the row holds `remote_version`, the only copy of
+ * the server's version on this machine.
+ */
+async function ensureLedgerStageState(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'cloud_published'))) return;
+  const columns = await tableColumns(client, 'cloud_published');
+  if (columns.includes('stage_state')) return;
+
+  await client.execute(
+    "ALTER TABLE cloud_published ADD COLUMN stage_state TEXT NOT NULL DEFAULT 'clear';",
+  );
+  await backfillLedgerStageState(client);
 }
 
 async function ensureFreshnessColumns(client: Client): Promise<void> {
@@ -1093,6 +1153,7 @@ export async function bootstrapSchema(
     await ensureFreshnessColumns(client);
     await ensureQualityColumns(client);
     await ensureForgetLogColumns(client);
+    await ensureLedgerStageState(client);
     await ensureConflictColumns(client);
     await ensureOwnershipColumns(client);
     await ensureMemorySessionColumns(client);

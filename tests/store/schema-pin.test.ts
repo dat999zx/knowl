@@ -56,6 +56,12 @@ const SCHEMA_PINS: Record<number, string> = {
   // ride the events that cause them and `memory_session_events` expires in about two days, so
   // any history worth backfilling is already gone.
   9: 'e35a04dead1990c2af454fc44545e39a',
+  // 10 adds `cloud_excluded` and `cloud_published.stage_state`. The table is additive; the
+  // column is why the level moves rather than riding on level 7's `CREATE TABLE IF NOT EXISTS`,
+  // which is a no-op on every store that already has the ledger. `KNOWL_SCHEMA_VERSION` again
+  // does not move: an older build can still read a database with an extra column and an extra
+  // table it does not know about.
+  10: '0fb5091ab39e438ed70777b8d7c4b8c9',
 };
 
 let root: string;

@@ -69,7 +69,7 @@ describe('CLI Integration', () => {
 
   it('should evaluate retrieval from a dataset as JSON', () => {
     const dataset = path.resolve('./docs/evals/retrieval-baseline.json');
-    const output = execSync(`node "${CLI_PATH}" eval retrieval --dataset "${dataset}" --json`, {
+    const output = execSync(`node "${CLI_PATH}" eval --dataset "${dataset}" --json`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     });
@@ -87,7 +87,7 @@ describe('CLI Integration', () => {
   });
 
   it('should report retrieval access as JSON', () => {
-    const output = execSync(`node "${CLI_PATH}" access report --json`, {
+    const output = execSync(`node "${CLI_PATH}" access --json`, {
       cwd: TEST_DIR,
       encoding: 'utf-8',
     });
@@ -611,7 +611,7 @@ describe('CLI Integration', () => {
         git('add src/billing.ts');
         git('commit -m "change billing"');
 
-        const output = execSync(`node "${CLI_PATH}" pr check --since ${baseCommit}`, {
+        const output = execSync(`node "${CLI_PATH}" pr --since ${baseCommit}`, {
           cwd: prDir,
           encoding: 'utf-8',
         });
@@ -767,7 +767,7 @@ describe('CLI Integration', () => {
     await client.execute({ sql: 'INSERT INTO knowledge_evidence (knowledge_item_id, evidence_id, relationship) VALUES (?, ?, ?)', args: [itemId, 'cli-evidence', 'supports'] });
     client.close();
 
-    const output = execSync(`node "${CLI_PATH}" evidence list ${itemId}`, { cwd: evidenceDir, encoding: 'utf-8' });
+    const output = execSync(`node "${CLI_PATH}" evidence ${itemId}`, { cwd: evidenceDir, encoding: 'utf-8' });
     expect(output).toContain('tests/evidence.test.ts');
     expect(output).toContain('supports');
     await fs.rm(evidenceDir, { recursive: true, force: true }).catch(() => {});
@@ -782,7 +782,7 @@ describe('CLI Integration', () => {
       execSync(`node "${CLI_PATH}" init --yes`, { cwd: symbolDir, encoding: 'utf-8' });
       const source = path.join(symbolDir, 'src', 'auth.ts');
       await fs.writeFile(source, 'export function createToken() { return "token"; }\n');
-      expect(execSync(`node "${CLI_PATH}" code index`, { cwd: symbolDir, encoding: 'utf-8' })).toContain('Code symbols indexed.');
+      expect(execSync(`node "${CLI_PATH}" index-code`, { cwd: symbolDir, encoding: 'utf-8' })).toContain('Code symbols indexed.');
       execSync(`node "${CLI_PATH}" decide "Symbol evidence target" "Symbol evidence should be inspectable."`, { cwd: symbolDir, encoding: 'utf-8' });
       const client = createClient({ url: `file:${path.join(symbolDir, '.knowl', 'knowl.db')}` });
       try {
@@ -795,10 +795,10 @@ describe('CLI Integration', () => {
         client.close();
       }
       await fs.writeFile(source, 'export function createAccessToken() { return "token"; }\n');
-      execSync(`node "${CLI_PATH}" code index`, { cwd: symbolDir, encoding: 'utf-8' });
-      const symbols = execSync(`node "${CLI_PATH}" code symbols src/auth.ts`, { cwd: symbolDir, encoding: 'utf-8' });
+      execSync(`node "${CLI_PATH}" index-code`, { cwd: symbolDir, encoding: 'utf-8' });
+      const symbols = execSync(`node "${CLI_PATH}" symbols src/auth.ts`, { cwd: symbolDir, encoding: 'utf-8' });
       expect(symbols).toContain('createAccessToken');
-      const evidence = execSync(`node "${CLI_PATH}" evidence list ${itemId}`, { cwd: symbolDir, encoding: 'utf-8' });
+      const evidence = execSync(`node "${CLI_PATH}" evidence ${itemId}`, { cwd: symbolDir, encoding: 'utf-8' });
       expect(evidence).toContain('symbol://src/auth.ts#createToken');
       expect(evidence).toContain('stale');
       expect(evidence).toContain('suggested: symbol://src/auth.ts#createAccessToken');

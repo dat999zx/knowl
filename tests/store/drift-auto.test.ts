@@ -169,7 +169,7 @@ describe('automatic drift check', () => {
     expect(warning).toContain('4 knowledge item(s)');
     expect(warning).toContain('"Billing module"');
     expect(warning).toContain('…');
-    expect(warning).toContain('knowl pr check --since abcdef012345');
+    expect(warning).toContain('knowl pr --since abcdef012345');
   });
 
   // The other half of the same rule. `affected_paths` is required because an item with none

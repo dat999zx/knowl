@@ -42,6 +42,21 @@ function usable(credential: CloudCredential | null, now: number, skewMs: number)
 }
 
 /**
+ * The same predicate, for callers outside the refresh path.
+ *
+ * Exported rather than reimplemented because the skew window and the unparseable-expiry rule are
+ * both easy to get subtly wrong, and a second copy would drift from this one silently. `runLogin`
+ * asks exactly this question before deciding whether a device-code flow is needed at all.
+ */
+export function isCredentialUsable(
+  credential: CloudCredential | null,
+  now: number = Date.now(),
+  skewMs: number = DEFAULT_SKEW_MS,
+): boolean {
+  return usable(credential, now, skewMs);
+}
+
+/**
  * One refresh per rotation, however many processes want one.
  *
  * The server revokes the entire session when it sees a refresh token replayed, so two

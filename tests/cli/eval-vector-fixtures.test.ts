@@ -65,7 +65,7 @@ const DATASET_JSON = {
 type Run = { metrics: { recallAt3: number }; stderr: string };
 
 function evaluate(vector: boolean): Run {
-  const args = [CLI_PATH, 'eval', 'retrieval', '--dataset', DATASET, '--json'];
+  const args = [CLI_PATH, 'eval', '--dataset', DATASET, '--json'];
   if (vector) args.push('--vector');
   // cwd is the initialised fixture repository, not the process's own. The command resolves a
   // project root to read vector config from, and a developer checkout happens to be one --
@@ -79,7 +79,7 @@ function evaluate(vector: boolean): Run {
   return { metrics: JSON.parse(result.stdout).metrics, stderr: result.stderr };
 }
 
-describe('knowl eval retrieval --vector against a fixture-backed dataset', () => {
+describe('knowl eval --vector against a fixture-backed dataset', () => {
   beforeAll(async () => {
     await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
     await fs.mkdir(ROOT, { recursive: true });

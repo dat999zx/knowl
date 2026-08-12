@@ -11,6 +11,25 @@ import { attachEvidenceToKnowledge, listEvidenceForItem } from './evidence-repos
 import { normalizeAffectedPaths } from './freshness.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 
+/**
+ * Queue a committed write for the team, if this repo is connected.
+ *
+ * The import is deferred because `cloud` sits above `store` in the layer rule
+ * (`tests/architecture/module-boundaries.test.ts`), and a static edge here would be upward and
+ * forbidden. Deferring is the remedy that test names, and it is honest rather than a dodge: this
+ * is optional behaviour that does nothing at all in a repo with no cloud pointer, so the module
+ * should not be loaded to discover that.
+ *
+ * Never throws -- `autoStageAfterWrite` swallows, and so does this.
+ */
+async function stageWrittenItems(itemIds: string[]): Promise<void> {
+  if (itemIds.length === 0) return;
+  try {
+    const { autoStageAfterWrite } = await import('../cloud/auto-stage.js');
+    await autoStageAfterWrite(itemIds);
+  } catch { /* the write already committed; see above */ }
+}
+
 const DUPLICATE_STOP_WORDS = new Set([
   'a', 'an', 'and', 'are', 'as', 'at', 'be', 'by', 'do', 'does', 'for', 'from', 'in', 'is',
   'it', 'of', 'on', 'or', 'our', 'the', 'this', 'to', 'use', 'uses', 'using', 'what', 'with',
@@ -472,6 +491,11 @@ export async function storeKnowledgeItemDeduped(
     return { item: written, superseded: retired };
   });
   await indexKnowledgeItemsBestEffort(projectId, [item]);
+  // After the transaction, never inside it. A crash between the two leaves an atom that is not
+  // staged, which `knowl cloud stage` repairs; staging inside would leave a ledger row -- written
+  // on a different connection, so it survives -- pointing at an item a rollback erased, and the
+  // next push would send a phantom.
+  await stageWrittenItems([item.id]);
 
   return {
     action: 'inserted',
@@ -615,6 +639,9 @@ export async function storeKnowledgeAtomsDeduped(
     outcome.crossRepo = await overlapFor(workspace, atom);
   }
   await indexKnowledgeItemsBestEffort(projectId, written.inserted);
+  // Only what was actually inserted. A duplicate resolved to a no-op wrote nothing, so staging
+  // its id would queue an atom this call did not change.
+  await stageWrittenItems(written.inserted.map(item => item.id));
 
   return {
     itemIds: written.itemIds,
