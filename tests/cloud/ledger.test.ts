@@ -83,4 +83,54 @@ describe('publication ledger', () => {
 
     expect(await publishedVersion('a1', 'other-workspace')).toBeNull();
   });
+
+  it('unstage clears a pending row without touching remote_version', async () => {
+    const { unstagePublish } = await import('../../src/cloud/ledger.js');
+
+    await stageForPublish(['a'], WS, 'main');
+    await recordPushed('a', WS, 7);
+    await restageForPublish(['a'], WS, 'main');
+    expect(await listStaged(WS)).toHaveLength(1);
+
+    expect(await unstagePublish('a', WS)).toBe(true);
+    expect(await listStaged(WS)).toHaveLength(0);
+
+    // The invariant: unstaging is not a retraction, so the server's version survives.
+    expect(await publishedVersion('a', WS)).toBe(7);
+  });
+
+  it('unstage reports false when nothing was pending', async () => {
+    const { unstagePublish } = await import('../../src/cloud/ledger.js');
+    expect(await unstagePublish('never-staged', WS)).toBe(false);
+  });
+
+  it('a re-stage preserves pushed_at instead of nulling it', async () => {
+    const { getClient } = await import('../../src/store/database.js');
+
+    await stageForPublish(['a'], WS, 'main');
+    await recordPushed('a', WS, 1);
+    await restageForPublish(['a'], WS, 'main');
+
+    const rows = await getClient().execute({
+      sql: 'SELECT pushed_at, stage_state FROM cloud_published WHERE item_id = ? AND remote_workspace = ?',
+      args: ['a', WS],
+    });
+    expect(rows.rows[0].pushed_at).not.toBeNull();
+    expect(String(rows.rows[0].stage_state)).toBe('pending');
+  });
+
+  it('a sweep re-stages an unstaged atom that was never pushed, and skips a pushed one', async () => {
+    const { unstagePublish } = await import('../../src/cloud/ledger.js');
+
+    await stageForPublish(['never-pushed'], WS, 'main');
+    await unstagePublish('never-pushed', WS);
+
+    await stageForPublish(['already-pushed'], WS, 'main');
+    await recordPushed('already-pushed', WS, 2);
+
+    await stageForPublish(['never-pushed', 'already-pushed'], WS, 'main');
+
+    const staged = (await listStaged(WS)).map(row => row.itemId);
+    expect(staged).toEqual(['never-pushed']);
+  });
 });

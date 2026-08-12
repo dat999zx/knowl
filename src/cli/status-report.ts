@@ -1,9 +1,30 @@
 import { KNOWLEDGE_CATEGORIES, KnowledgeCommit, KnowledgeItem, Project, ProjectConfig } from '../core/types.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
 import type { CaptureHealth } from '../store/capture-outcome.js';
+import type { CloudStatus } from '../cloud/status.js';
 import { formatWorkspaceBlock } from './workspace-report.js';
 
 const STATUS_LINE = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
+
+/**
+ * Two lines and a pointer, deliberately.
+ *
+ * `knowl status` was already long and the cloud has its own command with the full picture. What
+ * this fixes is that cloud state was reachable from nowhere in the report a developer actually
+ * runs -- so a repo could be connected, with atoms queued, and `knowl status` said nothing.
+ *
+ * Rendered only when connected. A repo that never touched the cloud gains no section at all.
+ */
+function formatCloudBlock(cloud: CloudStatus | null): string[] {
+  if (!cloud?.connected) return [];
+  return [
+    STATUS_LINE,
+    '☁️  CLOUD',
+    `  Workspace:     ${cloud.workspace}`,
+    `  Staged:        ${cloud.staged} (${cloud.stagedNew} new, ${cloud.stagedCorrections} correction(s))`,
+    '  Run `knowl cloud status` for the full picture.',
+  ];
+}
 
 export function formatStatusReport(input: {
   project: Project;
@@ -17,6 +38,8 @@ export function formatStatusReport(input: {
   /** Absent on a store with no recorded sessions, which renders no section at all. */
   capture?: CaptureHealth;
   captureNudgeMode?: string;
+  /** Absent or disconnected renders nothing, so an offline repo gains no noise. */
+  cloud?: CloudStatus | null;
 }): string {
   const countsByCategory = input.activeItems.reduce((acc, item) => {
     acc[item.category] = (acc[item.category] || 0) + 1;
@@ -52,6 +75,7 @@ export function formatStatusReport(input: {
   }
   lines.push(...formatCaptureHealthBlock(input.capture, input.captureNudgeMode));
   lines.push(...formatWorkspaceBlock(input.workspace ?? null));
+  lines.push(...formatCloudBlock(input.cloud ?? null));
   lines.push(STATUS_LINE);
 
   return lines.join('\n');

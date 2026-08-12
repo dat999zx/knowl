@@ -1,3 +1,4 @@
+import { buildEmbedText } from '../core/embed-recipe.js';
 import { KnowledgeItem } from '../core/types.js';
 import { getClient } from './database.js';
 import { iterateKnowledgeItemsForIndexing } from './index-scan.js';
@@ -67,10 +68,22 @@ export type VectorReindexOptions = {
   force?: boolean;
 };
 
+/**
+ * The adapter from a `KnowledgeItem` to the recipe module.
+ *
+ * Kept as a named function rather than replaced at its call sites: it has callers across
+ * indexing, reindexing and the retrieval probe, and the text it builds is now a CROSS-REPO
+ * contract that `knowl-cloud` holds a byte-identical copy of. Its shape lives in
+ * `src/core/embed-recipe.ts` so that one module is the only thing either repo has to keep in
+ * step; this stays here because `KnowledgeItem` does not belong in that module.
+ */
 export function buildKnowledgeEmbeddingText(item: KnowledgeItem): string {
-  const tags = item.tags?.length ? `\nTags: ${item.tags.join(', ')}` : '';
-  const reasoning = item.reasoning ? `\nReasoning: ${item.reasoning}` : '';
-  return `${item.title}\n${item.content}${reasoning}${tags}`;
+  return buildEmbedText({
+    title: item.title,
+    content: item.content,
+    reasoning: item.reasoning,
+    tags: item.tags,
+  });
 }
 
 /**

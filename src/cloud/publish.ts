@@ -5,17 +5,33 @@ import { createCloudApi, type CloudApi } from './api-client.js';
 import {
   listStaged, publishedVersion, recordPushed, restageForPublish, stageForPublish,
 } from './ledger.js';
+import { filterExcluded } from './exclusions.js';
 import { checkPublishGate, currentBranchOf } from './publish-gate.js';
 import { readSyncState } from './sync-state.js';
 import { listAssertions } from '../store/assertions.js';
 import { listEvidenceForItem } from '../store/evidence-repository.js';
 import type { PublishAssertion, PublishEvidence, PublishItem, PublishOutcome } from './sync-contract.js';
+import { EMBED_RECIPE_VERSION } from '../core/embed-recipe.js';
+import { fingerprintProfile, resolveVectorProfile, type VectorProfile } from '../core/vector-profile.js';
+import { decodeVector as decodeStoredVectorValue } from '../store/vector.js';
+import { encodeVector as encodeVectorToBase64 } from './vector-codec.js';
 import { withTeamStore } from './team-store.js';
 import { ensureAccessToken } from './token.js';
 
 export type StageResult =
   | { status: 'not-connected' }
-  | { status: 'staged'; items: PromoteTarget[]; applied: boolean; skippedForeign: number };
+  | {
+    status: 'staged';
+    items: PromoteTarget[];
+    applied: boolean;
+    skippedForeign: number;
+    /**
+     * Excluded atoms a sweep passed over. Reported rather than silent for the same reason
+     * `skippedForeign` is: a sweep that quietly stages fewer atoms than the category holds is
+     * indistinguishable from a sweep that found nothing, and the remedy differs.
+     */
+    skippedExcluded: number;
+  };
 
 /**
  * Record the intent to publish. Sends nothing.
@@ -94,7 +110,23 @@ async function stageInContext(
     ids: input.ids,
   });
 
-  if (input.apply && items.length > 0) {
+  // A sweep means "publish what is not published yet"; an excluded atom is one this machine was
+  // told never to publish, so it is not a candidate. Naming an id deliberately overrides that --
+  // `knowl cloud unstage --forever` promises exactly this in its own output, and an exclusion
+  // that naming could not override would be irreversible without hand-editing SQLite.
+  //
+  // Applied before the `apply` branch so the dry run and the real run list the same atoms. A
+  // preview that showed an atom `--apply` would then skip is worse than no preview.
+  const namedIds = Boolean(input.ids?.length);
+  const eligible = namedIds
+    ? items
+    : await (async () => {
+      const allowed = new Set(await filterExcluded(items.map(item => item.id)));
+      return items.filter(item => allowed.has(item.id));
+    })();
+  const skippedExcluded = items.length - eligible.length;
+
+  if (input.apply && eligible.length > 0) {
     // Swallowed on purpose, and only here. The branch is what the push's refusal quotes back,
     // not what it decides on -- `checkPublishGate` re-reads git itself and reports being
     // unable to run it as its own verdict. Failing to record an intent because git is missing
@@ -105,13 +137,19 @@ async function stageInContext(
     // Naming ids is a deliberate act about items the caller has in hand, and it is the only
     // way to send a correction, so it re-stages what was already pushed. A category sweep
     // means "publish what is not published yet" and leaves those alone -- otherwise every
-    // `knowl publish --category decision --apply` would re-send the whole category, spending a
+    // `knowl cloud stage --category decision --apply` would re-send the whole category, spending a
     // version bump and a server-side embedding job per atom on identical content.
     const stage = input.ids?.length ? restageForPublish : stageForPublish;
-    await stage(items.map(item => item.id), pointer.workspaceId, branch);
+    await stage(eligible.map(item => item.id), pointer.workspaceId, branch);
   }
 
-  return { status: 'staged', items, applied: Boolean(input.apply) && items.length > 0, skippedForeign };
+  return {
+    status: 'staged',
+    items: eligible,
+    applied: Boolean(input.apply) && eligible.length > 0,
+    skippedForeign,
+    skippedExcluded,
+  };
 }
 
 export type PushResult =
@@ -119,6 +157,28 @@ export type PushResult =
   | { status: 'not-logged-in' }
   | { status: 'gated'; reason: string; detail: string; staged: number }
   | { status: 'forbidden'; role: string }
+  /**
+   * Staged atoms that have no vector under this repo's current embedding profile.
+   *
+   * Not an error and not silence. They stay staged and go out as soon as they are embedded --
+   * but a push that said nothing would report success for work it did not do, which is the
+   * failure `loadPublishItem` returning a bare `null` used to cause.
+   *
+   * The server refuses these too. This is the same verdict one round trip earlier, with a
+   * message that names the command that fixes it.
+   */
+  | { status: 'needs-embedding'; count: number; remedy: string }
+  | {
+    /**
+     * The queue is not what the human confirmed. Nothing was sent.
+     *
+     * `changed` means a listed atom's text moved between the prompt and the answer; `added`
+     * means the queue grew, which only refuses under `strict`.
+     */
+    status: 'snapshot-stale';
+    added: string[];
+    changed: string[];
+  }
   | {
     status: 'pushed';
     created: number;
@@ -153,10 +213,105 @@ const parseJson = <T>(value: unknown): T | null => {
  * Nothing is un-staged until the server has confirmed it. An atom whose outcome was a conflict,
  * a foreign origin, or a failure stays staged, so the next run retries exactly it and no more.
  */
+/**
+ * What a confirmation prompt was shown, as a thing that can be checked later.
+ *
+ * `pushStaged` reads `listStaged` live, and once auto-staging is on a long-lived MCP server is
+ * writing to that queue continuously -- so between drawing a prompt and reading the answer,
+ * another process can stage new atoms or rewrite the text of listed ones. Confirming a live read
+ * would send items and content nobody was shown. **This risk is created by auto-staging; it did
+ * not exist when staging was manual and rare.**
+ *
+ * The payload is captured here rather than re-read at send time, and that is the whole
+ * mechanism. Comparing hashes and then loading the payload separately leaves a second window
+ * open between the comparison and the load, so what was hashed, what was shown and what is sent
+ * must be one object that nothing can edit in between.
+ */
+export type PushSnapshot = {
+  items: Array<{
+    itemId: string;
+    contentHash: string | null;
+    lifecycleHash: string | null;
+    /** The exact bytes that will be sent. */
+    payload: PublishItem;
+  }>;
+  /**
+   * Staged atoms that have no vector under this repository's current embedding profile.
+   *
+   * Captured here rather than recomputed at send time for the same reason the payloads are: the
+   * snapshot is what the human was shown, and a fresh read between the prompt and the send is
+   * exactly the window this type exists to close.
+   */
+  unembedded: string[];
+};
+
+/** The hashes of the atoms currently staged, for comparison against a snapshot. */
+async function stagedHashes(itemIds: string[]): Promise<Map<string, { contentHash: string | null; lifecycleHash: string | null }>> {
+  if (itemIds.length === 0) return new Map();
+  const placeholders = itemIds.map(() => '?').join(', ');
+  const result = await getClient().execute({
+    sql: `SELECT id, content_hash, lifecycle_hash FROM knowledge_items WHERE id IN (${placeholders})`,
+    args: itemIds,
+  });
+  return new Map(result.rows.map(row => [String(row.id), {
+    contentHash: row.content_hash === null || row.content_hash === undefined ? null : String(row.content_hash),
+    lifecycleHash: row.lifecycle_hash === null || row.lifecycle_hash === undefined ? null : String(row.lifecycle_hash),
+  }]));
+}
+
+/**
+ * Capture what a push would send right now, so a human can be shown it and it can be sent unchanged.
+ *
+ * Opens and closes its own database context, like `stagePublish` and for the same reason: this
+ * runs from a CLI command that owns its process.
+ */
+export async function computePushSnapshot(input: {
+  projectRoot: string;
+  config: ProjectConfig;
+}): Promise<PushSnapshot> {
+  const pointer = input.config.cloud;
+  if (!pointer) return { items: [], unembedded: [] };
+
+  await initDb(input.projectRoot);
+  try {
+    const profile = resolveVectorProfile(input.config);
+    const fingerprint = fingerprintProfile(profile);
+    const staged = await listStaged(pointer.workspaceId);
+    const hashes = await stagedHashes(staged.map(row => row.itemId));
+    const items: PushSnapshot['items'] = [];
+    const unembedded: string[] = [];
+    for (const row of staged) {
+      const loaded = await loadPublishItem(row.itemId, pointer.workspaceId, profile, fingerprint);
+      // A staged id whose row is gone cannot be shown or sent. Skipped here for the same reason
+      // the push skips it: the ledger records intent, and this command does not edit it.
+      if (!('item' in loaded)) {
+        // An atom with no current vector is a different case: it exists, it is staged, and the
+        // push will refuse because of it. Carried out so the prompt can say so rather than
+        // quietly showing a shorter list than the user staged.
+        if (loaded.skipped === 'no-vector') unembedded.push(row.itemId);
+        continue;
+      }
+      items.push({
+        itemId: row.itemId,
+        contentHash: hashes.get(row.itemId)?.contentHash ?? null,
+        lifecycleHash: hashes.get(row.itemId)?.lifecycleHash ?? null,
+        payload: loaded.item,
+      });
+    }
+    return { items, unembedded };
+  } finally {
+    await closeDb();
+  }
+}
+
 export async function pushStaged(input: {
   projectRoot: string;
   config: ProjectConfig;
   api?: CloudApi;
+  /** What a human was shown. When given, only these atoms are sent, and only if unchanged. */
+  snapshot?: PushSnapshot;
+  /** Refuse when the queue merely GREW, not only when a listed atom changed. */
+  strict?: boolean;
 }): Promise<PushResult> {
   const pointer = input.config.cloud;
   if (!pointer) return { status: 'not-connected' };
@@ -194,13 +349,68 @@ export async function pushStaged(input: {
     });
     if (!credential) return { status: 'not-logged-in' };
 
-    const items: PublishItem[] = [];
-    for (const record of staged) {
-      const item = await loadPublishItem(record.itemId, pointer.workspaceId);
-      // A staged id whose row is gone cannot be published and must not be invented. It stays in
-      // the ledger rather than being swept: the ledger is a record of intent, and deleting the
-      // intent here would be this command silently editing what the user asked for.
-      if (item) items.push(item);
+    // Read once for the whole batch rather than per atom: every item in this push is embedded by
+    // the same local profile, and resolving it is not free.
+    const profile = resolveVectorProfile(input.config);
+    const fingerprint = fingerprintProfile(profile);
+
+    let items: PublishItem[];
+    let unembedded: string[];
+
+    if (input.snapshot) {
+      const promised = new Map(input.snapshot.items.map(entry => [entry.itemId, entry]));
+      const stagedNow = new Set(staged.map(row => row.itemId));
+      const hashes = await stagedHashes([...promised.keys()].filter(id => stagedNow.has(id)));
+
+      const changed = [...promised.values()]
+        .filter(entry => stagedNow.has(entry.itemId))
+        .filter(entry => {
+          const now = hashes.get(entry.itemId);
+          return !now
+            || now.contentHash !== entry.contentHash
+            || now.lifecycleHash !== entry.lifecycleHash;
+        })
+        .map(entry => entry.itemId);
+
+      const added = staged.map(row => row.itemId).filter(id => !promised.has(id));
+
+      // A changed atom always refuses: its text is not what the human read. An addition only
+      // refuses under `strict`, because it will go in the next push either way and refusing by
+      // default would let a busy agent block every push it runs beside.
+      if (changed.length > 0 || (input.strict && added.length > 0)) {
+        return { status: 'snapshot-stale', added, changed };
+      }
+
+      // Sent from the SNAPSHOT, intersected with what is still staged. The payload is the object
+      // that was hashed and shown -- never a fresh read, which is the window this closes.
+      items = input.snapshot.items
+        .filter(entry => stagedNow.has(entry.itemId))
+        .map(entry => entry.payload);
+      // Carried from the snapshot rather than recomputed. `computePushSnapshot` already did the
+      // work of finding them, and re-reading here would reopen the very window the snapshot
+      // exists to close -- an atom embedded between the prompt and the send would slip through.
+      unembedded = input.snapshot.unembedded.filter(id => stagedNow.has(id));
+    } else {
+      items = [];
+      unembedded = [];
+      for (const record of staged) {
+        const loaded = await loadPublishItem(
+          record.itemId, pointer.workspaceId, profile, fingerprint,
+        );
+        // A staged id whose row is gone cannot be published and must not be invented. It stays in
+        // the ledger rather than being swept: the ledger is a record of intent, and deleting the
+        // intent here would be this command silently editing what the user asked for.
+        if ('item' in loaded) items.push(loaded.item);
+        // An atom that exists but has no vector under the current profile is a different case
+        // with a different remedy, and reporting it is the whole reason this is not a bare null.
+        else if (loaded.skipped === 'no-vector') unembedded.push(record.itemId);
+      }
+    }
+
+    // One rule on both paths: an unembedded staged atom blocks the push and names the fix.
+    // Refused here rather than at the server -- same verdict, one round trip earlier.
+    if (unembedded.length > 0) {
+      return { status: 'needs-embedding', count: unembedded.length, remedy: 'knowl reindex --vectors' };
     }
     if (items.length === 0) {
       return { status: 'pushed', created: 0, updated: 0, conflicts: [], rejected: [] };
@@ -251,7 +461,25 @@ export async function pushStaged(input: {
  * not exist. On a republish the ledger's number is the only copy on this machine, and the server
  * treats a republish without one as a conflict deliberately.
  */
-async function loadPublishItem(itemId: string, workspace: string): Promise<PublishItem | null> {
+/**
+ * What a staged id yielded, and why it yielded nothing.
+ *
+ * `null` used to mean "the row is gone", and that was the only reason. There is a second one
+ * now -- the atom has no vector under the current profile -- and the two have different
+ * remedies: nothing can be done about a deleted row, while an unembedded one is
+ * `knowl reindex --vectors`. Collapsing both to null made the second invisible, and a push
+ * would report success for atoms it never sent.
+ */
+export type LoadedPublishItem =
+  | { item: PublishItem }
+  | { skipped: 'missing' | 'no-vector' };
+
+async function loadPublishItem(
+  itemId: string,
+  workspace: string,
+  profile: VectorProfile,
+  fingerprint: string,
+): Promise<LoadedPublishItem> {
   const result = await getClient().execute({
     sql: `SELECT id, category, title, content, reasoning, alternatives, tags, source, source_commit,
                  affected_paths, content_hash, lifecycle_hash, status, freshness, confidence, tier,
@@ -260,7 +488,26 @@ async function loadPublishItem(itemId: string, workspace: string): Promise<Publi
     args: [itemId],
   });
   const row = result.rows[0] as Record<string, unknown> | undefined;
-  if (!row) return null;
+  if (!row) return { skipped: 'missing' };
+
+  // READ, never recompute. The vector was built when the atom was written; re-embedding here
+  // would spend a forward pass to reproduce a value already on disk -- and would produce a
+  // DIFFERENT one if the local profile changed since, which is exactly the corruption the
+  // fingerprint exists to prevent.
+  //
+  // Filtered on the current fingerprint, so a row built by an older profile or an older RECIPE
+  // does not match and the atom is correctly treated as unembedded. `EMBED_RECIPE_VERSION` is
+  // part of that hash, which is what makes a recipe change visible here at all.
+  const embedding = await getClient().execute({
+    sql: `SELECT vector, dimensions FROM knowledge_embeddings
+          WHERE knowledge_item_id = ? AND profile_fingerprint = ?`,
+    args: [itemId, fingerprint],
+  });
+  const stored = embedding.rows[0] as Record<string, unknown> | undefined;
+  if (!stored) return { skipped: 'no-vector' };
+
+  const values = decodeStoredVector(stored.vector);
+  if (!values) return { skipped: 'no-vector' };
 
   // Citations travel with the atom. `sync-apply.ts` has always written them on the way DOWN, so
   // leaving them out here made the pipe one-directional: every atom this client published arrived
@@ -310,7 +557,7 @@ async function loadPublishItem(itemId: string, workspace: string): Promise<Publi
 
   const expectedVersion = await publishedVersion(itemId, workspace);
 
-  return {
+  const item: PublishItem = {
     id: String(row.id),
     category: String(row.category),
     title: String(row.title),
@@ -337,5 +584,26 @@ async function loadPublishItem(itemId: string, workspace: string): Promise<Publi
     ...(evidence.length > 0 ? { evidence } : {}),
     ...(assertions.length > 0 ? { assertions } : {}),
     ...(expectedVersion === null ? {} : { expectedVersion }),
+    vector: encodeVectorToBase64(values),
+    profileFingerprint: {
+      provider: profile.provider,
+      model: profile.model,
+      dtype: profile.dtype,
+      pooling: profile.pooling,
+      recipeVersion: EMBED_RECIPE_VERSION,
+    },
   };
+  return { item };
+}
+
+/**
+ * The stored vector as numbers, whichever encoding the row happens to hold.
+ *
+ * `src/store/vector.ts` writes packed float32 and still reads the JSON arrays older builds wrote,
+ * so this defers to it rather than assuming one shape.
+ */
+function decodeStoredVector(value: unknown): number[] | null {
+  const decoded = decodeStoredVectorValue(value);
+  if (!decoded) return null;
+  return Array.from(decoded);
 }

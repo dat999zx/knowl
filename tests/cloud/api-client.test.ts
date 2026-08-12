@@ -174,4 +174,32 @@ describe('cloud api client', () => {
 
     expect(calls[0].url).toBe('https://api.knowl.test/v1/workspaces');
   });
+
+  it('me() returns the display identity from /v1/me', async () => {
+    const { fetchImpl, calls } = stubFetch(() => ({
+      status: 200,
+      // The server's real `MeResponse`. `orgs` and `workspaces` ride along and are deliberately
+      // dropped: caching them here would put a second, staler workspace list beside
+      // `listWorkspaces`.
+      body: {
+        user: { id: 'u1', email: 'dev@example.com', displayName: 'Dev' },
+        orgs: [],
+        workspaces: [],
+      },
+    }));
+
+    const identity = await createCloudApi({ apiHost: HOST, fetchImpl }).me('token-1');
+
+    expect(identity).toEqual({ email: 'dev@example.com', displayName: 'Dev' });
+    expect(calls[0].url).toBe(`${HOST}/v1/me`);
+  });
+
+  it('me() surfaces a failure rather than returning a blank identity', async () => {
+    // A blank identity would render as "signed in as <>" -- worse than saying it is unknown,
+    // because it looks like an answer.
+    const { fetchImpl } = stubFetch(() => ({ status: 401, body: { message: 'expired' } }));
+
+    await expect(createCloudApi({ apiHost: HOST, fetchImpl }).me('bad-token'))
+      .rejects.toThrow(CloudApiError);
+  });
 });

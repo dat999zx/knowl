@@ -276,4 +276,16 @@ export const cloudPublished = sqliteTable('cloud_published', {
   stagedOnBranch: text('staged_on_branch'),
   pushedAt: text('pushed_at'),
   retractedAt: text('retracted_at'),
+  /** Explicit since level 10. `pending` is what a push works through; see `bootstrap.ts`. */
+  stageState: text('stage_state').notNull().default('clear'),
 }, (table) => [primaryKey({ columns: [table.itemId, table.remoteWorkspace] })]);
+
+/**
+ * Atoms this machine will never publish. Keyed by item alone — see `bootstrap.ts` for why the
+ * workspace is deliberately absent.
+ */
+export const cloudExcluded = sqliteTable('cloud_excluded', {
+  itemId: text('item_id').primaryKey(),
+  excludedAt: text('excluded_at').notNull(),
+  reason: text('reason'),
+});

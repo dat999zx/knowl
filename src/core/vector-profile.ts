@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { EMBED_RECIPE_VERSION } from './embed-recipe.js';
 import type { ProjectConfig } from './types.js';
 
 export type VectorPooling = 'mean' | 'cls';
@@ -280,9 +281,18 @@ const EMBEDDING_BATCH_POLICY = 'single';
  * produced it. provider and model alone are not enough: dtype and pooling both
  * change the numbers, so without them a dtype-only switch leaves old rows
  * matching the filter and being scored against incompatible query vectors.
+ *
+ * `EMBED_RECIPE_VERSION` is in here for the same reason `EMBEDDING_BATCH_POLICY` is: the model
+ * is not the only thing that decides a vector. The recipe decides what text reaches the model
+ * at all -- field order, labels, which fields are included, the token budget it is clipped to --
+ * and a recipe change without a fingerprint change leaves every stored row matching a space it
+ * is no longer in. `vector-index.ts` calls that "staleness the fingerprint cannot see" and
+ * offers `reindex --force` as the workaround; including the version is the fix, so a recipe
+ * change invalidates its own rows and the ordinary reindex repairs them.
  */
 export function fingerprintProfile(profile: VectorProfile): string {
   const canonical =
-    `${profile.provider}|${profile.model}|${profile.dtype}|${profile.pooling}|${EMBEDDING_BATCH_POLICY}`;
+    `${profile.provider}|${profile.model}|${profile.dtype}|${profile.pooling}` +
+    `|${EMBEDDING_BATCH_POLICY}|r${EMBED_RECIPE_VERSION}`;
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }

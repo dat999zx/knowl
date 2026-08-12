@@ -60,6 +60,22 @@ function toCredential(body: TokenResponseBody): CloudCredential {
 }
 
 export type CloudRole = 'owner' | 'admin' | 'editor' | 'reader';
+
+/**
+ * The profile a workspace's vectors are built with, as the server reports it.
+ *
+ * Five values, never a preset name: a name is only meaningful to whoever owns the table that
+ * expands it, and after 5.0 the server no longer owns one. `recipeVersion` is the field a
+ * model-only comparison cannot express -- it says what TEXT went into the model.
+ */
+export type WorkspaceProfile = {
+  provider: string;
+  model: string;
+  dtype: string;
+  pooling: string;
+  dimensions: number;
+  recipeVersion: number;
+};
 export type CloudWorkspace = { id: string; name: string; role: CloudRole };
 
 /** Carries the status so callers can branch: 401 means log in, 403 means not a member. */
@@ -70,11 +86,15 @@ export class CloudApiError extends Error {
   }
 }
 
+/** What `knowl cloud status` prints for "signed in as". */
+export type CloudIdentity = { email: string; displayName: string };
+
 export type CloudApi = {
   startDeviceAuthorization(): Promise<DeviceAuthorization>;
   pollForToken(deviceCode: string): Promise<CloudCredential | 'pending'>;
   refresh(refreshToken: string): Promise<CloudCredential>;
   listWorkspaces(accessToken: string): Promise<CloudWorkspace[]>;
+  me(accessToken: string): Promise<CloudIdentity>;
   fetchSyncPage(input: {
     workspaceId: string;
     accessToken: string;
@@ -94,13 +114,18 @@ export type CloudApi = {
     itemId: string;
     body: UpdateItemBody;
   }): Promise<{ outcome: PublishOutcome | null }>;
+  /** The profile this repo must match to publish. `reader` is enough to read it. */
+  workspaceProfile(input: {
+    workspaceId: string;
+    accessToken: string;
+  }): Promise<WorkspaceProfile>;
 };
 
 /**
  * A black-holed connection must fail, not hang.
  *
  * The dropped latency budget was about live retrieval queries, and that reasoning never
- * covered auth: `knowl login` and `knowl cloud connect` are foreground commands with a person
+ * covered auth: `knowl cloud login` and `knowl cloud connect` are foreground commands with a person
  * waiting on them, and a TCP connection that is accepted and then never answered produces no
  * output and no error until the user gives up.
  */
@@ -203,6 +228,17 @@ export function createCloudApi(options: {
       return body.workspaces ?? [];
     },
 
+    async me(accessToken) {
+      // Only the two display fields are kept. `orgs` and `workspaces` come back too, but caching
+      // them here would put a second, staler copy of the workspace list beside `listWorkspaces`.
+      const { status, body } = await request<{ user: CloudIdentity }>('/v1/me', {
+        method: 'GET',
+        accessToken,
+      });
+      if (status !== 200) fail('/v1/me', status, body);
+      return { email: body.user.email, displayName: body.user.displayName };
+    },
+
     async fetchSyncPage(input) {
       const query = new URLSearchParams();
       // Omitted entirely on a first sync -- an absent `since` is what selects snapshot mode,
@@ -238,6 +274,18 @@ export function createCloudApi(options: {
       );
       if (status !== 200) fail('/knowledge', status, body as { code?: string; message?: string });
       return { outcomes: body.outcomes ?? [], commitId: body.commitId ?? null };
+    },
+
+    async workspaceProfile(input) {
+      const { status, body } = await request<{ serving: WorkspaceProfile }>(
+        `/v1/workspaces/${encodeURIComponent(input.workspaceId)}/policy`,
+        { method: 'GET', accessToken: input.accessToken },
+      );
+      if (status !== 200) fail('/policy', status, body);
+      // `serving`, never `target`. Target is an in-flight admin state during a reindex, and a
+      // client that embedded against it would build vectors for a generation the workspace is
+      // not searching yet.
+      return body.serving;
     },
 
     /** `needsReview` answers `{ outcome: null }` -- it records an observation, not a revision. */

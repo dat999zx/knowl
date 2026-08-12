@@ -1,6 +1,7 @@
 import type { CloudApi } from './api-client.js';
 import { applySyncRows } from './sync-apply.js';
 import { readSyncState, writeSyncState } from './sync-state.js';
+import type { VectorProfile } from '../core/vector-profile.js';
 import { dropTeamStore, withTeamStore } from './team-store.js';
 
 /** A safety stop, not a page budget: a traversal that never returns a null cursor is a bug. */
@@ -16,9 +17,28 @@ export type SyncInput = {
   api: CloudApi;
   accessToken: string;
   maxPages?: number;
+  /**
+   * What to store a received vector as, and what width to insist on.
+   *
+   * Omitted entirely by callers that do not want vectors stored -- every row then lands in
+   * `needEmbedding` and the local embedder handles them, which is exactly the pre-vector
+   * behaviour.
+   */
+  vectors?: {
+    profile: VectorProfile;
+    fingerprint: string;
+    dimensions: number | null;
+  };
 };
 
 export type SyncResult = {
+  /**
+   * Rows that arrived without a usable vector and must be embedded locally.
+   *
+   * Empty on the normal path. Every row of a workspace mid-reindex lands here by design, which
+   * is what keeps sync flowing while a profile change is in progress.
+   */
+  needEmbedding: string[];
   status: 'synced' | 'incomplete' | 'resynced';
   upserted: number;
   deleted: number;
@@ -63,6 +83,7 @@ async function traverse(input: SyncInput): Promise<SyncResult | typeof RESYNC_RE
     let since = state?.since ?? null;
     let cursor = state?.cursor ?? null;
     let upserted = 0;
+    const needEmbedding: string[] = [];
     let deleted = 0;
     let pages = 0;
     // Carried across pages rather than read from the last one alone: a traversal that fails
@@ -102,9 +123,10 @@ async function traverse(input: SyncInput): Promise<SyncResult | typeof RESYNC_RE
       if (page.resyncRequired) return RESYNC_REQUIRED;
 
       pages += 1;
-      const outcome = await applySyncRows(page.rows);
+      const outcome = await applySyncRows(page.rows, input.vectors);
       upserted += outcome.upserted;
       deleted += outcome.deleted;
+      needEmbedding.push(...outcome.needEmbedding);
 
       if (page.cursor === null) {
         since = page.nextSeq;
@@ -131,6 +153,7 @@ async function traverse(input: SyncInput): Promise<SyncResult | typeof RESYNC_RE
     return {
       status: complete ? 'synced' : 'incomplete',
       upserted,
+      needEmbedding,
       deleted,
       pages,
       since: complete ? since : (state?.since ?? null),

@@ -32,9 +32,13 @@ import { repoEntry, updateRepoSettings } from '../workspace/repo-settings.js';
 import { runCliQuery } from './query-command.js';
 import { runCliResume } from './resume-command.js';
 import { closeResumeDb } from '../session/resume-store.js';
+import { createResumePoint } from '../session/resume-points.js';
+import { formatPendingHandoffContext, recordDeliberateHandoff } from '../session/session-handoff.js';
 import { formatCrossRepoNotice } from './cross-repo-notice.js';
 import { formatWorkspaceBlock } from './workspace-report.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
+import { assertOwnedItem } from '../workspace/ownership.js';
+import { storeKnowledgeItemDeduped } from '../store/knowledge-writer.js';
 import { formatDoctorReport, runDoctor } from './doctor-report.js';
 import { upgradeExistingRepository, type UpgradeResult } from './upgrade.js';
 import { readKnownRepos, recordKnownRepo } from './repo-registry.js';
@@ -45,9 +49,16 @@ import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embed
 import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './config/service.js';
 import { runConfigUi } from './config/ui.js';
 import { defaultApiHost, runLogin, runLogout } from '../cloud/login.js';
+import { createCloudApi } from '../cloud/api-client.js';
+import { readCredential } from '../cloud/credentials.js';
+import { excludeFromPublish } from '../cloud/exclusions.js';
+import { unstagePublish } from '../cloud/ledger.js';
+import { writeAutoPushConsent } from '../cloud/consent.js';
+import { maybeAutoPush } from './auto-push.js';
+import { pickWorkspace } from './cloud-picker.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
-import { pushStaged, stagePublish } from '../cloud/publish.js';
+import { computePushSnapshot, pushStaged, stagePublish } from '../cloud/publish.js';
 import { retractItem } from '../cloud/retract.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
@@ -106,6 +117,16 @@ import { applyTranscriptConfigTransition, describeTranscriptTeardown } from '../
 // See the note in src/index.ts: dotenv 17 writes a banner to stdout unless told not to, and
 // stdout here is a machine-readable channel.
 dotenv.config({ quiet: true });
+
+/**
+ * Build the whole command tree, fresh.
+ *
+ * A factory rather than module-scope construction because three test files need to assert the
+ * shape of the tree, and a module is a singleton — a second import returns the first instance,
+ * already parsed. The body below is unchanged and deliberately not re-indented: this wrapper was
+ * introduced as a pure move, and re-indenting three thousand lines would bury that in noise.
+ */
+export function buildProgram(): Command {
 
 const program = new Command();
 
@@ -388,6 +409,13 @@ program
     try {
       const root = await findProjectRoot(process.cwd());
       const config = await loadConfig(root);
+
+      // Before this command opens its own context, deliberately. `cloudStatus` owns a
+      // process-wide one -- it opens and closes -- so calling it inside the block below would
+      // close the database out from under everything after it. Constraint `defde27f6f234535` is
+      // about the MCP path; this is the same hazard on the CLI path.
+      const cloud = config.cloud ? await cloudStatus(root, config) : null;
+
       await initDb(root);
 
       const project = await repo.getProjectByRootPath(root);
@@ -410,6 +438,7 @@ program
         commits,
         capture: await captureHealth(),
         captureNudgeMode: captureNudgeMode(config),
+        cloud,
       }));
 
       if (isUpdateCheckEnabled(config)) {
@@ -470,6 +499,90 @@ program
       process.exit(1);
     }
   });
+
+/** Shared by `park` and `handoff`: both take the same optional brief around a required goal. */
+const briefOptions = (command: Command): Command => command
+  .option('--completed <item...>', 'What is already done')
+  .option('--blocker <blocker>', 'What is in the way, if anything')
+  .option('--artifact <path...>', 'Files the returning session should look at')
+  .option('--verified', 'The work so far was checked')
+  .option('--unverified', 'The work so far was not checked');
+
+const verificationOf = (options: { verified?: boolean; unverified?: boolean }): 'verified' | 'unverified' | undefined =>
+  options.verified ? 'verified' : options.unverified ? 'unverified' : undefined;
+
+briefOptions(
+  program
+    .command('park')
+    .description('Park a workstream you mean to return to, and get a key back')
+    .requiredOption('--goal <goal>', 'What this workstream is trying to achieve')
+    .option('--next-action <action>', 'The next step as it stands now'),
+).action(async options => {
+  try {
+    const root = await findProjectRoot(process.cwd());
+    const point = await createResumePoint(root, {
+      goal: options.goal,
+      completed: options.completed,
+      nextAction: options.nextAction,
+      blocker: options.blocker,
+      artifactRefs: options.artifact,
+      verificationStatus: verificationOf(options),
+    });
+    // Printed verbatim and unwrapped: a key reworded is a key lost, and handing it back is the
+    // whole point of the command.
+    console.log(`Parked. To pick this up later, from anywhere:\n\n    knowl resume ${point.key}\n`);
+    await closeResumeDb();
+  } catch (error: any) {
+    console.error(`Error parking work: ${error.message}`);
+    process.exit(1);
+  }
+});
+
+briefOptions(
+  program
+    .command('handoff')
+    .description('Leave a baton for the next session in this project')
+    .requiredOption('--goal <goal>', 'What this workstream is trying to achieve')
+    .requiredOption('--next-action <action>', 'The single next thing to do'),
+).action(async options => {
+  try {
+    const root = await findProjectRoot(process.cwd());
+    await initDb(root);
+    try {
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const { handoff, replacedPrevious } = await recordDeliberateHandoff(project.id, {
+        // Filed under the host whose hooks deliver a baton on session start, matching the MCP
+        // path: a CLI invocation has no host session of its own to name.
+        host: 'claude',
+        projectRoot: root,
+        externalSessionId: 'cli',
+        taskState: {
+          goal: options.goal,
+          nextAction: options.nextAction,
+          completed: options.completed,
+          blocker: options.blocker,
+          artifactRefs: options.artifact,
+          verificationStatus: verificationOf(options) ?? 'unverified',
+        },
+      });
+
+      // One baton per project. Said out loud, because the previous one's goal, next action and
+      // blocker are gone and nothing else would mention it.
+      if (replacedPrevious) {
+        console.log('Replaced the previous unconsumed handoff — its goal, next action and blocker are gone.');
+      }
+      console.log('Handed off. The next session in this project receives this once, then it is archived.');
+      console.log(`\n${formatPendingHandoffContext(handoff)}`);
+    } finally {
+      await closeDb();
+    }
+  } catch (error: any) {
+    console.error(`Error handing off: ${error.message}`);
+    process.exit(1);
+  }
+});
 
 program.command('timeline').argument('<itemId>').description('Show the recorded history of one knowledge item').action(async itemId => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listAssertions(itemId), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading timeline: ${error.message}`); process.exit(1); }
@@ -621,14 +734,43 @@ function parseDefaultVisibility(value: string | undefined): 'workspace' | 'repo'
   throw new Error(`--default-visibility must be "repo" or "workspace", not "${value}".`);
 }
 
-program
+/**
+ * Names 5.0 removed, kept only so they can say where they went.
+ *
+ * These are NOT aliases: each exits non-zero and runs nothing. The whole cost of a hard break is
+ * that a familiar command stops working, and the difference between "unknown command" and
+ * "moved to `knowl cloud stage`" is the difference between a dead end and a redirect.
+ *
+ * Hidden, so they are absent from help — the surface is the new one. Commander still keeps them
+ * in `.commands`, which is why the tree test asserts help output rather than that array.
+ */
+for (const [gone, replacement] of [
+  ['login', 'knowl cloud login'],
+  ['logout', 'knowl cloud logout'],
+  ['publish', 'knowl cloud stage'],
+] as const) {
+  program
+    .command(gone, { hidden: true })
+    .allowUnknownOption()
+    .allowExcessArguments()
+    .action(() => {
+      console.error(`\`knowl ${gone}\` moved to \`${replacement}\`.`);
+      process.exit(1);
+    });
+}
+
+const cloudCommand = program.command('cloud').description('Publish to and read from a Knowl Cloud workspace');
+
+cloudCommand
   .command('login')
-  .description('Sign in to a Knowl Cloud workspace')
+  .description('Sign in to Knowl Cloud')
   .option('--api <host>', 'API host (defaults to $KNOWL_API_HOST, else the hosted service)', defaultApiHost())
+  .option('--force', 'Re-authenticate even if this machine is already signed in')
   .action(async options => {
     try {
       const result = await runLogin({
         apiHost: options.api,
+        force: options.force,
         onPrompt: authorization => {
           // The server does not send `verificationUri` yet. Naming the API host is a worse
           // instruction than a real approval URL and a far better one than "Open undefined",
@@ -639,8 +781,14 @@ program
           console.log('Waiting for approval...');
         },
       });
+      if (result.status === 'already-signed-in') {
+        console.log(result.identity
+          ? `Already signed in as ${result.identity.displayName} <${result.identity.email}> at ${options.api}.`
+          : `Already signed in at ${options.api}. Run with --force to re-authenticate.`);
+        return;
+      }
       if (result.status === 'expired') {
-        console.error('The code expired before it was approved. Run knowl login again.');
+        console.error('The code expired before it was approved. Run knowl cloud login again.');
         process.exit(1);
       }
       console.log(`Signed in to ${options.api}.`);
@@ -650,7 +798,7 @@ program
     }
   });
 
-program
+cloudCommand
   .command('logout')
   .description('Clear stored Knowl Cloud credentials')
   .option('--api <host>', 'API host (defaults to $KNOWL_API_HOST, else the hosted service)', defaultApiHost())
@@ -659,8 +807,34 @@ program
     console.log(wasLoggedIn ? `Signed out of ${options.api}.` : `Not signed in to ${options.api}.`);
   });
 
-program
-  .command('publish')
+cloudCommand
+  .command('workspaces')
+  .description('List the cloud workspaces this machine can reach')
+  .option('--api <host>', 'API host (defaults to $KNOWL_API_HOST, else the hosted service)', defaultApiHost())
+  .action(async options => {
+    try {
+      const credential = await readCredential(options.api);
+      if (!credential) {
+        console.error('Not signed in. Run knowl cloud login first.');
+        process.exit(1);
+      }
+      const workspaces = await createCloudApi({ apiHost: options.api })
+        .listWorkspaces(credential.accessToken);
+      if (workspaces.length === 0) {
+        console.log('You do not belong to any workspace yet.');
+        return;
+      }
+      for (const workspace of workspaces) {
+        console.log(`  ${workspace.id}  ${workspace.name}  (${workspace.role})`);
+      }
+    } catch (error: any) {
+      console.error(`Listing workspaces failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+cloudCommand
+  .command('stage')
   .description('Stage knowledge for publication to the connected cloud workspace')
   .option('--id <ids...>', 'Item ids to stage')
   .option('--category <list>', 'Comma-separated categories (quote the list on Windows)')
@@ -685,17 +859,85 @@ program
       if (result.skippedForeign > 0) {
         console.log(`${result.skippedForeign} item(s) belong to another repo and can only be published from it.`);
       }
+      // Named rather than silent, for the same reason `skippedForeign` is: a sweep that stages
+      // fewer atoms than the category holds looks identical to one that found nothing.
+      if (result.skippedExcluded > 0) {
+        console.log(`${result.skippedExcluded} item(s) are excluded from publication. Name an id to stage one anyway.`);
+      }
       console.log(result.applied
         ? `Staged ${result.items.length} item(s). Run knowl cloud push to send them.`
         : `${result.items.length} item(s) would be staged. Re-run with --apply.`);
       if (result.applied) console.log('Once pushed, removing it again takes knowl cloud retract, which is irreversible.');
+
+      if (result.applied) {
+        // Only with standing consent, an open gate and an unchanged snapshot. Reported when it
+        // fires, because a send that happened silently is the thing consent is trusted not to be.
+        const auto = await maybeAutoPush({ projectRoot: root, config });
+        if (auto.status === 'pushed') {
+          console.log(`Auto-push is on: sent ${auto.created} new and ${auto.updated} updated item(s).`);
+        } else if (auto.status === 'failed') {
+          console.error(`Auto-push did not send (${auto.detail}). Everything stays staged; run knowl cloud push.`);
+        }
+      }
     } catch (error: any) {
-      console.error(`Publish failed: ${error.message}`);
+      console.error(`Staging failed: ${error.message}`);
       process.exit(1);
     }
   });
 
-const cloudCommand = program.command('cloud').description('Connect this repository to a Knowl Cloud workspace');
+cloudCommand
+  .command('autopush')
+  .argument('<state>', 'on or off')
+  .description('Turn automatic pushing on or off, for this machine only')
+  .action(async (state: string) => {
+    if (state !== 'on' && state !== 'off') {
+      console.error('Expected on or off.');
+      process.exit(1);
+    }
+    const root = await findProjectRoot(process.cwd());
+    const config = await loadConfig(root);
+    if (!config.cloud) {
+      console.error('This repository is not connected to a cloud workspace.');
+      process.exit(1);
+    }
+    await writeAutoPushConsent(config.cloud.workspaceId, state === 'on');
+    const workspace = config.cloud.workspaceName ?? config.cloud.workspaceId;
+    console.log(state === 'on'
+      // Said plainly because the whole design turns on it: this is not a project setting and
+      // does not travel to anyone else.
+      ? `Automatic push enabled for ${workspace} on this machine.\nIt applies to you only — it is not committed and no teammate inherits it.`
+      : `Automatic push disabled for ${workspace}.`);
+  });
+
+cloudCommand
+  .command('unstage')
+  .argument('<id>', 'The item to take out of the queue')
+  .description('Take an atom out of the push queue. Does not unpublish it')
+  .option('--forever', 'Also exclude it, so nothing stages it again automatically')
+  .action(async (id: string, options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      if (!config.cloud) {
+        console.error('This repository is not connected to a cloud workspace.');
+        process.exit(1);
+      }
+      await initDb(root);
+      try {
+        const cleared = await unstagePublish(id, config.cloud.workspaceId);
+        if (options.forever) await excludeFromPublish(id, 'knowl cloud unstage --forever');
+        console.log(cleared ? `Unstaged ${id}.` : `${id} was not staged.`);
+        if (options.forever) {
+          console.log('It will not be staged again automatically. Naming its id to knowl cloud stage still stages it.');
+        }
+      } finally {
+        await closeDb();
+      }
+    } catch (error: any) {
+      console.error(`Unstage failed: ${error.message}`);
+      process.exit(1);
+    }
+  });
 
 cloudCommand
   .command('connect')
@@ -703,18 +945,38 @@ cloudCommand
   .option('--api <host>', 'API host (defaults to $KNOWL_API_HOST, else the hosted service)', defaultApiHost())
   .option('--workspace <id>', 'Workspace id, when you belong to more than one')
   .option('--remote <name>', 'Git remote to derive repo identity from', 'origin')
+  .option('--no-auto-stage', 'Do not stage new knowledge automatically; stage it explicitly instead')
   .action(async options => {
     try {
       const root = await findProjectRoot(process.cwd());
-      const result = await runConnect({
+      const connectInput = {
         projectRoot: root,
         apiHost: options.api,
-        workspaceId: options.workspace,
+        workspaceId: options.workspace as string | undefined,
         remote: options.remote,
-      });
+      };
+
+      // Shared by both entry paths -- the first attempt and the one that follows a pick -- so a
+      // connection made through the picker reports exactly what a direct one does.
+      const reportConnected = async (connected: Extract<Awaited<ReturnType<typeof runConnect>>, { status: 'connected' }>) => {
+        // Written after the pointer, not before: `runConnect` writes config itself, so setting
+        // this first would be overwritten by the connect it is meant to qualify.
+        if (options.autoStage === false) {
+          const current = await loadConfig(root);
+          if (current.cloud) {
+            await saveConfig(root, { ...current, cloud: { ...current.cloud, autoStage: false } });
+          }
+        }
+        console.log(`Connected ${connected.pointer.repo} to ${connected.pointer.workspaceName} as ${connected.role}.`);
+        console.log(options.autoStage === false
+          ? 'Nothing has been published, and new knowledge will not stage itself. Use knowl cloud stage.'
+          : 'Nothing has been published. New knowledge stages itself; send it with knowl cloud push.');
+      };
+
+      const result = await runConnect(connectInput);
 
       if (result.status === 'not-logged-in') {
-        console.error('Not signed in. Run knowl login first.');
+        console.error('Not signed in. Run knowl cloud login first.');
         process.exit(1);
       }
       if (result.status === 'no-workspaces') {
@@ -728,13 +990,42 @@ cloudCommand
         process.exit(1);
       }
       if (result.status === 'ambiguous') {
-        console.error('You belong to more than one workspace. Re-run with --workspace <id>:');
-        for (const entry of result.workspaces) console.error(`  ${entry.id}  ${entry.name} (${entry.role})`);
+        // The list is already in hand -- `runConnect` fetched it to discover the ambiguity -- so
+        // offering it beats refusing with it.
+        const chosen = await pickWorkspace(result.workspaces);
+        if (!chosen) {
+          // No TTY, or the user backed out. Same remedy either way, and the same one this
+          // command gave before the picker existed.
+          console.error('You belong to more than one workspace. Re-run with --workspace <id>:');
+          for (const entry of result.workspaces) console.error(`  ${entry.id}  ${entry.name} (${entry.role})`);
+          process.exit(1);
+        }
+        // Re-entered with the choice made, rather than writing the pointer here as well.
+        const confirmed = await runConnect({ ...connectInput, workspaceId: chosen });
+        if (confirmed.status !== 'connected') {
+          console.error(`Connect failed after choosing a workspace: ${confirmed.status}`);
+          process.exit(1);
+        }
+        await reportConnected(confirmed);
+        return;
+      }
+      if (result.status === 'profile-mismatch') {
+        // Nothing has been written: the pointer is only saved once the profiles agree, so this
+        // repository is left exactly as it was rather than connected-but-unable-to-publish.
+        console.error(
+          `This workspace embeds with ${result.workspace.model} `
+          + `(${result.workspace.dtype}, ${result.workspace.pooling}, recipe ${result.workspace.recipeVersion}).\n`
+          + `This repository uses ${result.repo.model} `
+          + `(${result.repo.dtype}, ${result.repo.pooling}, recipe ${result.repo.recipeVersion}).\n`
+          + `Differing: ${result.differing.join(', ')}.\n\n`
+          + 'Vectors are shared with the team, so they must be built the same way.\n'
+          + `Switch this repository to that model and re-embed its ${result.itemCount} item(s), `
+          + 'then connect again.',
+        );
         process.exit(1);
       }
 
-      console.log(`Connected ${result.pointer.repo} to ${result.pointer.workspaceName} as ${result.role}.`);
-      console.log('Nothing has been published. Use knowl publish to share knowledge.');
+      await reportConnected(result);
     } catch (error: any) {
       console.error(`Connect failed: ${error.message}`);
       process.exit(1);
@@ -755,7 +1046,7 @@ cloudCommand
         process.exit(1);
       }
       if (result.status === 'not-logged-in') {
-        console.error('Not signed in. Run knowl login first.');
+        console.error('Not signed in. Run knowl cloud login first.');
         process.exit(1);
       }
 
@@ -778,18 +1069,65 @@ cloudCommand
 cloudCommand
   .command('push')
   .description('Send staged knowledge, once its code is on the default branch')
-  .action(async () => {
+  .option('-y, --yes', 'Skip the confirmation. Required when there is no terminal to ask')
+  .action(async options => {
     try {
       const root = await findProjectRoot(process.cwd());
       const config = await loadConfig(root);
-      const result = await pushStaged({ projectRoot: root, config });
+
+      // Captured before anything is shown, and sent unchanged. A live re-read at send time is
+      // the window this closes: with auto-staging on, another process writes to this queue
+      // continuously.
+      const snapshot = await computePushSnapshot({ projectRoot: root, config });
+      const isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+      // Before the prompt, not after it. `snapshot.items` omits atoms with no vector, so showing
+      // the prompt first would ask a user to confirm a shorter list than they staged and then
+      // refuse the push anyway. Nothing is lost either way -- they stay staged -- but being told
+      // now, with the command that fixes it, is the difference between an answer and a puzzle.
+      if (snapshot.unembedded.length > 0) {
+        console.error(
+          `${snapshot.unembedded.length} staged item(s) have no vector for this repository's `
+          + 'embedding profile, so nothing was sent.\n'
+          + 'Run `knowl reindex --vectors`, then push again.',
+        );
+        process.exit(1);
+      }
+
+      if (snapshot.items.length > 0 && !options.yes) {
+        if (!isTTY) {
+          // A prompt that cannot be answered must not block CI, and silence must not be read
+          // as consent for something irreversible.
+          console.error(`${snapshot.items.length} item(s) would be sent. Re-run with --yes to confirm.`);
+          process.exit(1);
+        }
+        console.log(`About to send ${snapshot.items.length} item(s) to ${config.cloud?.workspaceName ?? 'the workspace'}:`);
+        for (const entry of snapshot.items) console.log(`  ${entry.payload.category}  ${entry.payload.title}`);
+        console.log('Sending is irreversible: undoing it means knowl cloud retract, a hard delete.');
+
+        const clack = await import('@clack/prompts');
+        const ok = await clack.confirm({ message: 'Send these?' });
+        if (clack.isCancel(ok) || !ok) {
+          console.log('Nothing sent. Everything stays staged.');
+          return;
+        }
+      }
+
+      const result = await pushStaged({ projectRoot: root, config, snapshot, strict: true });
 
       if (result.status === 'not-connected') {
         console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
         process.exit(1);
       }
       if (result.status === 'not-logged-in') {
-        console.error('Not signed in. Run knowl login first.');
+        console.error('Not signed in. Run knowl cloud login first.');
+        process.exit(1);
+      }
+      if (result.status === 'snapshot-stale') {
+        console.error('The queue changed while you were deciding, so nothing was sent.');
+        if (result.changed.length > 0) console.error(`  ${result.changed.length} listed item(s) were edited.`);
+        if (result.added.length > 0) console.error(`  ${result.added.length} new item(s) were staged.`);
+        console.error('Run knowl cloud push again to see the current list.');
         process.exit(1);
       }
       if (result.status === 'forbidden') {
@@ -798,6 +1136,16 @@ cloudCommand
       }
       if (result.status === 'gated') {
         console.error(`${result.staged} item(s) stay staged. ${result.detail}`);
+        process.exit(1);
+      }
+      if (result.status === 'needs-embedding') {
+        // Nothing is lost: they stay staged and go out on the next push. Said out loud because a
+        // push that quietly sent nothing would look like success.
+        console.error(
+          `${result.count} staged item(s) have no vector for this repository's embedding profile, `
+          + 'so nothing was sent.\n'
+          + `Run \`${result.remedy}\`, then push again.`,
+        );
         process.exit(1);
       }
 
@@ -829,7 +1177,7 @@ cloudCommand
         process.exit(1);
       }
       if (result.status === 'not-logged-in') {
-        console.error('Not signed in. Run knowl login first.');
+        console.error('Not signed in. Run knowl cloud login first.');
         process.exit(1);
       }
       if (result.status === 'forbidden') {
@@ -1290,9 +1638,8 @@ workspaceCommand
     }
   });
 
-const codeCommand = program.command('code').description('Index and inspect project code symbols');
-codeCommand.command('index').action(async () => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); await indexCode(root); console.log('Code symbols indexed.'); await closeDb(); } catch (error: any) { console.error(`Error indexing code: ${error.message}`); process.exit(1); } });
-codeCommand.command('symbols').argument('<path>').action(async filePath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listCodeSymbols(filePath), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading code symbols: ${error.message}`); process.exit(1); } });
+program.command('index-code').description('Index the project code symbols for retrieval').action(async () => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); await indexCode(root); console.log('Code symbols indexed.'); await closeDb(); } catch (error: any) { console.error(`Error indexing code: ${error.message}`); process.exit(1); } });
+program.command('symbols').description('List the indexed symbols in one file').argument('<path>').action(async filePath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listCodeSymbols(filePath), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading code symbols: ${error.message}`); process.exit(1); } });
 
 program.command('export').argument('<path>').description('Write portable JSONL memory to a file').action(async outputPath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await exportKnowledge(project.id, path.resolve(outputPath), root), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error exporting knowledge: ${error.message}`); process.exit(1); } });
 
@@ -1502,6 +1849,88 @@ program
       await closeDb();
     } catch (error: any) {
       console.error(`❌ Error recording decision: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('store')
+  .argument('<content>', 'The knowledge itself')
+  .description('Record one verified fact, decision or constraint')
+  .requiredOption('--category <category>', 'fact, decision, goal, constraint, architecture, state or skill')
+  .requiredOption('--title <title>', 'Concise title')
+  .option('--tag <tag...>', 'Tags')
+  .option('--path <path...>', 'Repository-relative paths this knowledge depends on')
+  .option('--confidence <number>', 'Confidence from 0.0 to 1.0', Number)
+  .option('--provenance <provenance>', 'observed, user_stated or inferred')
+  .option('--reasoning <text>', 'Why this is believed')
+  .option('--alternative <text...>', 'Alternatives considered')
+  .option('--source <label>', 'Source label')
+  .option('--source-commit <sha>', 'Commit where this was last reviewed')
+  .option('--supersedes <id>', 'Id of an active item this replaces')
+  .option('--local', 'Never publish this atom to a cloud workspace')
+  .action(async (content: string, options) => {
+    try {
+      if (!KNOWLEDGE_CATEGORIES.includes(options.category)) {
+        console.error(`Invalid category "${options.category}". Expected one of: ${KNOWLEDGE_CATEGORIES.join(', ')}.`);
+        process.exit(1);
+      }
+
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      await initDb(root);
+      try {
+        const project = await repo.getProjectByRootPath(root);
+        if (!project) throw new Error('Project not found in database.');
+
+        // Retiring an item is a write to that item, and in a linked workspace it may belong to
+        // another repo. The MCP write tools guard this; a CLI that did not would be the hole.
+        if (options.supersedes) {
+          const owner = await resolveWorkspace(root, config);
+          if (owner) await assertOwnedItem(options.supersedes, owner);
+        }
+
+        const result = await storeKnowledgeItemDeduped(
+          project.id,
+          {
+            category: options.category,
+            title: options.title,
+            content,
+            reasoning: options.reasoning,
+            alternatives: options.alternative,
+            tags: options.tag,
+            source: options.source,
+            sourceCommit: options.sourceCommit,
+            affectedPaths: options.path,
+            confidence: options.confidence,
+            provenance: options.provenance,
+            supersedes: options.supersedes,
+          },
+          `Store ${options.category}: ${options.title}`,
+          config.security,
+        );
+
+        if (result.action === 'duplicate') {
+          console.log(`NOT STORED — already held verbatim as ${result.item.id}. Nothing was written and nothing was lost.`);
+          return;
+        }
+
+        // Excluded after the write, which is the only order available: the id does not exist
+        // until the row does. The seam may therefore have staged it a moment ago, so the
+        // exclusion is paired with an unstage rather than trusting it to have lost the race.
+        if (options.local) {
+          await excludeFromPublish(result.item.id, 'knowl store --local');
+          if (config.cloud) await unstagePublish(result.item.id, config.cloud.workspaceId);
+        }
+
+        console.log(`Stored ${options.category} ${result.item.id}: ${result.item.title}`);
+        if (result.superseded) console.log(`  Retired ${result.superseded.id}.`);
+        if (options.local) console.log('  Marked local. It will not be published.');
+      } finally {
+        await closeDb();
+      }
+    } catch (error: any) {
+      console.error(`Error storing knowledge: ${error.message}`);
       process.exit(1);
     }
   });
@@ -1990,9 +2419,7 @@ transcripts
 // --- 9. RETRIEVAL EVALUATION COMMAND ---
 program
   .command('eval')
-  .description('Run checked-in retrieval evaluation datasets')
-  .command('retrieval')
-  .description('Evaluate agent retrieval against a dataset')
+  .description('Evaluate agent retrieval against a checked-in dataset')
   .requiredOption('--dataset <path>', 'Path to a retrieval evaluation JSON dataset')
   .option('--json', 'Print machine-readable JSON')
   .option('--vector', 'Embed queries and rank with vector + BM25 fusion (the path real agents use; requires the local embedding model)')
@@ -2125,9 +2552,7 @@ program
 // --- 10. ACCESS REPORT COMMAND ---
 program
   .command('access')
-  .description('Inspect retrieval access feedback')
-  .command('report')
-  .description('Show high-value, stale, and corrected knowledge')
+  .description('Show high-value, stale, and corrected knowledge from retrieval feedback')
   .option('--json', 'Print machine-readable JSON')
   .action(async (options) => {
     try {
@@ -2825,13 +3250,9 @@ skillCommand
     }
   });
 
-const evidenceCommand = program
+program
   .command('evidence')
-  .description('Inspect provenance evidence linked to knowledge');
-
-evidenceCommand
-  .command('list')
-  .description('List evidence linked to one knowledge item')
+  .description('List the provenance evidence linked to one knowledge item')
   .argument('<item-id>', 'Knowledge item ID')
   .action(async (itemId) => {
     try {
@@ -2854,12 +3275,8 @@ evidenceCommand
   });
 
 // --- 14. PR COMMAND ---
-const prCommand = program
+program
   .command('pr')
-  .description('Check git changes against stored knowledge provenance');
-
-prCommand
-  .command('check')
   .description('Mark knowledge tied to changed files as needing review')
   .requiredOption('--since <commit>', 'Base commit to compare against')
   .option('--dry-run', 'Preview impacted knowledge without marking it')
@@ -3077,5 +3494,17 @@ program
     console.log(formatStartupReport(hours));
   });
 
-// Parse commands
-program.parse(process.argv);
+return program;
+}
+
+/**
+ * Build the tree and run it against argv.
+ *
+ * Separate from `buildProgram` and NOT run on import. Parsing at module scope meant that merely
+ * importing this file consumed whatever argv the host process happened to have -- under vitest
+ * that is the runner's own arguments, and the first unrecognised one called `process.exit(1)`
+ * before a single assertion ran. `src/index.ts` calls this explicitly instead.
+ */
+export function runProgram(argv: string[] = process.argv): void {
+  buildProgram().parse(argv);
+}

@@ -535,9 +535,9 @@ Evidence types are `file`, `symbol`, `commit`, `test`, `command`, `url`, `user`,
 Each link has a `supports`, `contradicts`, or `derived_from` relationship.
 
 ```bash
-knowl evidence list <item-id>
-knowl code index
-knowl code symbols src/store/repository.ts
+knowl evidence <item-id>
+knowl index-code
+knowl symbols src/store/repository.ts
 ```
 
 Automatic staleness is limited to hashed file evidence and indexed symbol evidence. URL, commit,
@@ -554,8 +554,8 @@ resolution never fan out to workspace peers.
 Preview affected knowledge before changing freshness:
 
 ```bash
-knowl pr check --since origin/main --dry-run
-knowl pr check --since origin/main
+knowl pr --since origin/main --dry-run
+knowl pr --since origin/main
 ```
 
 The check considers `affectedPaths`, source strings, path-like tags, and stale symbol evidence.
@@ -574,7 +574,7 @@ knowl_feedback({
 })
 ```
 
-`knowl access report` summarizes frequently used, stale, and correction-causing items. Garbage
+`knowl access` summarizes frequently used, stale, and correction-causing items. Garbage
 collection also uses this heat: an item is hot when it has at least three retrievals or was
 retrieved within the last 21 days.
 
@@ -690,11 +690,11 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 
 | Command | Purpose |
 | --- | --- |
-| `knowl login [--api <host>]` | Sign in once, by device code. The credential lives in `~/.knowl`, never in `.knowl/config.json` |
-| `knowl logout [--api <host>]` | Clear the stored credential |
+| `knowl cloud login [--api <host>]` | Sign in once, by device code. The credential lives in `~/.knowl`, never in `.knowl/config.json` |
+| `knowl cloud logout [--api <host>]` | Clear the stored credential |
 | `knowl cloud connect [--workspace <id>] [--remote <name>]` | Point this repository at a workspace. Publishes nothing |
 | `knowl cloud pull` | Fetch team knowledge into the local replica |
-| `knowl publish [--id <ids...>] [--category <list>] [--apply]` | Stage knowledge for publication. Dry run without `--apply` |
+| `knowl cloud stage [--id <ids...>] [--category <list>] [--apply]` | Stage knowledge for publication. Dry run without `--apply` |
 | `knowl cloud push` | Send staged knowledge, once its code is on the default branch |
 | `knowl cloud retract <id> --reason <text>` | Remove a published atom for good. Works from any branch |
 | `knowl cloud status` | What is connected, how stale the replica is, and what is staged |
@@ -702,7 +702,7 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 ### Pointing at a different server
 
 Every command takes `--api <host>`, and `knowl cloud connect` records the host in the repository's
-config, so `pull`, `push` and `status` remember it afterwards. `knowl login` is per-machine rather
+config, so `pull`, `push` and `status` remember it afterwards. `knowl cloud login` is per-machine rather
 than per-repository and remembers nothing, so for a self-hosted or tunnelled server set it once:
 
 ```bash
@@ -720,7 +720,7 @@ refused: there is no stable identity to publish under. In a fork, `origin` is yo
 
 The pointer written into `.knowl/config.json` holds the API host, workspace and repo identity and
 **never a credential**. That file is deliberately committable, so a teammate clones, runs
-`knowl login`, and is in. Someone who clones without membership still gets a fully working local
+`knowl cloud login`, and is in. Someone who clones without membership still gets a fully working local
 Knowl; the team half simply reports itself unavailable.
 
 ### Publishing tracks the default branch, not your working tree
@@ -729,11 +729,22 @@ Local knowledge describes the tree in front of you. Team knowledge has to descri
 everyone shares, so publishing is two-phase, in the shape of git's own index and commit:
 
 ```
-knowl publish --category decision --apply   # stage: any time, any branch
-knowl cloud push                            # send: only from an up-to-date default branch
+knowl cloud stage --category decision --apply   # stage: any time, any branch
+knowl cloud push                                # send: only from an up-to-date default branch
 ```
 
-`knowl publish` records an intent and sends nothing. `knowl cloud push` refuses from a feature
+### Two kinds of sharing, and they are independent
+
+`knowl workspace promote` shares an atom with the **linked repositories on this machine**, by
+setting its `visibility`. Nothing leaves the machine.
+
+`knowl cloud stage` and `knowl cloud push` share it with **the team, over the network**, and that
+state lives in a local ledger rather than in `visibility`.
+
+Neither implies the other. Promoting publishes nothing, and publishing does not make your other
+local repositories see it.
+
+`knowl cloud stage` records an intent and sends nothing. `knowl cloud push` refuses from a feature
 branch, because an atom describing code only you have would be false for everyone else — and
 there is no unpublish. It also refuses from a checkout behind its remote, because being behind is
 indistinguishable from the code having been deleted.
@@ -770,7 +781,7 @@ Once a repository is connected, the MCP server offers one more tool:
 
 - **`knowl_cloud`** — `action: "status"` reports the connection, your role, how many atoms are
   staged, when the replica last synced, and what a push is currently waiting for. It touches no
-  network, so it answers instantly and offline. `action: "stage"` is `knowl publish`: it records
+  network, so it answers instantly and offline. `action: "stage"` is `knowl cloud stage`: it records
   an intent and is a dry run unless you pass `apply: true`.
 
 It stops there deliberately. Sending, pulling, connecting and signing in stay yours to run —
@@ -1301,7 +1312,7 @@ stale-active returns was taken on the `minilm-l6-en` default this repository shi
 `scoreCandidates`. The model and the scoring are both part of the result.
 
 ```bash
-knowl eval retrieval \
+knowl eval \
   --dataset docs/evals/retrieval-governance.json \
   --vector --json
 ```
@@ -1336,8 +1347,8 @@ BM25 outcome and rank values are therefore not published; rerun the command belo
 environment. No cross-hardware latency is claimed.
 
 ```bash
-knowl eval retrieval --dataset docs/evals/retrieval-suite.json --vector --json
-knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
+knowl eval --dataset docs/evals/retrieval-suite.json --vector --json
+knowl eval --dataset docs/evals/retrieval-suite.json --json
 ```
 
 ## CLI reference
@@ -1369,15 +1380,16 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 
 | Command | Description |
 | --- | --- |
+| `knowl store <content> --category <c> --title <t> [--tag <t...>] [--path <p...>] [--confidence <n>] [--provenance <p>] [--reasoning <text>] [--alternative <text...>] [--source <label>] [--source-commit <sha>] [--supersedes <id>] [--local]` | Record one verified fact, decision or constraint. `--local` marks it never-publish |
 | `knowl decide [title] [content]` | Record a decision, reasoning, alternatives, and tags |
 | `knowl query [query] [--as-of <timestamp>] [--limit <count>]` | Query current or historically valid project memory |
 | `knowl timeline <item-id>` | Print immutable assertions for one item |
 | `knowl conflicts` | List active exclusive conflict identities |
 | `knowl supersede <item-id> <replacement-id>` | Retire one item in favor of its replacement |
-| `knowl evidence list <item-id>` | List evidence and symbol staleness for an item |
+| `knowl evidence <item-id>` | List evidence and symbol staleness for an item |
 | `knowl context --token-budget <n> [--query <query>] [--task <task>]` | Compose a bounded local context pack |
-| `knowl eval retrieval --dataset <path> [--vector] [--json]` | Run a retrieval dataset; `--vector` enables vector+BM25 evaluation |
-| `knowl access report [--json]` | Report highly used, stale, and correction-causing knowledge |
+| `knowl eval --dataset <path> [--vector] [--json]` | Run a retrieval dataset; `--vector` enables vector+BM25 evaluation |
+| `knowl access [--json]` | Report highly used, stale, and correction-causing knowledge |
 
 ### Work loops and sessions
 
@@ -1394,8 +1406,8 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 | Command | Description |
 | --- | --- |
 | `knowl skill list\|read\|create\|run` | Manage file-backed learned skills and their entrypoints |
-| `knowl code index` | Incrementally index TS/JS symbols and import/export edges |
-| `knowl code symbols <path>` | Print indexed symbols for one repository-relative file |
+| `knowl index-code` | Incrementally index TS/JS symbols and import/export edges |
+| `knowl symbols <path>` | Print indexed symbols for one repository-relative file |
 | `knowl synthesize --scope <tag>` | Create or refresh one deterministic tag-scoped understanding |
 | `knowl ask <question>` | Ask a natural-language question using configured AI |
 | `knowl ingest <text>` | Extract and merge knowledge from explicitly supplied text using configured AI |
@@ -1411,10 +1423,12 @@ knowl eval retrieval --dataset docs/evals/retrieval-suite.json --json
 | `knowl config set-model <model>` | Verify, download and select a custom embedding model |
 | `knowl reindex --vectors` | Prepare the local model and embed items that have no current vector; `--force` re-embeds every item |
 | `knowl reindex --transcripts [--budget <minutes>]` | Build or update the optional session transcript index; resumable, so a budget is a stopping point rather than a rollback |
+| `knowl park --goal <goal> [--next-action <a>] [--completed <c...>] [--blocker <b>] [--artifact <p...>] [--verified\|--unverified]` | Park a workstream and get a key back; hand the key to the user verbatim |
+| `knowl handoff --goal <goal> --next-action <a> [--completed <c...>] [--blocker <b>] [--artifact <p...>] [--verified\|--unverified]` | Leave a baton the next session in this project receives once |
 | `knowl resume [key]` | Resume a parked workstream from its key, or list what is parked here |
 | `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access] [--tombstone-days N]` | Preview or apply duplicate, archive, compression, and tombstone maintenance |
 | `knowl forget-log [--limit N] [--repo <name>] [--json] [--prune-days N]` | Show why knowledge items were destroyed — policy, reason, and the retrieval evidence it overruled — or prune those records |
-| `knowl pr check --since <commit> [--dry-run]` | Find drift candidates and, unless dry-run, mark them for review |
+| `knowl pr --since <commit> [--dry-run]` | Find drift candidates and, unless dry-run, mark them for review |
 | `knowl view [--port <port>]` | Start the local GET-only viewer |
 | `knowl serve` | Start the stdio MCP server |
 | `knowl agent-event\|agent-hook\|agent-reminder` | Host-integration commands used by installed lifecycle configuration |

@@ -62,6 +62,7 @@ function fakeApi(
     },
     refresh: async () => credential,
     listWorkspaces: async () => [],
+    me: async () => ({ email: 'dev@example.com', displayName: 'Dev' }),
   };
 }
 
@@ -99,7 +100,10 @@ describe('runLogin', () => {
     });
 
     expect(result).toEqual({ status: 'authorized', sessionId: 'sess-1' });
-    expect(await readCredential(HOST)).toEqual(credential);
+    // The tokens land verbatim; `identity` rides alongside them since login now caches it so
+    // status can name you offline. Asserted as a superset rather than by equality, so adding a
+    // future credential field is not a test change.
+    expect(await readCredential(HOST)).toMatchObject(credential);
   });
 
   it('waits the interval the server advertised, not one of its own choosing', async () => {
@@ -191,5 +195,86 @@ describe('runLogout', () => {
 
     expect(await runLogout(HOST)).toEqual({ wasLoggedIn: true });
     expect(await readCredential(HOST)).toBeNull();
+  });
+
+  it('does not start device auth when a usable credential is already stored', async () => {
+    await writeCredential(HOST, { ...credential, identity: { email: 'dev@example.com', displayName: 'Dev' } });
+
+    let started = 0;
+    const api: CloudApi = {
+      ...fakeApi([credential]),
+      startDeviceAuthorization: async () => { started += 1; throw new Error('must not be called'); },
+    };
+
+    const result = await runLogin({ apiHost: HOST, api, onPrompt: () => {}, sleep: async () => {} });
+
+    expect(result.status).toBe('already-signed-in');
+    expect(result.status === 'already-signed-in' && result.identity?.email).toBe('dev@example.com');
+    expect(started).toBe(0);
+  });
+
+  it('reports an already-signed-in credential written before identity was cached', async () => {
+    // A 4.x credential has no identity. Saying so beats inventing one.
+    await writeCredential(HOST, credential);
+
+    const result = await runLogin({
+      apiHost: HOST, api: fakeApi([credential]), onPrompt: () => {}, sleep: async () => {},
+    });
+
+    expect(result.status).toBe('already-signed-in');
+    expect(result.status === 'already-signed-in' && result.identity).toBeNull();
+  });
+
+  it('re-authenticates anyway when force is set', async () => {
+    await writeCredential(HOST, credential);
+
+    let started = 0;
+    const base = fakeApi([credential]);
+    const api: CloudApi = {
+      ...base,
+      startDeviceAuthorization: async () => { started += 1; return authorization; },
+    };
+
+    const result = await runLogin({
+      apiHost: HOST, api, onPrompt: () => {}, sleep: async () => {}, force: true,
+    });
+
+    expect(result.status).toBe('authorized');
+    expect(started).toBe(1);
+  });
+
+  it('an expired stored credential does not short-circuit', async () => {
+    await writeCredential(HOST, { ...credential, expiresAt: new Date(Date.now() - 1_000).toISOString() });
+
+    let started = 0;
+    const base = fakeApi([credential]);
+    const api: CloudApi = {
+      ...base,
+      startDeviceAuthorization: async () => { started += 1; return authorization; },
+    };
+
+    const result = await runLogin({ apiHost: HOST, api, onPrompt: () => {}, sleep: async () => {} });
+
+    expect(result.status).toBe('authorized');
+    expect(started).toBe(1);
+  });
+
+  it('caches the identity it fetched, so status can answer offline', async () => {
+    await runLogin({
+      apiHost: HOST, api: fakeApi([credential]), onPrompt: () => {}, sleep: async () => {},
+    });
+
+    expect((await readCredential(HOST))?.identity).toEqual({ email: 'dev@example.com', displayName: 'Dev' });
+  });
+
+  it('signs in even when the identity fetch fails', async () => {
+    // A login that worked must not be reported as failed over a cosmetic field.
+    const base = fakeApi([credential]);
+    const api: CloudApi = { ...base, me: async () => { throw new CloudApiError(500, 'boom'); } };
+
+    const result = await runLogin({ apiHost: HOST, api, onPrompt: () => {}, sleep: async () => {} });
+
+    expect(result.status).toBe('authorized');
+    expect((await readCredential(HOST))?.identity).toBeUndefined();
   });
 });

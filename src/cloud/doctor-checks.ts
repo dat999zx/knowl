@@ -31,7 +31,7 @@ export async function cloudDoctorChecks(
     return [{
       status: 'WARN',
       message: `Connected to ${pointer.workspaceName ?? pointer.workspaceId}, but not signed in`,
-      fix: `Run knowl login --api ${pointer.apiHost}`,
+      fix: `Run knowl cloud login --api ${pointer.apiHost}`,
     }];
   }
 

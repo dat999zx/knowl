@@ -124,7 +124,21 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * design, because it runs inside a hook), so the failure would present as a repository that
  * simply always reports zero sessions rather than as anything breaking.
  */
-export const KNOWL_MIGRATION_LEVEL = 9;
+/*
+ * Level 10 adds `cloud_excluded` and `cloud_published.stage_state`.
+ *
+ * The table is additive on the same reasoning as levels 3, 4, 7 and 9: one new table, no
+ * backfill possible or needed, because a store that has never excluded anything has nothing
+ * to record.
+ *
+ * The COLUMN is why this level exists rather than riding on the table. `CREATE TABLE IF NOT
+ * EXISTS` is a no-op on a store that already has `cloud_published` from level 7, so without
+ * the bump every existing store would keep a ledger with no `stage_state` -- and `listStaged`
+ * reads that column, so every push would either fail or, worse, read NULL as pending and
+ * re-send atoms already published. `ensureLedgerStageState` backfills it, and the backfill
+ * direction is deliberately fail-safe: see its docblock.
+ */
+export const KNOWL_MIGRATION_LEVEL = 10;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

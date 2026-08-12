@@ -56,7 +56,7 @@ describe('cloudDoctorChecks', () => {
 
     expect(checks).toHaveLength(1);
     expect(checks[0].status).toBe('WARN');
-    expect(checks[0].fix).toContain('knowl login');
+    expect(checks[0].fix).toContain('knowl cloud login');
   });
 
   it('reports OK when connected, signed in and synced', async () => {

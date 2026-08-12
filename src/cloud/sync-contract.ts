@@ -29,6 +29,15 @@ export type SyncEvidence = {
 };
 
 export type SyncAtom = {
+  /**
+   * The atom's vector, base64 float32, **only when the server built it with the profile the
+   * workspace is currently serving**.
+   *
+   * Absent otherwise, and this client embeds the text itself. Not a degraded path: it is what
+   * every row looks like while a workspace is mid-reindex, and a vector the workspace no longer
+   * considers current would rank badly here with nothing to notice.
+   */
+  vector?: string;
   id: string;
   category: string;
   title: string;
@@ -149,6 +158,29 @@ export type PublishItem = {
    * overwrite rights by not knowing the field exists.
    */
   expectedVersion?: number;
+  /**
+   * This atom's vector, base64 of a little-endian Float32Array -- see `vector-codec.ts`.
+   *
+   * Read from `knowledge_embeddings` rather than computed at push time. It was built when the
+   * atom was written; recomputing would spend a forward pass to reproduce a value already on
+   * disk, and would produce a DIFFERENT one if the local profile changed since -- which is
+   * precisely the corruption `profileFingerprint` exists to prevent.
+   */
+  vector?: string;
+  /**
+   * What produced `vector`, in five fields, never a preset name.
+   *
+   * The server compares all five against the workspace's own and refuses the whole request on a
+   * difference. `recipeVersion` is the one a model-only fingerprint cannot express: it says what
+   * TEXT went into the model, where the other four say which model.
+   */
+  profileFingerprint?: {
+    provider: string;
+    model: string;
+    dtype: string;
+    pooling: string;
+    recipeVersion: number;
+  };
 };
 
 /**
