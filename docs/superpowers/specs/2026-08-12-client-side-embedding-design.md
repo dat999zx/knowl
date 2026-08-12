@@ -113,6 +113,21 @@ Three callers remain:
 
 Documents published from CLI clients never touch it. That is where the saving lives — the expensive thing was always the corpus, never the query.
 
+### 6.0 The cost of keeping it, which was not visible when §6 was agreed
+
+knowl-cloud goal `9a59f54e52ec4f49` records a benefit this design **forfeits**: removing the server embedder entirely would drop `@huggingface/transformers` and, with it, **four unfixable `sharp` CVEs**.
+
+Keeping a fallback embedder keeps the dependency and keeps those advisories. That is a real trade and it was not on the table when §6 was agreed, so it should be decided deliberately:
+
+| | keep the embedder (§6 as written) | drop it entirely |
+| --- | --- | --- |
+| Web-UI knowledge creation | works | impossible |
+| Owner changes workspace preset | server re-embeds | every member must re-push their whole history, coordinated |
+| Query embedding | server-side, browser downloads nothing | browser downloads a ~52 MB model, or queries go client-side only |
+| `@huggingface/transformers` + 4 unfixable `sharp` CVEs | retained | **removed** |
+
+The middle row is the load-bearing one: without a server embedder a preset change has no reliable owner (§6.1). Whether the CVEs outweigh that is a judgement call for the founder, not one this document should make silently.
+
 ### 6.1 Why a preset change must be re-embedded server-side
 
 When an owner changes the workspace preset, the whole corpus must be re-embedded. A client cannot reliably do it.
@@ -173,6 +188,7 @@ Nothing else in the four 5.0 plans is affected. They should ship on their own sc
 
 ## 11. Open questions
 
+0. **Does the server keep an embedder at all?** §6 says yes and §6.0 prices it: four unfixable `sharp` CVEs and a heavy dependency, against losing web-UI writes and any reliable way to change a workspace preset. **This is the largest open decision in the document** and it was agreed before the CVE cost was known.
 1. **Tolerance for the canary comparison.** Float arithmetic differs across builds and platforms; the threshold needs a real measurement, not a guess. Too tight rejects honest clients; too loose defeats the check.
 2. **Does the query path stay server-embedded permanently**, or does the web UI eventually embed in-browser? Server-embedded is right for now (§6) but the browser option removes the last document-adjacent model from the server.
 3. **Partial visibility and the replica.** §6.1 assumes a member's replica may be incomplete. Confirm whether workspace visibility rules can actually produce that, since it is the argument against client-side re-embedding.
