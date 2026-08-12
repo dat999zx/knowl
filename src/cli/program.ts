@@ -107,6 +107,16 @@ import { applyTranscriptConfigTransition, describeTranscriptTeardown } from '../
 // stdout here is a machine-readable channel.
 dotenv.config({ quiet: true });
 
+/**
+ * Build the whole command tree, fresh.
+ *
+ * A factory rather than module-scope construction because three test files need to assert the
+ * shape of the tree, and a module is a singleton — a second import returns the first instance,
+ * already parsed. The body below is unchanged and deliberately not re-indented: this wrapper was
+ * introduced as a pure move, and re-indenting three thousand lines would bury that in noise.
+ */
+export function buildProgram(): Command {
+
 const program = new Command();
 
 /**
@@ -3077,5 +3087,8 @@ program
     console.log(formatStartupReport(hours));
   });
 
+return program;
+}
+
 // Parse commands
-program.parse(process.argv);
+buildProgram().parse(process.argv);
