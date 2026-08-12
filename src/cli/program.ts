@@ -25,7 +25,7 @@ import { createManifest, isValidRepoName, readManifest, writeManifest } from '..
 import { knowlHome, listKnownWorkspaces, workspaceManifestPath } from '../workspace/paths.js';
 import { assertSafeToLink, backfillOriginRepo, countOwnedItems, joinWorkspace, leaveWorkspace } from '../workspace/membership.js';
 import { embeddingIdentityFromConfig, formatEmbeddingIdentity } from '../store/embedding-identity.js';
-import { promoteItems } from '../workspace/promote.js';
+import { countPromotable, promoteItems } from '../workspace/promote.js';
 import { closeDemandDb, summarizeDemand } from '../workspace/demand-ledger.js';
 import { existingItemsNotice, visibilityGateNotice } from './workspace-visibility-notice.js';
 import { repoEntry, updateRepoSettings } from '../workspace/repo-settings.js';
@@ -57,9 +57,11 @@ import { writeAutoPushConsent } from '../cloud/consent.js';
 import { maybeAutoPush } from './auto-push.js';
 import { pickWorkspace } from './cloud-picker.js';
 import { formatProfileMismatch } from './profile-mismatch.js';
+import { pickCategories } from './sharing-picker.js';
+import { recommendedTotal, WITHHELD_BY_DEFAULT } from '../core/sharing-defaults.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
-import { computePushSnapshot, pushStaged, stagePublish } from '../cloud/publish.js';
+import { computePushSnapshot, countStageable, pushStaged, stagePublish } from '../cloud/publish.js';
 import { retractItem } from '../cloud/retract.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
@@ -878,12 +880,73 @@ cloudCommand
     try {
       const root = await findProjectRoot(process.cwd());
       const config = await loadConfig(root);
+
+      // Checked before the picker rather than after, so a disconnected repo gets the one answer
+      // that helps instead of a prompt about a destination it does not have.
+      //
+      // `exitCode` and return, never `process.exit`: a cloud verb can have loaded the embedder
+      // before it fails, and exiting there aborts with UV_HANDLE_CLOSING and reports 127. Pinned
+      // by `tests/cli/cloud-exit-codes.test.ts`, which reads this source.
+      if (!config.cloud) {
+        console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
+        process.exitCode = 1;
+        return;
+      }
+
+      // A bare call asks instead of refusing. Flags mean the caller already knows what they want.
+      let picked: KnowledgeCategory[] | undefined;
+      let interactive = false;
+      if (!options.category && !options.id) {
+        await initDb(root);
+        let counts;
+        try {
+          counts = await countStageable(
+            config.cloud.workspaceId,
+            config.workspace?.repo ?? config.cloud.repo,
+          );
+        } finally { await closeDb(); }
+
+        if (recommendedTotal(counts) === 0) {
+          const held = Object.values(counts).reduce((sum, n) => sum + n, 0);
+          console.log('Everything worth sharing by default is already staged or sent.');
+          if (held > 0) {
+            console.log(`${held} item(s) remain in ${WITHHELD_BY_DEFAULT.join(' and ')}, which are held back on purpose.`);
+            console.log(`Stage them anyway with --category "${WITHHELD_BY_DEFAULT.join(',')}".`);
+          }
+          return;
+        }
+
+        const chosen = await pickCategories({
+          verb: 'stage',
+          destination: config.cloud.workspaceName ?? config.cloud.workspaceId,
+          counts,
+        });
+        if (chosen === null) {
+          if (!process.stdin.isTTY) {
+            const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+            throw new Error(
+              'Specify what to stage with --category <list> or --id <id>. '
+              + `${total} item(s) are unstaged; a bare stage would queue all of them for the team.`,
+            );
+          }
+          console.log('Nothing staged.');
+          return;
+        }
+        if (chosen.length === 0) {
+          console.log('Nothing selected, so nothing was staged.');
+          return;
+        }
+        picked = chosen;
+        interactive = true;
+      }
+
       const result = await stagePublish({
         projectRoot: root,
         config,
         ids: options.id,
-        categories: options.category?.split(',').map((entry: string) => entry.trim()),
-        apply: options.apply,
+        categories: picked ?? options.category?.split(',').map((entry: string) => entry.trim()),
+        // The picker's confirmation IS the apply, as it is for promote.
+        apply: interactive || options.apply,
       });
 
       if (result.status === 'not-connected') {
@@ -1643,7 +1706,62 @@ workspaceCommand
       const categories = options.category
         ? options.category.split(',').map(entry => entry.trim()).filter(Boolean) as KnowledgeCategory[]
         : undefined;
-      const result = await promoteItems({ projectRoot: root, repoName: active.repo, categories, ids: options.id, apply: options.apply });
+
+      // A bare call asks instead of refusing. Flags mean the caller already knows what they
+      // want, so the picker stays entirely out of their way.
+      let picked: KnowledgeCategory[] | undefined;
+      let interactive = false;
+      if (!options.category && !options.id) {
+        await initDb(root);
+        let counts;
+        try { counts = await countPromotable(active.repo); }
+        finally { await closeDb(); }
+
+        // Already up to date is not the same as nothing to do, and must not present as an empty
+        // picker the user dismisses. Found by rendering this against a repo that had already
+        // promoted once: all five recommended categories were 0 and the 279 remaining were
+        // exactly the two withheld by default.
+        if (recommendedTotal(counts) === 0) {
+          const held = Object.values(counts).reduce((sum, n) => sum + n, 0);
+          console.log('Everything worth sharing by default is already shared.');
+          if (held > 0) {
+            console.log(`${held} item(s) remain in ${WITHHELD_BY_DEFAULT.join(' and ')}, which are held back on purpose.`);
+            console.log(`Share them anyway with --category "${WITHHELD_BY_DEFAULT.join(',')}".`);
+          }
+          return;
+        }
+
+        const chosen = await pickCategories({ verb: 'promote', destination: active.name, counts });
+        if (chosen === null) {
+          // Null is "no TTY" or "cancelled". Without a terminal, reproduce the refusal this
+          // command has always given -- now able to say how much a bare call would have shared.
+          if (!process.stdin.isTTY) {
+            const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+            throw new Error(
+              'Specify what to promote with --category <list> or --id <id>. '
+              + `${total} item(s) are unpromoted; a bare promote would publish all of them.`,
+            );
+          }
+          console.log('Nothing promoted.');
+          return;
+        }
+        if (chosen.length === 0) {
+          console.log('Nothing selected, so nothing was promoted.');
+          return;
+        }
+        picked = chosen;
+        interactive = true;
+      }
+
+      const result = await promoteItems({
+        projectRoot: root,
+        repoName: active.repo,
+        categories: picked ?? categories,
+        ids: options.id,
+        // The picker's confirmation IS the apply. Requiring an interactive yes and a flag would
+        // move the tedium rather than remove it.
+        apply: interactive || options.apply,
+      });
       if (result.items.length === 0) {
         console.log(`Nothing to promote.${result.skippedForeign ? ` ${result.skippedForeign} matching item(s) belong to another repo.` : ''}`);
         return;

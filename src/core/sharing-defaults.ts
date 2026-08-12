@@ -39,6 +39,18 @@ export function withholdReason(category: KnowledgeCategory): string | null {
   return REASONS[category] ?? null;
 }
 
+/**
+ * How many candidates the recommendation would actually select.
+ *
+ * Zero is a real and common state -- a repo that shared once has nothing left in these five,
+ * because new writes reach the destination on their own. A picker opened in that state offers a
+ * list of zeros, and pressing enter returns an empty selection that reads as a bug rather than as
+ * "you are already up to date". Callers check this first and say so instead.
+ */
+export function recommendedTotal(counts: Record<KnowledgeCategory, number>): number {
+  return SHARED_BY_DEFAULT.reduce((sum, category) => sum + (counts[category] ?? 0), 0);
+}
+
 // Every category belongs to exactly one list. A category added to `KnowledgeCategory` and to
 // neither list would silently vanish from the picker -- the row would not render, and nobody
 // would be told it exists. Checked at module load so the failure is immediate and local.
