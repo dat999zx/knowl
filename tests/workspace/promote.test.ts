@@ -143,6 +143,31 @@ describe('promote', () => {
     expect(Number(after[0].n)).toBe(Number(before[0].n));
   });
 
+  it('counts only unpromoted rows this repo owns, and reports a zero for the rest', async () => {
+    const { countPromotable } = await import('../../src/workspace/promote.js');
+    const { KNOWLEDGE_CATEGORIES } = await import('../../src/core/types.js');
+    await initDb(ROOT);
+    try {
+      const counts = await countPromotable('server');
+      // The fixture seeds one decision and one fact, both owned and unpromoted.
+      expect(counts.decision).toBe(1);
+      expect(counts.fact).toBe(1);
+      // Every category present, so the picker can render a row per category — including a zero.
+      expect(Object.keys(counts).sort()).toEqual([...KNOWLEDGE_CATEGORIES].sort());
+      expect(counts.goal).toBe(0);
+    } finally { await closeDb(); }
+  });
+
+  it('stops counting a row once it has been promoted', async () => {
+    await promoteItems({ projectRoot: ROOT, repoName: 'server', categories: ['decision'], apply: true });
+
+    const { countPromotable } = await import('../../src/workspace/promote.js');
+    await initDb(ROOT);
+    try {
+      expect((await countPromotable('server')).decision).toBe(0);
+    } finally { await closeDb(); }
+  });
+
   it('requires a category or an id, so a bare promote cannot publish everything', async () => {
     await expect(promoteItems({ projectRoot: ROOT, repoName: 'server', apply: true }))
       .rejects.toThrow(/--category|--id/);

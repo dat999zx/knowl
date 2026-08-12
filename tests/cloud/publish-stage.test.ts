@@ -76,6 +76,40 @@ describe('stagePublish', () => {
     } finally { await closeDb(); }
   };
 
+  it('reports an --apply run that matched nothing as applied:false with no items', async () => {
+    // The shape behind a message defect: `applied` is false for two different reasons -- a dry
+    // run, and a real run that matched nothing -- so the CLI branching on it alone told a user
+    // who had just passed --apply to pass --apply. The CLI now checks `items` first.
+    const result = await stage({ categories: ['goal'], apply: true }) as any;
+
+    expect(result.items).toEqual([]);
+    expect(result.applied).toBe(false);
+  });
+
+  it('counts what a sweep would stage, and stops counting what is already queued', async () => {
+    const { countStageable } = await import('../../src/cloud/publish.js');
+    await stage({ categories: ['decision'], apply: true });
+
+    await initDb(ROOT);
+    try {
+      const counts = await countStageable(WS, 'github.com/acme/web');
+      // The decision is queued now, so it is no longer a candidate.
+      expect(counts.decision).toBe(0);
+      expect(counts.fact).toBe(1);
+    } finally { await closeDb(); }
+  });
+
+  it('does not count an excluded atom, because a sweep would skip it anyway', async () => {
+    // A picker offering it would promise something the sweep then silently drops.
+    await exclude(ids.fact);
+
+    await initDb(ROOT);
+    try {
+      const { countStageable } = await import('../../src/cloud/publish.js');
+      expect((await countStageable(WS, 'github.com/acme/web')).fact).toBe(0);
+    } finally { await closeDb(); }
+  });
+
   it('a category sweep skips an excluded atom and says how many it skipped', async () => {
     await exclude(ids.fact);
 
