@@ -1110,6 +1110,16 @@ cloudCommand
         console.error(`${result.staged} item(s) stay staged. ${result.detail}`);
         process.exit(1);
       }
+      if (result.status === 'needs-embedding') {
+        // Nothing is lost: they stay staged and go out on the next push. Said out loud because a
+        // push that quietly sent nothing would look like success.
+        console.error(
+          `${result.count} staged item(s) have no vector for this repository's embedding profile, `
+          + 'so nothing was sent.\n'
+          + `Run \`${result.remedy}\`, then push again.`,
+        );
+        process.exit(1);
+      }
 
       console.log(`Published ${result.created} new and ${result.updated} updated item(s).`);
       for (const outcome of result.conflicts) {

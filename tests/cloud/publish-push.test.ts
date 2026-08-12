@@ -1,7 +1,7 @@
 ﻿import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { gitArgs } from '../git-identity.js';
 import { CloudApiError, type CloudApi, type CloudRole } from '../../src/cloud/api-client.js';
 import type { PublishOutcome } from '../../src/cloud/sync-contract.js';
@@ -40,6 +40,32 @@ let WS: string;
 let connected: ProjectConfig;
 
 let ids: { decision: string; fact: string };
+
+
+/**
+ * Gives every seeded atom a vector under this repo's CURRENT profile.
+ *
+ * `pushStaged` reads the vector rather than computing one, and refuses to send an atom that has
+ * none -- so without this every case here would stop at `needs-embedding` instead of exercising
+ * what it is about.
+ *
+ * Written directly rather than by embedding: these tests are about the publish protocol, and
+ * running a real forward pass per atom would add a model download to a suite that needs no model
+ * at all. The values are arbitrary; only their width and their fingerprint matter.
+ */
+async function seedEmbeddings(itemIds: string[]): Promise<void> {
+  const { fingerprintProfile, resolveVectorProfile } = await import('../../src/core/vector-profile.js');
+  const { upsertKnowledgeEmbeddings } = await import('../../src/store/vector.js');
+  const profile = resolveVectorProfile(connected);
+  await upsertKnowledgeEmbeddings(itemIds.map((id, index) => ({
+    knowledgeItemId: id,
+    provider: profile.provider,
+    model: profile.model,
+    profileFingerprint: fingerprintProfile(profile),
+    dimensions: 384,
+    vector: new Array(384).fill(0.01 * (index + 1)),
+  })));
+}
 
 function fakeApi(outcomes: PublishOutcome[], onPublish?: (body: any) => void): CloudApi {
   return {
@@ -90,11 +116,11 @@ async function stageMany(count: number): Promise<void> {
         args: [`bulk-${index}`, `Bulk atom ${index}`, `Body ${index}`, now, now],
       });
     }
-    await stageForPublish(
-      Array.from({ length: count }, (_, index) => `bulk-${index}`),
-      WS,
-      'main',
-    );
+    const bulkIds = Array.from({ length: count }, (_, index) => `bulk-${index}`);
+    // Every atom needs a vector under the current profile, or `pushStaged` refuses the whole push
+    // with `needs-embedding` and this test never reaches the chunking it is about.
+    await seedEmbeddings(bulkIds);
+    await stageForPublish(bulkIds, WS, 'main');
   } finally { await closeDb(); }
 }
 
@@ -136,6 +162,7 @@ describe('pushStaged', () => {
     });
     ids = { decision: decision.item.id, fact: fact.item.id };
     await getClient().execute("UPDATE knowledge_items SET origin_repo = 'github.com/acme/web'");
+    await seedEmbeddings([ids.decision, ids.fact]);
     await closeDb();
 
     await writeCredential(API_HOST, {
@@ -287,6 +314,79 @@ describe('pushStaged', () => {
     expect(sizes.every(size => size <= 200)).toBe(true);
     // 250 staged bulk ids plus the decision the fixture already staged.
     expect(sizes.reduce((a, b) => a + b, 0)).toBe(251);
+  });
+
+
+  it('attaches the stored vector and the five-field fingerprint', async () => {
+    let sent: any;
+    await pushStaged({
+      projectRoot: CLONE, config: connected,
+      api: fakeApi([], (body: any) => { sent = body; }),
+    });
+
+    const { fingerprintProfile, resolveVectorProfile } = await import('../../src/core/vector-profile.js');
+    const { EMBED_RECIPE_VERSION } = await import('../../src/core/embed-recipe.js');
+    const { encodeVector } = await import('../../src/cloud/vector-codec.js');
+    const profile = resolveVectorProfile(connected);
+
+    expect(sent.items[0].vector).toBe(encodeVector(new Array(384).fill(0.01)));
+    expect(sent.items[0].profileFingerprint).toEqual({
+      provider: profile.provider,
+      model: profile.model,
+      dtype: profile.dtype,
+      pooling: profile.pooling,
+      recipeVersion: EMBED_RECIPE_VERSION,
+    });
+    // Never `fingerprintProfile`'s hash on the wire: the server compares five values, not a hash
+    // it has no way to reproduce.
+    expect(JSON.stringify(sent)).not.toContain(fingerprintProfile(profile));
+  });
+
+  it('reads the vector rather than embedding at push time', async () => {
+    const embeddings = await import('../../src/ai/embeddings.js');
+    const spy = vi.spyOn(embeddings, 'createLocalEmbeddingProvider');
+
+    try {
+      await pushStaged({ projectRoot: CLONE, config: connected, api: fakeApi([]) });
+    } finally { spy.mockRestore(); }
+
+    // The vector was built when the atom was written. Recomputing here would spend a forward pass
+    // to reproduce a value already on disk -- and produce a DIFFERENT one if the profile moved.
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('refuses to push an atom whose vector was built by a stale profile', async () => {
+    await initDb(CLONE);
+    try {
+      await getClient().execute({
+        sql: 'UPDATE knowledge_embeddings SET profile_fingerprint = ? WHERE knowledge_item_id = ?',
+        args: ['a-fingerprint-from-another-profile', ids.decision],
+      });
+    } finally { await closeDb(); }
+
+    let called = false;
+    const result = await pushStaged({
+      projectRoot: CLONE, config: connected, api: fakeApi([], () => { called = true; }),
+    });
+
+    // Not silence and not a lie: the atom stays staged and the message names the fix.
+    expect(result.status).toBe('needs-embedding');
+    expect((result as any).remedy).toContain('reindex');
+    expect(called).toBe(false);
+  });
+
+  it('refuses to push an atom with no vector at all', async () => {
+    await initDb(CLONE);
+    try {
+      await getClient().execute({
+        sql: 'DELETE FROM knowledge_embeddings WHERE knowledge_item_id = ?',
+        args: [ids.decision],
+      });
+    } finally { await closeDb(); }
+
+    const result = await pushStaged({ projectRoot: CLONE, config: connected, api: fakeApi([]) });
+    expect(result.status).toBe('needs-embedding');
+    expect((result as any).count).toBe(1);
   });
 
   it('sends evidence, and the citation survives a round trip into a replica', async () => {
