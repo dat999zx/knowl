@@ -10,6 +10,7 @@ import type { ActiveWorkspace } from '../workspace/resolve.js';
 import { attachEvidenceToKnowledge, listEvidenceForItem } from './evidence-repository.js';
 import { normalizeAffectedPaths } from './freshness.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
+import { governingDecisionForWrite, type GoverningDecision } from './governing-decision.js';
 
 /**
  * Queue a committed write for the team, if this repo is connected.
@@ -72,6 +73,12 @@ export interface StoreKnowledgeResult {
    * retired from here.
    */
   crossRepo?: CrossRepoOverlap[];
+  /**
+   * An active decision that already governs this subject. Advisory in the strongest sense: it
+   * never refuses the write, because the signal separates a real match from the best false one
+   * by only about a standard deviation. It exists so a writer is told the decision is there.
+   */
+  governingDecision?: GoverningDecision;
 }
 
 export interface StoreKnowledgeAtomOutcome {
@@ -83,6 +90,8 @@ export interface StoreKnowledgeAtomOutcome {
   nearDuplicateTitle?: string;
   /** Overlaps with linked repos, per atom: five findings can overlap five different repos. */
   crossRepo?: CrossRepoOverlap[];
+  /** Per atom, for the same reason: five findings can fall under five different decisions. */
+  governingDecision?: GoverningDecision;
 }
 
 export interface StoreKnowledgeBatchResult {
@@ -503,6 +512,9 @@ export async function storeKnowledgeItemDeduped(
     superseded: superseded || undefined,
     nearDuplicate: resolution === 'coexist' && duplicate ? duplicate : undefined,
     crossRepo: await overlapFor(await activeWorkspaceForWrite(), input),
+    // Read after the write is durable, like the cross-repo advisory above it. Computed against
+    // the WRITTEN item rather than the input so the text scored is the text stored.
+    governingDecision: await governingDecisionForWrite(projectId, item),
   };
 }
 
@@ -642,6 +654,15 @@ export async function storeKnowledgeAtomsDeduped(
   // Only what was actually inserted. A duplicate resolved to a no-op wrote nothing, so staging
   // its id would queue an atom this call did not change.
   await stageWrittenItems(written.inserted.map(item => item.id));
+
+  // After indexing, not before: a batch that writes a decision should have it embedded before
+  // the next atom in the same batch is scored against the pool. Keyed by id so an atom that was
+  // a verbatim duplicate (and therefore wrote nothing) is not scored against itself.
+  const insertedById = new Map(written.inserted.map(item => [item.id, item]));
+  for (const { outcome } of written.overlapSubjects) {
+    const item = insertedById.get(outcome.itemId);
+    if (item) outcome.governingDecision = await governingDecisionForWrite(projectId, item);
+  }
 
   return {
     itemIds: written.itemIds,

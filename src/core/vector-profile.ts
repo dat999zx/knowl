@@ -162,9 +162,11 @@ export function currentPresetId(config: ProjectConfig): PresetId | null {
 function presetProfile(id: Exclude<PresetId, 'custom'>): VectorProfile {
   // Every documentation field is stripped here. One left in would reach `fingerprintProfile`,
   // change the fingerprint of every stored embedding, and invalidate the whole index on
-  // upgrade -- for a number that only ever appears in a table.
+  // upgrade -- for a number that only ever appears in a table. A test pins arctic's real
+  // fingerprint against a value read out of a live store, so a future addition fails loudly.
   const {
-    label: _label, sizeMb: _sizeMb, languages: _languages, contextTokens: _contextTokens, ...profile
+    label: _label, sizeMb: _sizeMb, languages: _languages, contextTokens: _contextTokens,
+...profile
   } = VECTOR_PRESETS[id];
   return profile;
 }

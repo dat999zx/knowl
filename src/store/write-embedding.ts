@@ -39,6 +39,17 @@ function isDisabled(): boolean {
   return process.env.KNOWL_DISABLE_WRITE_EMBEDDING === '1';
 }
 
+/**
+ * Exported so the governing-decision guard embeds a write under exactly these rules rather than
+ * reimplementing them: never download, never throw, and re-check when the weights arrive. A
+ * second copy of this resolution would drift from the cache keying above, and the two failures
+ * that keying exists to prevent -- a stale profile fingerprint and a permanently-null embedder --
+ * are both silent.
+ */
+export async function resolveWriteEmbedder(): Promise<KnowledgeEmbedder | null> {
+  return resolveEmbedder();
+}
+
 async function resolveEmbedder(): Promise<KnowledgeEmbedder | null> {
   // Checked before anything is loaded or read, so the opt-out stays free.
   if (isDisabled()) return null;
