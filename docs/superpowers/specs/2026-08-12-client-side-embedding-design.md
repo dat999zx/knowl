@@ -1,7 +1,7 @@
 # Client-side embedding: the client makes the vectors, the server stores them
 
 **Date:** 2026-08-12
-**Status:** Design agreed in conversation, not yet reviewed or planned
+**Status:** Design agreed in conversation, not yet planned. Reviewed against knowl-cloud's tree 2026-08-12; §4, §5.0, §5.1, §5.2, §10 and §11 revised by that review.
 **Repos:** `knowl` (client half) and `knowl-cloud` (server half). **Most of the work is knowl-cloud's.**
 **Relationship to 5.0:** Independent. The four command-surface plans stand, with one correction noted in §9.
 
@@ -58,9 +58,15 @@ Nobody embeds the same text twice, anywhere. `embedReplica` disappears for on-pr
 `PublishItem` gains two fields:
 
 - `vector` — **base64 of a Float32Array, not a JSON float array.** 384 dimensions is ~1.5 KB binary and ~4.6 KB as JSON text. At a thousand atoms that is a 2 MB request versus a 5 MB one, for identical data.
-- `profileFingerprint` — provider, model, dtype and pooling together, as `knowl` already computes it (decision `43d9d55f957340fe`). **Not just the model name**: pooling is not discoverable at runtime and a wrong value produces plausible vectors that rank badly with nothing to notice.
+- `profileFingerprint` — **five values**: provider, model, dtype and pooling as `knowl` already computes them (decision `43d9d55f957340fe`), plus `recipeVersion`. **Not just the model name**: pooling is not discoverable at runtime and a wrong value produces plausible vectors that rank badly with nothing to notice.
 
-The server validates the fingerprint against the workspace profile and stores the vector as given. It runs no model on the publish path.
+**`recipeVersion` was added 2026-08-12** (knowl-cloud decision `9bb9e2d3714a4e6e`). The four model fields say what *produced* the vector and nothing about what text went *in*. The client builds `buildKnowledgeEmbeddingText`, the server builds `embeddableText`, and a difference in field order, separator, included fields or clip budget yields a different vector from an identical model — invisible to any fingerprint over the model alone.
+
+That divergence is not hypothetical between these two repos. Per `59d964ba2ac14798`, a boundary-only clip returns the **empty string** when the first segment exceeds the budget — an atom of base64, minified JSON or a spaceless stack trace. knowl-cloud fixed it with a mid-segment cut; OSS still has it. For those atoms the two sides do not differ slightly: one of them embeds nothing at all. `recipeVersion` is bumped by any change to the builder and pinned by a fixture test in the style of `SCHEMA_PINS`.
+
+The server validates all five against the workspace profile and stores the vector as given. It runs no model on the publish path.
+
+**The workspace stores the same five values, not the preset name** — see §5.
 
 The sync/pull contract gains the same `vector` field in the other direction.
 
@@ -81,23 +87,37 @@ Switch this repo and re-embed 1,240 items?  [~3 min]
 
 **A repo connecting to two workspaces with different models is refused, and that is correct.** `config.cloud` is a single object today, so one repo reaches one workspace — but `cloud_published`'s primary key is `(item_id, remote_workspace)` and its comment anticipates multiple. Under this design the rule falls out rather than being imposed: a repo has one profile, so it can join any workspace whose profile matches, and two workspaces with different models cannot both be joined. The only alternative is embedding the store twice, which is the exact duplicated work this redesign deletes.
 
-### 5.1 The canary
+### 5.0 What the workspace stores
 
-A fingerprint is a **claim**. Server-side embedding was self-enforcing — whatever clients did, one machine made every vector. Client-side embedding removes that, and a teammate on a stale `transformers.js` build, a different ONNX quantization or the wrong pooling produces vectors that are plausible and rank badly.
+**Five values, not a preset name** — decided 2026-08-12, knowl-cloud `9bb9e2d3714a4e6e`.
 
-So the workspace stores a **canary**: a fixed text and the vector its profile produces. At connect, the client proves it reproduces that vector within tolerance.
+`workspace_policy.embedding_preset` exists today and holds a name like `granite-small-en-r2` (`knowl-cloud/src/db/schema/control.ts:94`). A name is only meaningful to whoever owns the table that expands it into provider/model/dtype/pooling — and that table is `knowl/src/core/vector-profile.ts`, the CLI's. Comparing names would mean copying it into the server and keeping it in sync, and per `43d9d55f957340fe` a stale pooling value is exactly the failure that yields plausible vectors ranking badly with nothing to notice.
 
-**This is a mistake detector, not an attacker defense** — a deliberate framing from the founder:
+So the workspace stores the five expanded values and the check is five string comparisons with no lookup anywhere. `embedding_preset` stays as the label the settings page renders. `knowledge_embeddings` already stores the first four (`knowl-cloud/src/db/schema/knowledge.ts:131-135`) and gains `recipe_version`.
+
+### 5.1 The canary — **DEFERRED, not adopted**
+
+A fingerprint is a **claim**. Server-side embedding was self-enforcing — whatever clients did, one machine made every vector. Client-side embedding removes that, and a teammate on a stale `transformers.js` build or a different ONNX quantization produces vectors that are plausible and rank badly.
+
+The proposal was a **canary**: the workspace stores a fixed text and the vector its profile produces, and the client proves at connect that it reproduces that vector within tolerance.
+
+**Deferred out of v1 on 2026-08-12**, on the founder's own framing:
 
 > "Cloud workspace is user created, trusted. So if user decides to pollute it with wrong model, it's their problem. But we still need to verify and counter most of it — if they try to bypass, it's their problem."
 
-That framing is what makes the verification cheap: it only has to beat accident. A dimension check alone catches gross mismatch and nothing else; the canary catches the silent cases.
+*Counter most of it* is what the five-value check already does: it catches every misconfigured preset, which is the accident that actually happens, and `recipeVersion` (§4) closes the text-recipe hole the canary was also covering. What remains uncovered is a client claiming the right profile and producing different vectors anyway — a stale build, a different quantization. Revisit if that is ever observed rather than building for it now.
+
+**If it is adopted later, the canary should be a fixed ATOM, not a fixed text.** Run through the real `buildKnowledgeEmbeddingText`, one comparison then covers model, dtype, pooling *and* recipe together, and it catches a recipe change whose version bump was forgotten. A canary over a bare string never touches the builder and so cannot see the failure §4 describes.
 
 ### 5.2 Rejection is reported and attributable
 
 A rejected fingerprint fails the CLI push with the reason and the fix, so the user knows to reconfigure. The server records **which repo and which member** sent it.
 
 Attribution matters because the person who errs is not the person who suffers: one member's misconfigured client degrades *everyone else's* search, with nothing to notice. "Search got worse" must be traceable to a cause.
+
+**The mechanism, settled 2026-08-12 (`9bb9e2d3714a4e6e`): refuse the whole request, not the atom.** HTTP **422**, code `profile_mismatch`, body naming both the expected profile and the received one so the CLI can print the fix in two lines.
+
+Per-atom outcomes would be wrong here. A wrong profile is a property of the *client*, so every item in the batch carries it and per-atom reporting would repeat one identical error N times. `publishItems` already refuses a whole request this way for a detected secret — a 422 that is terminal and never retried in altered form — so this is that existing path with a second code, not a new failure shape.
 
 ---
 
@@ -138,6 +158,26 @@ Server-side is the only version that is correct regardless of who happens to be 
 
 **This is what justifies keeping the embedder at all.** Without it, an owner could never change the preset without every member re-pushing their entire history, coordinated.
 
+### 6.2 How the reindex actually runs
+
+Decided 2026-08-12 — knowl-cloud `7a0694a083244786`. Constraints set by the founder: it must not lag other tenants, and client sync must keep flowing throughout. Both are largely met by machinery that already exists.
+
+**It runs on the existing queue.** `knowl-cloud/src/knowledge/embedding/queue.ts` is already a single worker taking 16-atom slices round-robin across workspaces, so a workspace re-embedding 5,000 atoms takes turns like everyone else and cannot starve another tenant's publish. The single worker also keeps peak RSS constant (279 MB idle → 448 MB measured) rather than scaling with load.
+
+**One change the queue needs: within a workspace, live indexing jumps the reindex.** Its per-workspace store is a single FIFO array, so a member publishing three atoms mid-reindex would wait behind all 5,000 — hours before their own new note is searchable, in order to repair something merely degraded. Two tiers per workspace; round-robin still governs across workspaces.
+
+**Resume is a query, not a job table.** Rows carry their own profile, so the work list is `WHERE profile <> the workspace's current profile`. The queue is in-memory and a restart drops it — fine for publish indexing, fatal for a reindex, which would otherwise leave a workspace permanently degraded with nobody watching. The server rescans at boot and re-enqueues. No cursor, no state that can disagree with the rows.
+
+**The old vectors keep serving while the new ones build.** The policy holds two profiles, `serving` and `target`. Search, publish validation and the sync feed all filter on `serving`; a preset change writes `target` and leaves `serving` alone. The backfill builds a second generation alongside the live one — a sibling table rather than a `generation` discriminator in the key, so the live read path is untouched — and the swap flips `serving := target` and drops the old generation in one transaction. Before it nothing has changed for anyone; after it, everything has.
+
+**This is what avoids a degradation window, and it was not the first design.** Building in place meant every stored vector stopped matching the declared profile the instant the preset changed, so server-side vector search fell back to `tsvector` **for the whole corpus** until the job finished — and every member had to re-pin immediately, making a preset change a workspace-wide event. With a shadow generation, clients keep validating against `serving`, keep sending old-profile vectors, keep being accepted, and re-pin on their next connect *after* the swap. Storage roughly doubles for the duration — ~1.5 KB per 384-dim vector, so ~150 MB transient at 100k atoms — which is not worth designing around.
+
+**The one complication it introduces: a converging tail.** Atoms published during the window land with `serving`-profile vectors and need `target` rows too, so the backfill generates its own follow-on work. Publishing is far slower than embedding so it converges, but a continuously-publishing workspace could chase it. Bound it: when the remaining count is small, take a short per-workspace advisory lock, run a final catch-up pass, and swap inside it. Publishing blocks for seconds, not hours.
+
+**Sync is unaffected throughout** — the feed sends vectors matching `serving`, which during the window is every live row. This still narrows §3's claim: `embedReplica` does not disappear, it becomes the exception path for a row arriving without a usable vector. That path is now rare rather than being the entire corpus for the duration.
+
+**Also:** per-workspace progress, since `pendingCount()` is global and the settings page needs "1,240 of 5,000"; and a second preset change is refused while one is in flight.
+
 ---
 
 ## 7. Bulk publish: the constraint inverts
@@ -172,26 +212,30 @@ Nothing else in the four 5.0 plans is affected. They should ship on their own sc
 - Compute and attach `vector` + `profileFingerprint` on publish; base64 encoding
 - `knowl cloud connect` profile comparison, refusal, and switch-and-reindex offer
 - Canary reproduction check at connect
-- Consume vectors on pull; delete `embedReplica` for on-profile clients (`src/cloud/pull.ts:45,65-75`)
+- Consume vectors on pull; **narrow** `embedReplica` rather than deleting it (`src/cloud/pull.ts:45,65-75`) — per §6.2 it becomes the exception path for rows that arrive without a usable vector, which is what happens to every row of a workspace mid-reindex
 - Surface rejection reasons in the CLI
 
 **knowl-cloud (server):**
-- `PublishItem` and the sync contract gain `vector`; validation against workspace profile
+- `PublishItem` and the sync contract gain `vector`; validation of all five fingerprint fields against workspace profile
 - Remove inline embedding from `publishItems`
 - Store and serve vectors on the changes feed
-- Workspace profile policy: storage, enforcement, canary generation
+- Workspace profile policy: **storage already exists** — `workspace_policy.embedding_preset` (`src/db/schema/control.ts:94`) and the four profile columns on `knowledge_embeddings` (`src/db/schema/knowledge.ts:131-135`). The work is the migration to five expanded values (§5.0) plus **enforcement**. Canary generation is deferred with §5.1.
 - Re-embed job for preset changes
-- Keep an embedder for queries and web-UI writes only
-- Attribution on rejection
+- Keep an embedder for queries, web-UI writes and admin re-embeds — as a fallback and an admin tool only (`ac0a658049164d01`)
+- Attribution on rejection; 422 `profile_mismatch` (§5.2)
+
+**Already shipped here, so not work:** the `vector` column lost its fixed width in `drizzle/0007_embedding_profile.sql:19`, and `knowledge_embeddings` already carries provider/model/dtype/pooling/dimensions. Notes describing the column as `vector(768)` predate that migration.
 
 ---
 
 ## 11. Open questions
 
-0. **Does the server keep an embedder at all?** §6 says yes and §6.0 prices it: four unfixable `sharp` CVEs and a heavy dependency, against losing web-UI writes and any reliable way to change a workspace preset. **This is the largest open decision in the document** and it was agreed before the CVE cost was known.
-1. **Tolerance for the canary comparison.** Float arithmetic differs across builds and platforms; the threshold needs a real measurement, not a guess. Too tight rejects honest clients; too loose defeats the check.
-2. **Does the query path stay server-embedded permanently**, or does the web UI eventually embed in-browser? Server-embedded is right for now (§6) but the browser option removes the last document-adjacent model from the server.
-3. **Partial visibility and the replica.** §6.1 assumes a member's replica may be incomplete. Confirm whether workspace visibility rules can actually produce that, since it is the argument against client-side re-embedding.
+0. ~~**Does the server keep an embedder at all?**~~ **ANSWERED 2026-08-12** — knowl-cloud decision `ac0a658049164d01`. Yes, but narrowed: **a fallback and an admin tool, never the publish path.** Founder's words: "only as fallback, for direct admin jobs, when client fails… mostly will be client embed, send to server." The narrowing also changes §6.0's pricing — with the model serving only a short query string and a rare admin job, dropping `transformers.js` for `onnxruntime-node` directly (the second escape hatch in `96667505451a4abf`) becomes tractable, so the four CVEs are scoped debt with a known exit rather than the standing cost of the decision.
+1. ~~**Tolerance for the canary comparison.**~~ **MOOT** while §5.1 is deferred. It returns with the canary if the canary does.
+2. ~~**Does the query path stay server-embedded permanently?**~~ **ANSWERED 2026-08-12** — server-embedded, using **the workspace's profile**, not a profile of the server's own. A human searching the explorer types one short string, so the cost is trivial, where the browser alternative makes every user download a ~52 MB model before their first search. The model leaves the API process only if this *and* the re-embed job (question 0) both move — a later optimization, not a v1 question.
+
+5. **The query endpoint is now the entire model-DoS surface, and its rate limit was not sized for that.** New, and a direct consequence of this design: once publish stops embedding, a search is the only way to make the server run a model. Anonymous flooding cannot reach it — the 2026-08-11 audit moved the authorization check ahead of the embed (`b4aa84771d3f4771` finding 1, pinned by `tests/knowledge/authorization-order.test.ts`) — so the threat is an authenticated member. But `knowl-cloud/src/http/server.ts:64` bounds every caller at a global `max: 300, timeWindow: '1 minute'`, a number chosen when requests were cheap; 300 forward passes a minute per address is not the same proposition as 300 row reads. Metering's `memoryOps: 'throttle'` is a monthly quota, not burst protection. **The query endpoint needs its own limit derived from measured embed cost** — the same rule `60f1eac12b8a48ef` established for the auth group, generalized from cadence to cost. Needs the measurement, like question 4.
+3. **Partial visibility and the replica.** §6.1 assumes a member's replica may be incomplete. **Evidence now points the other way:** in knowl-cloud `visibility` is stored per atom (`src/db/schema/knowledge.ts:35`, defaulting to `workspace`) and rides the sync payload (`src/knowledge/sync-hydrate.ts:91`), but grep finds no filter on it in the feed — so replicas may in fact be complete. §6.1's other two arguments (the member must have pulled recently; must not close the laptop mid-job) survive either way. Read `sync-hydrate.ts` properly before relying on either answer.
 4. **Batch sizing.** Needs a measurement of payload and transaction time under multi-tenant load, replacing the embedder-derived 200/25.
 
 ---
@@ -205,4 +249,3 @@ Unrelated to the above, recorded so it is not lost.
 For 5.0 it matters in two places, both already covered: Plan A's migration level 10 reaches existing repos through `bootstrapSchema`, and `upgrade --all` sweeps every repo on the machine. Plan D Task 4 regenerates guidance through it — **rebuild `dist/` first**, or it rewrites the guidance files from a stale build (`699986cdbcaf4565`).
 
 **One acknowledged gap:** the original audit (`6ebc3abb506540f7`) flagged that `init` and `upgrade` do not explain their relationship by name. It was dropped when the 5.0 spec was written and is not in that spec's §11 deferred list. It should be added there.
-</content>

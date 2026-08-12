@@ -760,6 +760,20 @@ In `pushStaged`, replace the existing `const staged = await listStaged(...)` usa
 
 Delete the old `for (const record of staged) { const item = await loadPublishItem(...) }` loop — `computePushSnapshot` now does that work, once — and use `sendable` everywhere `items` was used below. The empty-queue early return moves above this block and keys on `current.items.length === 0`.
 
+**STOP: the premise under this whole section is stale. Verified 2026-08-12 against knowl-cloud's tree.**
+
+`MAX_BATCH = 25` and Codex's finding that 25 atoms take ~52 seconds both derive from `59d964ba2ac14798` — "200 atoms of realistic prose at 1564 MB peak, 418 seconds, a property of `publishItems` embedding inline and synchronously inside the request". **That has not been true since 2026-08-09.** knowl-cloud commit `a2d7413` ("index in the background, round-robin across workspaces") moved the forward pass into `src/knowledge/embedding/queue.ts`; `src/knowledge/publish.ts:171` now calls `enqueueIndexing` and returns. It shipped in `v0.1.0` on 2026-08-10, before every tag currently cut.
+
+So publish returns after its transaction commits, not after 418 seconds of CPU, and **no arithmetic derived from 2.1 seconds per atom describes the server that exists.** That includes Codex's 52-second figure and it includes the 10 this section originally chose.
+
+**What to do instead.** A bound is still wanted — an unbounded batch is an unbounded transaction on a shared database, which is what `MAX_BATCH`'s own docblock says and is still true. But it must be sized by **payload size and transaction time**, measured against the current server, not inferred from a superseded embedding cost. `docs/superpowers/specs/2026-08-12-client-side-embedding-design.md` §11.4 already names this as an open question requiring exactly that measurement.
+
+**Until that measurement exists, leave `MAX_BATCH` at 200 and change nothing here.** It is the contract's own cap, it has no known failure against a server that does not embed inline, and replacing it with a smaller number derived from a dead premise would turn a 1,000-atom publish into 100 round trips for no reason. The client timeout question below dissolves with it: a request that does not wait on a forward pass does not need 120 seconds.
+
+Everything from here to the end of Step 3 is retained only as the record of what was believed, and **must not be implemented**:
+
+---
+
 **Lower `MAX_BATCH`, and give publishing its own timeout.** These two numbers are one decision: with the batch at 25 and the client timeout at 30 seconds, the plan's own estimate (52 seconds for 25 atoms) exceeds the abort by 22 seconds, so every full batch would fail on the client while the server kept working.
 
 ```ts
@@ -778,6 +792,13 @@ Delete the old `for (const record of staged) { const item = await loadPublishIte
  * client every time. Both numbers are a linear reading of one data point, not a second
  * measurement: if a batch of 10 still times out against the live server, lower it again rather
  * than assuming the arithmetic held.
+ *
+ * PROVISIONAL, and deliberately so. This number exists only to dodge inline server-side
+ * embedding, and `docs/superpowers/specs/2026-08-12-client-side-embedding-design.md` §7 removes
+ * its reason for existing: once the client supplies the vector, a batch is a batch of row
+ * inserts and the limit is sized by payload and transaction time instead -- considerably larger.
+ * Do not treat 10 as a settled constant, and re-derive it from a measurement when that design
+ * lands rather than carrying this arithmetic forward.
  */
 const MAX_BATCH = 10;
 ```
