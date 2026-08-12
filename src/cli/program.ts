@@ -3376,6 +3376,12 @@ program
         currentCommit,
         changedFiles,
         apply: !options.dryRun,
+        // `pr check` is the deliberate, on-demand pass, so it also examines affected paths git
+        // cannot diff -- untracked or ignored working directories an atom names. The automatic
+        // session-start check deliberately does NOT pass this yet: that path returns early when
+        // HEAD has not moved, and relaxing its gating is a separate decision with the noise
+        // measurements in drift-auto.ts behind it.
+        projectRoot: root,
       });
 
       printPrCheckResult(result);
