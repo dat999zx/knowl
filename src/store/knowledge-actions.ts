@@ -8,6 +8,21 @@ import { KnowledgeWriteValidationOptions } from '../core/types.js';
 import { attachEvidenceToKnowledge } from './evidence-repository.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 
+/**
+ * Queue a committed write for the team, if this repo is connected.
+ *
+ * Deferred for the same reason the AI import below is: `cloud` sits above `store` in the layer
+ * rule (`tests/architecture/module-boundaries.test.ts`), so a static edge here would be upward
+ * and forbidden. This is optional behaviour that does nothing in a repo with no cloud pointer.
+ */
+async function stageWrittenItems(itemIds: string[]): Promise<void> {
+  if (itemIds.length === 0) return;
+  try {
+    const { autoStageAfterWrite } = await import('../cloud/auto-stage.js');
+    await autoStageAfterWrite(itemIds);
+  } catch { /* the write already committed; a ledger row must not fail it */ }
+}
+
 export type DirectDecisionInput = {
   title: string;
   content: string;
@@ -110,6 +125,12 @@ export async function recordDecisionDirect(
     }
   }
 
+  // The fourth seam site, confirmed by reading rather than assumed: this path writes through
+  // `repo.createKnowledgeItem` with `dbConnection` undefined, so each write commits on its own
+  // and there is no enclosing transaction to be inside. Without this, `knowl decide` and the
+  // `knowl_decide` tool would be the one write that silently never staged.
+  await stageWrittenItems([item.id]);
+
   return {
     action: 'inserted',
     item,
@@ -208,6 +229,13 @@ export async function updateKnowledgeItemWithCommit(
   if (updates.title !== undefined || updates.content !== undefined || updates.reasoning !== undefined) {
     await indexKnowledgeItemsBestEffort(projectId, [updated]);
   }
+
+  // `repo.updateKnowledgeItem` above is called with no `dbConnection`, so it committed on its
+  // own connection before this line -- this is genuinely post-commit rather than merely late.
+  //
+  // A published atom re-stages here, which is how a correction reaches the team at all: an atom
+  // edited in place would otherwise stay at the version the workspace already holds.
+  await stageWrittenItems([id]);
 
   return updated;
 }

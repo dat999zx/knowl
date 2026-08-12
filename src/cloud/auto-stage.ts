@@ -1,6 +1,8 @@
+import { loadConfig } from '../core/config.js';
+import { getProjectRoot } from '../store/database.js';
 import type { ProjectConfig } from '../core/types.js';
 import { filterExcluded } from './exclusions.js';
-import { restageForPublish, stageForPublish } from './ledger.js';
+import { publishedVersion, restageForPublish, stageForPublish } from './ledger.js';
 import { currentBranchOf } from './publish-gate.js';
 
 /**
@@ -48,5 +50,38 @@ export async function maybeAutoStage(input: {
     }
   } catch {
     // Deliberately swallowed. See the docblock.
+  }
+}
+
+/**
+ * The seam's entry point, for a caller that has just committed a write.
+ *
+ * Resolves the project root and config **itself** rather than being handed them. The three write
+ * paths that own their transactions -- `storeKnowledgeItemDeduped`, `storeKnowledgeAtomsDeduped`
+ * and `updateKnowledgeItemWithCommit` -- take neither, and threading both through them would mean
+ * changing every caller of each, which is how a store layer acquires a dependency on project
+ * configuration.
+ *
+ * `getProjectRoot()` reads the active database context, which is scoped-aware: a write performed
+ * inside a `withDbPath` scope resolves that scope's root rather than the process-wide one, so a
+ * replica write cannot stage against the wrong repository.
+ *
+ * `alreadyPublished` is asked here rather than by the caller, because only the ledger knows.
+ *
+ * Never throws, for the reason `maybeAutoStage` never throws.
+ */
+export async function autoStageAfterWrite(itemIds: string[], namespace?: string): Promise<void> {
+  if (itemIds.length === 0) return;
+  try {
+    const projectRoot = getProjectRoot();
+    const config = await loadConfig(projectRoot);
+    if (!config.cloud) return;
+
+    for (const itemId of itemIds) {
+      const alreadyPublished = await publishedVersion(itemId, config.cloud.workspaceId) !== null;
+      await maybeAutoStage({ projectRoot, config, itemId, namespace, alreadyPublished });
+    }
+  } catch {
+    // Swallowed for the same reason. A committed write must not fail over its ledger row.
   }
 }
