@@ -53,7 +53,7 @@ import { writeAutoPushConsent } from '../cloud/consent.js';
 import { pickWorkspace } from './cloud-picker.js';
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
-import { pushStaged, stagePublish } from '../cloud/publish.js';
+import { computePushSnapshot, pushStaged, stagePublish } from '../cloud/publish.js';
 import { retractItem } from '../cloud/retract.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
@@ -954,18 +954,52 @@ cloudCommand
 cloudCommand
   .command('push')
   .description('Send staged knowledge, once its code is on the default branch')
-  .action(async () => {
+  .option('-y, --yes', 'Skip the confirmation. Required when there is no terminal to ask')
+  .action(async options => {
     try {
       const root = await findProjectRoot(process.cwd());
       const config = await loadConfig(root);
-      const result = await pushStaged({ projectRoot: root, config });
+
+      // Captured before anything is shown, and sent unchanged. A live re-read at send time is
+      // the window this closes: with auto-staging on, another process writes to this queue
+      // continuously.
+      const snapshot = await computePushSnapshot({ projectRoot: root, config });
+      const isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+
+      if (snapshot.items.length > 0 && !options.yes) {
+        if (!isTTY) {
+          // A prompt that cannot be answered must not block CI, and silence must not be read
+          // as consent for something irreversible.
+          console.error(`${snapshot.items.length} item(s) would be sent. Re-run with --yes to confirm.`);
+          process.exit(1);
+        }
+        console.log(`About to send ${snapshot.items.length} item(s) to ${config.cloud?.workspaceName ?? 'the workspace'}:`);
+        for (const entry of snapshot.items) console.log(`  ${entry.payload.category}  ${entry.payload.title}`);
+        console.log('Sending is irreversible: undoing it means knowl cloud retract, a hard delete.');
+
+        const clack = await import('@clack/prompts');
+        const ok = await clack.confirm({ message: 'Send these?' });
+        if (clack.isCancel(ok) || !ok) {
+          console.log('Nothing sent. Everything stays staged.');
+          return;
+        }
+      }
+
+      const result = await pushStaged({ projectRoot: root, config, snapshot, strict: true });
 
       if (result.status === 'not-connected') {
         console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
         process.exit(1);
       }
       if (result.status === 'not-logged-in') {
-        console.error('Not signed in. Run knowl login first.');
+        console.error('Not signed in. Run knowl cloud login first.');
+        process.exit(1);
+      }
+      if (result.status === 'snapshot-stale') {
+        console.error('The queue changed while you were deciding, so nothing was sent.');
+        if (result.changed.length > 0) console.error(`  ${result.changed.length} listed item(s) were edited.`);
+        if (result.added.length > 0) console.error(`  ${result.added.length} new item(s) were staged.`);
+        console.error('Run knowl cloud push again to see the current list.');
         process.exit(1);
       }
       if (result.status === 'forbidden') {

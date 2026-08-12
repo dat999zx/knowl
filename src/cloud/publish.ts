@@ -154,6 +154,17 @@ export type PushResult =
   | { status: 'gated'; reason: string; detail: string; staged: number }
   | { status: 'forbidden'; role: string }
   | {
+    /**
+     * The queue is not what the human confirmed. Nothing was sent.
+     *
+     * `changed` means a listed atom's text moved between the prompt and the answer; `added`
+     * means the queue grew, which only refuses under `strict`.
+     */
+    status: 'snapshot-stale';
+    added: string[];
+    changed: string[];
+  }
+  | {
     status: 'pushed';
     created: number;
     updated: number;
@@ -187,10 +198,88 @@ const parseJson = <T>(value: unknown): T | null => {
  * Nothing is un-staged until the server has confirmed it. An atom whose outcome was a conflict,
  * a foreign origin, or a failure stays staged, so the next run retries exactly it and no more.
  */
+/**
+ * What a confirmation prompt was shown, as a thing that can be checked later.
+ *
+ * `pushStaged` reads `listStaged` live, and once auto-staging is on a long-lived MCP server is
+ * writing to that queue continuously -- so between drawing a prompt and reading the answer,
+ * another process can stage new atoms or rewrite the text of listed ones. Confirming a live read
+ * would send items and content nobody was shown. **This risk is created by auto-staging; it did
+ * not exist when staging was manual and rare.**
+ *
+ * The payload is captured here rather than re-read at send time, and that is the whole
+ * mechanism. Comparing hashes and then loading the payload separately leaves a second window
+ * open between the comparison and the load, so what was hashed, what was shown and what is sent
+ * must be one object that nothing can edit in between.
+ */
+export type PushSnapshot = {
+  items: Array<{
+    itemId: string;
+    contentHash: string | null;
+    lifecycleHash: string | null;
+    /** The exact bytes that will be sent. */
+    payload: PublishItem;
+  }>;
+};
+
+/** The hashes of the atoms currently staged, for comparison against a snapshot. */
+async function stagedHashes(itemIds: string[]): Promise<Map<string, { contentHash: string | null; lifecycleHash: string | null }>> {
+  if (itemIds.length === 0) return new Map();
+  const placeholders = itemIds.map(() => '?').join(', ');
+  const result = await getClient().execute({
+    sql: `SELECT id, content_hash, lifecycle_hash FROM knowledge_items WHERE id IN (${placeholders})`,
+    args: itemIds,
+  });
+  return new Map(result.rows.map(row => [String(row.id), {
+    contentHash: row.content_hash === null || row.content_hash === undefined ? null : String(row.content_hash),
+    lifecycleHash: row.lifecycle_hash === null || row.lifecycle_hash === undefined ? null : String(row.lifecycle_hash),
+  }]));
+}
+
+/**
+ * Capture what a push would send right now, so a human can be shown it and it can be sent unchanged.
+ *
+ * Opens and closes its own database context, like `stagePublish` and for the same reason: this
+ * runs from a CLI command that owns its process.
+ */
+export async function computePushSnapshot(input: {
+  projectRoot: string;
+  config: ProjectConfig;
+}): Promise<PushSnapshot> {
+  const pointer = input.config.cloud;
+  if (!pointer) return { items: [] };
+
+  await initDb(input.projectRoot);
+  try {
+    const staged = await listStaged(pointer.workspaceId);
+    const hashes = await stagedHashes(staged.map(row => row.itemId));
+    const items: PushSnapshot['items'] = [];
+    for (const row of staged) {
+      const payload = await loadPublishItem(row.itemId, pointer.workspaceId);
+      // A staged id whose row is gone cannot be shown or sent. Skipped here for the same reason
+      // the push skips it: the ledger records intent, and this command does not edit it.
+      if (!payload) continue;
+      items.push({
+        itemId: row.itemId,
+        contentHash: hashes.get(row.itemId)?.contentHash ?? null,
+        lifecycleHash: hashes.get(row.itemId)?.lifecycleHash ?? null,
+        payload,
+      });
+    }
+    return { items };
+  } finally {
+    await closeDb();
+  }
+}
+
 export async function pushStaged(input: {
   projectRoot: string;
   config: ProjectConfig;
   api?: CloudApi;
+  /** What a human was shown. When given, only these atoms are sent, and only if unchanged. */
+  snapshot?: PushSnapshot;
+  /** Refuse when the queue merely GREW, not only when a listed atom changed. */
+  strict?: boolean;
 }): Promise<PushResult> {
   const pointer = input.config.cloud;
   if (!pointer) return { status: 'not-connected' };
@@ -228,13 +317,45 @@ export async function pushStaged(input: {
     });
     if (!credential) return { status: 'not-logged-in' };
 
-    const items: PublishItem[] = [];
-    for (const record of staged) {
-      const item = await loadPublishItem(record.itemId, pointer.workspaceId);
-      // A staged id whose row is gone cannot be published and must not be invented. It stays in
-      // the ledger rather than being swept: the ledger is a record of intent, and deleting the
-      // intent here would be this command silently editing what the user asked for.
-      if (item) items.push(item);
+    let items: PublishItem[];
+    if (input.snapshot) {
+      const promised = new Map(input.snapshot.items.map(entry => [entry.itemId, entry]));
+      const stagedNow = new Set(staged.map(row => row.itemId));
+      const hashes = await stagedHashes([...promised.keys()].filter(id => stagedNow.has(id)));
+
+      const changed = [...promised.values()]
+        .filter(entry => stagedNow.has(entry.itemId))
+        .filter(entry => {
+          const now = hashes.get(entry.itemId);
+          return !now
+            || now.contentHash !== entry.contentHash
+            || now.lifecycleHash !== entry.lifecycleHash;
+        })
+        .map(entry => entry.itemId);
+
+      const added = staged.map(row => row.itemId).filter(id => !promised.has(id));
+
+      // A changed atom always refuses: its text is not what the human read. An addition only
+      // refuses under `strict`, because it will go in the next push either way and refusing by
+      // default would let a busy agent block every push it runs beside.
+      if (changed.length > 0 || (input.strict && added.length > 0)) {
+        return { status: 'snapshot-stale', added, changed };
+      }
+
+      // Sent from the SNAPSHOT, intersected with what is still staged. The payload is the object
+      // that was hashed and shown -- never a fresh read, which is the window this closes.
+      items = input.snapshot.items
+        .filter(entry => stagedNow.has(entry.itemId))
+        .map(entry => entry.payload);
+    } else {
+      items = [];
+      for (const record of staged) {
+        const item = await loadPublishItem(record.itemId, pointer.workspaceId);
+        // A staged id whose row is gone cannot be published and must not be invented. It stays in
+        // the ledger rather than being swept: the ledger is a record of intent, and deleting the
+        // intent here would be this command silently editing what the user asked for.
+        if (item) items.push(item);
+      }
     }
     if (items.length === 0) {
       return { status: 'pushed', created: 0, updated: 0, conflicts: [], rejected: [] };
