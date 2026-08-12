@@ -32,9 +32,13 @@ import { repoEntry, updateRepoSettings } from '../workspace/repo-settings.js';
 import { runCliQuery } from './query-command.js';
 import { runCliResume } from './resume-command.js';
 import { closeResumeDb } from '../session/resume-store.js';
+import { createResumePoint } from '../session/resume-points.js';
+import { formatPendingHandoffContext, recordDeliberateHandoff } from '../session/session-handoff.js';
 import { formatCrossRepoNotice } from './cross-repo-notice.js';
 import { formatWorkspaceBlock } from './workspace-report.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
+import { assertOwnedItem } from '../workspace/ownership.js';
+import { storeKnowledgeItemDeduped } from '../store/knowledge-writer.js';
 import { formatDoctorReport, runDoctor } from './doctor-report.js';
 import { upgradeExistingRepository, type UpgradeResult } from './upgrade.js';
 import { readKnownRepos, recordKnownRepo } from './repo-registry.js';
@@ -495,6 +499,90 @@ program
       process.exit(1);
     }
   });
+
+/** Shared by `park` and `handoff`: both take the same optional brief around a required goal. */
+const briefOptions = (command: Command): Command => command
+  .option('--completed <item...>', 'What is already done')
+  .option('--blocker <blocker>', 'What is in the way, if anything')
+  .option('--artifact <path...>', 'Files the returning session should look at')
+  .option('--verified', 'The work so far was checked')
+  .option('--unverified', 'The work so far was not checked');
+
+const verificationOf = (options: { verified?: boolean; unverified?: boolean }): 'verified' | 'unverified' | undefined =>
+  options.verified ? 'verified' : options.unverified ? 'unverified' : undefined;
+
+briefOptions(
+  program
+    .command('park')
+    .description('Park a workstream you mean to return to, and get a key back')
+    .requiredOption('--goal <goal>', 'What this workstream is trying to achieve')
+    .option('--next-action <action>', 'The next step as it stands now'),
+).action(async options => {
+  try {
+    const root = await findProjectRoot(process.cwd());
+    const point = await createResumePoint(root, {
+      goal: options.goal,
+      completed: options.completed,
+      nextAction: options.nextAction,
+      blocker: options.blocker,
+      artifactRefs: options.artifact,
+      verificationStatus: verificationOf(options),
+    });
+    // Printed verbatim and unwrapped: a key reworded is a key lost, and handing it back is the
+    // whole point of the command.
+    console.log(`Parked. To pick this up later, from anywhere:\n\n    knowl resume ${point.key}\n`);
+    await closeResumeDb();
+  } catch (error: any) {
+    console.error(`Error parking work: ${error.message}`);
+    process.exit(1);
+  }
+});
+
+briefOptions(
+  program
+    .command('handoff')
+    .description('Leave a baton for the next session in this project')
+    .requiredOption('--goal <goal>', 'What this workstream is trying to achieve')
+    .requiredOption('--next-action <action>', 'The single next thing to do'),
+).action(async options => {
+  try {
+    const root = await findProjectRoot(process.cwd());
+    await initDb(root);
+    try {
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+
+      const { handoff, replacedPrevious } = await recordDeliberateHandoff(project.id, {
+        // Filed under the host whose hooks deliver a baton on session start, matching the MCP
+        // path: a CLI invocation has no host session of its own to name.
+        host: 'claude',
+        projectRoot: root,
+        externalSessionId: 'cli',
+        taskState: {
+          goal: options.goal,
+          nextAction: options.nextAction,
+          completed: options.completed,
+          blocker: options.blocker,
+          artifactRefs: options.artifact,
+          verificationStatus: verificationOf(options) ?? 'unverified',
+        },
+      });
+
+      // One baton per project. Said out loud, because the previous one's goal, next action and
+      // blocker are gone and nothing else would mention it.
+      if (replacedPrevious) {
+        console.log('Replaced the previous unconsumed handoff — its goal, next action and blocker are gone.');
+      }
+      console.log('Handed off. The next session in this project receives this once, then it is archived.');
+      console.log(`\n${formatPendingHandoffContext(handoff)}`);
+    } finally {
+      await closeDb();
+    }
+  } catch (error: any) {
+    console.error(`Error handing off: ${error.message}`);
+    process.exit(1);
+  }
+});
 
 program.command('timeline').argument('<itemId>').description('Show the recorded history of one knowledge item').action(async itemId => {
   try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listAssertions(itemId), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading timeline: ${error.message}`); process.exit(1); }
@@ -1512,9 +1600,8 @@ workspaceCommand
     }
   });
 
-const codeCommand = program.command('code').description('Index and inspect project code symbols');
-codeCommand.command('index').action(async () => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); await indexCode(root); console.log('Code symbols indexed.'); await closeDb(); } catch (error: any) { console.error(`Error indexing code: ${error.message}`); process.exit(1); } });
-codeCommand.command('symbols').argument('<path>').action(async filePath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listCodeSymbols(filePath), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading code symbols: ${error.message}`); process.exit(1); } });
+program.command('index-code').description('Index the project code symbols for retrieval').action(async () => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); await indexCode(root); console.log('Code symbols indexed.'); await closeDb(); } catch (error: any) { console.error(`Error indexing code: ${error.message}`); process.exit(1); } });
+program.command('symbols').description('List the indexed symbols in one file').argument('<path>').action(async filePath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); console.log(JSON.stringify(await listCodeSymbols(filePath), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error reading code symbols: ${error.message}`); process.exit(1); } });
 
 program.command('export').argument('<path>').description('Write portable JSONL memory to a file').action(async outputPath => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await exportKnowledge(project.id, path.resolve(outputPath), root), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error exporting knowledge: ${error.message}`); process.exit(1); } });
 
@@ -1724,6 +1811,88 @@ program
       await closeDb();
     } catch (error: any) {
       console.error(`❌ Error recording decision: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('store')
+  .argument('<content>', 'The knowledge itself')
+  .description('Record one verified fact, decision or constraint')
+  .requiredOption('--category <category>', 'fact, decision, goal, constraint, architecture, state or skill')
+  .requiredOption('--title <title>', 'Concise title')
+  .option('--tag <tag...>', 'Tags')
+  .option('--path <path...>', 'Repository-relative paths this knowledge depends on')
+  .option('--confidence <number>', 'Confidence from 0.0 to 1.0', Number)
+  .option('--provenance <provenance>', 'observed, user_stated or inferred')
+  .option('--reasoning <text>', 'Why this is believed')
+  .option('--alternative <text...>', 'Alternatives considered')
+  .option('--source <label>', 'Source label')
+  .option('--source-commit <sha>', 'Commit where this was last reviewed')
+  .option('--supersedes <id>', 'Id of an active item this replaces')
+  .option('--local', 'Never publish this atom to a cloud workspace')
+  .action(async (content: string, options) => {
+    try {
+      if (!KNOWLEDGE_CATEGORIES.includes(options.category)) {
+        console.error(`Invalid category "${options.category}". Expected one of: ${KNOWLEDGE_CATEGORIES.join(', ')}.`);
+        process.exit(1);
+      }
+
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      await initDb(root);
+      try {
+        const project = await repo.getProjectByRootPath(root);
+        if (!project) throw new Error('Project not found in database.');
+
+        // Retiring an item is a write to that item, and in a linked workspace it may belong to
+        // another repo. The MCP write tools guard this; a CLI that did not would be the hole.
+        if (options.supersedes) {
+          const owner = await resolveWorkspace(root, config);
+          if (owner) await assertOwnedItem(options.supersedes, owner);
+        }
+
+        const result = await storeKnowledgeItemDeduped(
+          project.id,
+          {
+            category: options.category,
+            title: options.title,
+            content,
+            reasoning: options.reasoning,
+            alternatives: options.alternative,
+            tags: options.tag,
+            source: options.source,
+            sourceCommit: options.sourceCommit,
+            affectedPaths: options.path,
+            confidence: options.confidence,
+            provenance: options.provenance,
+            supersedes: options.supersedes,
+          },
+          `Store ${options.category}: ${options.title}`,
+          config.security,
+        );
+
+        if (result.action === 'duplicate') {
+          console.log(`NOT STORED — already held verbatim as ${result.item.id}. Nothing was written and nothing was lost.`);
+          return;
+        }
+
+        // Excluded after the write, which is the only order available: the id does not exist
+        // until the row does. The seam may therefore have staged it a moment ago, so the
+        // exclusion is paired with an unstage rather than trusting it to have lost the race.
+        if (options.local) {
+          await excludeFromPublish(result.item.id, 'knowl store --local');
+          if (config.cloud) await unstagePublish(result.item.id, config.cloud.workspaceId);
+        }
+
+        console.log(`Stored ${options.category} ${result.item.id}: ${result.item.title}`);
+        if (result.superseded) console.log(`  Retired ${result.superseded.id}.`);
+        if (options.local) console.log('  Marked local. It will not be published.');
+      } finally {
+        await closeDb();
+      }
+    } catch (error: any) {
+      console.error(`Error storing knowledge: ${error.message}`);
       process.exit(1);
     }
   });
@@ -2212,9 +2381,7 @@ transcripts
 // --- 9. RETRIEVAL EVALUATION COMMAND ---
 program
   .command('eval')
-  .description('Run checked-in retrieval evaluation datasets')
-  .command('retrieval')
-  .description('Evaluate agent retrieval against a dataset')
+  .description('Evaluate agent retrieval against a checked-in dataset')
   .requiredOption('--dataset <path>', 'Path to a retrieval evaluation JSON dataset')
   .option('--json', 'Print machine-readable JSON')
   .option('--vector', 'Embed queries and rank with vector + BM25 fusion (the path real agents use; requires the local embedding model)')
@@ -2347,9 +2514,7 @@ program
 // --- 10. ACCESS REPORT COMMAND ---
 program
   .command('access')
-  .description('Inspect retrieval access feedback')
-  .command('report')
-  .description('Show high-value, stale, and corrected knowledge')
+  .description('Show high-value, stale, and corrected knowledge from retrieval feedback')
   .option('--json', 'Print machine-readable JSON')
   .action(async (options) => {
     try {
@@ -3047,13 +3212,9 @@ skillCommand
     }
   });
 
-const evidenceCommand = program
+program
   .command('evidence')
-  .description('Inspect provenance evidence linked to knowledge');
-
-evidenceCommand
-  .command('list')
-  .description('List evidence linked to one knowledge item')
+  .description('List the provenance evidence linked to one knowledge item')
   .argument('<item-id>', 'Knowledge item ID')
   .action(async (itemId) => {
     try {
@@ -3076,12 +3237,8 @@ evidenceCommand
   });
 
 // --- 14. PR COMMAND ---
-const prCommand = program
+program
   .command('pr')
-  .description('Check git changes against stored knowledge provenance');
-
-prCommand
-  .command('check')
   .description('Mark knowledge tied to changed files as needing review')
   .requiredOption('--since <commit>', 'Base commit to compare against')
   .option('--dry-run', 'Preview impacted knowledge without marking it')

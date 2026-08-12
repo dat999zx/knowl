@@ -41,6 +41,28 @@ describe('the 5.0 cloud namespace', () => {
     for (const gone of ['login', 'logout', 'publish']) expect(top).toContain(gone);
   });
 
+  it('has no group left that wraps a single leaf', () => {
+    const top = buildProgram().commands.map(command => command.name());
+    for (const gone of ['code', 'eval-group']) expect(top).not.toContain(gone);
+    for (const flat of ['index-code', 'symbols', 'eval', 'access', 'pr', 'evidence']) {
+      expect(top).toContain(flat);
+    }
+    // `eval`, `access`, `pr` and `evidence` are now leaves rather than groups.
+    for (const name of ['eval', 'access', 'pr', 'evidence']) {
+      const command = buildProgram().commands.find(entry => entry.name() === name)!;
+      expect(command.commands.filter(sub => sub.name() !== 'help')).toEqual([]);
+    }
+  });
+
+  it('keeps snapshot as a group, because create and restore are a genuine pair', () => {
+    expect(subcommandNames(['snapshot'])).toEqual(['create', 'restore']);
+  });
+
+  it('gives a human the three writes that were MCP-only', () => {
+    const top = buildProgram().commands.map(command => command.name());
+    for (const added of ['store', 'park', 'handoff']) expect(top).toContain(added);
+  });
+
   it('keeps the local workspace group untouched', () => {
     expect(subcommandNames(['workspace'])).toEqual([
       'add', 'demand', 'init', 'join', 'list',
