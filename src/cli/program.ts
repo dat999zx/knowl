@@ -1081,6 +1081,19 @@ cloudCommand
       const snapshot = await computePushSnapshot({ projectRoot: root, config });
       const isTTY = Boolean(process.stdin.isTTY && process.stdout.isTTY);
 
+      // Before the prompt, not after it. `snapshot.items` omits atoms with no vector, so showing
+      // the prompt first would ask a user to confirm a shorter list than they staged and then
+      // refuse the push anyway. Nothing is lost either way -- they stay staged -- but being told
+      // now, with the command that fixes it, is the difference between an answer and a puzzle.
+      if (snapshot.unembedded.length > 0) {
+        console.error(
+          `${snapshot.unembedded.length} staged item(s) have no vector for this repository's `
+          + 'embedding profile, so nothing was sent.\n'
+          + 'Run `knowl reindex --vectors`, then push again.',
+        );
+        process.exit(1);
+      }
+
       if (snapshot.items.length > 0 && !options.yes) {
         if (!isTTY) {
           // A prompt that cannot be answered must not block CI, and silence must not be read

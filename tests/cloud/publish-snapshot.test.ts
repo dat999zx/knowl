@@ -95,6 +95,23 @@ describe('a push bound to a snapshot', () => {
         category: 'fact', title, content: `A durable observation about ${title}, long enough to be real.`,
       });
       await getClient().execute("UPDATE knowledge_items SET origin_repo = 'github.com/acme/web'");
+      // A vector under this repo's current profile. `pushStaged` reads one rather than computing
+      // it, and refuses any atom that has none -- so without this every case here stops at
+      // `needs-embedding` instead of exercising the snapshot binding it is about.
+      //
+      // Written directly rather than embedded: these tests are about the push protocol, and a
+      // real forward pass per atom would add a model download to a suite that needs no model.
+      const { fingerprintProfile, resolveVectorProfile } = await import('../../src/core/vector-profile.js');
+      const { upsertKnowledgeEmbeddings } = await import('../../src/store/vector.js');
+      const profile = resolveVectorProfile(connected);
+      await upsertKnowledgeEmbeddings([{
+        knowledgeItemId: stored.item.id,
+        provider: profile.provider,
+        model: profile.model,
+        profileFingerprint: fingerprintProfile(profile),
+        dimensions: 384,
+        vector: new Array(384).fill(0.02),
+      }]);
       return stored.item.id;
     } finally { await closeDb(); }
   };
