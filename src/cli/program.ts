@@ -403,6 +403,13 @@ program
     try {
       const root = await findProjectRoot(process.cwd());
       const config = await loadConfig(root);
+
+      // Before this command opens its own context, deliberately. `cloudStatus` owns a
+      // process-wide one -- it opens and closes -- so calling it inside the block below would
+      // close the database out from under everything after it. Constraint `defde27f6f234535` is
+      // about the MCP path; this is the same hazard on the CLI path.
+      const cloud = config.cloud ? await cloudStatus(root, config) : null;
+
       await initDb(root);
 
       const project = await repo.getProjectByRootPath(root);
@@ -425,6 +432,7 @@ program
         commits,
         capture: await captureHealth(),
         captureNudgeMode: captureNudgeMode(config),
+        cloud,
       }));
 
       if (isUpdateCheckEnabled(config)) {
