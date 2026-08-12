@@ -963,9 +963,16 @@ cloudCommand
       if (result.skippedExcluded > 0) {
         console.log(`${result.skippedExcluded} item(s) are excluded from publication. Name an id to stage one anyway.`);
       }
-      console.log(result.applied
-        ? `Staged ${result.items.length} item(s). Run knowl cloud push to send them.`
-        : `${result.items.length} item(s) would be staged. Re-run with --apply.`);
+      // `applied` is false for two different reasons -- a dry run, and a real run that matched
+      // nothing -- so branching on it alone told a user who had just passed --apply to pass
+      // --apply. Nothing eligible is its own outcome and says so.
+      if (result.items.length === 0) {
+        console.log('Nothing to stage: no eligible item matched.');
+      } else {
+        console.log(result.applied
+          ? `Staged ${result.items.length} item(s). Run knowl cloud push to send them.`
+          : `${result.items.length} item(s) would be staged. Re-run with --apply.`);
+      }
       if (result.applied) console.log('Once pushed, removing it again takes knowl cloud retract, which is irreversible.');
 
       if (result.applied) {

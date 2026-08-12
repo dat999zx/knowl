@@ -76,6 +76,16 @@ describe('stagePublish', () => {
     } finally { await closeDb(); }
   };
 
+  it('reports an --apply run that matched nothing as applied:false with no items', async () => {
+    // The shape behind a message defect: `applied` is false for two different reasons -- a dry
+    // run, and a real run that matched nothing -- so the CLI branching on it alone told a user
+    // who had just passed --apply to pass --apply. The CLI now checks `items` first.
+    const result = await stage({ categories: ['goal'], apply: true }) as any;
+
+    expect(result.items).toEqual([]);
+    expect(result.applied).toBe(false);
+  });
+
   it('counts what a sweep would stage, and stops counting what is already queued', async () => {
     const { countStageable } = await import('../../src/cloud/publish.js');
     await stage({ categories: ['decision'], apply: true });
