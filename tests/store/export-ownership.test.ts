@@ -136,6 +136,30 @@ describe('ownership and lifecycle survive export and import', () => {
     expect(landed).toMatchObject({ originRepo: 'server', visibility: 'workspace' });
   });
 
+  it('exports only the named items when given a selection', async () => {
+    // `knowl send` hands a person a handful of atoms rather than a backup, so the exporter takes
+    // an id filter instead of growing a second serialiser that would have to be kept in step with
+    // EXPORT_FORMAT_VERSION. Absent means everything, so every other caller is unchanged.
+    const wanted = await session(SOURCE, async () => {
+      const keep = await write(SOURCE, 'Rate limit is per caller', 'The limiter keys on the caller.');
+      await write(SOURCE, 'Unrelated fact', 'Nothing to do with limits.');
+      await exportKnowledge('local', DUMP, SOURCE, [keep]);
+      return keep;
+    });
+
+    const landed = await session(TARGET, async () => {
+      await importKnowledge(DUMP, { projectRoot: TARGET });
+      return {
+        kept: await ownership('Rate limit is per caller'),
+        other: await ownership('Unrelated fact'),
+      };
+    });
+
+    expect(landed.kept).toBeTruthy();
+    expect(landed.other).toBeFalsy();
+    expect(wanted).toBeTruthy();
+  });
+
   it('converges a promotion that reaches a machine holding the old copy', async () => {
     // content_hash is unchanged by a promotion, so the receiving side classified this as
     // identical and skipped it. The item stayed private on the second machine forever.

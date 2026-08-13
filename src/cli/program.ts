@@ -63,6 +63,7 @@ import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
 import { computePushSnapshot, countStageable, pushStaged, stagePublish } from '../cloud/publish.js';
 import { retractItem } from '../cloud/retract.js';
+import { previewSend, receiveKnowledge, sendKnowledge } from '../cloud/send/transfer.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { cloudPointer } from '../core/cloud-pointer.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
@@ -1355,6 +1356,154 @@ cloudCommand
       console.log('This cannot be undone, and the id can never be published again.');
     } catch (error: any) {
       console.error(`Retract failed: ${error.message}`);
+      process.exitCode = 1;
+      return;
+    }
+  });
+
+cloudCommand
+  .command('send')
+  .description('Hand a few atoms to one person, once, sealed. Expires; not a publish')
+  .option('--id <ids...>', 'Exactly these atoms')
+  .option('--query <text>', 'The atoms this retrieves; shown for confirmation before anything is sealed')
+  .option('--from <label>', 'How the recipient sees you; defaults to this repo')
+  .option('--expires-in <hours>', 'Hours until the bundle dies unread', '24')
+  .option('--yes', 'Skip the confirmation')
+  .action(async (options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      await initDb(root);
+      let itemIds: string[] = [];
+      let project: { id: string } | null = null;
+      try {
+        project = await repo.getProjectByRootPath(root);
+        if (!project) throw new Error('Project not found in database.');
+        if (options.id?.length) {
+          itemIds = options.id;
+        } else if (options.query) {
+          // Retrieval-shaped selection is fuzzy, so what it matched is printed and confirmed
+          // before anything is sealed. Sending the wrong three atoms to a colleague is not
+          // recoverable by an expiry.
+          const hits = await queryKnowledgeBase(project.id, { query: options.query, status: 'active', limit: 20 });
+          itemIds = hits.map(item => item.id);
+          console.log(`"${options.query}" matches ${hits.length} atom(s):`);
+          for (const item of hits) console.log(`  [${item.category}] ${item.title}`);
+        }
+      } finally {
+        await closeDb();
+      }
+
+      if (itemIds.length === 0) {
+        console.error('Nothing selected. Pass --id or --query.');
+        process.exitCode = 1;
+        return;
+      }
+      if (options.query && !options.yes && !await confirm(`Send these ${itemIds.length}?`)) {
+        console.log('Nothing sent.');
+        return;
+      }
+
+      const result = await sendKnowledge({
+        projectRoot: root,
+        projectId: project!.id,
+        config,
+        itemIds,
+        senderLabel: options.from ?? config.cloud?.repo ?? 'a colleague',
+        expiresInHours: Number(options.expiresIn),
+      });
+
+      if (result.status === 'not-connected') {
+        console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
+        process.exitCode = 1;
+        return;
+      }
+      if (result.status === 'not-logged-in') {
+        console.error('Not signed in. Run knowl cloud login first.');
+        process.exitCode = 1;
+        return;
+      }
+      if (result.status === 'nothing-selected') {
+        console.error('Nothing selected.');
+        process.exitCode = 1;
+        return;
+      }
+
+      console.log('');
+      console.log(`${result.itemCount} atom(s) sealed. Hand this to them:`);
+      console.log('');
+      console.log(`    knowl cloud receive ${result.code}`);
+      console.log('');
+      // Said once, here, because this is the only moment the code exists anywhere but in their
+      // hands. It is not stored, not logged, and cannot be recovered from the server.
+      console.log(`It expires ${result.expiresAt}, can be collected once, and is not recoverable if lost.`);
+    } catch (error: any) {
+      console.error(`Send failed: ${error.message}`);
+      process.exitCode = 1;
+      return;
+    }
+  });
+
+cloudCommand
+  .command('receive <code>')
+  .description('Collect atoms somebody sent you. Takes the code they gave you')
+  .option('--yes', 'Skip the confirmation')
+  .action(async (code, options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+
+      const preview = await previewSend({ config, code });
+      if (preview === 'not-connected') {
+        console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
+        process.exitCode = 1;
+        return;
+      }
+      if (preview === 'not-logged-in') {
+        console.error('Not signed in. Run knowl cloud login first.');
+        process.exitCode = 1;
+        return;
+      }
+      if (!preview) {
+        // One message for every reason, matching the server: a peek that distinguished "spent"
+        // from "never existed" would confirm a guessed code for free.
+        console.error('No bundle waiting on that code. Check what you typed, or ask for a re-send.');
+        process.exitCode = 1;
+        return;
+      }
+
+      console.log(`From: ${preview.senderLabel} · ${preview.itemCount} atom(s) · expires ${preview.expiresAt}`);
+      if (!options.yes && !await confirm('Collect it? This can only be done once.')) {
+        console.log('Left where it is. The code still works until it expires.');
+        return;
+      }
+
+      const result = await receiveKnowledge({ projectRoot: root, config, code });
+      if (result.status === 'refused') {
+        const message = {
+          not_found: 'No bundle waiting on that code.',
+          expired: 'That bundle expired. Ask for a new one.',
+          already_claimed: 'That bundle was already collected. Ask for a new one.',
+        }[result.reason];
+        console.error(message);
+        process.exitCode = 1;
+        return;
+      }
+      if (result.status !== 'received') {
+        console.error(result.status === 'not-logged-in' ? 'Not signed in.' : 'Not connected.');
+        process.exitCode = 1;
+        return;
+      }
+
+      const { inserted, identical, updated } = result.imported;
+      console.log(
+        `From ${result.preview.senderLabel}: ${inserted} new, ${updated} updated, ${identical} already held.`,
+      );
+      // Stamped, not silent. These arrived from a store this one cannot identify as itself, so
+      // they can never be promoted or published as this repo's own.
+      console.log('They are marked as imported, so they cannot be published from here as yours.');
+    } catch (error: any) {
+      console.error(`Receive failed: ${error.message}`);
       process.exitCode = 1;
       return;
     }
