@@ -89,12 +89,19 @@ describe('maybeAutoPush', () => {
       .toEqual({ status: 'skipped', reason: 'not-connected' });
   });
 
-  it('does not send from a feature branch, because consent does not relax the gate', async () => {
+  it('is not stopped by a feature branch, so the branch no longer decides what is sent', async () => {
     await writeAutoPushConsent(WS, true);
     git(CLONE, ['checkout', '-qb', 'feature/whatever']);
 
+    // The queue is emptied so this asserts about the BRANCH and nothing else: reaching
+    // `nothing-staged` proves the push ran and looked, where the gate used to refuse before
+    // looking at all. It also keeps the case offline -- `maybeAutoPush` takes no injectable api.
+    await initDb(CLONE);
+    try { await getClient().execute('DELETE FROM cloud_published'); }
+    finally { await closeDb(); }
+
     expect(await maybeAutoPush({ projectRoot: CLONE, config: connected }))
-      .toEqual({ status: 'skipped', reason: 'gated' });
+      .toEqual({ status: 'skipped', reason: 'nothing-staged' });
   });
 
   it('reports nothing-staged rather than attempting an empty send', async () => {

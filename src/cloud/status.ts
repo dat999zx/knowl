@@ -4,7 +4,6 @@ import { AUTO_SYNC_INTERVAL_MS } from './auto-sync.js';
 import { listCredentialHosts, normalizeApiHost, readCredential } from './credentials.js';
 import { defaultApiHost } from './login.js';
 import { listStaged } from './ledger.js';
-import { checkPublishGate, type GateVerdict } from './publish-gate.js';
 import { readSyncState } from './sync-state.js';
 import { withTeamStore } from './team-store.js';
 import { cloudPointer } from '../core/cloud-pointer.js';
@@ -42,7 +41,6 @@ export type CloudStatus =
       stagedCorrections: number;
       /** The branch the staged atoms were staged on, when they all agree. */
       stagedOnBranch: string | null;
-      gate: GateVerdict;
       signedIn: boolean;
       identity: StatusIdentity;
       tokenExpiresAt: string | null;
@@ -146,11 +144,10 @@ async function composeStatus(
     nextSyncDueAt: lastSynced === null || Number.isNaN(lastSynced)
       ? new Date().toISOString()
       : new Date(lastSynced + AUTO_SYNC_INTERVAL_MS).toISOString(),
-    // Named only when every staged atom agrees. Two branches make "waiting on X" a false
-    // statement about the others, and the gate's own detail already names the branch the
-    // checkout is on, which is the one that actually decides.
+    // Named only when every staged atom agrees, because "staged on X" is a false statement
+    // about the others otherwise. Reported as provenance, not as a condition: since 2026-08-13
+    // the branch decides nothing about whether a push goes out.
     stagedOnBranch: branches.size === 1 ? [...branches][0] : null,
-    gate: checkPublishGate(projectRoot),
   };
 }
 
@@ -197,12 +194,11 @@ export function formatCloudStatus(status: CloudStatus): string {
     ` (${status.stagedNew} new, ${status.stagedCorrections} correction(s))` +
     `${status.stagedOnBranch ? ` on ${status.stagedOnBranch}` : ''}, not yet sent.`,
   );
-  // What is holding it, named. A developer who staged on a branch and moved on has no other
-  // prompt: the atoms sit in a table nobody reads, and a status line that reported the count
-  // without the reason would leave them there.
-  lines.push(status.gate.ok
-    ? '           Ready to send. Run knowl cloud push.'
-    : `           ${status.gate.detail}`);
+  // The next step, named. A developer who staged and moved on has no other prompt: the atoms sit
+  // in a table nobody reads, and a line that reported the count without the command would leave
+  // them there. Unconditional since 2026-08-13 -- staged work is now always one push from sent,
+  // where this used to print the gate's refusal and send a reader off to change branch instead.
+  lines.push('           Ready to send. Run knowl cloud push.');
   // Only while something is staged, so the warning still means something when it appears. It no
   // longer says publishing cannot be undone -- `knowl cloud retract` wires the server's delete
   // verb -- but undoing is a hard delete plus a tombstone that bars the id forever, which is a
