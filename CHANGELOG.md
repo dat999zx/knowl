@@ -3,6 +3,44 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.0.3 — 2026-08-13
+
+### Publishing no longer waits for the default branch
+
+`knowl cloud push` refused every send from anything but an up-to-date default branch. That
+blocked knowledge with nothing to do with code — pricing research, a vendor decision — on a git
+fact that had no bearing on whether it was true.
+
+The gate was specified to apply only to code-coupled atoms, but it was never able to: it received
+a project root and never saw an atom, so it produced one verdict for the whole checkout and
+applied it to everything in the batch.
+
+It is removed, on the distinction that survives:
+
+> **Publishing adds an atom. Reporting drift retires someone else's.**
+
+Adding from a stale checkout gives the team something merely premature, and `knowl cloud
+supersede` and `knowl cloud retract` both undo it. Retiring from a stale checkout destroys what is
+still true for everyone current — from a checkout behind the default branch, merged code and
+deleted code look identical. Drift reporting keeps the gate for exactly that reason, and
+`retract` already sat outside it on the same reasoning.
+
+Two surfaces that reported the gate as the blocker change with it. `knowl cloud status` printed
+the refusal verbatim on a feature branch, naming a blocker that no longer exists and sending the
+reader to change branch for a push that would have worked; it now reports readiness. `knowl
+doctor` warned about staged-but-unsent work *only* when the gate refused, so staged work sat
+invisible on the default branch; it now warns whenever anything is staged, and points at `knowl
+cloud push`.
+
+Automatic staging no longer skips silently on a feature branch.
+
+**The cost, stated plainly:** an atom published from a branch that is later abandoned stays in the
+team store, and a squashed or rebased `sourceCommit` can dangle. Both are staleness rather than
+corruption, and `supersede` and `retract` are the remedies.
+
+`docs/reference.md` is corrected in seven places, including a section heading, that described
+publishing as branch-gated.
+
 ## 5.0.2 — 2026-08-13
 
 ### A `cloud` block is not the same thing as a cloud connection
