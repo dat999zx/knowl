@@ -3,6 +3,39 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.0.2 — 2026-08-13
+
+### A `cloud` block is not the same thing as a cloud connection
+
+Making `cloud.autoStage` settable in 5.0.1 created a state nothing had seen before. In a
+repository that was never connected to a workspace:
+
+```
+$ knowl config set cloud.autoStage false
+Set cloud.autoStage = false
+$ knowl doctor
+[FAIL] Cannot read properties of undefined (reading 'trim')
+```
+
+The setting is stored inside the `cloud` block, and fifteen callers read that block's mere
+presence as "this repository is connected". So the config held settings but no pointer, and
+`doctor` printed a JavaScript error where the diagnosis goes — on a repository whose only sin was
+setting a documented preference. `cloud status`, `cloud unstage`, auto-staging and auto-push read
+the same way.
+
+A repository is now treated as connected only when the block carries both `apiHost` and
+`workspaceId`: the two fields nothing works without, one naming the deployment credentials are
+keyed by and the other naming what to read and write. Anything less is an unconnected repository,
+which is what it always was.
+
+No action is needed. A config written by `knowl config set cloud.autoStage` is valid and stays
+valid; it simply no longer claims to be a connection.
+
+### Dependencies
+
+`sharp` and `adm-zip` are forced past the pins `@huggingface/transformers` carries, picking up
+patched versions of both.
+
 ## 5.0.1 — 2026-08-13
 
 Two surfaces that told you the wrong thing about what Knowl was doing.
