@@ -549,6 +549,31 @@ The incremental Tree-sitter index supports `.ts`, `.tsx`, `.js`, and `.jsx`. It 
 symbols and import/export relationships for local inspection; code indexing and symbol
 resolution never fan out to workspace peers.
 
+### Change impact, when two sessions touch the same code
+
+**Off by default.** `impact.enabled` is absent from a new configuration rather than present and
+false, so upgrading Knowl cannot switch it on. Turn it on with `knowl config set impact.enabled
+true`; the MCP tool below is registered only when it is on.
+
+While it is on, Knowl records which files a session actually read, and tells a session when
+another one has since changed code underneath it — the case where you are working from something
+that was true when you read it and is not any more.
+
+Findings come in three tiers. `certain` and `likely` are returned by default; `possible` is
+unmeasured path matching and is returned only when asked for by name. A `certain` finding also
+refuses the next edit to that file until you have re-read it, which is the one place this feature
+does more than report.
+
+- **`knowl_impact`** — `scope: "mine"` (the default) lists findings against reads still held open,
+  which is the work someone can still act on; `scope: "all"` includes findings whose session has
+  since ended and which nobody has adjudicated. Pass `resolve` to close one.
+
+Closing a finding is the only way it ever closes, and the resolution is the measurement:
+`repaired` (you reconciled your work with the change), `false_positive` (the change does not
+affect what you were doing), `dismissed` (it does, and you are proceeding anyway), or `expired`
+(the work it concerned is gone). `false_positive` is what makes a precision number possible, so
+it is worth using when it is the true answer.
+
 ### Pull-request drift and retrieval feedback
 
 Preview affected knowledge before changing freshness:
@@ -695,6 +720,7 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 | --- | --- |
 | `knowl cloud login [--api <host>]` | Sign in once, by device code. The credential lives in `~/.knowl`, never in `.knowl/config.json` |
 | `knowl cloud logout [--api <host>]` | Clear the stored credential |
+| `knowl cloud workspaces [--api <host>]` | List the workspaces this machine can reach, before connecting to one |
 | `knowl cloud connect [--workspace <id>] [--remote <name>] [--repo <name>]` | Point this project at a workspace. Publishes nothing |
 | `knowl cloud pull` | Fetch team knowledge into the local replica |
 | `knowl cloud stage [--id <ids...>] [--category <list>] [--apply]` | Queue knowledge for the team. Bare opens the same picker; naming flags dry-runs until `--apply` |
@@ -748,15 +774,60 @@ The pointer written into `.knowl/config.json` holds the API host, workspace and 
 `knowl cloud login`, and is in. Someone who clones without membership still gets a fully working local
 Knowl; the team half simply reports itself unavailable.
 
+### Knowledge stages itself; sending stays yours
+
+Once a repository is connected, knowledge written from then on is **queued for the team as it is
+written**. You do not have to remember to stage it. Nothing is sent by that: staging records an
+intent, and a separate push is what puts it in front of anyone.
+
+```
+knowl cloud status                # what is queued, and what a push is waiting for
+knowl cloud push                  # send it — only from an up-to-date default branch
+```
+
+Three ways to say "not this one", in the order you will want them:
+
+```
+knowl store "..." --local         # at write time: never publish this atom
+knowl cloud unstage <id>          # after the fact: take it back out of the queue
+knowl cloud unstage <id> --forever   # and never queue it again automatically
+```
+
+`--local` is the one to reach for. An atom that is only true of this machine — an absolute path,
+an environment quirk — has to say so when it is written, because that is the only moment anyone
+knows. An agent says the same thing with `local: true` on `knowl_store`.
+
+Turn the whole thing off for a repository with `knowl config set cloud.autoStage false`, or at
+connect time with `knowl cloud connect --no-auto-stage`.
+
+**Backfilling an existing store is a separate act.** Connecting queues nothing that already
+existed, so a store that predates the connection is caught up deliberately:
+
+```
+knowl cloud stage                                # pick categories from a list
+knowl cloud stage --category decision --apply    # or name them
+```
+
+A bare call opens a picker with the categories worth sharing already ticked and a count beside
+each; confirming it is the apply. Naming categories skips the picker and dry-runs until `--apply`.
+
 ### Publishing tracks the default branch, not your working tree
 
 Local knowledge describes the tree in front of you. Team knowledge has to describe the branch
-everyone shares, so publishing is two-phase, in the shape of git's own index and commit:
+everyone shares, so sending is gated where staging is not:
 
 ```
-knowl cloud stage --category decision --apply   # stage: any time, any branch
-knowl cloud push                                # send: only from an up-to-date default branch
+knowl cloud push                  # only from an up-to-date default branch
 ```
+
+`knowl cloud push` shows what it is about to send and asks, because sending cannot be undone
+except by `knowl cloud retract`, which is a hard delete. `--yes` skips the question; without a
+terminal it is required, so silence is never read as consent.
+
+**Automatic sending is off, and turning it on is per machine.** `knowl cloud autopush on` records
+standing consent for this workspace **on this machine only** — it is not written to
+`.knowl/config.json` and no teammate or CI inherits it. It never relaxes the branch gate, and it
+still sends only what it showed itself: a queue that changed underneath it is refused, not sent.
 
 ### Two kinds of sharing, and they are independent
 
@@ -1418,7 +1489,10 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl workspace list` | List machine-local workspaces |
 | `knowl workspace status [--verbose]` | Show membership and resolved peers |
 | `knowl workspace remove <repo-name> [--export-first]` | Unlink the current repository |
-| `knowl workspace promote (--category <list> \| --id <id...>) [--apply]` | Preview or promote locally owned knowledge |
+| `knowl workspace promote [--category <list> \| --id <id...>] [--apply]` | Share locally owned knowledge with linked repos. Bare opens a picker; naming flags dry-runs until `--apply` |
+| `knowl workspace demand [--limit <n>] [--json]` | What the linked repos have queried each other for — the readout that says which knowledge this repo owes its peers |
+| `knowl workspace repin-embedding [--force]` | Repoint the workspace at this repository's embedding profile |
+| `knowl workspace set [--default-visibility <repo\|workspace>]` | Change this repo's recorded nature in the workspace manifest |
 
 ### Memory and retrieval
 
@@ -1443,13 +1517,22 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl task checkpoint <task-id> <summary> [options]` | Store resumable progress, blockers, artifacts, and verification state |
 | `knowl task finish <task-id> <summary>` | Finish a manual work loop |
 | `knowl task run <title> -- <command...>` | Wrap one bounded command in a work loop |
-| `knowl session start\|event\|finish\|recover` | Manage bounded, expiring session scratch and recovery |
+| `knowl session start <title>` | Open a bounded, expiring session scratchpad |
+| `knowl session event <id> <type>` | Record one event against an open session |
+| `knowl session finish <id> --status <s>` | Close a session and promote what it earned |
+| `knowl session recover` | Reclaim sessions abandoned by a crashed host |
 
 ### Skills, code, and optional AI
 
 | Command | Description |
 | --- | --- |
-| `knowl skill list\|read\|create\|run` | Manage file-backed learned skills and their entrypoints |
+| `knowl skill list` | List learned skill packages |
+| `knowl skill read <name>` | Read one learned skill package |
+| `knowl skill create <name>` | Create a file-backed skill package and index it |
+| `knowl skill run <name> [args...]` | Run an approved skill package's entrypoint |
+| `knowl skill approve <name>` | Approve a package for execution, pinned to its current contents |
+| `knowl skill revoke <name>` | Withdraw approval, so the entrypoint stops being runnable |
+| `knowl skill trust` | List the packages currently approved to run |
 | `knowl index-code` | Incrementally index TS/JS symbols and import/export edges |
 | `knowl symbols <path>` | Print indexed symbols for one repository-relative file |
 | `knowl synthesize --scope <tag>` | Create or refresh one deterministic tag-scoped understanding |
@@ -1463,7 +1546,10 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl export <path>` | Write portable, checksum-verified JSONL |
 | `knowl import <path> [--dry-run] [--on-divergence newer\|skip\|theirs\|fail]` | Import JSONL with an explicit divergence policy |
 | `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Create a checksummed SQLite snapshot, or restore one after verifying its manifest, size, checksum, and SQLite integrity |
-| `knowl config` / `get <key>` / `set <key> <value>` / `reset [key]` | Edit configuration interactively or from scripts |
+| `knowl config` | Edit configuration interactively |
+| `knowl config get <key>` | Print one configuration value |
+| `knowl config set <key> <value>` | Set one configuration value |
+| `knowl config reset [key]` | Restore one key, or all of them, to the default |
 | `knowl config set-model <model>` | Verify, download and select a custom embedding model |
 | `knowl reindex --vectors` | Prepare the local model and embed items that have no current vector; `--force` re-embeds every item |
 | `knowl reindex --transcripts [--budget <minutes>]` | Build or update the optional session transcript index; resumable, so a budget is a stopping point rather than a rollback |

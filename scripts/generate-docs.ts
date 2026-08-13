@@ -20,7 +20,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS } from '../src/mcp/tool-definitions.js';
+import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, IMPACT_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS } from '../src/mcp/tool-definitions.js';
 import { DEFAULT_PRESET_ID, VECTOR_PRESETS } from '../src/core/vector-profile.js';
 import { stripManagedKnowlGuidance } from '../src/core/agents-guidance.js';
 import { renderManagedKnowlGuidanceSection } from '../src/core/knowl-guidance.js';
@@ -75,7 +75,13 @@ for (const [id, [file, body]] of Object.entries(regions)) {
  * happened three times before the counts were reconciled by hand.
  */
 const referenceText = fs.readFileSync(REFERENCE, 'utf8');
-for (const tool of [...CORE_TOOL_DEFINITIONS, ...TRANSCRIPT_TOOL_DEFINITIONS, ...CLOUD_TOOL_DEFINITIONS, ...WORKSPACE_TOOL_DEFINITIONS]) {
+// Every gated set, named. `knowl_impact` was missing from this list and from the reference for
+// as long as both existed -- the check reported "every tool is documented" while knowing
+// nothing about it. Adding a set to `tool-definitions.ts` means adding it here.
+for (const tool of [
+  ...CORE_TOOL_DEFINITIONS, ...TRANSCRIPT_TOOL_DEFINITIONS, ...CLOUD_TOOL_DEFINITIONS,
+  ...WORKSPACE_TOOL_DEFINITIONS, ...IMPACT_TOOL_DEFINITIONS,
+]) {
   if (!referenceText.includes(`\`${tool.name}\``)) {
     failures.push(`docs/reference.md documents no tool named ${tool.name}`);
   }
@@ -83,25 +89,47 @@ for (const tool of [...CORE_TOOL_DEFINITIONS, ...TRANSCRIPT_TOOL_DEFINITIONS, ..
 
 /** Same rule for the CLI. Built output only -- the help text is what a user actually sees. */
 const distEntry = path.join(root, 'dist', 'index.js');
-if (fs.existsSync(distEntry)) {
-  const help = execFileSync(process.execPath, [distEntry, '--help'], {
+
+/**
+ * The command names one `--help` screen lists.
+ *
+ * Commander indents a command name by exactly two spaces and wraps its description far to the
+ * right. Matching on `trim()` would read every wrapped word as a command -- it did, and asked
+ * the reference to document "knowl the".
+ */
+function commandsListedBy(argv: string[]): string[] {
+  const help = execFileSync(process.execPath, [distEntry, ...argv, '--help'], {
     encoding: 'utf8',
     env: { ...process.env, NO_COLOR: '1' },
   });
   const marker = help.indexOf('Commands:');
-  if (marker === -1) throw new Error('Could not find a "Commands:" section in `knowl --help`.');
-  // Commander indents a command name by exactly two spaces and wraps its description far to
-  // the right. Matching on `trim()` would read every wrapped word as a command -- it did, and
-  // asked the reference to document "knowl the".
-  const commands = help.slice(marker + 'Commands:'.length)
+  // A leaf command lists no subcommands, which is not an error -- only the root must have some.
+  if (marker === -1) {
+    if (argv.length === 0) throw new Error('Could not find a "Commands:" section in `knowl --help`.');
+    return [];
+  }
+  return [...new Set(help.slice(marker + 'Commands:'.length)
     .split('\n')
     .map(line => /^ {2}(\S+)/.exec(line)?.[1] ?? '')
     .map(name => name.split(/[|[<]/)[0])
-    .filter(name => /^[a-z][a-z-]+$/.test(name));
-  for (const command of new Set(commands)) {
-    if (command === 'help') continue;
+    .filter(name => /^[a-z][a-z-]+$/.test(name))
+    .filter(name => name !== 'help'))];
+}
+
+if (fs.existsSync(distEntry)) {
+  // Descends one level into every group, because this used to read the TOP-LEVEL screen only.
+  // `knowl cloud` appeared in the reference, so the whole group passed -- and `cloud workspaces`,
+  // `cloud unstage` and `cloud autopush` shipped undocumented behind a green gate. A gate that
+  // enumerates one level while reporting on all of them is worse than no gate, because it is
+  // believed.
+  for (const command of commandsListedBy([])) {
     if (!referenceText.includes(`knowl ${command}`)) {
       failures.push(`docs/reference.md documents no command named "knowl ${command}"`);
+    }
+    for (const sub of commandsListedBy([command])) {
+      if (!referenceText.includes(`knowl ${command} ${sub}`)) {
+        failures.push(`docs/reference.md documents no command named "knowl ${command} ${sub}"`);
+      }
     }
   }
 } else {

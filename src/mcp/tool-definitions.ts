@@ -15,6 +15,9 @@ import { UNTRUSTED_NOTICE } from '../core/untrusted.js';
  */
 export type ToolDefinition = { name: string; description: string; inputSchema: Record<string, unknown> };
 
+/** The only ways a change-impact finding is ever closed. Named here beside the schema that offers them. */
+export const IMPACT_RESOLUTIONS = ['repaired', 'dismissed', 'expired', 'false_positive'];
+
 /**
  * Ceilings named inside the schemas below, so they travel with the text that quotes them.
  *
@@ -93,6 +96,7 @@ export const TRANSCRIPT_TOOL_DEFINITIONS: ToolDefinition[] = [
  * pulling already happens on its own. Staging is the half that is safe from every vantage, so it
  * is the half exposed.
  */
+
 export const CLOUD_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_cloud',
@@ -119,6 +123,43 @@ export const CLOUD_TOOL_DEFINITIONS: ToolDefinition[] = [
               forever: {
                 type: 'boolean',
                 description: 'unstage only. Also exclude the atom, so nothing stages it again automatically. Use this for knowledge that is only true of this machine and was queued before anyone noticed; `local` on knowl_store is the way to say so at write time instead.',
+              },
+            },
+          },
+        },
+];
+
+// Registered only when the repo turned change impact on. One tool, not two: `types.ts:267-271`
+// records that every registered tool costs guidance-card space in every session of every user,
+// so reading findings and adjudicating one share a surface rather than splitting into a pull
+// tool and a resolve tool.
+export const IMPACT_TOOL_DEFINITIONS: ToolDefinition[] = [
+        {
+          name: 'knowl_impact',
+          description: 'Change-impact findings: code a live session read that has since moved underneath it. Pass resolve to adjudicate one. A certain-tier finding also refuses the next edit to that file until you re-read it, so listing them here is how you see what is about to be blocked and why.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              scope: {
+                type: 'string', enum: ['mine', 'all'],
+                description: 'mine (default): findings against reads still held open -- the work someone can still act on. all: every open finding, including ones whose read was released when its session ended and which nobody has adjudicated yet.',
+              },
+              tier: {
+                type: 'string', enum: ['certain', 'likely', 'possible'],
+                description: 'One tier. Omit for certain + likely; `possible` is unmeasured path matching and is returned only when asked for by name.',
+              },
+              resolve: {
+                type: 'object',
+                description: 'Adjudicate one finding. This is the only way a finding is ever closed -- the write gate deliberately leaves them open -- and the resolutions are the measurement: false_positive is what makes a precision number possible, so use it when it is the true answer.',
+                properties: {
+                  id: { type: 'string', minLength: 1, maxLength: 64, description: 'The finding id, exactly as it was returned.' },
+                  resolution: {
+                    type: 'string', enum: IMPACT_RESOLUTIONS,
+                    description: 'repaired: you reconciled your work with the change. false_positive: the change does not affect what you were doing. dismissed: it does affect you and you are proceeding anyway. expired: the work it concerned is gone.',
+                  },
+                },
+                required: ['id', 'resolution'],
+                additionalProperties: false,
               },
             },
           },

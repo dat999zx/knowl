@@ -43,7 +43,7 @@ import { isTranscriptSearchEnabled } from '../transcripts/config.js';
 import { hasIndexableArchive } from '../transcripts/paths.js';
 import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
-import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
+import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, IMPACT_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
 import { teamUpdateNotice } from '../cloud/team-update.js';
 import { maybeAutoSync } from '../cloud/auto-sync.js';
 import { cloudStatusInRequest } from '../cloud/status.js';
@@ -125,7 +125,6 @@ export function describeWriteReconciliation(result: {
 
 
 /** Resolutions `knowl_impact` accepts, matching `ImpactResolution` in the store. */
-const IMPACT_RESOLUTIONS = ['repaired', 'dismissed', 'expired', 'false_positive'];
 
 /**
  * The default tier set: everything measured, and nothing that is not.
@@ -148,42 +147,6 @@ const MAX_IMPACT_SIGNATURE_CHARS = 200;
 const IMPACT_DISABLED_MESSAGE =
   'Change-impact detection is not enabled for this repository. Enable impact.enabled with `knowl config`.';
 
-// Registered only when the repo turned change impact on. One tool, not two: `types.ts:267-271`
-// records that every registered tool costs guidance-card space in every session of every user,
-// so reading findings and adjudicating one share a surface rather than splitting into a pull
-// tool and a resolve tool.
-const IMPACT_TOOLS: ToolDefinition[] = [
-        {
-          name: 'knowl_impact',
-          description: 'Change-impact findings: code a live session read that has since moved underneath it. Pass resolve to adjudicate one. A certain-tier finding also refuses the next edit to that file until you re-read it, so listing them here is how you see what is about to be blocked and why.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              scope: {
-                type: 'string', enum: ['mine', 'all'],
-                description: 'mine (default): findings against reads still held open -- the work someone can still act on. all: every open finding, including ones whose read was released when its session ended and which nobody has adjudicated yet.',
-              },
-              tier: {
-                type: 'string', enum: ['certain', 'likely', 'possible'],
-                description: 'One tier. Omit for certain + likely; `possible` is unmeasured path matching and is returned only when asked for by name.',
-              },
-              resolve: {
-                type: 'object',
-                description: 'Adjudicate one finding. This is the only way a finding is ever closed -- the write gate deliberately leaves them open -- and the resolutions are the measurement: false_positive is what makes a precision number possible, so use it when it is the true answer.',
-                properties: {
-                  id: { type: 'string', minLength: 1, maxLength: 64, description: 'The finding id, exactly as it was returned.' },
-                  resolution: {
-                    type: 'string', enum: IMPACT_RESOLUTIONS,
-                    description: 'repaired: you reconciled your work with the change. false_positive: the change does not affect what you were doing. dismissed: it does affect you and you are proceeding anyway. expired: the work it concerned is gone.',
-                  },
-                },
-                required: ['id', 'resolution'],
-                additionalProperties: false,
-              },
-            },
-          },
-        },
-];
 
 /**
  * The published tool surface.
@@ -237,7 +200,7 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
   }
 
   if (config && isImpactEnabled(config)) {
-    tools.push(...IMPACT_TOOLS);
+    tools.push(...IMPACT_TOOL_DEFINITIONS);
   }
 
   if (config?.cloud) {
@@ -262,7 +225,7 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
  */
 const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
   [
-    ...knowlToolDefinitions(null), ...TRANSCRIPT_TOOL_DEFINITIONS, ...IMPACT_TOOLS,
+    ...knowlToolDefinitions(null), ...TRANSCRIPT_TOOL_DEFINITIONS, ...IMPACT_TOOL_DEFINITIONS,
     ...CLOUD_TOOL_DEFINITIONS, ...WORKSPACE_TOOL_DEFINITIONS,
   ]
     .map(tool => [tool.name, tool.inputSchema]),
