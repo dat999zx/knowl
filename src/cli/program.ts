@@ -62,6 +62,7 @@ import { recommendedTotal, WITHHELD_BY_DEFAULT } from '../core/sharing-defaults.
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
 import { computePushSnapshot, countStageable, pushStaged, stagePublish } from '../cloud/publish.js';
+import { reportDrift } from '../cloud/drift-report.js';
 import { retractItem } from '../cloud/retract.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { cloudPointer } from '../core/cloud-pointer.js';
@@ -77,7 +78,7 @@ import { listForgetLog, pruneForgetLog } from '../store/forget-log.js';
 import { truncateText } from '../core/token-budget.js';
 import { getAccessSummary } from '../store/access-feedback.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } from '../store/work-loop.js';
-import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince } from '../store/drift.js';
+import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince, listRenamedPathsSince } from '../store/drift.js';
 import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage, SkillEntrypoint } from '../skills/registry.js';
 import { approveSkill, listTrust, revokeSkill } from '../skills/trust.js';
@@ -3507,15 +3508,56 @@ program
         currentCommit,
         changedFiles,
         apply: !options.dryRun,
+        projectRoot: root,
+        // A rename leaves the old path absent from the tree, so without this a refactor reads as
+        // a mass deletion of everything it touched.
+        renamedFrom: listRenamedPathsSince(root, options.since, currentCommit),
         // `pr check` is the deliberate, on-demand pass, so it also examines affected paths git
         // cannot diff -- untracked or ignored working directories an atom names. The automatic
-        // session-start check deliberately does NOT pass this yet: that path returns early when
-        // HEAD has not moved, and relaxing its gating is a separate decision with the noise
-        // measurements in drift-auto.ts behind it.
-        projectRoot: root,
+        // session-start check still does NOT ask for this; it passes `projectRoot` alone, which
+        // since 2026-08-13 buys it removal-vs-edit classification without the extra scan.
+        includeUntracked: true,
       });
 
       printPrCheckResult(result);
+
+      /**
+       * Tell the team, from the one place that should.
+       *
+       * `reportDrift` shipped complete, gated and tested with no production caller at all. It gets
+       * one here rather than at session start, because this is the deliberate pass a human runs:
+       * session start must stay offline, and a network call per session on a signal nobody asked
+       * for is how the last version of this became noise.
+       *
+       * Every refusal is silent by design. `reportDrift` returns `not-connected` for a local repo,
+       * `not-published` for an atom the team has never seen, and `gated` off the default branch or
+       * behind its remote -- a drift report retires knowledge for everyone, so it keeps the vantage
+       * requirement that publishing gave up. None of those is a failure of `pr check`, and none
+       * should make it exit non-zero.
+       */
+      const prCheckConfig = await loadConfig(root);
+      if (prCheckConfig.cloud && !options.dryRun && result.candidates.length > 0) {
+        const reported: string[] = [];
+        for (const candidate of result.candidates) {
+          // The reason is stored on the report and read by whoever reviews it, so it names the
+          // evidence rather than restating the verdict: which cited paths went away, and the kind
+          // of drift this was.
+          const evidence = candidate.removedPaths.length > 0
+            ? candidate.removedPaths.join(', ')
+            : candidate.matchedPaths.join(', ');
+          const outcome = await reportDrift({
+            projectRoot: root,
+            config: prCheckConfig,
+            itemId: candidate.itemId,
+            reason: `${candidate.kind}: ${evidence}`,
+          }).catch(() => 'not-connected' as const);
+          if (outcome === 'reported') reported.push(candidate.itemId);
+        }
+        if (reported.length > 0) {
+          console.log(`Reported ${reported.length} of ${result.candidates.length} to the team.`);
+        }
+      }
+
       await closeDb();
     } catch (error: any) {
       try {

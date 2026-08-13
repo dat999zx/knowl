@@ -607,9 +607,12 @@ describe('CLI Integration', () => {
           args: [JSON.stringify(['src/billing.ts']), baseCommit, 'fresh', itemId],
         });
 
-        await fs.writeFile(path.join(prDir, 'src', 'billing.ts'), 'export const version = 2;\n', 'utf-8');
-        git('add src/billing.ts');
-        git('commit -m "change billing"');
+        // Removed, not edited. Since 2026-08-13 an edit to a cited file is not drift on its own:
+        // a file being touched says nothing about whether what was written about it became false,
+        // and treating it as drift is what made this signal unreadable at scale.
+        await fs.rm(path.join(prDir, 'src', 'billing.ts'));
+        git('add -A src/billing.ts');
+        git('commit -m "drop billing"');
 
         const output = execSync(`node "${CLI_PATH}" pr --since ${baseCommit}`, {
           cwd: prDir,
