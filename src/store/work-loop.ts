@@ -68,6 +68,36 @@ async function requireWorkLoopTask(taskId: string): Promise<KnowledgeItem> {
  * the store's own idiom (`search.ts`, `vector.ts`): tags serialize as a JSON array, so the
  * quoted needle cannot match a longer tag that merely starts with the same characters.
  */
+/**
+ * Retire this task's earlier step atoms in favour of the one just written.
+ *
+ * A checkpoint is a snapshot of where a task stands, not an entry in a log, so the previous
+ * snapshot stops being true the moment a new one is taken. Measured on this repository's own
+ * store before this existed: 54 active work-loop atoms across 18 tasks, one of them holding five
+ * checkpoints — 6% of the whole active corpus describing lifecycle rather than knowledge.
+ *
+ * **Superseded, never deleted.** `resolveDuplicate`'s invariant is that content is never silently
+ * discarded, and nothing else in this system removes knowledge automatically. The retired atoms
+ * stay queryable, so "what did this task actually do" still has an answer, and the memory session
+ * keeps the full event trail either way (`captureMemorySessionEvent`).
+ *
+ * **Keyed on the `task:<id>` tag, deliberately not on the title.** Work loops run in parallel, and
+ * matching titles would let one task retire another's checkpoints. The task's own anchor atom is
+ * tagged `task-start` rather than `task:<id>`, so it is excluded and `requireWorkLoopTask` keeps
+ * resolving.
+ */
+async function retirePriorSteps(taskId: string, replacementId: string): Promise<void> {
+  const rows = (await getClient().execute({
+    sql: `SELECT id FROM knowledge_items
+      WHERE tags LIKE ? AND status = 'active' AND id != ?`,
+    args: [`%"task:${taskId}"%`, replacementId],
+  })).rows;
+
+  for (const row of rows) {
+    await repo.supersedeKnowledgeItem(String(row.id), replacementId);
+  }
+}
+
 async function taskAlreadyFinished(taskId: string): Promise<boolean> {
   const rows = (await getClient().execute({
     sql: `SELECT 1 FROM knowledge_items
@@ -188,9 +218,14 @@ async function recordWorkLoopStep(
   }
   const now = new Date().toISOString();
   const taskState = normalizeTaskState(taskStateInput);
+  const taskName = task.title.replace(/^Work Loop: /, '');
   const item = await repo.createKnowledgeItem(projectId, {
     category: 'state',
-    title,
+    // The task, in the title. Every step atom used to be called exactly `Work Loop checkpoint`
+    // whatever it was about, so 38 of them collided in one store and none could be retrieved by
+    // the work it described. `recent-context.ts` filters them by the `Work Loop checkpoint%`
+    // prefix, which this keeps intact.
+    title: `${title}: ${taskName}`,
     content: [
       `Task ID: ${taskId}`,
       `Task: ${task.title.replace(/^Work Loop: /, '')}`,
@@ -206,6 +241,8 @@ async function recordWorkLoopStep(
   await repo.createKnowledgeCommit(projectId, commitMessage, [
     { itemId: item.id, action: 'insert', after: item },
   ]);
+
+  await retirePriorSteps(taskId, item.id);
 
   const sessionId = memorySessionId(task);
   if (sessionId) {

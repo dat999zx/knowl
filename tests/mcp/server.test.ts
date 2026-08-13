@@ -940,8 +940,10 @@ describe('MCP Server Layer', () => {
 
     const items = await repo.listKnowledgeItems();
     expect(items.some(item => item.title === 'Work Loop: Implement search UI')).toBe(true);
-    expect(items.some(item => item.title === 'Work Loop checkpoint')).toBe(true);
-    expect(items.some(item => item.title === 'Work Loop finish')).toBe(true);
+    // Step atoms name their task. Every one used to be called exactly `Work Loop checkpoint`
+    // whatever it described, which is how 38 of them collided in one store.
+    expect(items.some(item => item.title === 'Work Loop checkpoint: Implement search UI')).toBe(true);
+    expect(items.some(item => item.title === 'Work Loop finish: Implement search UI')).toBe(true);
   });
 
   it('should create, read, list, and run learned skills through stable MCP tools', async () => {

@@ -434,8 +434,10 @@ describe('CLI Integration', () => {
       encoding: 'utf-8',
     });
     expect(stateOutput).toContain('Work Loop: Implement search UI');
-    expect(stateOutput).toContain('Work Loop checkpoint');
     expect(stateOutput).toContain('Work Loop finish');
+    // And NOT the checkpoint. A finished task leaves one active step atom rather than a trail:
+    // the checkpoint is superseded by the finish, still queryable, just no longer live state.
+    expect(stateOutput).not.toContain('Work Loop checkpoint');
 
     await fs.rm(workLoopDir, { recursive: true, force: true });
   }, 60_000);
