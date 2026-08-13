@@ -133,7 +133,8 @@ async function resolutionOf(findingId: string): Promise<string | null> {
 
 async function finishItemCount(taskId: string): Promise<number> {
   const rows = await getClient().execute({
-    sql: "SELECT COUNT(*) AS n FROM knowledge_items WHERE title = 'Work Loop finish' AND content LIKE ?",
+    // Prefix, not equality: a step atom's title carries its task name since 2026-08-13.
+    sql: "SELECT COUNT(*) AS n FROM knowledge_items WHERE title LIKE 'Work Loop finish%' AND content LIKE ?",
     args: [`%Task ID: ${taskId}%`],
   });
   return Number(rows.rows[0]?.n ?? 0);
