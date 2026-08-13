@@ -46,7 +46,7 @@ import { discoverRepos } from './repo-discovery.js';
 import { applyDoctorRemedies } from './doctor-fix.js';
 import { formatSweepReport, sweepRepos } from './upgrade-all.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
-import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './config/service.js';
+import { getEffectiveConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './config/service.js';
 import { runConfigUi } from './config/ui.js';
 import { defaultApiHost, runLogin, runLogout } from '../cloud/login.js';
 import { createCloudApi } from '../cloud/api-client.js';
@@ -2337,7 +2337,7 @@ configCommand
   .argument('<key>')
   .action(async (key) => {
     try {
-      const value = await getConfigValue(await findProjectRoot(process.cwd()), key);
+      const value = await getEffectiveConfigValue(await findProjectRoot(process.cwd()), key);
       console.log(typeof value === 'string' ? value : JSON.stringify(value));
     } catch (error: any) {
       console.error(`❌ Configuration error: ${error.message}`);

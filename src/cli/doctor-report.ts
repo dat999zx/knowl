@@ -139,11 +139,29 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         // is cleared either by retiring the item or by changing the security setting.
         : 'run `knowl audit` to list the records, then retire an item with `knowl supersede <itemId> <replacementId>` or adjust security settings with `knowl config`',
     });
+    // Resolved here rather than at its first use below, because the severity of a missing
+    // embeddings table depends on whether anything was going to read it.
+    const vectorEnabled = isVectorSearchEnabled(config);
+
     try {
       await (getDb() as any).all(sql`SELECT 1 FROM knowledge_embeddings LIMIT 1`);
       checks.push({ status: 'OK', message: 'Database schema includes knowledge_embeddings' });
     } catch {
-      checks.push({ status: 'WARN', message: 'Database schema missing knowledge_embeddings; run knowl upgrade' });
+      // FAIL when vector search is on: there is no table for an embedding to live in, so
+      // semantic retrieval cannot work at all and no amount of reindexing will change that
+      // until the schema is upgraded. The coverage check below cannot report this itself --
+      // its own query reads the same missing table, so it throws into the outer catch and the
+      // report ends early on a raw SQL error instead of naming the problem.
+      //
+      // WARN when vector search is off, where the absent table is a database older than a
+      // feature the project does not use.
+      checks.push({
+        status: vectorEnabled ? 'FAIL' : 'WARN',
+        message: vectorEnabled
+          ? 'Database schema is missing knowledge_embeddings, so vector search has nowhere to store or read embeddings and cannot return anything; run knowl upgrade'
+          : 'Database schema missing knowledge_embeddings; run knowl upgrade',
+        fix: 'run `knowl upgrade`',
+      });
     }
     try {
       await (getDb() as any).all(sql`SELECT 1 FROM code_symbols LIMIT 1`);
@@ -171,7 +189,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
     // and a store where they disagreed about which profile that is would report a gap in one and
     // full coverage in the other. Null means vector search is off, which the lexical check reads
     // as "there is no semantic fallback".
-    const vectorFingerprint = isVectorSearchEnabled(config)
+    const vectorFingerprint = vectorEnabled
       ? fingerprintProfile(resolveVectorProfile(config))
       : null;
 
@@ -265,7 +283,7 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
         : 'MCP tool surface should expose knowl_skill_list, knowl_skill_read, and knowl_skill_run',
     });
 
-    if (isVectorSearchEnabled(config)) {
+    if (vectorEnabled) {
       const vector = getVectorSearchConfig(config);
       // Coverage, not configuration. "Enabled" was always true and told the user nothing
       // about whether their knowledge is actually reachable by semantic search.

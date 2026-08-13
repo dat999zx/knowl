@@ -24,9 +24,13 @@ export type ConfigKey =
   | 'memory.global.path'
   | 'impact.enabled'
   | 'impact.gate'
-  | 'capture.nudge';
+  | 'capture.nudge'
+  | 'cloud.autoStage'
+  | 'updateCheck.enabled';
 
-export type ConfigCategory = 'Search' | 'Security' | 'AI provider' | 'Memory namespaces' | 'Change impact' | 'Capture';
+export type ConfigCategory =
+  | 'Search' | 'Security' | 'AI provider' | 'Memory namespaces' | 'Change impact' | 'Capture'
+  | 'Cloud' | 'Updates';
 
 /**
  * How a value should be asked for. Without this the UI had only `parse`, so every field
@@ -243,6 +247,27 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: enumValue(CAPTURE_NUDGE_MODES), defaultValue: 'off',
     label: 'Empty-session nudge',
     description: 'When a conversation has run for several turns and stored nothing durable: shadow records the nudge it would have sent, enforce withholds the stop once and asks the agent to store what it learned. Measurement runs either way.',
+  },
+  {
+    // Absent from DEFAULT_CONFIG on purpose, like the three above: merged in, it would write
+    // `cloud.autoStage` into every config on the machine, including repositories that have never
+    // been connected to anything. Here it only tells the editor what "unset" means -- which for
+    // this key is ON, because a connected repository stages as it writes unless told otherwise.
+    //
+    // The rest of the `cloud` block is deliberately NOT here. `apiHost`, `workspaceId`,
+    // `workspaceName`, `repo` and `remote` are a pointer written by `knowl cloud connect`, not
+    // preferences: hand-editing them points the repository at a workspace it never authenticated
+    // against, and every later command looks connected while every push fails.
+    key: 'cloud.autoStage', category: 'Cloud', type: 'boolean',
+    parse: booleanValue, defaultValue: true,
+    label: 'Stage new knowledge automatically',
+    description: 'In a connected repository, queue new knowledge for the team as it is written. Nothing is sent by this -- `knowl cloud push` still sends, and still asks. Off means staging explicitly with `knowl cloud stage`.',
+  },
+  {
+    key: 'updateCheck.enabled', category: 'Updates', type: 'boolean',
+    parse: booleanValue, defaultValue: DEFAULT_CONFIG.updateCheck?.enabled,
+    label: 'Check npm for updates',
+    description: 'Let `status` and `doctor` check npm once a day for a newer Knowl. Off makes both entirely offline.',
   },
 ];
 

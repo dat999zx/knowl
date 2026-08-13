@@ -67,10 +67,35 @@ async function saveRawConfig(root: string, config: ConfigRecord) {
   await saveConfig(root, config as ProjectConfig);
 }
 
+/**
+ * What the file says, which for an unset key is nothing.
+ *
+ * The editor needs this rather than the effective value: it distinguishes stored from
+ * defaulted to decide what to mark as modified, and `search.vector.preset` specifically
+ * relies on an unset key reading as undefined so a repo initialised before presets existed
+ * can fall through to the model-derived answer.
+ */
 export async function getConfigValue(root: string, key: string): Promise<unknown> {
   const field = getConfigField(key);
   if (field.secret) return '********';
   return getAtPath(await loadRawConfig(root), key);
+}
+
+/**
+ * What the setting will actually do, which for an unset key is its default.
+ *
+ * `knowl config get` asks a behavioural question -- will this repository stage as it writes --
+ * and answering `undefined` does not answer it. Four keys are deliberately absent from
+ * `DEFAULT_CONFIG` (`cloud.autoStage`, `impact.enabled`, `impact.gate`, `capture.nudge`,
+ * whose comments in the schema explain that merging them in would write them into every
+ * config on the machine), so for those the file is silent even in a fully configured repo.
+ *
+ * Still one bare value on stdout, because this output is piped.
+ */
+export async function getEffectiveConfigValue(root: string, key: string): Promise<unknown> {
+  const stored = await getConfigValue(root, key);
+  if (stored !== undefined) return stored;
+  return getConfigField(key).defaultValue;
 }
 
 export async function setConfigValue(root: string, key: string, raw: string): Promise<unknown> {

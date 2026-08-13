@@ -241,10 +241,10 @@ export interface Project {
 
 export interface ProjectConfig {
   version: number;
-  project?: {
-    name?: string;
-    description?: string;
-  };
+  // `project` used to hold a name and description. Nothing has read either for a long time and
+  // `stripDeprecatedConfigFields` deletes the block on every load, so declaring it here described
+  // a field the product does not have. The strip stays: it is what cleans the key out of configs
+  // written before this.
   ai?: {
     provider: 'openai' | 'anthropic' | 'ollama' | 'custom';
     model: string;
