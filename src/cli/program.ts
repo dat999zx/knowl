@@ -78,7 +78,7 @@ import { listForgetLog, pruneForgetLog } from '../store/forget-log.js';
 import { truncateText } from '../core/token-budget.js';
 import { getAccessSummary } from '../store/access-feedback.js';
 import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } from '../store/work-loop.js';
-import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince } from '../store/drift.js';
+import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince, listRenamedPathsSince } from '../store/drift.js';
 import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage, SkillEntrypoint } from '../skills/registry.js';
 import { approveSkill, listTrust, revokeSkill } from '../skills/trust.js';
@@ -3509,6 +3509,9 @@ program
         changedFiles,
         apply: !options.dryRun,
         projectRoot: root,
+        // A rename leaves the old path absent from the tree, so without this a refactor reads as
+        // a mass deletion of everything it touched.
+        renamedFrom: listRenamedPathsSince(root, options.since, currentCommit),
         // `pr check` is the deliberate, on-demand pass, so it also examines affected paths git
         // cannot diff -- untracked or ignored working directories an atom names. The automatic
         // session-start check still does NOT ask for this; it passes `projectRoot` alone, which

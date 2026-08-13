@@ -79,19 +79,34 @@ describe('classifyDriftPaths', () => {
 
   it('calls a path that no longer exists removed', () => {
     expect(classifyDriftPaths(['src/gone.ts'], exists([])))
-      .toEqual({ removed: ['src/gone.ts'], changed: [] });
+      .toEqual({ removed: ['src/gone.ts'], changed: [], moved: [] });
   });
 
   it('calls a path that still exists merely changed', () => {
     expect(classifyDriftPaths(['src/here.ts'], exists(['src/here.ts'])))
-      .toEqual({ removed: [], changed: ['src/here.ts'] });
+      .toEqual({ removed: [], changed: ['src/here.ts'], moved: [] });
+  });
+
+  it('calls a path git renamed moved, not removed', () => {
+    // Audited on the real store after the first cut shipped: 30 of 44 survivors were this --
+    // a refactor moved `src/store/host-lifecycle.ts` to `src/session/`, and every atom citing it
+    // was flagged as though the runtime had been deleted. The atoms are still true; only their
+    // paths are stale, which is a different and much weaker finding.
+    expect(classifyDriftPaths(['src/store/host-lifecycle.ts'], exists([]),
+      new Set(['src/store/host-lifecycle.ts'])))
+      .toEqual({ removed: [], changed: [], moved: ['src/store/host-lifecycle.ts'] });
+  });
+
+  it('still calls a path removed when it is gone and was never renamed', () => {
+    expect(classifyDriftPaths(['src/gone.ts'], exists([]), new Set(['src/other.ts'])))
+      .toEqual({ removed: ['src/gone.ts'], changed: [], moved: [] });
   });
 
   it('separates the two rather than letting one hide the other', () => {
     // The case that matters: an item citing both. It is a removal candidate on the strength of the
     // first path, and reporting only "something changed" would lose that.
     expect(classifyDriftPaths(['src/gone.ts', 'src/here.ts'], exists(['src/here.ts'])))
-      .toEqual({ removed: ['src/gone.ts'], changed: ['src/here.ts'] });
+      .toEqual({ removed: ['src/gone.ts'], changed: ['src/here.ts'], moved: [] });
   });
 });
 

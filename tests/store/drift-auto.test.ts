@@ -154,6 +154,35 @@ describe('automatic drift check', () => {
     expect(stamped.last_drift_at).toBeNull();
   });
 
+  it('does not call a renamed file drift, because the atom is still true', async () => {
+    // Found by auditing the first cut of this rule against the real store: 30 of its 44 survivors
+    // were one refactor moving `src/store/` files into `src/session/`. A rename leaves the old
+    // path absent from the tree, so existence alone cannot tell it from a deletion -- and every
+    // one of those atoms was still perfectly true, with only its path stale.
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Moved but still true',
+      content: 'A claim about src/moved.ts.',
+      affectedPaths: ['src/moved.ts'],
+    });
+
+    await commitFile('src/moved.ts', 'export const a = 1;\n', 'add moved');
+    await runAutoDriftCheck(projectId, ROOT); // baseline past creation
+    git('mv src/moved.ts src/relocated.ts');
+    git('commit -m "relocate moved"');
+
+    const result = await runAutoDriftCheck(projectId, ROOT);
+    expect(result?.checked).toBe(true);
+    expect(result?.candidateTitles).not.toContain('Moved but still true');
+
+    const row = (await getClient().execute({
+      sql: 'SELECT freshness, last_drift_at FROM knowledge_items WHERE id = ?',
+      args: [item.id],
+    })).rows[0];
+    expect(String(row.freshness)).toBe('fresh');
+    expect(row.last_drift_at).toBeNull();
+  });
+
   it('clears the stamp when the item is reviewed, and not when it is merely touched', async () => {
     const item = await repo.createKnowledgeItem(projectId, {
       category: 'fact',

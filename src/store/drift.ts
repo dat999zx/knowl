@@ -59,13 +59,19 @@ export function isChurnPath(candidate: string): boolean {
 export function classifyDriftPaths(
   citedPaths: string[],
   exists: (candidate: string) => boolean,
-): { removed: string[]; changed: string[] } {
+  movedFrom: ReadonlySet<string> = new Set(),
+): { removed: string[]; changed: string[]; moved: string[] } {
   const removed: string[] = [];
   const changed: string[] = [];
+  const moved: string[] = [];
   for (const candidate of citedPaths) {
-    (exists(candidate) ? changed : removed).push(candidate);
+    if (exists(candidate)) changed.push(candidate);
+    // Checked before "removed", because a rename leaves the old path absent from the tree and is
+    // otherwise indistinguishable from a deletion by existence alone.
+    else if (movedFrom.has(candidate)) moved.push(candidate);
+    else removed.push(candidate);
   }
-  return { removed, changed };
+  return { removed, changed, moved };
 }
 
 export interface DriftCheckResult {
@@ -108,6 +114,37 @@ export function listChangedFilesSince(projectRoot: string, sinceCommit: string, 
       .map(line => normalizePathForKnowledge(line.trim()))
       .filter(Boolean)
   ));
+}
+
+/**
+ * The paths a rename moved *away from*, over the same range the changed-file list covers.
+ *
+ * Rename detection has to come from a whole-tree diff. `git log -- <path>` limits the diff to that
+ * pathspec, which hides the destination and reports every rename as a plain delete -- the mistake
+ * that made the first audit of this rule report zero renames when 30 of 44 flagged items were
+ * renames.
+ *
+ * Best-effort: a git failure yields an empty set, which degrades to treating moves as deletions.
+ * That is the old, noisier behaviour rather than a broken drift check.
+ */
+export function listRenamedPathsSince(
+  projectRoot: string,
+  sinceCommit: string,
+  currentCommit?: string | null,
+): Set<string> {
+  const range = currentCommit ? `${sinceCommit}..${currentCommit}` : sinceCommit;
+  const sources = new Set<string>();
+  let output: string;
+  try {
+    output = runGit(['diff', '--name-status', '-M', range], projectRoot);
+  } catch {
+    return sources;
+  }
+  for (const line of output.split(/\r?\n/)) {
+    const match = /^R\d*\t(.+?)\t(.+)$/.exec(line.trim());
+    if (match) sources.add(normalizePathForKnowledge(match[1]));
+  }
+  return sources;
 }
 
 function matchedPaths(item: KnowledgeItem, changedFiles: string[]): string[] {
@@ -231,6 +268,15 @@ export async function checkKnowledgeDrift(
      * session-start check could gain the first without silently acquiring the second.
      */
     includeUntracked?: boolean;
+    /**
+     * Paths a rename moved away from in this window, from `listRenamedPathsSince`.
+     *
+     * Without it a moved file is indistinguishable from a deleted one by existence alone, and
+     * every atom citing the old path reports as though the code had been removed. Audited on this
+     * repo's store, that was **30 of 44** flagged items -- one refactor moving `src/store/` files
+     * into `src/session/` accounted for most of them, and every one of those atoms was still true.
+     */
+    renamedFrom?: ReadonlySet<string>;
   }
 ): Promise<DriftCheckResult> {
   const items = (await repo.listKnowledgeItems())
@@ -282,7 +328,9 @@ export async function checkKnowledgeDrift(
     const paths = Array.from(new Set([...gitPaths, ...untrackedPaths]));
     // Churn first, so a path that carries no information cannot make an item look removed either.
     const informative = gitPaths.filter(candidate => !isChurnPath(candidate));
-    const classified = exists ? classifyDriftPaths(informative, exists) : null;
+    const classified = exists
+      ? classifyDriftPaths(informative, exists, options.renamedFrom)
+      : null;
     return { item, matchedPaths: paths, untrackedPaths, classified, symbolEvidence };
   }));
 

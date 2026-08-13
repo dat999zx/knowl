@@ -77,10 +77,23 @@ Knowl's equivalent of under-promise is *"a cited file changed but the assertion 
 
 | class | meaning | actionable |
 | --- | --- | --- |
-| `removed` | a cited path no longer exists | **yes** |
+| `removed` | a cited path no longer exists **and was not renamed** | **yes** |
 | `symbol-removed` | cited evidence names a symbol no longer in the file | **yes** |
 | `untracked-moved` | a cited untracked directory moved after the atom was written | **yes** |
+| `moved` | git renamed the cited path; the atom is still true, its path is stale | **no — dropped** |
 | `changed` | the file exists and was merely edited | **no — dropped** |
+
+**`moved` exists because the first cut of this design shipped without it and was wrong.** Auditing
+its 44 survivors found only 14 real: **30 were renames**, nearly all from one refactor moving
+`src/store/host-lifecycle.ts` and its neighbours into `src/session/`. A rename leaves the old path
+absent from the tree, so existence alone cannot tell it from a deletion — precision was 32%, not
+the ~100% the rule implied.
+
+Renames come from `git diff --name-status -M` over the same range that produced the changed files,
+so the cost is one extra git call per check and no history scan. Note that
+`git log --find-renames -- <path>` does **not** work: the pathspec limits the diff and hides the
+destination, reporting every rename as a plain delete. That is what made the first audit report
+zero renames.
 
 Deterministic throughout: `removed` is a filesystem check, `symbol-removed` reuses the evidence
 already stored in `knowledge_evidence`.
@@ -96,8 +109,14 @@ matcher and classifier (`scripts/measure-drift-precision.ts`):
 
 | | before | after | noise removed |
 | --- | --- | --- | --- |
-| knowl | 339 | **44** | **87.0%** |
-| knowl-cloud | 78 | **2** | **97.4%** |
+| knowl | 339 | **14** | **95.9%** |
+| knowl-cloud | 78 | **1** | **98.7%** |
+
+A recall spot-check read 8 of the 290 items dropped as "the cited file still exists": *"CLI
+entrypoint is `src/index.ts`"*, *"MCP server is thin tool wiring"*, *"Knowledge search uses SQLite
+FTS5 and BM25"*, *"Knowl build and verification commands"*. All still true, and all would have sat
+permanently flagged under the old rule. Indicative rather than conclusive — recall cannot be
+measured without ground truth.
 
 ## Phase 3 — route the surviving signal into the prior that already exists
 
