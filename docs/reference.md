@@ -1128,6 +1128,21 @@ stalling together?".
 The file is capped at 4MB, created owner-only (`0600`, in a `0700` directory), and removable
 with `--clear`. Set `KNOWL_DISABLE_STARTUP_TRACE=1` to turn it off entirely.
 
+### Update checks
+
+`knowl status` and `knowl doctor` ask the npm registry whether a newer Knowl exists and print a
+line when there is one. `status` caches the answer for a day; `doctor` always asks, because a
+diagnostic that reports a stale version is worse than one that takes an extra moment. The request
+times out after two seconds and fails silently, so being offline costs nothing.
+
+Only those two commands check. Hooks, MCP, and `knowl serve` never do.
+
+```bash
+knowl config set updateCheck.enabled false   # this repository
+KNOWL_NO_UPDATE_CHECK=1                      # one invocation, or exported
+NO_UPDATE_NOTIFIER=1                         # the cross-tool convention, also honoured
+```
+
 ## Local viewer
 
 `knowl view` starts a browser inspector on `127.0.0.1`:

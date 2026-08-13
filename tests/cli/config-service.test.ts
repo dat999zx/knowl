@@ -4,7 +4,7 @@ import path from 'node:path';
 import { DEFAULT_CONFIG, NEW_PROJECT_CONFIG, upgradeConfigDefaults } from '../../src/core/config.js';
 import { resolveVectorProfile } from '../../src/core/vector-profile.js';
 import { CONFIG_FIELDS } from '../../src/cli/config/schema.js';
-import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from '../../src/cli/config/service.js';
+import { getConfigValue, getEffectiveConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from '../../src/cli/config/service.js';
 import { CONFIG_UI_QUIT, CONFIG_UI_SAVE, ConfigFieldView, ConfigPrompts, modelChoices, presetChoices, runConfigUi } from '../../src/cli/config/ui.js';
 
 const ROOT = path.resolve('.knowl-config-service-test');
@@ -79,6 +79,27 @@ describe('config service', () => {
     await writeConfig();
     expect(await getConfigValue(ROOT, 'search.vector.enabled')).toBe(true);
     await expect(getConfigValue(ROOT, 'search.unknown')).rejects.toThrow('Unknown config key');
+  });
+
+  it('answers what an unset setting will do, rather than that it is unset', async () => {
+    // Four keys are deliberately kept out of DEFAULT_CONFIG, so in a perfectly normal repo the
+    // file says nothing about them. `config get cloud.autoStage` therefore printed `undefined`
+    // for a repository that does stage as it writes -- the opposite of the truth.
+    await writeConfig();
+
+    expect(await getConfigValue(ROOT, 'cloud.autoStage')).toBeUndefined();     // the file
+    expect(await getEffectiveConfigValue(ROOT, 'cloud.autoStage')).toBe(true); // the behaviour
+  });
+
+  it('prefers the stored value over the default once one is set', async () => {
+    await writeConfig();
+    await setConfigValue(ROOT, 'cloud.autoStage', 'false');
+    expect(await getEffectiveConfigValue(ROOT, 'cloud.autoStage')).toBe(false);
+  });
+
+  it('still refuses an unknown key when asked for the effective value', async () => {
+    await writeConfig();
+    await expect(getEffectiveConfigValue(ROOT, 'search.unknown')).rejects.toThrow('Unknown config key');
   });
 
   it('sets typed values and creates a backup', async () => {
