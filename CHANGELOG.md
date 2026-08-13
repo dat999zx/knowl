@@ -3,6 +3,41 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.1.0 — 2026-08-13
+
+### Hand knowledge to a person, not just to a workspace
+
+`knowl cloud send` seals a few atoms under a five-word code and prints it; `knowl cloud receive`
+takes that code and imports them. `push` is *everyone on this team, permanently*; `send` is *you,
+specifically, right now* — collected once, and expiring whether or not anyone takes it.
+
+The service cannot read what you send. Your machine mints the code, derives an encryption key and
+a mailbox id from it under separate labels, and uploads only the id and the sealed bytes. The code
+travels between two humans and is printed once — not stored, not logged, not recoverable.
+
+Both ends need a Knowl Cloud account; neither needs the same workspace. What arrives is marked as
+imported, so it can never be published from your repo as your own work.
+
+### Drift detection stopped crying wolf
+
+A file being edited is no longer evidence that anything became false. Measured on a real store,
+the detector flagged 339 of 867 active items and only 14 of those cited a file that had genuinely
+gone away. It now separates a deletion from an edit, ignores a rename, drops paths that change on
+every release, and no longer treats a tag as a file path — 339 down to 14, with the noise cut by
+96%. Because what survives is small enough to act on, a surviving candidate is now marked
+`needs_review` instead of recorded and ignored, and `knowl pr check` reports it to the team.
+
+### Work-loop checkpoints stopped piling up
+
+A checkpoint is a snapshot of where a task stands, not an entry in a log, so each one now retires
+the last and a finished task leaves exactly one atom. Step atoms also carry the task in their
+title, where every one of them used to be called `Work Loop checkpoint` whatever it was about.
+
+### Also
+
+- `knowl export` takes an optional set of item ids, so a selection can be exported without
+  exporting the store.
+
 ## 5.0.3 — 2026-08-13
 
 ### Publishing no longer waits for the default branch
