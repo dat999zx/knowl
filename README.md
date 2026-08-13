@@ -483,8 +483,8 @@ knowl workspace init product      # create the workspace
 knowl workspace add product       # run inside each repo that joins it
                                   # ...or --default-visibility repo to keep its writes private
 
-knowl workspace promote --category decision           # preview what would be shared
-knowl workspace promote --category decision --apply   # publish it
+knowl workspace promote                               # pick what to share from a list
+knowl workspace promote --category decision --apply   # or name it outright
 ```
 
 Joining a workspace shares what the repo writes **from then on**, and says so when it does; pass
