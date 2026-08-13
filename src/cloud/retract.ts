@@ -23,13 +23,14 @@ export type RetractResult =
  * deletion as a row of its own. This is the only path that removes something from the team, and
  * it cannot be undone from either side.
  *
- * **Deliberately NOT behind the publish gate, and that is the whole point of the command.**
- * `checkPublishGate` exists because publishing from a feature branch asserts something about code
- * only you have, which is false for everyone else. Removal is the opposite act: it is true from
- * every vantage, and the case that brings someone here is a leaked name or a secret sitting in a
- * shared workspace right now. Answering that with "switch to the default branch and pull first"
- * would hold the leak open for the length of a rebase. Staging is ungated for the mirror-image
- * reason -- an intent is safe to record from anywhere -- and this is safe to *send* from anywhere.
+ * **Deliberately NOT behind any git gate**, and until 2026-08-13 that made this command the
+ * exception. It no longer is: publishing was ungated the same day, leaving `checkUpstreamGate`
+ * with one caller, `reportDrift`. The line it draws is not which branch you are on but what the
+ * act does -- adding an atom and removing your own are both true from every vantage, while
+ * retiring someone else's knowledge needs a vantage that can tell deleted from not-yet-pulled.
+ * The case that brings someone here is a leaked name or a secret sitting in a shared workspace
+ * right now, and answering that with "switch to the default branch and pull first" would hold
+ * the leak open for the length of a rebase.
  *
  * The ledger check still comes first: an atom this machine never pushed has no server-side row,
  * so there is nothing to retract and sending the user to log in could not help.

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { gitArgs } from '../git-identity.js';
-import { checkPublishGate, currentBranchOf } from '../../src/cloud/publish-gate.js';
+import { checkUpstreamGate, currentBranchOf } from '../../src/cloud/publish-gate.js';
 
 const ORIGIN = path.resolve('./.knowl-gate-origin');
 const CLONE = path.resolve('./.knowl-gate-clone');
@@ -20,7 +20,7 @@ async function makeOriginAndClone(): Promise<void> {
   git(process.cwd(), ['clone', '-q', ORIGIN, CLONE]);
 }
 
-describe('checkPublishGate', () => {
+describe('checkUpstreamGate', () => {
   beforeEach(async () => {
     for (const dir of [ORIGIN, CLONE]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     await makeOriginAndClone();
@@ -30,7 +30,7 @@ describe('checkPublishGate', () => {
   });
 
   it('passes on an up-to-date default branch', async () => {
-    expect(checkPublishGate(CLONE)).toEqual({ ok: true });
+    expect(checkUpstreamGate(CLONE)).toEqual({ ok: true });
   });
 
   it('refuses on a feature branch, because that code is nobody else\'s yet', async () => {
@@ -38,7 +38,7 @@ describe('checkPublishGate', () => {
     // false for every colleague on main, and there is no unpublish.
     git(CLONE, ['checkout', '-qb', 'feature/rollback']);
 
-    const verdict = checkPublishGate(CLONE);
+    const verdict = checkUpstreamGate(CLONE);
     expect(verdict).toMatchObject({ ok: false, reason: 'not-default-branch' });
     expect((verdict as { detail: string }).detail).toContain('feature/rollback');
   });
@@ -53,7 +53,7 @@ describe('checkPublishGate', () => {
     git(ORIGIN, ['commit', '-qm', 'two']);
     git(CLONE, ['fetch', '-q']);
 
-    const verdict = checkPublishGate(CLONE);
+    const verdict = checkUpstreamGate(CLONE);
     expect(verdict).toMatchObject({ ok: false, reason: 'behind-remote' });
   });
 
@@ -63,13 +63,13 @@ describe('checkPublishGate', () => {
     git(ORIGIN, ['commit', '-qm', 'two']);
     git(CLONE, ['pull', '-q']);
 
-    expect(checkPublishGate(CLONE)).toEqual({ ok: true });
+    expect(checkUpstreamGate(CLONE)).toEqual({ ok: true });
   });
 
   it('reports git being unavailable as its own reason, not as a branch problem', async () => {
     // The misdiagnosis this repo has already shipped twice: "could not determine" reported as
     // a confident wrong answer.
-    const verdict = checkPublishGate(path.resolve('./.knowl-gate-not-a-repo'));
+    const verdict = checkUpstreamGate(path.resolve('./.knowl-gate-not-a-repo'));
     expect(verdict).toMatchObject({ ok: false, reason: 'git-unavailable' });
   });
 

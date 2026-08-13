@@ -3,7 +3,7 @@ import type { ProjectConfig } from '../core/types.js';
 import { closeDb, initDb } from '../store/database.js';
 import { createCloudApi, type CloudApi } from './api-client.js';
 import { publishedVersion } from './ledger.js';
-import { checkPublishGate } from './publish-gate.js';
+import { checkUpstreamGate } from './publish-gate.js';
 import { ensureAccessToken } from './token.js';
 import { cloudPointer } from '../core/cloud-pointer.js';
 
@@ -56,7 +56,7 @@ async function gatedTarget(
   }
   if (!known) return 'not-published';
 
-  if (!checkPublishGate(projectRoot).ok) return 'gated';
+  if (!checkUpstreamGate(projectRoot).ok) return 'gated';
 
   const commit = headOf(projectRoot);
   // Both verbs carry a commit -- one required by the contract, one that makes a bad report

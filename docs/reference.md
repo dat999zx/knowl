@@ -29,7 +29,7 @@ which parts of a restore are deliberately not restored.
 | [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-optional-off-by-default) · [Host behavior](#host-and-subagent-behavior) |
 | [Evidence, code, drift](#evidence-code-intelligence-and-drift) | [Evidence and symbols](#evidence-and-symbols) · [PR drift and feedback](#pull-request-drift-and-retrieval-feedback) |
 | [Workspaces](#workspaces) | [Federation and ownership](#federation-and-ownership) · [Ownership stamping](#ownership) |
-| [Knowl Cloud](#knowl-cloud) | [Identity and connection](#identity-and-connection) · [Publishing and the default branch](#publishing-tracks-the-default-branch-not-your-working-tree) · [Staying current](#staying-current) |
+| [Knowl Cloud](#knowl-cloud) | [Identity and connection](#identity-and-connection) · [Publishing and drift](#publishing-works-from-any-branch-reporting-drift-does-not) · [Staying current](#staying-current) |
 | [Learned skills and synthesis](#learned-skills-and-synthesis) | [File-backed skills](#file-backed-skills) · [Deterministic synthesis](#deterministic-synthesis) |
 | [Portability and maintenance](#portability-and-maintenance) | [Export and import](#jsonl-export-and-import) · [Garbage collection](#garbage-collection) · [Snapshots, audit, doctor](#snapshots-audit-and-doctor) |
 | [Local viewer](#local-viewer) · [Architecture](#architecture-and-security-boundaries) | Inspector, component diagram, security boundaries, [write durability](#write-durability) |
@@ -724,7 +724,7 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 | `knowl cloud connect [--workspace <id>] [--remote <name>] [--repo <name>]` | Point this project at a workspace. Publishes nothing |
 | `knowl cloud pull` | Fetch team knowledge into the local replica |
 | `knowl cloud stage [--id <ids...>] [--category <list>] [--apply]` | Queue knowledge for the team. Bare opens the same picker; naming flags dry-runs until `--apply` |
-| `knowl cloud push` | Send staged knowledge, once its code is on the default branch |
+| `knowl cloud push` | Send staged knowledge. Works from any branch |
 | `knowl cloud retract <id> --reason <text>` | Remove a published atom for good. Works from any branch |
 | `knowl cloud status` | What is connected, how stale the replica is, and what is staged |
 
@@ -781,8 +781,8 @@ written**. You do not have to remember to stage it. Nothing is sent by that: sta
 intent, and a separate push is what puts it in front of anyone.
 
 ```
-knowl cloud status                # what is queued, and what a push is waiting for
-knowl cloud push                  # send it — only from an up-to-date default branch
+knowl cloud status                # what is queued
+knowl cloud push                  # send it — from any branch
 ```
 
 Three ways to say "not this one", in the order you will want them:
@@ -811,14 +811,24 @@ knowl cloud stage --category decision --apply    # or name them
 A bare call opens a picker with the categories worth sharing already ticked and a count beside
 each; confirming it is the apply. Naming categories skips the picker and dry-runs until `--apply`.
 
-### Publishing tracks the default branch, not your working tree
+### Publishing works from any branch; reporting drift does not
 
-Local knowledge describes the tree in front of you. Team knowledge has to describe the branch
-everyone shares, so sending is gated where staging is not:
+Staging and sending are both ungated:
 
 ```
-knowl cloud push                  # only from an up-to-date default branch
+knowl cloud push                  # from any branch, at any time
 ```
+
+Publishing **adds** an atom, and the worst case is knowledge that arrives early — which an update,
+a supersede or `knowl cloud retract` all answer. This used to refuse from anything but an
+up-to-date default branch. The gate could not tell knowledge about code from knowledge about
+anything else, so a pricing decision or a piece of market research waited on a merge it had
+nothing to do with, and auto-push skipped without saying why.
+
+**Reporting drift upward is still gated**, and the line is what the act does rather than which
+branch you are on. A drift report **retires** a colleague's atom for the whole workspace, and from
+a checkout behind the default branch, code that was merged and code that was deleted look
+identical. Adding from a bad vantage is recoverable; retiring from one is not.
 
 `knowl cloud push` shows what it is about to send and asks, because sending cannot be undone
 except by `knowl cloud retract`, which is a hard delete. `--yes` skips the question; without a
@@ -826,8 +836,8 @@ terminal it is required, so silence is never read as consent.
 
 **Automatic sending is off, and turning it on is per machine.** `knowl cloud autopush on` records
 standing consent for this workspace **on this machine only** — it is not written to
-`.knowl/config.json` and no teammate or CI inherits it. It never relaxes the branch gate, and it
-still sends only what it showed itself: a queue that changed underneath it is refused, not sent.
+`.knowl/config.json` and no teammate or CI inherits it. It still sends only what it showed
+itself: a queue that changed underneath it is refused, not sent.
 
 ### Two kinds of sharing, and they are independent
 
@@ -840,10 +850,8 @@ state lives in a local ledger rather than in `visibility`.
 Neither implies the other. Promoting publishes nothing, and publishing does not make your other
 local repositories see it.
 
-`knowl cloud stage` records an intent and sends nothing. `knowl cloud push` refuses from a feature
-branch, because an atom describing code only you have would be false for everyone else — and
-there is no unpublish. It also refuses from a checkout behind its remote, because being behind is
-indistinguishable from the code having been deleted.
+`knowl cloud stage` records an intent and sends nothing. `knowl cloud push` sends it, from any
+branch and whatever state your checkout is in.
 
 Only atoms this repository wrote can be published. A reader is refused before anything is sent.
 A version conflict names the atom and stops rather than overwriting; a detected secret fails the
@@ -861,11 +869,10 @@ it on their next sync. It cannot be undone, and the id can never be used again �
 knowledge that must not remain readable, not for knowledge that stopped being true. Supersede that
 instead, which keeps the lineage.
 
-**It is the one upward path with no branch gate, deliberately.** Publishing and drift reports are
-gated because they assert something about code only you have. A removal is true from every vantage,
-and the case that brings you here is a secret sitting in a shared workspace right now — answering
-that with "switch to the default branch and pull first" would hold the leak open for the length of
-a rebase.
+**It has no branch gate, deliberately.** Only drift reports do, because they retire knowledge the
+rest of the team is relying on. A removal is true from every vantage, and the case that brings you
+here is a secret sitting in a shared workspace right now — answering that with "switch to the
+default branch and pull first" would hold the leak open for the length of a rebase.
 
 `--reason` is required and stored on the tombstone. `expectedVersion` comes from the local ledger,
 so if a colleague edited the atom after you published it the retraction stops with a conflict
@@ -883,9 +890,8 @@ Once a repository is connected, the MCP server offers one more tool:
   queue, and is always safe — it sends nothing and unpublishes nothing.
 
 It stops there deliberately. Sending, pulling, connecting and signing in stay yours to run —
-sending because it is irreversible and gated on a branch state the agent cannot see the whole of,
-the other three because two need a browser and pulling already happens on its own. Asked to send,
-the agent relays the command instead.
+sending because it is irreversible, the other three because two need a browser and pulling already
+happens on its own. Asked to send, the agent relays the command instead.
 
 Because knowledge stages itself as it is written, an agent needs a way to say "not this one" at
 write time: `knowl_store` takes `local: true`, the tool-side equivalent of `knowl store --local`,
@@ -911,9 +917,10 @@ immediately, a refresh runs in the background, and a `TEAM UPDATE:` notice tells
 something landed that it may want to re-query for. `knowl cloud pull` forces the refresh when you
 know a colleague has just published.
 
-Drift travels the same gate. When a local check finds a published atom's code has moved, it is
-reported upward from the default branch only, and the workspace sees it — so one person noticing
-protects everyone.
+Drift is the one upward path that is gated. When a local check finds a published atom's code has
+moved, it is reported upward from an up-to-date default branch only, and the workspace sees it —
+so one person noticing protects everyone, and nobody retires an atom over code they simply have
+not pulled yet.
 
 ## Learned skills and synthesis
 

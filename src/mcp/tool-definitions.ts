@@ -89,8 +89,10 @@ export const TRANSCRIPT_TOOL_DEFINITIONS: ToolDefinition[] = [
  * One tool rather than four, for the reason `knowl_impact` is one: every registered tool costs
  * guidance-card space in every session of every user, so a capability earns a name, not a verb.
  *
- * It deliberately stops at the local half of publishing. `push` sends to the team and is gated on
- * default-branch state the agent cannot see the whole of. `retract` exists now and is worse to
+ * It deliberately stops at the local half of publishing. `push` sends to the team, and decision
+ * `9a2fe8a011d6423b` reserves sending for a human. It was ALSO gated on default-branch state
+ * until 2026-08-13; that gate is gone and the reservation is untouched, because it never rested
+ * on the gate -- an agent may see and stage, only a human may send. `retract` exists now and is worse to
  * call by mistake, not better: it hard-deletes the row and writes a tombstone that bars the id
  * forever. `connect`, `login` and `pull` are likewise operator actions: two need a browser, and
  * pulling already happens on its own. Staging is the half that is safe from every vantage, so it

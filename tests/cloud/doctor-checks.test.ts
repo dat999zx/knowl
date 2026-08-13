@@ -3,8 +3,12 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { writeCredential } from '../../src/cloud/credentials.js';
 import { cloudDoctorChecks } from '../../src/cloud/doctor-checks.js';
+import { stageForPublish } from '../../src/cloud/ledger.js';
 import { withTeamStore } from '../../src/cloud/team-store.js';
 import { writeSyncState } from '../../src/cloud/sync-state.js';
+import { closeDb, initDb } from '../../src/store/database.js';
+import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
+import * as repo from '../../src/store/repository.js';
 import type { ProjectConfig } from '../../src/core/types.js';
 
 const HOME = path.resolve('./.knowl-doctor-home');
@@ -43,6 +47,20 @@ describe('cloudDoctorChecks', () => {
       lastSyncedAt: '2026-08-09T11:00:00.000Z',
       lastError,
     }));
+  };
+
+  /** One real atom staged in the ledger, the only state `stagedCheck` reports on. */
+  const stageOne = async (workspaceId: string) => {
+    await initDb(ROOT);
+    try {
+      const project = await repo.createProject(ROOT, `doctor-${workspaceId}`);
+      const stored = await storeKnowledgeItemDeduped(project.id, {
+        category: 'fact', title: 'Queued', content: 'Something worth sending, at a believable length.',
+      });
+      await stageForPublish([stored.item.id], workspaceId, 'feature/whatever');
+    } finally {
+      await closeDb();
+    }
   };
 
   it('says nothing at all when the repo is not connected', async () => {
@@ -118,6 +136,26 @@ describe('cloudDoctorChecks', () => {
     expect(checks[0].status).toBe('WARN');
     expect(checks[0].message).toContain('network down');
     expect(checks[0].fix).toContain('knowl cloud pull');
+  });
+
+  it('warns about staged work and points at the push, not at the branch', async () => {
+    // This check used to quote `checkPublishGate`'s git verdict, because the gate was the only
+    // reason staged work could sit unsent. Publishing is ungated as of 2026-08-13, so the one
+    // remaining reason is that nobody has pushed -- and naming a branch here would be a lie.
+    const config = pointer('w-staged');
+    await writeCredential(HOST, {
+      accessToken: 'a', refreshToken: 'r', sessionId: 'sess-1',
+      expiresAt: new Date(NOW + 3_600_000).toISOString(),
+    });
+    await synced('w-staged');
+    await stageOne('w-staged');
+
+    const checks = await cloudDoctorChecks(config, ROOT, () => NOW);
+    const staged = checks.find(check => check.message.includes('staged but not sent'));
+
+    expect(staged?.status).toBe('WARN');
+    expect(staged?.fix).toBe('Run knowl cloud push');
+    expect(staged?.message).not.toMatch(/branch|git|pull/i);
   });
 
   it('makes no network call, so doctor stays fast and works offline', async () => {

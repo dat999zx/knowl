@@ -181,29 +181,32 @@ describe('pushStaged', () => {
     for (const dir of [ORIGIN, CLONE]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   });
 
-  it('refuses from a feature branch and names it, without sending anything', async () => {
-    // The scenario the gate exists for. An atom describing code only this branch has would be
-    // false for every colleague on main, and there is no unpublish.
+  it('publishes from a feature branch, because adding knowledge is true from every vantage', async () => {
+    // Reversed 2026-08-13. Publishing ADDS an atom, and the worst case is knowledge that is
+    // premature -- which supersede and retract both undo. `reportDrift` keeps this gate because
+    // it RETIRES someone else's atom, where a wrong vantage destroys instead of adding.
     git(CLONE, ['checkout', '-qb', 'feature/rollback']);
     let sent = false;
 
     const result = await pushStaged({
-      projectRoot: CLONE, config: connected, api: fakeApi([], () => { sent = true; }),
+      projectRoot: CLONE, config: connected,
+      api: fakeApi([{ id: ids.decision, status: 'created', version: 1 }], () => { sent = true; }),
     });
 
-    expect(result).toMatchObject({ status: 'gated', reason: 'not-default-branch' });
-    expect((result as any).detail).toContain('feature/rollback');
-    expect(sent).toBe(false);
+    expect(result).toMatchObject({ status: 'pushed', created: 1 });
+    expect(sent).toBe(true);
   });
 
-  it('refuses from a checkout behind its remote', async () => {
-    // Behind main is indistinguishable from the code having been deleted, and this repo has
-    // shipped that collapse before in `fileContentHash`.
+  it('publishes from a checkout behind its remote', async () => {
+    // Being behind main makes CODE ambiguous -- deleted and not-yet-pulled look identical from
+    // here. That ambiguity is a reason to withhold a drift report, not to withhold an atom.
     await commitToOrigin('b.txt');
     git(CLONE, ['fetch', '-q']);
 
-    expect(await pushStaged({ projectRoot: CLONE, config: connected, api: fakeApi([]) }))
-      .toMatchObject({ status: 'gated', reason: 'behind-remote' });
+    expect(await pushStaged({
+      projectRoot: CLONE, config: connected,
+      api: fakeApi([{ id: ids.decision, status: 'created', version: 1 }]),
+    })).toMatchObject({ status: 'pushed', created: 1 });
   });
 
   it('refuses a reader before sending anything', async () => {

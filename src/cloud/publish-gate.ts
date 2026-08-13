@@ -28,7 +28,7 @@ function git(cwd: string, args: string[]): string | null {
  * `origin/HEAD` is the answer when the remote published one, which a fresh clone records. The
  * `main`/`master` fallback exists because that symbolic ref is local state a clone can be missing
  * -- an old clone, a `git remote set-head` never run -- and guessing wrong there is cheap while
- * refusing to publish at all is not.
+ * refusing every drift report is not.
  */
 export function defaultBranchOf(projectRoot: string): string | null {
   const head = git(projectRoot, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
@@ -65,19 +65,25 @@ export function commitsBehindRemote(projectRoot: string, branch: string): number
 }
 
 /**
- * Whether this checkout may speak for the team.
+ * Whether this checkout may RETIRE knowledge on the team's behalf.
+ *
+ * Named `checkPublishGate` until 2026-08-13, when publishing stopped consulting it. `reportDrift`
+ * is the only caller left, and that is the whole distinction: publishing ADDS an atom, where the
+ * worst case is knowledge that is premature and which supersede and retract both undo. A drift
+ * report RETIRES someone else's atom for everyone, and a wrong vantage there destroys instead of
+ * adding. Same git facts, opposite blast radius.
  *
  * Two conditions, and the second is the one that looks optional and is not. Being behind the
  * remote default branch is INDISTINGUISHABLE from the code having been deleted: the file the
- * team just published about is genuinely not here. Publishing or reporting drift from that
- * vantage retires knowledge that is still correct for everyone who is current.
+ * team just published about is genuinely not here. Reporting drift from that vantage retires
+ * knowledge that is still correct for everyone who is current.
  *
  * This repository has shipped that collapse before -- `fileContentHash` caught every read
  * error and returned null, `currentStateOf` mapped null to `gone`, and an antivirus lock on
  * Windows became "the file you read is deleted", fired as the strongest notice the system has
  * about an intact file.
  */
-export function checkPublishGate(projectRoot: string): GateVerdict {
+export function checkUpstreamGate(projectRoot: string): GateVerdict {
   let current: string | null;
   let target: string | null;
   try {
@@ -89,7 +95,7 @@ export function checkPublishGate(projectRoot: string): GateVerdict {
       reason: 'git-unavailable',
       detail:
         `Could not run git in ${projectRoot}: ${error.message}. ` +
-        'Publishing is gated on the default branch, so git has to be on PATH.',
+        'Drift is reported only from the default branch, so git has to be on PATH.',
     };
   }
 
@@ -112,8 +118,8 @@ export function checkPublishGate(projectRoot: string): GateVerdict {
       reason: 'not-default-branch',
       detail:
         `This checkout is on ${current ?? 'a detached HEAD'}, not ${target}. ` +
-        'Knowledge about code only this branch has would be false for everyone on ' +
-        `${target}, and there is no unpublish.`,
+        'Code that only this branch has looks deleted from here, so marking the team\'s ' +
+        `knowledge stale would retire what is still true on ${target}.`,
     };
   }
 

@@ -96,7 +96,6 @@ describe('formatStatusReport wiring', () => {
         connected: true, workspace: 'Acme Core', role: 'owner',
         lastSyncedAt: null, lastError: null,
         staged: 3, stagedNew: 2, stagedCorrections: 1, stagedOnBranch: 'main',
-        gate: { ok: true, reason: 'ok', detail: '' } as never,
         signedIn: true, identity: { email: 'd@e.com', displayName: 'Dev' },
         tokenExpiresAt: null, nextSyncDueAt: null,
       },

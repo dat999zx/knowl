@@ -346,9 +346,9 @@ const SCHEMA_STATEMENTS = [
    *
    * Two-phase, matching git's index-then-commit. `staged_at` records an intent, formed on any
    * branch at any time; `pushed_at` records that the server accepted it. `staged_on_branch` sits
-   * between them because the push is gated on the default branch and the refusal has to be able
-   * to say what it is waiting for -- an atom staged on a feature branch describes code nobody
-   * else has yet, and there is no unpublish.
+   * between them and is **provenance, not a condition**: it was written for a default-branch
+   * push gate that was removed on 2026-08-13, and since then `cloud status` displays it and
+   * nothing reads it to decide anything.
    *
    * `remote_version` is the only place on this machine that the server's version number lives,
    * and every republish needs it: a republish with no `expectedVersion` is treated as a conflict

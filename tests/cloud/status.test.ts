@@ -176,6 +176,19 @@ describe('cloudStatus', () => {
     expect(text).toContain('feature/rollback');
   });
 
+  it('tells a feature branch its staged work is ready, because the branch no longer holds it', async () => {
+    // Until 2026-08-13 this line printed the publish gate's refusal. Publishing is ungated now,
+    // so that sentence would be false twice over: it names a blocker that is gone, and it sends
+    // the reader off to change branch and pull for a push that would have worked.
+    git(CLONE, ['checkout', '-qb', 'feature/rollback']);
+    await stagePublish({ projectRoot: CLONE, config: connected, ids: [id], apply: true });
+
+    const text = formatCloudStatus(await cloudStatus(CLONE, connected));
+
+    expect(text).toContain('Ready to send. Run knowl cloud push.');
+    expect(text).not.toMatch(/not main|no unpublish|Pull first/i);
+  });
+
   it('warns that sending is irreversible whenever anything is staged', async () => {
     // A product requirement, not a nicety. `knowl cloud retract` now wires the server's delete
     // verb, so this no longer says publishing cannot be undone -- but undoing means a hard delete

@@ -1286,11 +1286,6 @@ cloudCommand
         process.exitCode = 1;
         return;
       }
-      if (result.status === 'gated') {
-        console.error(`${result.staged} item(s) stay staged. ${result.detail}`);
-        process.exitCode = 1;
-        return;
-      }
       if (result.status === 'needs-embedding') {
         // Nothing is lost: they stay staged and go out on the next push. Said out loud because a
         // push that quietly sent nothing would look like success.

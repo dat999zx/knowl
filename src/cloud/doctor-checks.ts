@@ -4,7 +4,6 @@ import { withDbPath } from '../store/database.js';
 import { resolveStorage } from '../store/storage-roles.js';
 import { readCredential } from './credentials.js';
 import { listStaged } from './ledger.js';
-import { checkPublishGate } from './publish-gate.js';
 import { readSyncState } from './sync-state.js';
 import { withTeamStore } from './team-store.js';
 import { cloudPointer } from '../core/cloud-pointer.js';
@@ -72,26 +71,28 @@ export async function cloudDoctorChecks(
 }
 
 /**
- * Staged work that the gate is currently refusing to send.
+ * Staged work that nobody has sent yet.
  *
- * A developer who staged on a feature branch and moved on has no other prompt -- the atoms are
- * in a table nobody reads, and the push they were waiting for is a command they have to
- * remember to run. Reported through doctor because doctor is a command they already run.
+ * A developer who staged and moved on has no other prompt -- the atoms sit in a table nobody
+ * reads, and the push is a command they have to remember to run. Reported through doctor because
+ * doctor is a command they already run.
  *
- * Silent when nothing is staged, and silent when the gate would pass: a WARN that fires on the
- * happy path is furniture, and the one time it matters nobody reads it.
+ * Until 2026-08-13 this consulted `checkPublishGate` and stayed silent unless it refused, because
+ * the gate was the only thing that could hold staged work back. Publishing is ungated now, so the
+ * only remaining cause is that no push has happened -- and quoting a git verdict here would name
+ * a reason that no longer applies and send the reader to change branch for nothing.
+ *
+ * Silent when nothing is staged: a WARN that fires on the happy path is furniture, and the one
+ * time it matters nobody reads it.
  */
 async function stagedCheck(workspaceId: string, projectRoot: string): Promise<DoctorCheck[]> {
   const staged = await withDbPath(resolveStorage(projectRoot).knowledge, () => listStaged(workspaceId))
     .catch(() => []);
   if (staged.length === 0) return [];
 
-  const verdict = checkPublishGate(projectRoot);
-  if (verdict.ok) return [];
-
   return [{
     status: 'WARN',
-    message: `Cloud: ${staged.length} item(s) staged but not sent. ${verdict.detail}`,
-    fix: 'Run knowl cloud status',
+    message: `Cloud: ${staged.length} item(s) staged but not sent.`,
+    fix: 'Run knowl cloud push',
   }];
 }

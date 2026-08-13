@@ -6,7 +6,7 @@ import {
   listStaged, publishedVersion, recordPushed, restageForPublish, stageForPublish,
 } from './ledger.js';
 import { filterExcluded } from './exclusions.js';
-import { checkPublishGate, currentBranchOf } from './publish-gate.js';
+import { currentBranchOf } from './publish-gate.js';
 import { readSyncState } from './sync-state.js';
 import { listAssertions } from '../store/assertions.js';
 import { listEvidenceForItem } from '../store/evidence-repository.js';
@@ -129,10 +129,9 @@ async function stageInContext(
   const skippedExcluded = items.length - eligible.length;
 
   if (input.apply && eligible.length > 0) {
-    // Swallowed on purpose, and only here. The branch is what the push's refusal quotes back,
-    // not what it decides on -- `checkPublishGate` re-reads git itself and reports being
-    // unable to run it as its own verdict. Failing to record an intent because git is missing
-    // would refuse the one half of publishing that is safe from every vantage.
+    // Swallowed on purpose, and only here. `staged_on_branch` is a record of where an intent was
+    // formed -- displayed by `cloud status`, read by nothing that decides anything. Failing to
+    // record an intent because git is missing would refuse a step that never needed git at all.
     let branch: string | null;
     try { branch = currentBranchOf(input.projectRoot); } catch { branch = null; }
 
@@ -157,7 +156,6 @@ async function stageInContext(
 export type PushResult =
   | { status: 'not-connected' }
   | { status: 'not-logged-in' }
-  | { status: 'gated'; reason: string; detail: string; staged: number }
   | { status: 'forbidden'; role: string }
   /**
    * Staged atoms that have no vector under this repo's current embedding profile.
@@ -322,16 +320,8 @@ export async function pushStaged(input: {
   try {
     const staged = await listStaged(pointer.workspaceId);
 
-    // Before the gate, deliberately. Reporting `gated` when there is nothing to send would be a
-    // refusal about nothing -- it would tell a developer on a feature branch to go and pull, for
-    // a push that had no work in it either way.
     if (staged.length === 0) {
       return { status: 'pushed', created: 0, updated: 0, conflicts: [], rejected: [] };
-    }
-
-    const verdict = checkPublishGate(input.projectRoot);
-    if (!verdict.ok) {
-      return { status: 'gated', reason: verdict.reason, detail: verdict.detail, staged: staged.length };
     }
 
     // The role rides on every sync response, so refusing a reader here costs nothing and saves a
