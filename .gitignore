@@ -45,3 +45,8 @@ docs/evals/results/shards/
 .verify-dist/
 .benchmark-tsc/
 benchmarks/*/data/
+
+# `drizzle-kit generate` and `check` write here. Knowl runs its own migrations from
+# `store/bootstrap.ts`, so this output is a scratch artifact rather than something to commit --
+# it has never been in the tree, and it appeared as untracked noise the moment anyone ran the tool.
+drizzle/
