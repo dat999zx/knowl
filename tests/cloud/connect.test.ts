@@ -58,6 +58,31 @@ describe('runConnect', () => {
       .toEqual({ status: 'not-logged-in' });
   });
 
+  it('refreshes an expired access token rather than sending the dead one', async () => {
+    // An access token lives about an hour. Reading it straight sent an expired one and the
+    // server answered "The credential is not valid" -- which reads as "log in again" to somebody
+    // who is signed in perfectly well, on the command they run precisely when onboarding.
+    await makeRepo('git@github.com:acme/web.git');
+    const { writeCredential } = await import('../../src/cloud/credentials.js');
+    await writeCredential(HOST, { ...credential, expiresAt: new Date(Date.now() - 60_000).toISOString() });
+
+    let refreshed = 0;
+    const sent: string[] = [];
+    const base = api([{ id: 'ws-1', name: 'Acme', role: 'owner' }]);
+    const refreshing: CloudApi = {
+      ...base,
+      refresh: async () => { refreshed += 1; return { ...credential, accessToken: 'FRESH-TOKEN-4d81aa' }; },
+      listWorkspaces: async (token: string) => { sent.push(token); return [{ id: 'ws-1', name: 'Acme', role: 'owner' as const }]; },
+    };
+
+    const result = await runConnect({ projectRoot: REPO, apiHost: HOST, workspaceId: 'ws-1', api: refreshing });
+
+    expect(result.status).toBe('connected');
+    expect(refreshed).toBe(1);
+    // The fresh token, never the expired one it started with.
+    expect(sent).toEqual(['FRESH-TOKEN-4d81aa']);
+  });
+
   it('connects when the caller belongs to exactly one workspace', async () => {
     await makeRepo('git@github.com:acme/web.git');
     await writeCredential(HOST, credential);
