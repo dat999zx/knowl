@@ -4,9 +4,10 @@ import {
 } from './api-client.js';
 import { EMBED_RECIPE_VERSION } from '../core/embed-recipe.js';
 import { resolveVectorProfile } from '../core/vector-profile.js';
+import { ensureAccessToken } from './token.js';
 import { getClient } from '../store/database.js';
 import type { ProjectConfig } from '../core/types.js';
-import { normalizeApiHost, readCredential } from './credentials.js';
+import { normalizeApiHost } from './credentials.js';
 import { resolveRepoIdentity } from './repo-identity.js';
 
 export type CloudPointer = {
@@ -80,10 +81,18 @@ export async function runConnect(input: ConnectInput): Promise<ConnectResult> {
     return { status: 'identity-changed', current: existing.cloud.repo, next: identity.identity };
   }
 
-  const credential = await readCredential(input.apiHost);
+  const api = input.api ?? createCloudApi({ apiHost: input.apiHost });
+
+  // Refreshed, not merely read. `readCredential` hands back whatever is stored, including an
+  // access token that expired an hour ago -- and connect then sent it and reported "The
+  // credential is not valid", which reads as "log in again" to someone who is signed in. Every
+  // other network path (`pull`, `push`, `retract`, drift reporting) already goes through this.
+  const credential = await ensureAccessToken({
+    apiHost: input.apiHost,
+    refresh: refreshToken => api.refresh(refreshToken),
+  });
   if (!credential) return { status: 'not-logged-in' };
 
-  const api = input.api ?? createCloudApi({ apiHost: input.apiHost });
   const workspaces = await api.listWorkspaces(credential.accessToken);
 
   // Belonging to none is a different situation from belonging to several, and the remedies

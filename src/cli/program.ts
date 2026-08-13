@@ -50,7 +50,7 @@ import { getConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setCo
 import { runConfigUi } from './config/ui.js';
 import { defaultApiHost, runLogin, runLogout } from '../cloud/login.js';
 import { createCloudApi } from '../cloud/api-client.js';
-import { readCredential } from '../cloud/credentials.js';
+import { ensureAccessToken } from '../cloud/token.js';
 import { excludeFromPublish } from '../cloud/exclusions.js';
 import { unstagePublish } from '../cloud/ledger.js';
 import { writeAutoPushConsent } from '../cloud/consent.js';
@@ -848,14 +848,20 @@ cloudCommand
   .option('--api <host>', 'API host (defaults to $KNOWL_API_HOST, else the hosted service)', defaultApiHost())
   .action(async options => {
     try {
-      const credential = await readCredential(options.api);
+      const api = createCloudApi({ apiHost: options.api });
+      // Refreshed rather than read. A stored access token lives about an hour, so reading it
+      // straight sent a dead one and reported "The credential is not valid" to somebody who was
+      // signed in perfectly well. Every other network path already refreshes.
+      const credential = await ensureAccessToken({
+        apiHost: options.api,
+        refresh: refreshToken => api.refresh(refreshToken),
+      });
       if (!credential) {
         console.error('Not signed in. Run knowl cloud login first.');
         process.exitCode = 1;
         return;
       }
-      const workspaces = await createCloudApi({ apiHost: options.api })
-        .listWorkspaces(credential.accessToken);
+      const workspaces = await api.listWorkspaces(credential.accessToken);
       if (workspaces.length === 0) {
         console.log('You do not belong to any workspace yet.');
         return;
