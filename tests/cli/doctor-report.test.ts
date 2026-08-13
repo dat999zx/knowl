@@ -25,6 +25,10 @@ async function setup(vector: Record<string, unknown>): Promise<string> {
     JSON.stringify({ ...DEFAULT_CONFIG, search: { vector } }),
     'utf-8',
   );
+  // Otherwise the guidance check FAILs in every test in this suite, which is invisible while
+  // the assertions only read one check's status -- and silently makes any `ready` assertion
+  // pass or fail for a reason that has nothing to do with vectors.
+  await installKnowlProjectGuidance(root);
   await initDb(root);
   const project = await repo.createProject(root, 'doctor-report');
   await repo.createKnowledgeItem(project.id, {
@@ -81,8 +85,10 @@ describe('doctor vector coverage', () => {
 
     const check = coverageCheck((await runDoctor(root)).checks);
 
-    expect(check.status).toBe('WARN');
-    expect(check.message).toContain('1 of 1');
+    // FAIL rather than WARN because the whole store is uncovered, not because a fingerprint
+    // is null: what this test pins is that the row is COUNTED as missing at all.
+    expect(check.status).toBe('FAIL');
+    expect(check.message).toContain('0 of 1');
     expect(check.fix).toContain('knowl reindex --vectors');
   });
 
@@ -98,8 +104,46 @@ describe('doctor vector coverage', () => {
 
     const check = coverageCheck((await runDoctor(root)).checks);
 
-    expect(check.status).toBe('WARN');
-    expect(check.message).toContain('1 of 1');
+    expect(check.status).toBe('FAIL');
+    expect(check.message).toContain('0 of 1');
+  });
+
+  it('gates the verdict, so an unembedded store cannot report READY', async () => {
+    // The point of the change, and the thing a status line actually carries. Reporting the
+    // gap while still printing READY is what let knowl-cloud serve 345 atoms and zero vectors
+    // for twelve hours: the advisory line was there, above a verdict that contradicted it.
+    await setup(ARCTIC);
+    await closeDb();
+
+    const result = await runDoctor(root);
+
+    expect(result.ready).toBe(false);
+    // Named, not just counted: a `ready === false` assertion passes for any FAIL anywhere in
+    // the report, so on its own it would keep passing if this check went back to advisory.
+    expect(result.checks.filter(check => check.status === 'FAIL').map(check => check.message))
+      .toEqual([expect.stringMatching(/^Vector search/)]);
+  });
+
+  it('keeps READY when only a tail is unembedded, which is degradation and not breakage', async () => {
+    // The other half of the rule. Three of four covered: semantic search still reaches most
+    // of the store, and the missing one is reachable by keyword.
+    const projectId = await setup(ARCTIC);
+    const fingerprint = fingerprintProfile(resolveVectorProfile(
+      { version: 1, search: { vector: ARCTIC } } as unknown as ProjectConfig,
+    ));
+    await writeEmbedding(await onlyItemId(), fingerprint);
+    for (const title of ['Second item', 'Third item', 'Fourth item']) {
+      const created = await repo.createKnowledgeItem(projectId, {
+        category: 'fact', title, content: `Content for ${title}.`,
+      });
+      if (title !== 'Fourth item') await writeEmbedding(created.id, fingerprint);
+    }
+    await closeDb();
+
+    const result = await runDoctor(root);
+
+    expect(coverageCheck(result.checks).status).toBe('WARN');
+    expect(result.ready).toBe(true);
   });
 
   it('reports full coverage for a row written under the current profile', async () => {
