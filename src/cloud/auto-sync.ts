@@ -5,6 +5,7 @@ import { acquireLock } from './file-lock.js';
 import { runPull } from './pull.js';
 import { readSyncState } from './sync-state.js';
 import { withTeamStore } from './team-store.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 
 /**
  * Short, because arrival is announced rather than waited for.
@@ -53,7 +54,7 @@ function autoSyncLockPath(workspaceId: string): string {
  * database context would corrupt a request that had already returned its answer.
  */
 export function maybeAutoSync(input: { projectRoot: string; config: ProjectConfig; now?: () => number }): void {
-  const pointer = input.config.cloud;
+  const pointer = cloudPointer(input.config);
   if (!pointer) return;
 
   void (async () => {

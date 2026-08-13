@@ -5,6 +5,7 @@ import { createCloudApi, type CloudApi } from './api-client.js';
 import { publishedVersion } from './ledger.js';
 import { checkPublishGate } from './publish-gate.js';
 import { ensureAccessToken } from './token.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 
 type Target = {
   api: CloudApi;
@@ -41,7 +42,7 @@ async function gatedTarget(
   itemId: string,
   suppliedApi?: CloudApi,
 ): Promise<Target | 'not-connected' | 'not-published' | 'gated' | 'not-logged-in'> {
-  const pointer = config.cloud;
+  const pointer = cloudPointer(config);
   if (!pointer) return 'not-connected';
 
   await initDb(projectRoot);

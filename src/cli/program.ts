@@ -64,6 +64,7 @@ import { runPull } from '../cloud/pull.js';
 import { computePushSnapshot, countStageable, pushStaged, stagePublish } from '../cloud/publish.js';
 import { retractItem } from '../cloud/retract.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -417,7 +418,7 @@ program
       // process-wide one -- it opens and closes -- so calling it inside the block below would
       // close the database out from under everything after it. Constraint `defde27f6f234535` is
       // about the MCP path; this is the same hazard on the CLI path.
-      const cloud = config.cloud ? await cloudStatus(root, config) : null;
+      const cloud = cloudPointer(config) ? await cloudStatus(root, config) : null;
 
       await initDb(root);
 
@@ -893,7 +894,8 @@ cloudCommand
       // `exitCode` and return, never `process.exit`: a cloud verb can have loaded the embedder
       // before it fails, and exiting there aborts with UV_HANDLE_CLOSING and reports 127. Pinned
       // by `tests/cli/cloud-exit-codes.test.ts`, which reads this source.
-      if (!config.cloud) {
+      const pointer = cloudPointer(config);
+      if (!pointer) {
         console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
         process.exitCode = 1;
         return;
@@ -907,8 +909,8 @@ cloudCommand
         let counts;
         try {
           counts = await countStageable(
-            config.cloud.workspaceId,
-            config.workspace?.repo ?? config.cloud.repo,
+            pointer.workspaceId,
+            config.workspace?.repo ?? pointer.repo,
           );
         } finally { await closeDb(); }
 
@@ -924,7 +926,7 @@ cloudCommand
 
         const chosen = await pickCategories({
           verb: 'stage',
-          destination: config.cloud.workspaceName ?? config.cloud.workspaceId,
+          destination: pointer.workspaceName ?? pointer.workspaceId,
           counts,
         });
         if (chosen === null) {
@@ -1010,13 +1012,14 @@ cloudCommand
     }
     const root = await findProjectRoot(process.cwd());
     const config = await loadConfig(root);
-    if (!config.cloud) {
+    const pointer = cloudPointer(config);
+    if (!pointer) {
       console.error('This repository is not connected to a cloud workspace.');
       process.exitCode = 1;
       return;
     }
-    await writeAutoPushConsent(config.cloud.workspaceId, state === 'on');
-    const workspace = config.cloud.workspaceName ?? config.cloud.workspaceId;
+    await writeAutoPushConsent(pointer.workspaceId, state === 'on');
+    const workspace = pointer.workspaceName ?? pointer.workspaceId;
     console.log(state === 'on'
       // Said plainly because the whole design turns on it: this is not a project setting and
       // does not travel to anyone else.
@@ -1033,14 +1036,15 @@ cloudCommand
     try {
       const root = await findProjectRoot(process.cwd());
       const config = await loadConfig(root);
-      if (!config.cloud) {
+      const pointer = cloudPointer(config);
+      if (!pointer) {
         console.error('This repository is not connected to a cloud workspace.');
         process.exitCode = 1;
         return;
       }
       await initDb(root);
       try {
-        const cleared = await unstagePublish(id, config.cloud.workspaceId);
+        const cleared = await unstagePublish(id, pointer.workspaceId);
         if (options.forever) await excludeFromPublish(id, 'knowl cloud unstage --forever');
         console.log(cleared ? `Unstaged ${id}.` : `${id} was not staged.`);
         if (options.forever) {
@@ -2133,7 +2137,8 @@ program
         // exclusion is paired with an unstage rather than trusting it to have lost the race.
         if (options.local) {
           await excludeFromPublish(result.item.id, 'knowl store --local');
-          if (config.cloud) await unstagePublish(result.item.id, config.cloud.workspaceId);
+          const connected = cloudPointer(config);
+          if (connected) await unstagePublish(result.item.id, connected.workspaceId);
         }
 
         console.log(`Stored ${options.category} ${result.item.id}: ${result.item.title}`);

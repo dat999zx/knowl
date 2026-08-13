@@ -7,6 +7,7 @@ import { listStaged } from './ledger.js';
 import { checkPublishGate } from './publish-gate.js';
 import { readSyncState } from './sync-state.js';
 import { withTeamStore } from './team-store.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 
 /**
  * Cloud status, without touching the network.
@@ -23,7 +24,7 @@ export async function cloudDoctorChecks(
   projectRoot: string,
   now: () => number = Date.now,
 ): Promise<DoctorCheck[]> {
-  const pointer = config.cloud;
+  const pointer = cloudPointer(config);
   if (!pointer) return [];
 
   const credential = await readCredential(pointer.apiHost);

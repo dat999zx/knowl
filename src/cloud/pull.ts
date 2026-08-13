@@ -8,6 +8,7 @@ import { runSync, type SyncResult } from './sync.js';
 import { withTeamStore } from './team-store.js';
 import { getClient } from '../store/database.js';
 import { fingerprintProfile, resolveVectorProfile, type VectorProfile } from '../core/vector-profile.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 
 /**
  * The sync outcome is nested, not spread.
@@ -26,7 +27,7 @@ export async function runPull(input: {
   config: ProjectConfig;
   api?: CloudApi;
 }): Promise<PullResult> {
-  const pointer = input.config.cloud;
+  const pointer = cloudPointer(input.config);
   if (!pointer) return { status: 'not-connected' };
 
   const api = input.api ?? createCloudApi({ apiHost: pointer.apiHost });

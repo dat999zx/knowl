@@ -2,6 +2,7 @@ import type { ProjectConfig } from '../core/types.js';
 import { readAutoPushConsent } from '../cloud/consent.js';
 import { computePushSnapshot, pushStaged } from '../cloud/publish.js';
 import { checkPublishGate } from '../cloud/publish-gate.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 
 export type AutoPushOutcome =
   | { status: 'skipped'; reason: 'not-connected' | 'no-consent' | 'gated' | 'nothing-staged' }
@@ -29,7 +30,7 @@ export async function maybeAutoPush(input: {
   projectRoot: string;
   config: ProjectConfig;
 }): Promise<AutoPushOutcome> {
-  const pointer = input.config.cloud;
+  const pointer = cloudPointer(input.config);
   if (!pointer) return { status: 'skipped', reason: 'not-connected' };
 
   if (!await readAutoPushConsent(pointer.workspaceId)) {

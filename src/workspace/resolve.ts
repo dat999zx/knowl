@@ -10,6 +10,7 @@ import { teamStorePath } from '../core/paths.js';
 import { createManifest, readManifest, WorkspaceManifest } from './manifest.js';
 import { workspaceManifestPath } from './paths.js';
 import { isLinked } from './membership.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 
 export type PeerRepo = {
   name: string;
@@ -80,7 +81,12 @@ function synthesizedManifest(workspaceId: string, repo: string, config: ProjectC
 export async function resolveWorkspace(projectRoot: string, config?: ProjectConfig): Promise<ActiveWorkspace | null> {
   const effective = config ?? await loadConfig(projectRoot).catch(() => null);
   const link = effective?.workspace;
-  const pointer = effective?.cloud;
+  // Through the predicate, not `effective?.cloud` directly: `cloud.autoStage` is settable, so a
+  // repository that only ever set that preference has a `cloud` block with no pointer in it, and
+  // reading presence as connected built a `CloudPeer` around an undefined workspace id --
+  // `teamStorePath(undefined)` throwing "The path argument must be of type string" out of a
+  // `doctor` run that should have reported an ordinary unlinked project.
+  const pointer = effective ? cloudPointer(effective) : null;
 
   // Either reason is enough to be active, and neither implies the other: a repo can be linked
   // locally, connected to the cloud, both, or neither. Only "neither" keeps the null that
