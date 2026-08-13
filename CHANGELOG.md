@@ -3,6 +3,67 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.0.1 — 2026-08-13
+
+Two surfaces that told you the wrong thing about what Knowl was doing.
+
+### `doctor` no longer reports READY for a store semantic search cannot reach
+
+Unembedded knowledge was an advisory warning printed above `Result: READY`. A Knowl Cloud
+deployment sat at 345 atoms and zero vectors for twelve hours reading exactly that way — every
+embed failing on a permissions error nobody saw, under a verdict that said the install was healthy.
+
+Vector coverage is graded by proportion now:
+
+| state | verdict |
+| --- | --- |
+| everything embedded | `OK` |
+| a tail unembedded | `WARN` — still reachable by keyword |
+| **the majority unembedded** | **`FAIL`** |
+
+The majority rather than zero, because one stray embedded row would otherwise grade a store of 345
+items as merely advisory. Above that line semantic search answers from a minority of your knowledge
+*while still returning plausible results*, so a partial index misleads in a way an absent one
+cannot.
+
+A missing `knowledge_embeddings` table is also `FAIL`, but only when vector search is enabled.
+
+**If you gate CI on `knowl doctor`**, it exits 1 on `NOT READY`, so a repository in this state will
+now fail where it previously passed. `knowl reindex --vectors` fixes it. An empty project, a
+project with vector search off, and one running `KNOWL_DISABLE_WRITE_EMBEDDING=1` are all
+unaffected — a chosen gap is not a problem to report.
+
+Every other check was reviewed and deliberately left advisory: `code_symbols` and `memory_sessions`
+schema, stale sessions, `.gitignore`, host instructions and lifecycle hooks, and all cloud and
+workspace states. None of them makes a repository's own stored knowledge unreachable, which is the
+line between the two.
+
+### Two settings that existed but could not be set
+
+`knowl config set cloud.autoStage false` was documented in 5.0.0 and answered `Unknown config key`.
+`updateCheck.enabled` had been readable, defaulted and unreachable for longer. Both work now, and
+`knowl config` lists them.
+
+The rest of the `cloud` block stays deliberately unsettable: `apiHost`, `workspaceId`,
+`workspaceName`, `repo` and `remote` are a pointer written by `knowl cloud connect` *after* it
+authenticates, not preferences. Hand-editing them aims a repository at a workspace it never
+authenticated against — every later command looks connected while every push fails.
+
+`knowl config get` now answers with the effective value instead of `undefined`. Four settings are
+kept out of the default config on purpose, so in an ordinary repository the file says nothing about
+them, and `get cloud.autoStage` reported `undefined` for a repository that does stage as it writes.
+
+Update checks are documented for the first time, including the two environment variables that
+disable them (`KNOWL_NO_UPDATE_CHECK`, and the cross-tool `NO_UPDATE_NOTIFIER`).
+
+### Internal
+
+`ProjectConfig` and the config editor's field list were two hand-maintained enumerations of the
+same shape with nothing connecting them, which is how both settings above went missing. A guard
+test now requires every setting to be either editable or listed with a reason for not being.
+The deprecated `project` block is gone from `ProjectConfig`; it had been stripped from configs on
+every load for some time, so declaring it described a field the product did not have.
+
 ## 5.0.0 — 2026-08-13
 
 A command surface that had grown feature by feature, and contradicted itself in seven places. A
