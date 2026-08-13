@@ -1,6 +1,6 @@
 # `knowl send` / `knowl receive` — the client half
 
-Status: accepted, 2026-08-13. Server half: knowl-cloud PR #50.
+Status: accepted, 2026-08-13. The server half lives in the hosted service, not this repository.
 
 ## What this is for
 
@@ -15,7 +15,7 @@ with an expiry, is a different act.
 
 **A Knowl Cloud account, and nothing more.** Not anonymous, and not a shared workspace.
 
-This is a deliberate change to PR #50's premise, which says *"receiving is open because the entire
+This is a deliberate change to the server design's original premise, which held that *"receiving is open because the entire
 point is reaching somebody with no account"*. Decision: `8b24a27615914365`. It requires one
 server-side change, listed under **Server changes** below.
 
@@ -25,7 +25,7 @@ would have had nothing left to do.
 ## What the client owns
 
 All of it. The server stores an opaque blob under a client-chosen id and can validate none of the
-properties below — a client that sealed weakly, or not at all, passes every test in PR #50. That
+properties below — a client that sealed weakly, or not at all, passes every test on the server. That
 asymmetry is why this document exists.
 
 ### The code
@@ -57,7 +57,7 @@ key       =      HKDF(code, salt, "knowl-send:key:v1", 32)
 `salt` is a fixed published constant, not a secret: there is no per-user salt to agree on out of
 band, and the code itself carries the entropy.
 
-PR #50's body says `mailbox_id = sha256(code)`. That is also safe — SHA-256 is one-way, so the id
+The server design specifies `mailbox_id = sha256(code)`. That is also safe — SHA-256 is one-way, so the id
 does not leak the key — but two labelled HKDF outputs state the independence rather than relying
 on the reader to notice it. The server stores whatever id it is given, so this is a client-side
 choice with no contract impact.
@@ -93,22 +93,21 @@ This is the reason the receive half is small.
 Both are thin. The payload is an export file and the merge is an import.
 
 ```
-knowl send [--query <text> | --id <ids...> | --category <list>] [--expires-in <hours>]
+knowl cloud send [--query <text> | --id <ids...>] [--from <label>] [--expires-in <hours>]
   → selects atoms, exportKnowledge to a temp file, seal, POST /v1/send
   → prints the code, and only the code, for the human to hand over
 
-knowl receive <code>
+knowl cloud receive <code>
   → derive id, GET /v1/send/:id for the preview, show sender and count
   → confirm, POST /v1/send/:id to claim, unseal, importKnowledge
 ```
 
 Selection is deliberately split, because the two flag families answer different questions:
 
-- `--id` and `--category` go through `selectOwnedItems`, the same path `cloud stage` uses, so the
-  two sharing verbs agree about what is yours to share.
-- `--query` runs `queryKnowledgeForAgent` and sends the hits. This is the flag the motivating
-  incident needed — *"I couldn't get pricing research to a teammate"* — and it is the one that
-  makes `send` usable without knowing ids.
+- `--id` names atoms the caller already has in hand, and is the exact-selection path.
+- `--query` runs `queryKnowledgeBase` and sends the hits. This is the flag the motivating incident
+  needed — a body of research that existed only as atoms, with no path to a colleague — and it is
+  the one that makes `send` usable without knowing ids.
 
 `--query` prints what it matched and asks before sealing. A retrieval-shaped selection is a fuzzy
 one, and sending the wrong three atoms to a colleague is not recoverable by an expiry.
@@ -116,12 +115,11 @@ one, and sending the wrong three atoms to a colleague is not recoverable by an e
 Receiving into a project is required — `importKnowledge` needs a project id — and the command
 refuses outside one rather than inventing a store.
 
-**`exportKnowledge` needs a selection parameter it does not have.** Found during implementation:
-its signature is `exportKnowledge(projectId, outputPath, projectRoot?)` and it writes every active
-item. `send` needs a subset, so this design requires an optional `itemIds` filter on the existing
-exporter rather than a second writer — one format, one place that knows how to serialise an atom.
-That is a change to shared code in `portability.ts`, not new code beside it, and it is the first
-thing to build.
+**`exportKnowledge` took no selection, and now does.** Found during implementation: it wrote every
+active item, while `send` hands a person a handful. It gained an optional `itemIds` filter rather
+than a second writer — the record shape, the assertion and evidence walk, the manifest and the
+checksum are one format, and a parallel serialiser would be a second thing to keep in step with
+`EXPORT_FORMAT_VERSION`. Absent still means everything, so every existing caller is unchanged.
 
 The preview before the claim is what makes `[a]ccept / [s]elect / [r]eject` possible without
 spending the single claim. `peekMailbox` exists for this and does not consume the bundle.
@@ -133,7 +131,7 @@ One, in knowl-cloud:
 - `GET|POST /v1/send/:id` gains `preHandler: requirePrincipal`. Membership is deliberately **not**
   checked — cross-workspace sending is the point.
 
-Everything else in PR #50 stands, including the sealing it cannot verify.
+Everything else in the server design stands, including the sealing it cannot verify.
 
 ## Testing
 

@@ -847,12 +847,12 @@ itself: a queue that changed underneath it is refused, not sent.
 handful of atoms, sealed, collected once, and expiring whether or not anybody takes them.
 
 ```
-knowl cloud send --query "competitor pricing"
+knowl cloud send --query "retry policy"
   3 atom(s) sealed. Hand this to them:
       knowl cloud receive owl-cascade-ridge-plum-tin
 
 knowl cloud receive owl-cascade-ridge-plum-tin
-  From: research · 3 atom(s) · expires 2026-08-14T09:00:00Z
+  From: platform · 3 atom(s) · expires 2026-08-14T09:00:00Z
 ```
 
 **The server cannot read what you send.** Your machine mints a five-word code, derives an
