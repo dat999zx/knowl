@@ -116,6 +116,13 @@ one, and sending the wrong three atoms to a colleague is not recoverable by an e
 Receiving into a project is required — `importKnowledge` needs a project id — and the command
 refuses outside one rather than inventing a store.
 
+**`exportKnowledge` needs a selection parameter it does not have.** Found during implementation:
+its signature is `exportKnowledge(projectId, outputPath, projectRoot?)` and it writes every active
+item. `send` needs a subset, so this design requires an optional `itemIds` filter on the existing
+exporter rather than a second writer — one format, one place that knows how to serialise an atom.
+That is a change to shared code in `portability.ts`, not new code beside it, and it is the first
+thing to build.
+
 The preview before the claim is what makes `[a]ccept / [s]elect / [r]eject` possible without
 spending the single claim. `peekMailbox` exists for this and does not consume the bundle.
 

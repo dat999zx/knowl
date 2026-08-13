@@ -89,6 +89,21 @@ export class CloudApiError extends Error {
 /** What `knowl cloud status` prints for "signed in as". */
 export type CloudIdentity = { email: string; displayName: string };
 
+/** What a receiver is shown before deciding, and what the sender's label promises. */
+export type SendPreview = {
+  senderLabel: string;
+  itemCount: number;
+  createdAt: string;
+  expiresAt: string;
+};
+
+/**
+ * Why a claim came back empty. Distinguished rather than collapsed, because the remedies differ:
+ * a typo is retryable, an expiry needs a re-send, and "already collected" tells a receiver whose
+ * download dropped that the bundle is gone rather than that they mistyped.
+ */
+export type SendRefusal = 'not_found' | 'expired' | 'already_claimed';
+
 export type CloudApi = {
   startDeviceAuthorization(): Promise<DeviceAuthorization>;
   pollForToken(deviceCode: string): Promise<CloudCredential | 'pending'>;
@@ -114,6 +129,34 @@ export type CloudApi = {
     itemId: string;
     body: UpdateItemBody;
   }): Promise<{ outcome: PublishOutcome | null }>;
+  /**
+   * The drop box behind `knowl send` / `knowl receive`.
+   *
+   * Not workspace-scoped, and that is the point: `push` reaches a workspace, `send` reaches a
+   * person who may share none of yours. All three still require an access token -- decision
+   * `8b24a27615914365` -- so guessing a code is rate-limited and attributable, unlike the
+   * anonymous receive the server PR originally specified.
+   *
+   * `ciphertext` is base64 of bytes this client sealed. The server stores it and can open none of
+   * it; see `src/cloud/send/seal.ts` for why that is this side's job to keep.
+   */
+  createSend(input: {
+    accessToken: string;
+    mailboxId: string;
+    ciphertext: string;
+    senderLabel: string;
+    itemCount: number;
+    expiresInHours: number;
+  }): Promise<{ mailboxId: string; expiresAt: string }>;
+  /** Reads the label without spending the single claim, so a receiver can decline knowingly. */
+  peekSend(input: {
+    accessToken: string;
+    mailboxId: string;
+  }): Promise<SendPreview | null>;
+  claimSend(input: {
+    accessToken: string;
+    mailboxId: string;
+  }): Promise<{ ciphertext: string; preview: SendPreview } | { refused: SendRefusal }>;
   /** The profile this repo must match to publish. `reader` is enough to read it. */
   workspaceProfile(input: {
     workspaceId: string;
@@ -274,6 +317,54 @@ export function createCloudApi(options: {
       );
       if (status !== 200) fail('/knowledge', status, body as { code?: string; message?: string });
       return { outcomes: body.outcomes ?? [], commitId: body.commitId ?? null };
+    },
+
+    async createSend(input) {
+      const { status, body } = await request<{ mailboxId: string; expiresAt: string }>(
+        '/v1/send',
+        {
+          method: 'POST',
+          accessToken: input.accessToken,
+          body: {
+            mailboxId: input.mailboxId,
+            ciphertext: input.ciphertext,
+            senderLabel: input.senderLabel,
+            itemCount: input.itemCount,
+            expiresInHours: input.expiresInHours,
+          },
+        },
+      );
+      if (status !== 200 && status !== 201) fail('/send', status, body as { code?: string; message?: string });
+      return { mailboxId: body.mailboxId, expiresAt: body.expiresAt };
+    },
+
+    async peekSend(input) {
+      const { status, body } = await request<SendPreview>(
+        `/v1/send/${encodeURIComponent(input.mailboxId)}`,
+        { method: 'GET', accessToken: input.accessToken },
+      );
+      // Every failure is one 404 by design on the server side, so a peeker cannot confirm a
+      // guessed code for free. Null here means exactly that: nothing to show, reason withheld.
+      if (status === 404 || status === 410) return null;
+      if (status !== 200) fail('/send/:id', status, body as { code?: string; message?: string });
+      return body;
+    },
+
+    async claimSend(input) {
+      const { status, body } = await request<{
+        ciphertext: string; preview: SendPreview; reason?: SendRefusal;
+      }>(
+        `/v1/send/${encodeURIComponent(input.mailboxId)}`,
+        { method: 'POST', accessToken: input.accessToken },
+      );
+      // The claim discriminates where the peek does not: by now the caller has proven they hold
+      // the code, so telling them *why* it failed costs nothing and is the difference between
+      // "ask for a re-send" and "check what you typed".
+      if (status === 404 || status === 410) {
+        return { refused: (body?.reason ?? 'not_found') as SendRefusal };
+      }
+      if (status !== 200) fail('/send/:id claim', status, body as { code?: string; message?: string });
+      return { ciphertext: body.ciphertext, preview: body.preview };
     },
 
     async workspaceProfile(input) {
