@@ -12,12 +12,60 @@ export interface SymbolEvidenceDrift {
   suggestedLocator?: string;
 }
 
+/**
+ * What kind of drift this is, which decides whether it is worth anyone's attention.
+ *
+ * `changed` is the class that used to be everything. Measured on this repo's store, 226 of 339
+ * observations were a cited file that had merely been edited -- most often the highest-churn files
+ * in the tree -- and a file being edited says nothing about whether an atom is still true. Those
+ * are dropped rather than reported, on the same reasoning that took DocPrism's documentation
+ * flag rate from 98% to 14%: name the benign category and discard it.
+ */
+export type DriftKind = 'removed' | 'symbol-removed' | 'untracked-moved' | 'changed';
+
 export interface DriftCandidate {
   itemId: string;
   title: string;
   freshness: KnowledgeFreshness;
   matchedPaths: string[];
+  /** Cited paths that are no longer in the tree. The evidence the candidate rests on. */
+  removedPaths: string[];
+  kind: DriftKind;
   symbolEvidence?: SymbolEvidenceDrift[];
+}
+
+/**
+ * Paths whose changing carries no information about whether an atom is still true.
+ *
+ * Not a heuristic about importance -- a lockfile bump is a real change -- but about *aboutness*.
+ * These were the most-cited paths among flagged items in the measured store (`package.json` 28,
+ * `README.md` 23, `CHANGELOG.md` 14) because they change on nearly every release, so they
+ * generated drift on a schedule rather than on an event.
+ */
+const CHURN_PATH =
+  /(^|\/)(package(-lock)?\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|CHANGELOG\.md|README\.md)$|^(\.github|dist|build|coverage)\//;
+
+export function isChurnPath(candidate: string): boolean {
+  return CHURN_PATH.test(normalizePathForKnowledge(candidate));
+}
+
+/**
+ * Split cited paths into the ones that are gone and the ones that merely moved underneath.
+ *
+ * Existence is injected rather than read here so the rule is testable without a tree, and so the
+ * caller can answer from git's index -- which it has already loaded -- instead of one `stat` per
+ * path per item.
+ */
+export function classifyDriftPaths(
+  citedPaths: string[],
+  exists: (candidate: string) => boolean,
+): { removed: string[]; changed: string[] } {
+  const removed: string[] = [];
+  const changed: string[] = [];
+  for (const candidate of citedPaths) {
+    (exists(candidate) ? changed : removed).push(candidate);
+  }
+  return { removed, changed };
 }
 
 export interface DriftCheckResult {
@@ -171,16 +219,42 @@ export async function checkKnowledgeDrift(
     changedFiles: string[];
     apply?: boolean;
     /**
-     * Enables the untracked-path check. Absent keeps the git-only behaviour, so a caller that
-     * has no project root on hand behaves exactly as before rather than silently checking less.
+     * The tree to answer "does this cited path still exist?" against, which is what separates a
+     * removal from an edit. Without it nothing can be classified and every matched path is
+     * reported, which is the old behaviour and the noisy one.
      */
     projectRoot?: string;
+    /**
+     * Also examine affected paths git cannot diff -- untracked or ignored directories an atom
+     * names. Split out from `projectRoot` on 2026-08-13: classification needs the tree on every
+     * run, while this scan remains the deliberate opt-in it always was, so that the automatic
+     * session-start check could gain the first without silently acquiring the second.
+     */
+    includeUntracked?: boolean;
   }
 ): Promise<DriftCheckResult> {
   const items = (await repo.listKnowledgeItems())
     .filter(item => item.status === 'active');
   // One git call for the whole run, not one per item per path.
   const tracked = options.projectRoot ? listTrackedPaths(options.projectRoot) : null;
+
+  /**
+   * Does this cited path still exist? Git's index answers for everything it tracks, which is one
+   * lookup rather than one `stat`; the filesystem is the fallback for paths git does not track,
+   * so an ignored-but-present directory is not mistaken for a deletion.
+   */
+  const projectRoot = options.projectRoot;
+  const exists = projectRoot
+    ? (candidate: string): boolean => {
+      if (tracked?.files.has(candidate) || tracked?.directories.has(candidate)) return true;
+      try {
+        statSync(path.join(projectRoot, candidate));
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    : null;
   const entries = await Promise.all(items.map(async item => {
     const evidence = await listEvidenceForItem(item.id);
     const symbolEvidence = (await Promise.all(evidence
@@ -191,14 +265,45 @@ export async function checkKnowledgeDrift(
     const symbolPaths = symbolEvidence
       .map(entry => symbolPath(entry.locator))
       .filter((entry): entry is string => Boolean(entry));
-    const paths = Array.from(new Set([
+    /**
+     * Kept apart from the git-derived paths, because it is a different question with its own
+     * precision. The untracked check asks "has a directory this atom names moved *since the atom
+     * was written*", comparing mtime against `updated_at`, and it only runs when a caller opts in.
+     * That time-scoping is what the removal rule below supplies for git paths, so applying the
+     * rule here as well would discard a signal that had already earned its place.
+     */
+    const untrackedPaths = options.includeUntracked && options.projectRoot
+      ? untrackedPathsChangedSince(item, options.projectRoot, tracked)
+      : [];
+    const gitPaths = Array.from(new Set([
       ...matchedPaths(item, options.changedFiles),
       ...symbolPaths.filter(entry => options.changedFiles.includes(entry)),
-      ...(options.projectRoot ? untrackedPathsChangedSince(item, options.projectRoot, tracked) : []),
     ]));
-    return { item, matchedPaths: paths, symbolEvidence };
+    const paths = Array.from(new Set([...gitPaths, ...untrackedPaths]));
+    // Churn first, so a path that carries no information cannot make an item look removed either.
+    const informative = gitPaths.filter(candidate => !isChurnPath(candidate));
+    const classified = exists ? classifyDriftPaths(informative, exists) : null;
+    return { item, matchedPaths: paths, untrackedPaths, classified, symbolEvidence };
   }));
-  const candidates = entries.filter(entry => entry.matchedPaths.length > 0 || entry.symbolEvidence.length > 0);
+
+  /**
+   * What survives.
+   *
+   * A stale symbol is already a resolved "the thing this cites is not there any more", so it
+   * stands on its own. Otherwise the item needs a cited path that has gone. An item whose files
+   * were merely edited is dropped -- that was 226 of 339 observations, and reporting it is what
+   * made the whole signal unreadable.
+   *
+   * With no tree to check against, nothing can be classified and the old behaviour stands. That
+   * is deliberately the noisy direction: silently reporting less than before would be a worse
+   * failure than reporting too much.
+   */
+  const candidates = entries.filter(entry => {
+    if (entry.symbolEvidence.length > 0) return true;
+    if (entry.untrackedPaths.length > 0) return true;
+    if (!entry.classified) return entry.matchedPaths.length > 0;
+    return entry.classified.removed.length > 0;
+  });
 
   let updatedCount = 0;
   if (options.apply && candidates.length > 0) {
@@ -242,12 +347,23 @@ export async function checkKnowledgeDrift(
     currentCommit: options.currentCommit || null,
     changedFiles: options.changedFiles,
     updatedCount,
-    candidates: candidates.map(candidate => ({
-      itemId: candidate.item.id,
-      title: candidate.item.title,
-      freshness: options.apply ? 'needs_review' : candidate.item.freshness,
-      matchedPaths: candidate.matchedPaths,
-      ...(candidate.symbolEvidence.length > 0 ? { symbolEvidence: candidate.symbolEvidence } : {}),
-    })),
+    candidates: candidates.map(candidate => {
+      const removedPaths = candidate.classified?.removed ?? [];
+      return {
+        itemId: candidate.item.id,
+        title: candidate.item.title,
+        freshness: options.apply ? 'needs_review' as const : candidate.item.freshness,
+        matchedPaths: candidate.matchedPaths,
+        removedPaths,
+        // Strongest claim first: a removal names the candidate even when a stale symbol came with
+        // it. `changed` is reachable only where nothing could be classified at all.
+        kind: (removedPaths.length > 0
+          ? 'removed'
+          : candidate.symbolEvidence.length > 0
+            ? 'symbol-removed'
+            : candidate.untrackedPaths.length > 0 ? 'untracked-moved' : 'changed') as DriftKind,
+        ...(candidate.symbolEvidence.length > 0 ? { symbolEvidence: candidate.symbolEvidence } : {}),
+      };
+    }),
   };
 }

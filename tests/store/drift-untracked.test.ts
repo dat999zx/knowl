@@ -70,7 +70,7 @@ describe('drift over untracked paths', () => {
     await fs.writeFile(path.join(ROOT, 'experiments/reskin/second.txt'), 'added\n');
 
     const result = await checkKnowledgeDrift(projectId, {
-      sinceCommit: 'HEAD', currentCommit: 'HEAD', changedFiles: [], projectRoot: ROOT,
+      sinceCommit: 'HEAD', currentCommit: 'HEAD', changedFiles: [], projectRoot: ROOT, includeUntracked: true,
     });
 
     expect(result.candidates.map(c => c.itemId)).toContain(item.id);
@@ -84,7 +84,7 @@ describe('drift over untracked paths', () => {
       new Date(Date.now() + 60_000).toISOString());
 
     const result = await checkKnowledgeDrift(projectId, {
-      sinceCommit: 'HEAD', currentCommit: 'HEAD', changedFiles: [], projectRoot: ROOT,
+      sinceCommit: 'HEAD', currentCommit: 'HEAD', changedFiles: [], projectRoot: ROOT, includeUntracked: true,
     });
 
     expect(result.candidates.map(c => c.itemId)).not.toContain(item.id);
@@ -97,7 +97,7 @@ describe('drift over untracked paths', () => {
     const item = await atom('about tracked source', ['src/tracked.ts']);
 
     const result = await checkKnowledgeDrift(projectId, {
-      sinceCommit: 'HEAD', currentCommit: 'HEAD', changedFiles: [], projectRoot: ROOT,
+      sinceCommit: 'HEAD', currentCommit: 'HEAD', changedFiles: [], projectRoot: ROOT, includeUntracked: true,
     });
 
     expect(result.candidates.map(c => c.itemId)).not.toContain(item.id);
@@ -110,7 +110,7 @@ describe('drift over untracked paths', () => {
     await fs.writeFile(path.join(ROOT, 'src/untracked-scratch.ts'), 'scratch\n');
 
     const result = await checkKnowledgeDrift(projectId, {
-      sinceCommit: 'HEAD', currentCommit: 'HEAD', changedFiles: [], projectRoot: ROOT,
+      sinceCommit: 'HEAD', currentCommit: 'HEAD', changedFiles: [], projectRoot: ROOT, includeUntracked: true,
     });
 
     expect(result.candidates.map(c => c.itemId)).not.toContain(item.id);

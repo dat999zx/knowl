@@ -28,6 +28,22 @@ const commitFile = async (relPath: string, content: string, message: string): Pr
   return git('rev-parse HEAD').trim();
 };
 
+/**
+ * Delete a cited file and commit it.
+ *
+ * Since 2026-08-13 an edit is not drift -- a file being touched says nothing about whether an
+ * atom is still true, and treating it as drift is what produced 339 unread observations against
+ * 42 real ones on this repository's own store. A removal is. These fixtures use it because they
+ * are about the lifecycle around a candidate (stamping, watermarks, warnings), and need a
+ * candidate that qualifies; `an edited file is not drift on its own` covers the other side.
+ */
+const removeFile = async (relPath: string, message: string): Promise<string> => {
+  await fs.rm(path.join(ROOT, relPath), { force: true });
+  git(`add -A ${relPath}`);
+  git(`commit -m "${message}"`);
+  return git('rev-parse HEAD').trim();
+};
+
 const hook = (input: Partial<NormalizedHostHook>): NormalizedHostHook => ({
   host: 'generic',
   event: 'session-start',
@@ -64,7 +80,7 @@ describe('automatic drift check', () => {
     expect(second?.candidateCount).toBe(0);
   });
 
-  it('detects candidates without mutating them, then advances the watermark', async () => {
+  it('marks survivors needs_review, leaves bystanders alone, then advances the watermark', async () => {
     const item = await repo.createKnowledgeItem(projectId, {
       category: 'architecture',
       title: 'Billing module',
@@ -77,18 +93,20 @@ describe('automatic drift check', () => {
       content: 'Nothing to do with billing paths.',
     });
 
-    await commitFile('src/billing.ts', 'export const rate = 2;\n', 'change billing');
+    await removeFile('src/billing.ts', 'drop billing');
     const result = await runAutoDriftCheck(projectId, ROOT);
     expect(result?.checked).toBe(true);
     expect(result?.candidateCount).toBe(1);
     expect(result?.candidateTitles).toEqual(['Billing module']);
 
-    // Detection only: freshness is untouched on both candidate and bystander.
+    // The candidate is acted on; the bystander is not touched at all. Detection-only was the
+    // right answer while 39% of the store qualified -- see the `apply` comment in drift-auto.ts.
     const rows = await getClient().execute({
       sql: 'SELECT id, freshness, last_drift_at FROM knowledge_items WHERE id IN (?, ?) ORDER BY id = ? DESC',
       args: [item.id, bystander.id, item.id],
     });
-    for (const row of rows.rows) expect(String(row.freshness)).toBe('fresh');
+    expect(String(rows.rows[0].freshness)).toBe('needs_review');
+    expect(String(rows.rows[1].freshness)).toBe('fresh');
     // ...but the observation itself is recorded, on the candidate only. This is the whole
     // difference between a warning and a fact a later pass can act on.
     expect(rows.rows[0].last_drift_at).toBeTruthy();
@@ -107,6 +125,35 @@ describe('automatic drift check', () => {
     expect(after.last_drift_at).toBeTruthy();
   });
 
+  it('does not call an edited file drift on its own', async () => {
+    // The rule that removes most of the noise, and the reason the fixtures above delete rather
+    // than edit. Measured on this repository's own store, 226 of 339 observations were exactly
+    // this -- a cited file that had been edited and was still there. A file being touched is not
+    // evidence that anything written about it became false.
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Edited but still true',
+      content: 'A claim about src/edited.ts.',
+      affectedPaths: ['src/edited.ts'],
+    });
+
+    await commitFile('src/edited.ts', 'export const a = 1;\n', 'add edited');
+    await runAutoDriftCheck(projectId, ROOT); // baseline past creation
+    await commitFile('src/edited.ts', 'export const a = 2;\n', 'edit edited');
+
+    const result = await runAutoDriftCheck(projectId, ROOT);
+    expect(result?.checked).toBe(true);
+    expect(result?.candidateTitles).not.toContain('Edited but still true');
+
+    // Not merely unreported -- unrecorded. Stamping it would leave a later pass acting on the
+    // same false positive from a column instead of from a warning.
+    const stamped = (await getClient().execute({
+      sql: 'SELECT last_drift_at FROM knowledge_items WHERE id = ?',
+      args: [item.id],
+    })).rows[0];
+    expect(stamped.last_drift_at).toBeNull();
+  });
+
   it('clears the stamp when the item is reviewed, and not when it is merely touched', async () => {
     const item = await repo.createKnowledgeItem(projectId, {
       category: 'fact',
@@ -121,7 +168,7 @@ describe('automatic drift check', () => {
 
     await commitFile('src/reviewable.ts', 'export const a = 1;\n', 'add reviewable');
     await runAutoDriftCheck(projectId, ROOT); // baseline past creation
-    await commitFile('src/reviewable.ts', 'export const a = 2;\n', 'change reviewable');
+    await removeFile('src/reviewable.ts', 'drop reviewable');
     await runAutoDriftCheck(projectId, ROOT);
     expect(await stamp()).toBeTruthy();
 
@@ -233,7 +280,7 @@ describe('automatic drift check', () => {
     }
     await commitFile('src/bulky.ts', 'export const a = 1;\n', 'add bulky');
     await runAutoDriftCheck(projectId, ROOT); // advance the watermark past creation
-    await commitFile('src/bulky.ts', 'export const a = 2;\n', 'change bulky');
+    await removeFile('src/bulky.ts', 'drop bulky');
 
     const result = await handleHostLifecycleEvent(projectId, hook({
       externalSessionId: `drift-budget-${Date.now()}`,
@@ -254,7 +301,7 @@ describe('automatic drift check', () => {
     });
     await commitFile('src/limits.ts', 'export const limit = 10;\n', 'add limits');
     await runAutoDriftCheck(projectId, ROOT); // advance watermark past the file's creation
-    await commitFile('src/limits.ts', 'export const limit = 20;\n', 'raise limits');
+    await removeFile('src/limits.ts', 'drop limits');
 
     const result = await handleHostLifecycleEvent(projectId, hook({
       externalSessionId: `drift-session-${Date.now()}`,
@@ -265,11 +312,12 @@ describe('automatic drift check', () => {
     expect(result.drift?.candidateCount).toBe(1);
     expect(result.context).toMatch(/^DRIFT: 1 knowledge item/);
 
-    // Still detection only, even through the lifecycle path.
+    // Acted on through the lifecycle path too, not only through the direct call -- the warning
+    // and the mark are one pass, so a session cannot report drift it did not record.
     const row = (await getClient().execute({
       sql: 'SELECT freshness FROM knowledge_items WHERE id = ?',
       args: [flagged.id],
     })).rows[0];
-    expect(String(row.freshness)).toBe('fresh');
+    expect(String(row.freshness)).toBe('needs_review');
   });
 });

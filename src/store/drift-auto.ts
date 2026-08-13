@@ -79,7 +79,24 @@ export async function runAutoDriftCheck(projectId: string, projectRoot: string):
       sinceCommit: watermark,
       currentCommit: current,
       changedFiles,
-      apply: false,
+      /**
+       * Marks survivors `needs_review`, where this was detection-only until 2026-08-13.
+       *
+       * The old refusal was correct for the old signal: flipping freshness was measured as
+       * corpus-wide ranking damage, because 339 of 867 active items qualified. The damage was
+       * breadth, not depth -- the prior is a 6% nudge (`FRESHNESS_PRIOR.needs_review = 0.94`),
+       * which is only destructive when it lands on 39% of the corpus. Replayed against the same
+       * store, the classified rule leaves 44, about 5%, and every one of them cites a file that
+       * is genuinely gone.
+       *
+       * A signal nothing acts on is the state this whole change exists to leave.
+       */
+      apply: true,
+      // The tree, for removal-vs-edit classification only -- `includeUntracked` is deliberately
+      // not set, so this keeps its git-only scope. Without a root nothing can be classified and
+      // every edited file reports as drift, which is what made this path produce 339 unread
+      // observations against 42 real ones on this repo's own store.
+      projectRoot,
     });
     candidateCount = result.candidates.length;
     candidateTitles = result.candidates.slice(0, WARNING_TITLE_LIMIT).map(candidate => candidate.title);
