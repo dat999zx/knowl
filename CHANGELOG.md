@@ -3,6 +3,84 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.0.0 — 2026-08-13
+
+A command surface that had grown feature by feature, and contradicted itself in seven places. A
+command named `publish` that did not publish. `workspace` meaning both a set of linked local repos
+and a cloud tenancy. A CLI that could only append to or hard-delete team knowledge while the server
+had supported patching and superseding all along.
+
+**This release removes commands. There are no aliases.** A removed name exits 1 and prints where it
+went, which is a signpost rather than a redirect:
+
+```
+$ knowl publish
+`knowl publish` moved to `knowl cloud stage`.
+```
+
+### Every cloud verb lives under `knowl cloud`
+
+`login`, `logout` and `publish` leave the top level; `publish` becomes `stage`, because staging is
+what it does — it marks a pending set that `push` drains, which is `git add`, not `git commit`.
+That is also what makes bare `workspace` unambiguous: nothing cloud-shaped sits beside it any more.
+
+New: `cloud workspaces` lists what you can reach before connecting. `cloud unstage` takes an atom
+back out of the queue. `cloud autopush` records standing consent to send without a prompt — **per
+machine, never in `.knowl/config.json`**, so one person cannot enable irreversible publishing for a
+whole team by committing a file.
+
+`cloud login` no longer re-runs device authorisation for someone already signed in, and
+`cloud connect` offers a picker instead of refusing when you belong to more than one workspace.
+
+### Knowledge stages itself
+
+Connect a repository and knowledge written from then on is queued for the team as it is written.
+Nothing is sent by that — a separate `push` does that, still gated on the default branch, and it
+now shows what it is about to send and asks first.
+
+Three ways to say "not this one": `knowl store --local` at write time, `cloud unstage` after the
+fact, `cloud unstage --forever` to stop it recurring. Agents get the same choice through
+`local: true` on `knowl_store`.
+
+A push binds to a snapshot of exactly what it displayed. With staging now continuous, a
+long-running agent can change the queue between the prompt and the answer; a changed atom refuses
+rather than being sent unseen.
+
+### Local verbs are the only verbs
+
+There is no parallel cloud vocabulary for editing knowledge. Correct an atom locally and, if it is
+published, the correction re-stages itself. `retract` stops being the only way to unsay something
+and becomes the last resort it should always have been.
+
+### The rest
+
+`knowl store`, `knowl park` and `knowl handoff` exist for humans, not only for agents. Five groups
+that wrapped a single leaf became one word each: `index-code`, `symbols`, `eval`, `access`, `pr`,
+`evidence`. A bare `workspace promote` or `cloud stage` opens a picker with the categories worth
+sharing already ticked, rather than refusing until you name them.
+
+Vectors now travel both ways with the cloud: the client embeds once and sends the vector, and pull
+returns vectors instead of making every machine re-embed the same team knowledge. Requires
+knowl-cloud v0.3.1 or later.
+
+Migration level 10 adds `cloud_excluded` and `cloud_published.stage_state`. `KNOWL_SCHEMA_VERSION`
+stays 1, so a 4.x build can still open a database a 5.0 build has touched.
+
+### Fixed
+
+- A junctioned or symlinked transcript archive reported "Indexed 0 transcript message(s)" and
+  exited 0, silently skipping the whole corpus.
+- Drift now watches affected paths git cannot diff, so an atom pointing at an untracked working
+  directory stops reporting itself fresh forever.
+- Cloud failures exit 1 rather than 127. `process.exit` during embedder teardown aborted with a
+  native assertion, and 127 conventionally means "not found".
+- A profile mismatch that differs only by recipe no longer tells you to switch to the model you are
+  already using.
+- `cloud connect` and `cloud workspaces` sent an expired access token instead of refreshing it,
+  so an hour after signing in the onboarding command reported the credential was invalid.
+- A bare `cloud stage` named `promote` in its refusal — a real but unrelated command.
+- `cloud stage --apply` that matched nothing no longer asks you to pass `--apply`.
+
 ## 4.2.0 — 2026-08-11
 
 Memory that is present but never surfaced, memory that is never written at all, a second harness's
