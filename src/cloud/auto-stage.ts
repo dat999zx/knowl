@@ -4,6 +4,7 @@ import type { ProjectConfig } from '../core/types.js';
 import { filterExcluded } from './exclusions.js';
 import { publishedVersion, restageForPublish, stageForPublish } from './ledger.js';
 import { currentBranchOf } from './publish-gate.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 
 /**
  * Queue an atom for the team, if this repo is connected and nothing says otherwise.
@@ -24,7 +25,7 @@ export async function maybeAutoStage(input: {
   alreadyPublished: boolean;
 }): Promise<void> {
   try {
-    const pointer = input.config.cloud;
+    const pointer = cloudPointer(input.config);
     if (!pointer) return;
     // Absent means on. Only an explicit false turns it off, so a repo connected before this
     // setting existed behaves like one connected after.
@@ -75,10 +76,11 @@ export async function autoStageAfterWrite(itemIds: string[], namespace?: string)
   try {
     const projectRoot = getProjectRoot();
     const config = await loadConfig(projectRoot);
-    if (!config.cloud) return;
+    const pointer = cloudPointer(config);
+    if (!pointer) return;
 
     for (const itemId of itemIds) {
-      const alreadyPublished = await publishedVersion(itemId, config.cloud.workspaceId) !== null;
+      const alreadyPublished = await publishedVersion(itemId, pointer.workspaceId) !== null;
       await maybeAutoStage({ projectRoot, config, itemId, namespace, alreadyPublished });
     }
   } catch {

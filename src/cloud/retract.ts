@@ -5,6 +5,7 @@ import { publishedVersion, recordRetracted } from './ledger.js';
 import { readSyncState } from './sync-state.js';
 import { withTeamStore } from './team-store.js';
 import { ensureAccessToken } from './token.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 
 export type RetractResult =
   | { status: 'retracted' }
@@ -46,7 +47,7 @@ export async function retractItem(input: {
   reason: string;
   api?: CloudApi;
 }): Promise<RetractResult> {
-  const pointer = input.config.cloud;
+  const pointer = cloudPointer(input.config);
   if (!pointer) return { status: 'not-connected' };
 
   await initDb(input.projectRoot);

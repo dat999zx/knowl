@@ -17,6 +17,7 @@ import { decodeVector as decodeStoredVectorValue } from '../store/vector.js';
 import { encodeVector as encodeVectorToBase64 } from './vector-codec.js';
 import { withTeamStore } from './team-store.js';
 import { ensureAccessToken } from './token.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 
 export type StageResult =
   | { status: 'not-connected' }
@@ -55,7 +56,7 @@ export async function stagePublish(input: {
   categories?: KnowledgeCategory[];
   apply?: boolean;
 }): Promise<StageResult> {
-  const pointer = input.config.cloud;
+  const pointer = cloudPointer(input.config);
   if (!pointer) return { status: 'not-connected' };
 
   await initDb(input.projectRoot);
@@ -80,7 +81,7 @@ export async function stagePublishInRequest(input: {
   categories?: KnowledgeCategory[];
   apply?: boolean;
 }): Promise<StageResult> {
-  const pointer = input.config.cloud;
+  const pointer = cloudPointer(input.config);
   if (!pointer) return { status: 'not-connected' };
   return stageInContext(input, pointer);
 }
@@ -270,7 +271,7 @@ export async function computePushSnapshot(input: {
   projectRoot: string;
   config: ProjectConfig;
 }): Promise<PushSnapshot> {
-  const pointer = input.config.cloud;
+  const pointer = cloudPointer(input.config);
   if (!pointer) return { items: [], unembedded: [] };
 
   await initDb(input.projectRoot);
@@ -314,7 +315,7 @@ export async function pushStaged(input: {
   /** Refuse when the queue merely GREW, not only when a listed atom changed. */
   strict?: boolean;
 }): Promise<PushResult> {
-  const pointer = input.config.cloud;
+  const pointer = cloudPointer(input.config);
   if (!pointer) return { status: 'not-connected' };
 
   await initDb(input.projectRoot);

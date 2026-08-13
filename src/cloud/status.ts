@@ -7,6 +7,7 @@ import { listStaged } from './ledger.js';
 import { checkPublishGate, type GateVerdict } from './publish-gate.js';
 import { readSyncState } from './sync-state.js';
 import { withTeamStore } from './team-store.js';
+import { cloudPointer } from '../core/cloud-pointer.js';
 
 /** Who the stored credential belongs to, cached at login. Null when 4.x wrote it. */
 export type StatusIdentity = { email: string; displayName: string } | null;
@@ -57,7 +58,7 @@ export type CloudStatus =
  * every fact it reports is already on this disk.
  */
 export async function cloudStatus(projectRoot: string, config: ProjectConfig): Promise<CloudStatus> {
-  const pointer = config.cloud;
+  const pointer = cloudPointer(config);
   if (!pointer) return await composeDisconnected();
 
   await initDb(projectRoot);
@@ -79,7 +80,7 @@ export async function cloudStatus(projectRoot: string, config: ProjectConfig): P
  * different request from the one that caused it. See constraint `defde27f6f234535`.
  */
 export async function cloudStatusInRequest(projectRoot: string, config: ProjectConfig): Promise<CloudStatus> {
-  const pointer = config.cloud;
+  const pointer = cloudPointer(config);
   if (!pointer) return await composeDisconnected();
 
   // The caller's context answers this; nothing is opened and nothing is closed.
