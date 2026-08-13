@@ -726,6 +726,8 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 | `knowl cloud stage [--id <ids...>] [--category <list>] [--apply]` | Queue knowledge for the team. Bare opens the same picker; naming flags dry-runs until `--apply` |
 | `knowl cloud push` | Send staged knowledge. Works from any branch |
 | `knowl cloud retract <id> --reason <text>` | Remove a published atom for good. Works from any branch |
+| `knowl cloud send [--id <ids...>] [--query <text>] [--expires-in <hours>]` | Seal a few atoms for one person and print a code. Expires; collected once |
+| `knowl cloud receive <code>` | Collect atoms somebody sent you. Shows who and how many before taking it |
 | `knowl cloud status` | What is connected, how stale the replica is, and what is staged |
 
 ### Pointing at a different server
@@ -838,6 +840,37 @@ terminal it is required, so silence is never read as consent.
 standing consent for this workspace **on this machine only** — it is not written to
 `.knowl/config.json` and no teammate or CI inherits it. It still sends only what it showed
 itself: a queue that changed underneath it is refused, not sent.
+
+### Handing knowledge to a person
+
+`push` is *everyone on this team, permanently*. `send` is *you, specifically, right now* — a
+handful of atoms, sealed, collected once, and expiring whether or not anybody takes them.
+
+```
+knowl cloud send --query "retry policy"
+  3 atom(s) sealed. Hand this to them:
+      knowl cloud receive owl-cascade-ridge-plum-tin
+
+knowl cloud receive owl-cascade-ridge-plum-tin
+  From: platform · 3 atom(s) · expires 2026-08-14T09:00:00Z
+```
+
+**The server cannot read what you send.** Your machine mints a five-word code, derives an
+encryption key and a mailbox id from it under separate labels, and uploads only the id and the
+sealed bytes. The code travels between two humans over whatever channel they already use, and it
+is printed once — it is not stored, not logged, and cannot be recovered if lost.
+
+**Both ends need a Knowl Cloud account; neither needs the same workspace.** That is the whole
+capability `push` does not have. Requiring an account is what makes guessing a code rate-limited
+and attributable, so possession of the code is never the only thing standing between a stranger
+and a bundle.
+
+**What arrives is marked as imported.** Received atoms carry an origin no repo name can equal, so
+they can never be promoted or published from your repo as your own work. That is the same
+machinery `knowl import` uses, and it means a handoff cannot launder provenance.
+
+`--query` prints what it matched and asks before sealing: retrieval is fuzzy, and sending the
+wrong three atoms to a colleague is not undone by an expiry.
 
 ### Two kinds of sharing, and they are independent
 

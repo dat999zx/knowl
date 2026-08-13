@@ -56,8 +56,28 @@ async function exportOrigin(projectRoot?: string): Promise<ExportOrigin | null> 
   }
 }
 
-export async function exportKnowledge(projectId: string, outputPath: string, projectRoot?: string) {
-  const items = (await listKnowledgeItems()).sort((a, b) => a.id.localeCompare(b.id));
+/**
+ * @param itemIds Write only these items, in place of every active one.
+ *
+ * Added for `knowl send`, which hands a person a handful of atoms rather than a backup. Kept here
+ * rather than given a writer of its own: the record shape, the assertion and evidence walk, the
+ * manifest and the checksum are all one format, and a second serialiser would be a second thing to
+ * keep in step with `EXPORT_FORMAT_VERSION`.
+ *
+ * Absent means everything, so every existing caller is unchanged. An empty array is not the same
+ * as absent and produces an empty export, because "send the atoms I selected" and "select nothing"
+ * are different requests and only one of them is a mistake worth silently widening.
+ */
+export async function exportKnowledge(
+  projectId: string,
+  outputPath: string,
+  projectRoot?: string,
+  itemIds?: readonly string[],
+) {
+  const wanted = itemIds === undefined ? null : new Set(itemIds);
+  const items = (await listKnowledgeItems())
+    .filter(item => wanted === null || wanted.has(item.id))
+    .sort((a, b) => a.id.localeCompare(b.id));
   const records: unknown[] = [{
     type: 'header', format: 'knowl-jsonl', version: EXPORT_FORMAT_VERSION, namespace: 'project',
     // Always emitted, null included: "this build knows about origin and there is none" is a

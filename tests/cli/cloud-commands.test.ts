@@ -15,9 +15,12 @@ function subcommandNames(path: string[]): string[] {
 
 describe('the 5.0 cloud namespace', () => {
   it('holds every cloud verb', () => {
+    // `send` and `receive` are the pair `push` and `pull` cannot be: a handful of atoms to one
+    // person, once, expiring. They sit here rather than at the top level because they are cloud
+    // verbs -- both require an account, and neither works on a repo that never connected.
     expect(subcommandNames(['cloud'])).toEqual([
       'autopush', 'connect', 'login', 'logout', 'pull', 'push',
-      'retract', 'stage', 'status', 'unstage', 'workspaces',
+      'receive', 'retract', 'send', 'stage', 'status', 'unstage', 'workspaces',
     ]);
   });
 
