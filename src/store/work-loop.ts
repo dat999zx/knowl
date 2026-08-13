@@ -1,6 +1,6 @@
-import type { KnowledgeItem } from '../core/types.js';
+import type { CommitChange, KnowledgeItem } from '../core/types.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
-import { getClient } from './database.js';
+import { getClient, withClientTransaction } from './database.js';
 import * as repo from './repository.js';
 import { captureMemorySessionEvent } from './session-capture.js';
 import { finishMemorySession, startMemorySession } from './session-repository.js';
@@ -68,13 +68,23 @@ async function requireWorkLoopTask(taskId: string): Promise<KnowledgeItem> {
  * the store's own idiom (`search.ts`, `vector.ts`): tags serialize as a JSON array, so the
  * quoted needle cannot match a longer tag that merely starts with the same characters.
  */
+async function taskAlreadyFinished(taskId: string): Promise<boolean> {
+  const rows = (await getClient().execute({
+    sql: `SELECT 1 FROM knowledge_items
+      WHERE tags LIKE ? AND tags LIKE '%"finish"%'
+      LIMIT 1`,
+    args: [`%"task:${taskId}"%`],
+  })).rows;
+  return rows.length > 0;
+}
+
 /**
  * Retire this task's earlier step atoms in favour of the one just written.
  *
  * A checkpoint is a snapshot of where a task stands, not an entry in a log, so the previous
  * snapshot stops being true the moment a new one is taken. Measured on this repository's own
  * store before this existed: 54 active work-loop atoms across 18 tasks, one of them holding five
- * checkpoints — 6% of the whole active corpus describing lifecycle rather than knowledge.
+ * checkpoints -- 6% of the whole active corpus describing lifecycle rather than knowledge.
  *
  * **Superseded, never deleted.** `resolveDuplicate`'s invariant is that content is never silently
  * discarded, and nothing else in this system removes knowledge automatically. The retired atoms
@@ -84,28 +94,33 @@ async function requireWorkLoopTask(taskId: string): Promise<KnowledgeItem> {
  * **Keyed on the `task:<id>` tag, deliberately not on the title.** Work loops run in parallel, and
  * matching titles would let one task retire another's checkpoints. The task's own anchor atom is
  * tagged `task-start` rather than `task:<id>`, so it is excluded and `requireWorkLoopTask` keeps
- * resolving.
+ * resolving. The quoted needle is the same idiom `taskAlreadyFinished` documents above.
+ *
+ * Returns the changes rather than committing them, so the caller records the retirement in the
+ * same `knowledge_commits` entry as the insert that caused it. One transaction, because a partial
+ * sweep would leave two live snapshots of one task -- the state this exists to prevent.
  */
-async function retirePriorSteps(taskId: string, replacementId: string): Promise<void> {
+async function retirePriorSteps(taskId: string, replacementId: string): Promise<CommitChange[]> {
   const rows = (await getClient().execute({
     sql: `SELECT id FROM knowledge_items
       WHERE tags LIKE ? AND status = 'active' AND id != ?`,
     args: [`%"task:${taskId}"%`, replacementId],
   })).rows;
+  if (rows.length === 0) return [];
 
-  for (const row of rows) {
-    await repo.supersedeKnowledgeItem(String(row.id), replacementId);
-  }
-}
+  const priors = (await Promise.all(rows.map(row => repo.getKnowledgeItem(String(row.id)))))
+    .filter((item): item is KnowledgeItem => Boolean(item));
 
-async function taskAlreadyFinished(taskId: string): Promise<boolean> {
-  const rows = (await getClient().execute({
-    sql: `SELECT 1 FROM knowledge_items
-      WHERE tags LIKE ? AND tags LIKE '%"finish"%'
-      LIMIT 1`,
-    args: [`%"task:${taskId}"%`],
-  })).rows;
-  return rows.length > 0;
+  const changes: CommitChange[] = [];
+  await withClientTransaction(async conn => {
+    for (const prior of priors) {
+      await repo.updateKnowledgeItem(
+        prior.id, { status: 'superseded', supersededById: replacementId }, undefined, conn,
+      );
+      changes.push({ itemId: prior.id, action: 'supersede', before: prior });
+    }
+  });
+  return changes;
 }
 
 function stringList(value: unknown, maxItems = 20, maxLength = 500): string[] | undefined {
@@ -228,7 +243,7 @@ async function recordWorkLoopStep(
     title: `${title}: ${taskName}`,
     content: [
       `Task ID: ${taskId}`,
-      `Task: ${task.title.replace(/^Work Loop: /, '')}`,
+      `Task: ${taskName}`,
       `Recorded at: ${now}`,
       `Summary: ${summary}`,
       ...taskStateLines(taskState),
@@ -238,11 +253,13 @@ async function recordWorkLoopStep(
     confidence: 1.0,
   });
 
+  // Retire first, then record both in one commit: the insert is what caused the retirement, and
+  // splitting them left the supersessions absent from the audit log entirely.
+  const retired = await retirePriorSteps(taskId, item.id);
   await repo.createKnowledgeCommit(projectId, commitMessage, [
     { itemId: item.id, action: 'insert', after: item },
+    ...retired,
   ]);
-
-  await retirePriorSteps(taskId, item.id);
 
   const sessionId = memorySessionId(task);
   if (sessionId) {

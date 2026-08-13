@@ -127,6 +127,28 @@ describe('work loop session capture', () => {
       expect(String(active[0].id)).toBe(finished.itemId);
     });
 
+    it('records the retirement in the same commit as the insert that caused it', async () => {
+      // The audit log is the only place a supersession is visible after the fact. Retiring after
+      // the commit was written left these absent from it entirely -- the store would show a new
+      // checkpoint appearing and the previous one silently not-active, with nothing joining them.
+      const project = await repo.createProject(TEST_ROOT, 'Work loop audit trail');
+      const started = await startWorkLoop(project.id, 'Ship the audit trail', 'audit');
+      const first = await checkpointWorkLoop(project.id, started.taskId, 'step one');
+      const second = await checkpointWorkLoop(project.id, started.taskId, 'step two');
+
+      const rows = (await getClient().execute({
+        sql: `SELECT ci.item_id, ci.action FROM knowledge_commit_items ci
+              WHERE ci.item_id IN (?, ?)`,
+        args: [first.itemId, second.itemId],
+      })).rows;
+
+      const actionsFor = (id: string) => rows
+        .filter(row => String(row.item_id) === id)
+        .map(row => String(row.action));
+      expect(actionsFor(second.itemId)).toContain('insert');
+      expect(actionsFor(first.itemId)).toContain('supersede');
+    });
+
     it('never touches another task running at the same time', async () => {
       // The reason superseding keys on the `task:<id>` tag and not on the title. Users run work
       // loops in parallel; keying on the title would make one loop retire another's checkpoints.
