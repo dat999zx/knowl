@@ -3,6 +3,38 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.2.1 — 2026-08-14
+
+### A backlog of staged knowledge can be pushed again
+
+`knowl cloud push` sent the whole queue in one request. Publishing embeds every atom on the server
+as it arrives, so a large batch could not finish inside the request budget — and because nothing
+was recorded when it failed, every retry re-sent exactly what had just failed. A backlog of forty
+atoms was stuck permanently, while nine went through.
+
+The push now sends twenty at a time, and **on a timeout it halves the batch and tries again**
+rather than failing outright. That second part is what matters: how long an atom takes on the
+server varies by an order of magnitude depending on whether it is warm, so no fixed size is right
+for both. A slow server now degrades into smaller requests instead of blocking.
+
+Anything already accepted is recorded before the failure, so running the push again resumes where
+it stopped. When a push does give up, it says how many atoms it was carrying and how many are
+still queued, instead of naming only the timeout.
+
+### Staging says when an atom was already replaced
+
+`knowl cloud status` could report a number that pushing never drove to zero. Staging skips atoms
+that a newer write has retired — correctly — but said nothing, so naming 118 ids staged 109 with
+no way to discover what happened to the other nine. Reconciling "118 queued" against "109
+published" read as a broken push rather than as replaced knowledge.
+
+`knowl cloud stage` now reports how many named atoms were replaced, and `status` splits the queue:
+
+```
+Staged:    118 staged (118 new, 0 correction(s)) on main, not yet sent.
+           109 of those can still be sent; 9 were replaced by a newer write after being staged.
+```
+
 ## 5.2.0 — 2026-08-14
 
 ### Guessing a send code is now expensive, not merely improbable
