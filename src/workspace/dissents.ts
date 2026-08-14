@@ -211,3 +211,128 @@ export async function withdrawDissent(dissentId: string): Promise<void> {
   });
   if (Number(result.rowsAffected ?? 0) === 0) throw new NoSuchDissentError(dissentId);
 }
+
+export type IncomingDissent = {
+  dissentId: string;
+  fromRepo: string;
+  targetItemId: string;
+  targetTitle: string;
+  claim: string;
+  replacementItemId: string | null;
+  createdAt: string;
+  /** The atom has been rewritten since the objection was raised. */
+  staleAgainstCurrentRevision: boolean;
+};
+
+export type OutgoingDissent = {
+  id: string;
+  targetRepo: string;
+  targetItemId: string;
+  claim: string;
+  status: string;
+  createdAt: string;
+};
+
+/** Dissent rows a peer holds against atoms this repo owns. Unreadable peers contribute nothing. */
+async function openDissentsFromPeers(workspace: ActiveWorkspace): Promise<Array<{ fromRepo: string; row: Record<string, unknown> }>> {
+  const found: Array<{ fromRepo: string; row: Record<string, unknown> }> = [];
+  for (const peer of workspace.peers) {
+    if (!peer.present) continue;
+    try {
+      const store = await openPeerStore(peer.databasePath);
+      const rows = await store.client.execute({
+        sql: `SELECT id, target_item_id, target_content_hash, claim, replacement_item_id, created_at
+              FROM dissents WHERE target_repo = ? AND status = 'open'`,
+        args: [workspace.repo],
+      });
+      for (const row of rows.rows) found.push({ fromRepo: peer.name, row: row as Record<string, unknown> });
+    } catch {
+      // A peer written by an older build has no `dissents` table, and one that is corrupt or
+      // locked cannot be asked. Neither may fail the caller: this runs on the read path, so an
+      // unreadable neighbour must cost a missing annotation and never a failed query.
+    }
+  }
+  return found;
+}
+
+/**
+ * What the linked repos are disputing about this repo's atoms.
+ *
+ * Three things drop a dissent out of this list, and each corresponds to one of the ways a
+ * dispute genuinely ends:
+ *
+ * - the dissenter withdrew it (its own row is no longer `open`)
+ * - this repo rejected it (a local resolution row)
+ * - this repo answered it by rewriting or retiring the atom -- the revision pin no longer
+ *   matches, or the item is no longer active
+ *
+ * Accepting therefore needs no API. Superseding the atom is an ordinary local write, and the
+ * dispute clears itself because a retired atom is not scanned.
+ */
+export async function listIncomingDissents(workspace: ActiveWorkspace | null): Promise<IncomingDissent[]> {
+  if (!workspace) return [];
+  const candidates = await openDissentsFromPeers(workspace);
+  if (candidates.length === 0) return [];
+
+  const resolved = new Set<string>();
+  const resolutions = await getClient().execute({ sql: 'SELECT dissent_id FROM dissent_resolutions', args: [] });
+  for (const row of resolutions.rows) resolved.add(String(row.dissent_id));
+
+  const incoming: IncomingDissent[] = [];
+  for (const { fromRepo, row } of candidates) {
+    const dissentId = String(row.id);
+    if (resolved.has(dissentId)) continue;
+    const target = await getKnowledgeItem(String(row.target_item_id));
+    // Not ours, or no longer standing. Either way there is nothing here left to defend.
+    if (!target || target.status !== 'active') continue;
+    incoming.push({
+      dissentId,
+      fromRepo,
+      targetItemId: target.id,
+      targetTitle: target.title,
+      claim: String(row.claim),
+      replacementItemId: row.replacement_item_id === null ? null : String(row.replacement_item_id),
+      createdAt: String(row.created_at),
+      staleAgainstCurrentRevision: String(row.target_content_hash) !== revisionPin(target),
+    });
+  }
+  return incoming;
+}
+
+/**
+ * Reject a dissent raised against one of this repo's atoms.
+ *
+ * The row is written HERE, keyed by a `dissent_id` that lives in the peer's store. That
+ * asymmetry is the design rather than an oversight: the dissenter keeps its record of what it
+ * believes, this repo keeps its record of having answered, and neither writes the other's
+ * database. The peer's row stays `open` because it still describes that repo's position.
+ *
+ * There is no matching `accept`: accepting is superseding the atom, which needs no new verb.
+ */
+export async function rejectDissent(dissentId: string, targetItemId: string, reason?: string): Promise<void> {
+  const target = await getKnowledgeItem(targetItemId);
+  if (!target) throw new UnknownItemError(targetItemId);
+  await getClient().execute({
+    sql: `INSERT INTO dissent_resolutions (dissent_id, target_item_id, resolution, reason, resolved_at)
+          VALUES (?, ?, 'rejected', ?, ?)
+          ON CONFLICT (dissent_id) DO UPDATE SET
+            resolution = excluded.resolution, reason = excluded.reason, resolved_at = excluded.resolved_at`,
+    args: [dissentId, targetItemId, reason ?? null, new Date().toISOString()],
+  });
+}
+
+/** What this repo has raised against its neighbours. Own store only; no peer is consulted. */
+export async function listOutgoingDissents(): Promise<OutgoingDissent[]> {
+  const rows = await getClient().execute({
+    sql: `SELECT id, target_repo, target_item_id, claim, status, created_at FROM dissents ORDER BY created_at DESC`,
+    args: [],
+  });
+  return rows.rows.map(row => ({
+    id: String(row.id),
+    targetRepo: String(row.target_repo),
+    targetItemId: String(row.target_item_id),
+    claim: String(row.claim),
+    status: String(row.status),
+    createdAt: String(row.created_at),
+  }));
+}

@@ -11,7 +11,9 @@ import { workspaceManifestPath } from '../../src/workspace/paths.js';
 import { joinWorkspace } from '../../src/workspace/membership.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/core/config.js';
-import { createDissent, withdrawDissent } from '../../src/workspace/dissents.js';
+import {
+  createDissent, listIncomingDissents, listOutgoingDissents, rejectDissent, withdrawDissent,
+} from '../../src/workspace/dissents.js';
 
 /**
  * A dissent is one repo's recorded disagreement with an atom another repo owns.
@@ -231,6 +233,147 @@ describe('createDissent', () => {
   it('withdraw refuses an id this store does not hold', async () => {
     await initDb(A);
     await expect(withdrawDissent('not-a-dissent-here')).rejects.toThrow(/No dissent/i);
+    await closeDb();
+  });
+});
+
+describe('the owner side', () => {
+  let ownedByB = '';
+
+  beforeEach(async () => {
+    process.env.KNOWL_HOME = HOME;
+    await closeDb();
+    await releaseAll();
+    for (const dir of [HOME, A, B]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await writeManifest(workspaceManifestPath('ws'), createManifest('ws', null));
+    await seed(A, 'a', 'Local auth note', 'Auth tokens expire locally.');
+    ownedByB = await seed(B, 'b', 'Auth token TTL', 'Auth tokens expire after fifteen minutes.');
+    await joinWorkspace({ projectRoot: A, workspaceName: 'ws', repoName: 'a' });
+    await joinWorkspace({ projectRoot: B, workspaceName: 'ws', repoName: 'b' });
+  });
+
+  afterEach(async () => {
+    delete process.env.KNOWL_HOME;
+    await closeDb();
+    await releaseAll();
+    for (const dir of [HOME, A, B]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  /** Raise a dissent from `a` against `b`'s atom, then leave `a` closed. */
+  async function dissentFromA(claim = 'The TTL is five minutes, not fifteen.'): Promise<string> {
+    await initDb(A);
+    const workspace = await resolveWorkspace(A, await loadConfig(A));
+    const { id } = await createDissent({ targetItemId: ownedByB, claim }, workspace);
+    await closeDb();
+    return id;
+  }
+
+  const inB = async () => {
+    await initDb(B);
+    return resolveWorkspace(B, await loadConfig(B));
+  };
+
+  it('the owning repo sees an open dissent raised against its atom', async () => {
+    await dissentFromA();
+    const workspace = await inB();
+    const incoming = await listIncomingDissents(workspace);
+    await closeDb();
+
+    expect(incoming).toHaveLength(1);
+    expect(incoming[0].fromRepo).toBe('a');
+    expect(incoming[0].targetItemId).toBe(ownedByB);
+    expect(incoming[0].targetTitle).toBe('Auth token TTL');
+    expect(incoming[0].claim).toContain('five minutes');
+    expect(incoming[0].staleAgainstCurrentRevision).toBe(false);
+  });
+
+  it('a withdrawn dissent stops being incoming', async () => {
+    const id = await dissentFromA();
+    await initDb(A);
+    await withdrawDissent(id);
+    await closeDb();
+
+    const workspace = await inB();
+    const incoming = await listIncomingDissents(workspace);
+    await closeDb();
+    expect(incoming).toHaveLength(0);
+  });
+
+  it('rejecting it clears it, and the rejection is written in the owner\'s own store', async () => {
+    const id = await dissentFromA();
+    const workspace = await inB();
+    await rejectDissent(id, ownedByB, 'Measured at fifteen; the five-minute figure is the refresh window.');
+    const incoming = await listIncomingDissents(workspace);
+    const local = await getClient().execute({ sql: 'SELECT * FROM dissent_resolutions', args: [] });
+    await closeDb();
+
+    expect(incoming).toHaveLength(0);
+    expect(local.rows).toHaveLength(1);
+    expect(String(local.rows[0].resolution)).toBe('rejected');
+    // Written by the owner, about a dissent that lives in the peer's store. That asymmetry is
+    // the design: neither repo writes the other's database.
+    expect(String(local.rows[0].dissent_id)).toBe(id);
+  });
+
+  it('the rejection did not reach the dissenting repo\'s store', async () => {
+    const id = await dissentFromA();
+    const workspace = await inB();
+    await rejectDissent(id, ownedByB, 'Measured at fifteen.');
+    await closeDb();
+    void workspace;
+
+    expect(await peerRowCount(A, 'dissent_resolutions')).toBe(0);
+    await initDb(A);
+    const stillOpen = await getClient().execute({ sql: 'SELECT status FROM dissents WHERE id = ?', args: [id] });
+    await closeDb();
+    // The dissenter's own record is untouched -- it still says what that repo believes.
+    expect(String(stillOpen.rows[0].status)).toBe('open');
+  });
+
+  it('rewriting the disputed atom stales the dissent out, because the objection was to what it said', async () => {
+    await dissentFromA();
+    await initDb(B);
+    const item = (await repo.getKnowledgeItem(ownedByB))!;
+    await repo.updateKnowledgeItem(ownedByB, { content: 'Auth tokens expire after five minutes.' });
+    void item;
+    const workspace = await resolveWorkspace(B, await loadConfig(B));
+    const incoming = await listIncomingDissents(workspace);
+    await closeDb();
+
+    expect(incoming.every(entry => entry.staleAgainstCurrentRevision)).toBe(true);
+  });
+
+  it('rejecting refuses a target this repo does not own', async () => {
+    const id = await dissentFromA();
+    await initDb(A);
+    await expect(rejectDissent(id, 'no-such-item-000', 'nope')).rejects.toThrow(/No knowledge item|not yours/i);
+    await closeDb();
+  });
+
+  it('the dissenting repo can list what it has raised', async () => {
+    const id = await dissentFromA();
+    await initDb(A);
+    const outgoing = await listOutgoingDissents();
+    await closeDb();
+
+    // By id rather than by count: on Windows a fixture directory occasionally survives its own
+    // removal while libSQL still holds the sidecar, so a count asserts fixture isolation rather
+    // than the listing this test is about.
+    const raised = outgoing.find(entry => entry.id === id);
+    expect(raised).toBeDefined();
+    expect(raised!.targetRepo).toBe('b');
+    expect(raised!.status).toBe('open');
+  });
+
+  it('a peer with no dissents table contributes nothing rather than failing the listing', async () => {
+    // An older build's store, or one never used. The overlay runs on every workspace read, so
+    // this must degrade to "no dissents" and never to an error.
+    await initDb(A);
+    await getClient().execute('DROP TABLE dissents');
+    await closeDb();
+
+    const workspace = await inB();
+    await expect(listIncomingDissents(workspace)).resolves.toEqual([]);
     await closeDb();
   });
 });
