@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { Client } from '@libsql/client';
 import { getClient } from '../store/database.js';
 import { getKnowledgeItem } from '../store/repository.js';
 import { openPeerStore } from '../store/store-handle.js';
@@ -318,6 +319,129 @@ export async function rejectDissent(dissentId: string, targetItemId: string, rea
           ON CONFLICT (dissent_id) DO UPDATE SET
             resolution = excluded.resolution, reason = excluded.reason, resolved_at = excluded.resolved_at`,
     args: [dissentId, targetItemId, reason ?? null, new Date().toISOString()],
+  });
+}
+
+export type Dispute = {
+  /** The repo that raised it. */
+  by: string;
+  claim: string;
+  at: string;
+  replacementItemId?: string;
+};
+
+/** Every store this machine can read in the workspace: this repo's own, then each present peer. */
+async function readableStores(workspace: ActiveWorkspace): Promise<Array<{ repo: string; client: Client }>> {
+  const stores: Array<{ repo: string; client: Client }> = [{ repo: workspace.repo, client: getClient() }];
+  for (const peer of workspace.peers) {
+    if (!peer.present) continue;
+    try {
+      stores.push({ repo: peer.name, client: (await openPeerStore(peer.databasePath)).client });
+    } catch {
+      // Unreadable is not "has nothing", but on the read path it has to behave like it.
+    }
+  }
+  return stores;
+}
+
+/**
+ * Attach the disputes standing against each returned atom.
+ *
+ * **Annotation only.** The order of `items` is preserved exactly and no score is touched. A
+ * dispute adds a line to a result; it never demotes one. Demoting on dissent would let a
+ * neighbouring repo push another's knowledge down the ranking, which is the blast radius the
+ * single-owner rule exists to prevent -- arriving by a quieter route. If disputed atoms should
+ * one day rank lower, that is a separate change with its own measurement, and this makes it
+ * cheap to try rather than making it happen by accident.
+ *
+ * **Both halves of a dispute are read, from wherever they live.** The dissent is in the raising
+ * repo's store and the resolution in the owning repo's, so a THIRD repo holds neither. Reading
+ * only this store would leave every settled dispute looking open to everyone except the two
+ * repos involved.
+ *
+ * Staleness is judged against the owner's current row rather than against the item passed in:
+ * callers hand this compact search results whose content is truncated, and hashing that would
+ * make every atom read as rewritten.
+ */
+export async function annotateDisputes<T extends { id: string }>(
+  items: T[],
+  workspace: ActiveWorkspace | null,
+): Promise<Array<T & { disputed?: Dispute[] }>> {
+  if (!workspace || items.length === 0) return items;
+
+  const ids = [...new Set(items.map(item => item.id))];
+  const placeholders = ids.map(() => '?').join(', ');
+  const stores = await readableStores(workspace);
+
+  const open: Array<{ by: string; row: Record<string, unknown> }> = [];
+  for (const store of stores) {
+    try {
+      const rows = await store.client.execute({
+        sql: `SELECT id, target_repo, target_item_id, target_content_hash, claim, replacement_item_id, created_at
+              FROM dissents WHERE status = 'open' AND target_item_id IN (${placeholders})`,
+        args: ids,
+      });
+      for (const row of rows.rows) open.push({ by: store.repo, row: row as Record<string, unknown> });
+    } catch {
+      // No `dissents` table: a store written by a build that predates them. Nothing to add.
+    }
+  }
+  if (open.length === 0) return items;
+
+  const resolved = new Set<string>();
+  for (const store of stores) {
+    try {
+      const rows = await store.client.execute({
+        sql: `SELECT dissent_id FROM dissent_resolutions WHERE target_item_id IN (${placeholders})`,
+        args: ids,
+      });
+      for (const row of rows.rows) resolved.add(String(row.dissent_id));
+    } catch {
+      // Same tolerance, and it matters more here: failing to read a resolution would show a
+      // dispute that is already settled, so this must not become an error either.
+    }
+  }
+
+  const current = new Map<string, KnowledgeItem | null>();
+  const currentItem = async (itemId: string, ownerRepo: string): Promise<KnowledgeItem | null> => {
+    if (current.has(itemId)) return current.get(itemId)!;
+    let item: KnowledgeItem | null = null;
+    try {
+      if (ownerRepo === workspace.repo) {
+        item = await getKnowledgeItem(itemId);
+      } else {
+        const peer = workspace.peers.find(entry => entry.name === ownerRepo && entry.present);
+        if (peer) item = await getKnowledgeItem(itemId, (await openPeerStore(peer.databasePath)).db);
+      }
+    } catch {
+      item = null;
+    }
+    current.set(itemId, item);
+    return item;
+  };
+
+  const byItem = new Map<string, Dispute[]>();
+  for (const { by, row } of open) {
+    if (resolved.has(String(row.id))) continue;
+    const itemId = String(row.target_item_id);
+    const item = await currentItem(itemId, String(row.target_repo));
+    // Retired, unreachable, or rewritten since the objection was raised. A dissent is against
+    // what the atom SAID, so the owner changing it is an answer, not something to keep flagging.
+    if (!item || item.status !== 'active') continue;
+    if (String(row.target_content_hash) !== revisionPin(item)) continue;
+    const dispute: Dispute = {
+      by,
+      claim: String(row.claim),
+      at: String(row.created_at),
+      ...(row.replacement_item_id ? { replacementItemId: String(row.replacement_item_id) } : {}),
+    };
+    byItem.set(itemId, [...(byItem.get(itemId) ?? []), dispute]);
+  }
+  if (byItem.size === 0) return items;
+
+  return items.map(item => {
+    const disputes = byItem.get(item.id);
+    return disputes?.length ? { ...item, disputed: disputes } : item;
   });
 }
 

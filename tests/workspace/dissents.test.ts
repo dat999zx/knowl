@@ -12,7 +12,8 @@ import { joinWorkspace } from '../../src/workspace/membership.js';
 import { resolveWorkspace } from '../../src/workspace/resolve.js';
 import { DEFAULT_CONFIG, loadConfig, saveConfig } from '../../src/core/config.js';
 import {
-  createDissent, listIncomingDissents, listOutgoingDissents, rejectDissent, withdrawDissent,
+  annotateDisputes, createDissent, listIncomingDissents, listOutgoingDissents, rejectDissent,
+  withdrawDissent,
 } from '../../src/workspace/dissents.js';
 
 /**
@@ -119,6 +120,28 @@ async function peerRowCount(root: string, table: string): Promise<number> {
     const rows = await getClient().execute({ sql: `SELECT count(*) AS n FROM ${table}`, args: [] });
     return Number(rows.rows[0].n);
   } finally {
+    await closeDb();
+  }
+}
+
+/**
+ * Run `body` with `root`'s `dissents` table invisible, then put it back.
+ *
+ * Renamed rather than dropped, and restored rather than left. The store is stamped at the
+ * current migration level, so `bootstrapSchema` skips `SCHEMA_STATEMENTS` entirely on the next
+ * open and would never recreate a dropped table -- and on Windows a fixture directory routinely
+ * survives its own removal while libSQL holds the sidecar. A dropped table therefore outlives
+ * the test that dropped it and breaks every later case in the file.
+ */
+async function withDissentsTableHidden(root: string, body: () => Promise<void>): Promise<void> {
+  await initDb(root);
+  await getClient().execute('ALTER TABLE dissents RENAME TO dissents_hidden');
+  await closeDb();
+  try {
+    await body();
+  } finally {
+    await initDb(root);
+    await getClient().execute('ALTER TABLE dissents_hidden RENAME TO dissents');
     await closeDb();
   }
 }
@@ -368,12 +391,139 @@ describe('the owner side', () => {
   it('a peer with no dissents table contributes nothing rather than failing the listing', async () => {
     // An older build's store, or one never used. The overlay runs on every workspace read, so
     // this must degrade to "no dissents" and never to an error.
+    await withDissentsTableHidden(A, async () => {
+      const workspace = await inB();
+      await expect(listIncomingDissents(workspace)).resolves.toEqual([]);
+      await closeDb();
+    });
+  });
+});
+
+describe('annotateDisputes', () => {
+  let ownedByB = '';
+
+  beforeEach(async () => {
+    process.env.KNOWL_HOME = HOME;
+    await closeDb();
+    await releaseAll();
+    for (const dir of [HOME, A, B]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+    await writeManifest(workspaceManifestPath('ws'), createManifest('ws', null));
+    await seed(A, 'a', 'Local auth note', 'Auth tokens expire locally.');
+    ownedByB = await seed(B, 'b', 'Auth token TTL', 'Auth tokens expire after fifteen minutes.');
+    await joinWorkspace({ projectRoot: A, workspaceName: 'ws', repoName: 'a' });
+    await joinWorkspace({ projectRoot: B, workspaceName: 'ws', repoName: 'b' });
+  });
+
+  afterEach(async () => {
+    delete process.env.KNOWL_HOME;
+    await closeDb();
+    await releaseAll();
+    for (const dir of [HOME, A, B]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  });
+
+  async function dissentFromA(claim = 'The TTL is five minutes, not fifteen.'): Promise<string> {
     await initDb(A);
-    await getClient().execute('DROP TABLE dissents');
+    const workspace = await resolveWorkspace(A, await loadConfig(A));
+    const { id } = await createDissent({ targetItemId: ownedByB, claim }, workspace);
+    await closeDb();
+    return id;
+  }
+
+  const inB = async () => {
+    await initDb(B);
+    return resolveWorkspace(B, await loadConfig(B));
+  };
+
+  it('marks a disputed atom, naming the repo that disputes it', async () => {
+    await dissentFromA();
+    const workspace = await inB();
+    const [annotated] = await annotateDisputes([{ id: ownedByB }], workspace);
+    await closeDb();
+
+    expect(annotated.disputed).toHaveLength(1);
+    expect(annotated.disputed![0].by).toBe('a');
+    expect(annotated.disputed![0].claim).toContain('five minutes');
+  });
+
+  it('leaves an undisputed atom exactly as it arrived', async () => {
+    const workspace = await inB();
+    const [annotated] = await annotateDisputes([{ id: ownedByB, keep: 'me' }], workspace);
+    await closeDb();
+
+    expect(annotated).not.toHaveProperty('disputed');
+    expect(annotated.keep).toBe('me');
+  });
+
+  it('preserves order exactly — the overlay annotates and never ranks', async () => {
+    await dissentFromA();
+    const workspace = await inB();
+    const input = [{ id: 'x1' }, { id: ownedByB }, { id: 'x2' }, { id: 'x3' }];
+    const annotated = await annotateDisputes(input, workspace);
+    await closeDb();
+
+    expect(annotated.map(entry => entry.id)).toEqual(['x1', ownedByB, 'x2', 'x3']);
+  });
+
+  it('a withdrawn dissent no longer marks the atom', async () => {
+    const id = await dissentFromA();
+    await initDb(A);
+    await withdrawDissent(id);
     await closeDb();
 
     const workspace = await inB();
-    await expect(listIncomingDissents(workspace)).resolves.toEqual([]);
+    const [annotated] = await annotateDisputes([{ id: ownedByB }], workspace);
     await closeDb();
+    expect(annotated).not.toHaveProperty('disputed');
+  });
+
+  it('a rejected dissent no longer marks the atom, as seen from the owning repo', async () => {
+    const id = await dissentFromA();
+    const workspace = await inB();
+    await rejectDissent(id, ownedByB, 'Measured at fifteen.');
+    const [annotated] = await annotateDisputes([{ id: ownedByB }], workspace);
+    await closeDb();
+    expect(annotated).not.toHaveProperty('disputed');
+  });
+
+  it('and no longer marks it for a THIRD repo either, whose store holds neither row', async () => {
+    // The dissent lives in `a`, the rejection in `b`. A reader in `a` holds only its own half,
+    // so without reading the owner's resolutions it would keep showing a dispute that is over.
+    const id = await dissentFromA();
+    const workspaceB = await inB();
+    await rejectDissent(id, ownedByB, 'Measured at fifteen.');
+    await closeDb();
+    void workspaceB;
+
+    await initDb(A);
+    const workspaceA = await resolveWorkspace(A, await loadConfig(A));
+    const [annotated] = await annotateDisputes([{ id: ownedByB }], workspaceA);
+    await closeDb();
+    expect(annotated).not.toHaveProperty('disputed');
+  });
+
+  it('a rewritten atom sheds the dispute, because the objection was to what it said', async () => {
+    await dissentFromA();
+    await initDb(B);
+    await repo.updateKnowledgeItem(ownedByB, { content: 'Auth tokens expire after five minutes.' });
+    const workspace = await resolveWorkspace(B, await loadConfig(B));
+    const [annotated] = await annotateDisputes([{ id: ownedByB }], workspace);
+    await closeDb();
+    expect(annotated).not.toHaveProperty('disputed');
+  });
+
+  it('costs nothing outside a workspace, or with nothing to annotate', async () => {
+    await initDb(B);
+    await expect(annotateDisputes([{ id: ownedByB }], null)).resolves.toEqual([{ id: ownedByB }]);
+    const workspace = await resolveWorkspace(B, await loadConfig(B));
+    await expect(annotateDisputes([], workspace)).resolves.toEqual([]);
+    await closeDb();
+  });
+
+  it('a peer with no dissents table degrades to no annotation, never an error', async () => {
+    await withDissentsTableHidden(A, async () => {
+      const workspace = await inB();
+      await expect(annotateDisputes([{ id: ownedByB }], workspace)).resolves.toEqual([{ id: ownedByB }]);
+      await closeDb();
+    });
   });
 });
