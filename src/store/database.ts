@@ -133,6 +133,48 @@ export async function withDbPath<T>(dbPath: string, run: () => Promise<T>): Prom
 }
 
 /**
+ * Run `run` as though the process had started in `projectRoot`.
+ *
+ * `withDbPath` deliberately keeps the CALLER's config root, because the stores it was built for
+ * -- namespace databases -- live outside any `<root>/.knowl/` layout and deriving one from their
+ * path would point at nothing. For another REPO that behaviour is exactly wrong: the config root
+ * is what `resolveWriteDefaults` reads to stamp `origin_repo`, what auto-staging reads to find a
+ * cloud pointer, and what secret patterns are loaded from. A swap that moved only the database
+ * would write into the target repo and stamp it with the caller's name.
+ *
+ * So this swaps both, together. Nothing downstream is told about it and nothing needs to be:
+ * ownership stamping, auto-staging, the cloud pointer and `assertOwnedItem` all read the ambient
+ * context, so each of them follows the target repo by construction rather than by remembering.
+ * That is the same reason `cd` has always worked for the CLI, expressed for a server that cannot
+ * change directory.
+ *
+ * Scoped through `AsyncLocalStorage` like `withDbPath`, and for the same reason: reassigning the
+ * module handle made a swap visible to every concurrent operation in the process, so a write
+ * issued against one database during another's hop executed against the wrong file.
+ */
+export async function withRepoRoot<T>(projectRoot: string, run: () => Promise<T>): Promise<T> {
+  const previous = activeContext();
+  const dbPath = resolveStorage(projectRoot).knowledge;
+  const client = await acquireClient(dbPath, {
+    profileFingerprint: await currentProfileFingerprint(projectRoot),
+  });
+  const context: DbContext = {
+    db: drizzle(client, { schema }),
+    client,
+    projectRoot: path.resolve(projectRoot),
+    configRoot: path.resolve(projectRoot),
+    databasePath: path.resolve(dbPath),
+  };
+  try {
+    return await scopedContext.run(context, run);
+  } finally {
+    // Same rule as `withDbPath`: a database nothing had open before this call is not one the
+    // caller asked to keep pooled.
+    if (!previous) await releaseClient(dbPath);
+  }
+}
+
+/**
  * The one transaction in flight on the shared connection, and the queue of the rest.
  *
  * `BEGIN` belongs to the *connection*, and this process holds exactly one. Two transactions
