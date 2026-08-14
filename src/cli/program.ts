@@ -1030,6 +1030,13 @@ cloudCommand
       if (result.skippedExcluded > 0) {
         console.log(`${result.skippedExcluded} item(s) are excluded from publication. Name an id to stage one anyway.`);
       }
+      // The one selection rule that used to drop atoms in silence. Naming 118 ids and staging 109
+      // with no explanation is what made a queue look undrainable rather than nine shorter than
+      // asked for -- and unlike the two above, naming the id again cannot override it.
+      if (result.skippedInactive > 0) {
+        console.log(`${result.skippedInactive} item(s) were replaced by a newer write and can no longer be staged.`);
+        console.log('Stage the atom that replaced them instead.');
+      }
       // `applied` is false for two different reasons -- a dry run, and a real run that matched
       // nothing -- so branching on it alone told a user who had just passed --apply to pass
       // --apply. Nothing eligible is its own outcome and says so.

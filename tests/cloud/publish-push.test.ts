@@ -304,6 +304,88 @@ describe('pushStaged', () => {
     expect(await publishedVersionOf(ids.decision)).toBeNull();
   });
 
+  it('sends batches a cold server can finish inside the request timeout', async () => {
+    // knowl#103. The old size was 200 -- the contract maximum -- which measured at 1564 MB and
+    // 418s of server-side embedding, against a 30s client timeout. Any queue under 200 therefore
+    // went as ONE request that a cold server could not finish, and a backlog was unpushable.
+    await stageMany(60);
+    const sizes: number[] = [];
+    await pushStaged({
+      projectRoot: CLONE, config: connected,
+      api: fakeApi([], (body: any) => sizes.push(body.items.length)),
+    });
+
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(20);
+    expect(sizes.reduce((a, b) => a + b, 0)).toBe(61);
+  });
+
+  it('halves the batch and retries when a send times out, instead of losing the push', async () => {
+    // A timeout is the server saying "too much at once", so the client answers with less. Without
+    // this a cold server fails the whole queue and every retry re-sends exactly what just failed.
+    await stageMany(39);
+    const attempted: number[] = [];
+    let timeouts = 0;
+    const api = {
+      ...fakeApi([]),
+      publishItems: async (body: any) => {
+        attempted.push(body.items.length);
+        // Fails anything above 10, like a server that cannot finish a big batch in the budget.
+        if (body.items.length > 10) {
+          timeouts += 1;
+          throw new CloudApiError(408, '/knowledge timed out after 30000ms', 'timeout');
+        }
+        return { outcomes: [], commitId: 'c1' };
+      },
+    } as unknown as CloudApi;
+
+    const result = await pushStaged({ projectRoot: CLONE, config: connected, api });
+
+    expect(timeouts).toBeGreaterThan(0);
+    expect(result).toMatchObject({ status: 'pushed' });
+    // Every atom still went, just in smaller pieces.
+    const delivered = attempted.filter(size => size <= 10).reduce((a, b) => a + b, 0);
+    expect(delivered).toBe(40);
+  });
+
+  it('records what landed before a timeout, so a retry does not start over', async () => {
+    // The defect that made retrying pointless: nothing was written locally, so the next attempt
+    // re-sent the entire queue and failed identically.
+    await stageMany(39);
+    let sent = 0;
+    const api = {
+      ...fakeApi([]),
+      publishItems: async (body: any) => {
+        sent += 1;
+        // The first batch lands; everything after it times out, at every size.
+        if (sent > 1) throw new CloudApiError(408, '/knowledge timed out after 30000ms', 'timeout');
+        return {
+          outcomes: body.items.map((item: any) => ({ id: item.id, status: 'created', version: 1 })),
+          commitId: 'c1',
+        };
+      },
+    } as unknown as CloudApi;
+
+    await expect(pushStaged({ projectRoot: CLONE, config: connected, api })).rejects.toThrow();
+
+    // The first batch is off the queue. Progress survives the failure.
+    const left = await stagedIds();
+    expect(left.length).toBe(40 - 20);
+  });
+
+  it('names how many atoms it was carrying when a timeout ends the push', async () => {
+    // `Push failed: ... timed out after 30000ms` said nothing about size, so it pointed nowhere.
+    await stageMany(9);
+    const api = {
+      ...fakeApi([]),
+      publishItems: async () => {
+        throw new CloudApiError(408, '/knowledge timed out after 30000ms', 'timeout');
+      },
+    } as unknown as CloudApi;
+
+    await expect(pushStaged({ projectRoot: CLONE, config: connected, api }))
+      .rejects.toThrow(/10 atom/);
+  });
+
   it('chunks a batch larger than the contract maximum', async () => {
     // PublishRequest caps items at 200: an unbounded batch is an unbounded transaction and an
     // unbounded embedding job on the server.
