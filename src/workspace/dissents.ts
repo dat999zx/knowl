@@ -445,6 +445,26 @@ export async function annotateDisputes<T extends { id: string }>(
   });
 }
 
+/**
+ * Undo a rejection, putting the dispute back in front of this repo.
+ *
+ * Deliberately present from the start. A rejection is a judgement made on partial information --
+ * that is the normal case, since the other repo is the one that saw the problem -- and an
+ * irreversible one would make reconsidering impossible for no gain. `workspace promote` shipped
+ * without its inverse and the cost has been paid ever since; there is no reason to repeat the
+ * shape in a feature whose entire subject is disagreement being revisable.
+ *
+ * Safe because the resolution is local and additive: deleting the row restores exactly the state
+ * before the rejection, and the peer's dissent was never touched by either operation.
+ */
+export async function reopenDissent(dissentId: string): Promise<void> {
+  const result = await getClient().execute({
+    sql: 'DELETE FROM dissent_resolutions WHERE dissent_id = ?',
+    args: [dissentId],
+  });
+  if (Number(result.rowsAffected ?? 0) === 0) throw new NoSuchDissentError(dissentId);
+}
+
 /** What this repo has raised against its neighbours. Own store only; no peer is consulted. */
 export async function listOutgoingDissents(): Promise<OutgoingDissent[]> {
   const rows = await getClient().execute({

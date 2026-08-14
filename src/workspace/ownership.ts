@@ -7,7 +7,13 @@ import type { ActiveWorkspace } from './resolve.js';
 
 export class ForeignItemError extends Error {
   constructor(itemId: string, repo: string) {
-    super(`Item ${itemId} belongs to repo "${repo}" and was not changed. Run this from that repo.`);
+    super(
+      `Item ${itemId} belongs to repo "${repo}" and was not changed. Run this from that repo. ` +
+      // A refusal that only says no leaves the caller holding a finding with nowhere to put it,
+      // which is the gap dissent exists to close. Named here rather than at each call site so
+      // the CLI and the tool surface cannot end up offering different remedies.
+      'To record that it is wrong without editing it, raise a dissent -- the owner decides.',
+    );
     this.name = 'ForeignItemError';
   }
 }

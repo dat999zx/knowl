@@ -118,6 +118,16 @@ describe('knowl dissent CLI', { timeout: 180_000 }, () => {
     expect(rejected.stdout).toMatch(/keeps its own record/i);
 
     expect(knowl(B, 'dissent', 'list', '--incoming').stdout).toContain('INCOMING (0)');
+
+    // A rejection is a judgement on partial information -- the other repo is the one that saw
+    // the problem -- so reconsidering has to stay possible. `promote` shipped without its
+    // inverse and the cost has been paid ever since.
+    const reopened = knowl(B, 'dissent', 'reopen', dissentId);
+    expect(reopened.status, reopened.stderr).toBe(0);
+    expect(knowl(B, 'dissent', 'list', '--incoming').stdout).toContain('INCOMING (1)');
+
+    // Left rejected, so the withdraw case below reads a settled fixture.
+    knowl(B, 'dissent', 'reject', dissentId, '--target', ownedByB, '--reason', 'Measured at fifteen.');
   });
 
   it('withdrawing refuses an id this repo does not hold', () => {

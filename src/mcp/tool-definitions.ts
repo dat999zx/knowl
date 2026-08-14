@@ -290,6 +290,43 @@ export const WORKSPACE_TOOL_DEFINITIONS: ToolDefinition[] = [
             },
           },
         },
+        {
+          name: 'knowl_dissent',
+          description: "Contest a linked repo's knowledge item without editing it. Use when a query returns another repo's item you believe is wrong: editing it is refused, and a dissent is the way the finding reaches its owner instead of being lost. Recording one writes only in THIS repo and changes nothing in theirs, but from then on every query returning that item -- in any repo here -- carries the dispute, so the next reader sees the objection before relying on it. The owner ends it by superseding the item (which is why there is no accept action) or by rejecting the dissent. Workspace-local: an item owned by a cloud workspace is refused, because that dissent could never reach its owner.",
+          inputSchema: {
+            type: 'object',
+            properties: {
+              action: {
+                type: 'string', enum: ['record', 'list', 'reject', 'withdraw', 'reopen'],
+                description: "list (default): disputes against this repo's items and disputes it has raised. record: state that another repo's item is wrong. reject: this repo's item stands as written. withdraw: take back a dissent this repo raised. reopen: undo a rejection and put the dispute back.",
+              },
+              itemId: {
+                type: 'string', minLength: 1,
+                description: "record: the other repo's item you believe is wrong. Full id -- a truncated one matches nothing.",
+              },
+              claim: {
+                type: 'string', minLength: 1,
+                description: 'record: what is wrong with it. This is what the owning repo reads and what every later reader of that item sees, so state the correction, not that there is one.',
+              },
+              replacement: {
+                type: 'string', minLength: 1,
+                description: 'record, optional: an item in THIS repo saying what you believe instead, so the owner can read the correction rather than reconstruct it.',
+              },
+              dissentId: {
+                type: 'string', minLength: 1,
+                description: 'reject, withdraw, reopen: the dissent, as returned by the list action.',
+              },
+              targetItemId: {
+                type: 'string', minLength: 1,
+                description: 'reject: the item of yours the dissent was raised against.',
+              },
+              reason: {
+                type: 'string',
+                description: 'reject, optional: why the item stands as written.',
+              },
+            },
+          },
+        },
 ];
 
 /**

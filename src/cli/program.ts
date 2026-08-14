@@ -46,7 +46,8 @@ import { formatWorkspaceBlock } from './workspace-report.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem } from '../workspace/ownership.js';
 import {
-  createDissent, listIncomingDissents, listOutgoingDissents, rejectDissent, withdrawDissent,
+  createDissent, listIncomingDissents, listOutgoingDissents, rejectDissent, reopenDissent,
+  withdrawDissent,
 } from '../workspace/dissents.js';
 import { storeKnowledgeItemDeduped } from '../store/knowledge-writer.js';
 import { formatDoctorReport, runDoctor } from './doctor-report.js';
@@ -4840,6 +4841,26 @@ dissentCommand
       }
     } catch (error: any) {
       console.error(`Error rejecting dissent: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+dissentCommand
+  .command('reopen')
+  .argument('<dissentId>', 'A dissent this repo previously rejected')
+  .description('Undo a rejection and put the dispute back in front of this repo')
+  .action(async (dissentId: string) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      try {
+        await reopenDissent(dissentId);
+        console.log(`Reopened dissent ${dissentId}. It marks the item again and is back in \`knowl dissent list --incoming\`.`);
+      } finally {
+        await closeDb();
+      }
+    } catch (error: any) {
+      console.error(`Error reopening dissent: ${error.message}`);
       process.exit(1);
     }
   });
