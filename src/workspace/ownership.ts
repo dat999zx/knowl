@@ -172,3 +172,22 @@ export async function findForeignItem(
   if (item.visibility !== 'workspace') return null;
   return { repo: owner, item };
 }
+
+/**
+ * The same walk, with the peers that could not answer.
+ *
+ * `findForeignItem` collapses "no peer holds it" and "the peer that might was unreadable" into
+ * one null, which is right for a read: the caller's not-found path words both. It is wrong for
+ * anything durable. Telling someone their id does not exist, when the truth is that the repo
+ * owning it is not checked out on this machine, invites them to go and correct an id that was
+ * never wrong -- the mistake `UnverifiedOwnerError` exists to prevent on the write side.
+ */
+export async function peerVerdictFor(
+  itemId: string,
+  workspace: ActiveWorkspace,
+): Promise<{ repo: string | null; item: KnowledgeItem | null; unverified: string[] }> {
+  const { owner, item, unverified } = await ownerFromPeers(itemId, workspace);
+  // One shape rather than a union: `repo` is not a literal, so a union could not be narrowed on
+  // it, and every caller would have to re-test what it had already tested.
+  return owner && item ? { repo: owner, item, unverified } : { repo: null, item: null, unverified };
+}
