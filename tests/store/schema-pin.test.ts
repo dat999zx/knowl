@@ -90,6 +90,12 @@ const SCHEMA_PINS: Record<number, string> = {
   // parent's external session id and a dozen other counters key on that same function. Additive,
   // so `KNOWL_SCHEMA_VERSION` again does not move.
   16: '232a05446e8fcd4ed32861db0c97b8be',
+  // 17 adds `dissents` and `dissent_resolutions` with their two target indexes: one repo's
+  // recorded disagreement with an atom another repo owns, and the owning repo's answer. Two new
+  // tables, no altered column, no backfill, so `KNOWL_SCHEMA_VERSION` again does not move. The
+  // level does, and load-bearingly: `annotateDisputes` reads both on every workspace query, so a
+  // store left at 16 would skip the DDL and fail ordinary reads, not just the new command.
+  17: '7a690fc55d186b8106ea27c647685bd3',
 };
 
 let root: string;

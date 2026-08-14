@@ -232,6 +232,59 @@ const SCHEMA_STATEMENTS = [
     bytes INTEGER
   );`,
 
+  /**
+   * A dissent: this repo's recorded disagreement with an atom ANOTHER repo owns.
+   *
+   * Held here, in the writer's own store, and never in the owner's. That is the whole design:
+   * a repo may say what it believes without reaching into a database it does not own, so the
+   * single-writer rule `assertOwnedItem` enforces is not bent to allow disagreement.
+   *
+   * No foreign key on `target_item_id`, and there cannot be one -- the row it names lives in a
+   * different SQLite file. That is also why `target_repo` is stored rather than resolved later:
+   * the manifest can change, and a dissent has to keep saying who it was aimed at.
+   *
+   * `target_content_hash` pins the revision. A dissent is against what the atom SAID, so the
+   * owner rewriting it is a response, and the dissent stales out of the overlay rather than
+   * silently carrying to text nobody has objected to.
+   *
+   * `replacement_item_id` is local and optional: the correction itself, written where the
+   * dissenting repo can own it. Nothing dereferences it across stores.
+   */
+  `CREATE TABLE IF NOT EXISTS dissents (
+    id TEXT PRIMARY KEY,
+    target_repo TEXT NOT NULL,
+    target_item_id TEXT NOT NULL,
+    target_content_hash TEXT NOT NULL,
+    claim TEXT NOT NULL,
+    replacement_item_id TEXT,
+    provenance TEXT,
+    created_at TEXT NOT NULL,
+    withdrawn_at TEXT,
+    status TEXT NOT NULL DEFAULT 'open'
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_dissents_target ON dissents(target_item_id);`,
+
+  /**
+   * The owning repo's answer to a dissent raised against one of its atoms.
+   *
+   * Written HERE, by the owner, about a `dissent_id` that lives in a peer's store -- the mirror
+   * image of the table above, and the reason neither repo ever writes the other's database.
+   *
+   * There is no `accept` resolution and deliberately so. Accepting means superseding the atom,
+   * which is an ordinary local write the owner could always make; the dissent then goes silent
+   * because retired atoms are not returned, and no cross-store bookkeeping is needed to make
+   * that happen. Only a rejection needs recording, because it is the one outcome that leaves
+   * the disputed atom standing and must still clear the dispute.
+   */
+  `CREATE TABLE IF NOT EXISTS dissent_resolutions (
+    dissent_id TEXT PRIMARY KEY,
+    target_item_id TEXT NOT NULL,
+    resolution TEXT NOT NULL,
+    reason TEXT,
+    resolved_at TEXT NOT NULL
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_dissent_resolutions_target ON dissent_resolutions(target_item_id);`,
+
   `CREATE TABLE IF NOT EXISTS skill_steps (
     id TEXT PRIMARY KEY,
     knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,
