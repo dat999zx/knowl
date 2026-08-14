@@ -98,11 +98,44 @@ export type SendPreview = {
 };
 
 /**
- * Why a claim came back empty. Distinguished rather than collapsed, because the remedies differ:
- * a typo is retryable, an expiry needs a re-send, and "already collected" tells a receiver whose
- * download dropped that the bundle is gone rather than that they mistyped.
+ * Why a send or a claim came back empty. Distinguished rather than collapsed, because the remedies
+ * differ: a typo is retryable, an expiry needs a re-send, and "already collected" tells a receiver
+ * whose download dropped that the bundle is gone rather than that they mistyped.
  */
-export type SendRefusal = 'not_found' | 'expired' | 'already_claimed';
+export type KnownSendRefusal =
+  | 'not_found'
+  | 'expired'
+  | 'already_claimed'
+  /** The mailbox id is taken, which at 2^55 means codegen is broken, not that two people collided. */
+  | 'conflict'
+  /** The sender is at their in-flight quota: wait for claims or expiry rather than minting again. */
+  | 'rate_limited';
+
+/**
+ * Open on purpose, and this is a fix rather than future-proofing.
+ *
+ * The server and this client ship separately, so its `reason` enum grows without asking. It has
+ * already grown twice since 5.1.0 -- `conflict` and `rate_limited` -- and a closed union meant a
+ * sender at their quota was told **"No bundle waiting on that code"**, because the CLI's message
+ * map had no key for what arrived and fell through to the default.
+ *
+ * So an unrecognised reason is carried, not coerced, and the server's own `message` travels with
+ * it. A future addition then degrades to showing the truth instead of a confident wrong answer.
+ */
+export type SendRefusal = KnownSendRefusal | (string & {});
+
+/** A refusal, with whatever the server said about it. */
+export type SendRefused = { refused: SendRefusal; message?: string };
+
+/** One of the caller's own in-flight bundles, as `knowl cloud send --list` shows it. */
+export type SendMailbox = {
+  mailboxId: string;
+  itemCount: number;
+  createdAt: string;
+  expiresAt: string;
+  /** Non-null on a bundle that has been collected -- the tamper-evidence signal. */
+  claimedAt: string | null;
+};
 
 export type CloudApi = {
   startDeviceAuthorization(): Promise<DeviceAuthorization>;
@@ -147,7 +180,7 @@ export type CloudApi = {
     senderLabel: string;
     itemCount: number;
     expiresInHours: number;
-  }): Promise<{ mailboxId: string; expiresAt: string }>;
+  }): Promise<{ mailboxId: string; expiresAt: string } | SendRefused>;
   /** Reads the label without spending the single claim, so a receiver can decline knowingly. */
   peekSend(input: {
     accessToken: string;
@@ -156,7 +189,17 @@ export type CloudApi = {
   claimSend(input: {
     accessToken: string;
     mailboxId: string;
-  }): Promise<{ ciphertext: string; preview: SendPreview } | { refused: SendRefusal }>;
+  }): Promise<{ ciphertext: string; preview: SendPreview } | SendRefused>;
+  /**
+   * The caller's own in-flight bundles, and whether each has been taken.
+   *
+   * The claimed-yet column is the feature, not the listing: a bundle you never handed off showing
+   * `claimedAt` is how a leaked or guessed code announces itself. Own sends only -- these ids are
+   * claim tickets, so the server scopes the query to the principal rather than to a workspace.
+   */
+  listSends(accessToken: string): Promise<SendMailbox[]>;
+  /** Destroys a bundle before anyone collects it. False if there was nothing there to destroy. */
+  revokeSend(input: { accessToken: string; mailboxId: string }): Promise<boolean>;
   /** The profile this repo must match to publish. `reader` is enough to read it. */
   workspaceProfile(input: {
     workspaceId: string;
@@ -195,7 +238,7 @@ export function createCloudApi(options: {
 
   async function request<T>(
     pathname: string,
-    init: { method: 'GET' | 'POST' | 'PATCH'; body?: unknown; accessToken?: string },
+    init: { method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; body?: unknown; accessToken?: string },
   ): Promise<{ status: number; body: T & ApiErrorBody }> {
     const headers: Record<string, string> = { accept: 'application/json' };
     if (init.body !== undefined) headers['content-type'] = 'application/json';
@@ -226,6 +269,19 @@ export function createCloudApi(options: {
 
   function fail(pathname: string, status: number, body: ApiErrorBody): never {
     throw new CloudApiError(status, body.message ?? `${pathname} failed with ${status}`, body.code);
+  }
+
+  /**
+   * A refusal, keeping whatever the server actually said.
+   *
+   * **The reason is not narrowed to a known member**, deliberately. The server's enum grows
+   * independently of this client -- it gained `conflict` and `rate_limited` after 5.1.0 shipped --
+   * and coercing an unrecognised value to `fallback` is what made a sender at their quota read
+   * "No bundle waiting on that code". Carrying the string and the message lets the CLI print a
+   * known reason in its own words and an unknown one in the server's.
+   */
+  function refusalOf(body: { reason?: string; message?: string } | undefined, fallback: SendRefusal): SendRefused {
+    return { refused: body?.reason ?? fallback, message: body?.message };
   }
 
   return {
@@ -334,6 +390,12 @@ export function createCloudApi(options: {
           },
         },
       );
+      // 409 is a mailbox-id collision and 429 is the sender's in-flight quota. Both are refusals a
+      // sender can act on, not transport failures, so they come back as values rather than throws
+      // -- and they carry the server's own wording, which is the half a `reason` cannot express.
+      if (status === 409 || status === 429) {
+        return refusalOf(body as { reason?: string; message?: string }, 'conflict');
+      }
       if (status !== 200 && status !== 201) fail('/send', status, body as { code?: string; message?: string });
       return { mailboxId: body.mailboxId, expiresAt: body.expiresAt };
     },
@@ -352,7 +414,7 @@ export function createCloudApi(options: {
 
     async claimSend(input) {
       const { status, body } = await request<{
-        ciphertext: string; preview: SendPreview; reason?: SendRefusal;
+        ciphertext: string; preview: SendPreview; reason?: string; message?: string;
       }>(
         `/v1/send/${encodeURIComponent(input.mailboxId)}`,
         { method: 'POST', accessToken: input.accessToken },
@@ -360,11 +422,32 @@ export function createCloudApi(options: {
       // The claim discriminates where the peek does not: by now the caller has proven they hold
       // the code, so telling them *why* it failed costs nothing and is the difference between
       // "ask for a re-send" and "check what you typed".
-      if (status === 404 || status === 410) {
-        return { refused: (body?.reason ?? 'not_found') as SendRefusal };
+      if (status === 404 || status === 410 || status === 429) {
+        return refusalOf(body, 'not_found');
       }
       if (status !== 200) fail('/send/:id claim', status, body as { code?: string; message?: string });
       return { ciphertext: body.ciphertext, preview: body.preview };
+    },
+
+    async listSends(accessToken) {
+      const { status, body } = await request<{ mailboxes?: SendMailbox[] }>(
+        '/v1/send',
+        { method: 'GET', accessToken },
+      );
+      if (status !== 200) fail('/send', status, body as { code?: string; message?: string });
+      return body.mailboxes ?? [];
+    },
+
+    async revokeSend(input) {
+      const { status, body } = await request<unknown>(
+        `/v1/send/${encodeURIComponent(input.mailboxId)}`,
+        { method: 'DELETE', accessToken: input.accessToken },
+      );
+      // 404 is not an error here: revoking is idempotent, and a caller walking both derivations
+      // asks for an id that was never there by design.
+      if (status === 404 || status === 410) return false;
+      if (status !== 200) fail('/send/:id revoke', status, body as { code?: string; message?: string });
+      return true;
     },
 
     async workspaceProfile(input) {
