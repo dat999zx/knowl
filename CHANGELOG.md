@@ -3,6 +3,44 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.2.0 — 2026-08-14
+
+### Guessing a send code is now expensive, not merely improbable
+
+A five-word code is about 2⁵⁵, which sounds like plenty. It was not, because *each guess was
+cheap*: both the mailbox id and the sealing key came off the code through SHA-256, so a stolen
+database could be ground through on a GPU rig in hours-to-days — inside a bundle's own 24–72 hour
+life.
+
+Both halves now derive through **Argon2id at 64 MiB**. A guess costs about a second and a rig's
+worth of memory instead of a hash, which takes the whole codespace out of reach. That is why
+`send` and `receive` now pause for a moment before they do anything.
+
+Node 24.7 and later use the standard library's Argon2id; Node 22 and 23 use a bundled
+implementation that produces byte-identical output, so a bundle sealed on one still opens on the
+other.
+
+**Codes minted by 5.1.0 still work.** A receiver looks for the new mailbox first and the old one
+second, so an in-flight bundle from an un-upgraded sender is collected exactly as before.
+
+`knowl cloud send --words 6` mints a six-word code, about 2⁶⁶. Worth having alongside the slow
+derivation and no substitute for it.
+
+### You can see what you have in flight, and take it back
+
+`knowl cloud send --list` shows your unclaimed bundles and whether each has been collected. Read it
+as a detection surface first: **a bundle you never handed to anybody, marked collected, means
+somebody else had the code.**
+
+`knowl cloud send --revoke` destroys one early, taking either the code or an id from the list.
+
+### A sender at their quota is no longer told their bundle does not exist
+
+The service reports why it refused a send or a claim, and its list of reasons grows independently
+of the CLI. A reason this build had never heard of was being reported as the closest one it knew —
+so hitting the in-flight limit read as *"No bundle waiting on that code"* for a bundle that had
+just been created. Unrecognised reasons now show what the service actually said.
+
 ## 5.1.0 — 2026-08-13
 
 ### Hand knowledge to a person, not just to a workspace
