@@ -64,7 +64,9 @@ import { runPull } from '../cloud/pull.js';
 import { computePushSnapshot, countStageable, pushStaged, stagePublish } from '../cloud/publish.js';
 import { reportDrift } from '../cloud/drift-report.js';
 import { retractItem } from '../cloud/retract.js';
-import { previewSend, receiveKnowledge, sendKnowledge } from '../cloud/send/transfer.js';
+import {
+  listSends, previewSend, receiveKnowledge, refusalMessage, revokeSend, sendKnowledge,
+} from '../cloud/send/transfer.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { cloudPointer } from '../core/cloud-pointer.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
@@ -740,6 +742,61 @@ function parseDefaultVisibility(value: string | undefined): 'workspace' | 'repo'
   throw new Error(`--default-visibility must be "repo" or "workspace", not "${value}".`);
 }
 
+/** The two lines every cloud verb prints when it cannot get as far as a request. */
+function reportNoSession(state: 'not-connected' | 'not-logged-in') {
+  console.error(state === 'not-connected'
+    ? 'This repository is not connected to a cloud workspace. Run knowl cloud connect.'
+    : 'Not signed in. Run knowl cloud login first.');
+  process.exitCode = 1;
+}
+
+/**
+ * `knowl cloud send --list`.
+ *
+ * **A detection surface before a convenience.** A bundle showing `collected` that the sender never
+ * handed to anybody is how a leaked or guessed code announces itself, so that reading is printed
+ * rather than left for the reader to reach on their own.
+ *
+ * The ids are opaque here on purpose: codes are never stored, so this answers "was anything
+ * taken" and not "which of mine was it". The id is still what `--revoke` accepts.
+ */
+async function reportSends(config: Awaited<ReturnType<typeof loadConfig>>) {
+  const mailboxes = await listSends({ config });
+  if (typeof mailboxes === 'string') return reportNoSession(mailboxes);
+
+  if (mailboxes.length === 0) {
+    console.log('Nothing in flight. Every bundle you sent has been collected, revoked or expired.');
+    return;
+  }
+
+  console.log(`${mailboxes.length} bundle(s) in flight:`);
+  for (const box of mailboxes) {
+    const state = box.claimedAt ? `collected ${box.claimedAt}` : `expires ${box.expiresAt}`;
+    console.log(`  ${box.mailboxId}  ${box.itemCount} atom(s)  sent ${box.createdAt}  ${state}`);
+  }
+
+  if (mailboxes.some(box => box.claimedAt)) {
+    console.log('');
+    console.log('A bundle you never handed to anybody, marked collected, means the code leaked.');
+    console.log('Nothing can un-send it — treat what was in it as disclosed, and rotate what it named.');
+  }
+}
+
+/** `knowl cloud send --revoke`, taking either the code itself or an id copied out of `--list`. */
+async function reportRevoke(config: Awaited<ReturnType<typeof loadConfig>>, target: string) {
+  const revoked = await revokeSend({ config, target });
+  if (typeof revoked === 'string') return reportNoSession(revoked);
+
+  if (!revoked) {
+    // Same uniform answer as a failed peek: already collected, already expired, never existed and
+    // "not yours" are one message, because distinguishing them would confirm a guess for free.
+    console.error('Nothing to revoke. It was already collected, already expired, or never existed.');
+    process.exitCode = 1;
+    return;
+  }
+  console.log('Revoked. The code is dead and whoever holds it now sees nothing.');
+}
+
 /**
  * Names 5.0 removed, kept only so they can say where they went.
  *
@@ -1369,11 +1426,26 @@ cloudCommand
   .option('--query <text>', 'The atoms this retrieves; shown for confirmation before anything is sealed')
   .option('--from <label>', 'How the recipient sees you; defaults to this repo')
   .option('--expires-in <hours>', 'Hours until the bundle dies unread', '24')
+  .option('--words <count>', 'Words in the code: 5 (default) or 6 for a longer one', '5')
+  .option('--list', 'What you have in flight, and whether it has been collected')
+  .option('--revoke <code-or-id>', 'Destroy a bundle before anyone collects it')
   .option('--yes', 'Skip the confirmation')
   .action(async (options) => {
     try {
       const root = await findProjectRoot(process.cwd());
       const config = await loadConfig(root);
+
+      // Both of these answer about bundles already in flight, so they run before anything is
+      // selected, exported or sealed.
+      if (options.list) {
+        await reportSends(config);
+        return;
+      }
+      if (options.revoke) {
+        await reportRevoke(config, options.revoke);
+        return;
+      }
+
       await initDb(root);
       let itemIds: string[] = [];
       let project: { id: string } | null = null;
@@ -1412,8 +1484,16 @@ cloudCommand
         itemIds,
         senderLabel: options.from ?? config.cloud?.repo ?? 'a colleague',
         expiresInHours: Number(options.expiresIn),
+        // Validated rather than coerced: `Number('six')` is NaN, and a code length that fell
+        // through to a default would weaken the one secret in this feature without saying so.
+        words: numericOption(options.words, '--words', { min: 5 }),
       });
 
+      if (result.status === 'refused') {
+        console.error(refusalMessage(result.reason, result.message));
+        process.exitCode = 1;
+        return;
+      }
       if (result.status === 'not-connected') {
         console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
         process.exitCode = 1;
@@ -1454,18 +1534,20 @@ cloudCommand
       const root = await findProjectRoot(process.cwd());
       const config = await loadConfig(root);
 
-      const preview = await previewSend({ config, code });
-      if (preview === 'not-connected') {
+      // One lookup, and the derivation it resolved travels with it. Re-deriving inside the claim
+      // would pay for Argon2id at 64 MiB three more times for the same code.
+      const resolved = await previewSend({ config, code });
+      if (resolved === 'not-connected') {
         console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
         process.exitCode = 1;
         return;
       }
-      if (preview === 'not-logged-in') {
+      if (resolved === 'not-logged-in') {
         console.error('Not signed in. Run knowl cloud login first.');
         process.exitCode = 1;
         return;
       }
-      if (!preview) {
+      if (!resolved) {
         // One message for every reason, matching the server: a peek that distinguished "spent"
         // from "never existed" would confirm a guessed code for free.
         console.error('No bundle waiting on that code. Check what you typed, or ask for a re-send.');
@@ -1473,20 +1555,16 @@ cloudCommand
         return;
       }
 
+      const { preview } = resolved;
       console.log(`From: ${preview.senderLabel} · ${preview.itemCount} atom(s) · expires ${preview.expiresAt}`);
       if (!options.yes && !await confirm('Collect it? This can only be done once.')) {
         console.log('Left where it is. The code still works until it expires.');
         return;
       }
 
-      const result = await receiveKnowledge({ projectRoot: root, config, code });
+      const result = await receiveKnowledge({ projectRoot: root, config, resolved });
       if (result.status === 'refused') {
-        const message = {
-          not_found: 'No bundle waiting on that code.',
-          expired: 'That bundle expired. Ask for a new one.',
-          already_claimed: 'That bundle was already collected. Ask for a new one.',
-        }[result.reason];
-        console.error(message);
+        console.error(refusalMessage(result.reason, result.message));
         process.exitCode = 1;
         return;
       }

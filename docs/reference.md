@@ -726,7 +726,8 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 | `knowl cloud stage [--id <ids...>] [--category <list>] [--apply]` | Queue knowledge for the team. Bare opens the same picker; naming flags dry-runs until `--apply` |
 | `knowl cloud push` | Send staged knowledge. Works from any branch |
 | `knowl cloud retract <id> --reason <text>` | Remove a published atom for good. Works from any branch |
-| `knowl cloud send [--id <ids...>] [--query <text>] [--expires-in <hours>]` | Seal a few atoms for one person and print a code. Expires; collected once |
+| `knowl cloud send [--id <ids...>] [--query <text>] [--expires-in <hours>] [--words <count>]` | Seal a few atoms for one person and print a code. Expires; collected once |
+| `knowl cloud send --list` / `--revoke <code-or-id>` | What you have in flight and whether it was collected; destroy one early |
 | `knowl cloud receive <code>` | Collect atoms somebody sent you. Shows who and how many before taking it |
 | `knowl cloud status` | What is connected, how stale the replica is, and what is staged |
 
@@ -860,6 +861,18 @@ encryption key and a mailbox id from it under separate labels, and uploads only 
 sealed bytes. The code travels between two humans over whatever channel they already use, and it
 is printed once — it is not stored, not logged, and cannot be recovered if lost.
 
+**Guessing the code is made expensive, not just improbable.** Five words is about 2⁵⁵, which a
+GPU rig could once have ground through against a stolen database inside a bundle's own 24–72 hour
+life — because the derivation was fast. Both halves now come off **Argon2id at 64 MiB**, so each
+guess costs about a second and a rig's worth of memory rather than a hash. That is why `send` and
+`receive` pause for a moment before they do anything.
+
+`--words 6` mints a six-word code instead, about 2⁶⁶. Worth having alongside the slow derivation
+and no substitute for it: what made 2⁵⁵ reachable was the cost per guess.
+
+Codes minted by knowl 5.1.0 still work. A receiver looks for the new mailbox first and the old one
+second, so an in-flight bundle from an un-upgraded sender is collected exactly as before.
+
 **Both ends need a Knowl Cloud account; neither needs the same workspace.** That is the whole
 capability `push` does not have. Requiring an account is what makes guessing a code rate-limited
 and attributable, so possession of the code is never the only thing standing between a stranger
@@ -871,6 +884,23 @@ machinery `knowl import` uses, and it means a handoff cannot launder provenance.
 
 `--query` prints what it matched and asks before sealing: retrieval is fuzzy, and sending the
 wrong three atoms to a colleague is not undone by an expiry.
+
+**`--list` is how a leaked code announces itself.** It shows what you have in flight and whether
+each has been collected. A bundle you never handed to anybody, marked collected, means somebody
+else had the code — nothing can un-send it, so treat what was in it as disclosed.
+
+```
+knowl cloud send --list
+  2 bundle(s) in flight:
+    3f7c…  3 atom(s)  sent 2026-08-14T09:00:00Z  expires 2026-08-15T09:00:00Z
+    a19b…  1 atom(s)  sent 2026-08-14T09:04:00Z  collected 2026-08-14T09:31:00Z
+
+knowl cloud send --revoke owl-cascade-ridge-plum-tin
+  Revoked. The code is dead and whoever holds it now sees nothing.
+```
+
+`--revoke` takes either the code or an id from `--list`. The ids are opaque on purpose: codes are
+never stored, so the list answers *was anything taken*, not *which of mine was it*.
 
 ### Two kinds of sharing, and they are independent
 
