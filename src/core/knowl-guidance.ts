@@ -87,7 +87,8 @@ const WORKSPACE = `### Linked repositories
 - Method questions — "how do we generate X", "is there a script for Y" — belong to the whole workspace: query them unscoped before building new tooling; a sibling repo's pipeline answers them more often than this repo's files do.
 - A \`WORKSPACE:\` notice names linked repos that matched but were not shown, with counts. Re-query with \`repos\` to read them.
 - Whether a new write is shared is this repo's recorded default, not a fixed rule: joining a linked workspace sets it to workspace visibility, while \`--default-visibility repo\` keeps writes private. \`knowl workspace set\` with no flags prints the current value.
-- Knowledge already written privately stays private until someone runs \`knowl workspace promote\`. Only the owning repo can promote, update, or retire its own items.`;
+- Knowledge already written privately stays private until someone runs \`knowl workspace promote\`. Only the owning repo can promote, update, or retire its own items.
+- When the work you are doing belongs to a LINKED repo, pass \`repo: "<name>"\` on the call instead of writing it here. The call then applies to that repo exactly as if it had been run there -- what you write is stamped as its own, and retiring its knowledge is allowed, because the repo is correcting itself. Without it a write lands here, attributed here, which is how a finding ends up in the wrong drawer.`;
 
 export function renderFullKnowlGuidance(): string {
   const table = [

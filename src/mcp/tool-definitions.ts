@@ -263,6 +263,10 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           inputSchema: {
             type: 'object',
             properties: {
+              repo: {
+                type: 'string', minLength: 1,
+                description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here. Not for a drive-by correction of something you noticed in passing while working on this repo.",
+              },
               category: {
                 type: 'string',
                 enum: KNOWLEDGE_CATEGORIES,
@@ -343,6 +347,10 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           inputSchema: {
             type: 'object',
             properties: {
+              repo: {
+                type: 'string', minLength: 1,
+                description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here. Not for a drive-by correction of something you noticed in passing while working on this repo.",
+              },
               atoms: {
                 type: 'array',
                 // Every other array on this surface is capped -- tags/repos/completed at 20 --
@@ -399,6 +407,10 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           inputSchema: {
             type: 'object',
             properties: {
+              repo: {
+                type: 'string', minLength: 1,
+                description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here. Not for a drive-by correction of something you noticed in passing while working on this repo.",
+              },
               title: {
                 type: 'string',
                 minLength: 1,
@@ -501,7 +513,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_timeline',
           description: 'Read one item\'s immutable assertion history: what it claimed, when, and what superseded it. Use when memory looks contradictory or you need to know whether a fact changed -- knowl_query answers what it says now, this answers how it got there.',
-          inputSchema: { type: 'object', properties: { itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID, as returned by knowl_query.' } }, required: ['itemId'] },
+          inputSchema: { type: 'object', properties: { repo: { type: 'string', minLength: 1, description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here." }, itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID, as returned by knowl_query.' } }, required: ['itemId'] },
         },
         {
           name: 'knowl_conflicts',
@@ -532,7 +544,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           description: 'List the evidence linked to one knowledge item. Use before relying on an item that is low-confidence, contested, or old enough that its support matters more than its claim.',
           inputSchema: {
             type: 'object',
-            properties: { itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID.' } },
+            properties: { repo: { type: 'string', minLength: 1, description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here." }, itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID.' } },
             required: ['itemId'],
           },
         },
@@ -568,6 +580,10 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           inputSchema: {
             type: 'object',
             properties: {
+              repo: {
+                type: 'string', minLength: 1,
+                description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here. Not for a drive-by correction of something you noticed in passing while working on this repo.",
+              },
               id: {
                 type: 'string',
                 minLength: 1,
