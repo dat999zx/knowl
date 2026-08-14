@@ -165,6 +165,31 @@ describe('stagePublish', () => {
     expect(await staged()).toEqual([ids.decision]);
   });
 
+  it('counts a named id that is no longer active, rather than dropping it in silence', async () => {
+    // knowl#104. Naming 118 ids and getting 109 staged, with nothing said about the other 9, is
+    // what made a staged count look undrainable: the user has no way to learn the difference is
+    // atoms a newer write retired. `skippedForeign` and `skippedExcluded` were already reported;
+    // this was the one selection rule with no counter behind it.
+    await execute(`UPDATE knowledge_items SET status = 'superseded' WHERE id = '${ids.fact}'`);
+
+    const result = await stage({ ids: [ids.decision, ids.fact], apply: true });
+
+    expect(result).toMatchObject({ skippedInactive: 1 });
+    expect(await staged()).toEqual([ids.decision]);
+  });
+
+  it('counts a retired atom separately from a foreign one, because the remedies differ', async () => {
+    // Collapsing them into one number would tell a user to go and publish from another repo when
+    // the real answer is that the atom was replaced here.
+    await execute(`UPDATE knowledge_items SET origin_repo = 'github.com/acme/api' WHERE id = '${ids.fact}'`);
+    await execute(`UPDATE knowledge_items SET status = 'superseded' WHERE id = '${ids.decision}'`);
+
+    const result = await stage({ ids: [ids.decision, ids.fact], apply: true });
+
+    expect(result).toMatchObject({ skippedForeign: 1, skippedInactive: 1 });
+    expect(await staged()).toEqual([]);
+  });
+
   it('counts foreign items rather than silently returning fewer rows', async () => {
     // "1 item belongs to api" is actionable; a short list with no explanation is not.
     await execute(`UPDATE knowledge_items SET origin_repo = 'github.com/acme/api' WHERE id = '${ids.fact}'`);

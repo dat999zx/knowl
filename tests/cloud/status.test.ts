@@ -98,6 +98,46 @@ describe('cloudStatus', () => {
     expect(status.stagedCorrections).toBe(1);
   });
 
+  it('separates staged atoms that can still be sent from ones a newer write retired', async () => {
+    // knowl#104. A staged atom superseded AFTERWARDS keeps `stage_state = 'pending'`, so it goes
+    // on being counted. Reporting one number a user cannot reconcile against what a push reports
+    // reads as "the push is broken" rather than "one of these was replaced".
+    const { stageForPublish } = await import('../../src/cloud/ledger.js');
+    await initDb(CLONE);
+    try {
+      const now = new Date().toISOString();
+      for (const [id, itemStatus] of [['live', 'active'], ['retired', 'superseded']] as const) {
+        await getClient().execute({
+          sql: `INSERT INTO knowledge_items (id, category, title, content, status, created_at, updated_at)
+                VALUES (?, 'fact', ?, 'body', ?, ?, ?)`,
+          args: [id, `Atom ${id}`, itemStatus, now, now],
+        });
+      }
+      await stageForPublish(['live', 'retired'], WS, 'main');
+    } finally { await closeDb(); }
+
+    const status = await cloudStatus(CLONE, connected) as Extract<Awaited<ReturnType<typeof cloudStatus>>, { connected: true }>;
+
+    // `staged` stays the whole queue -- the ledger records intent and this command does not edit
+    // it -- but the half that a push can actually move is now nameable.
+    expect(status.staged).toBe(2);
+    expect(status.stagedSendable).toBe(1);
+    expect(status.stagedInactive).toBe(1);
+  });
+
+  it('reports every staged atom as sendable when none has been retired', async () => {
+    const { stageForPublish } = await import('../../src/cloud/ledger.js');
+    await initDb(CLONE);
+    try { await stageForPublish(['only'], WS, 'main'); } finally { await closeDb(); }
+
+    const status = await cloudStatus(CLONE, connected) as Extract<Awaited<ReturnType<typeof cloudStatus>>, { connected: true }>;
+
+    // A staged id whose row is gone entirely is NOT counted as retired: it is missing, which the
+    // push already reports its own way, and calling it superseded would name the wrong remedy.
+    expect(status.staged).toBe(1);
+    expect(status.stagedInactive).toBe(0);
+  });
+
   it('reports the signed-in identity from the credential cache, without a network call', async () => {
     const home = path.resolve(`./.knowl-status-home-${run}`);
     process.env.KNOWL_HOME = home;

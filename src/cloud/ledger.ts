@@ -115,6 +115,29 @@ export async function listStaged(workspace: string): Promise<PublishedRecord[]> 
   return result.rows.map(row => toRecord(row as unknown as Record<string, unknown>));
 }
 
+/**
+ * Staged rows whose atom is no longer active.
+ *
+ * Staging filters on `status = 'active'`, but nothing revisits a row afterwards -- so an atom
+ * superseded AFTER it was queued keeps `stage_state = 'pending'` and goes on being counted. One
+ * number the user cannot reconcile against what a push reports reads as a broken push rather than
+ * as an atom that was replaced, which is the whole of knowl#104.
+ *
+ * An INNER JOIN deliberately: a staged id whose row is gone entirely is *missing*, not retired,
+ * and the push already reports that case its own way. Counting it here would name a remedy --
+ * "it was superseded" -- that is not the one the user needs.
+ */
+export async function countInactiveStaged(workspace: string): Promise<number> {
+  const result = await getClient().execute({
+    sql: `SELECT COUNT(*) AS n
+          FROM cloud_published p JOIN knowledge_items k ON k.id = p.item_id
+          WHERE p.remote_workspace = ? AND p.stage_state = 'pending'
+            AND p.retracted_at IS NULL AND k.status <> 'active'`,
+    args: [workspace],
+  });
+  return Number(result.rows[0]?.n ?? 0);
+}
+
 /** Already sent and accepted. What this machine has put in front of the team. */
 export async function listPushed(workspace: string): Promise<PublishedRecord[]> {
   const result = await getClient().execute({

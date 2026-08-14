@@ -842,6 +842,24 @@ standing consent for this workspace **on this machine only** — it is not writt
 `.knowl/config.json` and no teammate or CI inherits it. It still sends only what it showed
 itself: a queue that changed underneath it is refused, not sent.
 
+**A big queue goes in small requests, and a slow server makes them smaller rather than fatal.**
+Publishing embeds each atom on the server, so a large batch can outrun the request budget. The
+push sends 20 at a time, and on a timeout it halves the batch and tries again rather than failing
+the whole backlog. Anything already accepted is recorded before the failure, so running the push
+again resumes where it stopped instead of starting over.
+
+**A staged atom you then replace locally can no longer be sent, and both commands now say so.**
+`knowl cloud stage` reports how many named ids were replaced by a newer write, and `knowl cloud
+status` splits the queue into what a push can still move and what it cannot:
+
+```
+Staged:    118 staged (118 new, 0 correction(s)) on main, not yet sent.
+           109 of those can still be sent; 9 were replaced by a newer write after being staged.
+```
+
+Without that split the count never reaches zero by pushing, and no command explains why. Stage the
+atom that replaced them instead.
+
 ### Handing knowledge to a person
 
 `push` is *everyone on this team, permanently*. `send` is *you, specifically, right now* — a

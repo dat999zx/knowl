@@ -57,7 +57,7 @@ export async function selectOwnedItems(input: {
    * right; the message belongs to the caller.
    */
   verb?: string;
-}): Promise<{ items: PromoteTarget[]; skippedForeign: number }> {
+}): Promise<{ items: PromoteTarget[]; skippedForeign: number; skippedInactive: number }> {
   const byCategory = input.categories?.length ? input.categories : null;
   const byId = input.ids?.length ? input.ids : null;
   if (!byCategory && !byId) {
@@ -101,6 +101,21 @@ export async function selectOwnedItems(input: {
       sql: `SELECT COUNT(*) AS n FROM knowledge_items
             WHERE ${selector.clause} AND status = 'active'
               AND ${visibilityClause}origin_repo IS NOT NULL AND origin_repo <> ?`,
+      args: [...selector.args, input.repoName],
+    });
+
+    // Counted for the same reason `skippedForeign` is, and it was the one selection rule with no
+    // counter behind it. `status = 'active'` below silently drops an atom a newer write retired,
+    // so naming 118 ids staged 109 and said nothing -- which is what made a queue look
+    // undrainable rather than nine-shorter-than-asked-for (knowl#104).
+    //
+    // Owned rows only, so a foreign retired atom is reported once as foreign rather than twice.
+    // The two remedies are different and neither is "both": a foreign atom publishes from its own
+    // repo, a retired one is already replaced here.
+    const inactive = await client.execute({
+      sql: `SELECT COUNT(*) AS n FROM knowledge_items
+            WHERE ${selector.clause} AND status <> 'active'
+              AND ${visibilityClause}(origin_repo IS NULL OR origin_repo = ?)`,
       args: [...selector.args, input.repoName],
     });
 
@@ -174,6 +189,7 @@ export async function selectOwnedItems(input: {
         supersededById: row.superseded_by_id === null ? null : String(row.superseded_by_id),
       })),
       skippedForeign: Number(foreign.rows[0]?.n ?? 0),
+      skippedInactive: Number(inactive.rows[0]?.n ?? 0),
     };
   }
 }

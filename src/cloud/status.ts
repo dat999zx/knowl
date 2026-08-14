@@ -3,7 +3,7 @@ import { closeDb, initDb } from '../store/database.js';
 import { AUTO_SYNC_INTERVAL_MS } from './auto-sync.js';
 import { listCredentialHosts, normalizeApiHost, readCredential } from './credentials.js';
 import { defaultApiHost } from './login.js';
-import { listStaged } from './ledger.js';
+import { countInactiveStaged, listStaged } from './ledger.js';
 import { readSyncState } from './sync-state.js';
 import { withTeamStore } from './team-store.js';
 import { cloudPointer } from '../core/cloud-pointer.js';
@@ -35,6 +35,15 @@ export type CloudStatus =
       lastSyncedAt: string | null;
       lastError: string | null;
       staged: number;
+      /**
+       * The half of `staged` a push can actually move, and the half a newer write retired.
+       *
+       * `staged` stays the whole queue: the ledger records intent and this command does not edit
+       * it. But a user reconciling "118 queued" against "109 published" had no way to discover the
+       * difference, which is what made the count look undrainable (knowl#104).
+       */
+      stagedSendable: number;
+      stagedInactive: number;
       /** Never pushed from this machine. */
       stagedNew: number;
       /** Pushed before, staged again: an update to something the team already has. */
@@ -61,13 +70,16 @@ export async function cloudStatus(projectRoot: string, config: ProjectConfig): P
 
   await initDb(projectRoot);
   let staged;
+  let inactive;
   try {
     staged = await listStaged(pointer.workspaceId);
+    // Read inside the same context, because `composeStatus` runs after `closeDb` and cannot ask.
+    inactive = await countInactiveStaged(pointer.workspaceId);
   } finally {
     await closeDb();
   }
 
-  return composeStatus(pointer, projectRoot, staged);
+  return composeStatus(pointer, projectRoot, staged, inactive);
 }
 
 /**
@@ -82,7 +94,12 @@ export async function cloudStatusInRequest(projectRoot: string, config: ProjectC
   if (!pointer) return await composeDisconnected();
 
   // The caller's context answers this; nothing is opened and nothing is closed.
-  return composeStatus(pointer, projectRoot, await listStaged(pointer.workspaceId));
+  return composeStatus(
+    pointer,
+    projectRoot,
+    await listStaged(pointer.workspaceId),
+    await countInactiveStaged(pointer.workspaceId),
+  );
 }
 
 /**
@@ -108,6 +125,7 @@ async function composeStatus(
   pointer: NonNullable<ProjectConfig['cloud']>,
   projectRoot: string,
   staged: Awaited<ReturnType<typeof listStaged>>,
+  stagedInactive: number,
 ): Promise<CloudStatus> {
   // A replica that cannot be opened at all reads as "never synced" rather than failing the
   // whole report -- the same choice `cloudDoctorChecks` makes, for the same reason.
@@ -133,6 +151,8 @@ async function composeStatus(
     lastSyncedAt: state?.lastSyncedAt ?? null,
     lastError: state?.lastError ?? null,
     staged: staged.length,
+    stagedSendable: staged.length - stagedInactive,
+    stagedInactive,
     stagedNew: staged.length - corrections,
     stagedCorrections: corrections,
     signedIn: Boolean(credential),
@@ -194,6 +214,15 @@ export function formatCloudStatus(status: CloudStatus): string {
     ` (${status.stagedNew} new, ${status.stagedCorrections} correction(s))` +
     `${status.stagedOnBranch ? ` on ${status.stagedOnBranch}` : ''}, not yet sent.`,
   );
+  // Said only when there is a discrepancy to explain. A user reconciling what this reports against
+  // what a push reports had no way to find the difference, so a queue that would not reach zero
+  // read as a broken push rather than as atoms a newer write had replaced (knowl#104).
+  if (status.stagedInactive > 0) {
+    lines.push(
+      `           ${status.stagedSendable} of those can still be sent;` +
+      ` ${status.stagedInactive} were replaced by a newer write after being staged.`,
+    );
+  }
   // The next step, named. A developer who staged and moved on has no other prompt: the atoms sit
   // in a table nobody reads, and a line that reported the count without the command would leave
   // them there. Unconditional since 2026-08-13 -- staged work is now always one push from sent,
