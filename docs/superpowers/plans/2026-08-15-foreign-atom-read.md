@@ -207,42 +207,37 @@ git add src/workspace/ownership.ts tests/workspace/foreign-item-read.test.ts
 git commit -m "feat(workspace): carry the found row on the peer ownership walk"
 ```
 
-### Task 2: Evidence reads accept a peer connection
+### Task 2: WITHDRAWN — evidence stays omitted, per the shipped house rule
 
-**Files:**
-- Modify: `src/store/evidence-repository.ts:107-113`
-- Test: covered by Task 3's foreign-fetch suite (this task has no independent user-visible behaviour; it is the seam Task 3 needs)
+**Originally:** give `listEvidenceForItem` an optional connection so a foreign atom's citations
+could be read from the owning store instead of coming back empty.
 
-**Interfaces:**
-- Produces: `listEvidenceForItem(itemId: string, client?: Client): Promise<Array<Evidence & { relationship: EvidenceRelationship }>>` — same shape, optional connection, defaulting to `getClient()`.
+**Withdrawn during execution, after finding the rule already exists.** `src/mcp/tools.ts` (the
+search path, above `scoreOf`) says:
 
-- [ ] **Step 1: Change the signature**
+> Evidence and staleness resolve against THIS repo's filesystem and database, so a foreign item
+> would be judged against the wrong checkout -- reporting "stale" for a file that is simply
+> somewhere else. Omitting it beats answering wrongly.
 
-```ts
-export async function listEvidenceForItem(
-  itemId: string,
-  // Optional connection, mirroring `getKnowledgeItem(id, dbConnection?)`. Without it, a foreign
-  // atom's citations were read from the LOCAL store and came back empty -- reporting "no
-  // citations" for an atom that has them, which is the failure shape the cloud sync contract
-  // records (fields the wire silently dropped, "with nothing red anywhere").
-  client?: Client,
-): Promise<Array<Evidence & { relationship: EvidenceRelationship }>> {
-  const result = await (client ?? getClient()).execute({
-```
+and `tests/mcp/foreign-item-refusal.test.ts` records the same reasoning for `affectedPaths`:
+*"Same reasoning that already omits evidence and staleness for foreign items."*
 
-with `import type { Client } from '@libsql/client';` added.
+So foreign items already get no evidence on the search path, deliberately and under test. Three
+reasons to match it rather than extend it:
 
-- [ ] **Step 2: Verify nothing regressed**
+1. **One rule for foreign items beats two.** An agent that learns "a foreign atom arrives
+   without checkout-relative fields" is right on both read paths. Splitting the rule by path
+   makes it something you have to look up.
+2. **Half the reason is not fixable anyway.** The optional connection would fix the *database*
+   half; staleness resolves against the working tree and stays uncomputable here. Evidence would
+   arrive systematically partial — a field answered incompletely, which is worse than a field
+   honestly absent.
+3. **It is scope.** A signature change in `evidence-repository.ts` inside a PR about id-fetch is
+   a thing a reviewer must stop and evaluate for no benefit this PR delivers.
 
-Run: `npx vitest run tests/store/` and `npm run typecheck`
-Expected: PASS — every existing caller omits the parameter and is unaffected.
-
-- [ ] **Step 3: Commit**
-
-```bash
-git add src/store/evidence-repository.ts
-git commit -m "refactor(store): let evidence reads target a given connection"
-```
+If proposal B later needs a peer's citations to pin a claim, that change carries its own
+argument and its own tests. The `foreign.note` in Task 3 states the omission rather than leaving
+the agent to infer it from an absent key.
 
 ### Task 3: The id-fetch falls through to linked repos
 
@@ -252,16 +247,17 @@ git commit -m "refactor(store): let evidence reads target a given connection"
 - Test: `tests/mcp/foreign-item-fetch.test.ts` (create)
 
 **Interfaces:**
-- Consumes: `findForeignItem` (Task 1), `listEvidenceForItem(itemId, client)` (Task 2), `openPeerStore`, `resolveWorkspace`.
-- Produces: a foreign fetch payload — the same `full` shape, minus `affectedPaths`, plus a `foreign: { repo: string; note: string }` block. Evidence, when requested, carries no `stale` field.
+- Consumes: `findForeignItem` (Task 1), `resolveWorkspace`.
+- Produces: a foreign fetch payload — the same `full` shape, minus `affectedPaths`, plus a `foreign: { repo: string; note: string }` block. `includeEvidence` never attaches evidence to a foreign item, matching the search path.
 
-- [ ] **Step 1: Write the failing test.** Two stores as in Task 1, wired through the MCP server with a workspace config so `resolveWorkspace` sees the peer. Assertions:
-  - fetching the peer's id returns the whole item (title, content, reasoning) and `foreign.repo === 'peer'`
+- [ ] **Step 1: Write the failing test.** Build on `tests/mcp/foreign-item-refusal.test.ts`'s fixture — two repos joined to a real on-disk workspace under `KNOWL_HOME`, driven through `createMcpServer`. Assertions:
+  - fetching the peer's id returns the whole item (title, content, reasoning) and `foreign.repo` names the owner
   - the payload has **no** `affectedPaths` key, even though the peer row has one
-  - `foreign.note` names the owning repo and says why the omitted fields are omitted
-  - with `includeEvidence: true`, the peer's citations come back, and **no** entry carries a `stale` key
-  - an id no peer holds still returns `isError` with the existing `No knowledge item` text (regression pin on the miss path)
-  - outside a workspace, an unknown id returns the same refusal (no workspace resolution crash)
+  - `foreign.note` names the owning repo and says the item can only be changed there
+  - with `includeEvidence: true`, the foreign payload still carries **no** `evidence` key — the search path's rule, unchanged
+  - a local item with `includeEvidence: true` still gets its evidence (or the rule has just turned the feature off)
+  - an id no repo holds still returns `isError` on the miss path
+  - an unlinked repo is unaffected: unknown id still refuses, with no workspace resolution crash
 
 - [ ] **Step 2: Run** `npx vitest run tests/mcp/foreign-item-fetch.test.ts` — expect FAIL.
 
@@ -274,8 +270,6 @@ git commit -m "refactor(store): let evidence reads target a given connection"
             const active = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
             const foreign = await findForeignItem(String(id), active);
             if (foreign) {
-              const peer = active!.peers.find(entry => entry.name === foreign.repo)!;
-              const store = await openPeerStore(peer.databasePath);
               const item = foreign.item;
               const full = {
                 id: item.id,
@@ -300,16 +294,14 @@ git commit -m "refactor(store): let evidence reads target a given connection"
                 updatedAt: item.updatedAt,
                 foreign: {
                   repo: foreign.repo,
-                  note: `Read from linked repo "${foreign.repo}". affectedPaths and evidence staleness are omitted because they resolve against that repo's checkout, not this one. Only "${foreign.repo}" can update or retire this item.`,
+                  note: `Read from linked repo "${foreign.repo}". affectedPaths and evidence are omitted because they resolve against that repo's checkout and database, not this one. Only "${foreign.repo}" can update or retire this item.`,
                 },
               };
-              // Staleness is NOT computed: `isEvidenceStale` measures against this repo's
-              // working tree, and answering with it would be the wrong-checkout mistake in a
-              // field nobody would think to doubt. Absent means unavailable here, not fresh.
-              const payload = includeEvidence
-                ? [{ ...full, evidence: boundedEvidence(await listEvidenceForItem(item.id, store.client)) }]
-                : [full];
-              return { content: [{ type: 'text', text: JSON.stringify(payload, null, 1) }] };
+              // `includeEvidence` is deliberately not honoured here, matching the search path:
+              // evidence and staleness resolve against THIS repo's database and working tree,
+              // so a foreign item would be judged against the wrong checkout. The note says so
+              // rather than leaving the agent to infer it from an absent key.
+              return { content: [{ type: 'text', text: JSON.stringify([full], null, 1) }] };
             }
             return {
               isError: true,
