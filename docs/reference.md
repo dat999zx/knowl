@@ -1715,6 +1715,38 @@ setting its `visibility`. Nothing leaves the machine.
 `knowl cloud stage` and `knowl cloud push` share it with **the team, over the network**, and that
 state lives in a local ledger rather than in `visibility`.
 
+### Contesting a linked repo's knowledge
+
+One repo owns an item and only that repo may change it. That rule is what keeps a neighbour from
+silently retiring knowledge its owner had good reason to hold — but on its own it leaves the repo
+that *noticed* an error with nowhere to put what it found.
+
+`knowl dissent record` is that place. It writes one row, in **your** store, saying which of
+another repo's items you believe is wrong and why:
+
+```
+knowl dissent record 5fdbe969633c418d --claim "The TTL is five minutes; measured on the staging box."
+```
+
+Nothing in the other repo is touched. What changes is that every query returning that item — in
+any repo in the workspace — now carries the dispute beside it, so the next agent to rely on it
+reads your objection first rather than discovering it later.
+
+The owning repo sees it with `knowl dissent list --incoming` and ends it in one of two ways:
+
+- **Accept** — supersede the item, as it always could. The dispute clears itself, because a
+  retired item is no longer returned. There is deliberately no `accept` verb.
+- **Reject** — `knowl dissent reject <dissentId> --target <itemId>`. The item stands and stops
+  reading as disputed. The other repo keeps its own record of disagreeing; rejecting answers it
+  rather than deleting it.
+
+A dispute also ends quietly when the owner simply rewrites the item, because a dissent is pinned
+to the revision it was raised against — the objection was to what the item *said*.
+
+Dissent is workspace-local. An item owned by a cloud workspace is refused rather than recorded,
+because a dissent that cannot reach its owner would sit on one machine forever while reading as
+though something had been done.
+
 Neither implies the other. Promoting publishes nothing, and publishing does not make your other
 local repositories see it.
 
@@ -2658,6 +2690,10 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl workspace demand [--limit <n>] [--json]` | What the linked repos have queried each other for — the readout that says which knowledge this repo owes its peers |
 | `knowl workspace repin-embedding [--yes]` | Repoint the workspace at this repository's embedding profile |
 | `knowl workspace set [--role <text>] [--default-visibility <repo\|workspace>] [--kin <group>]` | Change this repo's recorded nature in the workspace manifest; bare prints the current values |
+| `knowl dissent record <itemId> --claim <text> [--replacement <id>]` | Record that a linked repo's item is wrong, without editing it. The item is not changed; only its owner can supersede or retire it |
+| `knowl dissent list [--incoming] [--outgoing]` | Disputes raised against this repo's items, and disputes this repo has raised. Neither flag shows both |
+| `knowl dissent reject <dissentId> --target <itemId> [--reason <text>]` | Reject a dispute raised against one of this repo's items. The item stands and stops reading as disputed |
+| `knowl dissent withdraw <dissentId>` | Take back a dispute this repo raised |
 
 ### Memory and retrieval
 

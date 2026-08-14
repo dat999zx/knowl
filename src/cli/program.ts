@@ -45,6 +45,9 @@ import { formatCrossRepoNotice } from './cross-repo-notice.js';
 import { formatWorkspaceBlock } from './workspace-report.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem } from '../workspace/ownership.js';
+import {
+  createDissent, listIncomingDissents, listOutgoingDissents, rejectDissent, withdrawDissent,
+} from '../workspace/dissents.js';
 import { storeKnowledgeItemDeduped } from '../store/knowledge-writer.js';
 import { formatDoctorReport, runDoctor } from './doctor-report.js';
 import { upgradeExistingRepository, type UpgradeResult } from './upgrade.js';
@@ -4730,6 +4733,135 @@ program
       process.exit(1);
     }
     console.log(formatStartupReport(hours));
+  });
+
+/**
+ * `knowl dissent` -- say that a linked repo's atom is wrong, without editing it.
+ *
+ * Every verb is explicit rather than `knowl dissent <id>` with subcommands beside it: an item id
+ * is opaque, so a bare argument could not be told apart from a subcommand name, and the failure
+ * would be a user typing an id that happens to read like a verb.
+ *
+ * The layer is deliberately thin. Everything with a rule in it lives in `workspace/dissents.ts`,
+ * so the CLI and the MCP tool cannot drift into two different sets of guards.
+ */
+const dissentCommand = program
+  .command('dissent')
+  .description("Contest a linked repo's knowledge item without editing it");
+
+dissentCommand
+  .command('record')
+  .argument('<itemId>', 'The item, owned by another repo in this workspace, that you believe is wrong')
+  .requiredOption('--claim <text>', 'What is wrong with it. This is what the owner reads.')
+  .option('--replacement <id>', 'An item in THIS repo that says what you believe instead')
+  .description("Record disagreement with another repo's item")
+  .action(async (itemId: string, options: { claim: string; replacement?: string }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      await initDb(root);
+      try {
+        const workspace = await resolveWorkspace(root, config);
+        const { id, targetRepo } = await createDissent(
+          { targetItemId: itemId, claim: options.claim, replacementItemId: options.replacement, provenance: 'user_stated' },
+          workspace,
+        );
+        console.log(`Recorded dissent ${id} against ${itemId}, owned by "${targetRepo}".`);
+        console.log(`"${targetRepo}" sees it on its next \`knowl dissent list\`, and every query that returns that item now carries the dispute.`);
+        console.log('Nothing in that repo was changed -- only its owner can supersede or retire it.');
+      } finally {
+        await closeDb();
+      }
+    } catch (error: any) {
+      console.error(`Error recording dissent: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+dissentCommand
+  .command('list')
+  .description('Disputes raised against this repo, and disputes this repo has raised')
+  .option('--incoming', "Only disputes against this repo's items")
+  .option('--outgoing', 'Only disputes this repo has raised')
+  .action(async (options: { incoming?: boolean; outgoing?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const config = await loadConfig(root);
+      await initDb(root);
+      try {
+        // Neither flag means both, which is the useful default: the question "what is disputed
+        // around here" does not naturally pick a direction.
+        const both = !options.incoming && !options.outgoing;
+        if (options.incoming || both) {
+          const incoming = await listIncomingDissents(await resolveWorkspace(root, config));
+          console.log(`INCOMING (${incoming.length})`);
+          for (const entry of incoming) {
+            const stale = entry.staleAgainstCurrentRevision ? ' [raised against an older revision]' : '';
+            console.log(`  ${entry.dissentId}  "${entry.targetTitle}" (${entry.targetItemId}) -- ${entry.fromRepo} says: ${entry.claim}${stale}`);
+          }
+          if (incoming.length > 0) {
+            console.log('  Accept one by superseding the item; that clears it. Or: knowl dissent reject <dissentId> --target <itemId>');
+          }
+        }
+        if (options.outgoing || both) {
+          const outgoing = await listOutgoingDissents();
+          console.log(`OUTGOING (${outgoing.length})`);
+          for (const entry of outgoing) {
+            console.log(`  ${entry.id}  ${entry.targetItemId} @ ${entry.targetRepo} [${entry.status}] -- ${entry.claim}`);
+          }
+        }
+      } finally {
+        await closeDb();
+      }
+    } catch (error: any) {
+      console.error(`Error listing dissents: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+dissentCommand
+  .command('reject')
+  .argument('<dissentId>', 'The dissent to reject, as shown by `knowl dissent list --incoming`')
+  .requiredOption('--target <itemId>', 'The item of yours it was raised against')
+  .option('--reason <text>', 'Why the item stands as written')
+  .description("Reject a dispute raised against one of this repo's items")
+  .action(async (dissentId: string, options: { target: string; reason?: string }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      try {
+        await rejectDissent(dissentId, options.target, options.reason);
+        console.log(`Rejected dissent ${dissentId}. ${options.target} stands as written and no longer reads as disputed.`);
+        // Said plainly, because the row is deliberately one-sided and that looks like a bug
+        // otherwise.
+        console.log('The other repo keeps its own record of disagreeing -- rejecting answers it, it does not delete it.');
+      } finally {
+        await closeDb();
+      }
+    } catch (error: any) {
+      console.error(`Error rejecting dissent: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+dissentCommand
+  .command('withdraw')
+  .argument('<dissentId>', 'A dissent THIS repo raised')
+  .description('Take back a dispute this repo raised')
+  .action(async (dissentId: string) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      try {
+        await withdrawDissent(dissentId);
+        console.log(`Withdrew dissent ${dissentId}. It no longer marks the item it named.`);
+      } finally {
+        await closeDb();
+      }
+    } catch (error: any) {
+      console.error(`Error withdrawing dissent: ${error.message}`);
+      process.exit(1);
+    }
   });
 
 return program;
