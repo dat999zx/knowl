@@ -1,6 +1,8 @@
 import { getKnowledgeItem } from '../store/repository.js';
-import { acquireClient, PeerDatabaseMissingError } from '../store/connection-pool.js';
+import { PeerDatabaseMissingError } from '../store/connection-pool.js';
+import { openPeerStore } from '../store/store-handle.js';
 import { isImportedOrigin } from '../store/portability.js';
+import type { KnowledgeItem } from '../core/types.js';
 import type { ActiveWorkspace } from './resolve.js';
 
 export class ForeignItemError extends Error {
@@ -31,6 +33,14 @@ export class UnverifiedOwnerError extends Error {
 type PeerVerdict = {
   /** The peer that holds the item, when one positively does. */
   owner: string | null;
+  /**
+   * The row that peer holds, read on the same probe that established ownership.
+   *
+   * A second lookup for the same id would be a second walk over the same peers, which is the
+   * divergence `store-handle.ts` records: `federated-query.ts` re-implemented selection for want
+   * of a way to point the existing code at another store, and the two drifted.
+   */
+  item: KnowledgeItem | null;
   /** Peers that could not answer at all. Empty means every peer was asked and said no. */
   unverified: string[];
 };
@@ -54,9 +64,17 @@ async function ownerFromPeers(itemId: string, workspace: ActiveWorkspace): Promi
       continue;
     }
     try {
-      const client = await acquireClient(peer.databasePath, { readOnly: true });
-      const rows = await client.execute({ sql: 'SELECT 1 FROM knowledge_items WHERE id = ? LIMIT 1', args: [itemId] });
-      if (rows.rows.length > 0) return { owner: peer.name, unverified };
+      // The whole row, through the same mapper the local path uses, rather than `SELECT 1`.
+      // The probe answered the ownership question and nothing else, so a caller that also
+      // wanted the record had to walk every peer a second time. Reading it here costs one
+      // indexed primary-key lookup instead of an existence check on the same index.
+      //
+      // A row this build cannot map throws, and is caught below as a gap rather than as a hit.
+      // That is the honest verdict for "written by a newer Knowl", which the catch already
+      // names -- and it is safer than reporting ownership for a record we could not read.
+      const store = await openPeerStore(peer.databasePath);
+      const item = await getKnowledgeItem(itemId, store.db);
+      if (item) return { owner: peer.name, item, unverified };
     } catch (error) {
       // A repo with no knowledge database holds no items. That is an answer, not a gap --
       // and it is the ordinary state of a member repo that has been cloned but not used.
@@ -65,7 +83,7 @@ async function ownerFromPeers(itemId: string, workspace: ActiveWorkspace): Promi
       unverified.push(peer.name);
     }
   }
-  return { owner: null, unverified };
+  return { owner: null, item: null, unverified };
 }
 
 async function assertOne(itemId: string, workspace: ActiveWorkspace): Promise<void> {
@@ -112,4 +130,30 @@ export async function assertOwnedItem(
   const ids = (typeof itemIds === 'string' ? [itemIds] : itemIds)
     .filter((id): id is string => typeof id === 'string' && id.length > 0);
   for (const itemId of new Set(ids)) await assertOne(itemId, workspace);
+}
+
+/**
+ * The whole row for an id a linked repo owns, for reading only.
+ *
+ * The refusal this serves was a *not-found*, not a guard: `getKnowledgeItem` reads the local
+ * store, so a sibling's id was simply absent, and the message explained that absence in
+ * ownership terms. Withholding the record was never the protection. The protection is that
+ * `affectedPaths` and evidence staleness resolve against the OWNING repo's checkout, and the
+ * caller drops those rather than answering them from the wrong working tree.
+ *
+ * `assertOwnedItem` is deliberately untouched. This widens what may be read; nothing here
+ * widens what may be written, and a foreign write is refused exactly as it was before.
+ *
+ * Null covers three situations on purpose -- no workspace, no peer holds it, and every peer
+ * that might hold it is unreadable. The caller's own not-found path already words all three
+ * correctly, and collapsing them here would let an unreadable peer report as one that said no,
+ * which is the mistake `UnverifiedOwnerError` exists to prevent on the write side.
+ */
+export async function findForeignItem(
+  itemId: string,
+  workspace: ActiveWorkspace | null,
+): Promise<{ repo: string; item: KnowledgeItem } | null> {
+  if (!workspace) return null;
+  const { owner, item } = await ownerFromPeers(itemId, workspace);
+  return owner && item ? { repo: owner, item } : null;
 }
