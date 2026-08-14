@@ -1,7 +1,7 @@
 ﻿import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory, type ProjectConfig } from '../core/types.js';
 import { closeDb, getClient, initDb } from '../store/database.js';
 import { selectOwnedItems, type PromoteTarget } from '../workspace/promote.js';
-import { createCloudApi, type CloudApi } from './api-client.js';
+import { CloudApiError, createCloudApi, type CloudApi } from './api-client.js';
 import {
   listStaged, publishedVersion, recordPushed, restageForPublish, stageForPublish,
 } from './ledger.js';
@@ -32,6 +32,15 @@ export type StageResult =
      * indistinguishable from a sweep that found nothing, and the remedy differs.
      */
     skippedExcluded: number;
+    /**
+     * Named atoms a newer write already retired.
+     *
+     * Reported for the same reason the two above are, and this was the selection rule that had no
+     * counter: staging filters on `status = 'active'`, so naming 118 ids staged 109 and said
+     * nothing about the other nine. A count the user cannot reconcile against what a push reports
+     * reads as a broken push rather than as atoms that were replaced (knowl#104).
+     */
+    skippedInactive: number;
   };
 
 /**
@@ -96,7 +105,7 @@ async function stageInContext(
   },
   pointer: NonNullable<ProjectConfig['cloud']>,
 ): Promise<StageResult> {
-  const { items, skippedForeign } = await selectOwnedItems({
+  const { items, skippedForeign, skippedInactive } = await selectOwnedItems({
     // The local name, not `pointer.repo`. A repo has two of them and both are right: local
     // workspace membership stamps `origin_repo` with the member name from the manifest
     // ("web"), while `cloud connect` records the git identity ("github.com/acme/web")
@@ -150,6 +159,7 @@ async function stageInContext(
     applied: Boolean(input.apply) && eligible.length > 0,
     skippedForeign,
     skippedExcluded,
+    skippedInactive,
   };
 }
 
@@ -197,7 +207,30 @@ export type PushResult =
   };
 
 /** The contract's own cap. An unbounded batch is an unbounded transaction on the server. */
-const MAX_BATCH = 200;
+/**
+ * Atoms per request.
+ *
+ * **Was 200 -- the server contract's own ceiling -- and that was the bug.** Publishing embeds
+ * inline and synchronously on the server, measured at 1564 MB and 418 seconds for 200 atoms of
+ * realistic prose, against a client timeout of 30 seconds. Any queue under 200 therefore went as
+ * ONE request that a cold server could not possibly finish, so a backlog of 40 was permanently
+ * unpushable while a queue of 9 barely landed (knowl#103).
+ *
+ * 20 is sized against the *cold* per-atom cost measured from a real backlog -- roughly 3s at
+ * worst, so ~10 atoms fit a 30s budget with the batch halving below to cover the rest. A warm
+ * server runs an order of magnitude faster and pays only the extra round trips.
+ *
+ * Never raise this above 200: `PublishRequest` rejects a larger batch outright.
+ */
+const MAX_BATCH = 20;
+
+/** Where halving stops. One atom that still times out is the server's problem, not the size. */
+const MIN_BATCH = 1;
+
+/** The server saying "not this much at once" -- the one failure a smaller batch can answer. */
+function isTimeout(error: unknown): error is CloudApiError {
+  return error instanceof CloudApiError && error.code === 'timeout';
+}
 
 const parseJson = <T>(value: unknown): T | null => {
   if (value === null || value === undefined) return null;
@@ -413,17 +446,50 @@ export async function pushStaged(input: {
     const conflicts: PublishOutcome[] = [];
     const rejected: PublishOutcome[] = [];
 
-    for (let start = 0; start < items.length; start += MAX_BATCH) {
-      // A thrown CloudApiError propagates. The secret case in particular must NOT be caught and
-      // converted into a partial success: the batch failed, and the ledger correctly still says
-      // every atom in it is unsent. The rejection is terminal -- never retried, and never
-      // retried in altered form.
-      const { outcomes } = await api.publishItems({
-        workspaceId: pointer.workspaceId,
-        accessToken: credential.accessToken,
-        originRepo: pointer.repo,
-        items: items.slice(start, start + MAX_BATCH),
-      });
+    let start = 0;
+    while (start < items.length) {
+      let size = Math.min(MAX_BATCH, items.length - start);
+      let outcomes: PublishOutcome[];
+
+      for (;;) {
+        try {
+          // A thrown CloudApiError propagates unless it is a timeout. The secret case in
+          // particular must NOT be caught and converted into a partial success: the batch failed,
+          // and the ledger correctly still says every atom in it is unsent. The rejection is
+          // terminal -- never retried, and never retried in altered form.
+          ({ outcomes } = await api.publishItems({
+            workspaceId: pointer.workspaceId,
+            accessToken: credential.accessToken,
+            originRepo: pointer.repo,
+            items: items.slice(start, start + size),
+          }));
+          break;
+        } catch (error) {
+          // A timeout is the one failure that says "too much at once", so the client answers with
+          // less rather than failing a whole backlog. Safe to re-send: the server upserts by item
+          // id and returns `updated` for anything the timed-out attempt had already committed, so
+          // the worst case is a spent version bump, never a duplicate.
+          if (isTimeout(error) && size > MIN_BATCH) {
+            size = Math.max(MIN_BATCH, Math.floor(size / 2));
+            continue;
+          }
+          if (isTimeout(error)) {
+            // The old message named only the URL and the ceiling, so it pointed nowhere. What the
+            // user needs is the size it gave up at and how much is still queued -- the two numbers
+            // that say whether to wait for a warmer server or to go and split the queue by hand.
+            throw new CloudApiError(
+              error.status,
+              `${error.message} — gave up at ${size} atom(s) per request, `
+              + `with ${items.length - start} atom(s) still staged. `
+              + 'Anything already sent is recorded, so running the push again resumes from there.',
+              error.code,
+            );
+          }
+          throw error;
+        }
+      }
+
+      start += size;
 
       for (const outcome of outcomes) {
         if (outcome.status === 'created' || outcome.status === 'updated') {
