@@ -56,6 +56,7 @@ import { unstagePublish } from '../cloud/ledger.js';
 import { writeAutoPushConsent } from '../cloud/consent.js';
 import { maybeAutoPush } from './auto-push.js';
 import { pickWorkspace } from './cloud-picker.js';
+import { askConfirm } from './confirm-prompt.js';
 import { formatProfileMismatch } from './profile-mismatch.js';
 import { pickCategories } from './sharing-picker.js';
 import { recommendedTotal, WITHHELD_BY_DEFAULT } from '../core/sharing-defaults.js';
@@ -1479,9 +1480,22 @@ cloudCommand
         process.exitCode = 1;
         return;
       }
-      if (options.query && !options.yes && !await confirm(`Send these ${itemIds.length}?`)) {
-        console.log('Nothing sent.');
-        return;
+      if (options.query && !options.yes) {
+        const answer = await askConfirm(`Send these ${itemIds.length} atom(s)?`, {
+          acceptHint: 'seal them; undoing it means a revoke',
+          declineHint: 'nothing is sealed or sent',
+        });
+        if (answer === 'no-tty') {
+          // Sealing is irreversible without a revoke, and a fuzzy query is exactly the selection
+          // nobody should confirm on the reader's behalf.
+          console.error(`${itemIds.length} atom(s) would be sealed. Re-run with --yes to confirm.`);
+          process.exitCode = 1;
+          return;
+        }
+        if (answer === 'declined') {
+          console.log('Nothing sent.');
+          return;
+        }
       }
 
       const result = await sendKnowledge({
@@ -1564,9 +1578,22 @@ cloudCommand
 
       const { preview } = resolved;
       console.log(`From: ${preview.senderLabel} · ${preview.itemCount} atom(s) · expires ${preview.expiresAt}`);
-      if (!options.yes && !await confirm('Collect it? This can only be done once.')) {
-        console.log('Left where it is. The code still works until it expires.');
-        return;
+      if (!options.yes) {
+        const answer = await askConfirm('Collect it? This can only be done once.', {
+          acceptHint: 'import the atoms and spend the code',
+          declineHint: 'the code still works until it expires',
+        });
+        if (answer === 'no-tty') {
+          // The peek above is free and repeatable; the claim is the one-shot. Left unasked, this
+          // would spend somebody's bundle in a script that only meant to look at it.
+          console.error('Collecting spends the code. Re-run with --yes to confirm.');
+          process.exitCode = 1;
+          return;
+        }
+        if (answer === 'declined') {
+          console.log('Left where it is. The code still works until it expires.');
+          return;
+        }
       }
 
       const result = await receiveKnowledge({ projectRoot: root, config, resolved });
