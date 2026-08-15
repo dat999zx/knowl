@@ -25,6 +25,13 @@ Thumbs.db
 
 # Temp
 .tmp/
+# Scratch scripts written against the live database while debugging. They sit in the project
+# root because that is where `node` resolves the repo's own modules from, which also means
+# `git add -A` sweeps them into whatever commit is being made -- one reached a PR branch before
+# it was caught.
+ledger-tmp.cjs
+zz-*.mjs
+zz-*.cjs
 # Stryker's vitest runner drops a setup shim per runner process in the project root and does
 # not always collect them (`stryker-setup-0.js`, `-1.js`, ...). They are scratch, not source.
 stryker-setup-*.js
