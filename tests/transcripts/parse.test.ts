@@ -172,22 +172,48 @@ describe('streamProseFrom', () => {
 
   it('does not load the file into memory', async () => {
     const file = path.join(dir, 'big.jsonl');
-    // 20 MB of prose across 2,001 lines. A whole-file read would allocate all of it.
+    // ~58 MB of prose across 6,001 lines. A whole-file read would allocate all of it.
+    //
+    // Deliberately larger than the 20 MB this used to write, because the healthy footprint is
+    // BOUNDED while the bound below scales with the file: measured under vitest, peak was ~6 MB
+    // at 19 MB and ~3 MB at 58 MB. A bigger file therefore buys margin instead of costing it.
     const body = userLine('y'.repeat(10_000)) + '\n';
-    await fs.writeFile(file, userLine('x'.repeat(10_000)) + '\n' + body.repeat(2_000));
+    await fs.writeFile(file, userLine('x'.repeat(10_000)) + '\n' + body.repeat(6_000));
+    const size = (await fs.stat(file)).size;
 
-    global.gc?.();
-    const before = process.memoryUsage().heapUsed;
+    // `arrayBuffers`, NOT `heapUsed`. This is the whole point of the assertion and the reason
+    // the old one could never have worked.
+    //
+    // The bytes this test is watching live in `carry`, a Buffer. Buffer contents sit in an
+    // ArrayBuffer backing store, which Node accounts under `external`/`arrayBuffers` and
+    // deliberately NOT under `heapUsed`. Measured against a reader mutated to swallow the file
+    // whole (`highWaterMark` above the file size): `arrayBuffers` peaked at 457 MB while
+    // `heapUsed` peaked at 0.00 MB -- the same 0.00 MB the healthy reader shows. The old
+    // `heapUsed` bound was therefore vacuous: it could not detect the regression it existed to
+    // prevent, and the ~11 MB it occasionally reported was unrelated GC noise, which is exactly
+    // why it failed at random on one CI leg in two consecutive releases.
+    //
+    // Raising that constant would have been the same bug with a longer fuse. Reading the right
+    // counter turns a coin-flip into a 30x separation.
+    const before = process.memoryUsage().arrayBuffers;
     let count = 0;
     let peak = 0;
     for await (const _ of streamProseFrom(file, 0, 0)) {
       count++;
-      if (count % 200 === 0) peak = Math.max(peak, process.memoryUsage().heapUsed - before);
+      if (count % 200 === 0) peak = Math.max(peak, process.memoryUsage().arrayBuffers - before);
     }
 
-    expect(count).toBe(2_001);
-    // Generous bound: the point is that growth is unrelated to the 20 MB file size.
-    expect(peak).toBeLessThan(8 * 1024 * 1024);
+    expect(count).toBe(6_001);
+    // Relative to the file, because "does not load the file" is a claim about scaling: a reader
+    // that swallows this one holds hundreds of MB, a streaming reader holds a chunk.
+    //
+    // Both sides of this bound are measured, not guessed. Healthy runs under vitest peaked at
+    // 0.00-5.95 MB across six runs at two file sizes, with no upward trend against size -- the
+    // residue is chunk buffers the collector has not reached yet, which is bounded by the read
+    // size rather than by the file. The mutated reader that swallows the file whole peaked at
+    // 457 MB. A quarter of the file sits ~2.4x above the honest case and ~32x below the
+    // dishonest one.
+    expect(peak).toBeLessThan(size / 4);
   });
 
   it('decodes a multibyte character split across chunk boundaries', async () => {
