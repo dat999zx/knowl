@@ -88,7 +88,10 @@ describe('doctor vector coverage', () => {
     // FAIL rather than WARN because the whole store is uncovered, not because a fingerprint
     // is null: what this test pins is that the row is COUNTED as missing at all.
     expect(check.status).toBe('FAIL');
-    expect(check.message).toContain('0 of 1');
+    // A row that exists but cannot be read is reported as exactly that. `IS NOT` is what puts
+    // a NULL fingerprint on this side of the split rather than dropping it from both totals.
+    expect(check.message).toMatch(/earlier embedding recipe/i);
+    expect(check.message).toContain('1 of 1');
     expect(check.fix).toContain('knowl reindex --vectors');
   });
 
@@ -105,7 +108,26 @@ describe('doctor vector coverage', () => {
     const check = coverageCheck((await runDoctor(root)).checks);
 
     expect(check.status).toBe('FAIL');
+    expect(check.message).toMatch(/earlier embedding recipe/i);
+    expect(check.message).toContain('1 of 1');
+    // The sentence that was wrong for this row specifically: a reindex is precisely what
+    // embeds it, so telling the reader nothing does is the opposite of the remedy offered.
+    expect(check.message).not.toMatch(/retroactively/i);
+  });
+
+  it('says NEVER embedded, not stale, when no embedding row exists at all', async () => {
+    // The other side of the split, pinned so the two cannot collapse back into one message.
+    // Nothing was written here, so there is no earlier recipe to blame and the reindex is a
+    // backfill rather than a repair.
+    await setup(ARCTIC);
+    await closeDb();
+
+    const check = coverageCheck((await runDoctor(root)).checks);
+
+    expect(check.status).toBe('FAIL');
     expect(check.message).toContain('0 of 1');
+    expect(check.message).toMatch(/retroactively/i);
+    expect(check.message).not.toMatch(/recipe/i);
   });
 
   it('gates the verdict, so an unembedded store cannot report READY', async () => {
