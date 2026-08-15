@@ -78,6 +78,98 @@ describe('portability', () => {
     expect(tombstones.map(record => record.tombstone.id)).toContain(doomed.id);
   });
 
+  /**
+   * A selected export must stay selected, all the way down the record stream.
+   *
+   * `exportKnowledge` grew `itemIds` for `knowl cloud send`, which hands a person a handful of
+   * atoms and whose recipient may share no workspace with the sender. The filter reached the
+   * items and nothing else: skill packages and tombstones were appended unconditionally, so a
+   * one-atom send also disclosed the repo's entire learned-skills library -- file contents
+   * inlined -- and its whole forget-log. The forget-log is the sharper half: a tombstone exists
+   * because somebody decided to destroy something, and its title travels inside it.
+   *
+   * It survived the first real end-to-end send only because that repo happened to have no
+   * tombstones and an empty `.knowl/skills`. So the fixture below deliberately has both.
+   */
+  describe('a targeted export', () => {
+    const SEND = path.resolve('.knowl-portability-send');
+
+    beforeAll(async () => {
+      await fs.rm(SEND, { recursive: true, force: true });
+      await fs.mkdir(path.join(SEND, '.knowl', 'skills', 'deploy-runbook'), { recursive: true });
+      await fs.writeFile(
+        path.join(SEND, '.knowl', 'skills', 'deploy-runbook', 'SKILL.md'),
+        '# Deploy runbook\n\nSECRET-SKILL-SENTINEL: internal steps.\n',
+        'utf8',
+      );
+    });
+    afterAll(async () => { await fs.rm(SEND, { recursive: true, force: true }).catch(() => {}); });
+
+    const recordsOf = async (file: string) => (await fs.readFile(file, 'utf8'))
+      .split('\n').filter(Boolean).map(line => JSON.parse(line));
+
+    it('emits only the selected item, and neither skills nor tombstones', async () => {
+      const sent = await createKnowledgeItem('local', {
+        category: 'fact', title: 'The one atom', content: 'This is what was selected.',
+      });
+      const withheld = await createKnowledgeItem('local', {
+        category: 'fact', title: 'Not for sending', content: 'Stays home.',
+      });
+      const buried = await createKnowledgeItem('local', {
+        category: 'fact', title: 'Deliberately destroyed', content: 'Gone on purpose.',
+      });
+      await deleteKnowledgeItem(buried.id);
+
+      const target = path.join(SEND, 'targeted.jsonl');
+      const result = await portability.exportKnowledge('local', target, SEND, [sent.id]);
+      const records = await recordsOf(target);
+
+      expect(records.filter(r => r.type === 'item').map(r => r.item.id)).toEqual([sent.id]);
+      expect(records.filter(r => r.type === 'skill_package')).toEqual([]);
+      expect(records.filter(r => r.type === 'tombstone')).toEqual([]);
+      // The counted result is what `cloud send` reports to the sender, so it has to agree with
+      // the bytes rather than describe a stream nobody sent.
+      expect(result.tombstones).toBe(0);
+
+      // Said against the raw bytes too: the record-type filters above would pass on a record
+      // that leaked the same values under a type this test did not think to name. The deleted
+      // atom is checked by ID rather than by title, because a tombstone row is
+      // `{id, deletedAt, reason}` and carries no title -- what a leaked forget-log discloses is
+      // which atoms were destroyed and when, plus whatever free text the reason holds.
+      const raw = await fs.readFile(target, 'utf8');
+      expect(raw).not.toContain('SECRET-SKILL-SENTINEL');
+      expect(raw).not.toContain(buried.id);
+      expect(raw).not.toContain(withheld.id);
+    });
+
+    it('still ships both when nothing was selected, because that request means everything', async () => {
+      // The counterweight. The cheap way to pass the test above is to stop exporting skills and
+      // tombstones at all, which would silently break `knowl export` -- a backup, where both
+      // belong. Absent `itemIds` and an empty one are different requests.
+      const target = path.join(SEND, 'whole.jsonl');
+      const result = await portability.exportKnowledge('local', target, SEND);
+      const records = await recordsOf(target);
+
+      expect(records.filter(r => r.type === 'skill_package').map(r => r.name)).toContain('deploy-runbook');
+      expect(records.filter(r => r.type === 'tombstone').length).toBeGreaterThanOrEqual(1);
+      expect(result.tombstones).toBeGreaterThanOrEqual(1);
+    });
+
+    it('selecting nothing exports nothing, rather than widening to everything', async () => {
+      // An empty array is a selection, not an absence -- the docblock on `exportKnowledge` says
+      // so, and the guard added for this bug tests `wanted === null` precisely so an empty
+      // selection cannot fall through to the "everything" branch.
+      const target = path.join(SEND, 'empty-selection.jsonl');
+      const result = await portability.exportKnowledge('local', target, SEND, []);
+      const records = await recordsOf(target);
+
+      expect(records.filter(r => r.type === 'item')).toEqual([]);
+      expect(records.filter(r => r.type === 'skill_package')).toEqual([]);
+      expect(records.filter(r => r.type === 'tombstone')).toEqual([]);
+      expect(result.tombstones).toBe(0);
+    });
+  });
+
   it('applies new items even when another item diverged', async () => {
     // The defect this replaces: one divergent item discarded the whole import, so
     // unrelated new knowledge could never land on a machine that had done any work.
