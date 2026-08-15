@@ -47,6 +47,35 @@ code that cannot be re-collected, and the other seals atoms to a person on a fuz
 rather than treating silence as consent, both commands now say what they would have done and exit
 non-zero, so a script that only meant to peek at a bundle cannot spend it.
 
+### Doctor says when an upgrade invalidated the vector index, instead of calling it never embedded
+
+`fingerprintProfile` hashes the embedding recipe and the batching policy alongside the model, so a
+recipe change invalidates its own rows rather than leaving them matching a space they are no longer
+in. Retrieval filters on that same fingerprint. Both halves are right, and together they mean a
+release can take a fully embedded store to zero reachable vectors at once, without the user doing
+anything at all.
+
+Doctor counted those rows as unembedded — correct, since search cannot read them — and then
+described them with the wrong sentence: *"only 23 of 747 active item(s) are embedded … Nothing
+embeds these retroactively."* Every one of the 724 was embedded, and a reindex is exactly what
+repairs them. The reader was told the opposite of both facts, and the natural conclusion — a broken
+embedder, or a model that never downloaded — sends them looking in the wrong place.
+
+Measured on a real machine upgrading across 5.0.0: **1,100 of 1,639 vectors, three repositories'
+entire indexes, went invisible on the version bump** and semantic search silently fell back to
+keyword for three days.
+
+The check now separates the two conditions, because two different things can be wrong at once and
+only one of them is something the user just did:
+
+- rows embedded under an **earlier recipe** — named as such, with the note that re-embedding
+  restores every one, and without the "nothing embeds these retroactively" line that is untrue of
+  them
+- rows that were **never embedded at all** — the original wording, unchanged
+
+Severity is unchanged: a majority uncovered still fails, a tail still warns, and the remedy is
+`knowl reindex --vectors` either way.
+
 ## 5.3.0 — 2026-08-15
 
 Two ways a linked workspace stops being a wall. Until now a repo could *see* its siblings'

@@ -303,13 +303,21 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
           (SELECT COUNT(*) FROM knowledge_items WHERE status = 'active') AS active,
           (SELECT COUNT(*) FROM knowledge_items i
              JOIN knowledge_embeddings e ON e.knowledge_item_id = i.id
-           WHERE i.status = 'active' AND e.profile_fingerprint = ${fingerprint}) AS embedded
+           WHERE i.status = 'active' AND e.profile_fingerprint = ${fingerprint}) AS embedded,
+          -- Embedded, but under a different recipe -- as unreachable as never having been
+          -- embedded, since retrieval filters on this same column, and yet a different thing
+          -- to report. IS NOT rather than != so a row predating the column counts here
+          -- instead of vanishing from both totals on a NULL comparison.
+          (SELECT COUNT(*) FROM knowledge_items i
+             JOIN knowledge_embeddings e ON e.knowledge_item_id = i.id
+           WHERE i.status = 'active' AND e.profile_fingerprint IS NOT ${fingerprint}) AS stale
       `);
       checks.push(vectorCoverageCheck({
         enabled: true,
         model: `${vector.provider}/${vector.model}`,
         activeItems: Number(counts[0]?.active ?? 0),
         embeddedItems: Number(counts[0]?.embedded ?? 0),
+        staleItems: Number(counts[0]?.stale ?? 0),
         writeEmbeddingDisabled: process.env.KNOWL_DISABLE_WRITE_EMBEDDING === '1',
       }));
     } else {

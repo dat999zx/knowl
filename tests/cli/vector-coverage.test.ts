@@ -86,4 +86,68 @@ describe('vector coverage check', () => {
     expect(vectorCoverageCheck({ enabled: true, model: 'local/m', activeItems: 0, embeddedItems: 0 }).status)
       .toBe('OK');
   });
+
+  /**
+   * The gap an UPGRADE opened, which is a different condition from the gap a missing model left.
+   *
+   * `fingerprintProfile` hashes the embedding recipe and the batching policy alongside the model,
+   * deliberately, so a recipe change invalidates its own rows. Retrieval filters on that same
+   * fingerprint. The consequence is that a release can take a fully-embedded store to zero
+   * reachable vectors at once, through no action of the user's -- and the old wording described
+   * that as items that "are embedded", counted them as never-embedded, and told the reader
+   * "nothing embeds these retroactively", which is the one thing that is not true of them.
+   */
+  describe('when a previous embedding recipe left rows behind', () => {
+    it('says the rows exist under an older profile rather than implying they were never made', () => {
+      const check = vectorCoverageCheck({
+        enabled: true, model: 'local/m', activeItems: 747, embeddedItems: 23, staleItems: 724,
+      });
+      expect(check.status).toBe('FAIL');
+      expect(check.message).toContain('724');
+      expect(check.message).toMatch(/earlier embedding recipe|previous embedding recipe/i);
+      expect(check.message).toMatch(/upgrade/i);
+    });
+
+    it('does NOT say nothing embeds them retroactively, because a reindex is exactly what does', () => {
+      const check = vectorCoverageCheck({
+        enabled: true, model: 'local/m', activeItems: 747, embeddedItems: 23, staleItems: 724,
+      });
+      expect(check.message).not.toMatch(/retroactively/i);
+      expect(check.fix).toMatch(/reindex/);
+    });
+
+    it('separates rows left by an upgrade from rows that were never embedded at all', () => {
+      // 100 active, 10 current, 60 stale -- so 30 were never embedded. Reporting one number
+      // would hide that two different things went wrong and only one of them is an upgrade.
+      const check = vectorCoverageCheck({
+        enabled: true, model: 'local/m', activeItems: 100, embeddedItems: 10, staleItems: 60,
+      });
+      expect(check.message).toContain('60');
+      expect(check.message).toContain('30');
+    });
+
+    it('still fails loudly when an upgrade darkened the whole store', () => {
+      const check = vectorCoverageCheck({
+        enabled: true, model: 'local/m', activeItems: 48, embeddedItems: 0, staleItems: 48,
+      });
+      expect(check.status).toBe('FAIL');
+      expect(check.remedy).toEqual({ kind: 'reindex-vectors' });
+    });
+
+    it('a stale tail is a warning, matching how a never-embedded tail is treated', () => {
+      const check = vectorCoverageCheck({
+        enabled: true, model: 'local/m', activeItems: 100, embeddedItems: 97, staleItems: 3,
+      });
+      expect(check.status).toBe('WARN');
+      expect(check.message).toMatch(/earlier embedding recipe|previous embedding recipe/i);
+    });
+
+    it('keeps the never-embedded wording when nothing is stale, so the old case is unchanged', () => {
+      const check = vectorCoverageCheck({
+        enabled: true, model: 'local/m', activeItems: 10, embeddedItems: 4, staleItems: 0,
+      });
+      expect(check.message).toMatch(/retroactively/i);
+      expect(check.message).not.toMatch(/recipe/i);
+    });
+  });
 });
