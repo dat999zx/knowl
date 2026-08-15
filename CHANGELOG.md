@@ -3,7 +3,18 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.4.0 — 2026-08-15
+
+Mostly a release about knowing what actually happened. Two of these are cases where Knowl told you
+something confidently and wrongly: `cloud send` said it was handing over a few atoms while handing
+over your skills library and your forget-log, and `doctor` said your knowledge had never been
+embedded when an upgrade had just invalidated a perfectly good index. A third said nothing at all —
+`cloud receive` crashed before it could collect. The feature is the same theme from the other side:
+an atom written across repos now records who wrote it, instead of losing that at the moment it was
+created.
+
+If you are upgrading and semantic search has felt worse lately, run `knowl doctor` — it will now
+tell you whether a reindex is what you need.
 
 ### A send carries the atoms you chose, and no longer your skills and your forget-log with them
 
