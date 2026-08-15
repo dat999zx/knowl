@@ -144,10 +144,20 @@ export async function assertOwnedItem(
  * `assertOwnedItem` is deliberately untouched. This widens what may be read; nothing here
  * widens what may be written, and a foreign write is refused exactly as it was before.
  *
- * Null covers three situations on purpose -- no workspace, no peer holds it, and every peer
- * that might hold it is unreadable. The caller's own not-found path already words all three
- * correctly, and collapsing them here would let an unreadable peer report as one that said no,
- * which is the mistake `UnverifiedOwnerError` exists to prevent on the write side.
+ * **Shared rows only.** `federated-query.ts` reads a peer with `visibility = 'workspace'` in
+ * the SQL, so a repo-private row is never loaded into that process at all. Fetching by id has
+ * to reach the same rows and no others, or knowing an id becomes a way around the rule that
+ * `knowl workspace promote` exists to apply -- and the id of an unshared atom is not secret:
+ * it travels in supersession chains, conflict reports and anything the peer published later.
+ * The filter is here rather than in `ownerFromPeers` on purpose: the write guard must keep
+ * seeing private rows, since a foreign item is still foreign and must still be refused.
+ *
+ * Null covers four situations on purpose -- no workspace, no peer holds it, every peer that
+ * might hold it is unreadable, and the peer holds it privately. The caller's own not-found path
+ * already words all of them correctly, and collapsing them here would let an unreadable peer
+ * report as one that said no, which is the mistake `UnverifiedOwnerError` exists to prevent on
+ * the write side. A private row reports as a miss for a second reason: "that one is private"
+ * would confirm the row exists, which the caller was no more entitled to know than the body.
  */
 export async function findForeignItem(
   itemId: string,
@@ -155,5 +165,10 @@ export async function findForeignItem(
 ): Promise<{ repo: string; item: KnowledgeItem } | null> {
   if (!workspace) return null;
   const { owner, item } = await ownerFromPeers(itemId, workspace);
-  return owner && item ? { repo: owner, item } : null;
+  if (!owner || !item) return null;
+  // Strict equality, matching the search path's predicate exactly. The column is NOT NULL
+  // DEFAULT 'repo', so there is no third state to decide about: anything not positively shared
+  // is private.
+  if (item.visibility !== 'workspace') return null;
+  return { repo: owner, item };
 }

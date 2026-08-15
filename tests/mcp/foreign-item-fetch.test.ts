@@ -74,8 +74,22 @@ async function seed(root: string, name: string, title: string, content: string, 
   return stored.item.id;
 }
 
+/** A second row in an already-seeded repo, kept private -- what `workspace promote` exists to change. */
+async function seedPrivate(root: string, name: string, title: string, content: string): Promise<string> {
+  await initDb(root);
+  const project = await repo.getProjectByRootPath(root);
+  const stored = await storeKnowledgeItemDeduped(project!.id, { category: 'decision', title, content });
+  await getClient().execute({
+    sql: 'UPDATE knowledge_items SET visibility = ?, origin_repo = ? WHERE id = ?',
+    args: ['repo', name, stored.item.id],
+  });
+  await closeDb();
+  return stored.item.id;
+}
+
 describe('knowl_query fetch-by-id reaches a linked repo', () => {
   let foreignId = '';
+  let foreignPrivateId = '';
   let localId = '';
   let soloId = '';
 
@@ -87,6 +101,7 @@ describe('knowl_query fetch-by-id reaches a linked repo', () => {
     await writeManifest(workspaceManifestPath('ws'), createManifest('ws', null));
     localId = await seed(A, 'a', 'Local auth note', 'Auth tokens expire locally.', 'LOCAL-REASONING-SENTINEL');
     foreignId = await seed(B, 'b', 'Auth token TTL', 'Auth tokens expire after fifteen minutes.', 'PEER-REASONING-SENTINEL');
+    foreignPrivateId = await seedPrivate(B, 'b', 'Rotation key procedure', 'PRIVATE-SENTINEL: b never shared this.');
     soloId = await seed(SOLO, 'solo', 'Solo note', 'A note in an unlinked repo.', 'SOLO-REASONING');
     await joinWorkspace({ projectRoot: A, workspaceName: 'ws', repoName: 'a' });
     await joinWorkspace({ projectRoot: B, workspaceName: 'ws', repoName: 'b' });
@@ -148,6 +163,33 @@ describe('knowl_query fetch-by-id reaches a linked repo', () => {
     expect(item).not.toHaveProperty('foreign');
     // Without this the suite would pass with evidence switched off for everyone.
     expect(JSON.parse(withEvidence.content[0].text)[0]).toHaveProperty('evidence');
+  });
+
+  it('refuses a peer\'s repo-private id, exactly as a search for it would', async () => {
+    // The reach of this fetch is "what the workspace shares", not "whatever the peer's file
+    // happens to hold". `federated-query.ts` puts `visibility = 'workspace'` in the SQL so a
+    // private row is never read into this process; an id must not be a way around that. It is
+    // reported as a miss rather than as a refusal, because saying "that one is private" would
+    // confirm the row exists -- and the caller was never entitled to know that either.
+    await initDb(A);
+    const result = await callTool(A, await loadConfig(A), 'knowl_query', { id: foreignPrivateId });
+    await closeDb();
+
+    expect(result.isError).toBe(true);
+    expect(String(result.content[0].text)).not.toContain('PRIVATE-SENTINEL');
+    expect(String(result.content[0].text)).not.toMatch(/private/i);
+  });
+
+  it('the owning repo still reads its own private row, which is the point of it being private', async () => {
+    // Or the fix has simply deleted the row rather than scoped it.
+    await initDb(B);
+    const result = await callTool(B, await loadConfig(B), 'knowl_query', { id: foreignPrivateId });
+    await closeDb();
+
+    expect(result.isError).toBeFalsy();
+    const [item] = JSON.parse(result.content[0].text);
+    expect(item.content).toContain('PRIVATE-SENTINEL');
+    expect(item).not.toHaveProperty('foreign');
   });
 
   it('still refuses an id no repo in the workspace holds', async () => {

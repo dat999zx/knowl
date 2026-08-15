@@ -57,6 +57,13 @@ checkout — which is what the search path has always done with the same rows. I
 block naming the repo that owns it, so the omissions read as deliberate rather than as an atom that
 cites nothing, and so the agent knows where the item can be changed.
 
+**Only what the repo shares.** A query across a workspace has always read a peer's
+workspace-visible rows and nothing else, and fetching by id reaches exactly the same rows. A repo
+keeps its private knowledge private until it runs `knowl workspace promote`, and knowing an id is
+not a way around that — ids are not secret, they travel in supersession chains and conflict
+reports. A private row reports as a miss rather than as a refusal, because "that one is private"
+would confirm it exists.
+
 **Reading is all that changed.** Updating, superseding or retiring another repo's item is refused
 exactly as before, by the same guard, with the same message.
 
