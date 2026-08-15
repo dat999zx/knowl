@@ -991,6 +991,38 @@ Read-only, on the same line the cloud tool draws. `knowl workspace promote` is a
 shares in one step with no second command to complete, so it stays yours; linking and unlinking
 repos are machine setup and stay yours for the reason `knowl init` does.
 
+#### Doing a linked repo's work from here
+
+`knowl_store`, `knowl_decide`, `knowl_update`, `knowl_ingest_atoms`, `knowl_timeline` and
+`knowl_evidence_list` take an optional `repo`. Passing it runs that one call **as** the named
+repo: against its store, stamped as its own, with its config, its cloud pointer and its ownership
+rules — exactly as if the command had been run in its directory.
+
+This has never been a new capability, only a newly reachable one. `cd ../sibling && knowl store …`
+has always worked, because standing in a repo is what the ownership guard checks — an item there
+is simply *local*. An MCP server cannot change directory, so an agent was denied what the human
+running the same commands could already do, and the workaround was to shell out to the CLI.
+
+It is deliberately **full rights**, retiring the target's knowledge included. When you are
+finishing that repo's task, the repo is correcting itself, and which folder your terminal happens
+to sit in is not a fact about the knowledge. An additive-only version would have left the
+destructive half reachable only by shelling out, which is the situation this removes.
+
+Three things bound it. The target is **named, not pathed** — resolved through the workspace
+manifest, so a repo has to be linked before it can be acted as. A linked repo with no checkout
+on this machine is refused rather than written to, because a repo's evidence paths and git state
+do not resolve without a working tree. And `repo` is honoured only on the tools above: the
+dispatch reads the published schema, so a tool that does not describe the argument does not
+accept it, and naming a repo elsewhere refuses the call rather than quietly rebinding it.
+
+That last one matters most on `knowl_query`, which takes `repos` — a *filter* over the shared
+rows of the repos you name. The singular `repo` is a *rebind*, and honouring it there would have
+read a linked repo's private knowledge as though it were your own.
+
+Use it when the work belongs to the other repo — you are finishing its task and have its context
+in hand. It is not for correcting something you merely noticed in passing while working here: you
+have not read that repo's code, and its facts are true of a place you are not standing in.
+
 ### Staying current
 
 Team knowledge arriving is a notification, not a wait. Queries answer from the replica

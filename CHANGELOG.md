@@ -3,6 +3,41 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### An agent can do another linked repo's work, from here
+
+Pass `repo: "<name>"` to `knowl_store`, `knowl_decide`, `knowl_update`, `knowl_ingest_atoms`,
+`knowl_timeline` or `knowl_evidence_list` and that one call runs as the named repo: against its
+store, stamped as its own, with its config, its cloud pointer and its ownership rules — exactly as
+if it had been run in that repo's directory.
+
+This was never a new capability, only a newly reachable one. `cd ../sibling && knowl store …` has
+always worked, because standing in a repo is what the ownership guard checks: an item there is
+simply *local*, so the guard is satisfied rather than bypassed. What was missing was a way for an
+MCP server — bound to its launch directory for the whole of its life — to do the same thing. The
+workaround was to shell out and run the CLI, which works, and is invisible to every rule this
+codebase otherwise keeps.
+
+So an agent that had spent an hour on one repo's task, with output landing in another, had to file
+what it learned in the wrong place or not at all.
+
+**Full rights, including retiring the target's knowledge.** When you are finishing that repo's
+task, the repo is correcting itself, and which folder the terminal happens to sit in is not a fact
+about the knowledge. An additive-only version would have left the destructive half reachable only
+by shelling out, which is the situation this removes.
+
+Three things bound it. The target is **named, not pathed** — resolved through the workspace
+manifest, so a repo has to be linked before it can be acted as. A linked repo with no checkout on
+this machine is refused rather than written to, because a repo's evidence paths and git state do
+not resolve without a working tree. And `repo` is honoured **only on the tools that declare it**,
+which the dispatch reads from the published schema rather than from a list kept beside it. Naming
+a repo anywhere else refuses the call and says which tools offer it — notably on `knowl_query`,
+whose `repos` filter over shared rows sits one letter away from a rebind that would have read a
+linked repo's private knowledge as its own.
+
+Omitting `repo` leaves every call exactly as it was.
+
 ## 5.2.1 — 2026-08-14
 
 ### A backlog of staged knowledge can be pushed again

@@ -5,6 +5,8 @@ import { captureChangeWatermark, consumeChangeNotice } from './change-notice.js'
 import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem } from '../workspace/ownership.js';
+import { withRepoContext } from '../workspace/act-as.js';
+import { getProjectRoot as ambientProjectRoot } from '../store/database.js';
 import { flattenGroups, queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { recordDemandEventBestEffort } from '../workspace/demand-ledger.js';
 import { hasAiConfigured } from '../core/config.js';
@@ -231,6 +233,16 @@ const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
     .map(tool => [tool.name, tool.inputSchema]),
 );
 
+/**
+ * The tools that may be run as another linked repo: exactly the ones whose schema says so.
+ *
+ * Derived rather than listed, because a list beside the schemas is a list that drifts from them.
+ * It is used only to name the alternatives in a refusal; the refusal itself reads the schema.
+ */
+const ACT_AS_TOOLS = [...SCHEMA_BY_TOOL.entries()]
+  .filter(([, schema]) => (schema.properties as Record<string, unknown> | undefined)?.repo)
+  .map(([name]) => name);
+
 /** What a shortened result keeps of its body: enough to judge relevance, not to answer from. */
 const QUERY_EXCERPT_CHARS = 240;
 
@@ -437,7 +449,15 @@ export function registerTools(
 
 
   // 2. Call tool
-  const callTool = async (request: CallToolRequest): Promise<CallToolResult> => {
+  /**
+   * `actingAs` is set only when a call named another repo. Everything it carries is what the
+   * server resolved at startup for ITSELF, recomputed for the target -- so a handler cannot
+   * tell the difference and none of them had to be changed.
+   */
+  const callTool = async (
+    request: CallToolRequest,
+    actingAs?: { projectId: string; projectRoot: string; config: ProjectConfig | null },
+  ): Promise<CallToolResult> => {
     const { name } = request.params;
     // `arguments` is optional in the protocol, and a conformant client omits it for a tool whose
     // properties are all optional. `validateToolArguments` already reads undefined as `{}` -- but
@@ -447,9 +467,9 @@ export function registerTools(
     const args = request.params.arguments ?? {};
     await whenReady();
     const initError = getInitError();
-    const projectId = getProjectId();
-    const projectRoot = getProjectRoot();
-    const config = getConfig();
+    const projectId = actingAs ? actingAs.projectId : getProjectId();
+    const projectRoot = actingAs ? actingAs.projectRoot : getProjectRoot();
+    const config = actingAs ? actingAs.config : getConfig();
 
     if (initError) {
       return {
@@ -1754,13 +1774,75 @@ export function registerTools(
    * the way the hook path is forced to. A failure anywhere in here degrades to "no
    * notice" -- memory news must never be able to fail a tool call.
    */
+  /**
+   * Run one call as another linked repo, when it asked to be.
+   *
+   * A `repo` argument means "do this as that repo would". Wrapping the whole dispatch rather
+   * than each handler is what makes it true of every tool at once: the context swap moves the
+   * database and config root together, so a handler reading the ambient context cannot end up
+   * half-rebound, and no handler needed changing to gain this.
+   *
+   * The project id is re-resolved inside the swap. The one the server captured at startup names
+   * a row in ITS database, which does not exist in the target's.
+   *
+   * **Only where it is declared**, and declaration is read from the published schema rather
+   * than from a list kept beside it, so the two cannot drift. Wrapping the dispatch is what
+   * gives every tool this at once, which is also the hazard: `repo` is read off the raw
+   * arguments before the per-tool schema is consulted, and `validateToolArguments` only rejects
+   * an unknown property where `additionalProperties: false`, which almost none of these
+   * schemas set. Left alone it therefore worked on all thirty tools while being described on
+   * six -- silently rebinding `knowl_gc_apply` at one end and, at the other, `knowl_query`,
+   * whose `repos` FILTER over shared rows sits one letter away from a `repo` REBIND that would
+   * have read the target's private knowledge as its own.
+   */
+  const callToolAsRepo = async (request: CallToolRequest): Promise<CallToolResult> => {
+    const asRepo = (request.params.arguments as Record<string, unknown> | undefined)?.repo;
+    if (typeof asRepo !== 'string' || asRepo.length === 0) return callTool(request);
+    const declared = (SCHEMA_BY_TOOL.get(request.params.name)?.properties as Record<string, unknown> | undefined)?.repo;
+    if (!declared) {
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: `${request.params.name} does not take a "repo" argument, and the call was not run. ` +
+            `Acting as a linked repo is offered on ${ACT_AS_TOOLS.join(', ')}. ` +
+            'For everything else, this call applies to the repo the server is running in.',
+        }],
+      };
+    }
+    await whenReady();
+    const callerRoot = getProjectRoot();
+    const workspace = callerRoot ? await resolveWorkspace(callerRoot, getConfig() ?? undefined) : null;
+    try {
+      return await withRepoContext(asRepo, workspace, async () => {
+        const root = ambientProjectRoot();
+        const { getProjectByRootPath } = await import('../store/repository.js');
+        const project = await getProjectByRootPath(root);
+        if (!project) {
+          throw new Error(
+            `Repo "${asRepo}" is checked out at ${root} but has no Knowl project there. ` +
+            'Run `knowl init` in it once before acting as it.',
+          );
+        }
+        const { loadConfig } = await import('../core/config.js');
+        return callTool(request, { projectId: project.id, projectRoot: root, config: await loadConfig(root) });
+      });
+    } catch (error: any) {
+      // Refusals here are about the target rather than about the tool, so they are reported the
+      // same way every other refusal is instead of becoming a protocol-level error.
+      return { isError: true, content: [{ type: 'text', text: String(error?.message ?? error) }] };
+    }
+  };
+
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     // Before `getProjectRoot()`, not just before dispatch: startup fills that variable in
     // behind the handshake, and reading it early would take a watermark against `null`.
     await whenReady();
+    // The caller's root deliberately, even for a call acting as another repo: the change notice
+    // reports what moved in THIS session's store, and a write into a sibling moved nothing here.
     const projectRoot = getProjectRoot();
     const watermark = await captureChangeWatermark(projectRoot);
-    const result = await callTool(request);
+    const result = await callToolAsRepo(request);
     const notice = await consumeChangeNotice(projectRoot, request.params.name, watermark);
     if (!notice) return result;
     return { ...result, content: [...result.content, { type: 'text' as const, text: notice }] };
