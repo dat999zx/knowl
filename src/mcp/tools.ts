@@ -4,7 +4,7 @@ import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/
 import { captureChangeWatermark, consumeChangeNotice } from './change-notice.js';
 import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
-import { assertOwnedItem } from '../workspace/ownership.js';
+import { assertOwnedItem, findForeignItem } from '../workspace/ownership.js';
 import { withRepoContext } from '../workspace/act-as.js';
 import { getProjectRoot as ambientProjectRoot } from '../store/database.js';
 import { flattenGroups, queryFederated, type FederatedResult } from '../workspace/federated-query.js';
@@ -699,13 +699,30 @@ export function registerTools(
         // `knowl_decide` REQUIRES reasoning and until now nothing could hand it back.
         if (id) {
           const { getKnowledgeItem } = await import('../store/repository.js');
-          const item = await getKnowledgeItem(String(id));
+          const local = await getKnowledgeItem(String(id));
+          // Resolved only on a local miss, so an ordinary fetch pays nothing for the workspace
+          // lookup -- the property `assertOwnedTargets` keeps on the write side, for the same
+          // reason. `findForeignItem` returns null for a null workspace, so the hit path needs
+          // no second guard of its own.
+          const active = local === null && projectRoot
+            ? await resolveWorkspace(projectRoot, config ?? undefined)
+            : null;
+          const foreign = await findForeignItem(String(id), active);
+          const item = local ?? foreign?.item ?? null;
           if (!item) {
+            // The old refusal told the caller to run this from the owning repo. The linked
+            // repos have now been asked, so repeating that would send them somewhere already
+            // consulted. "Readable from here" rather than "no linked repo holds it": a peer
+            // that is not checked out, or whose database would not open, was never asked and
+            // must not be reported as one that said no.
+            const scope = active
+              ? `in this repo's store or in any linked repo readable from here`
+              : `in this repo's store`;
             return {
               isError: true,
               content: [{
                 type: 'text',
-                text: `No knowledge item "${id}" in this repo's store. If it belongs to a linked repo, run this from that repo -- fetch is local so a foreign atom's paths are never read against the wrong checkout.`,
+                text: `No knowledge item "${id}" ${scope}. Ids must be given in full -- a truncated one matches nothing.`,
               }],
             };
           }
@@ -723,11 +740,23 @@ export function registerTools(
             ...(item.tags?.length ? { tags: item.tags } : {}),
             ...(item.source ? { source: item.source } : {}),
             ...(item.sourceCommit ? { sourceCommit: item.sourceCommit } : {}),
-            ...(item.affectedPaths?.length ? { affectedPaths: item.affectedPaths } : {}),
+            // Withheld for a foreign atom: these name files in the OWNING repo's checkout, and
+            // the repos most likely to be linked are fork siblings where the same path exists
+            // in both and means different things. The search path already drops them for the
+            // same reason.
+            ...(!foreign && item.affectedPaths?.length ? { affectedPaths: item.affectedPaths } : {}),
             ...(item.conflictKey ? { conflictKey: item.conflictKey } : {}),
             ...(item.supersededById ? { supersededById: item.supersededById } : {}),
             createdAt: item.createdAt,
             updatedAt: item.updatedAt,
+            // Said, not implied. An absent `affectedPaths` is indistinguishable from an atom
+            // that cites nothing, and an absent `evidence` from one nobody ever cited.
+            ...(foreign ? {
+              foreign: {
+                repo: foreign.repo,
+                note: `Read from linked repo "${foreign.repo}". affectedPaths and evidence are omitted because they resolve against that repo's checkout and database, not this one. Only "${foreign.repo}" can update or retire this item.`,
+              },
+            } : {}),
           };
           const evidenceWithStale = async (itemId: string) => Promise.all(
             (await listEvidenceForItem(itemId)).map(async evidence => ({
@@ -735,7 +764,12 @@ export function registerTools(
               stale: projectRoot ? await isEvidenceStale(evidence, projectRoot) : false,
             })),
           );
-          const payload = includeEvidence
+          // `includeEvidence` is deliberately not honoured for a foreign atom, matching the
+          // search path: `listEvidenceForItem` reads THIS repo's database and `isEvidenceStale`
+          // measures against THIS repo's working tree, so the answer would be an empty citation
+          // list and a staleness verdict about the wrong checkout. Omitting beats answering
+          // wrongly, and the `foreign` note above says which it is.
+          const payload = includeEvidence && !foreign
             ? [{ ...full, evidence: boundedEvidence(await evidenceWithStale(item.id)) }]
             : [full];
           // An array of one, not a bare object: every existing caller parses the first block as

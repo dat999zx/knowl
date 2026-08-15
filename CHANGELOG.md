@@ -38,6 +38,39 @@ linked repo's private knowledge as its own.
 
 Omitting `repo` leaves every call exactly as it was.
 
+### A linked repo's atom can be read in full, by id
+
+A workspace query returns rows from every linked repo, but asking for one of those rows whole —
+`knowl_query { id }` — refused, and told you to go and run the command from the repo that owns it.
+Reading a federated result therefore meant switching repos, and an agent that had just been handed
+an id could not open it.
+
+The refusal was never a permission check. `knowl_query { id }` reads this repo's database, so a
+sibling's id was simply not there, and the message explained that absence in terms of ownership.
+What ownership actually protects is narrower: `affectedPaths` names files in the owning repo's
+checkout, and evidence and its staleness resolve against that repo's database and working tree.
+Those fields are what must not cross — not the record.
+
+So the fetch now looks in the linked repos too. A foreign atom comes back whole, with its content,
+reasoning and alternatives, and **without** the fields that would be answered against the wrong
+checkout — which is what the search path has always done with the same rows. It carries a `foreign`
+block naming the repo that owns it, so the omissions read as deliberate rather than as an atom that
+cites nothing, and so the agent knows where the item can be changed.
+
+**Only what the repo shares.** A query across a workspace has always read a peer's
+workspace-visible rows and nothing else, and fetching by id reaches exactly the same rows. A repo
+keeps its private knowledge private until it runs `knowl workspace promote`, and knowing an id is
+not a way around that — ids are not secret, they travel in supersession chains and conflict
+reports. A private row reports as a miss rather than as a refusal, because "that one is private"
+would confirm it exists.
+
+**Reading is all that changed.** Updating, superseding or retiring another repo's item is refused
+exactly as before, by the same guard, with the same message.
+
+A miss now says the linked repos were searched too — and says "readable from here", because a repo
+that is not checked out on this machine was never asked, and must not be reported as one that
+answered no.
+
 ## 5.2.1 — 2026-08-14
 
 ### A backlog of staged knowledge can be pushed again
