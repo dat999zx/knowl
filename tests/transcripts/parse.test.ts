@@ -204,16 +204,24 @@ describe('streamProseFrom', () => {
     }
 
     expect(count).toBe(6_001);
-    // Relative to the file, because "does not load the file" is a claim about scaling: a reader
-    // that swallows this one holds hundreds of MB, a streaming reader holds a chunk.
+    // One copy of the file is the line, because that is what the claim actually says: a reader
+    // that "loads the file into memory" holds at least all of it at once, and a streaming reader
+    // holds a chunk plus whatever the collector has not swept yet.
     //
-    // Both sides of this bound are measured, not guessed. Healthy runs under vitest peaked at
-    // 0.00-5.95 MB across six runs at two file sizes, with no upward trend against size -- the
-    // residue is chunk buffers the collector has not reached yet, which is bounded by the read
-    // size rather than by the file. The mutated reader that swallows the file whole peaked at
-    // 457 MB. A quarter of the file sits ~2.4x above the honest case and ~32x below the
-    // dishonest one.
-    expect(peak).toBeLessThan(size / 4);
+    // Every number here is measured, in both environments, which is the whole point of the
+    // rewrite -- the constant this replaces was never measured anywhere:
+    //
+    //   healthy, locally          0.00 - 5.95 MB   (six runs, two file sizes)
+    //   healthy, slowest CI leg        18.71 MB   (ubuntu-latest node 22, which defers GC hardest)
+    //   whole-file read              457 MB       (reader mutated to swallow the file)
+    //
+    // The residue is chunk buffers awaiting collection: it tracks GC timing and the read size,
+    // NOT the file -- it did not grow between a 19 MB and a 58 MB fixture. So the honest ceiling
+    // stays put while this bound rises with the file, and one copy sits ~3x above the worst
+    // honest reading and ~8x below the dishonest one. An earlier draft used a quarter of the
+    // file and was too tight for that CI leg by 3.6 MB, which is exactly the mistake of picking
+    // a threshold from one machine.
+    expect(peak).toBeLessThan(size);
   });
 
   it('decodes a multibyte character split across chunk boundaries', async () => {
