@@ -352,9 +352,9 @@ candidates. Park a workstream under a key and pick it up in any session, from an
 **🔗 Workspaces**
 
 Your API repo learned something the frontend repo needs. Link them and a query fans out,
-while each repository keeps its own database and its own ownership boundary. Knowledge a
-repo already holds is shared only when you promote it, and only the owner can retire its
-own atoms.
+while each repository keeps its own database and its own ownership boundary. Open a shared
+peer atom in full by id, or finish that repo's work from here by naming it on the call.
+Knowledge a repo already holds is shared only when you promote it.
 
 `workspace init` · `workspace add` · `workspace promote --apply`
 
@@ -489,9 +489,15 @@ knowl workspace promote --category decision --apply   # or name it outright
 
 Joining a workspace shares what the repo writes **from then on**, and says so when it does; pass
 `--default-visibility repo` to decline. What the repo already knows is shared only when you
-promote it. Peer results are read-only and labeled with the repo that owns them, and only the
-owner can retire its own atoms. A peer that is missing or unreadable is skipped and disclosed,
-never a reason for your local search to fail.
+promote it. Peer results are labeled with the repo that owns them, and a shared one can be opened
+in full by id — without its `affectedPaths` or evidence, which resolve against a checkout you are
+not standing in. A peer that is missing or unreadable is skipped and disclosed, never a reason for
+your local search to fail.
+
+Writing into a sibling is deliberate rather than incidental. An agent names the repo on the call
+and that one call runs **as** that repo — its store, its config, its ownership rules, stamped as
+its own — exactly as `cd`-ing there has always behaved for the CLI. Name nothing and a foreign id
+is refused as before. Either way a repo's private knowledge stays private until it is promoted.
 
 → [Workspaces](docs/reference.md#workspaces)
 
