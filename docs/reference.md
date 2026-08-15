@@ -1008,10 +1008,16 @@ finishing that repo's task, the repo is correcting itself, and which folder your
 to sit in is not a fact about the knowledge. An additive-only version would have left the
 destructive half reachable only by shelling out, which is the situation this removes.
 
-Two things bound it. The target is **named, not pathed** — resolved through the workspace
-manifest, so a repo has to be linked before it can be acted as. And a linked repo with no checkout
+Three things bound it. The target is **named, not pathed** — resolved through the workspace
+manifest, so a repo has to be linked before it can be acted as. A linked repo with no checkout
 on this machine is refused rather than written to, because a repo's evidence paths and git state
-do not resolve without a working tree.
+do not resolve without a working tree. And `repo` is honoured only on the tools above: the
+dispatch reads the published schema, so a tool that does not describe the argument does not
+accept it, and naming a repo elsewhere refuses the call rather than quietly rebinding it.
+
+That last one matters most on `knowl_query`, which takes `repos` — a *filter* over the shared
+rows of the repos you name. The singular `repo` is a *rebind*, and honouring it there would have
+read a linked repo's private knowledge as though it were your own.
 
 Use it when the work belongs to the other repo — you are finishing its task and have its context
 in hand. It is not for correcting something you merely noticed in passing while working here: you

@@ -233,6 +233,16 @@ const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
     .map(tool => [tool.name, tool.inputSchema]),
 );
 
+/**
+ * The tools that may be run as another linked repo: exactly the ones whose schema says so.
+ *
+ * Derived rather than listed, because a list beside the schemas is a list that drifts from them.
+ * It is used only to name the alternatives in a refusal; the refusal itself reads the schema.
+ */
+const ACT_AS_TOOLS = [...SCHEMA_BY_TOOL.entries()]
+  .filter(([, schema]) => (schema.properties as Record<string, unknown> | undefined)?.repo)
+  .map(([name]) => name);
+
 /** What a shortened result keeps of its body: enough to judge relevance, not to answer from. */
 const QUERY_EXCERPT_CHARS = 240;
 
@@ -1774,10 +1784,32 @@ export function registerTools(
    *
    * The project id is re-resolved inside the swap. The one the server captured at startup names
    * a row in ITS database, which does not exist in the target's.
+   *
+   * **Only where it is declared**, and declaration is read from the published schema rather
+   * than from a list kept beside it, so the two cannot drift. Wrapping the dispatch is what
+   * gives every tool this at once, which is also the hazard: `repo` is read off the raw
+   * arguments before the per-tool schema is consulted, and `validateToolArguments` only rejects
+   * an unknown property where `additionalProperties: false`, which almost none of these
+   * schemas set. Left alone it therefore worked on all thirty tools while being described on
+   * six -- silently rebinding `knowl_gc_apply` at one end and, at the other, `knowl_query`,
+   * whose `repos` FILTER over shared rows sits one letter away from a `repo` REBIND that would
+   * have read the target's private knowledge as its own.
    */
   const callToolAsRepo = async (request: CallToolRequest): Promise<CallToolResult> => {
     const asRepo = (request.params.arguments as Record<string, unknown> | undefined)?.repo;
     if (typeof asRepo !== 'string' || asRepo.length === 0) return callTool(request);
+    const declared = (SCHEMA_BY_TOOL.get(request.params.name)?.properties as Record<string, unknown> | undefined)?.repo;
+    if (!declared) {
+      return {
+        isError: true,
+        content: [{
+          type: 'text',
+          text: `${request.params.name} does not take a "repo" argument, and the call was not run. ` +
+            `Acting as a linked repo is offered on ${ACT_AS_TOOLS.join(', ')}. ` +
+            'For everything else, this call applies to the repo the server is running in.',
+        }],
+      };
+    }
     await whenReady();
     const callerRoot = getProjectRoot();
     const workspace = callerRoot ? await resolveWorkspace(callerRoot, getConfig() ?? undefined) : null;

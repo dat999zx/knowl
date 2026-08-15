@@ -27,10 +27,14 @@ task, the repo is correcting itself, and which folder the terminal happens to si
 about the knowledge. An additive-only version would have left the destructive half reachable only
 by shelling out, which is the situation this removes.
 
-Two things bound it. The target is **named, not pathed** — resolved through the workspace manifest,
-so a repo has to be linked before it can be acted as. And a linked repo with no checkout on this
-machine is refused rather than written to, because a repo's evidence paths and git state do not
-resolve without a working tree.
+Three things bound it. The target is **named, not pathed** — resolved through the workspace
+manifest, so a repo has to be linked before it can be acted as. A linked repo with no checkout on
+this machine is refused rather than written to, because a repo's evidence paths and git state do
+not resolve without a working tree. And `repo` is honoured **only on the tools that declare it**,
+which the dispatch reads from the published schema rather than from a list kept beside it. Naming
+a repo anywhere else refuses the call and says which tools offer it — notably on `knowl_query`,
+whose `repos` filter over shared rows sits one letter away from a rebind that would have read a
+linked repo's private knowledge as its own.
 
 Omitting `repo` leaves every call exactly as it was.
 

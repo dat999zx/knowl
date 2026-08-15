@@ -19,6 +19,38 @@ export type ToolDefinition = { name: string; description: string; inputSchema: R
 export const IMPACT_RESOLUTIONS = ['repaired', 'dismissed', 'expired', 'false_positive'];
 
 /**
+ * The `repo` argument: do one call as another linked repo.
+ *
+ * Declared here rather than pasted per tool, and declaring it is what PERMITS it -- dispatch
+ * reads these schemas to decide whether a `repo` argument is honoured at all, so adding the
+ * property to a tool is the entire act of enabling it there. A list kept beside the schemas
+ * would drift from them; this cannot.
+ *
+ * Two variants, because there are two truths. `knowl_timeline` and `knowl_evidence_list` only
+ * read, and promising them "retiring its knowledge" and "what you write is stamped as its own"
+ * described a different tool to the model that has to choose between them.
+ */
+const ACT_AS_REPO_BASE =
+  'Do this as another repo in this workspace, named as the manifest names it. Use when you are ' +
+  'finishing THAT repo\'s work from here: the call applies to its store exactly as if you had run it there';
+
+/** For the tools that write: the full grant, and the case it is not for. */
+export const ACT_AS_REPO_WRITE = {
+  type: 'string', minLength: 1,
+  description: `${ACT_AS_REPO_BASE}, including retiring its knowledge, and what you write is stamped as its own. ` +
+    'Omit it -- the normal case -- and everything applies here. Not for a drive-by correction of ' +
+    'something you noticed in passing while working on this repo.',
+};
+
+/** For the tools that only read: the same rebind, minus a grant they do not have. */
+export const ACT_AS_REPO_READ = {
+  type: 'string', minLength: 1,
+  description: `${ACT_AS_REPO_BASE}, so you read that repo's history rather than this one's. ` +
+    'This tool only reads; nothing about naming a repo here writes to it. Omit it -- the normal ' +
+    'case -- and everything applies here.',
+};
+
+/**
  * Ceilings named inside the schemas below, so they travel with the text that quotes them.
  *
  * The transcript tools already bound every numeric argument and cap their rendered output;
@@ -263,10 +295,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           inputSchema: {
             type: 'object',
             properties: {
-              repo: {
-                type: 'string', minLength: 1,
-                description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here. Not for a drive-by correction of something you noticed in passing while working on this repo.",
-              },
+              repo: ACT_AS_REPO_WRITE,
               category: {
                 type: 'string',
                 enum: KNOWLEDGE_CATEGORIES,
@@ -347,10 +376,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           inputSchema: {
             type: 'object',
             properties: {
-              repo: {
-                type: 'string', minLength: 1,
-                description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here. Not for a drive-by correction of something you noticed in passing while working on this repo.",
-              },
+              repo: ACT_AS_REPO_WRITE,
               atoms: {
                 type: 'array',
                 // Every other array on this surface is capped -- tags/repos/completed at 20 --
@@ -407,10 +433,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           inputSchema: {
             type: 'object',
             properties: {
-              repo: {
-                type: 'string', minLength: 1,
-                description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here. Not for a drive-by correction of something you noticed in passing while working on this repo.",
-              },
+              repo: ACT_AS_REPO_WRITE,
               title: {
                 type: 'string',
                 minLength: 1,
@@ -513,7 +536,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {
           name: 'knowl_timeline',
           description: 'Read one item\'s immutable assertion history: what it claimed, when, and what superseded it. Use when memory looks contradictory or you need to know whether a fact changed -- knowl_query answers what it says now, this answers how it got there.',
-          inputSchema: { type: 'object', properties: { repo: { type: 'string', minLength: 1, description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here." }, itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID, as returned by knowl_query.' } }, required: ['itemId'] },
+          inputSchema: { type: 'object', properties: { repo: ACT_AS_REPO_READ, itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID, as returned by knowl_query.' } }, required: ['itemId'] },
         },
         {
           name: 'knowl_conflicts',
@@ -544,7 +567,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           description: 'List the evidence linked to one knowledge item. Use before relying on an item that is low-confidence, contested, or old enough that its support matters more than its claim.',
           inputSchema: {
             type: 'object',
-            properties: { repo: { type: 'string', minLength: 1, description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here." }, itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID.' } },
+            properties: { repo: ACT_AS_REPO_READ, itemId: { type: 'string', minLength: 1, description: 'Knowledge item ID.' } },
             required: ['itemId'],
           },
         },
@@ -580,10 +603,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
           inputSchema: {
             type: 'object',
             properties: {
-              repo: {
-                type: 'string', minLength: 1,
-                description: "Do this as another repo in this workspace, named as the manifest names it. Use when you are finishing THAT repo's work from here: the call applies to its store exactly as if you had run it there, including retiring its knowledge, and what you write is stamped as its own. Omit it -- the normal case -- and everything applies here. Not for a drive-by correction of something you noticed in passing while working on this repo.",
-              },
+              repo: ACT_AS_REPO_WRITE,
               id: {
                 type: 'string',
                 minLength: 1,

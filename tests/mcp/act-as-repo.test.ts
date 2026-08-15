@@ -69,6 +69,19 @@ async function seed(root: string, name: string, title: string, content: string):
   return stored.item.id;
 }
 
+/** A second row in an already-seeded repo, kept private -- what `workspace promote` exists to change. */
+async function seedPrivate(root: string, name: string, title: string, content: string): Promise<string> {
+  await initDb(root);
+  const project = await repo.getProjectByRootPath(root);
+  const stored = await storeKnowledgeItemDeduped(project!.id, { category: 'decision', title, content });
+  await getClient().execute({
+    sql: 'UPDATE knowledge_items SET visibility = ?, origin_repo = ? WHERE id = ?',
+    args: ['repo', name, stored.item.id],
+  });
+  await closeDb();
+  return stored.item.id;
+}
+
 async function rowIn(root: string, id: string) {
   await initDb(root);
   try {
@@ -92,6 +105,7 @@ describe('acting as a linked repo through the tool surface', { timeout: 180_000 
     await writeManifest(workspaceManifestPath('mas'), createManifest('mas', null));
     await seed(A, 'a', 'Local note', 'Something only this repo knows.');
     ownedByB = await seed(B, 'b', 'Auth token TTL', 'Auth tokens expire after fifteen minutes.');
+    await seedPrivate(B, 'b', 'Rotation key procedure', 'PRIVATE-SENTINEL: b never shared this.');
     await joinWorkspace({ projectRoot: A, workspaceName: 'mas', repoName: 'a' });
     await joinWorkspace({ projectRoot: B, workspaceName: 'mas', repoName: 'b' });
     resetWriteOwnershipCache();
@@ -178,6 +192,44 @@ describe('acting as a linked repo through the tool surface', { timeout: 180_000 
     await closeDb();
     // Without `repo` this is the `belongs to repo "b"` refusal; with it, it simply reads.
     expect(String(result.content[0].text)).not.toMatch(/belongs to repo/);
+  });
+
+  it('refuses `repo` on a tool that does not declare it, naming the ones that do', async () => {
+    // Declaration IS the contract. `repo` is read off the raw arguments at dispatch, before the
+    // per-tool schema is consulted, and `validateToolArguments` only rejects unknown properties
+    // where `additionalProperties: false` -- which almost no tool sets. So without this check
+    // `repo` silently worked on all thirty tools while being described on six, which is the
+    // gap between "not documented" and "not there".
+    await initDb(A);
+    const result = await callTool(A, await loadConfig(A), 'knowl_conflicts', { repo: 'b' });
+    await closeDb();
+
+    expect(result.isError).toBe(true);
+    expect(String(result.content[0].text)).toMatch(/knowl_conflicts/);
+    expect(String(result.content[0].text)).toMatch(/knowl_store/);
+  });
+
+  it('does not let `repo` read a linked repo\'s private knowledge through knowl_query', async () => {
+    // `knowl_query` declares `repos` (a FILTER over shared rows) and not `repo` (a REBIND of the
+    // whole call). Honouring the singular here would have made every private row in b readable
+    // from a, because a rebound call is standing in b and everything there is local to it.
+    await initDb(A);
+    const result = await callTool(A, await loadConfig(A), 'knowl_query', {
+      repo: 'b', query: 'private rotation key procedure',
+    });
+    await closeDb();
+
+    expect(result.isError).toBe(true);
+    expect(String(result.content[0].text)).not.toContain('PRIVATE-SENTINEL');
+  });
+
+  it('a refused `repo` writes nothing, in either repo', async () => {
+    await initDb(A);
+    const before = (await repo.listKnowledgeItems()).length;
+    await callTool(A, await loadConfig(A), 'knowl_conflicts', { repo: 'b' });
+    const after = (await repo.listKnowledgeItems()).length;
+    await closeDb();
+    expect(after).toBe(before);
   });
 
   it('acting as yourself is a no-op rather than an error', async () => {
