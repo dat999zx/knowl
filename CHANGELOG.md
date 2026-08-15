@@ -3,7 +3,13 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.3.0 — 2026-08-15
+
+Two ways a linked workspace stops being a wall. Until now a repo could *see* its siblings'
+knowledge and do nothing else with it: a federated result carried rows you could not open, and work
+that belonged to another repo had to be filed where you were standing or not at all. Both are
+addressed here, and both stop at the same line — a repo's private knowledge stays private, and the
+tools that can act as another repo are the ones that say so.
 
 ### An agent can do another linked repo's work, from here
 
@@ -70,6 +76,14 @@ exactly as before, by the same guard, with the same message.
 A miss now says the linked repos were searched too — and says "readable from here", because a repo
 that is not checked out on this machine was never asked, and must not be reported as one that
 answered no.
+
+### The reference page has a logo you can see
+
+`docs/reference.md` opened with a near-white wordmark on transparent, so on GitHub's light theme
+only the cyan `owl` showed and the page led with a floating half-word. It now ships a light variant
+alongside the dark one and lets `prefers-color-scheme` choose. The dark original also drops from
+329 KB to 118 KB at unchanged dimensions — it is flat two-colour art that was stored as 32-bit
+truecolour.
 
 ## 5.2.1 — 2026-08-14
 
