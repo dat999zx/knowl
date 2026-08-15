@@ -31,7 +31,7 @@ which parts of a restore are deliberately not restored.
 | [Retrieval and context](#retrieval-and-context) | [Current retrieval](#current-retrieval) · [What a result carries](#what-a-result-carries) · [Embedding models](#choosing-an-embedding-model) · [Historical queries](#historical-retrieval-and-assertions) · [Context packs](#bounded-context-packs) |
 | [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-optional-off-by-default) · [Host behavior](#host-and-subagent-behavior) |
 | [Evidence, code, drift](#evidence-code-intelligence-and-drift) | [Evidence and symbols](#evidence-and-symbols) · [PR drift and feedback](#pull-request-drift-and-retrieval-feedback) |
-| [Workspaces](#workspaces) | [Federation and ownership](#federation-and-ownership) · [Ownership stamping](#ownership) |
+| [Workspaces](#workspaces) | [Federation and ownership](#federation-and-ownership) · [Reading a peer's atom by id](#reading-a-linked-repos-atom-by-id) · [Doing a peer's work](#doing-a-linked-repos-work-from-here) · [Ownership stamping](#ownership) |
 | [Knowl Cloud](#knowl-cloud) | [Identity and connection](#identity-and-connection) · [Publishing and drift](#publishing-works-from-any-branch-reporting-drift-does-not) · [Staying current](#staying-current) |
 | [Learned skills and synthesis](#learned-skills-and-synthesis) | [File-backed skills](#file-backed-skills) · [Deterministic synthesis](#deterministic-synthesis) |
 | [Portability and maintenance](#portability-and-maintenance) | [Export and import](#jsonl-export-and-import) · [Garbage collection](#garbage-collection) · [Snapshots, audit, doctor](#snapshots-audit-and-doctor) |
@@ -666,8 +666,12 @@ Normal `workspace add` refuses to link when `.knowl/config.json` is tracked by G
 mismatches or item ownership.
 
 Only an explicit current query fans out to available peers. A promoted peer result is labeled
-with its `repo` and is read-only from the querying repository. Mutations, historical `asOf`
-queries, recent context, context packs, work loops, synthesis, code indexing, and implicit
+with its `repo` and is read-only from the querying repository — unless the call names that repo,
+which runs it *as* that repo rather than reaching across from this one; see
+[Doing a linked repo's work from here](#doing-a-linked-repos-work-from-here). A shared peer atom
+can also be opened whole by id, without acting as anything: see
+[Reading a linked repo's atom by id](#reading-a-linked-repos-atom-by-id). Mutations, historical
+`asOf` queries, recent context, context packs, work loops, synthesis, code indexing, and implicit
 lifecycle context remain local. Missing, unreadable, or schema-incompatible peers are skipped and
 disclosed in the response rather than causing healthy local retrieval to fail.
 
@@ -692,14 +696,41 @@ costs one check.
 
 Promotion is preview-first and accepts active, private, locally owned atoms selected by category
 or ID. Both `workspace add` and `workspace join` enforce a compatible embedding identity, reject a
-nested checkout, and refuse a Git-tracked `.knowl/config.json` without `--force`. There is no
-cross-repository mutation, demote/unshare command, or workspace-wide historical view.
+nested checkout, and refuse a Git-tracked `.knowl/config.json` without `--force`. Nothing reaches
+across from one repository into another: a foreign id is refused, and the only way to change a
+linked repository's knowledge is to run the call *as* that repository, which makes the atom local
+and the guard satisfied rather than bypassed. There is no demote/unshare command, and no
+workspace-wide historical view.
 
 `workspace remove --export-first` is an acknowledgement that the repository still owns
 knowledge; it does not create an export. A removed name is retired only when the repository
 still owns active atoms, since the name is the ownership key on everything it wrote. A repository
 that owned nothing releases its name for anyone; a repository that owned atoms keeps exclusive
 claim on the name and reclaims it by re-linking, while every other repository is refused.
+
+### Reading a linked repo's atom by id
+
+A federated query returns rows from every linked repository, each labeled with its owner. Asking
+for one of those rows *whole* — `knowl_query { id }` — resolves it too, so reading a federated
+result no longer means switching repositories.
+
+The record crosses; the checkout-relative fields do not. A foreign atom arrives with its content,
+reasoning and alternatives, and **without** `affectedPaths` or evidence, because those name files
+in the owning repository's checkout and resolve against its database and working tree — answered
+here they would be measured against the wrong tree. It carries a `foreign` block naming the owner,
+so an absent `affectedPaths` reads as deliberate rather than as an atom that cites nothing, and so
+the agent knows where the item can be changed.
+
+**It reaches exactly the rows a query reaches, and no others.** A repository's private knowledge
+stays private until `workspace promote` shares it; knowing an id is not a way around that, since
+ids are not secret — they travel in supersession chains and conflict reports. A private row is
+reported as *not found* rather than as a refusal, because "that one is private" would confirm it
+exists.
+
+Reading is all this grants. Updating, superseding or retiring another repository's item is refused
+by the same guard as before, with the same message. A miss says the linked repositories were
+searched too, and says "readable from here": a repository that is not checked out on this machine
+was never asked, and must not be reported as one that answered no.
 
 ### Ownership
 
