@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createClient, type Client } from '@libsql/client';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { bootstrapSchema } from '../../src/store/bootstrap.js';
-import { readMigrationLevel } from '../../src/store/schema-version.js';
+import { KNOWL_MIGRATION_LEVEL, readMigrationLevel } from '../../src/store/schema-version.js';
 
 let root: string;
 let client: Client;
@@ -69,7 +69,10 @@ describe('a level-9 store upgrading to level 10', () => {
       "SELECT name FROM sqlite_schema WHERE type = 'table' AND name = 'cloud_excluded'",
     );
     expect(tables.rows).toHaveLength(1);
-    expect(await readMigrationLevel(client)).toBe(10);
+    // The CURRENT level, not the literal 10. What this asserts is that one bootstrap stamps the
+    // gate forward, and pinning the number made an unrelated later level fail a test about this
+    // one -- the brittleness `impact-schema.test.ts` already avoids by asserting `>= 4`.
+    expect(await readMigrationLevel(client)).toBe(KNOWL_MIGRATION_LEVEL);
   });
 
   it('maps the old three-column predicate onto explicit states', async () => {

@@ -138,7 +138,25 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * re-send atoms already published. `ensureLedgerStageState` backfills it, and the backfill
  * direction is deliberately fail-safe: see its docblock.
  */
-export const KNOWL_MIGRATION_LEVEL = 10;
+/*
+ * Level 11 adds `knowledge_items.written_by`: the repo whose session authored an atom, when
+ * that is not the repo that owns it.
+ *
+ * One nullable column and no backfill, on the same reasoning as level 5 -- and here the absence
+ * of a backfill is not a compromise but the correct value. NULL means "the owner wrote it", and
+ * every row predating this column was written before any repo could act as another, so the
+ * owner IS who wrote it.
+ *
+ * The bump is still load-bearing rather than ceremonial. `ALTER TABLE ... ADD COLUMN` only runs
+ * for a store that reaches the migration body, so without it an existing database stamped at
+ * level 10 would skip the column forever while this build's mapper reads it -- the failure this
+ * gate exists to prevent, and one that would surface as a write error rather than a missing
+ * feature.
+ *
+ * `KNOWL_SCHEMA_VERSION` deliberately does not move: an older build ignores the column, and a
+ * newer one reading NULL gets the truth rather than a hole.
+ */
+export const KNOWL_MIGRATION_LEVEL = 11;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

@@ -1,4 +1,5 @@
 import { withRepoRoot } from '../store/database.js';
+import { runAsAuthor } from '../store/write-ownership.js';
 import type { ActiveWorkspace } from './resolve.js';
 
 /**
@@ -77,5 +78,14 @@ export async function withRepoContext<T>(
   // rather than writing knowledge whose `affectedPaths` point at nothing on this machine.
   if (!peer.present) throw new RepoNotPresentError(repoName);
 
-  return withRepoRoot(peer.root, run);
+  // The caller's name rides alongside the context swap, because the swap is what destroys the
+  // ability to derive it: everything downstream reads the ambient context, and after the hop
+  // that context IS the target. Acting as a repo makes the atom the target's, which is right --
+  // it governs that repo and is promoted and retired by it. It should not also erase the fact
+  // that another repo's session did the work.
+  //
+  // Outside the swap on purpose. `withRepoRoot` is reachable from other callers with other
+  // reasons to point at another database, and only THIS one -- a named repo doing another
+  // repo's work -- has an author to record.
+  return runAsAuthor(workspace.repo, () => withRepoRoot(peer.root, run));
 }

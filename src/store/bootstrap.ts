@@ -52,6 +52,7 @@ const SCHEMA_STATEMENTS = [
     tier TEXT NOT NULL DEFAULT 'asserted',
     tier_since TEXT,
     last_drift_at TEXT,
+    written_by TEXT,
     provenance TEXT,
     conflict_key TEXT, conflict_scope TEXT, conflict_exclusive INTEGER NOT NULL DEFAULT 0,
     superseded_by_id TEXT,
@@ -775,6 +776,12 @@ async function ensureFreshnessColumns(client: Client): Promise<void> {
     // Left NULL rather than backfilled: an existing row has no recorded drift observation,
     // and inventing one would refuse promotion for items nothing has actually contradicted.
     await client.execute('ALTER TABLE knowledge_items ADD COLUMN last_drift_at TEXT;');
+  }
+  if (!columns.includes('written_by')) {
+    // Left NULL, and NULL already means the right thing: "the owner wrote it". Every row that
+    // predates this column was written before any repo could act as another, so the owner is
+    // exactly who wrote it -- the honest backfill is the one that writes nothing.
+    await client.execute('ALTER TABLE knowledge_items ADD COLUMN written_by TEXT;');
   }
   if (!columns.includes('freshness')) {
     await client.execute(`ALTER TABLE knowledge_items ADD COLUMN freshness TEXT NOT NULL DEFAULT '${DEFAULT_FRESHNESS}';`);

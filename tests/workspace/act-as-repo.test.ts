@@ -166,6 +166,83 @@ describe('withRepoContext', () => {
     await closeDb();
   });
 
+  it('records who did the work, without changing who owns it', async () => {
+    // Ownership and authorship are two different facts. The atom is genuinely b's -- b promotes
+    // it, b retires it -- but a's session wrote it, and before `written_by` nothing said so.
+    const workspace = await inA();
+    const written = await withRepoContext('b', workspace, async () => {
+      const project = await repo.getProjectByRootPath(getProjectRoot());
+      const result = await storeKnowledgeItemDeduped(project!.id, {
+        category: 'fact', title: 'Written from a', content: 'Authored by a, owned by b.',
+      });
+      return result.item.id;
+    });
+    await closeDb();
+
+    await initDb(B);
+    const row = await getClient().execute({
+      sql: 'SELECT origin_repo, written_by FROM knowledge_items WHERE id = ?', args: [written],
+    });
+    await closeDb();
+
+    expect(String(row.rows[0].origin_repo)).toBe('b');
+    expect(String(row.rows[0].written_by)).toBe('a');
+  });
+
+  it('leaves written_by NULL for an ordinary local write, because null already means the owner', async () => {
+    // Stamping every row with its own owner's name would make the column say nothing on the
+    // overwhelming majority of rows, and force a reader to compare it against origin_repo to
+    // find that out.
+    await initDb(A);
+    const project = await repo.getProjectByRootPath(A);
+    const result = await storeKnowledgeItemDeduped(project!.id, {
+      category: 'fact', title: 'Written at home', content: 'No repo was named.',
+    });
+    const row = await getClient().execute({
+      sql: 'SELECT origin_repo, written_by FROM knowledge_items WHERE id = ?', args: [result.item.id],
+    });
+    await closeDb();
+
+    expect(String(row.rows[0].origin_repo)).toBe('a');
+    expect(row.rows[0].written_by).toBeNull();
+  });
+
+  it('leaves written_by NULL when a repo names itself, since nothing crossed', async () => {
+    const workspace = await inA();
+    const written = await withRepoContext('a', workspace, async () => {
+      const project = await repo.getProjectByRootPath(getProjectRoot());
+      const result = await storeKnowledgeItemDeduped(project!.id, {
+        category: 'fact', title: 'Named my own repo', content: 'Author and owner are the same.',
+      });
+      return result.item.id;
+    });
+    const row = await getClient().execute({
+      sql: 'SELECT written_by FROM knowledge_items WHERE id = ?', args: [written],
+    });
+    await closeDb();
+
+    expect(row.rows[0].written_by).toBeNull();
+  });
+
+  it('does not leak the author into a write made after the rebind returns', async () => {
+    // The scope is async-local rather than a module variable precisely so this cannot happen:
+    // an MCP server serves one repo's call while another is mid-hop.
+    const workspace = await inA();
+    await withRepoContext('b', workspace, async () => undefined);
+
+    await initDb(A);
+    const project = await repo.getProjectByRootPath(A);
+    const after = await storeKnowledgeItemDeduped(project!.id, {
+      category: 'fact', title: 'After the hop', content: 'Written back at home.',
+    });
+    const row = await getClient().execute({
+      sql: 'SELECT written_by FROM knowledge_items WHERE id = ?', args: [after.item.id],
+    });
+    await closeDb();
+
+    expect(row.rows[0].written_by).toBeNull();
+  });
+
   it('acting as yourself is allowed and is a no-op, so callers need no special case', async () => {
     const workspace = await inA();
     const seen = await withRepoContext('a', workspace, async () => getProjectRoot());

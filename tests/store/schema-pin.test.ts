@@ -62,6 +62,12 @@ const SCHEMA_PINS: Record<number, string> = {
   // does not move: an older build can still read a database with an extra column and an extra
   // table it does not know about.
   10: '0fb5091ab39e438ed70777b8d7c4b8c9',
+  // 11 adds `knowledge_items.written_by`: who authored an atom, when that is not who owns it.
+  // One nullable column and no backfill, as level 5 was -- and here writing nothing is the
+  // correct backfill rather than a concession, because NULL already means "the owner wrote it"
+  // and every pre-existing row was written before a repo could act as another.
+  // `KNOWL_SCHEMA_VERSION` again does not move.
+  11: '2f2aa4d61c1fd3600266ec572a964aa0',
 };
 
 let root: string;

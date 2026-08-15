@@ -1,4 +1,30 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { getConfigRoot } from './database.js';
+
+/**
+ * The repo whose session is running the current call, while it acts as a different repo.
+ *
+ * `resolveWriteDefaults` answers "who owns what I am writing", and once a call has been rebound
+ * to a linked repo that answer is the TARGET -- correctly, since the atom really is the
+ * target's. What it can no longer answer is who did the work, because the ambient context it
+ * reads has already been replaced. So the caller's name rides beside the swap rather than being
+ * derived from it.
+ *
+ * `AsyncLocalStorage` for the same reason the database swap uses it: a module-level variable
+ * would leak the caller's identity into every concurrent operation in the process, and an MCP
+ * server serves calls from one repo while another is mid-hop.
+ */
+const authorScope = new AsyncLocalStorage<string>();
+
+/** Run `run` recording `callerRepo` as the author of anything it writes. */
+export function runAsAuthor<T>(callerRepo: string, run: () => Promise<T>): Promise<T> {
+  return authorScope.run(callerRepo, run);
+}
+
+/** The acting repo, or null when a call is simply running where it stands. */
+export function currentAuthorRepo(): string | null {
+  return authorScope.getStore() ?? null;
+}
 
 /**
  * Which repo owns knowledge written right now, or null outside a workspace.

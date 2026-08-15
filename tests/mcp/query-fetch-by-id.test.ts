@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { closeDb, initDb } from '../../src/store/database.js';
+import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { createMcpServer } from '../../src/mcp/server.js';
@@ -85,6 +85,38 @@ describe('knowl_query fetch-by-id', () => {
     expect(full.reasoning).toContain('REASONING-SENTINEL');
     expect(full.alternatives).toContain('a nightly batch');
     expect(full).toHaveProperty('createdAt');
+  });
+
+  /**
+   * `written_by` is written by the store and read by nothing else, so the one link that makes it
+   * a feature rather than a column is this surface. Its failure mode is silence: a mapper that
+   * dropped the field, or a select that never asked for it, yields a response that looks exactly
+   * like the ordinary case where the owner wrote the atom. Both branches are pinned here for
+   * that reason -- an assertion that the field appears is only worth as much as one that it does
+   * not appear when it should not.
+   */
+  it('omits writtenBy for an ordinary atom, since absent already means the owner wrote it', async () => {
+    const [full] = parse(await call('knowl_query', { id: bigId }));
+    expect(full).not.toHaveProperty('writtenBy');
+  });
+
+  it('surfaces writtenBy when another repo authored the atom', async () => {
+    // Its own item rather than a stamp on the shared one, so the pair above and below cannot be
+    // made to pass or fail by the order they run in.
+    //
+    // Set on the row rather than through `withRepoContext`, deliberately: what is under test is
+    // the read path from column to response, and driving it through the write path would let a
+    // broken mapper pass on a value the writer had put there anyway.
+    const authored = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Written from a sibling', content: 'Authored elsewhere, owned here.',
+    });
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET written_by = ? WHERE id = ?',
+      args: ['github.com/acme/service-a', authored.id],
+    });
+
+    const [full] = parse(await call('knowl_query', { id: authored.id }));
+    expect(full.writtenBy).toBe('github.com/acme/service-a');
   });
 
   it('refuses an unknown id with isError, not an empty array that reads as a miss', async () => {
