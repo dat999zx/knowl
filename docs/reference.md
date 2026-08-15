@@ -906,7 +906,15 @@ knowl cloud send --query "retry policy"
 
 knowl cloud receive owl-cascade-ridge-plum-tin
   From: platform · 3 atom(s) · expires 2026-08-14T09:00:00Z
+  ◆  Collect it? This can only be done once.
+  │  ● Decline (the code still works until it expires)
+  │  ○ Accept (import the atoms and spend the code)
 ```
+
+Both ends ask before the irreversible half — `receive` always, `send` when `--query` chose the
+atoms rather than `--id`. Decline is preselected, so a bare Enter costs nothing. `--yes` skips the
+menu. Without a terminal to ask, neither command guesses: it prints what it would have done and
+exits non-zero, so a script that only meant to look at a bundle cannot spend it.
 
 **The server cannot read what you send.** Your machine mints a five-word code, derives an
 encryption key and a mailbox id from it under separate labels, and uploads only the id and the

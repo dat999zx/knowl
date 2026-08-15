@@ -3,6 +3,50 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### `knowl cloud receive` collects again, and the two irreversible prompts became a menu
+
+`knowl cloud receive <code>` could not collect anything. It peeked the mailbox, printed the sender
+and the atom count, and then died:
+
+```
+From: a colleague · 1 atom(s) · expires 2026-08-18T05:22:28.087Z
+Receive failed: confirm is not defined
+```
+
+`knowl cloud send --query …` failed the same way at the same point. Both called a bare global
+`confirm()` — a browser API that does not exist in Node — so both threw a `ReferenceError` on the
+one path either command is ever actually used on. Nothing was lost: the crash landed before the
+claim, so a bundle that failed to collect was still sitting there afterwards. But the only way
+through was `--yes`, which is the flag that skips the question, and answering a question you were
+never asked is not the interaction these two commands wanted.
+
+**Why nothing caught it.** `tsc` was reading `confirm` as legitimate. The project set `target`
+without setting `lib`, and a transitive dependency's `/// <reference lib="dom" />` pulled the whole
+DOM into scope, so every browser global typechecked clean inside a CLI. `lib: ["ES2022"]` is now
+explicit and the bare call is a compile error — verified by putting the original line back and
+watching `npm run typecheck` fail on it, where before it passed. The tests missed it for a second,
+compounding reason: every test drove these commands with `--yes`, which skips the branch entirely,
+so the defect was only ever reachable by a human at a terminal.
+
+**Both prompts are now a two-option menu**, matching the settings picker rather than a y/n:
+
+```
+◆  Collect it? This can only be done once.
+│  ● Decline (the code still works until it expires)
+│  ○ Accept (import the atoms and spend the code)
+```
+
+Decline is listed first and preselected, so the answer a bare Enter gives is the answer that costs
+nothing, and the irreversible option is never under the cursor on arrival. Ctrl-C is a decline.
+Spelling both outcomes out is worth more here than anywhere else in the CLI: one of these spends a
+code that cannot be re-collected, and the other seals atoms to a person on a fuzzy `--query` match.
+
+`--yes` still exists and still skips the menu. What changed is what happens without a terminal:
+rather than treating silence as consent, both commands now say what they would have done and exit
+non-zero, so a script that only meant to peek at a bundle cannot spend it.
+
 ## 5.3.0 — 2026-08-15
 
 Two ways a linked workspace stops being a wall. Until now a repo could *see* its siblings'
