@@ -738,6 +738,16 @@ was never asked, and must not be reported as one that answered no.
 promotable. Joining additionally backfills the rows that already existed, which are by definition
 the joining repository's own.
 
+`written_by` records the repository whose session authored an atom, when that is not the one that
+owns it — the case that arises from naming a repo on a call. Ownership is unaffected: the atom is
+the target's, and the target promotes and retires it. `NULL` means the owner wrote it, which is
+the ordinary case, so the column is set only when author and owner genuinely differ; stamping a
+repository's own name on its own atoms would make the field say nothing on almost every row. Rows
+predating the column are `NULL` for the same reason rather than as a gap — they were written
+before a repository could act as another, so their owner is exactly who wrote them. It is not part
+of the lifecycle fingerprint: authorship is fixed at write time and never diverges, so including
+it would make every cross-repository atom look changed to a peer holding the same one.
+
 ## Knowl Cloud
 
 A hosted workspace shares knowledge across a team. It is entirely opt-in: a repository that never

@@ -27,6 +27,17 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
   lifecycleHash: text('lifecycle_hash'),
   /** Owning repo in a workspace; NULL outside one. The only lifecycle key. */
   originRepo: text('origin_repo'),
+  /**
+   * The repo whose session authored this atom, when that is not `originRepo`.
+   *
+   * Deliberately NOT part of `lifecycleHash`. Authorship is a fact about how the row came to
+   * exist and never changes after the write; the lifecycle fingerprint tracks what an import or
+   * a sync has to reconcile, and including a field that cannot diverge would make every atom
+   * written across repos look changed to a peer that has the same one.
+   *
+   * NULL means the owner wrote it, which is the ordinary case -- see `KnowledgeItem.writtenBy`.
+   */
+  writtenBy: text('written_by'),
   /** 'repo' | 'workspace'. Logical scope, persisted independently of which file holds the row. */
   visibility: text('visibility').notNull().default('repo'),
   freshness: text('freshness').notNull().default('fresh'), // 'fresh', 'stale', 'needs_review'

@@ -93,6 +93,19 @@ export interface KnowledgeItem {
   lifecycleHash?: string | null;
   /** Owning repo in a workspace; null outside one. The only lifecycle key. */
   originRepo?: string | null;
+  /**
+   * The repo whose session authored this atom, when that is not the repo that owns it.
+   *
+   * Subject and author are two different facts, and `originRepo` answers only the first. Acting
+   * as a linked repo writes an atom that is genuinely the target's -- it governs that repo, is
+   * promoted and retired by it, and travels with its knowledge -- but the work happened
+   * somewhere else, and without this nothing recorded where.
+   *
+   * Null is the ordinary case and means "the owner wrote it", not "unknown". Storing the owner's
+   * own name here for every local write would make the column noise and cost a read to discover
+   * it says nothing, so it is set only when the two genuinely differ.
+   */
+  writtenBy?: string | null;
   /** 'repo' | 'workspace'. Logical scope, independent of which file holds the row. */
   visibility?: string | null;
   freshness: KnowledgeFreshness;

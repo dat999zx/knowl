@@ -28,7 +28,7 @@ import {
 } from '../core/types.js';
 import { DatabaseError, KnowledgeConflictError } from '../core/errors.js';
 import { DEFAULT_FRESHNESS, hashKnowledgeContent, hashKnowledgeLifecycle, normalizeAffectedPaths } from './freshness.js';
-import { resolveWriteDefaults } from './write-ownership.js';
+import { currentAuthorRepo, resolveWriteDefaults } from './write-ownership.js';
 import { assertConfidenceInRange, KnowledgeValidationError, validateKnowledgeWrite } from '../core/knowledge-validation.js';
 
 export const LOCAL_PROJECT_ID = 'local';
@@ -158,11 +158,19 @@ export async function createKnowledgeItem(
   // Visibility rides the same resolution: both come from this repo's manifest entry, and a
   // second lookup per write is the 2.7.0 regression 2.7.1 fixed.
   const { repo: originRepo, visibility } = await resolveWriteDefaults();
+  // Recorded only when the author is not the owner. Writing the owner's own name on every local
+  // write would make the column say nothing on the overwhelming majority of rows, and a reader
+  // would have to compare it against `originRepo` to discover that. NULL already carries "the
+  // owner wrote it" -- including for every row written before the column existed, when no repo
+  // could act as another and so the owner necessarily did.
+  const author = currentAuthorRepo();
+  const writtenBy = author && author !== originRepo ? author : null;
   const freshness = item.freshness || DEFAULT_FRESHNESS;
 
   const newItem = {
     id,
     originRepo,
+    writtenBy,
     category: item.category,
     status: 'active' as KnowledgeStatus,
     title: item.title,

@@ -747,6 +747,10 @@ export function registerTools(
             ...(!foreign && item.affectedPaths?.length ? { affectedPaths: item.affectedPaths } : {}),
             ...(item.conflictKey ? { conflictKey: item.conflictKey } : {}),
             ...(item.supersededById ? { supersededById: item.supersededById } : {}),
+            // Present only when the author is not the owner, which is what makes it worth
+            // reading: an atom carrying it was written by another repo's session finishing this
+            // repo's work, and that is context for judging it. Absent means the owner wrote it.
+            ...(item.writtenBy ? { writtenBy: item.writtenBy } : {}),
             createdAt: item.createdAt,
             updatedAt: item.updatedAt,
             // Said, not implied. An absent `affectedPaths` is indistinguishable from an atom

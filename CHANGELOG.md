@@ -76,6 +76,28 @@ only one of them is something the user just did:
 Severity is unchanged: a majority uncovered still fails, a tail still warns, and the remedy is
 `knowl reindex --vectors` either way.
 
+### An atom written across repos records who wrote it
+
+5.3.0 let an agent do a linked repo's work by naming it on the call. The write lands in that
+repo, stamped as its own — which is right, because it governs that repo, and that repo promotes
+and retires it. But nothing recorded that another repo's session authored it, so the fact simply
+disappeared at the moment it was created.
+
+`written_by` records it. Subject and author are two different questions, and `origin_repo` only
+ever answered the first.
+
+**Null keeps meaning "the owner wrote it"**, which is the ordinary case and the reason the column
+is not stamped on every write. Putting a repo's own name on every one of its own atoms would make
+the column say nothing on the overwhelming majority of rows, and force a reader to compare it
+against `origin_repo` to discover that. It is set only when the two genuinely differ.
+
+Existing knowledge is deliberately **not** backfilled, and here writing nothing is the correct
+answer rather than a concession: every row that predates the column was written before a repo
+could act as another, so its owner is exactly who wrote it — which is what null already says.
+
+Migration level 11, one nullable column. The compatibility floor does not move: an older Knowl
+ignores the column, and a newer one reading null gets the truth rather than a hole.
+
 ## 5.3.0 — 2026-08-15
 
 Two ways a linked workspace stops being a wall. Until now a repo could *see* its siblings'
