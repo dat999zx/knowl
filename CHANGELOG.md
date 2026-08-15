@@ -5,6 +5,33 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+### A send carries the atoms you chose, and no longer your skills and your forget-log with them
+
+`knowl cloud send --id <one atom>` sealed the selected atom — and also every learned skill package
+in `.knowl/skills`, file contents inlined, and every tombstone in the store.
+
+`exportKnowledge` gained an item selection for `send`, and the selection reached the item records
+and nothing after them. Skill packages and tombstones were appended unconditionally. For
+`knowl export` that is correct, because a backup means everything. For `send` it is not: send hands
+a few atoms to one person, and that person is explicitly someone who may share no workspace with
+the sender.
+
+So a one-atom send to an outside collaborator disclosed the sender's entire learned-skills library,
+file contents and all, plus the full forget-log — which atoms were destroyed, when, and whatever
+free text the deletion reason carried. A tombstone holds no title, so the second is narrower than
+it first looks, but it is still a record of what somebody decided to remove, handed to a person who
+was given none of it.
+
+It went unnoticed because the first real end-to-end send was made from a repository that happened
+to have no tombstones and an empty skills directory, so the bundle was correct by accident. Any
+repository with learned skills would have shipped them all.
+
+A selection now governs the whole stream rather than only the part where it was easy to apply. The
+guard is on "was everything asked for", not on the item list being non-empty, so selecting nothing
+still exports nothing instead of widening to everything. `knowl export` is unchanged and still
+carries both. If a send ever wants skills, that should be a flag somebody asks for rather than a
+default nobody sees.
+
 ### `knowl cloud receive` collects again, and the two irreversible prompts became a menu
 
 `knowl cloud receive <code>` could not collect anything. It peeked the mailbox, printed the sender

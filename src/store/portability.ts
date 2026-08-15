@@ -1,4 +1,4 @@
-import crypto from 'node:crypto';
+﻿import crypto from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -67,6 +67,11 @@ async function exportOrigin(projectRoot?: string): Promise<ExportOrigin | null> 
  * Absent means everything, so every existing caller is unchanged. An empty array is not the same
  * as absent and produces an empty export, because "send the atoms I selected" and "select nothing"
  * are different requests and only one of them is a mistake worth silently widening.
+ *
+ * `itemIds` governs the WHOLE stream, not just the item records: a selection also withholds skill
+ * packages and tombstones. It did not at first, and the gap was not academic -- a one-atom send
+ * shipped the sender's entire learned-skills library with file contents inlined, plus every
+ * tombstone, to a recipient who may share no workspace with them. See the guard below.
  */
 export async function exportKnowledge(
   projectId: string,
@@ -95,7 +100,18 @@ export async function exportKnowledge(
       records.push({ type: 'knowledge_evidence', link: { knowledgeItemId: item.id, evidenceId: value.id, relationship } });
     }
   }
-  if (projectRoot) {
+  // Both of the blocks below are gated on `wanted === null` -- "everything was asked for" --
+  // and NOT on the item list being non-empty. A selection is a selection at every level of the
+  // stream, not only at the one where it was easy to apply.
+  //
+  // The distinction is the whole of `knowl cloud send`. Export means a backup, where a skill
+  // library and a forget-log belong. Send hands a person a handful of atoms and its recipient
+  // may share no workspace with the sender, so shipping them there disclosed the repo's entire
+  // learned-skills library -- file contents inlined -- plus which atoms had been destroyed, when,
+  // and whatever free text their deletion reason held. A per-item send has no use for either: the
+  // recipient cannot act on a tombstone for an item they were never given. If a send ever does
+  // want skills, that is a flag someone asks for, not a default nobody sees.
+  if (wanted === null && projectRoot) {
     const skillsDir = `${projectRoot}/.knowl/skills`;
     for (const entry of await fs.readdir(skillsDir, { withFileTypes: true }).catch(() => [] as any[])) {
       if (entry.isDirectory()) records.push({ type: 'skill_package', name: entry.name, files: await skillFiles(projectRoot, `${skillsDir}/${entry.name}`) });
@@ -103,7 +119,7 @@ export async function exportKnowledge(
   }
   // Tombstones ride after the items so an older importer, which ignores unknown record
   // types, still reads a valid stream.
-  const tombstones = await listTombstones();
+  const tombstones = wanted === null ? await listTombstones() : [];
   for (const tombstone of tombstones) records.push({ type: 'tombstone', tombstone });
   const body = `${records.map(record => JSON.stringify(record)).join('\n')}\n`;
   const manifest = crypto.createHash('sha256').update(body).digest('hex');

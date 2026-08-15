@@ -6,6 +6,7 @@ import { closeDb, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped } from '../../src/store/knowledge-writer.js';
+import { listTombstones } from '../../src/store/tombstones.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 import { clearCredential, writeCredential } from '../../src/cloud/credentials.js';
 import { deriveMailboxId } from '../../src/cloud/send/code.js';
@@ -296,6 +297,76 @@ describe('a bundle all the way there and back', () => {
 
     // Spent, and the second attempt refuses rather than replaying.
     expect(await previewSend({ config, code: sent.code, api })).toBeNull();
+  });
+
+  it('hands over the chosen atom, and not the sender\'s skills or forget-log', async () => {
+    // Asserted on what the RECEIVER ends up holding rather than on the sealed bytes, because
+    // that is the disclosure: a skill directory installed on their disk and a tombstone replayed
+    // into their store are the things the sender never meant to give them.
+    //
+    // The fixture carries both on purpose. The first real end-to-end send was made from a
+    // repository that happened to have neither, which is the only reason the bundle looked
+    // correct and the leak shipped in 5.3.0.
+    await fs.mkdir(path.join(SENDER, '.knowl', 'skills', 'deploy-runbook'), { recursive: true });
+    await fs.writeFile(
+      path.join(SENDER, '.knowl', 'skills', 'deploy-runbook', 'SKILL.md'),
+      '# Deploy runbook\n\nSECRET-SKILL-SENTINEL\n', 'utf8',
+    );
+
+    await initDb(SENDER);
+    const projectId = (await repo.createProject(SENDER, 'sender')).id;
+    const chosen = await storeKnowledgeItemDeduped(projectId, {
+      category: 'decision', title: 'The atom they asked for', content: 'Selected deliberately.',
+    });
+    const buried = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Destroyed on purpose', content: 'Not theirs to see.',
+    });
+    await repo.deleteKnowledgeItem(buried.item.id);
+    await closeDb();
+
+    const box = new Map<string, string>();
+    const api = fakeApi({
+      createSend: async ({ mailboxId, ciphertext }) => {
+        box.set(mailboxId, ciphertext);
+        return { mailboxId, expiresAt: preview.expiresAt };
+      },
+      peekSend: async ({ mailboxId }) => (box.has(mailboxId) ? preview : null),
+      claimSend: async ({ mailboxId }) => {
+        const ciphertext = box.get(mailboxId);
+        if (!ciphertext) return { refused: 'not_found' as const };
+        box.delete(mailboxId);
+        return { ciphertext, preview };
+      },
+    });
+
+    const sent = await sendKnowledge({
+      projectRoot: SENDER, projectId, config, itemIds: [chosen.item.id],
+      senderLabel: 'github.com/acme/web', expiresInHours: 24, api,
+    });
+    expect(sent.status).toBe('sent');
+    if (sent.status !== 'sent') return;
+
+    const resolved = await previewSend({ config, code: sent.code, api });
+    if (!resolved || typeof resolved === 'string') throw new Error('the bundle did not resolve');
+    const received = await receiveKnowledge({ projectRoot: RECEIVER, config, resolved, api });
+    expect(received.status).toBe('received');
+    if (received.status !== 'received') return;
+
+    // The atom they were given arrived.
+    expect(received.imported.inserted).toBe(1);
+
+    // The skill did not land on their disk.
+    const installed = await fs.readdir(path.join(RECEIVER, '.knowl', 'skills')).catch(() => []);
+    expect(installed).not.toContain('deploy-runbook');
+
+    // And the forget-log did not follow it into their store. Read from the receiver's own
+    // database, since a tombstone that arrived would have been replayed into exactly this table.
+    // By id: a tombstone is `{id, deletedAt, reason}` and carries no title, so what a leaked
+    // forget-log gives away is which atoms were destroyed and when.
+    await initDb(RECEIVER);
+    const tombstones = await listTombstones();
+    await closeDb();
+    expect(tombstones.map(entry => entry.id)).not.toContain(buried.item.id);
   });
 
   it('refuses a code nobody sent, without touching the store', async () => {

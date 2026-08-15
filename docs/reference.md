@@ -926,6 +926,11 @@ atoms rather than `--id`. Decline is preselected, so a bare Enter costs nothing.
 menu. Without a terminal to ask, neither command guesses: it prints what it would have done and
 exits non-zero, so a script that only meant to look at a bundle cannot spend it.
 
+**A send carries the atoms you chose and nothing else** — not your learned skills, and not your
+forget-log. A backup means everything, which is what `knowl export` is for; handing a few atoms to
+one person means those atoms. The recipient may share no workspace with you, so the bundle carries
+no record of knowledge you deleted and no copy of a skill you never offered.
+
 **The server cannot read what you send.** Your machine mints a five-word code, derives an
 encryption key and a mailbox id from it under separate labels, and uploads only the id and the
 sealed bytes. The code travels between two humans over whatever channel they already use, and it
