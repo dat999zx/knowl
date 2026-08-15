@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/hero.svg" alt="Knowl — governed project memory for AI coding agents" width="100%" />
+<img src="docs/assets/hero.svg" alt="Knowl — persistent memory across sessions for Claude Code, Cursor and Codex, over MCP" width="100%" />
 
 **Local-first. Typed. And retired the moment it stops being true.**
 
@@ -36,10 +36,11 @@ Coding agents start every session blank, so teams write things down — and thos
 grow. Six months in, the store still reports the database you migrated off last spring,
 because nothing ever told it that decision was over.
 
-Knowl is a repository-local store of **typed knowledge atoms** — decisions, constraints,
-architecture, facts, goals, state, and skills — read and written over
-[MCP](https://modelcontextprotocol.io) or the `knowl` CLI, where **a replacement retires its
-predecessor at write time** instead of sitting beside it.
+Knowl is **persistent memory across sessions** for Claude Code, Cursor and Codex: a
+repository-local store of **typed knowledge atoms** — decisions, constraints, architecture, facts,
+goals, state, and skills — read and written over an [MCP](https://modelcontextprotocol.io) memory
+server or the `knowl` CLI, where **a replacement retires its predecessor at write time** instead of
+sitting beside it.
 
 ## Quick start
 
