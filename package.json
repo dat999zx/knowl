@@ -47,6 +47,7 @@
     "typecheck:bench": "tsc -p benchmarks/tsconfig.json",
     "bench:cr:build": "tsup benchmarks/memoryagentbench/cli.ts --format esm --outDir .benchmark-dist --no-dts",
     "bench:cr": "npm run bench:cr:build --silent && node .benchmark-dist/cli.js",
+    "measure:card": "tsx scripts/measure-card-cost.ts",
     "docs:generate": "tsx scripts/generate-docs.ts",
     "docs:check": "tsx scripts/generate-docs.ts --check",
     "lint": "eslint .",
