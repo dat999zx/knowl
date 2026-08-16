@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { findProjectRoot } from '../../src/core/config.js';
+import { findProjectRootSync } from '../../src/cli/database-presence.js';
 import { discoverRepos } from '../../src/cli/repo-discovery.js';
 
 /**
@@ -74,6 +75,106 @@ describe('what marks a directory as a Knowl project', () => {
     const roots = found.map(entry => entry.root);
     expect(roots).toContain(REAL);
     expect(roots).not.toContain(FAKE_HOME);
+  });
+});
+
+/**
+ * A git worktree is a checkout of the same repository, and it must reach the same memory.
+ *
+ * `.knowl/` is gitignored, so `git worktree add` -- which materialises tracked files only --
+ * produces a checkout with no marker anywhere in it. When the worktree is placed outside the
+ * main checkout, the ancestor walk has nothing to find and every command fails with
+ * `No Knowl project found`. Measured 2026-08-16 against 5.4.0: `knowl doctor` reported
+ * NOT READY and `knowl query` exited non-zero inside a worktree under the system temp
+ * directory.
+ *
+ * That is the whole of the parallel-agent case. `isolation: "worktree"` on Claude Code's Agent
+ * tool, this repository's own `docs/audit-lanes.md`, and every orchestrator that fans agents
+ * out across isolated checkouts all produce exactly this shape -- so the agents that most need
+ * shared memory were the ones guaranteed not to have it.
+ *
+ * The fallback runs only after the ordinary walk fails, which is what keeps a Knowl project
+ * nested inside a larger git repository resolving to itself rather than jumping out to the
+ * enclosing repository's main worktree (K-09).
+ */
+function git(cwd: string, args: string[]) {
+  // Per-invocation identity: `git config` run in a fixture searches upward and lands in the
+  // nearest enclosing repository, which for a fixture is this one. `-c` writes no file.
+  const result = spawnSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', ...args], {
+    cwd, encoding: 'utf8',
+  });
+  if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr}`);
+  return result.stdout.trim();
+}
+
+describe('a git worktree of an initialized repository', () => {
+  let base = '';
+  let main = '';
+  let outside = '';
+  let nestedWorktree = '';
+
+  beforeEach(async () => {
+    base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-worktree-')));
+    main = path.join(base, 'main');
+    outside = path.join(base, 'trees', 'agent-1');
+    nestedWorktree = path.join(main, '.agents', 'agent-2');
+
+    await fs.mkdir(main, { recursive: true });
+    git(main, ['init', '--initial-branch=main']);
+    await fs.writeFile(path.join(main, 'README.md'), '# fixture\n', 'utf8');
+    await fs.writeFile(path.join(main, '.gitignore'), '.knowl/\n', 'utf8');
+    git(main, ['add', '.']);
+    git(main, ['commit', '-m', 'init']);
+
+    // The marker, deliberately never committed -- which is the real situation.
+    await fs.mkdir(path.join(main, '.knowl'), { recursive: true });
+    await fs.writeFile(path.join(main, '.knowl', 'config.json'), JSON.stringify({ version: 1 }), 'utf8');
+
+    git(main, ['worktree', 'add', '-b', 'agent-1', outside]);
+    git(main, ['worktree', 'add', '-b', 'agent-2', nestedWorktree]);
+  });
+
+  afterEach(async () => {
+    await fs.rm(base, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('carries no marker of its own, which is the premise of the bug', async () => {
+    await expect(fs.access(path.join(outside, '.knowl', 'config.json'))).rejects.toThrow();
+  });
+
+  it('resolves to the main checkout when the worktree sits outside it', async () => {
+    expect(await findProjectRoot(outside)).toBe(main);
+  });
+
+  it('resolves from a nested directory inside that worktree', async () => {
+    const deep = path.join(outside, 'src', 'deep');
+    await fs.mkdir(deep, { recursive: true });
+    expect(await findProjectRoot(deep)).toBe(main);
+  });
+
+  it('still resolves a worktree placed inside the main checkout by the ordinary walk', async () => {
+    expect(await findProjectRoot(nestedWorktree)).toBe(main);
+  });
+
+  it('does not invent a project for a worktree whose main checkout has no marker', async () => {
+    await fs.rm(path.join(main, '.knowl'), { recursive: true, force: true });
+    await expect(findProjectRoot(outside)).rejects.toThrow(/No Knowl project found/);
+  });
+
+  it('resolves the same way through the synchronous resolver', async () => {
+    // `assertDatabasePresentForCommand` treats null as "not a project, nothing to check", so a
+    // sync resolver that gave up here would silently skip the missing-database guard in exactly
+    // the checkouts the async resolver had just started serving.
+    expect(findProjectRootSync(outside)).toBe(main);
+  });
+
+  it('does not adopt an enclosing repository when the start path is simply not a project', async () => {
+    // A plain checkout with no Knowl project anywhere must still fail, or the fallback would
+    // turn "not initialized" into "silently borrowed somebody else's store".
+    const plain = path.join(base, 'plain');
+    await fs.mkdir(plain, { recursive: true });
+    git(plain, ['init', '--initial-branch=main']);
+    await expect(findProjectRoot(plain)).rejects.toThrow(/No Knowl project found/);
   });
 });
 

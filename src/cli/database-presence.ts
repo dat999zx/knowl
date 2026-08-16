@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { resolveStorage } from '../store/storage-roles.js';
+import { mainWorktreeRoot } from '../core/config.js';
 import { repoRegistryPath } from './repo-registry.js';
 
 /**
@@ -54,8 +55,7 @@ function isProjectRootSync(candidate: string): boolean {
   }
 }
 
-/** The enclosing initialized repository, or null when there is none. */
-export function findProjectRootSync(startPath: string): string | null {
+function walkForProjectRootSync(startPath: string): string | null {
   let current = path.resolve(startPath);
   for (;;) {
     if (isProjectRootSync(current)) return current;
@@ -63,6 +63,24 @@ export function findProjectRootSync(startPath: string): string | null {
     if (parent === current) return null;
     current = parent;
   }
+}
+
+/**
+ * The enclosing initialized repository, or null when there is none.
+ *
+ * Falls back to the main checkout for a linked worktree, exactly as `findProjectRoot` does and
+ * for the same reason -- `.knowl/` is gitignored, so a worktree carries no marker. Kept in step
+ * deliberately: this guard exists to turn a vanished database into an explanation rather than a
+ * raw error, and a resolver that gave up where the async one succeeds would skip the guard in
+ * precisely the checkouts that had just started resolving.
+ */
+export function findProjectRootSync(startPath: string): string | null {
+  const direct = walkForProjectRootSync(startPath);
+  if (direct) return direct;
+
+  const main = mainWorktreeRoot(startPath);
+  if (main && path.resolve(main) !== path.resolve(startPath)) return walkForProjectRootSync(main);
+  return null;
 }
 
 /** Has this machine ever initialized or upgraded this repository? */
