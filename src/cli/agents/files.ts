@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parse, stringify } from 'smol-toml';
+import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
 
 export interface McpEntry {
   command: string;
@@ -41,9 +42,9 @@ export async function mergeJsonMcpConfig(configPath: string, entry: McpEntry): P
   const servers = config.mcpServers && typeof config.mcpServers === 'object' && !Array.isArray(config.mcpServers)
     ? config.mcpServers as Record<string, unknown>
     : {};
-  if (equalEntry(servers.knowl, entry)) return 'unchanged';
-  const status: MergeStatus = servers.knowl === undefined ? 'configured' : 'updated';
-  config.mcpServers = { ...servers, knowl: entry };
+  if (equalEntry(servers[KNOWL_MCP_SERVER_KEY], entry)) return 'unchanged';
+  const status: MergeStatus = servers[KNOWL_MCP_SERVER_KEY] === undefined ? 'configured' : 'updated';
+  config.mcpServers = { ...servers, [KNOWL_MCP_SERVER_KEY]: entry };
   await writeWithBackup(configPath, `${JSON.stringify(config, null, 2)}\n`, existing);
   return status;
 }
@@ -54,9 +55,9 @@ export async function mergeCodexTomlConfig(configPath: string, entry: McpEntry):
   const servers = config.mcp_servers && typeof config.mcp_servers === 'object' && !Array.isArray(config.mcp_servers)
     ? config.mcp_servers as Record<string, unknown>
     : {};
-  if (equalEntry(servers.knowl, entry)) return 'unchanged';
-  const status: MergeStatus = servers.knowl === undefined ? 'configured' : 'updated';
-  config.mcp_servers = { ...servers, knowl: entry };
+  if (equalEntry(servers[KNOWL_MCP_SERVER_KEY], entry)) return 'unchanged';
+  const status: MergeStatus = servers[KNOWL_MCP_SERVER_KEY] === undefined ? 'configured' : 'updated';
+  config.mcp_servers = { ...servers, [KNOWL_MCP_SERVER_KEY]: entry };
   await writeWithBackup(configPath, stringify(config), existing);
   return status;
 }

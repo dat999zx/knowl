@@ -4,6 +4,21 @@ import { isTranscriptSearchEnabled } from './config.js';
 export const KNOWL_GUIDANCE_START_MARKER = '<!-- KNOWL_PROJECT_MEMORY -->';
 export const KNOWL_GUIDANCE_END_MARKER = '<!-- /KNOWL_PROJECT_MEMORY -->';
 
+/**
+ * The key `knowl init` writes into every host's MCP config, and the prefix that follows from it.
+ *
+ * Hosts that namespace MCP tools build the callable name from the *registration key*, so the
+ * prefix is not a guess: `knowl init` writes `mcpServers.knowl` / `mcp_servers.knowl` and a
+ * namespacing host therefore exposes `mcp__knowl__knowl_query`. Guidance that prints the bare
+ * name prints something that does not resolve, which matters most on a host that lists tools
+ * without loading their schemas -- there the agent has to select a tool by its exact name.
+ *
+ * Defined here rather than in `cli/agents/files.ts` so guidance does not import from the CLI
+ * layer, and shared with the writers so the printed name cannot drift from the written one.
+ */
+export const KNOWL_MCP_SERVER_KEY = 'knowl';
+export const KNOWL_NAMESPACED_TOOL_PREFIX = `mcp__${KNOWL_MCP_SERVER_KEY}__`;
+
 export const KNOWL_MCP_TOOL_GROUPS = [
   {
     label: 'Focused retrieval',
@@ -64,7 +79,7 @@ const REQUIRED_WORKFLOW = `### Required workflow
 3. Use a relevant active hit immediately. Inspect files only after a miss, conflict, stale/low-confidence memory, or explicit verification request.
 4. Query again before switching to a distinct subtask or project area, and before choosing how to build something new — existing tooling and pipelines are project knowledge, and in a linked workspace they often live in a sibling repo, so leave method queries unscoped.
 5. Store or update durable knowledge during work and before the final answer — verified findings, stated intent (goals, plans, direction the user voiced) stored as goals with user_stated provenance even while unsettled, and resolved diagnoses stored as skills when the cause will recur (an environment quirk, a config trap — not a typo). The test: could a fresh session recover this from memory alone? Never store raw transcripts, secrets, or transient debugging noise.
-6. If Knowl MCP tools are unavailable, stop and tell the user instead of silently bypassing Knowl.`;
+6. Listed but not callable is not unavailable. A host may namespace the tools and withhold their schemas until asked, so load the schema for the name you need — namespaced it is \`${KNOWL_NAMESPACED_TOOL_PREFIX}knowl_query\` — and call it. Only when the tools are genuinely absent, stop and tell the user instead of silently bypassing Knowl.`;
 
 const LIFECYCLE_MODES = `### Lifecycle modes
 

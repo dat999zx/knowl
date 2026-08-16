@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import {
   KNOWL_CLAUDE_CONTINUATION_REMINDER,
@@ -8,12 +9,15 @@ import {
   KNOWL_CLAUDE_PROMPT_REMINDER,
   KNOWL_HOST_NEUTRAL_MODE_LINE,
   KNOWL_MCP_SERVER_INSTRUCTIONS,
+  KNOWL_MCP_SERVER_KEY,
   KNOWL_MCP_TOOL_GROUPS,
   KNOWL_MCP_TOOL_NAMES,
+  KNOWL_NAMESPACED_TOOL_PREFIX,
   KNOWL_SUBAGENT_BOOTSTRAP_CARD,
   renderFullKnowlGuidance,
   renderManagedKnowlGuidanceSection,
 } from '../../src/core/knowl-guidance.js';
+import { mergeCodexTomlConfig, mergeJsonMcpConfig } from '../../src/cli/agents/files.js';
 
 const EXPECTED_TOOLS = [
   'knowl_query',
@@ -205,6 +209,58 @@ describe('canonical Knowl agent guidance', () => {
     // The subagent card stays intent-free — a subagent receives a bounded task, not a user
     // conversation — but it does debug, so diagnoses are in its storable class too.
     expect(KNOWL_SUBAGENT_BOOTSTRAP_CARD).toMatch(recurrence);
+  });
+
+  /**
+   * Listed-but-not-callable has to be distinguishable from unavailable.
+   *
+   * Grounded in a live failure, not taste: a Claude Code session (2026-08-16) listed all of
+   * knowl's tools by name under "schemas are NOT loaded -- calling them directly will fail",
+   * and reaching `knowl_query` first cost a schema-load round-trip that rule 6 did not describe.
+   * Rule 6 read "if Knowl MCP tools are unavailable, stop and tell the user", which an agent
+   * looking at a list of uncallable tools can reasonably read as its own case -- and the
+   * instructed response to that case is to stop using Knowl.
+   *
+   * The subagent card already had this line, because a subagent is dispatched into exactly that
+   * shape. It is the same failure in the main session and it wants the same sentence.
+   */
+  it('tells an agent that listed-but-not-callable tools are loadable, not unavailable', () => {
+    const guidance = renderFullKnowlGuidance();
+    expect(guidance).toMatch(/listed but not callable is not unavailable/i);
+    expect(guidance).toMatch(/load the schema/i);
+    // The bare name does not resolve on a namespacing host, so the rule prints the form that does.
+    expect(guidance).toContain(`${KNOWL_NAMESPACED_TOOL_PREFIX}knowl_query`);
+    // Unchanged: the genuine-absence half of the rule still has to survive the rewrite.
+    expect(guidance).toMatch(/stop and tell the user/i);
+    // The subagent card is the surface this was generalised from; it must not regress.
+    expect(KNOWL_SUBAGENT_BOOTSTRAP_CARD).toMatch(/listed but not callable/i);
+  });
+
+  /**
+   * The printed name must be built from the written one.
+   *
+   * This is a known defect class in this project: a surface that PRINTS an identifier drifts
+   * from the identifier that actually resolves, because nothing joins the two halves. It has
+   * already happened twice with CLI command names. A namespaced tool name is the same shape --
+   * derived from the MCP registration key, which lives in the config writers -- so the prefix is
+   * derived from one exported constant and asserted against what the writers actually emit.
+   */
+  it('derives the namespaced tool prefix from the key the config writers register', async () => {
+    expect(KNOWL_NAMESPACED_TOOL_PREFIX).toBe(`mcp__${KNOWL_MCP_SERVER_KEY}__`);
+
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-mcp-key-'));
+    const entry = { command: 'knowl', args: ['serve'] };
+
+    const jsonPath = path.join(directory, '.mcp.json');
+    await mergeJsonMcpConfig(jsonPath, entry);
+    const json = JSON.parse(await fs.readFile(jsonPath, 'utf8'));
+    expect(Object.keys(json.mcpServers)).toEqual([KNOWL_MCP_SERVER_KEY]);
+
+    const tomlPath = path.join(directory, 'config.toml');
+    await mergeCodexTomlConfig(tomlPath, entry);
+    expect(await fs.readFile(tomlPath, 'utf8')).toContain(`[mcp_servers.${KNOWL_MCP_SERVER_KEY}]`);
+
+    await fs.rm(directory, { recursive: true, force: true });
   });
 
   it('changes only the lifecycle mode line between compact renderings', () => {
