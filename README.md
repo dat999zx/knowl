@@ -321,7 +321,7 @@ Seven typed atom types, where a same-subject write retires its predecessor inste
 sitting beside it. That one behavior is the [90-vs-73 difference](#the-idea-memory-that-retires-itself).
 Evidence attached to a file or symbol goes stale *by itself* when the code moves.
 
-`conflicts` · `timeline` · `query --as-of` · `pr check` · `code index`
+`conflicts` · `timeline` · `query --as-of` · `pr --since` · `index-code`
 
 </td>
 <td width="50%" valign="top">
@@ -332,7 +332,7 @@ Vector-primary with a bounded BM25 fallback, reranked by freshness, status, and 
 so the *current* answer wins rather than the merely similar one. The embedding model is
 local and optional — without it you still get keyword retrieval, and nothing leaves the machine.
 
-`query` · `context --token-budget` · `config set-model` · `access report`
+`query` · `context --token-budget` · `config set-model` · `access`
 
 </td>
 </tr>
@@ -395,7 +395,7 @@ knowl state                            # the active memory, as a hierarchy
 knowl conflicts                        # items that contradict each other
 knowl timeline <item-id>               # every version an atom ever had
 knowl context --token-budget 1500      # a fixed-size briefing for an agent
-knowl pr --since origin/main     # knowledge your diff may invalidate
+knowl pr --since origin/main           # knowledge your diff may invalidate
 knowl doctor                           # setup, retrieval, and registration
 ```
 
@@ -436,7 +436,7 @@ knowl doctor                           # setup, retrieval, and registration
   agent/MCP path; a single-repo `knowl query` from the CLI is lexical.)
 - **Runs offline.** The embedding model is local and optional; without it you still get keyword
   retrieval. Retrieval never sends your query anywhere.
-- **Four bundled embedding presets**, including a multilingual one covering 200+ languages, plus
+- **Five bundled embedding presets**, including a multilingual one covering 200+ languages, plus
   `custom` for your own ONNX model. `knowl config set-model <model>`
 - **Exact-identifier support** — filenames, item IDs, and `symbol://` locators still hit even when
   semantic similarity is weak.
@@ -561,7 +561,7 @@ loopback binding is the privacy boundary: do not put it behind a public proxy or
 ### Everything else
 
 <!-- generated:tool-count -->
-**27 MCP tools** (plus 3 when transcript search is on, 1 when connected to a cloud workspace, and 1 when linked into a local workspace)
+**27 MCP tools** (plus 3 when transcript search is on, 1 when connected to a cloud workspace, 1 when linked into a local workspace, and 1 when change impact is on)
 <!-- /generated:tool-count -->
 and two resource URIs · the
 **complete CLI**, from `knowl status` to `knowl audit` · a **read-only integrity audit** ·

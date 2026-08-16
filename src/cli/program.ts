@@ -1281,7 +1281,7 @@ cloudCommand
 
 cloudCommand
   .command('push')
-  .description('Send staged knowledge, once its code is on the default branch')
+  .description('Send staged knowledge. Works from any branch')
   .option('-y, --yes', 'Skip the confirmation. Required when there is no terminal to ask')
   .action(async options => {
     try {
