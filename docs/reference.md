@@ -648,11 +648,13 @@ The shipped workspace commands are:
 | --- | --- |
 | `knowl workspace init <name>` | Create a workspace outside its member repositories |
 | `knowl workspace add <name> [--name <repo-name>] [--default-visibility <repo\|workspace>] [--promote-existing] [--force]` | Link the current repository; shares its new writes by default in a `linked` workspace |
+| `knowl workspace set [--role <text>] [--default-visibility <repo\|workspace>] [--kin <group>]` | Change what this repo records about itself; with no flags, prints the current values |
 | `knowl workspace join <manifest> [--name <repo-name>] [--force]` | Adopt a copied manifest and map this checkout |
 | `knowl workspace list` | List workspaces known to this machine |
 | `knowl workspace status [--verbose]` | Show this repository's membership and peer health |
 | `knowl workspace remove <repo-name> [--export-first]` | Unlink the current repository, retiring its name if it still owns atoms |
 | `knowl workspace promote [--category <list> \| --id <id...>] [--apply]` | Share locally owned atoms with linked repos. Bare opens a picker with `decision, constraint, architecture, goal, skill` preticked and confirming applies; `--apply` is only needed on the flag path |
+| `knowl workspace demand [--limit <n>] [--json]` | What the linked repos have queried each other for, most-repeated first — the knowledge this repo owes its peers |
 | `knowl workspace repin-embedding [--yes]` | Move the workspace to this repository's embedding model and list the peers that must reindex |
 
 ### Federation and ownership
@@ -760,6 +762,21 @@ on, and your query text is never sent anywhere. The web console is what queries 
 
 The replica is a replica: deleting it is always safe, and the next pull rebuilds it from scratch.
 
+**An organisation is what carries the plan, not a workspace.** Signing in creates one free
+organisation for you, and every workspace inside it draws on that one allowance — published atoms a
+period, stored atoms, and how many workspaces the organisation may hold. So adding a workspace
+divides the allowance rather than adding to it, and a team that outgrows its plan upgrades the
+organisation once rather than each workspace separately.
+
+Your first organisation is free. Starting a second is a separate subscription — its own plan, its
+own bill, its own allowance — which is what you buy when work needs a wallet of its own, such as a
+different company. You may own as many as you are willing to pay for; there is no limit and no
+second free one.
+
+Members are the exception, and are counted per workspace rather than per organisation. Repositories
+inside a workspace are unlimited on every plan, and queries are never metered because they never
+reach the server.
+
 | Command | Purpose |
 | --- | --- |
 | `knowl cloud login [--api <host>]` | Sign in once, by device code. The credential lives in `~/.knowl`, never in `.knowl/config.json` |
@@ -768,7 +785,9 @@ The replica is a replica: deleting it is always safe, and the next pull rebuilds
 | `knowl cloud connect [--workspace <id>] [--remote <name>] [--repo <name>]` | Point this project at a workspace. Publishes nothing |
 | `knowl cloud pull` | Fetch team knowledge into the local replica |
 | `knowl cloud stage [--id <ids...>] [--category <list>] [--apply]` | Queue knowledge for the team. Bare opens the same picker; naming flags dry-runs until `--apply` |
-| `knowl cloud push` | Send staged knowledge. Works from any branch |
+| `knowl cloud unstage <id> [--forever]` | Take an atom back out of the queue. Publishes and unpublishes nothing; `--forever` also stops it being queued again automatically |
+| `knowl cloud push [--yes]` | Send staged knowledge. Works from any branch; `--yes` is required without a terminal to ask |
+| `knowl cloud autopush <on\|off>` | Record standing consent to push automatically, on this machine only — never written to `.knowl/config.json` |
 | `knowl cloud retract <id> --reason <text>` | Remove a published atom for good. Works from any branch |
 | `knowl cloud send [--id <ids...>] [--query <text>] [--expires-in <hours>] [--words <count>]` | Seal a few atoms for one person and print a code. Expires; collected once |
 | `knowl cloud send --list` / `--revoke <code-or-id>` | What you have in flight and whether it was collected; destroy one early |
@@ -1677,14 +1696,14 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | --- | --- |
 | `knowl workspace init <name>` | Create a workspace |
 | `knowl workspace add <name> [--name <repo-name>] [--default-visibility <repo\|workspace>] [--promote-existing] [--force]` | Link the current repository; shares its new writes by default in a `linked` workspace |
-| `knowl workspace join <manifest> [--name <repo-name>]` | Join from a copied manifest |
+| `knowl workspace join <manifest> [--name <repo-name>] [--force]` | Join from a copied manifest |
 | `knowl workspace list` | List machine-local workspaces |
 | `knowl workspace status [--verbose]` | Show membership and resolved peers |
 | `knowl workspace remove <repo-name> [--export-first]` | Unlink the current repository |
 | `knowl workspace promote [--category <list> \| --id <id...>] [--apply]` | Share locally owned knowledge with linked repos. Bare opens a picker; naming flags dry-runs until `--apply` |
 | `knowl workspace demand [--limit <n>] [--json]` | What the linked repos have queried each other for — the readout that says which knowledge this repo owes its peers |
-| `knowl workspace repin-embedding [--force]` | Repoint the workspace at this repository's embedding profile |
-| `knowl workspace set [--default-visibility <repo\|workspace>]` | Change this repo's recorded nature in the workspace manifest |
+| `knowl workspace repin-embedding [--yes]` | Repoint the workspace at this repository's embedding profile |
+| `knowl workspace set [--role <text>] [--default-visibility <repo\|workspace>] [--kin <group>]` | Change this repo's recorded nature in the workspace manifest; bare prints the current values |
 
 ### Memory and retrieval
 

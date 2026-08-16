@@ -38,7 +38,7 @@ function contextLabel(tokens: number): string {
 /** Region id -> [file, body]. */
 const regions: Record<string, [string, string]> = {
   'tool-count': [README, [
-    `**${CORE_TOOL_DEFINITIONS.length} MCP tools** (plus ${TRANSCRIPT_TOOL_DEFINITIONS.length} when transcript search is on, ${CLOUD_TOOL_DEFINITIONS.length} when connected to a cloud workspace, and ${WORKSPACE_TOOL_DEFINITIONS.length} when linked into a local workspace)`,
+    `**${CORE_TOOL_DEFINITIONS.length} MCP tools** (plus ${TRANSCRIPT_TOOL_DEFINITIONS.length} when transcript search is on, ${CLOUD_TOOL_DEFINITIONS.length} when connected to a cloud workspace, ${WORKSPACE_TOOL_DEFINITIONS.length} when linked into a local workspace, and ${IMPACT_TOOL_DEFINITIONS.length} when change impact is on)`,
   ].join('\n')],
 
   'embedding-presets': [REFERENCE, [
