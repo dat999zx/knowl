@@ -10,6 +10,7 @@ import {
   NativeInstructionHost,
   verifyKnowlHostInstructions,
 } from './instruction-files.js';
+import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
 
 function commandEntry(environment: AgentEnvironment): McpEntry {
   return { command: environment.platform === 'win32' ? 'knowl.cmd' : 'knowl', args: ['serve'] };
@@ -45,7 +46,7 @@ export function createCodexAdapter(environment: AgentEnvironment): AgentAdapter 
       const pathname = configPath(root);
       const source = await readConfig(pathname);
       const parsed = source ? parse(source) as Record<string, any> : {};
-      return { installed: await environment.commandExists('codex'), configured: equalEntry(parsed.mcp_servers?.knowl, commandEntry(environment)), scope: 'project', configPath: pathname };
+      return { installed: await environment.commandExists('codex'), configured: equalEntry(parsed.mcp_servers?.[KNOWL_MCP_SERVER_KEY], commandEntry(environment)), scope: 'project', configPath: pathname };
     },
     async configure(root): Promise<AgentIntegrationResult> {
       const pathname = configPath(root);
@@ -81,7 +82,7 @@ function createJsonProjectAdapter(
       const pathname = configPath(root);
       const source = await readConfig(pathname);
       const parsed = source ? JSON.parse(source) as Record<string, any> : {};
-      return { installed: await environment.commandExists(command), configured: equalEntry(parsed.mcpServers?.knowl, commandEntry(environment)), scope: 'project', configPath: pathname };
+      return { installed: await environment.commandExists(command), configured: equalEntry(parsed.mcpServers?.[KNOWL_MCP_SERVER_KEY], commandEntry(environment)), scope: 'project', configPath: pathname };
     },
     async configure(root): Promise<AgentIntegrationResult> {
       const pathname = configPath(root);

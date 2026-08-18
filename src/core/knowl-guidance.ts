@@ -8,10 +8,19 @@ export const KNOWL_GUIDANCE_END_MARKER = '<!-- /KNOWL_PROJECT_MEMORY -->';
  * The key `knowl init` writes into every host's MCP config, and the prefix that follows from it.
  *
  * Hosts that namespace MCP tools build the callable name from the *registration key*, so the
- * prefix is not a guess: `knowl init` writes `mcpServers.knowl` / `mcp_servers.knowl` and a
- * namespacing host therefore exposes `mcp__knowl__knowl_query`. Guidance that prints the bare
- * name prints something that does not resolve, which matters most on a host that lists tools
- * without loading their schemas -- there the agent has to select a tool by its exact name.
+ * middle segment is not a guess: `knowl init` writes `mcpServers.knowl` / `mcp_servers.knowl`,
+ * and every reader of those files derives the key from this constant too, so the name printed
+ * here cannot drift from the name written and then detected. That matters most on a host that
+ * lists tools without loading their schemas -- there the agent selects a tool by exact name.
+ *
+ * The `mcp__` / `__` wrapper around it is NOT universal. It is Claude Code's convention, and it
+ * is where the observed failure happened, but this guidance is written once and installed for
+ * every host: `installKnowlProjectGuidance` writes the same managed text into `KNOWL.md` and
+ * `AGENTS.md` whichever host was selected, and `GEMINI.md` includes it by reference. Nothing in
+ * `src/session/hosts/` carries per-host tool-name knowledge, so there is nowhere to resolve a
+ * different convention from -- and `cli/agents/host-hook.ts` already splits on the LAST `__`
+ * precisely because it has met other shapes. So the prose names this form as an example of the
+ * convention rather than asserting it is the name every host will show.
  *
  * Defined here rather than in `cli/agents/files.ts` so guidance does not import from the CLI
  * layer, and shared with the writers so the printed name cannot drift from the written one.
@@ -79,7 +88,7 @@ const REQUIRED_WORKFLOW = `### Required workflow
 3. Use a relevant active hit immediately. Inspect files only after a miss, conflict, stale/low-confidence memory, or explicit verification request.
 4. Query again before switching to a distinct subtask or project area, and before choosing how to build something new — existing tooling and pipelines are project knowledge, and in a linked workspace they often live in a sibling repo, so leave method queries unscoped.
 5. Store or update durable knowledge during work and before the final answer — verified findings, stated intent (goals, plans, direction the user voiced) stored as goals with user_stated provenance even while unsettled, and resolved diagnoses stored as skills when the cause will recur (an environment quirk, a config trap — not a typo). The test: could a fresh session recover this from memory alone? Never store raw transcripts, secrets, or transient debugging noise.
-6. Listed but not callable is not unavailable. A host may namespace the tools and withhold their schemas until asked, so load the schema for the name you need — namespaced it is \`${KNOWL_NAMESPACED_TOOL_PREFIX}knowl_query\` — and call it. Only when the tools are genuinely absent, stop and tell the user instead of silently bypassing Knowl.`;
+6. Listed but not callable is not unavailable. A host may namespace the tools and withhold their schemas until asked, so load the schema for the name your host lists and call it — where names are namespaced from the server key, \`knowl_query\` appears as \`${KNOWL_NAMESPACED_TOOL_PREFIX}knowl_query\`. Stop and tell the user only when the tools are genuinely absent, or when every call fails; never silently bypass Knowl.`;
 
 const LIFECYCLE_MODES = `### Lifecycle modes
 
@@ -159,7 +168,7 @@ const TRANSCRIPT_ROUTE_LINE =
 function renderCompactKnowlGuidance(modeLine: string, options: { transcripts?: boolean } = {}): string {
   return [
     'KNOWL WORKFLOW - for project work.',
-    'Start: use a relevant active lifecycle hit; else call knowl_query with the words that name the subject before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are unavailable, stop and tell the user.',
+    'Start: use a relevant active lifecycle hit; else call knowl_query with the words that name the subject before repository files or commands. A knowl_task_start hit counts in manual mode. Re-query on a new area. Inspect files only after miss/conflict/stale/low-confidence or explicit verification. If tools are absent, stop and tell the user.',
     modeLine,
     'Manual fallback: knowl task run for one bounded command; resumable work uses knowl_task_start once, knowl_task_checkpoint at milestones or blockers with its taskId, and knowl_task_finish once after verification.',
     'Route by what you need; the tool list names them:',

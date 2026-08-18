@@ -3,6 +3,7 @@ import path from 'node:path';
 import { mergeJsonMcpConfig, McpEntry } from './files.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentIntegrationResult } from './types.js';
 import { unsupportedLifecycleResult } from './lifecycle-config.js';
+import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
 
 function desktopConfigPath(environment: AgentEnvironment) {
   if (environment.platform === 'win32') return path.join(environment.appDataDir, 'Claude', 'claude_desktop_config.json');
@@ -17,7 +18,7 @@ function entry(environment: AgentEnvironment): McpEntry {
 async function configured(pathname: string, expected: McpEntry) {
   try {
     const config = JSON.parse(await fs.readFile(pathname, 'utf8')) as Record<string, any>;
-    const value = config.mcpServers?.knowl;
+    const value = config.mcpServers?.[KNOWL_MCP_SERVER_KEY];
     return value?.command === expected.command && JSON.stringify(value.args) === JSON.stringify(expected.args);
   } catch (error: any) {
     if (error.code === 'ENOENT') return false;

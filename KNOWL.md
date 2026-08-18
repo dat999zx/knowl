@@ -8,7 +8,7 @@
 3. Use a relevant active hit immediately. Inspect files only after a miss, conflict, stale/low-confidence memory, or explicit verification request.
 4. Query again before switching to a distinct subtask or project area, and before choosing how to build something new — existing tooling and pipelines are project knowledge, and in a linked workspace they often live in a sibling repo, so leave method queries unscoped.
 5. Store or update durable knowledge during work and before the final answer — verified findings, stated intent (goals, plans, direction the user voiced) stored as goals with user_stated provenance even while unsettled, and resolved diagnoses stored as skills when the cause will recur (an environment quirk, a config trap — not a typo). The test: could a fresh session recover this from memory alone? Never store raw transcripts, secrets, or transient debugging noise.
-6. Listed but not callable is not unavailable. A host may namespace the tools and withhold their schemas until asked, so load the schema for the name you need — namespaced it is `mcp__knowl__knowl_query` — and call it. Only when the tools are genuinely absent, stop and tell the user instead of silently bypassing Knowl.
+6. Listed but not callable is not unavailable. A host may namespace the tools and withhold their schemas until asked, so load the schema for the name your host lists and call it — where names are namespaced from the server key, `knowl_query` appears as `mcp__knowl__knowl_query`. Stop and tell the user only when the tools are genuinely absent, or when every call fails; never silently bypass Knowl.
 
 ### Lifecycle modes
 
