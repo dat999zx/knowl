@@ -133,6 +133,35 @@ describe('agent adapters', () => {
     expect((await readJson(desktopPath)).mcpServers.knowl.command).toBe('knowl.cmd');
   });
 
+  /**
+   * Whatever key `configure` writes, `detect` and `verify` have to look for the same one.
+   *
+   * The writers were moved onto `KNOWL_MCP_SERVER_KEY` while three readers kept the literal --
+   * `project-adapters.ts` twice and `desktop-adapter.ts` once. Mutating the constant proved the
+   * split: every adapter reported `configure -> configured` and then `verify -> false`,
+   * `detect.configured -> false`. `knowl init` would write a config `knowl doctor` can never
+   * see, and `doctor --fix` would re-run init forever without converging.
+   *
+   * The tests above pin the on-disk key as the literal `knowl`, which is right -- it is a
+   * compatibility contract with configs users already have. This one pins the *join*, so the
+   * two halves cannot be renamed apart.
+   */
+  it('detects and verifies every adapter it just configured', async () => {
+    const adapters = [
+      createCodexAdapter(environment),
+      createClaudeCodeAdapter(environment),
+      createCursorAdapter(environment),
+      createGeminiAdapter(environment),
+      createClaudeDesktopAdapter(environment),
+    ];
+
+    for (const adapter of adapters) {
+      await adapter.configure(PROJECT);
+      expect(`${adapter.name}: ${(await adapter.detect(PROJECT)).configured}`).toBe(`${adapter.name}: true`);
+      expect(`${adapter.name}: ${await adapter.verify(PROJECT)}`).toBe(`${adapter.name}: true`);
+    }
+  });
+
   it('deduplicates agent names and rejects unsupported names', () => {
     expect(parseAgentNames(['codex', 'claude', 'codex'])).toEqual(['codex', 'claude']);
     expect(() => parseAgentNames(['unknown'])).toThrow('Unsupported agent "unknown"');

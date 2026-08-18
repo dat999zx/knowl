@@ -252,15 +252,30 @@ export async function runDoctor(startPath: string = process.cwd()): Promise<Doct
             fix: verified ? undefined : `run \`knowl init ${adapter.name}\``,
             remedy: verified ? undefined : { kind: 'host-init', host: adapter.name },
           });
+        // The two messages below no longer say "MCP remains available". That wording claimed the
+        // tool surface is a sufficient fallback, and it is only sufficient on a host that loads
+        // tool *descriptions*. A host may list the tools by name and defer their schemas until
+        // asked, and there the routing prose is not in context at all: the host instruction file
+        // and the server card are the only carriers left. So the fallback is narrower than the
+        // old message promised, and naming what actually survives -- the recording, not the
+        // routing -- is the honest form.
+        //
+        // Severity is deliberately unchanged. Deferral is a client-side presentation choice made
+        // after `initialize` and `tools/list`, so the server cannot detect it, and an
+        // unconditional FAIL would report NOT READY on every host where nothing is wrong.
+        //
+        // NOTE: the `degraded` branch is currently unreachable from here. No adapter's
+        // `lifecycleCapability` returns it -- the only producer is `init-flow.ts`, which does not
+        // feed this call. It is worded correctly for when one does.
         } else if (capability === 'degraded') {
           checks.push({
             status: 'WARN',
-            message: `${adapter.name} lifecycle hooks degraded; MCP remains available`,
+            message: `${adapter.name} lifecycle hooks degraded; MCP still records knowledge, but capture is manual`,
             fix: `run \`knowl init ${adapter.name}\``,
             remedy: { kind: 'host-init', host: adapter.name },
           });
         } else {
-          checks.push({ status: 'OK', message: `${adapter.name} lifecycle hooks unsupported; MCP remains available` });
+          checks.push({ status: 'OK', message: `${adapter.name} lifecycle hooks unsupported; MCP still records knowledge, use the manual work loop` });
         }
       } catch (error: any) {
         // No remedy: the check itself failed, so what is wrong with the host is unknown and
