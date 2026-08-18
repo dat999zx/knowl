@@ -3,6 +3,70 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+Three fixes to the places where Knowl decides *which* memory it is talking to, and whether an agent
+believes it can talk to Knowl at all. The worktree one is the largest: until now, every agent an
+orchestrator fanned out into an isolated checkout was silently cut off from the repository's memory.
+
+### A git worktree reaches the repository's memory instead of reporting no project
+
+`.knowl/` is gitignored, and `git worktree add` materialises tracked files only — so a linked
+worktree is a checkout of an initialized repository that carries no marker anywhere inside it.
+Placed beside the main checkout, which is where orchestrators put them, every command failed:
+`knowl doctor` reported NOT READY and `knowl query` exited non-zero. Not a degraded result, a hard
+error.
+
+That was the whole of the parallel-agent case. Claude Code's `isolation: "worktree"`, and every
+orchestrator that fans agents across isolated checkouts, produce exactly this shape — so the agents
+that most need shared memory were the ones guaranteed not to have it. It stayed hidden because a
+worktree placed *inside* the main checkout already worked, the ordinary ancestor walk climbing out
+into it.
+
+When that walk finds nothing, Knowl now resolves the repository's shared git directory and looks
+again from the main checkout. It is a fallback, never a first step: a Knowl project nested inside a
+larger git repository still resolves to itself, and a repository whose main checkout was never
+initialized still refuses rather than borrowing somebody else's store.
+
+Two things keep it from answering about the wrong repository. Knowl consults git only when it finds
+the marker a linked worktree actually carries — `.git` as a *file* rather than a directory — so an
+ordinary directory pays a `stat` instead of a subprocess on a path that runs once per agent tool
+call. And it strips `GIT_DIR`, `GIT_COMMON_DIR` and `GIT_WORK_TREE` from that call, because git
+exports them into every hook it runs: without that, a directory with no relationship to your
+repository could inherit one from inside a `git commit` hook and silently read and write its memory.
+
+`knowl init` inside a worktree now says it is a worktree of the repository, rather than describing
+it as nested inside one and telling you to move it somewhere it already is.
+
+### An agent is told that a listed tool with no schema is not a missing tool
+
+Some hosts list Knowl's MCP tools by name and withhold their schemas until asked. The guidance said
+*"if Knowl MCP tools are unavailable, stop and tell the user"* — which an agent looking at a list of
+tools it cannot yet call can reasonably read as its own case. The instructed response to that case
+was to stop using Knowl.
+
+The rule now separates the two: load the schema for the name you need and call it, and stop only
+when the tools are genuinely absent or when every call fails. Where a host namespaces tools from the
+server key, the guidance names the form that resolves rather than the bare name that does not.
+
+Run `knowl init` to pick up the reworded guidance in an existing repository.
+
+### `knowl doctor` sees the MCP configuration `knowl init` writes
+
+The MCP server key was written from one constant and read back from three hard-coded copies.
+Renaming it would have left `init` writing a configuration `doctor` could never detect, and
+`doctor --fix` re-running `init` forever without converging. Both halves now derive from the same
+constant, and a test drives configure → detect → verify across every supported host.
+
+Doctor also no longer says "MCP remains available" when lifecycle hooks are degraded or unsupported.
+That claimed the tool surface is a sufficient fallback, and on a host that defers tool schemas it is
+not — the messages now name what actually survives, which is the recording rather than the routing.
+
+### Development tooling
+
+`npm run measure:card` prices the guidance card against a real transcript archive, with the writeup
+in `docs/evals/guidance-card-cost.md`. Nothing in the published package changes.
+
 ## 5.4.0 — 2026-08-15
 
 Mostly a release about knowing what actually happened. Two of these are cases where Knowl told you
