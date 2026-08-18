@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { ProjectConfig } from './types.js';
 import { ConfigError, ProjectNotFoundError } from './errors.js';
 import { DEFAULT_PRESET_ID } from './vector-profile.js';
@@ -110,10 +112,8 @@ export async function isProjectRoot(candidate: string): Promise<boolean> {
   }
 }
 
-/**
- * Traverses up from the starting path to find the root of the enclosing Knowl project.
- */
-export async function findProjectRoot(startPath: string = process.cwd()): Promise<string> {
+/** Traverses up from `startPath` looking for the marker. Null when no ancestor carries one. */
+async function walkForProjectRoot(startPath: string): Promise<string | null> {
   let current = path.resolve(startPath);
   const root = path.parse(current).root;
 
@@ -126,6 +126,133 @@ export async function findProjectRoot(startPath: string = process.cwd()): Promis
 
   // Check root directory itself
   if (await isProjectRoot(current)) return current;
+
+  return null;
+}
+
+/**
+ * The main checkout of the repository `startPath` belongs to, or null when that is not a
+ * question with an answer here.
+ *
+ * `git rev-parse --git-common-dir` names the *shared* git directory, which is what separates a
+ * linked worktree from the checkout it was made from. Measured output, which is why the single
+ * `path.resolve` below is enough for all of it:
+ *
+ * | run from                  | prints                   |
+ * |---------------------------|--------------------------|
+ * | main checkout root        | `.git`                   |
+ * | subdirectory of main      | `../../.git`             |
+ * | linked worktree root      | `C:/repo/.git` (absolute)|
+ * | subdirectory of a worktree| `C:/repo/.git` (absolute)|
+ * | outside any repository    | exits non-zero           |
+ *
+ * Relative in the first two cases and absolute in the next two, so resolving against
+ * `startPath` normalises every one of them to the same shared `.git`, whose parent is the main
+ * checkout.
+ *
+ * Only a directory literally named `.git` is accepted. A submodule reports
+ * `.git/modules/<name>`, and a bare or otherwise unusual layout reports something else again;
+ * in those the parent is not a checkout and guessing would hand back a directory that merely
+ * looks like one. Refusing is the safe answer because every caller treats null as "no extra
+ * information", never as "no project".
+ *
+ * Returns null when git is absent or the path is not in a repository. This is a best-effort
+ * widening of a lookup that already failed, so it must not turn a missing git binary into an
+ * error the caller did not have before.
+ *
+ * git is asked at all only when `insideLinkedWorktree` finds the marker, and it is asked with
+ * `GIT_DIR` and friends stripped -- see those two helpers for why each is load-bearing.
+ */
+export function mainWorktreeRoot(startPath: string): string | null {
+  if (!insideLinkedWorktree(startPath)) return null;
+
+  const result = spawnSync('git', ['rev-parse', '--git-common-dir'], {
+    cwd: startPath, encoding: 'utf8', env: gitEnvWithoutRepoOverrides(),
+  });
+  if (result.error || result.status !== 0 || typeof result.stdout !== 'string') return null;
+
+  const commonDir = result.stdout.trim();
+  if (!commonDir) return null;
+
+  const resolved = path.resolve(startPath, commonDir);
+  if (path.basename(resolved) !== '.git') return null;
+  return path.dirname(resolved);
+}
+
+/**
+ * Is `startPath` inside a LINKED worktree -- the only shape the resolution above can answer for?
+ *
+ * `git worktree add` writes `.git` as a FILE holding `gitdir: <path>`, where a main checkout has
+ * `.git` as a DIRECTORY. That one bit is the whole test, and it costs a `stat` per ancestor.
+ *
+ * It is a gate rather than an optimisation, for two separate reasons.
+ *
+ * **The miss branch is a hot path.** `src/cli/agent-hook.ts` runs once per agent tool call as a
+ * fresh process -- "its cost is paid hundreds of times a session ... the only Knowl command with
+ * that property" -- and its own comment names `ProjectNotFoundError` as the ORDINARY case,
+ * because the hook fires in every directory the agent visits and most are not Knowl
+ * repositories. A `git` spawn measures ~22ms here, which is ~13% of the 175ms that bundling the
+ * hook bought, and it cannot be amortised because the process is new every time. Ordinary CLI
+ * commands would pay it twice, once in the `preAction` guard and once in the command body.
+ *
+ * **`GIT_DIR` outranks `cwd`.** `git rev-parse` honours `GIT_DIR`/`GIT_COMMON_DIR` over the
+ * working directory, and git exports them into every hook it runs, so any subprocess of
+ * `git commit` inherits them. Without this gate a directory with no relationship to that
+ * repository resolved to it and silently read and wrote its memory. Stripping the variables
+ * (below) is the direct fix; refusing to ask at all unless a linked-worktree marker is actually
+ * present is the one that does not depend on knowing every variable git consults.
+ */
+function insideLinkedWorktree(startPath: string): boolean {
+  let current = path.resolve(startPath);
+  for (;;) {
+    try {
+      if (statSync(path.join(current, '.git')).isFile()) return true;
+    } catch {
+      // Absent or unreadable: neither is an answer, so keep climbing.
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+/**
+ * `process.env` with the variables that would make git answer about a different repository
+ * removed. `cwd` is the question being asked; these would override it.
+ */
+function gitEnvWithoutRepoOverrides(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_COMMON_DIR;
+  delete env.GIT_WORK_TREE;
+  return env;
+}
+
+/**
+ * Traverses up from the starting path to find the root of the enclosing Knowl project.
+ *
+ * When the walk finds nothing, one widening is tried: `.knowl/` is gitignored and
+ * `git worktree add` materialises tracked files only, so a linked worktree is a checkout of an
+ * initialized repository that carries no marker anywhere inside it. Placed outside the main
+ * checkout -- which is where orchestrators put them -- the walk has nothing to reach and every
+ * command failed with `No Knowl project found`. Resolving the shared git directory recovers the
+ * main checkout, and the walk is run again from there so the same marker rule decides.
+ *
+ * The widening is deliberately a FALLBACK rather than a first step. A Knowl project nested
+ * inside a larger git repository must keep resolving to itself, and it does, because the
+ * ordinary walk reaches its marker before this runs (K-09). It also cannot invent a project:
+ * the second walk applies `isProjectRoot` exactly as the first did, so a repository whose main
+ * checkout was never initialized still throws.
+ */
+export async function findProjectRoot(startPath: string = process.cwd()): Promise<string> {
+  const direct = await walkForProjectRoot(startPath);
+  if (direct) return direct;
+
+  const main = mainWorktreeRoot(startPath);
+  if (main && path.resolve(main) !== path.resolve(startPath)) {
+    const fromMain = await walkForProjectRoot(main);
+    if (fromMain) return fromMain;
+  }
 
   throw new ProjectNotFoundError(startPath);
 }

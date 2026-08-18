@@ -329,14 +329,28 @@ program
       // is that same question asked one directory further up.
       const enclosing = await findProjectRoot(cwd).catch(() => null);
       if (enclosing && path.resolve(enclosing) !== path.resolve(cwd)) {
+        // Two different ways to get here, and the same words are false in the second. `cwd`
+        // under `enclosing` is the subpackage case above. `cwd` NOT under it means the resolver
+        // reached the project sideways, through the shared git directory of a linked worktree --
+        // so "inside", "run commands from anywhere under" and "move it outside" would each
+        // describe something that is not true of where the user is standing.
+        const relative = path.relative(enclosing, cwd);
+        const nested = relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
         throw new Error(
-          `${cwd} is inside the Knowl repository at ${enclosing}.\n` +
-          'Initializing here would create a second store, and every command run below this ' +
-          'directory would then read and write that one instead of the repository\'s -- ' +
-          'silently, because both are valid.\n' +
-          `  - to use the existing memory: run knowl commands from anywhere under ${enclosing}\n` +
-          `  - to upgrade that repository: cd ${enclosing} && knowl init\n` +
-          '  - if this really is a separate project, move it outside that repository first',
+          nested
+            ? `${cwd} is inside the Knowl repository at ${enclosing}.\n` +
+              'Initializing here would create a second store, and every command run below this ' +
+              'directory would then read and write that one instead of the repository\'s -- ' +
+              'silently, because both are valid.\n' +
+              `  - to use the existing memory: run knowl commands from anywhere under ${enclosing}\n` +
+              `  - to upgrade that repository: cd ${enclosing} && knowl init\n` +
+              '  - if this really is a separate project, move it outside that repository first'
+            : `${cwd} is a git worktree of the Knowl repository at ${enclosing}, and already ` +
+              'reads and writes its memory.\n' +
+              'Initializing here would create a second store that only this worktree can see, ' +
+              'and the two would diverge silently.\n' +
+              '  - to use the existing memory: nothing to do -- run knowl commands here\n' +
+              `  - to upgrade that repository: cd ${enclosing} && knowl init`,
         );
       }
 
