@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { findProjectRoot } from '../../src/core/config.js';
+import { findProjectRoot, mainWorktreeRoot } from '../../src/core/config.js';
 import { findProjectRootSync } from '../../src/cli/database-presence.js';
 import { discoverRepos } from '../../src/cli/repo-discovery.js';
 
@@ -175,6 +175,98 @@ describe('a git worktree of an initialized repository', () => {
     await fs.mkdir(plain, { recursive: true });
     git(plain, ['init', '--initial-branch=main']);
     await expect(findProjectRoot(plain)).rejects.toThrow(/No Knowl project found/);
+  });
+
+  /**
+   * `GIT_DIR` outranks `cwd`, and git exports it into every hook it runs.
+   *
+   * So a subprocess of `git commit` -- husky, lint-staged, or Knowl's own agent hook fired from
+   * one -- inherits a `GIT_DIR` naming a repository that has nothing to do with the directory it
+   * is standing in. Asking `git rev-parse --git-common-dir` there answers about the inherited
+   * repository, and the directory silently reads and writes memory that is not its own. That is
+   * worse than the miss the fallback was added to cure: a wrong answer, delivered confidently.
+   */
+  it('ignores an inherited GIT_DIR naming an unrelated repository', async () => {
+    const unrelated = path.join(base, 'unrelated', 'deep');
+    await fs.mkdir(unrelated, { recursive: true });
+
+    const previous = process.env.GIT_DIR;
+    process.env.GIT_DIR = path.join(main, '.git');
+    try {
+      expect(mainWorktreeRoot(unrelated)).toBeNull();
+      await expect(findProjectRoot(unrelated)).rejects.toThrow(/No Knowl project found/);
+    } finally {
+      if (previous === undefined) delete process.env.GIT_DIR;
+      else process.env.GIT_DIR = previous;
+    }
+  });
+
+  /**
+   * The miss branch is `agent-hook`'s ordinary case -- it fires in every directory the agent
+   * visits, most of which are not repositories at all -- and it runs as a fresh process
+   * hundreds of times a session, so a ~22ms `git` spawn there is unamortisable overhead on the
+   * one command whose cost was deliberately engineered down to 175ms.
+   *
+   * A linked worktree writes `.git` as a FILE; a main checkout writes a DIRECTORY. Refusing to
+   * spawn git without that marker keeps the cost on the path that needs it and off the path
+   * that does not.
+   */
+  it('answers null without consulting git when no linked-worktree marker is present', async () => {
+    const bare = path.join(base, 'not-a-repo', 'deep');
+    await fs.mkdir(bare, { recursive: true });
+    expect(mainWorktreeRoot(bare)).toBeNull();
+
+    // The main checkout is a repository, and still not a linked worktree.
+    expect(mainWorktreeRoot(main)).toBeNull();
+  });
+});
+
+/**
+ * Resolving sideways into the main checkout gave the `knowl init` guard a case its message was
+ * never written for.
+ *
+ * The guard exists for a subpackage NESTED inside an initialized repository, and every line of
+ * it assumes that: "is inside", "run knowl commands from anywhere under", "move it outside that
+ * repository first". A linked worktree placed beside the main checkout is none of those -- it is
+ * not inside, you no longer need to be under the main checkout to reach the memory, and it is
+ * already outside, so the escape hatch names something the user has done. Refusing is still
+ * right; describing it wrongly is not.
+ */
+describe('knowl init inside a git worktree of an initialized repository', () => {
+  let base = '';
+  let main = '';
+  let worktree = '';
+
+  beforeEach(async () => {
+    base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'knowl-init-worktree-')));
+    main = path.join(base, 'main');
+    worktree = path.join(base, 'trees', 'agent-1');
+
+    await fs.mkdir(main, { recursive: true });
+    git(main, ['init', '--initial-branch=main']);
+    await fs.writeFile(path.join(main, '.gitignore'), '.knowl/\n', 'utf8');
+    git(main, ['add', '.']);
+    git(main, ['commit', '-m', 'init']);
+    await fs.mkdir(path.join(main, '.knowl'), { recursive: true });
+    await fs.writeFile(path.join(main, '.knowl', 'config.json'), JSON.stringify({ version: 1 }), 'utf8');
+    git(main, ['worktree', 'add', '-b', 'agent-1', worktree]);
+  });
+
+  afterEach(async () => {
+    await fs.rm(base, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('refuses, and says the worktree already reaches that memory', async () => {
+    const result = initIn(worktree, path.join(base, 'home'));
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('is a git worktree of the Knowl repository at');
+    expect(result.stderr).toContain(main);
+    // The nested-subpackage wording is false here and must not be what the user sees.
+    expect(result.stderr).not.toContain('is inside the Knowl repository at');
+    expect(result.stderr).not.toContain('move it outside that repository first');
+    // It must still refuse to build the second store.
+    await expect(fs.access(path.join(worktree, '.knowl', 'config.json'))).rejects.toThrow();
   });
 });
 

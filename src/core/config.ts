@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { ProjectConfig } from './types.js';
@@ -158,10 +159,15 @@ async function walkForProjectRoot(startPath: string): Promise<string | null> {
  * Returns null when git is absent or the path is not in a repository. This is a best-effort
  * widening of a lookup that already failed, so it must not turn a missing git binary into an
  * error the caller did not have before.
+ *
+ * git is asked at all only when `insideLinkedWorktree` finds the marker, and it is asked with
+ * `GIT_DIR` and friends stripped -- see those two helpers for why each is load-bearing.
  */
 export function mainWorktreeRoot(startPath: string): string | null {
+  if (!insideLinkedWorktree(startPath)) return null;
+
   const result = spawnSync('git', ['rev-parse', '--git-common-dir'], {
-    cwd: startPath, encoding: 'utf8',
+    cwd: startPath, encoding: 'utf8', env: gitEnvWithoutRepoOverrides(),
   });
   if (result.error || result.status !== 0 || typeof result.stdout !== 'string') return null;
 
@@ -171,6 +177,55 @@ export function mainWorktreeRoot(startPath: string): string | null {
   const resolved = path.resolve(startPath, commonDir);
   if (path.basename(resolved) !== '.git') return null;
   return path.dirname(resolved);
+}
+
+/**
+ * Is `startPath` inside a LINKED worktree -- the only shape the resolution above can answer for?
+ *
+ * `git worktree add` writes `.git` as a FILE holding `gitdir: <path>`, where a main checkout has
+ * `.git` as a DIRECTORY. That one bit is the whole test, and it costs a `stat` per ancestor.
+ *
+ * It is a gate rather than an optimisation, for two separate reasons.
+ *
+ * **The miss branch is a hot path.** `src/cli/agent-hook.ts` runs once per agent tool call as a
+ * fresh process -- "its cost is paid hundreds of times a session ... the only Knowl command with
+ * that property" -- and its own comment names `ProjectNotFoundError` as the ORDINARY case,
+ * because the hook fires in every directory the agent visits and most are not Knowl
+ * repositories. A `git` spawn measures ~22ms here, which is ~13% of the 175ms that bundling the
+ * hook bought, and it cannot be amortised because the process is new every time. Ordinary CLI
+ * commands would pay it twice, once in the `preAction` guard and once in the command body.
+ *
+ * **`GIT_DIR` outranks `cwd`.** `git rev-parse` honours `GIT_DIR`/`GIT_COMMON_DIR` over the
+ * working directory, and git exports them into every hook it runs, so any subprocess of
+ * `git commit` inherits them. Without this gate a directory with no relationship to that
+ * repository resolved to it and silently read and wrote its memory. Stripping the variables
+ * (below) is the direct fix; refusing to ask at all unless a linked-worktree marker is actually
+ * present is the one that does not depend on knowing every variable git consults.
+ */
+function insideLinkedWorktree(startPath: string): boolean {
+  let current = path.resolve(startPath);
+  for (;;) {
+    try {
+      if (statSync(path.join(current, '.git')).isFile()) return true;
+    } catch {
+      // Absent or unreadable: neither is an answer, so keep climbing.
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return false;
+    current = parent;
+  }
+}
+
+/**
+ * `process.env` with the variables that would make git answer about a different repository
+ * removed. `cwd` is the question being asked; these would override it.
+ */
+function gitEnvWithoutRepoOverrides(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  delete env.GIT_DIR;
+  delete env.GIT_COMMON_DIR;
+  delete env.GIT_WORK_TREE;
+  return env;
 }
 
 /**
