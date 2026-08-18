@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.4.1 — 2026-08-18
 
 Three fixes to the places where Knowl decides *which* memory it is talking to, and whether an agent
 believes it can talk to Knowl at all. The worktree one is the largest: until now, every agent an
