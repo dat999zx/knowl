@@ -81,7 +81,7 @@ describe('the auto-stage seam', () => {
 
   it('an update to a published atom stages a correction and keeps its version', async () => {
     const stored = await storeKnowledgeItemDeduped(projectId, atom('published'));
-    await recordPushed(stored.item.id, WS, 4);
+    await recordPushed(stored.item.id, WS, 4, { contentHash: null, lifecycleHash: null });
     expect(await staged()).toEqual([]);
 
     await updateKnowledgeItemWithCommit(projectId, stored.item.id, { content: 'Corrected wording entirely.' });

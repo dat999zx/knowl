@@ -80,7 +80,7 @@ describe('retracting a published atom', () => {
     await initDb(CLONE);
     await getClient().execute('DELETE FROM cloud_published');
     await stageForPublish([published], WS, 'main');
-    await recordPushed(published, WS, 3);
+    await recordPushed(published, WS, 3, { contentHash: null, lifecycleHash: null });
     await closeDb();
 
     await writeCredential(API_HOST, {

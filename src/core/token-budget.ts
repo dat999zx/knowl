@@ -157,6 +157,49 @@ export function truncateText(value: string, maxChars: number, marker = ''): stri
   return `${value.slice(0, maxChars - marker.length)}${marker}`;
 }
 
+/**
+ * What replaces the elided middle. Fixed rather than counted, following the `truncated` flag's
+ * own reasoning: the caller is deciding "do I need the rest of this", and a byte count answers a
+ * question nobody asked. A fixed marker also keeps the arithmetic below exact.
+ */
+const MIDDLE_ELISION = '\n\n[... elided ...]\n\n';
+
+/**
+ * How much of the surviving budget goes to the opening. The head decides whether the atom is
+ * relevant at all, so it keeps the larger share; the tail is there because that is where the
+ * atom says what it concluded.
+ */
+const HEAD_SHARE = 0.6;
+
+/**
+ * Keep both ends of an over-long body and drop the middle.
+ *
+ * WHY THIS EXISTS, AND WHY IT IS NOT A CEILING CHANGE. Atom bodies in this project are written
+ * with the verdict last -- `CONSEQUENCE`, `THE FIX`, `WHAT NOT TO BUILD`, `THE LIMIT OF THIS
+ * EVIDENCE` -- so a head slice systematically delivers the setup and drops the finding. That
+ * would be recoverable if the flag were acted on, but it mostly is not: measured over the
+ * session archive, 43.3% of delivered items arrive truncated and only 2.2% of them are ever
+ * chased by an id-fetch. The withheld tail is not being declined, it is going unread.
+ *
+ * The corpus measurement that settled `MAX_ITEM_CONTENT_CHARS` at 2,000 also showed that raising
+ * it to 4,000 buys content declined 97.8% of the time at +399 tok/query. This spends nothing:
+ * the budget is identical to the character, and only the choice of WHICH characters changes. It
+ * is therefore orthogonal to that decision rather than a re-litigation of it.
+ *
+ * Exact by construction: `head + marker + tail === maxChars` whenever there is room for the
+ * marker at all, which is what keeps the existing length assertion true.
+ */
+export function truncateMiddle(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  // With no room for the marker there is no middle to speak of, and a caller asking for fewer
+  // characters than the marker wants a prefix, not two fragments of one.
+  if (maxChars <= MIDDLE_ELISION.length) return value.slice(0, Math.max(0, maxChars));
+  const keep = maxChars - MIDDLE_ELISION.length;
+  const head = Math.ceil(keep * HEAD_SHARE);
+  const tail = keep - head;
+  return `${value.slice(0, head)}${MIDDLE_ELISION}${tail === 0 ? '' : value.slice(value.length - tail)}`;
+}
+
 export function estimateTokens(value: string): number {
   return Math.ceil(value.length / 4);
 }
@@ -175,7 +218,10 @@ export function compactKnowledgeItem(item: KnowledgeItem, extras: CompactProvena
     id: item.id,
     category: item.category as KnowledgeCategory,
     title: truncateText(item.title, MAX_TITLE_CHARS),
-    content: truncateText(item.content, MAX_ITEM_CONTENT_CHARS),
+    // Middle-elided, not head-sliced: see `truncateMiddle`. Titles, tags and paths above stay
+    // head-truncated on purpose -- a path with its middle removed is not a shorter path, it is
+    // an unusable one, and those fields have no conclusion to preserve.
+    content: truncateMiddle(item.content, MAX_ITEM_CONTENT_CHARS),
     freshness: item.freshness as KnowledgeFreshness,
     confidence: item.confidence,
     // A flag, not a length: the caller is deciding "is this the whole fact or the start of

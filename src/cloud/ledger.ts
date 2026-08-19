@@ -11,6 +11,9 @@ export type PublishedRecord = {
   retractedAt: string | null;
   /** Explicit since level 10. `pending` is what a push works through. */
   stageState: 'pending' | 'clear';
+  /** The atom's hashes as of the last confirmed push. NULL for a row that predates the columns. */
+  remoteContentHash: string | null;
+  remoteLifecycleHash: string | null;
 };
 
 const asText = (value: unknown): string | null => (value === null || value === undefined ? null : String(value));
@@ -27,6 +30,8 @@ function toRecord(row: Record<string, unknown>): PublishedRecord {
     pushedAt: asText(row.pushed_at),
     retractedAt: asText(row.retracted_at),
     stageState: String(row.stage_state) === 'pending' ? 'pending' : 'clear',
+    remoteContentHash: asText(row.remote_content_hash),
+    remoteLifecycleHash: asText(row.remote_lifecycle_hash),
   };
 }
 
@@ -104,15 +109,77 @@ export async function restageForPublish(
   return staged;
 }
 
-/** Staged and not yet sent. This is exactly what a push has to work through. */
+/**
+ * Staged, but byte-for-byte what the server was last given.
+ *
+ * The atom was re-staged -- by an explicit `knowl cloud stage --id`, or by a write that rewrote
+ * it to the same bytes -- and there is nothing to send. Sending it anyway costs a version bump
+ * the server applies unconditionally, and that version then reaches every replica on its next
+ * pull, so one no-op push is a round of sync traffic for the whole team.
+ *
+ * `IS` rather than `=` throughout: SQLite's `=` is unknown when either side is NULL, and a
+ * hash is nullable on both sides. `IS` compares nulls as equal, which is the intended reading --
+ * an atom with no content hash then and no content hash now has not changed.
+ *
+ * `remote_content_hash IS NOT NULL` gates the whole rule, so a row from before these columns
+ * existed never matches and is always sent. Failing toward sending is the recoverable direction:
+ * a redundant push spends a version, a wrongly skipped one strands a correction locally with
+ * nothing to reveal it.
+ *
+ * Both hashes must match. Content alone would treat a retirement -- `status` and `freshness`
+ * live in the lifecycle hash -- as an unchanged atom.
+ *
+ * `LEFT JOIN`, deliberately. A staged id whose atom is gone entirely is *missing*, and the push
+ * reports that case its own way; an inner join would drop it here and turn a reportable problem
+ * into a silent one.
+ */
+const UNCHANGED_SINCE_PUSH = `
+  p.remote_content_hash IS NOT NULL
+  AND p.remote_content_hash IS k.content_hash
+  AND p.remote_lifecycle_hash IS k.lifecycle_hash`;
+
+/**
+ * Staged and not yet sent. This is exactly what a push has to work through.
+ *
+ * Excludes atoms identical to what was already pushed, so `knowl cloud status` and the push
+ * itself agree on one number. `clearUnchangedStaged` settles the same rows in the table; this
+ * filter is what keeps a read honest before that has run.
+ */
 export async function listStaged(workspace: string): Promise<PublishedRecord[]> {
   const result = await getClient().execute({
-    sql: `SELECT * FROM cloud_published
-          WHERE remote_workspace = ? AND stage_state = 'pending' AND retracted_at IS NULL
-          ORDER BY staged_at, item_id`,
+    sql: `SELECT p.* FROM cloud_published p
+          LEFT JOIN knowledge_items k ON k.id = p.item_id
+          WHERE p.remote_workspace = ? AND p.stage_state = 'pending' AND p.retracted_at IS NULL
+            AND NOT (${UNCHANGED_SINCE_PUSH})
+          ORDER BY p.staged_at, p.item_id`,
     args: [workspace],
   });
   return result.rows.map(row => toRecord(row as unknown as Record<string, unknown>));
+}
+
+/**
+ * Settle the rows `listStaged` filters out, so the queue does not accumulate them forever.
+ *
+ * Run at the start of a push rather than from the read, because a read that writes is a surprise
+ * and `knowl cloud status` is a read. The filter and this statement share one predicate so the
+ * two cannot drift apart.
+ *
+ * Returns how many were settled, which is worth reporting: "3 unchanged" is the difference
+ * between a push that did nothing and a push that was not needed.
+ */
+export async function clearUnchangedStaged(workspace: string): Promise<number> {
+  const result = await getClient().execute({
+    sql: `UPDATE cloud_published SET stage_state = 'clear'
+          WHERE remote_workspace = ? AND stage_state = 'pending' AND retracted_at IS NULL
+            AND item_id IN (
+              SELECT p.item_id FROM cloud_published p
+              JOIN knowledge_items k ON k.id = p.item_id
+              WHERE p.remote_workspace = ? AND p.stage_state = 'pending'
+                AND p.retracted_at IS NULL AND ${UNCHANGED_SINCE_PUSH}
+            )`,
+    args: [workspace, workspace],
+  });
+  return Number(result.rowsAffected ?? 0);
 }
 
 /**
@@ -159,11 +226,24 @@ export async function recordPushed(
   itemId: string,
   workspace: string,
   remoteVersion: number,
+  /**
+   * The hashes of the payload that was actually SENT, taken from that payload and never re-read
+   * from the store. A fresh read here would record what the atom says now, and an edit landing
+   * between the send and this write would then look already-published and never be sent -- the
+   * same window `PushSnapshot` exists to close, reopened at the last step.
+   */
+  hashes: { contentHash: string | null; lifecycleHash: string | null },
 ): Promise<void> {
   await getClient().execute({
-    sql: `UPDATE cloud_published SET remote_version = ?, pushed_at = ?, stage_state = 'clear'
+    sql: `UPDATE cloud_published
+          SET remote_version = ?, pushed_at = ?, stage_state = 'clear',
+              remote_content_hash = ?, remote_lifecycle_hash = ?
           WHERE item_id = ? AND remote_workspace = ?`,
-    args: [remoteVersion, new Date().toISOString(), itemId, workspace],
+    args: [
+      remoteVersion, new Date().toISOString(),
+      hashes.contentHash, hashes.lifecycleHash,
+      itemId, workspace,
+    ],
   });
 }
 
@@ -182,7 +262,9 @@ export async function recordPushed(
  */
 export async function recordRetracted(itemId: string, workspace: string): Promise<void> {
   await getClient().execute({
-    sql: `UPDATE cloud_published SET retracted_at = ?, remote_version = NULL
+    sql: `UPDATE cloud_published
+          SET retracted_at = ?, remote_version = NULL,
+              remote_content_hash = NULL, remote_lifecycle_hash = NULL
           WHERE item_id = ? AND remote_workspace = ?`,
     args: [new Date().toISOString(), itemId, workspace],
   });

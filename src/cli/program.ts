@@ -1383,6 +1383,11 @@ cloudCommand
       }
 
       console.log(`Published ${result.created} new and ${result.updated} updated item(s).`);
+      if (result.skippedUnchanged > 0) {
+        console.log(
+          `  ${result.skippedUnchanged} staged item(s) were already published unchanged and were not re-sent.`,
+        );
+      }
       for (const outcome of result.conflicts) {
         console.log(`  conflict  ${outcome.id} -- the workspace has a newer version. Pull, re-read, and publish again.`);
       }
