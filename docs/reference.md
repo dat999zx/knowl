@@ -1409,10 +1409,19 @@ refuses a `Sec-Fetch-Site` that says it came from elsewhere.
 It still exposes full local atom content across every status, so loopback binding remains the
 privacy boundary: do not put it behind a public proxy or tunnel.
 
-The graph connects atoms through shared tags and category-derived links. It is a synthetic
-navigation graph, not a causal graph and not the evidence graph. Search, category filters, stale
-rings, neighborhood focus, and the item inspector help locate content, evidence, and timeline
-assertions.
+The graph connects atoms through shared tags, and only through tags that **few** atoms carry: a
+tag on more than five is a category rather than a relationship, and the rail already filters by
+category. Drawing those as edges produced a star per common tag and buried the mesh that meant
+something — on a 675-atom store, 32 such tags accounted for 425 of 1,556 links.
+
+An atom that shares no rare tag with anything stays **unlinked**, and settles at the rim. It used
+to be tied to the first atom of its own category, which drew one enormous star per category and
+asserted a relationship that did not exist.
+
+It is a synthetic navigation graph, not a causal graph and not the evidence graph. Labels are
+dropped rather than overlapped, so a crowded region shows fewer of them rather than an unreadable
+pile. Search, category filters, stale rings, neighborhood focus, and the item inspector help
+locate content, evidence, and timeline assertions.
 
 <p align="center">
   <img src="assets/viewer-graph.png" alt="Knowl local viewer showing the project-memory graph" width="48%" />

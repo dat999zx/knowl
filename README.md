@@ -579,9 +579,11 @@ its place: search only reaches memory you already suspect exists, and an atom ca
 information is precisely the one nobody thinks to look for. Sorted oldest-first, it surfaces on its
 own. `knowl list --unread` asks the same question from the terminal.
 
-The graph links atoms through shared tags and category-derived edges — a navigation aid, not a
-causal or evidence graph. It shows full local content across every status, so loopback binding is
-the privacy boundary: do not put it behind a public proxy or tunnel.
+The graph links atoms only through tags **few** atoms share — a tag on dozens of them is a
+category, and the rail already filters by those. An atom nothing else is about stays unlinked
+rather than being tied to an arbitrary neighbour. It is a navigation aid, not a causal or
+evidence graph. It shows full local content across every status, so loopback binding is the
+privacy boundary: do not put it behind a public proxy or tunnel.
 
 → [Local viewer](docs/reference.md#local-viewer)
 

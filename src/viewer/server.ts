@@ -44,12 +44,13 @@ type GraphNode = {
   tags: string[]; confidence: number | null; updatedAt: string | null; degree: number;
   content: string; reasoning: string | null;
 };
-type GraphLink = { source: string; target: string; weight: number; kind: 'tag' | 'category' };
+type GraphLink = { source: string; target: string; weight: number; kind: 'tag' };
 
-// Build a graph of knowledge atoms (nodes) linked by shared tags, so the viewer
-// can render memory as a connected neural map instead of a flat list. Large tag
-// groups fan out from a hub to avoid a hairball; otherwise pairs are fully linked.
-// Any atom left isolated is tied to a same-category neighbour so nothing floats free.
+// Build a graph of knowledge atoms (nodes) linked by shared tags, so the viewer can render
+// memory as a connected map instead of a flat list. Only tags FEW atoms share draw a link --
+// see COMMON_TAG below -- and an atom nothing else is about is left unlinked rather than tied
+// to an arbitrary neighbour. Both of those replaced the opposite behaviour, so a reader
+// arriving here should not find the old rules described as current.
 async function buildGraph(): Promise<{ nodes: GraphNode[]; links: GraphLink[] }> {
   const items = await listKnowledgeItems();
   const nodes: GraphNode[] = items.map((item: any) => ({
@@ -67,7 +68,7 @@ async function buildGraph(): Promise<{ nodes: GraphNode[]; links: GraphLink[] }>
   }));
 
   const links = new Map<string, GraphLink>();
-  const addLink = (a: string, b: string, weight: number, kind: 'tag' | 'category') => {
+  const addLink = (a: string, b: string, weight: number, kind: 'tag') => {
     if (a === b) return;
     const [x, y] = a < b ? [a, b] : [b, a];
     const key = x + '|' + y;
@@ -84,14 +85,19 @@ async function buildGraph(): Promise<{ nodes: GraphNode[]; links: GraphLink[] }>
       byTag.set(tag, bucket);
     }
   }
+  // A tag two or three atoms share says "these are about the same specific thing". A tag
+  // thirty-seven atoms share is a CATEGORY, and saying so as thirty-six edges from an arbitrary
+  // hub draws a star that means nothing and hides the mesh that does. Measured on a 675-atom
+  // store: 32 tags exceeded this threshold and produced 425 of the links by themselves --
+  // every visible star in the graph. The rail already filters by category; the graph should
+  // only draw what filtering cannot say.
+  // 5 is the knee, measured on a 675-atom store: thresholds 3/4/5/6/8 give 191/288/430/583/1039
+  // links while connecting 189/223/250/264/284 atoms. Past 5 the edge count grows quadratically
+  // to connect almost nobody new -- 8 costs 609 extra edges for 34 extra atoms.
+  const COMMON_TAG = 5;
   for (const ids of byTag.values()) {
-    if (ids.length < 2) continue;
-    if (ids.length <= 5) {
-      for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) addLink(ids[i], ids[j], 1, 'tag');
-    } else {
-      const hub = ids[0];
-      for (let k = 1; k < ids.length; k++) addLink(hub, ids[k], 1, 'tag');
-    }
+    if (ids.length < 2 || ids.length > COMMON_TAG) continue;
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) addLink(ids[i], ids[j], 1, 'tag');
   }
 
   const degree = new Map<string, number>();
@@ -99,13 +105,12 @@ async function buildGraph(): Promise<{ nodes: GraphNode[]; links: GraphLink[] }>
     degree.set(link.source, (degree.get(link.source) ?? 0) + 1);
     degree.set(link.target, (degree.get(link.target) ?? 0) + 1);
   }
-  for (const node of nodes) {
-    if ((degree.get(node.id) ?? 0) === 0) {
-      const neighbour = nodes.find(other => other.id !== node.id && other.category === node.category);
-      if (neighbour) { addLink(node.id, neighbour.id, 0.5, 'category'); degree.set(node.id, 1); }
-    }
-    node.degree = degree.get(node.id) ?? 0;
-  }
+  // An atom that shares no rare tag with anything is left unlinked, and that is the honest
+  // answer. This used to tie every such atom to `nodes.find(same category)` -- the FIRST atom
+  // of its category, the same one every time -- which drew one enormous star per category and
+  // asserted a relationship that does not exist. Unlinked atoms settle into a ring at the rim,
+  // where "nothing else is about this" is exactly what a reader should see.
+  for (const node of nodes) node.degree = degree.get(node.id) ?? 0;
 
   return { nodes, links: [...links.values()] };
 }
