@@ -41,7 +41,10 @@ describe('session candidates', () => {
   it('captures a commit subject as a fact, with evidence', async () => {
     const session = await startMemorySession({ title: 'Commit work', query: 'x' });
     await appendMemorySessionEvent(session.id, 'command', {
-      command: 'git add -A && git commit -q -m "fix(store): take writes through the client"',
+      // Carries a body, because a commit without one is no longer captured at all -- see
+      // "does not mint an atom whose content says no more than its title". What this case
+      // pins is the categorisation and the evidence, neither of which depends on the body.
+      command: `git add -A && git commit -q -m "$(cat <<'EOF'\nfix(store): take writes through the client\nThe pool handed out a fresh connection per statement, so a transaction\nspanning two writes could land on two of them.\nEOF\n)"`,
       exitCode: 0,
     });
     await finishMemorySession(session.id, 'finished');
@@ -58,7 +61,7 @@ describe('session candidates', () => {
   it('files a feat commit as architecture, not as a fact', async () => {
     const session = await startMemorySession({ title: 'Feature work', query: 'x' });
     await appendMemorySessionEvent(session.id, 'command', {
-      command: 'git commit -q -m "feat(workspace): record a role per linked repo"',
+      command: `git commit -q -m "$(cat <<'EOF'\nfeat(workspace): record a role per linked repo\nA reader in one repo was a writer in another, and the manifest had nowhere\nto say so.\nEOF\n)"`,
       exitCode: 0,
     });
     await finishMemorySession(session.id, 'finished');
@@ -99,9 +102,46 @@ describe('session candidates', () => {
 
   it('skips docs, test, chore and merge commits, which are process not knowledge', async () => {
     const session = await startMemorySession({ title: 'Process commits', query: 'x' });
+    // Every one carries a body. Without one the body guard drops them first and this case
+    // passes whether or not the skip list and the merge check exist at all -- which is
+    // exactly what it looked like after the guard landed, and it proved nothing.
     for (const subject of ['docs: tidy readme', 'test: add a case', 'chore: bump deps', 'Merge branch feat/x']) {
-      await appendMemorySessionEvent(session.id, 'command', { command: `git commit -q -m "${subject}"`, exitCode: 0 });
+      await appendMemorySessionEvent(session.id, 'command', {
+        command: `git commit -q -m "${subject}" -m "A real body, so what drops this is the filter under test."`,
+        exitCode: 0,
+      });
     }
+    await finishMemorySession(session.id, 'finished');
+
+    expect(await extractSessionMemoryCandidates(session.id)).toEqual([]);
+  });
+
+  it('skips a merge commit that carries a body, which the type skip list cannot catch', async () => {
+    const session = await startMemorySession({ title: 'Merge with a body', query: 'x' });
+    // A merge commit has no conventional-commit type, so `SKIPPED_COMMIT_TYPES` never sees
+    // it and the body guard passes it through. The /^merge\b/i check is the only thing
+    // between this and an atom whose content is a conflict list.
+    await appendMemorySessionEvent(session.id, 'command', {
+      command: [
+        "git commit -F - <<'EOF'",
+        "Merge branch 'feat/x' into main",
+        '',
+        'Resolved conflicts in src/store/repository.ts and src/cli/program.ts.',
+        'EOF',
+      ].join('\n'),
+      exitCode: 0,
+    });
+    await finishMemorySession(session.id, 'finished');
+
+    expect(await extractSessionMemoryCandidates(session.id)).toEqual([]);
+  });
+
+  it('files a test-typed commit as process even when it carries a body', async () => {
+    const session = await startMemorySession({ title: 'Typed skip', query: 'x' });
+    await appendMemorySessionEvent(session.id, 'command', {
+      command: 'git commit -q -m "test: cover the retry path" -m "Adds three cases around the backoff."',
+      exitCode: 0,
+    });
     await finishMemorySession(session.id, 'finished');
 
     expect(await extractSessionMemoryCandidates(session.id)).toEqual([]);
@@ -189,7 +229,7 @@ describe('session candidates', () => {
   it('survives a malformed event payload instead of losing the whole session', async () => {
     const session = await startMemorySession({ title: 'Bad payload', query: 'x' });
     await appendMemorySessionEvent(session.id, 'command', {
-      command: 'git commit -q -m "fix(store): guard the payload parse"',
+      command: `git commit -q -m "$(cat <<'EOF'\nfix(store): guard the payload parse\nOne malformed row must not cost the whole capture.\nEOF\n)"`,
       exitCode: 0,
     });
     await finishMemorySession(session.id, 'finished');
@@ -224,5 +264,50 @@ describe('session candidates', () => {
 
     expect(candidates.some((candidate) => candidate.title.startsWith('Session outcome'))).toBe(false);
     expect(candidates.some((candidate) => candidate.candidateType === 'outcome')).toBe(false);
+  });
+
+  it('keeps a commit that explains itself and drops one that only names itself', async () => {
+    const session = await startMemorySession({ title: 'Two commits', query: 'commits' });
+    await appendMemorySessionEvent(session.id, 'command', {
+      command: 'git commit -m "feat: rename the cache key"',
+      exitCode: 0,
+      summary: 'committed',
+    });
+    await appendMemorySessionEvent(session.id, 'command', {
+      command: [
+        "git commit -F - <<'EOF'",
+        'feat: pin the embedding dimension at write time',
+        '',
+        'A vector whose width disagrees with the column ranks as noise forever,',
+        'so the width is asserted when the row is written rather than when it is read.',
+        'EOF',
+      ].join('\n'),
+      exitCode: 0,
+      summary: 'committed',
+    });
+    await finishMemorySession(session.id, 'finished', 'Two commits.');
+
+    const candidates = await extractSessionMemoryCandidates(session.id);
+    const commits = candidates.filter(candidate => candidate.candidateType === 'commit');
+
+    expect(commits).toHaveLength(1);
+    expect(commits[0].title).toBe('feat: pin the embedding dimension at write time');
+    expect(commits[0].content).toContain('ranks as noise forever');
+    // The dropped one must not survive under any title.
+    expect(candidates.some(candidate => candidate.title.includes('rename the cache key'))).toBe(false);
+  });
+
+  it('does not mint an atom whose content says no more than its title', async () => {
+    const session = await startMemorySession({ title: 'Bare only', query: 'commits' });
+    await appendMemorySessionEvent(session.id, 'command', {
+      command: 'git commit -m "fix: off-by-one in the pager"',
+      exitCode: 0,
+      summary: 'committed',
+    });
+    await finishMemorySession(session.id, 'finished', 'One bare commit.');
+
+    const candidates = await extractSessionMemoryCandidates(session.id);
+    expect(candidates.filter(candidate => candidate.candidateType === 'commit')).toHaveLength(0);
+    expect(candidates.every(candidate => candidate.content !== candidate.title)).toBe(true);
   });
 });

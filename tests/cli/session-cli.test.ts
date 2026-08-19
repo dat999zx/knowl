@@ -26,7 +26,11 @@ describe('session CLI', () => {
     // rebuild this session promoted on `stop.summary` alone; that rule measured at zero
     // value and was removed, so without an event carrying real knowledge the finish below
     // correctly reports `skipped` and this test would assert nothing about promotion.
-    execSync(`node "${CLI_PATH}" session event ${started.id} command --exit-code 0 --command "git commit -q -m \\"fix(cli): record a promotable session event\\"" --json`, { cwd: TEST_DIR, encoding: 'utf-8' });
+    //
+    // The second `-m` is the body, and it is required: a commit that says no more than its
+    // title is no longer captured, so a bare subject here promotes nothing and this case
+    // fails on the very assertion it exists to make.
+    execSync(`node "${CLI_PATH}" session event ${started.id} command --exit-code 0 --command "git commit -q -m \\"fix(cli): record a promotable session event\\" -m \\"Session finish promoted nothing because the extractor had no durable source.\\"" --json`, { cwd: TEST_DIR, encoding: 'utf-8' });
 
     const finished = JSON.parse(execSync(`node "${CLI_PATH}" session finish ${started.id} --status failed --summary "failure recorded" --json`, { cwd: TEST_DIR, encoding: 'utf-8' }));
     expect(finished).toMatchObject({ id: started.id, status: 'failed', promotion: { status: 'promoted', itemIds: expect.any(Array) } });
