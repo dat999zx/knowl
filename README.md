@@ -2,7 +2,7 @@
 
 <img src="docs/assets/hero.svg" alt="Knowl — persistent memory across sessions for Claude Code, Cursor and Codex, over MCP" width="100%" />
 
-**Local-first. Typed. And retired the moment it stops being true.**
+**Your CLAUDE.md only grows. Knowl retires facts when they change.**
 
 [![npm](https://img.shields.io/npm/v/%40dat999zx%2Fknowl?color=3987e5&label=npm)](https://www.npmjs.com/package/@dat999zx/knowl)
 [![CI](https://img.shields.io/github/actions/workflow/status/dat999zx/knowl/ci.yml?branch=main&label=CI)](https://github.com/dat999zx/knowl/actions/workflows/ci.yml)
@@ -32,15 +32,15 @@
 
 ---
 
-Coding agents start every session blank, so teams write things down — and those notes only ever
-grow. Six months in, the store still reports the database you migrated off last spring,
-because nothing ever told it that decision was over.
+Your agent starts every session blank, so you keep a `CLAUDE.md`. It only grows. Six months in it
+still names the database you migrated off last spring, and now the agent gets both answers.
 
-Knowl is **persistent memory across sessions** for Claude Code, Cursor and Codex: a
-repository-local store of **typed knowledge atoms** — decisions, constraints, architecture, facts,
-goals, state, and skills — read and written over an [MCP](https://modelcontextprotocol.io) memory
-server or the `knowl` CLI, where **a replacement retires its predecessor at write time** instead of
-sitting beside it.
+Knowl is persistent memory for Claude Code, Cursor and Codex, over
+[MCP](https://modelcontextprotocol.io) or the CLI. When a fact changes, the old one is retired
+instead of competing with the new one.
+
+Turn that off and retrieval drops from 98% to 47%. End to end, 90 to 73.
+[How it was measured ↓](#the-idea-memory-that-retires-itself)
 
 ## Quick start
 
