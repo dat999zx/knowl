@@ -4,7 +4,7 @@ import { KnowledgeCategory } from '../core/types.js';
 import { getRecentContext } from '../store/recent-context.js';
 import { formatRecentContextToMarkdown, formatHierarchyToMarkdown } from '../core/format.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
-import { DEFAULT_CONTEXT_MAX_CHARS, DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS, MAX_TITLE_CHARS, truncateText } from '../core/token-budget.js';
+import { DEFAULT_CONTEXT_MAX_CHARS, DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS, MAX_TITLE_CHARS, truncateMiddle, truncateText } from '../core/token-budget.js';
 import { fenceUntrusted, inlineUntrusted, UNTRUSTED_NOTICE_BRIEF } from '../core/untrusted.js';
 import { formatInitError } from './init-error.js';
 import { sanitizeToolErrorMessage } from './tool-schema.js';
@@ -109,7 +109,7 @@ export function registerResources(
           for (const item of items.slice(0, DEFAULT_RESULT_LIMIT)) {
             md += `## ${inlineUntrusted(truncateText(item.title, MAX_TITLE_CHARS))} (ID: ${item.id})\n\n`;
             // A body keeps its shape, inside a container it cannot close.
-            md += `${fenceUntrusted(truncateText(item.content, MAX_ITEM_CONTENT_CHARS))}\n\n`;
+            md += `${fenceUntrusted(truncateMiddle(item.content, MAX_ITEM_CONTENT_CHARS))}\n\n`;
             if (item.reasoning) md += `**Reasoning:** ${inlineUntrusted(truncateText(item.reasoning, MAX_PREVIEW_CHARS))}\n\n`;
             if (item.alternatives && item.alternatives.length > 0) {
               md += `**Alternatives:** ${inlineUntrusted(truncateText(item.alternatives.join(', '), MAX_PREVIEW_CHARS))}\n\n`;

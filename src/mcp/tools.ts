@@ -16,7 +16,7 @@ import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.j
 import { formatHierarchyToMarkdown, formatRecentContextToMarkdown } from '../core/format.js';
 import { inlineUntrusted } from '../core/untrusted.js';
 import { compactMcpJson, compactItemResponse, compactAssertionResponse, boundedEvidence } from './response-format.js';
-import { DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS, truncateText, uncalibratedScore, type UncalibratedScore } from '../core/token-budget.js';
+import { DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS, truncateMiddle, truncateText, uncalibratedScore, type UncalibratedScore } from '../core/token-budget.js';
 import { getRecentContext } from '../store/recent-context.js';
 import { storeKnowledgeItemDeduped, storeKnowledgeAtomsDeduped } from '../store/knowledge-writer.js';
 import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
@@ -1358,7 +1358,7 @@ export function registerTools(
         const { title, query } = args as any;
         const result = await startWorkLoop(projectId!, title, query);
         return {
-          content: [{ type: 'text', text: compactMcpJson({ ...result, relevantMemory: result.relevantMemory.map(item => ({ ...item, content: truncateText(item.content, MAX_ITEM_CONTENT_CHARS) })) }) }],
+          content: [{ type: 'text', text: compactMcpJson({ ...result, relevantMemory: result.relevantMemory.map(item => ({ ...item, content: truncateMiddle(item.content, MAX_ITEM_CONTENT_CHARS) })) }) }],
         };
       }
 
