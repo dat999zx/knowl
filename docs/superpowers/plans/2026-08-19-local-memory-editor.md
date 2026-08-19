@@ -20,7 +20,12 @@
 - **Do not write `written_by`.** It means *cross-repo* authorship — `src/store/schema.ts:38`: "NULL means the owner wrote it, which is the ordinary case". The human-authored signal is `provenance: 'user_stated'`.
 - **Import specifiers end in `.js`** even for `.ts` sources. ESM, `"type": "module"`.
 - **Tests mirror sources:** `src/viewer/server.ts` → `tests/viewer/server.test.ts`.
-- **Run the suite with `npm test`** (`vitest run`). A single file: `npx vitest run tests/path/file.test.ts`.
+- **Run `npm run build && npm test`, in that order, for any claim that the suite passes.** Twelve
+  test files spawn the built CLI (`execSync('node dist/index.js …')`) instead of importing source.
+  `dist/` is gitignored and `npm test` never rebuilds it, so a stale build makes that whole tier
+  validate the *previous* revision and report green. CI builds first (`ci.yml:86` then `:89`), so
+  the breakage surfaces only there. Constraint `eb5b45dabe8f49be`. A single file, when no `src/`
+  change is involved: `npx vitest run tests/path/file.test.ts`.
 - **No new dependencies.** Everything here is stdlib plus what is already installed.
 
 ---
@@ -33,6 +38,28 @@ Spec §10. Independent of every other task — it can ship alone.
 
 `parseCommitSubjects` already returns `body: string | null`, and the `git commit -m "subject"` form always yields `body: null` (`src/store/extractors/commit-subject.ts:40`), so the filter is one condition.
 
+> **The guard alone is not safe — three defects found in review, all fixed in this task.**
+>
+> 1. **`git commit -m "subject" -m "body"` parsed to `body: null`.** That is git's own documented
+>    way to write a body, and `DASH_M` read the first `-m` only. While a bodyless commit still
+>    became an atom this merely lost the body; the moment the guard drops on "no body", it
+>    discards commits that *did* carry one. So the parser is fixed first: `DASH_M_INVOCATION`
+>    bounds one `git commit` (stopping at the next, so `git commit -m "a" && git commit -m "b"`
+>    stays two commits) and `DASH_M_VALUE` collects every `-m` within it — first is the subject,
+>    the rest join as paragraphs, the way git joins them.
+> 2. **The guard made two sibling guards untested.** `tests/store/session-candidates.test.ts`'s
+>    "skips docs, test, chore and merge commits" fed bare `-m` for all four subjects, so the body
+>    guard dropped them before the skip list or merge check was reached and its `toEqual([])`
+>    passed vacuously — deleting **both** guards left it green. Merge-commit skipping had zero
+>    coverage anywhere in the repo, and a merge commit *with* a body parses with `type: null`, so
+>    the skip list cannot catch it and the regex is the only thing that does. Fixtures now carry
+>    bodies, and two cases were added. Both guards are mutation-proved.
+> 3. **A fifth test broke, hidden by a stale `dist/`.** `tests/cli/session-cli.test.ts` asserts
+>    `promotion.status === 'promoted'` and its only candidate source was a bare commit. The CLI
+>    suites `execSync('node dist/index.js …')` rather than importing source, and `npm test` does
+>    not build, so it reported green against the previous revision. **Run `npm run build && npm test`,
+>    in that order** — see constraint `eb5b45dabe8f49be`; twelve test files spawn the built CLI.
+
 **Files:**
 - Modify: `src/store/session-candidates.ts:59-75`
 - Test: `tests/store/session-candidates.test.ts`
@@ -41,7 +68,7 @@ Spec §10. Independent of every other task — it can ship alone.
 - Consumes: `parseCommitSubjects(command: string): CommitSubject[]` where `CommitSubject = { type: string | null; subject: string; body: string | null }`
 - Produces: nothing new. `extractSessionMemoryCandidates(sessionId: string): Promise<MemoryCandidate[]>` keeps its signature; only which candidates it returns changes.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `tests/store/session-candidates.test.ts`, inside the existing `describe('session candidates', ...)`:
 
@@ -92,13 +119,13 @@ Add to `tests/store/session-candidates.test.ts`, inside the existing `describe('
   });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `npx vitest run tests/store/session-candidates.test.ts -t 'commit'`
 
 Expected: FAIL. The first case gets 2 commit candidates instead of 1; the second gets 1 instead of 0.
 
-- [ ] **Step 3: Write the minimal implementation**
+- [x] **Step 3: Write the minimal implementation**
 
 In `src/store/session-candidates.ts`, in the `for (const commit of parseCommitSubjects(command))` loop, add the third guard and simplify the now-unconditional content join:
 
@@ -125,19 +152,19 @@ In `src/store/session-candidates.ts`, in the `for (const commit of parseCommitSu
     }
 ```
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [x] **Step 4: Run the tests to verify they pass**
 
 Run: `npx vitest run tests/store/session-candidates.test.ts`
 
 Expected: PASS, including the pre-existing cases. If `derives durable decisions, not successful command noise` breaks, you changed more than the guard.
 
-- [ ] **Step 5: Run the full suite**
+- [x] **Step 5: Run the full suite**
 
 Run: `npm test`
 
 Expected: PASS. `tests/store/candidate-promotion.test.ts` exercises the same pipeline; check it did not depend on a body-less commit as a fixture.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/store/session-candidates.ts tests/store/session-candidates.test.ts
@@ -181,7 +208,7 @@ Spec §9. Server only — no UI in this task, so it is reviewable on its own.
   - `POST /api/atoms/:id/archive` → `200 { item: KnowledgeItem }`
   - Errors are `{ error: string }` with 400 (malformed / unknown field), 404 (no such atom), 405 (method not allowed on that path), 413 (body too large).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add a new file `tests/viewer/write.test.ts`. It is separate from `server.test.ts` because that suite's fixture atom asserts the viewer is read-only, and these cases are about the opposite:
 
@@ -326,13 +353,13 @@ describe('viewer writes', () => {
 });
 ```
 
-- [ ] **Step 2: Run the tests to verify they fail**
+- [x] **Step 2: Run the tests to verify they fail**
 
 Run: `npx vitest run tests/viewer/write.test.ts`
 
 Expected: FAIL. Every write case returns 405 from the blanket method gate.
 
-- [ ] **Step 3: Add the body reader and the field whitelist**
+- [x] **Step 3: Add the body reader and the field whitelist**
 
 In `src/viewer/server.ts`, above `startViewer`:
 
@@ -387,7 +414,7 @@ import { createKnowledgeItem, getKnowledgeItem, updateKnowledgeItem, listKnowled
 
 (`listKnowledgeItems` is already imported — merge, do not duplicate the import.)
 
-- [ ] **Step 4: Move the method gate and add the routes**
+- [x] **Step 4: Move the method gate and add the routes**
 
 Delete this line entirely (`src/viewer/server.ts:128`):
 
@@ -463,17 +490,17 @@ So the final order inside `route()` is: Host check → token check → `pathname
 you place the writes after the GET routes instead, `PATCH /api/graph` returns a graph and that test
 goes red.
 
-- [ ] **Step 5: Run the tests to verify they pass**
+- [x] **Step 5: Run the tests to verify they pass**
 
 Run: `npx vitest run tests/viewer/write.test.ts tests/viewer/server.test.ts`
 
 Expected: PASS, both files. `server.test.ts` must still pass unchanged — its read-only assertions are about GET routes and none of them moved.
 
-- [ ] **Step 6: Prove the CSRF guard can fail**
+- [x] **Step 6: Prove the CSRF guard can fail**
 
 A guard nobody has watched go red is not a guard. Temporarily change `SameSite=Strict` to `SameSite=Lax` in `src/viewer/server.ts:163`, run `npx vitest run tests/viewer/write.test.ts`, and confirm the cookie test **fails**. Restore `Strict` and confirm it passes again. Do not commit the temporary change.
 
-- [ ] **Step 7: Run the full suite and commit**
+- [x] **Step 7: Run the full suite and commit**
 
 Run: `npm test`
 
@@ -519,9 +546,20 @@ The viewer's only navigation is a force-directed canvas. 656 atoms averaging ~2 
 
 **Interfaces:**
 - Consumes: `getAccessSummary(): Promise<Map<string, { retrievalCount: number; lastRetrievedAt: string }>>` from `src/store/access-feedback.js`; `POST /api/atoms`, `PATCH /api/atoms/:id`, `POST /api/atoms/:id/archive` from Task 2 (used in Task 4, not here).
-- Produces: `GET /api/reads` → `{ [itemId: string]: number }`, a plain object of read counts, absent key meaning zero. Task 4's UI reuses the `state.rows` array this task builds.
+- Produces: `GET /api/reads` → `{ [itemId: string]: number }`, a plain object of read counts, absent key meaning zero. Task 4 reuses `nodes`, `renderList()` and `setView()` from this task.
 
-- [ ] **Step 1: Write the failing test for the route**
+> **Correction, verified against the code 2026-08-19.** An earlier draft of this plan said the
+> page holds its atoms in a variable called `items`, loaded from `/api/brain`. **There is no such
+> variable.** The page loads `/api/graph` once at boot into `nodes` (`src/viewer/ui.ts:649`), and
+> `buildGraph` (`src/viewer/server.ts:50-64`) maps **every** row from `listKnowledgeItems()` with
+> no status filter, carrying `id, title, category, status, freshness, tags, confidence,
+> updatedAt, degree, content, reasoning`.
+>
+> So the list reads `nodes` and needs no second fetch. Two consequences: the `status !== 'active'`
+> filter is load-bearing rather than defensive, because superseded and archived atoms really are
+> in that array; and a refresh after a write must re-fetch `/api/graph`, not `/api/brain`.
+
+- [x] **Step 1: Write the failing test for the route**
 
 Add to `tests/viewer/write.test.ts`, inside the existing `describe`:
 
@@ -536,13 +574,13 @@ Add to `tests/viewer/write.test.ts`, inside the existing `describe`:
   });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run tests/viewer/write.test.ts -t 'read counts'`
 
 Expected: FAIL with status 405 — `/api/reads` does not exist, so it falls through to the method gate.
 
-- [ ] **Step 3: Add the route**
+- [x] **Step 3: Add the route**
 
 In `src/viewer/server.ts`, import beside the existing `getKnowledgeAccessReport` import:
 
@@ -564,13 +602,13 @@ And add beside the other GET routes:
     }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `npx vitest run tests/viewer/write.test.ts -t 'read counts'`
 
 Expected: PASS.
 
-- [ ] **Step 5: Add the view toggle and the list markup**
+- [x] **Step 5: Add the view toggle and the list markup**
 
 In `src/viewer/ui.ts`, in the `<div id="app">` block, add a view switch beside the existing search input, and a list container as a sibling of the `<canvas id="graph">`:
 
@@ -595,7 +633,7 @@ In `src/viewer/ui.ts`, in the `<div id="app">` block, add a view switch beside t
     </div>
 ```
 
-- [ ] **Step 6: Add the list logic**
+- [x] **Step 6: Add the list logic**
 
 In the script block of `src/viewer/ui.ts`, beside the existing `fetchJSON` / `renderStats` functions. Match the surrounding ES5 style — `function (x) {}`, `var`, no arrow functions, no template literals:
 
@@ -618,7 +656,7 @@ In the script block of `src/viewer/ui.ts`, beside the existing `fetchJSON` / `re
 
   function listRows() {
     var q = (document.getElementById('search').value || '').toLowerCase();
-    return items.filter(function (item) {
+    return nodes.filter(function (item) {
       if (item.status !== 'active') return false;
       if (hiddenCat[item.category]) return false;
       if (!inLens(item)) return false;
@@ -647,14 +685,14 @@ In the script block of `src/viewer/ui.ts`, beside the existing `fetchJSON` / `re
     }).join('');
     document.getElementById('listempty').hidden = rows.length > 0;
 
-    var active = items.filter(function (i) { return i.status === 'active'; });
+    var active = nodes.filter(function (i) { return i.status === 'active'; });
     document.getElementById('n-all').textContent = active.length;
     document.getElementById('n-unread').textContent = active.filter(function (i) { return readCount(i) === 0; }).length;
     document.getElementById('n-stale').textContent = active.filter(function (i) { return i.freshness !== 'fresh'; }).length;
 
     Array.prototype.forEach.call(body.querySelectorAll('tr'), function (tr) {
       tr.addEventListener('click', function () {
-        var item = items.filter(function (i) { return i.id === tr.getAttribute('data-id'); })[0];
+        var item = byId[tr.getAttribute('data-id')];
         if (item) openInspector(item);
       });
     });
@@ -682,15 +720,17 @@ In the script block of `src/viewer/ui.ts`, beside the existing `fetchJSON` / `re
   });
 ```
 
-Where the page already loads its data (the block calling `renderLegend()` and `renderStats()`), add the reads fetch and keep `items` populated from `/api/brain`:
+Inside the existing `/api/graph` boot handler, after `renderStats()`, fetch the read counts. It is a second request rather than a field on the graph payload because the graph is cached hard by the physics settle and the counts are the one thing that changes while the page is open:
 
 ```javascript
     fetchJSON('/api/reads').then(function (r) { reads = r || {}; renderList(); });
 ```
 
+Note the boot handler returns early when `nodes` is empty (`if (!nodes.length) { … return; }`), so put this **above** that guard if an empty store should still render an empty list rather than only the graph's empty state.
+
 Wire `renderList()` into the existing search input handler so typing filters both views.
 
-- [ ] **Step 7: Add the styles**
+- [x] **Step 7: Add the styles**
 
 In the `<style>` block, matching the existing dark palette and the token names already in the file:
 
@@ -712,7 +752,7 @@ table.atoms .num { text-align: right; font-variant-numeric: tabular-nums; }
 .empty-list { color: #8b98a5; padding: 16px 8px; }
 ```
 
-- [ ] **Step 8: Render it and read it**
+- [ ] **Step 8: Render it and read it**  <!-- NOT DONE: needs a human at a browser -->
 
 This is the step the constraint exists for. Run:
 
@@ -730,7 +770,7 @@ Open the printed URL and confirm, by looking:
 6. Clicking a row opens the same inspector the graph opens.
 7. Switching back to **Graph** still renders and animates — the canvas is hidden, not destroyed.
 
-- [ ] **Step 9: Run the full suite and commit**
+- [x] **Step 9: Run the full suite and commit**
 
 Run: `npm test`
 
@@ -766,7 +806,7 @@ Spec §7. The verbs, on the UI Task 3 built, over the routes Task 2 exposed.
 - Consumes: `openInspector(item)` and `closeInspector()` (existing, `src/viewer/ui.ts:518` and `:583`); `items` and `renderList()` from Task 3; the three write routes from Task 2.
 - Produces: nothing further. This is the last task in the viewer chain.
 
-- [ ] **Step 1: Add the edit form to the inspector**
+- [x] **Step 1: Add the edit form to the inspector**
 
 In `openInspector`, after the existing content block, add an actions row and a hidden form. Keep the ES5 style:
 
@@ -828,7 +868,7 @@ Append `actions + form` to the inspector's existing HTML string, then wire it be
     });
 ```
 
-- [ ] **Step 2: Add the save helper and the reload**
+- [x] **Step 2: Add the save helper and the reload**
 
 Beside `fetchJSON`:
 
@@ -844,11 +884,38 @@ Beside `fetchJSON`:
           throw new Error(payload.error || ('Request failed: ' + response.status));
         });
       }
-      // Re-fetch rather than patching `items` in place. The store computes contentHash,
+      // Re-fetch rather than patching the node in place. The store computes contentHash,
       // freshness and updatedAt on write, so a locally spliced row would disagree with the
       // database in exactly the fields the list sorts and filters on.
-      return fetchJSON('/api/brain').then(function (fresh) {
-        items = fresh;
+      //
+      // Positions are carried across by id. Rebuilding `nodes` wholesale would reset every
+      // x/y and make the graph jump on each save, which reads as the edit having done
+      // something to the shape of the knowledge rather than to one atom's text.
+      return fetchJSON('/api/graph').then(function (data) {
+        var fresh = data.nodes || [];
+        var next = [];
+        for (var i = 0; i < fresh.length; i++) {
+          var was = byId[fresh[i].id];
+          if (was) {
+            fresh[i].x = was.x; fresh[i].y = was.y; fresh[i].vx = was.vx; fresh[i].vy = was.vy;
+          } else {
+            fresh[i].x = (Math.random() - 0.5) * 420; fresh[i].y = (Math.random() - 0.5) * 420;
+            fresh[i].vx = 0; fresh[i].vy = 0;
+          }
+          next.push(fresh[i]);
+        }
+        nodes = next;
+        links = data.links || [];
+        // Rebuilt, not preserved: links are derived from tags and category, so editing either
+        // changes them. A stale `adj` makes the graph's neighbour highlight assert a
+        // relationship the store no longer holds.
+        byId = {}; adj = {};
+        for (var j = 0; j < nodes.length; j++) { byId[nodes[j].id] = nodes[j]; adj[nodes[j].id] = []; }
+        for (var k = 0; k < links.length; k++) {
+          var l = links[k];
+          if (adj[l.source]) adj[l.source].push(l.target);
+          if (adj[l.target]) adj[l.target].push(l.source);
+        }
         renderLegend(); renderStats(); renderList();
         closeInspector();
       });
@@ -860,7 +927,7 @@ Beside `fetchJSON`:
   }
 ```
 
-- [ ] **Step 3: Add the new-atom form**
+- [x] **Step 3: Add the new-atom form**
 
 Add a button beside the view switch and a dialog:
 
@@ -905,7 +972,7 @@ Add a button beside the view switch and a dialog:
 
 `<dialog>` is native and needs no library — it gives focus trapping, `Esc` to close, and the backdrop for free.
 
-- [ ] **Step 4: Style the forms**
+- [x] **Step 4: Style the forms**
 
 ```css
 .acts { display: flex; gap: 8px; margin-top: 12px; }
@@ -924,7 +991,7 @@ dialog#newdlg::backdrop { background: rgba(0, 0, 0, .6); }
 .err { color: #f0a0a0; margin-top: 8px; }
 ```
 
-- [ ] **Step 5: Render it and read it**
+- [ ] **Step 5: Render it and read it**  <!-- NOT DONE: needs a human at a browser -->
 
 Run:
 
@@ -942,7 +1009,7 @@ Confirm by looking and clicking:
 6. **Cancel leaves nothing behind** — reopen the inspector and the old values are there.
 7. **`Esc` closes the new-memory dialog** without writing.
 
-- [ ] **Step 6: Run the full suite and commit**
+- [x] **Step 6: Run the full suite and commit**
 
 Run: `npm test`
 
@@ -984,7 +1051,7 @@ Spec §9. `query` searches; nothing browses. The logic lives in a sibling module
   - `type ListRow = { id: string; title: string; category: string; freshness: string; ageDays: number | null; reads: number }`
   - `formatListRows(rows: ListRow[], total: number): string`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/cli/list-report.test.ts`:
 
@@ -1061,13 +1128,13 @@ describe('list report', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run tests/cli/list-report.test.ts`
 
 Expected: FAIL — `Cannot find module '../../src/cli/list-report.js'`.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 Create `src/cli/list-report.ts`:
 
@@ -1165,13 +1232,13 @@ export function formatListRows(rows: ListRow[], total: number): string {
 }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `npx vitest run tests/cli/list-report.test.ts`
 
 Expected: PASS, all eight cases.
 
-- [ ] **Step 5: Register the command**
+- [x] **Step 5: Register the command**
 
 In `src/cli/program.ts`, beside the existing `query` command, following the surrounding `try/catch` + `process.exit(1)` convention:
 
@@ -1208,7 +1275,7 @@ import { formatListRows, selectListRows } from './list-report.js';
 import { getAccessSummary } from '../store/access-feedback.js';
 ```
 
-- [ ] **Step 6: Render it and read it**
+- [x] **Step 6: Render it and read it**  <!-- verified in the terminal -->
 
 Run:
 
@@ -1228,7 +1295,7 @@ Confirm by looking:
 4. `NO_COLOR=1 node dist/index.js list` has no escape codes (picocolors handles this; confirm it).
 5. `list --category nonsense` prints `No memories match.`, not an empty frame.
 
-- [ ] **Step 7: Run the full suite and commit**
+- [x] **Step 7: Run the full suite and commit**
 
 Run: `npm test`
 
@@ -1264,7 +1331,7 @@ Spec §9. The CLI's editing entry point is a link, not a UI. Building a terminal
 - Consumes: `ViewerServer` (`{ url: string; token: string; browseUrl: string; close: () => Promise<void> }`) from `src/viewer/server.js`.
 - Produces: `atomEditUrl(viewer: { url: string; token: string }, atomId: string): string`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/cli/edit-link.test.ts`:
 
@@ -1295,13 +1362,13 @@ describe('atom edit url', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails**
+- [x] **Step 2: Run it to verify it fails**
 
 Run: `npx vitest run tests/cli/edit-link.test.ts`
 
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Write the module**
+- [x] **Step 3: Write the module**
 
 Create `src/cli/edit-link.ts`:
 
@@ -1320,27 +1387,27 @@ export function atomEditUrl(viewer: { url: string; token: string }, atomId: stri
 }
 ```
 
-- [ ] **Step 4: Run it to verify it passes**
+- [x] **Step 4: Run it to verify it passes**
 
 Run: `npx vitest run tests/cli/edit-link.test.ts`
 
 Expected: PASS, all four cases.
 
-- [ ] **Step 5: Teach the page to honour the fragment**
+- [x] **Step 5: Teach the page to honour the fragment**
 
 In `src/viewer/ui.ts`, after the initial data load completes (the block that calls `renderLegend()` and `renderStats()`), add:
 
 ```javascript
     var wanted = /^#\/atom\/(.+)$/.exec(window.location.hash || '');
     if (wanted) {
-      var target = items.filter(function (i) { return i.id === decodeURIComponent(wanted[1]); })[0];
+      var target = byId[decodeURIComponent(wanted[1])];
       // Open the row rather than hunting for a dot in a physics simulation, which is the whole
       // reason `knowl edit` exists.
       if (target) { setView('list'); openInspector(target); }
     }
 ```
 
-- [ ] **Step 6: Register the command**
+- [x] **Step 6: Register the command**
 
 In `src/cli/program.ts`, beside the `view` command:
 
@@ -1379,7 +1446,7 @@ Add the import:
 import { atomEditUrl } from './edit-link.js';
 ```
 
-- [ ] **Step 7: Render it and read it**
+- [x] **Step 7: Render it and read it**  <!-- verified in the terminal; surfaced the id-prefix defect -->
 
 Run:
 
@@ -1397,7 +1464,7 @@ Confirm:
 3. The bad id prints the "no memory with id" line, exits non-zero, and **does not** leave a server running (`node dist/index.js edit bad; echo $?` prints `1` and returns to the prompt).
 4. `Ctrl-C` on a running `knowl edit` exits cleanly with status 0.
 
-- [ ] **Step 8: Run the full suite and commit**
+- [x] **Step 8: Run the full suite and commit**
 
 Run: `npm test`
 
@@ -1430,6 +1497,74 @@ an unexplained empty page plus a process the user now has to kill."
 **One spec item consciously narrowed.** §7 says permanent deletion sits behind a typed confirmation. This plan ships **archive only** from the viewer; `deleteKnowledgeItem` is not wired to any route. Permanent deletion already exists as `knowl forget`, and adding a second irreversible path in the same change as the first-ever write route is more risk than the task needs. Note it for the second plan.
 
 ---
+
+## What actually happened
+
+Executed 2026-08-19. Every task was reviewed by an independent adversarial pass before commit, and
+**the reviews changed the work in every case** — the plan as written would have shipped three real
+defects and one vulnerability.
+
+**Task 1 needed a parser fix the plan did not anticipate.** `git commit -m "subject" -m "body"` is
+git's own documented way to write a body, and `parseCommitSubjects` read the first `-m` only, so it
+reported `body: null`. Dropping on "no body" would have discarded commits that had one. The guard
+is only honest on top of `DASH_M_INVOCATION` + `DASH_M_VALUE`. It also silently made the
+`SKIPPED_COMMIT_TYPES` and merge-commit guards vacuous, and broke a fifth test that reported green
+against a stale `dist/`.
+
+**Task 2 shipped a CSRF hole and the plan's own security table was wrong.** It listed
+`SameSite=Strict` as "the CSRF defence". **`SameSite` does not scope by port** — same-site is the
+registrable domain, so any other `127.0.0.1:*` page is same-site and the browser attaches the
+cookie unprompted; the Host check cannot help because the browser sends this viewer's authority.
+Verified live: a `text/plain` POST with only the cookie created an atom. Writes now require
+`Origin` absent-or-own and reject a foreign `Sec-Fetch-Site`. Four siblings came with it: every
+store rejection surfaced as 500 (including the secret refusal, which is the one message a human
+most needs), a non-array `tags` bypassed the secret scanner entirely, `category` was unvalidated
+end to end, and the 413 was undeliverable for bodies large enough to matter.
+
+**Two plan errors found while executing.** The page has no `items` variable — it loads
+`/api/graph` into `nodes`, and `buildGraph` returns every status, so the `status !== 'active'`
+filter is load-bearing rather than defensive. And `written_by` is not the human-vs-agent signal
+it looks like; it marks cross-repo authorship, and `provenance: 'user_stated'` is the right field.
+Both are corrected inline above.
+
+**Running the CLI surfaced a defect no test would have.** `knowl list` prints eight characters of
+an id and `knowl edit` demanded all sixteen, so pasting exactly what was shown failed.
+`resolveAtomId` now accepts a prefix and reports candidates when one is ambiguous. This is the
+"render it and read it" constraint earning its place.
+
+**Tasks 3–6 review found twelve more, two of them in code this plan told the implementer to
+write verbatim.**
+
+- **Stored XSS.** `esc()` escapes `& < >` but not quotes, and the table's `data-id="…"` was the
+  file's first attribute-context use of an atom value. Ids are not ours to trust: `importKnowledge`
+  writes `entry.item.id` verbatim from a JSONL file and `knowl cloud receive` routes through it,
+  so a teammate's send carries an arbitrary string into the DOM — under a CSP that permits inline
+  handlers. Fixed twice over: `esc()` covers quotes, and the attribute now carries a row index.
+- **`knowl list --limit abc` printed "No memories match." on a full store and exited 0.** Commander
+  calls a coercion as `fn(value, previous)` and `parseInt`'s second parameter is the radix, so a
+  repeated flag became `parseInt("8", 5)` → NaN; then `NaN ?? 50` is NaN and `slice(0, NaN)` is
+  `[]`. A command that lies about an empty store is the worst possible failure for this feature.
+  `src/cli/parse-options.ts` now holds a one-parameter coercion, used at all three sites.
+- **Adding the first memory to an empty store left the graph blank forever**, because boot returns
+  before starting the render loop and `save()` never started it; the "Empty brain" overlay also
+  swallowed clicks on the lens buttons.
+- **Archive closed the inspector**, so the Restore its own confirm text promised was unreachable
+  without hunting for a dot in the graph.
+- Plus: a success after a failure left the new-memory dialog open with a stale error, inviting a
+  duplicate write; List→resize→Graph left a 0×0 canvas; lens counts ignored the search and category
+  filters; a failed `/api/reads` made Unread claim the whole store; the footer conflated
+  limit-hiding with filter-hiding; and `knowl edit` resolved prefixes against atoms `knowl list`
+  never shows.
+
+**Two of its mutations survived, which is the more useful half of that review.** Deleting `pad()`
+entirely and changing `Math.floor` to `Math.ceil` both left the suite green — the assertions only
+checked that substrings appeared somewhere, and the age fixture sat on an exact day boundary where
+floor and ceil agree. Both now have tests that fail when the code is broken.
+
+**Still open, and it needs a human:** the two browser verification steps (Task 3 step 8, Task 4
+step 5). Nothing asserts what the page looks like — the tests exercise API routes, and a static
+check confirms the markup is present and the template literal is intact, but no automated check
+here can see a layout.
 
 ## Execution Handoff
 
