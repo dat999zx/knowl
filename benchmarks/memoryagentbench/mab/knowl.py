@@ -35,8 +35,17 @@ class KnowlBridge:
                 "Set KNOWL_BRIDGE to the built mab-bridge.js (npx tsup "
                 "benchmarks/memoryagentbench/mab-bridge.ts --format esm --outDir .benchmark-dist --no-dts)"
             )
+        # The bridge resolves its embedding profile from the Knowl project it belongs to, via
+        # findProjectRoot(process.cwd()). Inheriting MemoryAgentBench's cwd makes it look for a
+        # .knowl next to agent.py and fail. The measured store is a fresh temp dir either way --
+        # this only decides which config the embedding preset is read from, and that must be the
+        # Knowl repo's, so the run is reproducible from a checkout rather than from a local dir.
+        project_root = os.environ.get("KNOWL_PROJECT") or os.path.dirname(
+            os.path.dirname(os.path.abspath(bridge_path))
+        )
         self.proc = subprocess.Popen(
             ["node", bridge_path],
+            cwd=project_root,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=None,
@@ -140,6 +149,12 @@ def initialize_knowl_agent(agent, agent_config=None):
     overrides, for a one-off ablation without editing a file.
     """
     config = agent_config or {}
+    # Set the same fields every other memory agent's initialiser sets (see _initialize_mem0_agent):
+    # the memory-agent path does not run _initialize_rag_agent, so nothing else assigns these.
+    agent.retrieve_num = config["retrieve_num"]
+    agent.context = ""
+    agent.agent_start_time = __import__("time").time()
+
     supersede = bool(config.get("knowl_supersede", True))
     vector = bool(config.get("knowl_vector", True))
     if os.environ.get("KNOWL_SUPERSEDE") == "0":
