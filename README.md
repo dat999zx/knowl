@@ -113,25 +113,41 @@ re-run **inside MemoryAgentBench's harness, scored by its own code**, with an LL
 Knowl returned — the harder, fully end-to-end setup, at the largest context the task offers:
 
 <div align="center">
-<img src="docs/assets/benchmark-mab-comparison.svg" alt="MemoryAgentBench FactConsolidation single-hop at 262K context, substring exact match, gpt-4o-mini reader: Knowl 90, GPT-4o long-context 60, BM25 56, NV-Embed-v2 55, HippoRAG-v2 54, GPT-4o-mini long-context 45, Cognee 28, MemGPT 28, Mem0 18" width="82%" />
+<img src="docs/assets/benchmark-mab-comparison.svg" alt="MemoryAgentBench FactConsolidation single-hop at 262K context, substring exact match, gpt-4o-mini reader: Knowl 90, agentmemory 79, GPT-4o long-context 60, HippoRAG-v2 54, BM25 48, GPT-4o-mini long-context 45, Qwen3-Embedding-4B 29, Cognee 28, MemGPT 28, Mem0 18, MIRIX 14, Zep 7" width="82%" />
 </div>
 
 | System | FactConsolidation-SH @262K |
 | --- | ---: |
 | **Knowl** | **90** |
+| **agentmemory** | **79** |
 | GPT-4o (long-context) | 60 |
-| BM25 | 56 |
-| NV-Embed-v2 | 55 |
 | HippoRAG-v2 | 54 |
+| BM25 | 48 |
 | GPT-4o-mini (long-context) | 45 |
+| Qwen3-Embedding-4B | 29 |
 | Cognee | 28 |
 | MemGPT | 28 |
 | Mem0 | 18 |
+| MIRIX | 14 |
+| Zep | 7 |
 
 18,332 facts, 100 questions, substring exact match. Every row uses **gpt-4o-mini as the reader**,
 Knowl's included — the paper states it for all RAG and memory agents, so these are like-for-like.
-Knowl's figure was measured here; every other figure is from the MemoryAgentBench paper, Table 2.
-Systems the paper does not evaluate on this task are not listed.
+**Knowl and agentmemory were measured here; every other figure is from the MemoryAgentBench
+paper**, [arXiv 2507.05257v4](https://arxiv.org/abs/2507.05257v4), Table 3. agentmemory is not
+evaluated in that paper — its published numbers are LongMemEval-S retrieval recall, a different
+task — so it was run through the same harness with the same config, and both adapters share one
+reader code path so neither can drift from the paper's own RAG handler. Method, mechanism and
+reproduction steps: [FINDINGS.md](benchmarks/memoryagentbench/mab/FINDINGS.md).
+
+Otherwise shown are every commercial memory system the paper evaluates, plus the highest scorer
+from each baseline family. The paper's table has changed between versions — BM25 read 56 in v1 and
+reads 48 in v4 — so the version is cited, not just the table.
+
+Knowl's 90 was measured 2026-08-08 and independently reproduced at **89.0** on 2026-08-19 with the
+checked-in adapter; agentmemory's 79 is a single run. Every figure here is one run at
+`temperature: 0.7`, and the ablation gap moved 4 points between two runs of the same 6k cell, so
+read them to the point rather than the decimal.
 
 Switching supersession off in that same harness drops Knowl to **73**, and the gap holds across a
 40× change in corpus size:

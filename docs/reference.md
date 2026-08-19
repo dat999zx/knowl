@@ -1529,26 +1529,38 @@ uncertainty. The comparisons are wider than that — the ablation gap is about f
 and holds at two corpus sizes — but a single figure quoted alone should not be read to the point.
 
 <div align="center">
-<img src="assets/benchmark-mab-comparison.svg" alt="MemoryAgentBench FactConsolidation single-hop at 262K context, substring exact match, gpt-4o-mini reader: Knowl 90, GPT-4o long-context 60, BM25 56, NV-Embed-v2 55, HippoRAG-v2 54, GPT-4o-mini long-context 45, Cognee 28, MemGPT 28, Mem0 18" width="82%" />
+<img src="assets/benchmark-mab-comparison.svg" alt="MemoryAgentBench FactConsolidation single-hop at 262K context, substring exact match, gpt-4o-mini reader: Knowl 90, agentmemory 79, GPT-4o long-context 60, HippoRAG-v2 54, BM25 48, GPT-4o-mini long-context 45, Qwen3-Embedding-4B 29, Cognee 28, MemGPT 28, Mem0 18, MIRIX 14, Zep 7" width="82%" />
 </div>
 
 | System | FactConsolidation-SH @262K |
 | --- | ---: |
 | **Knowl** | **90** |
+| **agentmemory** | **79** |
 | GPT-4o (long-context) | 60 |
-| BM25 | 56 |
-| NV-Embed-v2 | 55 |
 | HippoRAG-v2 | 54 |
+| BM25 | 48 |
 | GPT-4o-mini (long-context) | 45 |
+| Qwen3-Embedding-4B | 29 |
 | Cognee | 28 |
 | MemGPT | 28 |
 | Mem0 | 18 |
+| MIRIX | 14 |
+| Zep | 7 |
 
-Knowl's row was measured here. Every other row is from the paper's Table 2, which states that "all
-RAG agents and commercial memory agents use GPT-4o-mini as the backbone" — the same reader used for
-Knowl, so the rows are like-for-like. Long-context rows use their own named model. Systems the
-paper does not evaluate on this task, including Zep, Graphiti and Letta, are not listed rather than
-carried over from secondary sources.
+Knowl's row and agentmemory's row were measured here; agentmemory is not evaluated in the paper
+at all, so there is no published figure to compare its row against. Every other row is from Table 3 of
+[arXiv 2507.05257v4](https://arxiv.org/abs/2507.05257v4), which states that "all RAG agents and
+commercial memory agents use GPT-4o-mini as the backbone" — the same reader used for Knowl, so the
+rows are like-for-like. Long-context rows use their own named model.
+
+Shown are every commercial memory system the paper evaluates, plus the highest scorer from each
+baseline family. Systems the paper does not evaluate on this task — Graphiti and Letta among them —
+are omitted rather than carried over from secondary sources.
+
+**The paper's table is versioned and has changed.** These figures are v4 (2026-06-28), where the
+comparison is Table 3. In v1 it was Table 2, BM25 read 56.0 rather than 48.0, and Zep and MIRIX
+were absent. Quote the version alongside the table number; a figure traced only to "the
+MemoryAgentBench paper" cannot be checked.
 
 The ablation in that harness:
 
