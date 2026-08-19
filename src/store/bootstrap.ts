@@ -368,6 +368,8 @@ const SCHEMA_STATEMENTS = [
     pushed_at TEXT,
     retracted_at TEXT,
     stage_state TEXT NOT NULL DEFAULT 'clear',
+    remote_content_hash TEXT,
+    remote_lifecycle_hash TEXT,
     PRIMARY KEY (item_id, remote_workspace)
   );`,
 
@@ -755,6 +757,35 @@ async function ensureLedgerStageState(client: Client): Promise<void> {
     "ALTER TABLE cloud_published ADD COLUMN stage_state TEXT NOT NULL DEFAULT 'clear';",
   );
   await backfillLedgerStageState(client);
+}
+
+/**
+ * Remember WHAT was pushed, not only that something was.
+ *
+ * The ledger recorded `remote_version` and no content, so nothing on this machine could tell a
+ * re-staged atom whose text actually changed from one that was merely rewritten to the same
+ * bytes. The second is sent anyway, the server bumps `version` unconditionally, and that spent
+ * version reaches every replica on its next pull -- a whole round of sync traffic for an atom
+ * nobody edited.
+ *
+ * Both hashes, because either can move without the other. Content alone would send a retirement
+ * -- `status` and `freshness` live in the lifecycle hash -- as an unchanged atom and silently
+ * strand it locally, which is a far worse defect than the one this fixes.
+ *
+ * Left NULL for every existing row, and the skip predicate requires NOT NULL, so a row written
+ * before this column simply never skips. Backfilling from `knowledge_items` would be the wrong
+ * direction: it would claim the server holds whatever this machine holds now, which is exactly
+ * what nobody knows.
+ */
+async function ensurePublishedContentHashes(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'cloud_published'))) return;
+  const columns = await tableColumns(client, 'cloud_published');
+  if (!columns.includes('remote_content_hash')) {
+    await client.execute('ALTER TABLE cloud_published ADD COLUMN remote_content_hash TEXT;');
+  }
+  if (!columns.includes('remote_lifecycle_hash')) {
+    await client.execute('ALTER TABLE cloud_published ADD COLUMN remote_lifecycle_hash TEXT;');
+  }
 }
 
 async function ensureFreshnessColumns(client: Client): Promise<void> {
@@ -1161,6 +1192,7 @@ export async function bootstrapSchema(
     await ensureQualityColumns(client);
     await ensureForgetLogColumns(client);
     await ensureLedgerStageState(client);
+    await ensurePublishedContentHashes(client);
     await ensureConflictColumns(client);
     await ensureOwnershipColumns(client);
     await ensureMemorySessionColumns(client);

@@ -68,6 +68,11 @@ const SCHEMA_PINS: Record<number, string> = {
   // and every pre-existing row was written before a repo could act as another.
   // `KNOWL_SCHEMA_VERSION` again does not move.
   11: '2f2aa4d61c1fd3600266ec572a964aa0',
+  // 12 adds `cloud_published.remote_content_hash` and `.remote_lifecycle_hash`, so a re-staged
+  // atom nobody edited is settled rather than re-sent. Two nullable columns, no backfill --
+  // the skip predicate requires a non-null hash, so every pre-existing row keeps being sent.
+  // Additive, so `KNOWL_SCHEMA_VERSION` again does not move.
+  12: '8655428a61126c78a4117b827a103703',
 };
 
 let root: string;

@@ -104,6 +104,23 @@ const publishedVersionOf = async (id: string): Promise<number | null> => {
   finally { await closeDb(); }
 };
 
+/**
+ * Rewrite an atom's body, the way a correction does.
+ *
+ * `content_hash` is what the ledger compares against, so a test that means "this atom changed"
+ * has to move it. Republishing byte-identical content is now skipped outright, which is what
+ * `does not re-send an atom that is byte-identical to what was pushed` covers.
+ */
+async function editAtom(id: string, body: string): Promise<void> {
+  await initDb(CLONE);
+  try {
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET content = ?, content_hash = ? WHERE id = ?',
+      args: [body, `hash-${body}`, id],
+    });
+  } finally { await closeDb(); }
+}
+
 /** Real rows, not bare ledger ids: the push sends atom bodies, so the items have to exist. */
 async function stageMany(count: number): Promise<void> {
   await initDb(CLONE);
@@ -243,6 +260,9 @@ describe('pushStaged', () => {
       projectRoot: CLONE, config: connected,
       api: fakeApi([{ id: ids.decision, status: 'created', version: 1 }]),
     });
+    // Edited before re-staging. An unchanged republish is now settled without a send, so an
+    // atom that never moved would reach no request at all and this test would assert on nothing.
+    await editAtom(ids.decision, 'a corrected decision');
     await stagePublish({ projectRoot: CLONE, config: connected, ids: [ids.decision], apply: true });
 
     let body: any;
@@ -305,18 +325,21 @@ describe('pushStaged', () => {
   });
 
   it('sends batches a cold server can finish inside the request timeout', async () => {
-    // knowl#103. The old size was 200 -- the contract maximum -- which measured at 1564 MB and
-    // 418s of server-side embedding, against a 30s client timeout. Any queue under 200 therefore
-    // went as ONE request that a cold server could not finish, and a backlog was unpushable.
-    await stageMany(60);
+    // knowl#103. 200 -- the contract maximum -- measured at 1564 MB and 418s of server-side
+    // embedding against a 30s client timeout, so any queue under 200 went as ONE request a cold
+    // server could not finish. 20 answered that. Embedding now runs on a background worker after
+    // the commit and a client-supplied vector is never recomputed, so the binding constraint is
+    // no longer time but the server's 2 MB `BODY_LIMIT` -- which 100 atoms of ~5 KB fit with
+    // room, and which is why the ceiling is asserted rather than the old number.
+    await stageMany(150);
     const sizes: number[] = [];
     await pushStaged({
       projectRoot: CLONE, config: connected,
       api: fakeApi([], (body: any) => sizes.push(body.items.length)),
     });
 
-    expect(Math.max(...sizes)).toBeLessThanOrEqual(20);
-    expect(sizes.reduce((a, b) => a + b, 0)).toBe(61);
+    expect(Math.max(...sizes)).toBeLessThanOrEqual(100);
+    expect(sizes.reduce((a, b) => a + b, 0)).toBe(151);
   });
 
   it('halves the batch and retries when a send times out, instead of losing the push', async () => {
@@ -350,7 +373,7 @@ describe('pushStaged', () => {
   it('records what landed before a timeout, so a retry does not start over', async () => {
     // The defect that made retrying pointless: nothing was written locally, so the next attempt
     // re-sent the entire queue and failed identically.
-    await stageMany(39);
+    await stageMany(150);
     let sent = 0;
     const api = {
       ...fakeApi([]),
@@ -369,7 +392,61 @@ describe('pushStaged', () => {
 
     // The first batch is off the queue. Progress survives the failure.
     const left = await stagedIds();
-    expect(left.length).toBe(40 - 20);
+    expect(left.length).toBe(151 - 100);
+  });
+
+  it('does not re-send an atom that is byte-identical to what was pushed', async () => {
+    // The server bumps `version` on any accepted update whether or not the content moved, and
+    // that spent version reaches every replica on its next pull -- so a no-op republish costs the
+    // whole team a round of sync traffic for an atom nobody edited.
+    await pushStaged({
+      projectRoot: CLONE, config: connected,
+      api: fakeApi([{ id: ids.decision, status: 'created', version: 1 }]),
+    });
+    await stagePublish({ projectRoot: CLONE, config: connected, ids: [ids.decision], apply: true });
+
+    let called = 0;
+    const result = await pushStaged({
+      projectRoot: CLONE, config: connected,
+      api: fakeApi([], () => { called += 1; }),
+    });
+
+    expect(called).toBe(0);
+    expect(result).toMatchObject({ status: 'pushed', created: 0, updated: 0, skippedUnchanged: 1 });
+    // Settled, not merely hidden: a filtered row would come back on the next status read.
+    expect(await stagedIds()).not.toContain(ids.decision);
+  });
+
+  it('halves the batch on a 413, because a body too large says "send fewer" the same way', async () => {
+    // A timeout is the request taking too long and a 413 is the body being too big before it is
+    // read at all. Both mean send fewer, and raising MAX_BATCH to 100 makes the second reachable
+    // on unusually fat atoms -- a 413 that failed the push outright would be a worse regression
+    // than the round trips the raise saves.
+    await stageMany(150);
+    const attempted: number[] = [];
+    let oversized = 0;
+    const api = {
+      ...fakeApi([]),
+      publishItems: async (body: any) => {
+        attempted.push(body.items.length);
+        if (body.items.length > 50) {
+          oversized += 1;
+          throw new CloudApiError(413, '/knowledge failed with 413', 'payload_too_large');
+        }
+        return {
+          outcomes: body.items.map((item: any) => ({ id: item.id, status: 'created', version: 1 })),
+          commitId: 'c1',
+        };
+      },
+    } as unknown as CloudApi;
+
+    const result = await pushStaged({ projectRoot: CLONE, config: connected, api });
+
+    expect(oversized).toBeGreaterThan(0);
+    expect(Math.max(...attempted)).toBe(100);
+    expect(Math.min(...attempted)).toBeLessThanOrEqual(50);
+    expect(result).toMatchObject({ status: 'pushed', created: 151 });
+    expect(await stagedIds()).toEqual([]);
   });
 
   it('names how many atoms it was carrying when a timeout ends the push', async () => {

@@ -41,7 +41,7 @@ describe('remote_version is written by push and cleared only by retract', () => 
     await stageForPublish(['a'], WS, 'main');
     expect(await storedVersion('a')).toBeNull();
 
-    await recordPushed('a', WS, 4);
+    await recordPushed('a', WS, 4, { contentHash: null, lifecycleHash: null });
     expect(Number(await storedVersion('a'))).toBe(4);
 
     // Edit -> re-stage -> change your mind -> edit again -> re-stage.
@@ -60,7 +60,7 @@ describe('remote_version is written by push and cleared only by retract', () => 
 
   it('is cleared by retraction, and only by retraction', async () => {
     await stageForPublish(['a'], WS, 'main');
-    await recordPushed('a', WS, 4);
+    await recordPushed('a', WS, 4, { contentHash: null, lifecycleHash: null });
 
     await recordRetracted('a', WS);
     expect(await storedVersion('a')).toBeNull();
@@ -68,7 +68,7 @@ describe('remote_version is written by push and cleared only by retract', () => 
 
   it('a sweep never blanks the version of a pushed atom', async () => {
     await stageForPublish(['a'], WS, 'main');
-    await recordPushed('a', WS, 11);
+    await recordPushed('a', WS, 11, { contentHash: null, lifecycleHash: null });
 
     await stageForPublish(['a'], WS, 'main');
     expect(Number(await storedVersion('a'))).toBe(11);
