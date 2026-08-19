@@ -1,0 +1,11 @@
+# Graphiti 0.29.2 on an embedded Kuzu database. Values copied from Simple_rag_bm25 so the row is
+# comparable; retrieve_num 10 matches BM25, Zep, Cognee, HippoRAG-v2 and the embedding baselines.
+# Graphiti's ingest is LLM-driven, so unlike the other methods this run costs real money at scale.
+agent_name: Agentic_memory_graphiti
+model: gpt-4o-mini
+temperature: 0.7
+input_length_limit: 10000000
+buffer_length: 200
+output_dir: ./outputs/graphiti-gpt-4o-mini
+
+retrieve_num: 10

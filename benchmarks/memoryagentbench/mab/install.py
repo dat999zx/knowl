@@ -30,7 +30,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 
-METHODS = ("knowl.py", "agentmemory_bench.py")
+METHODS = ("knowl.py", "agentmemory_bench.py", "graphiti_bench.py")
 
 # Anchors are written as explicit line lists and joined, so no escape survives two layers of
 # quoting. Each anchor must match exactly once; a replacement already present is skipped.
@@ -55,7 +55,7 @@ EDITS = [
         # missing. Both methods install together, so go straight to the final list.
         "family routing (both methods)",
         ['for agent_type in ["letta", "cognee", "mem0", "zep"])'],
-        ['for agent_type in ["letta", "cognee", "mem0", "zep", "knowl", "agentmemory"])'],
+        ['for agent_type in ["letta", "cognee", "mem0", "zep", "knowl", "agentmemory", "graphiti"])'],
     ),
     (
         "knowl: memory-agent dispatch",
@@ -86,6 +86,20 @@ EDITS = [
         ],
     ),
     (
+        "graphiti: initialise dispatch",
+        [
+            '        elif self._is_agent_type("agentmemory"):',
+            "            from methods.agentmemory_bench import initialize_agentmemory_agent",
+        ],
+        [
+            '        elif self._is_agent_type("graphiti"):',
+            "            from methods.graphiti_bench import initialize_graphiti_agent",
+            "            initialize_graphiti_agent(self, agent_config)",
+            '        elif self._is_agent_type("agentmemory"):',
+            "            from methods.agentmemory_bench import initialize_agentmemory_agent",
+        ],
+    ),
+    (
         "agentmemory: memory-agent dispatch",
         [
             "            return handle_knowl_agent(self, message, memorizing, query_id, context_id)",
@@ -95,6 +109,18 @@ EDITS = [
             '        elif self._is_agent_type("agentmemory"):',
             "            from methods.agentmemory_bench import handle_agentmemory_agent",
             "            return handle_agentmemory_agent(self, message, memorizing, query_id, context_id)",
+        ],
+    ),
+    (
+        "graphiti: memory-agent dispatch",
+        [
+            "            return handle_agentmemory_agent(self, message, memorizing, query_id, context_id)",
+        ],
+        [
+            "            return handle_agentmemory_agent(self, message, memorizing, query_id, context_id)",
+            '        elif self._is_agent_type("graphiti"):',
+            "            from methods.graphiti_bench import handle_graphiti_agent",
+            "            return handle_graphiti_agent(self, message, memorizing, query_id, context_id)",
         ],
     ),
 ]
