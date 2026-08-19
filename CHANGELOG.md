@@ -3,6 +3,58 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.5.0 — 2026-08-19
+
+Pushing to a workspace got slower the more memory a repository had, and the reason was never the
+amount of knowledge — it was how many times the client knocked. A backlog went as five requests
+where one would do, and an atom nobody had edited was sent anyway.
+
+### A routine backlog is one request instead of five
+
+`MAX_BATCH` was 20, sized against roughly three seconds per atom of embedding that the server used
+to do inline and synchronously inside the publish request. It no longer does: embedding moved to a
+background worker that runs after the commit, and a client that brings its own vector is never
+re-embedded at all. The number was answering a cost that had already been removed.
+
+The binding constraint now is the server's 2 MB body limit, **not** the 200-item cap in the
+publish contract. Measured against a real store — atoms averaging about 2 KB of text, 384-dimension
+vectors arriving as about 2 KB of base64 — an atom is roughly 5 KB and at worst 12 KB, so 100 per
+request lands near 500 KB and worst-cases at 1.2 MB. A ninety-atom queue stops being five round
+trips and becomes one.
+
+That raise is what makes an oversized body reachable at all, so the retry that used to answer only
+a timeout now answers a 413 as well. Both failures mean the same thing to a client holding a queue
+— send fewer — and both are safe to retry smaller, because the server upserts by item id and a
+rejected body committed nothing. Nothing else is retried: a secret rejection is still terminal,
+never retried and never retried in altered form.
+
+### An atom nobody edited is no longer re-sent
+
+The ledger recorded which atoms had been pushed and what version the server gave them, but never
+what they *said*. So an atom re-staged into byte-identical text was indistinguishable from a real
+correction, and went anyway — spending a version bump the server applies unconditionally, which
+then reaches every replica on its next pull. One redundant push was a round of sync traffic for
+everybody.
+
+`knowl cloud push` now settles those without sending them and reports how many, and
+`knowl cloud status` counts the same way, so the two agree on one number.
+
+Both the content hash and the lifecycle hash have to match. That second half is load-bearing:
+`status` and `freshness` live in the lifecycle hash, so comparing content alone would read a
+**retirement** as an unchanged atom and strand it locally — a worse failure than the redundant push
+this removes.
+
+Migration level 12, adding two nullable columns to the publication ledger. There is no backfill and
+that is deliberate: the skip requires a recorded hash, so every atom staged before this release is
+still sent exactly as it would have been. `KNOWL_SCHEMA_VERSION` does not move, so a 5.4 build
+opens a 5.5-touched database unchanged.
+
+### Note
+
+The matching server-side change ships in knowl-cloud, where a publish is now a fixed four
+statements regardless of how many atoms it carries, rather than about five per atom against a
+remote database. Neither half requires the other, but a backlog is fastest with both.
+
 ## 5.4.1 — 2026-08-18
 
 Three fixes to the places where Knowl decides *which* memory it is talking to, and whether an agent
