@@ -555,8 +555,9 @@ is refused as before. Either way a repo's private knowledge stays private until 
 
 ### See it: the local viewer
 
-`knowl view` starts a read-only inspector on `127.0.0.1` with a fresh access token per launch —
-knowing the port is not enough to read anything.
+`knowl view` starts an editor on `127.0.0.1` with a fresh access token per launch — knowing the
+port is not enough to read anything, and writes additionally require the request to name this
+viewer as its origin, so another page you happen to have open cannot write here.
 
 ```bash
 knowl view
