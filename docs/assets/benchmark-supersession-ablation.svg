@@ -25,11 +25,11 @@
     <text x="174" y="139">Supersession ON</text>
     <text x="174" y="177">Supersession OFF</text>
   </g>
-  <rect x="190" y="122" width="432"   height="24" rx="6" fill="#199e70"/>
-  <rect x="190" y="160" width="350.4" height="24" rx="6" fill="#3987e5"/>
+  <rect x="190" y="122" width="432"   height="24" rx="6" fill="#319e19"/>
+  <rect x="190" y="160" width="350.4" height="24" rx="6" fill="#39d3e5"/>
   <g font-size="14" font-weight="700">
-    <text x="634" y="140" fill="#7fdca0">90</text>
-    <text x="552.4" y="178" fill="#7cb0f5">73</text>
+    <text x="634" y="140" fill="#90dc7f">90</text>
+    <text x="552.4" y="178" fill="#7ce8f5">73</text>
   </g>
 
   <text x="174" y="214" font-size="12" fill="#6f6d67" text-anchor="end">6K context</text>
@@ -37,17 +37,17 @@
     <text x="174" y="241">Supersession ON</text>
     <text x="174" y="279">Supersession OFF</text>
   </g>
-  <rect x="190" y="224" width="451.2" height="24" rx="6" fill="#199e70" opacity="0.75"/>
-  <rect x="190" y="262" width="374.4" height="24" rx="6" fill="#3987e5" opacity="0.75"/>
+  <rect x="190" y="224" width="451.2" height="24" rx="6" fill="#319e19" opacity="0.75"/>
+  <rect x="190" y="262" width="374.4" height="24" rx="6" fill="#39d3e5" opacity="0.75"/>
   <g font-size="14" font-weight="700">
-    <text x="653.2" y="242" fill="#7fdca0">94</text>
-    <text x="576.4" y="280" fill="#7cb0f5">78</text>
+    <text x="653.2" y="242" fill="#90dc7f">94</text>
+    <text x="576.4" y="280" fill="#7ce8f5">78</text>
   </g>
 
   <g transform="translate(28,326)" font-size="13" font-weight="700">
-    <rect x="0" y="0" width="340" height="44" rx="12" fill="#12251a" stroke="#1e5c38"/>
-    <text x="20" y="27" fill="#7fdca0">+17 points @262K · +16 @6K</text>
-    <rect x="358" y="0" width="344" height="44" rx="12" fill="#1b2330" stroke="#305f94"/>
-    <text x="378" y="27" fill="#7cb0f5" font-weight="400">Stable across a 40× corpus change</text>
+    <rect x="0" y="0" width="340" height="44" rx="12" fill="#152512" stroke="#295c1e"/>
+    <text x="20" y="27" fill="#90dc7f">+17 points @262K · +16 @6K</text>
+    <rect x="358" y="0" width="344" height="44" rx="12" fill="#1b2330" stroke="#308a94"/>
+    <text x="378" y="27" fill="#7ce8f5" font-weight="400">Stable across a 40× corpus change</text>
   </g>
 </svg>

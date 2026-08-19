@@ -32,10 +32,10 @@
     geometry on the original minilm-era figures.
   -->
   <g>
-    <rect x="160" y="104" width="493" height="24" rx="6" fill="#3987e5"/>
-    <rect x="160" y="158" width="499" height="24" rx="6" fill="#3987e5"/>
-    <rect x="160" y="212" width="476" height="24" rx="6" fill="#3987e5"/>
-    <rect x="160" y="266" width="481.8" height="24" rx="6" fill="#3987e5"/>
+    <rect x="160" y="104" width="493" height="24" rx="6" fill="#39d3e5"/>
+    <rect x="160" y="158" width="499" height="24" rx="6" fill="#39d3e5"/>
+    <rect x="160" y="212" width="476" height="24" rx="6" fill="#39d3e5"/>
+    <rect x="160" y="266" width="481.8" height="24" rx="6" fill="#39d3e5"/>
   </g>
   <g font-size="14" font-weight="700" fill="#ffffff" text-anchor="start">
     <text x="659.5" y="122">98.6%</text>
@@ -46,18 +46,18 @@
 
   <g transform="translate(28,352)" font-size="13" font-weight="600">
     <g>
-      <rect x="0" y="0" width="176" height="26" rx="13" fill="#12251a" stroke="#1e5c38"/>
+      <rect x="0" y="0" width="176" height="26" rx="13" fill="#152512" stroke="#295c1e"/>
       <circle cx="16" cy="13" r="4" fill="#0ca30c"/>
-      <text x="26" y="18" fill="#7fdca0">497 / 500 cases hit</text>
+      <text x="26" y="18" fill="#90dc7f">497 / 500 cases hit</text>
     </g>
     <g transform="translate(190,0)">
       <rect x="0" y="0" width="168" height="26" rx="13" fill="#1b2330" stroke="#2c313a"/>
-      <circle cx="16" cy="13" r="4" fill="#3987e5"/>
+      <circle cx="16" cy="13" r="4" fill="#39d3e5"/>
       <text x="26" y="18" fill="#c3c2b7">168 atoms · 20 domains</text>
     </g>
     <g transform="translate(372,0)">
       <rect x="0" y="0" width="212" height="26" rx="13" fill="#1b2330" stroke="#2c313a"/>
-      <circle cx="16" cy="13" r="4" fill="#eda100"/>
+      <circle cx="16" cy="13" r="4" fill="#edbd00"/>
       <text x="26" y="18" fill="#c3c2b7">stale + rejected distractor traps</text>
     </g>
   </g>

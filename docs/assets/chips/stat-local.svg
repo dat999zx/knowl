@@ -2,7 +2,7 @@
      role="img" aria-label="100 percent local, no egress">
   <rect x="0.5" y="0.5" width="179" height="37" rx="8" fill="#161b22" stroke="#30363d"/>
   <text x="14" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
-        font-size="14" font-weight="700" fill="#eda100">100%</text>
+        font-size="14" font-weight="700" fill="#edbd00">100%</text>
   <text x="61" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
         font-size="12" fill="#8b949e">local, no egress</text>
 </svg>

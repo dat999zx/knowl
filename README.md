@@ -4,11 +4,11 @@
 
 **Local-first. Typed. And retired the moment it stops being true.**
 
-[![npm](https://img.shields.io/npm/v/%40dat999zx%2Fknowl?color=3987e5&label=npm)](https://www.npmjs.com/package/@dat999zx/knowl)
+[![npm](https://img.shields.io/npm/v/%40dat999zx%2Fknowl?color=4fd8e8&label=npm)](https://www.npmjs.com/package/@dat999zx/knowl)
 [![CI](https://img.shields.io/github/actions/workflow/status/dat999zx/knowl/ci.yml?branch=main&label=CI)](https://github.com/dat999zx/knowl/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-Apache--2.0-199e70)](LICENSE)
-[![node](https://img.shields.io/badge/node-%E2%89%A522-3987e5)](package.json)
-[![MCP](https://img.shields.io/badge/protocol-MCP-eda100)](https://modelcontextprotocol.io)
+[![license](https://img.shields.io/badge/license-Apache--2.0-85c577)](LICENSE)
+[![node](https://img.shields.io/badge/node-%E2%89%A522-70b6fd)](package.json)
+[![MCP](https://img.shields.io/badge/protocol-MCP-cab049)](https://modelcontextprotocol.io)
 
 <p align="center">
   <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="Scores 90 on MemoryAgentBench FactConsolidation single-hop at 262K" height="38" /></picture></a>
@@ -566,8 +566,8 @@ knowl view
 ```
 
 <p align="center">
-  <img src="docs/assets/viewer-graph.png" alt="Knowl local viewer showing the project-memory graph" width="48%" />
-  <img src="docs/assets/viewer-inspect.png" alt="Knowl local viewer showing details for a selected knowledge atom" width="48%" />
+  <img src="docs/assets/viewer-graph.png" alt="The Knowl local viewer: the memory graph, linked only through tags few atoms share, with unlinked atoms settling at the rim" width="48%" />
+  <img src="docs/assets/viewer-inspect.png" alt="The Knowl local viewer list: every atom with an unread mark in the margin, and one atom open in the inspector with its markdown rendered" width="48%" />
 </p>
 
 **This is where you fix what your agents got wrong.** Open any atom to read its evidence and

@@ -1,0 +1,131 @@
+<!doctype html><meta charset="utf-8"><style>
+:root{--bg:#04121a;--panel:#0a1f29;--ink:#faf8f5;--muted:#a9c2cb;--faint:#7fa3b0;
+--hair:#78becd29;--accent:#4fd8e8;--gold:#f2e2c4;
+--constraint:#f69088;--decision:#cab049;--goal:#85c577;--fact:#21c9ca;--state:#70b6fd;--arch:#b7a0f8;--skill:#e691ca;
+--sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;--mono:"Cascadia Mono",Consolas,ui-monospace,monospace}
+*{box-sizing:border-box;margin:0}
+html,body{width:1200px;height:675px;overflow:hidden}
+body{background:#04121a;color:#faf8f5;font-family:var(--sans);
+background-image:radial-gradient(900px 500px at 78% -10%,#0a2f3d 0%,transparent 60%)}
+.scene{position:absolute;inset:0;padding:54px 64px;display:none}
+.scene.on{display:block}
+h1{font-size:44px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+h1 em{font-style:normal;color:var(--constraint)}
+.sub{margin-top:14px;font-size:21px;color:var(--faint)}
+.card{margin-top:24px;border:1px solid var(--goal);border-radius:12px;padding:16px 22px;background:#07202a}
+.card.dead{border:1px dashed var(--hair);background:transparent}
+.chip{display:inline-block;font-size:13px;font-weight:700;padding:4px 12px;border-radius:999px}
+.chip.a{color:var(--goal);background:#12301d}
+.chip.s{color:var(--decision);background:#2a2410}
+.card h2{font-size:26px;margin-top:9px}
+.card.dead h2{color:var(--faint);text-decoration:line-through}
+.card p{font-size:17px;color:var(--faint);margin-top:4px}
+.cmd{margin-top:20px;font-family:var(--mono);font-size:20px;color:var(--accent)}
+.cmd .d{color:var(--fact)}
+.cur{display:inline-block;width:9px;height:21px;background:var(--muted);vertical-align:-4px}
+.punch{margin-top:22px;font-size:28px;font-weight:700;color:var(--accent)}
+.punch2{margin-top:8px;font-size:19px;color:var(--faint)}
+.stats{display:flex;align-items:flex-end;gap:26px}
+.big{font-size:76px;font-weight:800;line-height:.95;color:var(--goal)}
+.big.off{color:var(--faint);opacity:.55}
+.vs{font-size:26px;color:var(--faint);padding-bottom:10px}
+.lbl{font-size:17px;color:var(--faint);margin-top:6px}
+.right{margin-left:auto;text-align:left;padding-bottom:6px}
+.right b{display:block;font-size:20px}
+.right span{display:block;font-size:17px;color:var(--faint);margin-top:4px}
+hr{border:0;border-top:1px solid var(--hair);margin:24px 0}
+h3{font-size:27px;font-weight:700}
+.grid{margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:20px 46px}
+.feat{display:flex;gap:14px}
+.feat i{width:4px;border-radius:2px;flex:none}
+.feat b{display:block;font-size:20px}
+.feat span{display:block;font-size:17px;color:var(--faint);margin-top:3px}
+.foot{margin-top:22px;font-size:17px;color:var(--faint)}
+.close{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center}
+.close img{width:96px;height:96px}
+.wm{font-size:56px;font-weight:800;letter-spacing:-.02em;margin-top:12px}
+.wm i{font-style:normal;color:var(--accent)}
+.tag{font-size:20px;color:var(--faint);margin-top:6px}
+.nums{display:flex;gap:50px;margin-top:30px}
+.nums div{text-align:center}
+.nums b{display:block;font-size:38px;font-weight:800}
+.nums span{display:block;font-size:15px;color:var(--faint);margin-top:2px}
+.line{margin-top:30px;font-size:24px;font-weight:700;text-align:center;line-height:1.35}
+.line i{font-style:normal;color:var(--accent)}
+.url{margin-top:18px;font-family:var(--mono);font-size:18px;color:var(--fact)}
+</style>
+<body>
+<div class="scene" id="s1">
+  <h1>Your coding agent is <em>confidently wrong.</em></h1>
+  <p class="sub">It still quotes the database you dropped last year.</p>
+  <div class="card" id="c1"><span class="chip a" id="chip1">active</span><h2>Database choice</h2><p>PostgreSQL. Managed, familiar.</p></div>
+  <p class="cmd"><span class="d">$</span> <span id="typed"></span><span class="cur" id="cur"></span></p>
+  <div id="after" style="display:none">
+    <div class="card"><span class="chip a">active</span><h2>Database choice</h2><p>SQLite. Lives beside the code, no server.</p></div>
+    <p class="punch">Knowl retires the old answer at write time.</p>
+    <p class="punch2">A query returns one answer. The other is history, not noise.</p>
+  </div>
+</div>
+<div class="scene" id="s2">
+  <div class="stats">
+    <div><div class="big">98%</div><div class="lbl">with supersession</div></div>
+    <div class="vs">vs</div>
+    <div><div class="big off">47%</div><div class="lbl">without</div></div>
+    <div class="right"><b>Answering &ldquo;which fact is current?&rdquo;</b><span>MemoryAgentBench conflict resolution</span><span>Same corpus, same ranker.</span></div>
+  </div>
+  <hr>
+  <h3>And everything else in the box</h3>
+  <div class="grid">
+    <div class="feat"><i style="background:#85c577"></i><div><b>Corrects itself</b><span>Seven typed atoms, full history, time travel</span></div></div>
+    <div class="feat"><i style="background:#70b6fd"></i><div><b>Retrieval for agents</b><span>Vector + BM25, reranked by freshness</span></div></div>
+    <div class="feat"><i style="background:#b7a0f8"></i><div><b>Survives the session</b><span>Hooks, handoffs, resume keys</span></div></div>
+    <div class="feat"><i style="background:#cab049"></i><div><b>Workspaces</b><span>Many repos, one memory, promote explicitly</span></div></div>
+    <div class="feat"><i style="background:#e691ca"></i><div><b>Reusable skills</b><span>File-backed, read before they run</span></div></div>
+    <div class="feat"><i style="background:#21c9ca"></i><div><b>Your data, portable</b><span>Checksummed export, verified snapshots</span></div></div>
+  </div>
+  <p class="foot">Runs offline. No API key. Nothing leaves the machine.</p>
+</div>
+<div class="scene" id="s3"><div class="close">
+  <img id="owl" alt="" />
+  <div class="wm">kn<i>owl</i></div>
+  <div class="tag">Local-first memory for AI coding agents.</div>
+  <div class="nums">
+    <div><b style="color:#85c577">27</b><span>MCP tools</span></div>
+    <div><b style="color:#70b6fd">0</b><span>API keys</span></div>
+    <div><b style="color:#cab049">100%</b><span>local, no egress</span></div>
+    <div><b style="color:#b7a0f8">7</b><span>atom types</span></div>
+  </div>
+  <div class="line">Memory shouldn&rsquo;t just remember the past.<br><i>It should know what&rsquo;s true now.</i></div>
+  <div class="url">github.com/dat999zx/knowl</div>
+</div></div>
+<script>window.OWL_B64 = "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAMAAACdt4HsAAAAP1BMVEUREhP39/cAAAA0zN4N7vJeXl8fXWWfoKAvuMgxwtMqm6lV//8xwtQ/v78hP0M3vuUAAAAAAAAAAAAAAAAAAAChK0qDAAAAEHRSTlP+/wD5DP/+//GZ/ANoBP8SkfQ8pQAAAw5JREFUeNq1V4mSIyEIJWnRvtL9/3+7gBcqJpmdXasmVaP9HsglwHNY7sU/7txgSQu20znafLnxaxjgB226bRnW5ujbw30iIPh9CmDdwXt/XfQD+ypbp5MP3hCQorcI3z10y++ixv10bk5Al2fp64BOHKzHKZ/ZBIeIn8ELhWuuAVp9Fg8fliihrgEKT+L36xPBRbbYFAMU/Ivx8MVihldhAI338NXymgFy9HyPjww5piD57yf4xPCqBAfbP+NDwBkOQ6gMEL3JBO7plP0evAYWxCAHypIESwQAq7L/I6/KkcCaQBggEsgFqv/xUReaGzEeOKA4c8mDdxt/Sh4DFL6917Lc5Es2xbashrkSQ8Ibpl3Zl1Q72IKmB5XomS8JDDdZYLWOfbVn/A9GFc7nDe5eLQW4fPikA/rFTBO/rDd5wpkpvHDmQ4jyucgsfVyIGdmIm0W+C0ZUEElKheIkpK82CSK6QegsnQjYCqEhUC5+8AGABEHoXe2lLkczsowlekrD490c31aFr3DEIrzukAmorO++h3OQiWVYt/FI50WXJGQ/zMRCkGMGsBKNBDkir7wvii7JhjBkDlaU3vfVkikSEgFWsah1CEkSVutoWq4rKRHUeRUg+xWP+mJQCa6Wtdq+RNwMz0UhE0SxOBBM5KMm8LoWGgQNviXjK9RcrAwNQQMJbZx4rUH2emgJND70hVGSQeVpjmVNUCAqC1XWp1AG7cCSVUh/KXhDmyk1aSEmk1nTa2qESV2WZOpqukERYAJP6TyWRDQ1MJ5MsaFV0oLcu/Ig4qTVgKdZVKMXQvHIA2f9EhVVq6wLQcSDnzPEsm49LEU0++yaMqSHxXjaWp/PGNLTZj2uXWGbMKTHlZ73wYzDk2oykALyvDOLbjD6YjxhqA0Gtzjd22k86cOWanG6JisFkhEbocOXJqtt8+IDOjothNYDZ23zft9o/l2rC/+y2f59u18Gjo9KzAaO34884k33xdBFk9/xv8Y+uYZ7P3i6t4NnHH3dfPS9P42+74fv45vhW4//hWV7M/7/AVG7HQzkICwnAAAAAElFTkSuQmCC";
+var CMD = 'knowl decide "Database choice" "SQLite. Lives beside the code."';
+var frame = parseInt((location.hash || '#0').slice(1), 10) || 0;
+document.getElementById('owl').src = 'data:image/png;base64,' + window.OWL_B64;
+
+function show(id) { document.getElementById(id).classList.add('on'); }
+
+if (frame < 64) {
+  show('s1');
+  // Beat 1: hold. Beat 2: type the correction. Beat 3: the predecessor retires.
+  // Two characters a frame, so the 63-character command finishes at frame 38 and the
+  // supersede at 45 lands AFTER the correction is typed rather than during it.
+  var typed = Math.max(0, Math.min(CMD.length, (frame - 6) * 2));
+  document.getElementById('typed').textContent = CMD.slice(0, typed);
+  var blink = (frame % 8) < 4;
+  document.getElementById('cur').style.visibility = blink ? 'visible' : 'hidden';
+  if (frame >= 45) {
+    var card = document.getElementById('c1');
+    card.className = 'card dead';
+    var chip = document.getElementById('chip1');
+    chip.className = 'chip s';
+    chip.textContent = 'superseded';
+    document.getElementById('after').style.display = 'block';
+    document.getElementById('cur').style.visibility = 'hidden';
+  }
+} else if (frame < 104) {
+  show('s2');
+} else {
+  show('s3');
+}
+</script>

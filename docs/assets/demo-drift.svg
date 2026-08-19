@@ -7,13 +7,13 @@
   <!-- append-only -->
   <text x="36" y="96" font-size="12" font-weight="700" fill="#6e7681" letter-spacing="1.4">APPEND-ONLY</text>
   <g>
-    <rect x="200" y="80" width="676" height="11" rx="5.5" fill="#3987e5" opacity="0.85"/>
+    <rect x="200" y="80" width="676" height="11" rx="5.5" fill="#39d3e5" opacity="0.85"/>
     <text x="204" y="74" font-size="10.5" fill="#6e7681">MongoDB</text>
-    <rect x="370" y="99" width="506" height="11" rx="5.5" fill="#3987e5" opacity="0.85"/>
+    <rect x="370" y="99" width="506" height="11" rx="5.5" fill="#39d3e5" opacity="0.85"/>
     <text x="374" y="93" font-size="10.5" fill="#6e7681">PostgreSQL</text>
-    <rect x="540" y="118" width="336" height="11" rx="5.5" fill="#3987e5" opacity="0.85"/>
+    <rect x="540" y="118" width="336" height="11" rx="5.5" fill="#39d3e5" opacity="0.85"/>
     <text x="544" y="112" font-size="10.5" fill="#6e7681">Postgres + a read replica</text>
-    <rect x="710" y="137" width="166" height="11" rx="5.5" fill="#3987e5" opacity="0.85"/>
+    <rect x="710" y="137" width="166" height="11" rx="5.5" fill="#39d3e5" opacity="0.85"/>
     <text x="714" y="131" font-size="10.5" fill="#6e7681">SQLite, beside the code</text>
   </g>
 
@@ -23,17 +23,17 @@
     <rect x="200" y="218" width="166" height="11" rx="5.5" fill="#484f58"/>
     <rect x="370" y="237" width="166" height="11" rx="5.5" fill="#484f58"/>
     <rect x="540" y="256" width="166" height="11" rx="5.5" fill="#484f58"/>
-    <rect x="710" y="275" width="166" height="11" rx="5.5" fill="#199e70"/>
+    <rect x="710" y="275" width="166" height="11" rx="5.5" fill="#319e19"/>
     <text x="714" y="269" font-size="10.5" fill="#3fb950">SQLite — still true</text>
   </g>
 
   <!-- today, sweeping -->
   <g>
-    <line x1="200" y1="70" x2="200" y2="300" stroke="#eda100" stroke-width="1.5" stroke-dasharray="4 4">
+    <line x1="200" y1="70" x2="200" y2="300" stroke="#edbd00" stroke-width="1.5" stroke-dasharray="4 4">
       <animate attributeName="x1" values="200;876;876" keyTimes="0;0.62;1" dur="9s" repeatCount="indefinite"/>
       <animate attributeName="x2" values="200;876;876" keyTimes="0;0.62;1" dur="9s" repeatCount="indefinite"/>
     </line>
-    <text x="200" y="318" font-size="11" font-weight="700" fill="#eda100" text-anchor="middle">today
+    <text x="200" y="318" font-size="11" font-weight="700" fill="#edbd00" text-anchor="middle">today
       <animate attributeName="x" values="200;876;876" keyTimes="0;0.62;1" dur="9s" repeatCount="indefinite"/>
     </text>
   </g>
@@ -41,13 +41,13 @@
   <!-- what a query finds once the sweep lands -->
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0" keyTimes="0;0.640;0.690;0.940;1" dur="9s" repeatCount="indefinite"/>
-    <rect x="896" y="76" width="72" height="76" rx="8" fill="#2a1f18" stroke="#7a4b1f"/>
-    <text x="932" y="110" font-size="22" font-weight="700" fill="#eda100" text-anchor="middle">4</text>
-    <text x="932" y="128" font-size="10" fill="#a0783c" text-anchor="middle">answers,</text>
-    <text x="932" y="142" font-size="10" fill="#a0783c" text-anchor="middle">3 retired</text>
+    <rect x="896" y="76" width="72" height="76" rx="8" fill="#2a2618" stroke="#7a681f"/>
+    <text x="932" y="110" font-size="22" font-weight="700" fill="#edbd00" text-anchor="middle">4</text>
+    <text x="932" y="128" font-size="10" fill="#a08c3c" text-anchor="middle">answers,</text>
+    <text x="932" y="142" font-size="10" fill="#a08c3c" text-anchor="middle">3 retired</text>
 
-    <rect x="896" y="216" width="72" height="70" rx="8" fill="#0f2e1f" stroke="#1c5c3c"/>
+    <rect x="896" y="216" width="72" height="70" rx="8" fill="#152e0f" stroke="#275c1c"/>
     <text x="932" y="252" font-size="22" font-weight="700" fill="#3fb950" text-anchor="middle">1</text>
-    <text x="932" y="270" font-size="10" fill="#5fa77c" text-anchor="middle">answer</text>
+    <text x="932" y="270" font-size="10" fill="#6ca75f" text-anchor="middle">answer</text>
   </g>
 </svg>

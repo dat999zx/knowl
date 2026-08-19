@@ -8,7 +8,7 @@
   <!-- the atom already held -->
   <g>
     <animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;0.330;0.360;0.940;1" dur="9s" repeatCount="indefinite"/>
-    <rect x="36" y="62" width="580" height="72" rx="10" fill="#0d1117" stroke="#199e70" stroke-width="1.5"/>
+    <rect x="36" y="62" width="580" height="72" rx="10" fill="#0d1117" stroke="#319e19" stroke-width="1.5"/>
     <circle cx="58" cy="86" r="4" fill="#3fb950"/>
     <text x="72" y="90" font-size="11.5" fill="#3fb950">decision · active</text>
     <text x="58" y="114" font-size="14.5" font-weight="700" fill="#ffffff">Database choice</text>
@@ -19,7 +19,7 @@
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.100;0.130;0.940;0.975;1" dur="9s" repeatCount="indefinite"/>
     <text x="36" y="176" font-size="12.5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" fill="#58a6ff">write · same subject</text>
-    <path d="M180 170 H320" stroke="#1f4b7a" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <path d="M180 170 H320" stroke="#1f707a" stroke-width="1.5" stroke-dasharray="4 4"/>
     <circle cx="180" cy="170" r="4.5" fill="#58a6ff">
       <animate attributeName="cx" values="180;180;320;320" keyTimes="0;0.130;0.230;1" dur="9s" repeatCount="indefinite"/>
     </circle>
@@ -31,7 +31,7 @@
     <animateTransform attributeName="transform" type="translate" values="0 0;0 0;0 0;664 92;664 92;664 92" keyTimes="0;0.330;0.380;0.470;0.940;1" dur="9s" repeatCount="indefinite"/>
     <rect x="36" y="62" width="580" height="72" rx="10" fill="#0d1117" stroke="#30363d" stroke-dasharray="5 4"/>
     <circle cx="58" cy="86" r="4" fill="#6e7681"/>
-    <text x="72" y="90" font-size="11.5" fill="#eda100">decision · superseded</text>
+    <text x="72" y="90" font-size="11.5" fill="#edbd00">decision · superseded</text>
     <text x="58" y="114" font-size="14.5" font-weight="700" fill="#6e7681">Database choice</text>
     <text x="212" y="114" font-size="13" fill="#6e7681">PostgreSQL</text>
     <line x1="58" y1="109" x2="310" y2="109" stroke="#6e7681"/>
@@ -40,7 +40,7 @@
   <!-- the replacement taking the active lane -->
   <g opacity="0">
     <animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;0.380;0.430;0.940;0.975;1" dur="9s" repeatCount="indefinite"/>
-    <rect x="36" y="62" width="580" height="72" rx="10" fill="#0d1117" stroke="#199e70" stroke-width="1.5"/>
+    <rect x="36" y="62" width="580" height="72" rx="10" fill="#0d1117" stroke="#319e19" stroke-width="1.5"/>
     <circle cx="58" cy="86" r="4" fill="#3fb950"/>
     <text x="72" y="90" font-size="11.5" fill="#3fb950">decision · active · fresh</text>
     <text x="58" y="114" font-size="14.5" font-weight="700" fill="#ffffff">Database choice</text>

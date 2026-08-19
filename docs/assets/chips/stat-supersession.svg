@@ -2,7 +2,7 @@
      role="img" aria-label="Scores 90 on MemoryAgentBench FactConsolidation single-hop at 262K context">
   <rect x="0.5" y="0.5" width="203" height="37" rx="8" fill="#161b22" stroke="#30363d"/>
   <text x="14" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
-        font-size="14" font-weight="700" fill="#199e70">90</text>
+        font-size="14" font-weight="700" fill="#319e19">90</text>
   <text x="38" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
         font-size="12" fill="#8b949e">MemoryAgentBench @262K</text>
 </svg>
