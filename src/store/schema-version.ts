@@ -156,7 +156,25 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * `KNOWL_SCHEMA_VERSION` deliberately does not move: an older build ignores the column, and a
  * newer one reading NULL gets the truth rather than a hole.
  */
-export const KNOWL_MIGRATION_LEVEL = 11;
+/*
+ * Level 12 adds `cloud_published.remote_content_hash` and `.remote_lifecycle_hash`: the atom's
+ * hashes as of the last confirmed push, so a re-staged atom that nobody actually edited is
+ * settled instead of sent.
+ *
+ * Two nullable columns and NO backfill, and the absence is load-bearing rather than lazy. The
+ * skip predicate requires `remote_content_hash IS NOT NULL`, so every existing row simply never
+ * skips and behaves exactly as it does today. Backfilling from `knowledge_items` would assert
+ * that the server holds whatever this machine holds right now -- which is precisely what no
+ * local row knows, and getting it wrong strands a correction locally with nothing to reveal it.
+ *
+ * The bump is load-bearing for the same reason as level 10: `CREATE TABLE IF NOT EXISTS` is a
+ * no-op on a store that already has `cloud_published`, so without it an existing database would
+ * never gain the columns while `listStaged` joins on them.
+ *
+ * `KNOWL_SCHEMA_VERSION` does not move: an older build ignores both columns and pushes exactly
+ * as it did before.
+ */
+export const KNOWL_MIGRATION_LEVEL = 12;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

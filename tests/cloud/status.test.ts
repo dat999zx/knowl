@@ -87,7 +87,7 @@ describe('cloudStatus', () => {
     try {
       await stageForPublish(['fresh'], WS, 'main');
       await stageForPublish(['known'], WS, 'main');
-      await recordPushed('known', WS, 3);
+      await recordPushed('known', WS, 3, { contentHash: null, lifecycleHash: null });
       await restageForPublish(['known'], WS, 'main');
     } finally { await closeDb(); }
 

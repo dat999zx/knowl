@@ -3,6 +3,7 @@ import { closeDb, getClient, initDb } from '../store/database.js';
 import { selectOwnedItems, type PromoteTarget } from '../workspace/promote.js';
 import { CloudApiError, createCloudApi, type CloudApi } from './api-client.js';
 import {
+  clearUnchangedStaged,
   listStaged, publishedVersion, recordPushed, restageForPublish, stageForPublish,
 } from './ledger.js';
 import { filterExcluded } from './exclusions.js';
@@ -204,32 +205,53 @@ export type PushResult =
      * the others the moment retraction is wired.
      */
     rejected: PublishOutcome[];
+    /**
+     * Staged atoms that were settled without being sent, because they were byte-identical to what
+     * the server was last given.
+     *
+     * Reported rather than swallowed: it is the difference between a push that did nothing and a
+     * push that was not needed, and a user watching a queue shrink with no network activity
+     * deserves to be told which.
+     */
+    skippedUnchanged: number;
   };
 
-/** The contract's own cap. An unbounded batch is an unbounded transaction on the server. */
 /**
  * Atoms per request.
  *
- * **Was 200 -- the server contract's own ceiling -- and that was the bug.** Publishing embeds
- * inline and synchronously on the server, measured at 1564 MB and 418 seconds for 200 atoms of
- * realistic prose, against a client timeout of 30 seconds. Any queue under 200 therefore went as
- * ONE request that a cold server could not possibly finish, so a backlog of 40 was permanently
- * unpushable while a queue of 9 barely landed (knowl#103).
+ * **Was 200, then 20, and both numbers were answers to a cost that no longer exists.** Publishing
+ * used to embed inline and synchronously on the server -- 1564 MB and 418 seconds for 200 atoms
+ * -- so 200 was unsendable and 20 was sized against that ~3s-per-atom cold path (knowl#103).
+ * Embedding now runs on a background worker after the commit, and a client that brings its own
+ * vector is never re-embedded at all, so the request no longer waits on a forward pass.
  *
- * 20 is sized against the *cold* per-atom cost measured from a real backlog -- roughly 3s at
- * worst, so ~10 atoms fit a 30s budget with the batch halving below to cover the rest. A warm
- * server runs an order of magnitude faster and pays only the extra round trips.
+ * What is left is round trips and payload, and 100 is sized against the payload. The server's
+ * `BODY_LIMIT` is 2 MB, and a real atom measures ~2 KB of text plus a 384-float vector as ~2 KB
+ * of base64 -- call it 5 KB typical and 12 KB for the largest. 100 therefore lands around 500 KB
+ * and worst-cases near 1.2 MB, both inside the limit, and it puts a routine backlog in ONE
+ * request instead of five.
  *
- * Never raise this above 200: `PublishRequest` rejects a larger batch outright.
+ * Never raise this above 200: `PublishRequest` rejects a larger batch outright. And note the
+ * binding constraint is the body limit, not that ceiling -- 200 fat atoms would 413.
  */
-const MAX_BATCH = 20;
+const MAX_BATCH = 100;
 
 /** Where halving stops. One atom that still times out is the server's problem, not the size. */
 const MIN_BATCH = 1;
 
-/** The server saying "not this much at once" -- the one failure a smaller batch can answer. */
-function isTimeout(error: unknown): error is CloudApiError {
-  return error instanceof CloudApiError && error.code === 'timeout';
+/**
+ * The server saying "not this much at once" -- the failures a smaller batch can answer.
+ *
+ * Two of them, and they arrive from opposite ends. A timeout is the request taking too long; a
+ * 413 is the body being too large before it is read at all. Both mean the same thing to a client
+ * holding a queue -- send fewer -- and both are safe to retry smaller, because the server upserts
+ * by item id and a 413 committed nothing at all.
+ *
+ * Nothing else is retried. A secret rejection in particular is terminal and must fail the batch
+ * untouched, never retried and never retried in altered form.
+ */
+function isTooMuchAtOnce(error: unknown): error is CloudApiError {
+  return error instanceof CloudApiError && (error.code === 'timeout' || error.status === 413);
 }
 
 const parseJson = <T>(value: unknown): T | null => {
@@ -351,10 +373,18 @@ export async function pushStaged(input: {
 
   await initDb(input.projectRoot);
   try {
+    // Before the queue is read, so an atom re-staged into identical bytes is settled rather than
+    // sent. `listStaged` filters the same rows anyway; this is what stops them accumulating in
+    // the table forever, and it runs here rather than from the read because `knowl cloud status`
+    // is also a reader and a read must not write.
+    const skippedUnchanged = await clearUnchangedStaged(pointer.workspaceId);
+
     const staged = await listStaged(pointer.workspaceId);
 
     if (staged.length === 0) {
-      return { status: 'pushed', created: 0, updated: 0, conflicts: [], rejected: [] };
+      return {
+        status: 'pushed', created: 0, updated: 0, conflicts: [], rejected: [], skippedUnchanged,
+      };
     }
 
     // The role rides on every sync response, so refusing a reader here costs nothing and saves a
@@ -438,8 +468,18 @@ export async function pushStaged(input: {
       return { status: 'needs-embedding', count: unembedded.length, remedy: 'knowl reindex --vectors' };
     }
     if (items.length === 0) {
-      return { status: 'pushed', created: 0, updated: 0, conflicts: [], rejected: [] };
+      return {
+        status: 'pushed', created: 0, updated: 0, conflicts: [], rejected: [], skippedUnchanged,
+      };
     }
+
+    // Keyed off the payloads being sent, never a fresh read. `recordPushed` stores these, and a
+    // re-read there would record what the atom says *now* -- so an edit landing between the send
+    // and the confirmation would look already-published and never be sent again.
+    const sentHashes = new Map(items.map(item => [item.id, {
+      contentHash: item.contentHash ?? null,
+      lifecycleHash: item.lifecycleHash ?? null,
+    }]));
 
     let created = 0;
     let updated = 0;
@@ -469,11 +509,11 @@ export async function pushStaged(input: {
           // less rather than failing a whole backlog. Safe to re-send: the server upserts by item
           // id and returns `updated` for anything the timed-out attempt had already committed, so
           // the worst case is a spent version bump, never a duplicate.
-          if (isTimeout(error) && size > MIN_BATCH) {
+          if (isTooMuchAtOnce(error) && size > MIN_BATCH) {
             size = Math.max(MIN_BATCH, Math.floor(size / 2));
             continue;
           }
-          if (isTimeout(error)) {
+          if (isTooMuchAtOnce(error)) {
             // The old message named only the URL and the ceiling, so it pointed nowhere. What the
             // user needs is the size it gave up at and how much is still queued -- the two numbers
             // that say whether to wait for a warmer server or to go and split the queue by hand.
@@ -493,7 +533,12 @@ export async function pushStaged(input: {
 
       for (const outcome of outcomes) {
         if (outcome.status === 'created' || outcome.status === 'updated') {
-          await recordPushed(outcome.id, pointer.workspaceId, outcome.version);
+          await recordPushed(
+            outcome.id,
+            pointer.workspaceId,
+            outcome.version,
+            sentHashes.get(outcome.id) ?? { contentHash: null, lifecycleHash: null },
+          );
           if (outcome.status === 'created') created += 1; else updated += 1;
           continue;
         }
@@ -505,7 +550,7 @@ export async function pushStaged(input: {
       }
     }
 
-    return { status: 'pushed', created, updated, conflicts, rejected };
+    return { status: 'pushed', created, updated, conflicts, rejected, skippedUnchanged };
   } finally {
     await closeDb();
   }

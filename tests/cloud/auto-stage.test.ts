@@ -70,7 +70,7 @@ describe('maybeAutoStage', () => {
 
   it('re-stages a published atom as a correction, preserving its version', async () => {
     await stageForPublish(['a'], WS, 'main');
-    await recordPushed('a', WS, 5);
+    await recordPushed('a', WS, 5, { contentHash: null, lifecycleHash: null });
 
     await maybeAutoStage({ projectRoot: ROOT, config: connected(), itemId: 'a', alreadyPublished: true });
 
