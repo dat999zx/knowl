@@ -253,19 +253,6 @@ export function differsOnlyInPolarity(a: { title: string }, b: { title: string }
 }
 
 /**
- * Whether an item asserts that someone actually grounded the claim.
- *
- * The same two values `fuse.ts` treats as a claim, and for the same stated reason: unknown
- * provenance is not evidence of provenance, so silence sits with `inferred` rather than with
- * `observed`. Keeping the two modules on one definition matters because they now express the
- * same judgement in two places -- ranking demotes an unclaimed atom, and this refuses to let one
- * retire a claimed atom.
- */
-function claimsFirstHandGrounding(provenance: KnowledgeProvenance | null | undefined): boolean {
-  return provenance === 'observed' || provenance === 'user_stated';
-}
-
-/**
  * Everything an item carries that a title-and-content comparison cannot see.
  *
  * Named as a type because two places decide "is this copy redundant" -- the write path, when
@@ -428,25 +415,25 @@ export function resolveDuplicate(
   }
   if (!sameSubjectTitle(input, duplicate)) return 'coexist';
 
-  // Two guards on the supersede branch, both clamping to `coexist` rather than refusing. Neither
-  // can lose a write: the incoming atom is still inserted, the predecessor stays active, and the
-  // caller is told about the pair through the `nearDuplicate` channel that already reports the
-  // exact retire call. An agent that means to retire the other one says so with `supersedes`,
-  // which is checked first and is never second-guessed.
+  // One guard on the supersede branch, clamping to `coexist` rather than refusing. It cannot lose
+  // a write: the incoming atom is still inserted, the predecessor stays active, and the caller is
+  // told about the pair through the `nearDuplicate` channel that already reports the exact retire
+  // call. An agent that means to retire the other one says so with `supersedes`, which is checked
+  // first and is never second-guessed.
   //
-  // 1. POLARITY. The titles are the same claim asserted both ways; see `POLARITY_TOKENS`.
+  // The titles are the same claim asserted both ways; see `POLARITY_TOKENS`.
+  //
+  // NOT GUARDED ON PROVENANCE, and that was measured rather than assumed. A second guard was
+  // proposed here -- refuse to let an atom with no provenance retire one claiming `observed` or
+  // `user_stated` -- and replayed against this repo's 101 real supersessions it would have
+  // blocked 3, all three of them legitimate corrections. One of the three is an atom whose entire
+  // point is that the measurement it replaced was defective; blocking it leaves the known-wrong
+  // figure active. Unset provenance is not a weak claim here, it is simply what 73% of all writes
+  // look like, including the most carefully verified ones. `agent-query.ts` does demote an
+  // unclaimed atom, but by a 0.98 multiplier -- a nudge in ranking is not the same judgement as
+  // refusing a supersession, and a pair left coexisting is invisible afterwards: `knowl_conflicts`
+  // reads only `conflictKey`/`conflictExclusive`, set on 3 of 937 active items.
   if (differsOnlyInPolarity(input, duplicate)) return 'coexist';
-
-  // 2. GROUNDING. An atom that does not claim first-hand grounding must not silently retire one
-  //    that does -- "inferred evidence must not overturn an explicit fact". Deliberately
-  //    one-directional and narrow: it fires only where the HELD atom claims `observed` or
-  //    `user_stated` and the incoming one does not, so the 79% of writes that leave provenance
-  //    unset are unaffected unless they are aimed at one of the ~20% that made a claim. That
-  //    asymmetry is also the incentive `fuse.ts` chose on the ranking side: declaring provenance
-  //    is what earns full credit, and here it is what earns the right to retire a grounded claim.
-  if (claimsFirstHandGrounding(duplicate.provenance) && !claimsFirstHandGrounding(input.provenance)) {
-    return 'coexist';
-  }
 
   return 'supersede';
 }

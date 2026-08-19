@@ -95,42 +95,26 @@ describe('resolveDuplicate polarity guard', () => {
   });
 });
 
-describe('resolveDuplicate grounding guard', () => {
-  const grounded = held({ title: 'Vector dim', content: 'It is 768.', provenance: 'observed' });
-
-  it('an unclaimed write does not retire an observed one', () => {
+describe('provenance deliberately does not gate supersession', () => {
+  /**
+   * A guard was proposed that would refuse to let an unclaimed write retire an `observed` one.
+   * Replayed against this repo's 101 real supersessions it blocked 3, and all 3 were legitimate
+   * corrections -- including one whose whole point was that the measurement it replaced was
+   * defective. Unset provenance is what 73% of writes look like, not a weak claim. Pinned here so
+   * the idea is not re-introduced without new evidence.
+   */
+  it('an unclaimed write still retires an observed one', () => {
     expect(resolveDuplicate(
       { category: 'fact', title: 'Vector dim setting', content: 'It is 1024.' },
-      grounded,
+      held({ title: 'Vector dim', content: 'It is 768.', provenance: 'observed' }),
+    )).toBe('supersede');
+  });
+
+  it('and the polarity guard still wins over it, whatever the provenance', () => {
+    expect(resolveDuplicate(
+      { category: 'fact', title: 'Reranker is the right call', content: 'Yes.', provenance: 'observed' },
+      held({ title: 'Reranker is not the right call', content: 'No.', provenance: 'observed' }),
     )).toBe('coexist');
-  });
-
-  it('a write that claims grounding may retire an observed one', () => {
-    expect(resolveDuplicate(
-      { category: 'fact', title: 'Vector dim setting', content: 'It is 1024.', provenance: 'observed' },
-      grounded,
-    )).toBe('supersede');
-  });
-
-  it('user_stated counts as a claim on both sides', () => {
-    expect(resolveDuplicate(
-      { category: 'fact', title: 'Vector dim setting', content: 'It is 1024.', provenance: 'user_stated' },
-      held({ title: 'Vector dim', content: 'It is 768.', provenance: 'user_stated' }),
-    )).toBe('supersede');
-  });
-
-  it('is one-directional: an observed write may retire an unclaimed predecessor', () => {
-    expect(resolveDuplicate(
-      { category: 'fact', title: 'Vector dim setting', content: 'It is 1024.', provenance: 'observed' },
-      held({ title: 'Vector dim', content: 'It is 768.' }),
-    )).toBe('supersede');
-  });
-
-  it('leaves the unclaimed-to-unclaimed majority path untouched', () => {
-    expect(resolveDuplicate(
-      { category: 'fact', title: 'Vector dim setting', content: 'It is 1024.' },
-      held({ title: 'Vector dim', content: 'It is 768.' }),
-    )).toBe('supersede');
   });
 });
 
