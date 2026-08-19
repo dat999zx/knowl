@@ -1257,6 +1257,9 @@ export const VIEWER_HTML = `<!doctype html>
     activeView = next;
     document.getElementById("listwrap").hidden = !isList;
     document.getElementById("graph").hidden = isList;
+    // The canvas hint is pinned to the bottom of the stage, so in list view it printed
+    // "drag node to pull" across the last row of a table nothing drags.
+    document.querySelector(".hint").hidden = isList;
     document.getElementById("tab-list").setAttribute("aria-selected", String(isList));
     document.getElementById("tab-graph").setAttribute("aria-selected", String(!isList));
     if (isList) { renderList(); return; }
