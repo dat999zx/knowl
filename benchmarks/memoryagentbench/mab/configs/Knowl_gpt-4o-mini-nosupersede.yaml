@@ -1,0 +1,16 @@
+# Knowl, supersession OFF -- the ablation arm.
+#
+# Every value except the knowl_* pair is copied from the baselines rather than chosen:
+# temperature and input_length_limit match every gpt-4o-mini config in the repo, buffer_length
+# matches Simple_rag_bm25, and retrieve_num 10 is what BM25, Zep, Cognee, HippoRAG-v2, RAPTOR,
+# GraphRAG, Self-RAG and all four embedding baselines use. Mem0 is the outlier at 100.
+agent_name: Agentic_memory_knowl_nosupersede
+model: gpt-4o-mini
+temperature: 0.7
+input_length_limit: 10000000
+buffer_length: 200
+output_dir: ./outputs/knowl-gpt-4o-mini-nosupersede
+
+retrieve_num: 10
+knowl_supersede: false
+knowl_vector: true
