@@ -36,8 +36,9 @@ Your agent starts every session blank, so you keep a `CLAUDE.md`. It only grows.
 still names the database you migrated off last spring, and now the agent gets both answers.
 
 Knowl is persistent memory for Claude Code, Cursor and Codex, over
-[MCP](https://modelcontextprotocol.io) or the CLI. When a fact changes, the old one is retired
-instead of competing with the new one.
+[MCP](https://modelcontextprotocol.io) or the CLI. When a fact is replaced, the old one is retired
+instead of competing with the new one — automatically if you configure an AI provider to spot the
+contradiction, or explicitly with `knowl supersede <old> <new>`.
 
 Turn that off and retrieval drops from 98% to 47%. End to end, 90 to 73.
 [How it was measured ↓](#the-idea-memory-that-retires-itself)
