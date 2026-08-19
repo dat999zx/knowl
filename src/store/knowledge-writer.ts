@@ -36,6 +36,39 @@ const DUPLICATE_STOP_WORDS = new Set([
   'it', 'of', 'on', 'or', 'our', 'the', 'this', 'to', 'use', 'uses', 'using', 'what', 'with',
 ]);
 
+/**
+ * Tokens that flip a claim rather than extend it.
+ *
+ * THE FAILURE THIS EXISTS FOR. `sameSubjectTitle` is a token-SUBSET test, and none of these
+ * words is a stop word, so an affirmative title is a strict subset of its own negation and the
+ * subset test fires. Measured by running the real function, 2026-08-19:
+ *
+ *     "Push gate blocks default branch"  SUPERSEDES  "Push gate no longer blocks default branch"
+ *     "Reranker is the right call"       SUPERSEDES  "Reranker is not the right call"
+ *
+ * The survivor then asserts the opposite of what was retired, silently. The first pair is this
+ * project's own 2026-08-13 push-gate reversal: a title shape that, written twice across the
+ * reversal, retires its own predecessor in whichever order the two writes happen to arrive.
+ *
+ * WHY NOT THE NUMERIC CASE TOO. The published prior art for this guard (muninndb's
+ * `dedup_separation.go`) is built around numbers -- "$99" merging with "$149". That hole does not
+ * exist here and the check would be dead weight: `duplicateTokens` splits on `[^a-z0-9_]+`, so
+ * digits survive as tokens, `768` is absent from a title saying `1024`, the subset test already
+ * fails, and the two atoms already coexist. Verified alongside the two cases above. Only polarity
+ * is unguarded, because only polarity words are short, common, and absent from the stop list.
+ *
+ * DELIBERATELY NARROW. Ambiguous stems are left out -- `can` ("Can the gate block" is a real
+ * title), `won`, `don`. A missed negation costs what today already costs; a false positive here
+ * costs a supersede that should have happened, which the caller then has to make deliberately.
+ * Contraction apostrophes are split by the tokenizer, so `isn't` arrives as `isn` plus a
+ * one-character token that the length filter drops -- hence the bare stems below.
+ */
+const POLARITY_TOKENS = new Set([
+  'not', 'no', 'never', 'none', 'nor', 'without', 'cannot', 'longer', 'unable',
+  'isn', 'aren', 'wasn', 'weren', 'doesn', 'didn', 'hasn', 'haven', 'hadn',
+  'couldn', 'shouldn', 'wouldn',
+]);
+
 export interface StoreKnowledgeInput {
   category: KnowledgeCategory;
   title: string;
@@ -188,6 +221,48 @@ export function sameSubjectTitle(a: { title: string }, b: { title: string }): bo
     if (!larger.has(token)) return false;
   }
   return true;
+}
+
+/**
+ * Whether two same-subject titles differ ONLY by polarity -- one negates the other.
+ *
+ * Called after `sameSubjectTitle` has already established containment, so the smaller set is a
+ * subset of the larger and the difference is exactly what the longer title adds. If everything it
+ * adds is a polarity token, the two titles are not "same subject, new information" -- they are
+ * the same subject asserted both ways, and retiring either one leaves the store asserting a
+ * claim its own history contradicts.
+ *
+ * Symmetric on purpose: which of the pair is the incoming write is not the question. Reaching
+ * this from the affirmative side (a re-assertion arriving after a recorded negation) is the more
+ * dangerous direction, because the negation is usually the correction.
+ */
+export function differsOnlyInPolarity(a: { title: string }, b: { title: string }): boolean {
+  const left = duplicateTokens(a.title);
+  const right = duplicateTokens(b.title);
+  const [smaller, larger] = left.size <= right.size ? [left, right] : [right, left];
+
+  let added = 0;
+  for (const token of larger) {
+    if (smaller.has(token)) continue;
+    if (!POLARITY_TOKENS.has(token)) return false;
+    added++;
+  }
+  // Identical token sets add nothing and are not a polarity pair; that case is a plain duplicate
+  // and belongs to the payload comparison above, which can still answer `no-op`.
+  return added > 0;
+}
+
+/**
+ * Whether an item asserts that someone actually grounded the claim.
+ *
+ * The same two values `fuse.ts` treats as a claim, and for the same stated reason: unknown
+ * provenance is not evidence of provenance, so silence sits with `inferred` rather than with
+ * `observed`. Keeping the two modules on one definition matters because they now express the
+ * same judgement in two places -- ranking demotes an unclaimed atom, and this refuses to let one
+ * retire a claimed atom.
+ */
+function claimsFirstHandGrounding(provenance: KnowledgeProvenance | null | undefined): boolean {
+  return provenance === 'observed' || provenance === 'user_stated';
 }
 
 /**
@@ -351,7 +426,29 @@ export function resolveDuplicate(
     };
     if (carriesNothingNew(incoming, held ?? duplicate)) return 'no-op';
   }
-  return sameSubjectTitle(input, duplicate) ? 'supersede' : 'coexist';
+  if (!sameSubjectTitle(input, duplicate)) return 'coexist';
+
+  // Two guards on the supersede branch, both clamping to `coexist` rather than refusing. Neither
+  // can lose a write: the incoming atom is still inserted, the predecessor stays active, and the
+  // caller is told about the pair through the `nearDuplicate` channel that already reports the
+  // exact retire call. An agent that means to retire the other one says so with `supersedes`,
+  // which is checked first and is never second-guessed.
+  //
+  // 1. POLARITY. The titles are the same claim asserted both ways; see `POLARITY_TOKENS`.
+  if (differsOnlyInPolarity(input, duplicate)) return 'coexist';
+
+  // 2. GROUNDING. An atom that does not claim first-hand grounding must not silently retire one
+  //    that does -- "inferred evidence must not overturn an explicit fact". Deliberately
+  //    one-directional and narrow: it fires only where the HELD atom claims `observed` or
+  //    `user_stated` and the incoming one does not, so the 79% of writes that leave provenance
+  //    unset are unaffected unless they are aimed at one of the ~20% that made a claim. That
+  //    asymmetry is also the incentive `fuse.ts` chose on the ranking side: declaring provenance
+  //    is what earns full credit, and here it is what earns the right to retire a grounded claim.
+  if (claimsFirstHandGrounding(duplicate.provenance) && !claimsFirstHandGrounding(input.provenance)) {
+    return 'coexist';
+  }
+
+  return 'supersede';
 }
 
 // Resolve the item (if any) that a new write should mark superseded: the detected
