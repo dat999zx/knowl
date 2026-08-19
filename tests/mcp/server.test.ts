@@ -659,8 +659,10 @@ describe('MCP Server Layer', () => {
     const session = await startMemorySession({ title: 'MCP promotion' });
     // A commit subject is now the source that yields a candidate; the session had no
     // events at all before, and relied on the stop.summary rule that Phase 1 removed.
+    // It needs a BODY: a commit that only names itself is no longer captured, so a bare
+    // one here promotes nothing and this case fails on the promotion it exists to check.
     await appendMemorySessionEvent(session.id, 'command', {
-      command: 'git commit -q -m "fix(mcp): promote sessions through the tool path"',
+      command: `git commit -q -m "$(cat <<'EOF'\nfix(mcp): promote sessions through the tool path\nFinalization ran on the CLI path only, so a session finished through the\ntool left its candidates unpromoted.\nEOF\n)"`,
       exitCode: 0,
     });
     const res = await runRpcRequest('tools/call', { name: 'knowl_session_finish', arguments: { sessionId: session.id, status: 'finished', summary: 'MCP summary' } });

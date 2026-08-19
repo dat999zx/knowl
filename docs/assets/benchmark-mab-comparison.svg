@@ -37,21 +37,21 @@
   </g>
 
   <!-- width = value * 4.8 -->
-  <rect x="214" y="115" width="432"   height="21" rx="5" fill="#199e70"/>
-  <rect x="214" y="148" width="379.2" height="21" rx="5" fill="#3987e5"/>
-  <rect x="214" y="181" width="288"   height="21" rx="5" fill="#3987e5"/>
-  <rect x="214" y="214" width="259.2" height="21" rx="5" fill="#3987e5"/>
-  <rect x="214" y="247" width="230.4" height="21" rx="5" fill="#3987e5"/>
-  <rect x="214" y="280" width="216"   height="21" rx="5" fill="#3987e5"/>
-  <rect x="214" y="313" width="139.2" height="21" rx="5" fill="#3987e5"/>
-  <rect x="214" y="346" width="134.4" height="21" rx="5" fill="#3987e5"/>
-  <rect x="214" y="379" width="134.4" height="21" rx="5" fill="#3987e5"/>
-  <rect x="214" y="412" width="86.4"  height="21" rx="5" fill="#3987e5"/>
-  <rect x="214" y="445" width="67.2"  height="21" rx="5" fill="#3987e5"/>
-  <rect x="214" y="478" width="33.6"  height="21" rx="5" fill="#3987e5"/>
+  <rect x="214" y="115" width="432"   height="21" rx="5" fill="#319e19"/>
+  <rect x="214" y="148" width="379.2" height="21" rx="5" fill="#39d3e5"/>
+  <rect x="214" y="181" width="288"   height="21" rx="5" fill="#39d3e5"/>
+  <rect x="214" y="214" width="259.2" height="21" rx="5" fill="#39d3e5"/>
+  <rect x="214" y="247" width="230.4" height="21" rx="5" fill="#39d3e5"/>
+  <rect x="214" y="280" width="216"   height="21" rx="5" fill="#39d3e5"/>
+  <rect x="214" y="313" width="139.2" height="21" rx="5" fill="#39d3e5"/>
+  <rect x="214" y="346" width="134.4" height="21" rx="5" fill="#39d3e5"/>
+  <rect x="214" y="379" width="134.4" height="21" rx="5" fill="#39d3e5"/>
+  <rect x="214" y="412" width="86.4"  height="21" rx="5" fill="#39d3e5"/>
+  <rect x="214" y="445" width="67.2"  height="21" rx="5" fill="#39d3e5"/>
+  <rect x="214" y="478" width="33.6"  height="21" rx="5" fill="#39d3e5"/>
 
   <g font-size="14" font-weight="700">
-    <text x="658" y="131" fill="#7fdca0">90</text>
+    <text x="658" y="131" fill="#90dc7f">90</text>
     <text x="605.2" y="164" fill="#c3c2b7">79</text>
     <text x="514" y="197" fill="#c3c2b7">60</text>
     <text x="485.2" y="230" fill="#c3c2b7">54</text>

@@ -35,7 +35,7 @@ which parts of a restore are deliberately not restored.
 | [Knowl Cloud](#knowl-cloud) | [Identity and connection](#identity-and-connection) · [Publishing and drift](#publishing-works-from-any-branch-reporting-drift-does-not) · [Staying current](#staying-current) |
 | [Learned skills and synthesis](#learned-skills-and-synthesis) | [File-backed skills](#file-backed-skills) · [Deterministic synthesis](#deterministic-synthesis) |
 | [Portability and maintenance](#portability-and-maintenance) | [Export and import](#jsonl-export-and-import) · [Garbage collection](#garbage-collection) · [Snapshots, audit, doctor](#snapshots-audit-and-doctor) |
-| [Local viewer](#local-viewer) · [Architecture](#architecture-and-security-boundaries) | Inspector, component diagram, security boundaries, [write durability](#write-durability) |
+| [Local viewer](#local-viewer) · [Architecture](#architecture-and-security-boundaries) | [Browsing](#browsing-and-finding-what-you-cannot-name) · [Editing](#editing) · [What protects it](#what-protects-it) · component diagram, security boundaries, [write durability](#write-durability) |
 | [Agent setup](#agent-setup) · [Benchmarks](#benchmarks) | Host integration, and every evaluation suite with reproduction commands |
 | [CLI reference](#cli-reference) · [MCP tools](#mcp-tools-and-resources) | Every shipped command, tool, and resource |
 | [Optional AI](#optional-ai) · [Local data](#local-data) | Provider configuration and on-disk layout |
@@ -1341,30 +1341,95 @@ NO_UPDATE_NOTIFIER=1                         # the cross-tool convention, also h
 
 ## Local viewer
 
-`knowl view` starts a browser inspector on `127.0.0.1`:
+`knowl view` starts a browser editor on `127.0.0.1`:
 
 ```bash
 knowl view
 knowl view --port 4312
 ```
 
-The viewer binds to `127.0.0.1`, answers only `GET`, and mints a fresh access token per launch.
-The printed URL carries that token; knowing the port is not enough to read anything. It exposes
-full local atom content across all statuses, so loopback binding is still the privacy boundary;
-do not expose it through a public proxy or tunnel.
+This is where a person reads and corrects what their agents remember. It runs against
+`.knowl/knowl.db` on this machine — no account, no network, no sync round trip.
 
-The graph connects atoms through shared tags and category-derived links. It is a synthetic
-navigation graph, not a causal graph and not the evidence graph. Search, category filters, stale
-rings, neighborhood focus, and the item inspector help locate content, evidence, and timeline
-assertions.
+### Browsing, and finding what you cannot name
+
+The viewer opens on the graph and has a **List** view beside it, with three lenses:
+
+| Lens | Shows |
+| --- | --- |
+| **All** | Every active atom |
+| **Unread** | Atoms that have never been retrieved, oldest first |
+| **Stale** | Atoms whose freshness is not `fresh` |
+
+**Unread is the one that finds problems you cannot search for.** A search only reaches memory you
+already suspect exists; an atom that carries no information is exactly the one nobody thinks to
+look for. Sorting by never-retrieved, oldest first, floats it to the top. `knowl list --unread`
+answers the same question in the terminal.
+
+The search box and the category toggles filter the table and the graph together, and the lens
+counts describe what is currently visible rather than the whole store.
+
+### Editing
+
+Click any row to open the inspector, which reads the atom with its evidence, timeline and
+supersede chain. It carries three actions:
+
+- **Edit** — title, content, reasoning, tags, category, confidence. Every human write is stamped
+  `provenance: user_stated`, which is what makes "show me what I wrote" answerable later. An atom
+  keeps its id, its origin and its author across every revision.
+- **Archive** — sets `status: archived`, so it stops appearing in queries. **Reversible**: the
+  panel stays open and offers **Restore**. Permanent removal stays with `knowl forget`, which asks
+  first.
+- **+ New memory** — write an atom by hand, without an agent noticing something first.
+
+A human edit carries no special authority. It goes through the same store the agents use, does not
+outrank an agent's write, and is not immune to supersession.
+
+`knowl edit <id>` starts the viewer and prints a link that opens directly on one atom. It takes the
+eight-character id `knowl list` prints, and names the candidates when a prefix is ambiguous.
+
+On a cloud-connected repository, `cloud.autoStage` is on by default, so an edited atom re-stages
+itself and travels on the next `knowl cloud push`.
+
+### What protects it
+
+The viewer binds to `127.0.0.1` and mints a fresh access token per launch. The printed URL carries
+that token; knowing the port is not enough to read anything. The page exchanges it for an
+`HttpOnly; SameSite=Strict` cookie, and the `Host` header must be a loopback literal, so a hostname
+that merely resolves to `127.0.0.1` is refused.
+
+**Writes carry one check that reads do not, and the reason is worth stating.** `SameSite` does not
+scope by port: "same site" is computed from the registrable domain, and for an IP host that is the
+IP with the port excluded. So a page served from *any other* `127.0.0.1` port — a dev server, a
+docs preview, a local model UI — is same-site with the viewer, and the browser attaches the cookie
+unprompted. The `Host` check cannot help, because the browser sends the viewer's own authority,
+correctly. Every write therefore requires the request to name this viewer as its `Origin`, and
+refuses a `Sec-Fetch-Site` that says it came from elsewhere.
+
+It still exposes full local atom content across every status, so loopback binding remains the
+privacy boundary: do not put it behind a public proxy or tunnel.
+
+The graph connects atoms through shared tags, and only through tags that **few** atoms carry: a
+tag on more than five is a category rather than a relationship, and the rail already filters by
+category. Drawing those as edges produced a star per common tag and buried the mesh that meant
+something — on a 675-atom store, 32 such tags accounted for 425 of 1,556 links.
+
+An atom that shares no rare tag with anything stays **unlinked**, and settles at the rim. It used
+to be tied to the first atom of its own category, which drew one enormous star per category and
+asserted a relationship that did not exist.
+
+It is a synthetic navigation graph, not a causal graph and not the evidence graph. Labels are
+dropped rather than overlapped, so a crowded region shows fewer of them rather than an unreadable
+pile. Search, category filters, stale rings, neighborhood focus, and the item inspector help
+locate content, evidence, and timeline assertions.
 
 <p align="center">
-  <img src="assets/viewer-graph.png" alt="Knowl local viewer showing the project-memory graph" width="48%" />
-  <img src="assets/viewer-inspect.png" alt="Knowl local viewer showing details for a selected knowledge atom" width="48%" />
+  <img src="assets/viewer-graph.png" alt="The Knowl local viewer: the memory graph, linked only through tags few atoms share, with unlinked atoms settling at the rim" width="48%" />
+  <img src="assets/viewer-inspect.png" alt="The Knowl local viewer list: every atom with an unread mark in the margin, and one atom open in the inspector with its markdown rendered" width="48%" />
 </p>
 
 The graph and filter UI do not write telemetry. A direct GET to `/api/retrieval` records retrieval
-access telemetry, so GET-only does not mean every endpoint is free of database writes.
+access telemetry, so a read endpoint is not necessarily free of database writes either.
 
 ## Architecture and security boundaries
 
@@ -1383,7 +1448,7 @@ flowchart TB
         CLI["CLI · knowl …"]
         MCP["MCP · knowl serve"]
         HOOK["Short-lived lifecycle hooks"]
-        VIEW["GET-only local viewer"]
+        VIEW["Local viewer · loopback, token, same-origin writes"]
     end
 
     subgraph core["Deterministic core services"]
@@ -1724,6 +1789,8 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl store <content> --category <c> --title <t> [--tag <t...>] [--path <p...>] [--confidence <n>] [--provenance <p>] [--reasoning <text>] [--alternative <text...>] [--source <label>] [--source-commit <sha>] [--supersedes <id>] [--local]` | Record one verified fact, decision or constraint. `--local` marks it never-publish |
 | `knowl decide [title] [content]` | Record a decision, reasoning, alternatives, and tags |
 | `knowl query [query] [--as-of <timestamp>] [--limit <count>]` | Query current or historically valid project memory |
+| `knowl list [--unread] [--stale] [--category <c>] [--limit <n>]` | Browse stored memories rather than searching them. `--unread` shows what has never been retrieved, oldest first |
+| `knowl edit <id>` | Open one memory in the local viewer to edit it. Accepts the eight-character id `knowl list` prints |
 | `knowl timeline <item-id>` | Print immutable assertions for one item |
 | `knowl conflicts` | List active exclusive conflict identities |
 | `knowl supersede <item-id> <replacement-id>` | Retire one item in favor of its replacement |
@@ -1782,7 +1849,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access] [--tombstone-days N]` | Preview or apply duplicate, archive, compression, and tombstone maintenance |
 | `knowl forget-log [--limit N] [--repo <name>] [--json] [--prune-days N]` | Show why knowledge items were destroyed — policy, reason, and the retrieval evidence it overruled — or prune those records |
 | `knowl pr --since <commit> [--dry-run]` | Find drift candidates and, unless dry-run, mark them for review |
-| `knowl view [--port <port>]` | Start the local GET-only viewer |
+| `knowl view [--port <port>]` | Start the local viewer: browse, read, edit, add and archive memory |
 | `knowl serve` | Start the stdio MCP server |
 | `knowl agent-event\|agent-hook\|agent-reminder` | Host-integration commands used by installed lifecycle configuration |
 

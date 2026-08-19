@@ -14,11 +14,11 @@
   </g>
 
   <g text-anchor="middle">
-    <text x="138" y="142" font-size="40" font-weight="800" fill="#3987e5">100<tspan font-size="20" font-weight="700" fill="#7cb0f5">%</tspan></text>
+    <text x="138" y="142" font-size="40" font-weight="800" fill="#39d3e5">100<tspan font-size="20" font-weight="700" fill="#7ce8f5">%</tspan></text>
     <text x="138" y="169" font-size="13" font-weight="600" fill="#c3c2b7">mean reciprocal rank</text>
     <text x="138" y="188" font-size="12" fill="#898781">expected decision ranked first</text>
 
-    <text x="380" y="142" font-size="40" font-weight="800" fill="#eda100">27</text>
+    <text x="380" y="142" font-size="40" font-weight="800" fill="#edbd00">27</text>
     <text x="380" y="169" font-size="13" font-weight="600" fill="#c3c2b7">stale-active returns</text>
     <text x="380" y="188" font-size="12" fill="#898781">21 stale-trap failures</text>
 

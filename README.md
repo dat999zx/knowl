@@ -4,11 +4,11 @@
 
 **Your CLAUDE.md only grows. Knowl retires facts when they change.**
 
-[![npm](https://img.shields.io/npm/v/%40dat999zx%2Fknowl?color=3987e5&label=npm)](https://www.npmjs.com/package/@dat999zx/knowl)
+[![npm](https://img.shields.io/npm/v/%40dat999zx%2Fknowl?color=4fd8e8&label=npm)](https://www.npmjs.com/package/@dat999zx/knowl)
 [![CI](https://img.shields.io/github/actions/workflow/status/dat999zx/knowl/ci.yml?branch=main&label=CI)](https://github.com/dat999zx/knowl/actions/workflows/ci.yml)
-[![license](https://img.shields.io/badge/license-Apache--2.0-199e70)](LICENSE)
-[![node](https://img.shields.io/badge/node-%E2%89%A522-3987e5)](package.json)
-[![MCP](https://img.shields.io/badge/protocol-MCP-eda100)](https://modelcontextprotocol.io)
+[![license](https://img.shields.io/badge/license-Apache--2.0-85c577)](LICENSE)
+[![node](https://img.shields.io/badge/node-%E2%89%A522-70b6fd)](package.json)
+[![MCP](https://img.shields.io/badge/protocol-MCP-cab049)](https://modelcontextprotocol.io)
 
 <p align="center">
   <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="Scores 90 on MemoryAgentBench FactConsolidation single-hop at 262K" height="38" /></picture></a>
@@ -408,6 +408,8 @@ The commands worth knowing on day one:
 
 ```bash
 knowl query "auth design"              # search project memory
+knowl list --unread                    # browse it — and see what nothing ever reads
+knowl edit <item-id>                   # open one memory in the viewer to fix it
 knowl state                            # the active memory, as a hierarchy
 knowl conflicts                        # items that contradict each other
 knowl timeline <item-id>               # every version an atom ever had
@@ -556,22 +558,33 @@ is refused as before. Either way a repo's private knowledge stays private until 
 
 ### See it: the local viewer
 
-`knowl view` starts a read-only inspector on `127.0.0.1` with a fresh access token per launch —
-knowing the port is not enough to read anything.
+`knowl view` starts an editor on `127.0.0.1` with a fresh access token per launch — knowing the
+port is not enough to read anything, and writes additionally require the request to name this
+viewer as its origin, so another page you happen to have open cannot write here.
 
 ```bash
 knowl view
 ```
 
 <p align="center">
-  <img src="docs/assets/viewer-graph.png" alt="Knowl local viewer showing the project-memory graph" width="48%" />
-  <img src="docs/assets/viewer-inspect.png" alt="Knowl local viewer showing details for a selected knowledge atom" width="48%" />
+  <img src="docs/assets/viewer-graph.png" alt="The Knowl local viewer: the memory graph, linked only through tags few atoms share, with unlinked atoms settling at the rim" width="48%" />
+  <img src="docs/assets/viewer-inspect.png" alt="The Knowl local viewer list: every atom with an unread mark in the margin, and one atom open in the inspector with its markdown rendered" width="48%" />
 </p>
 
-Search, filter by category, spot stale rings, focus a neighborhood, and open any atom to read its
-evidence and timeline. The graph links atoms through shared tags and category-derived edges — a
-navigation aid, not a causal or evidence graph. It shows full local content across every status, so
-loopback binding is the privacy boundary: do not put it behind a public proxy or tunnel.
+**This is where you fix what your agents got wrong.** Open any atom to read its evidence and
+timeline, then edit it, archive it, or write a new one by hand. Archiving is reversible — Restore
+is on the same panel.
+
+Beside the graph there is a list, with a lens for **what nothing has ever read**. That one earns
+its place: search only reaches memory you already suspect exists, and an atom carrying no
+information is precisely the one nobody thinks to look for. Sorted oldest-first, it surfaces on its
+own. `knowl list --unread` asks the same question from the terminal.
+
+The graph links atoms only through tags **few** atoms share — a tag on dozens of them is a
+category, and the rail already filters by those. An atom nothing else is about stays unlinked
+rather than being tied to an arbitrary neighbour. It is a navigation aid, not a causal or
+evidence graph. It shows full local content across every status, so loopback binding is the
+privacy boundary: do not put it behind a public proxy or tunnel.
 
 → [Local viewer](docs/reference.md#local-viewer)
 
@@ -618,7 +631,7 @@ usually what you actually need to know.
 | How several repos share memory safely | [Workspaces](docs/reference.md#workspaces) |
 | How a procedure becomes reusable | [Skills and synthesis](docs/reference.md#learned-skills-and-synthesis) |
 | How to export, snapshot, or restore | [Portability and maintenance](docs/reference.md#portability-and-maintenance) |
-| What the viewer shows, and its privacy boundary | [Local viewer](docs/reference.md#local-viewer) |
+| How to read, correct and add memory by hand | [Local viewer](docs/reference.md#local-viewer) |
 | How the pieces fit, and where the trust boundaries are | [Architecture](docs/reference.md#architecture-and-security-boundaries) |
 | How to wire a specific host | [Agent setup](docs/reference.md#agent-setup) |
 | How the numbers on this page were measured | [Benchmarks](docs/reference.md#benchmarks) |
