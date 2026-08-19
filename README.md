@@ -2,7 +2,7 @@
 
 <img src="docs/assets/hero.svg" alt="Knowl — persistent memory across sessions for Claude Code, Cursor and Codex, over MCP" width="100%" />
 
-**Your CLAUDE.md only grows. Knowl retires a fact the moment it stops being true.**
+**Your CLAUDE.md only grows. Knowl retires facts when they change.**
 
 [![npm](https://img.shields.io/npm/v/%40dat999zx%2Fknowl?color=3987e5&label=npm)](https://www.npmjs.com/package/@dat999zx/knowl)
 [![CI](https://img.shields.io/github/actions/workflow/status/dat999zx/knowl/ci.yml?branch=main&label=CI)](https://github.com/dat999zx/knowl/actions/workflows/ci.yml)
@@ -32,20 +32,15 @@
 
 ---
 
-Every coding agent starts blank, so you keep a file. `CLAUDE.md`, `.cursorrules`, a notes doc in
-the repo. It only ever grows. Six months in it still says you use the database you migrated off
-last spring, because nothing ever told it that decision was over — and now both answers are in
-there and the agent picks one.
+Your agent starts every session blank, so you keep a `CLAUDE.md`. It only grows. Six months in it
+still names the database you migrated off last spring, and now the agent gets both answers.
 
-Knowl is **persistent memory across sessions** for Claude Code, Cursor and Codex, over
-[MCP](https://modelcontextprotocol.io) or the `knowl` CLI. The difference from a file, and from
-every append-only memory store: **a replacement retires its predecessor at write time.** The stale
-value stops being retrievable instead of competing with the new one forever.
+Knowl is persistent memory for Claude Code, Cursor and Codex, over
+[MCP](https://modelcontextprotocol.io) or the CLI. When a fact changes, the old one is retired
+instead of competing with the new one.
 
-Switching that one behaviour off costs **51 points of retrieval accuracy** — 98% top-1 down to
-47% — and **17 points end-to-end**, 90 down to 73, once a model has to read what came back. Same
-corpus, same ranker, one variable.
-[Both measurements ↓](#the-idea-memory-that-retires-itself)
+Turn that off and retrieval drops from 98% to 47%. End to end, 90 to 73.
+[How it was measured ↓](#the-idea-memory-that-retires-itself)
 
 ## Quick start
 
