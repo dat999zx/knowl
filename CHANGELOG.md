@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.6.0 — 2026-08-19
 
 A person can now read, correct and add memory by hand — `knowl view` became an editor, and two new
 commands make the store browsable from the terminal. Plus two changes to what a stored atom is
