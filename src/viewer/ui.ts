@@ -133,12 +133,80 @@ export const VIEWER_HTML = `<!doctype html>
     font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em;
     color: var(--faint); pointer-events: none; user-select: none;
   }
-  .stagehead { position: absolute; left: 18px; top: 16px; pointer-events: none; }
+  .stagehead {
+    position: absolute; left: 18px; right: 18px; top: 16px; z-index: 3;
+    display: flex; align-items: center; gap: 12px;
+    /* The eyebrow must stay click-through so it never eats a drag on the canvas beneath it;
+       the controls opt back in individually. */
+    pointer-events: none;
+  }
   .stagehead .t { font-size: 12.5px; color: var(--muted); }
+  .stagehead .viewswitch, .stagehead #new-atom { pointer-events: auto; }
+  .stagehead #new-atom { margin-left: auto; }
+
+  .viewswitch { display: flex; gap: 2px; }
+  .viewswitch button, #new-atom {
+    background: var(--panel-solid); border: 1px solid var(--line); color: var(--muted);
+    padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12.5px; border-radius: 6px;
+  }
+  .viewswitch button[aria-selected="true"] { color: var(--ink); border-color: var(--line-strong); }
+  .viewswitch button:hover, #new-atom:hover { color: var(--ink); border-color: var(--line-strong); }
+
+  .listwrap { position: absolute; inset: 52px 0 0 0; overflow: auto; padding: 8px 18px 24px; }
+  .lenses { display: flex; gap: 4px; margin-bottom: 12px; }
+  .lenses button {
+    background: transparent; border: 1px solid var(--line); color: var(--muted);
+    padding: 4px 10px; cursor: pointer; font: inherit; font-size: 12.5px; border-radius: 6px;
+  }
+  .lenses button.on { color: var(--ink); border-color: var(--line-strong); }
+  .lenses .n { opacity: .6; margin-left: 5px; }
+  table.atoms { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table.atoms th {
+    text-align: left; color: var(--faint); font-weight: 500; font-size: 11px;
+    letter-spacing: .04em; text-transform: uppercase;
+    border-bottom: 1px solid var(--line); padding: 6px 8px;
+  }
+  table.atoms td { border-bottom: 1px solid var(--line); padding: 7px 8px; color: var(--muted); }
+  table.atoms tbody tr:hover td { background: var(--panel-solid); cursor: pointer; }
+  table.atoms td.t { color: var(--ink); max-width: 52ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.atoms .num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.atoms .zero { color: var(--c-architecture); }
+  .empty-list { color: var(--muted); padding: 18px 8px; }
+
+  .acts { display: flex; gap: 8px; margin-top: 14px; }
+  .acts button {
+    background: var(--panel-solid); border: 1px solid var(--line); color: var(--ink);
+    padding: 6px 13px; cursor: pointer; font: inherit; font-size: 12.5px; border-radius: 6px;
+  }
+  .acts button:hover { border-color: var(--line-strong); }
+  .acts button.danger:hover { border-color: #8a4b4b; color: #f0c0c0; }
+  .editform label, #newform label { display: block; margin: 11px 0; color: var(--muted); font-size: 11.5px; }
+  .editform input, .editform textarea, .editform select,
+  #newform input, #newform textarea, #newform select {
+    display: block; width: 100%; margin-top: 5px; background: #0c1119; color: var(--ink);
+    border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; font: inherit;
+    font-size: 12.5px; box-sizing: border-box; outline: none;
+  }
+  .editform input:focus, .editform textarea:focus, .editform select:focus,
+  #newform input:focus, #newform textarea:focus, #newform select:focus {
+    border-color: #2f5f9e; box-shadow: 0 0 0 3px rgba(57,135,229,0.16);
+  }
+  .editform textarea, #newform textarea { resize: vertical; font-family: var(--mono); font-size: 12px; }
+  dialog#newdlg {
+    background: var(--panel-solid); color: var(--ink); border: 1px solid var(--line);
+    border-radius: 12px; max-width: 720px; width: 90vw; padding: 22px 24px;
+  }
+  dialog#newdlg h2 { margin: 0 0 4px; font-size: 15px; }
+  dialog#newdlg::backdrop { background: rgba(3, 5, 9, 0.66); }
+  .err { color: #f0a0a0; margin-top: 10px; font-size: 12.5px; }
   .empty {
     position: absolute; inset: 0; display: grid; place-content: center; text-align: center;
     color: var(--muted); gap: 8px; padding: 24px;
+    /* It covers the whole stage and is a later sibling than .listwrap, so without this it
+       swallows clicks on the lens buttons whenever the store is empty. */
+    pointer-events: none;
   }
+  .empty code { pointer-events: auto; }
   .empty h2 { font-size: 16px; color: var(--ink); margin: 0; }
   .empty code { font-family: var(--mono); font-size: 12px; color: #6cb0ff; background: #0c1119; padding: 2px 6px; border-radius: 5px; }
 
@@ -237,8 +305,26 @@ export const VIEWER_HTML = `<!doctype html>
   </aside>
 
   <main class="stage">
-    <div class="stagehead"><span class="eyebrow">Project brain</span></div>
+    <div class="stagehead">
+      <span class="eyebrow">Project brain</span>
+      <div class="viewswitch" role="tablist">
+        <button id="tab-graph" role="tab" aria-selected="true">Graph</button>
+        <button id="tab-list" role="tab" aria-selected="false">List</button>
+      </div>
+      <button id="new-atom" class="primary">+ New memory</button>
+    </div>
     <canvas id="graph"></canvas>
+    <div class="listwrap" id="listwrap" hidden>
+      <div class="lenses" role="tablist">
+        <button data-lens="all" class="on" role="tab">All <span class="n" id="n-all"></span></button>
+        <button data-lens="unread" role="tab">Unread <span class="n" id="n-unread"></span></button>
+        <button data-lens="stale" role="tab">Stale <span class="n" id="n-stale"></span></button>
+      </div>
+      <table class="atoms"><thead><tr>
+        <th>Title</th><th>Category</th><th>Freshness</th><th>Age</th><th class="num">Reads</th>
+      </tr></thead><tbody id="atomrows"></tbody></table>
+      <p class="empty-list" id="listempty" hidden>Nothing matches.</p>
+    </div>
     <div class="hint">drag node to pull · drag canvas to pan · scroll to zoom · click to inspect</div>
     <div class="empty" id="empty" hidden>
       <span class="eyebrow">Empty brain</span>
@@ -250,6 +336,24 @@ export const VIEWER_HTML = `<!doctype html>
   <aside class="inspector" id="inspector" aria-hidden="true"></aside>
 </div>
 <div class="tooltip" id="tooltip" hidden></div>
+<dialog id="newdlg"><form id="newform">
+  <h2>New memory</h2>
+  <label>Category<select name="category">
+    <option value="fact">fact</option>
+    <option value="decision">decision</option>
+    <option value="goal">goal</option>
+    <option value="constraint">constraint</option>
+    <option value="architecture">architecture</option>
+    <option value="state">state</option>
+    <option value="skill">skill</option>
+  </select></label>
+  <label>Title<input name="title" required /></label>
+  <label>Content<textarea name="content" rows="12" required></textarea></label>
+  <label>Tags<input name="tags" placeholder="comma, separated" /></label>
+  <div class="acts"><button type="submit">Save</button>
+  <button type="button" id="newcancel">Cancel</button></div>
+  <p class="err" id="newerr" hidden></p>
+</form></dialog>
 
 <script>
 (function () {
@@ -275,8 +379,13 @@ export const VIEWER_HTML = `<!doctype html>
   var W = 0, H = 0, dpr = 1, alpha = 1, t = 0;
 
   function esc(s) {
+    // Quotes are escaped too, because this is now used inside an attribute value
+    // (data-id on a table row) and not only as element text. Atom fields arrive from
+    // agents and from synced teammates, and the CSP here allows inline script, so a value
+    // that escapes its attribute would execute.
     return String(s == null ? "" : s)
-      .split("&").join("&amp;").split("<").join("&lt;").split(">").join("&gt;");
+      .split("&").join("&amp;").split("<").join("&lt;").split(">").join("&gt;")
+      .split('"').join("&quot;").split("'").join("&#39;");
   }
   function short(id) { return String(id).slice(0, 8); }
   function radius(n) { return 4.5 + Math.sqrt(n.degree || 0) * 2.3; }
@@ -448,7 +557,11 @@ export const VIEWER_HTML = `<!doctype html>
     }
   }
 
+  // Guards against a second render loop. Boot starts one, and save() starts one when the
+  // store was empty at boot; two would double the physics step per frame.
+  var looping = false;
   function frame() {
+    looping = true;
     t++;
     step();
     draw();
@@ -495,6 +608,8 @@ export const VIEWER_HTML = `<!doctype html>
         var cat = this.getAttribute("data-cat");
         hiddenCat[cat] = !hiddenCat[cat];
         this.className = hiddenCat[cat] ? "off" : "";
+        // Same reason as the search box: the canvas polls hiddenCat every frame, the table does not.
+        renderList();
       });
     }
   }
@@ -547,11 +662,72 @@ export const VIEWER_HTML = `<!doctype html>
         tagHtml +
         '<span class="eyebrow">Evidence</span><div class="ev" id="ins-ev"><p class="muted-note">Loading evidence.</p></div>' +
         '<span class="eyebrow">Timeline</span><div class="timeline" id="ins-tl"><p class="muted-note">Loading history.</p></div>' +
+        '<div class="acts">' +
+          '<button id="ins-edit">Edit</button>' +
+          (n.status === "archived"
+            ? '<button id="ins-restore">Restore</button>'
+            : '<button id="ins-archive" class="danger">Archive</button>') +
+        '</div>' +
+        '<form class="editform" id="ins-form" hidden>' +
+          '<label>Title<input name="title" required /></label>' +
+          '<label>Content<textarea name="content" rows="12" required></textarea></label>' +
+          '<label>Reasoning<textarea name="reasoning" rows="4"></textarea></label>' +
+          '<label>Tags<input name="tags" placeholder="comma, separated" /></label>' +
+          '<label>Category<select name="category">' +
+            CAT_ORDER.map(function (c) { return '<option value="' + c + '">' + c + '</option>'; }).join("") +
+          '</select></label>' +
+          '<label>Confidence<input name="confidence" type="number" min="0" max="1" step="0.05" /></label>' +
+          '<div class="acts"><button type="submit">Save</button>' +
+          '<button type="button" id="ins-cancel">Cancel</button></div>' +
+          '<p class="err" id="ins-err" hidden></p>' +
+        '</form>' +
       '</div>';
 
     inspector.classList.add("open");
     inspector.setAttribute("aria-hidden", "false");
     document.getElementById("ins-close").addEventListener("click", closeInspector);
+
+    var editForm = document.getElementById("ins-form");
+    document.getElementById("ins-edit").addEventListener("click", function () {
+      editForm.title.value = n.title || "";
+      editForm.content.value = n.content || "";
+      editForm.reasoning.value = n.reasoning || "";
+      editForm.tags.value = (n.tags || []).join(", ");
+      editForm.category.value = n.category;
+      editForm.confidence.value = n.confidence === null || n.confidence === undefined ? "" : n.confidence;
+      editForm.hidden = false;
+      editForm.title.focus();
+    });
+    document.getElementById("ins-cancel").addEventListener("click", function () { editForm.hidden = true; });
+
+    editForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var patch = {
+        title: editForm.title.value.trim(),
+        content: editForm.content.value,
+        reasoning: editForm.reasoning.value.trim() || null,
+        tags: editForm.tags.value.split(",").map(function (t) { return t.trim(); }).filter(Boolean),
+        category: editForm.category.value
+      };
+      if (editForm.confidence.value !== "") patch.confidence = Number(editForm.confidence.value);
+      save("/api/atoms/" + encodeURIComponent(n.id), "PATCH", patch, "ins-err");
+    });
+
+    var archiveButton = document.getElementById("ins-archive");
+    if (archiveButton) {
+      archiveButton.addEventListener("click", function () {
+        // Reversible, so it asks once rather than making anybody retype the title. Restore is
+        // on the same panel the moment it is archived.
+        if (!window.confirm('Archive "' + n.title + '"? It stops appearing in queries, and you can restore it.')) return;
+        save("/api/atoms/" + encodeURIComponent(n.id) + "/archive", "POST", undefined, "ins-err", n.id);
+      });
+    }
+    var restoreButton = document.getElementById("ins-restore");
+    if (restoreButton) {
+      restoreButton.addEventListener("click", function () {
+        save("/api/atoms/" + encodeURIComponent(n.id) + "/restore", "POST", undefined, "ins-err", n.id);
+      });
+    }
 
     fetchJSON("/api/evidence/" + encodeURIComponent(n.id)).then(function (rows) {
       var host = document.getElementById("ins-ev");
@@ -636,13 +812,223 @@ export const VIEWER_HTML = `<!doctype html>
     view.scale = Math.max(0.15, Math.min(4, view.scale * factor));
   }, { passive: false });
 
-  document.getElementById("search").addEventListener("input", function () { query = this.value.trim(); });
+  // The canvas re-reads query every frame, so it needed no redraw call. The table does.
+  document.getElementById("search").addEventListener("input", function () { query = this.value.trim(); renderList(); });
   document.getElementById("tg-labels").addEventListener("change", function () { showAllLabels = this.checked; });
   document.getElementById("tg-stale").addEventListener("change", function () { dimStale = this.checked; });
   document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeInspector(); });
   window.addEventListener("resize", resize);
 
   function fetchJSON(url) { return fetch(url).then(function (r) { return r.json(); }); }
+
+  // ---- writes ----
+  function showError(slotId, message) {
+    var slot = document.getElementById(slotId);
+    if (slot) { slot.textContent = message; slot.hidden = false; }
+    else window.alert(message);
+  }
+
+  function save(path, method, body, errorSlot, keepOpenFor) {
+    // Cleared on the way in, not only on success. Otherwise a retry that SUCCEEDS still sees a
+    // stale error, the dialog stays open, and the obvious response is to press Save again --
+    // which writes a second atom.
+    var slot = document.getElementById(errorSlot);
+    if (slot) { slot.hidden = true; slot.textContent = ""; }
+    return fetch(path, {
+      method: method,
+      headers: { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    }).then(function (response) {
+      if (!response.ok) {
+        return response.json().catch(function () { return {}; }).then(function (payload) {
+          throw new Error(payload.error || ("Request failed: " + response.status));
+        });
+      }
+      // Re-fetch rather than splicing the row in place. The store computes contentHash,
+      // freshness and updatedAt on write, so a locally patched row would disagree with the
+      // database in exactly the fields the list sorts and filters on.
+      return fetchJSON("/api/graph").then(function (data) {
+        var fresh = data.nodes || [];
+        for (var i = 0; i < fresh.length; i++) {
+          var was = byId[fresh[i].id];
+          // Positions carry across by id. Rebuilding them would make the graph jump on every
+          // save, which reads as the edit having changed the shape of the knowledge rather
+          // than one atom's text.
+          if (was) {
+            fresh[i].x = was.x; fresh[i].y = was.y; fresh[i].vx = was.vx; fresh[i].vy = was.vy;
+          } else {
+            fresh[i].x = (Math.random() - 0.5) * 420; fresh[i].y = (Math.random() - 0.5) * 420;
+            fresh[i].vx = 0; fresh[i].vy = 0;
+          }
+        }
+        nodes = fresh;
+        links = data.links || [];
+        // Rebuilt rather than preserved: links derive from tags and category, so editing
+        // either changes them, and a stale adj asserts a relationship the store no longer holds.
+        byId = {}; adj = {};
+        for (var j = 0; j < nodes.length; j++) { byId[nodes[j].id] = nodes[j]; adj[nodes[j].id] = []; }
+        for (var k = 0; k < links.length; k++) {
+          var l = links[k];
+          if (adj[l.source]) adj[l.source].push(l.target);
+          if (adj[l.target]) adj[l.target].push(l.source);
+        }
+        renderLegend(); renderStats(); renderList();
+        // Boot returns before starting the render loop when the store is empty, so the very
+        // first atom would otherwise leave the graph blank and "Empty brain" on screen until a
+        // reload. Start it here if it was never started.
+        document.getElementById("empty").hidden = nodes.length > 0;
+        if (nodes.length && !looping) { fit(); frame(); }
+        // A new atom spawns at a random position, and by now alpha is below the freeze
+        // threshold, so without reheating the layout it never actually gets placed.
+        reheat(0.35);
+        // Reopen rather than close when the atom still exists. Archiving closed the panel and
+        // the row then failed the active filter, so the Restore button this promises was
+        // unreachable without hunting for a dot in the graph.
+        var still = byId[keepOpenFor];
+        if (still) openInspector(still); else closeInspector();
+      });
+    }).catch(function (error) {
+      // A write that fails where nobody sees it is worse than one that refuses loudly: the
+      // user walks away believing the correction landed.
+      showError(errorSlot, error.message);
+    });
+  }
+
+  // ---- list ----
+  var reads = {};
+  var readsFailed = false;
+  var lens = "all";
+
+  function ageDays(iso) {
+    if (!iso) return null;
+    return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  }
+
+  // Absent from /api/reads means never retrieved. There is no stored zero.
+  function readCount(item) { return reads[item.id] || 0; }
+
+  function inLens(item) {
+    if (lens === "unread") return readCount(item) === 0;
+    if (lens === "stale") return item.freshness !== "fresh";
+    return true;
+  }
+
+  // Everything except the lens. The lens tabs count within THIS set, so a badge can never
+  // disagree with the table it sits above -- "All 137" over four visible rows is a badge
+  // describing a store the user is not looking at.
+  function passesFilters(item) {
+    if (item.status !== "active") return false;
+    if (hiddenCat[item.category]) return false;
+    var q = query.toLowerCase();
+    if (!q) return true;
+    return (item.title + " " + (item.tags || []).join(" ")).toLowerCase().indexOf(q) >= 0;
+  }
+
+  function listRows() {
+    return nodes.filter(function (item) {
+      // nodes carries every status -- buildGraph does not filter -- so this is load-bearing.
+      return passesFilters(item) && inLens(item);
+    }).sort(function (a, b) {
+      // Unread sorts oldest-first: the longest-ignored atom is the likeliest dead weight and
+      // the one somebody scrolling would otherwise never reach.
+      var l = String(a.updatedAt || ""), r = String(b.updatedAt || "");
+      return lens === "unread" ? l.localeCompare(r) : r.localeCompare(l);
+    });
+  }
+
+  function renderList() {
+    // The table is rebuilt from scratch with a listener per row, and the search box fires on
+    // every keystroke. Skip it while the graph is showing; setView re-renders on the way in.
+    if (view !== "list") return;
+    var rows = listRows();
+    var body = document.getElementById("atomrows");
+    if (!body) return;
+    body.innerHTML = rows.map(function (item, index) {
+      var age = ageDays(item.updatedAt);
+      var n = readCount(item);
+      // The attribute carries OUR row index, never the atom's id. Ids are not ours to trust:
+      // importKnowledge writes entry.item.id verbatim from a JSONL file and knowl cloud
+      // receive routes through it, so an imported dump or a teammate's send can carry an
+      // arbitrary string. esc() escapes quotes as well now, but the safest attribute is one
+      // that never holds foreign data at all.
+      return '<tr data-i="' + index + '">' +
+        '<td class="t">' + esc(item.title) + "</td>" +
+        '<td>' + esc(item.category) + "</td>" +
+        '<td>' + esc(item.freshness) + "</td>" +
+        '<td>' + (age === null ? "&mdash;" : age + "d") + "</td>" +
+        '<td class="num' + (n === 0 ? " zero" : "") + '">' + n + "</td>" +
+      "</tr>";
+    }).join("");
+    var emptyNote = document.getElementById("listempty");
+    emptyNote.hidden = rows.length > 0;
+    // Say so rather than letting the lens assert something false about the whole store.
+    emptyNote.textContent = readsFailed && lens === "unread"
+      ? "Read counts are unavailable, so this lens cannot be trusted."
+      : "Nothing matches.";
+
+    var visible = nodes.filter(passesFilters);
+    document.getElementById("n-all").textContent = visible.length;
+    document.getElementById("n-unread").textContent = visible.filter(function (i) { return readCount(i) === 0; }).length;
+    document.getElementById("n-stale").textContent = visible.filter(function (i) { return i.freshness !== "fresh"; }).length;
+
+    var trs = body.querySelectorAll("tr");
+    for (var i = 0; i < trs.length; i++) {
+      trs[i].addEventListener("click", function () {
+        var item = rows[Number(this.getAttribute("data-i"))];
+        if (item) openInspector(item);
+      });
+    }
+  }
+
+  var view = "graph";
+  function setView(next) {
+    var isList = next === "list";
+    view = next;
+    document.getElementById("listwrap").hidden = !isList;
+    document.getElementById("graph").hidden = isList;
+    document.getElementById("tab-list").setAttribute("aria-selected", String(isList));
+    document.getElementById("tab-graph").setAttribute("aria-selected", String(!isList));
+    if (isList) { renderList(); return; }
+    // A hidden canvas measures 0x0, so any resize while the list was showing set the backing
+    // store to zero and the graph came back blank until the window was resized again.
+    resize();
+    reheat(0.02);
+  }
+
+  // A native dialog gives focus trapping, Esc-to-close and the backdrop without a library.
+  var newDialog = document.getElementById("newdlg");
+  var newForm = document.getElementById("newform");
+  document.getElementById("new-atom").addEventListener("click", function () {
+    document.getElementById("newerr").hidden = true;
+    newDialog.showModal();
+  });
+  document.getElementById("newcancel").addEventListener("click", function () { newDialog.close(); });
+  newForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    save("/api/atoms", "POST", {
+      category: newForm.category.value,
+      title: newForm.title.value.trim(),
+      content: newForm.content.value,
+      tags: newForm.tags.value.split(",").map(function (t) { return t.trim(); }).filter(Boolean)
+    }, "newerr").then(function () {
+      // Only clear on success -- closing a dialog that refused the write would throw the
+      // text away along with the reason it was refused.
+      if (document.getElementById("newerr").hidden) { newDialog.close(); newForm.reset(); }
+    });
+  });
+
+  document.getElementById("tab-graph").addEventListener("click", function () { setView("graph"); });
+  document.getElementById("tab-list").addEventListener("click", function () { setView("list"); });
+  var lensButtons = document.querySelectorAll(".lenses button");
+  for (var li = 0; li < lensButtons.length; li++) {
+    lensButtons[li].addEventListener("click", function () {
+      lens = this.getAttribute("data-lens");
+      for (var lj = 0; lj < lensButtons.length; lj++) {
+        lensButtons[lj].classList.toggle("on", lensButtons[lj] === this);
+      }
+      renderList();
+    });
+  }
 
   // ---- boot ----
   resize();
@@ -660,6 +1046,15 @@ export const VIEWER_HTML = `<!doctype html>
       if (adj[l.source]) adj[l.source].push(l.target);
       if (adj[l.target]) adj[l.target].push(l.source);
     }
+    // Read counts drive the Unread lens. Fetched before the empty-store early return so an
+    // empty list still renders its own empty state rather than only the graph's.
+    fetchJSON("/api/reads").then(function (r) { reads = r || {}; renderList(); }, function () {
+      // Without this the rejection is unhandled, reads stays empty, and every atom reports
+      // zero -- so the Unread lens quietly claims the entire store has never been read.
+      reads = {};
+      readsFailed = true;
+      renderList();
+    });
     if (!nodes.length) { document.getElementById("empty").hidden = false; return; }
     renderLegend();
     renderStats();
@@ -668,6 +1063,14 @@ export const VIEWER_HTML = `<!doctype html>
     alpha = 0.05;
     fit();
     frame();
+
+    // knowl edit <id> deep-links here. Open the row rather than leaving somebody to hunt for
+    // a dot in a physics simulation, which is the whole reason that command exists.
+    var wanted = /^#\/atom\/(.+)$/.exec(window.location.hash || "");
+    if (wanted) {
+      var target = byId[decodeURIComponent(wanted[1])];
+      if (target) { setView("list"); openInspector(target); }
+    }
   });
 })();
 </script>
