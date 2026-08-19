@@ -3,6 +3,58 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+Two changes to what a stored atom is allowed to lose. One is about delivery — a long body arriving
+with its conclusion cut off — and the other about the write path, where a claim could be retired by
+its own negation.
+
+### A truncated body keeps both ends, not just the head
+
+Atom bodies here are written with the verdict last: `CONSEQUENCE`, `THE FIX`, `THE LIMIT OF THIS
+EVIDENCE`. Delivery truncation was a head slice, so it systematically handed over the setup and
+dropped the finding — and the caveat that had to travel with it went with the rest.
+
+That would be recoverable if the `truncated` flag were acted on, and mostly it is not. The withheld
+tail was not being declined; it was going unread, which is exactly the case a head slice makes
+invisible.
+
+An over-long body now keeps a 60/40 head and tail around a marked elision. **This is not a ceiling
+change and does not spend a single extra character** — the budget is identical, and only which
+characters survive it moves. `MAX_ITEM_CONTENT_CHARS` stays at 2,000 for the reasons recorded when
+it was set, and reading an item whole by `id` still returns it whole.
+
+Applied to the three surfaces that hand a stored body to an agent: `knowl_query` results, the
+`knowl://category/{name}` resource, and `knowl_task_start`'s relevant memory. Titles, tags and
+`affectedPaths` deliberately keep the head slice — a path with its middle removed is not a shorter
+path, it is an unusable one.
+
+### A claim can no longer be retired by its own negation
+
+Write-time supersession judges whether two atoms share a subject by testing whether one title's
+significant tokens are contained in the other's. None of `not`, `no`, `never` or `longer` is a stop
+word, so an affirmative title was a strict subset of its own negation and the test fired. "Push gate
+blocks default branch" retired "Push gate no longer blocks default branch", in whichever order the
+two writes happened to arrive, and the survivor then asserted the opposite of what it had retired
+with nothing said about it.
+
+Two titles that differ only by polarity are now left to coexist. The incoming atom is still
+inserted, the predecessor stays active, and the pair is reported through the near-duplicate channel
+that already hands back the exact retire call — so an agent that means to retire the other one says
+so, and an explicit `supersedes` is never second-guessed.
+
+Deliberately narrow. Ambiguous stems (`can`, `won`, `don`) are left out: a missed negation costs
+what it already costs, while a false positive costs a supersession the caller then has to make by
+hand. The numeric case that similar guards elsewhere are built around does not exist here — digits
+survive tokenization, so `768` is simply absent from a title saying `1024` and the two already
+coexist.
+
+**Provenance deliberately does not gate supersession.** A second guard was proposed alongside this
+one — refuse to let an atom with no provenance retire one claiming `observed` — and it was dropped
+on measurement rather than on principle. Replayed against 101 real supersessions it blocked 3, and
+all three were legitimate corrections, including one whose entire point was that the measurement it
+replaced had been defective. Unset provenance is not a weak claim; it is what most writes look like.
+
 ## 5.5.0 — 2026-08-19
 
 Pushing to a workspace got slower the more memory a repository had, and the reason was never the
