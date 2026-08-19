@@ -42,9 +42,10 @@ Knowl is **persistent memory across sessions** for Claude Code, Cursor and Codex
 every append-only memory store: **a replacement retires its predecessor at write time.** The stale
 value stops being retrievable instead of competing with the new one forever.
 
-On MemoryAgentBench's FactConsolidation task, that one behaviour is worth **17 points** — 90 with
-supersession on, 73 with it off, same corpus, same retrieval, same reader.
-[See the benchmark ↓](#verified-end-to-end-in-the-benchmarks-own-harness)
+Switching that one behaviour off costs **51 points of retrieval accuracy** — 98% top-1 down to
+47% — and **17 points end-to-end**, 90 down to 73, once a model has to read what came back. Same
+corpus, same ranker, one variable.
+[Both measurements ↓](#the-idea-memory-that-retires-itself)
 
 ## Quick start
 
