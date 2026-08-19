@@ -2,7 +2,7 @@
 
 <img src="docs/assets/hero.svg" alt="Knowl — persistent memory across sessions for Claude Code, Cursor and Codex, over MCP" width="100%" />
 
-**Local-first. Typed. And retired the moment it stops being true.**
+**Your CLAUDE.md only grows. Knowl retires a fact the moment it stops being true.**
 
 [![npm](https://img.shields.io/npm/v/%40dat999zx%2Fknowl?color=3987e5&label=npm)](https://www.npmjs.com/package/@dat999zx/knowl)
 [![CI](https://img.shields.io/github/actions/workflow/status/dat999zx/knowl/ci.yml?branch=main&label=CI)](https://github.com/dat999zx/knowl/actions/workflows/ci.yml)
@@ -32,15 +32,19 @@
 
 ---
 
-Coding agents start every session blank, so teams write things down — and those notes only ever
-grow. Six months in, the store still reports the database you migrated off last spring,
-because nothing ever told it that decision was over.
+Every coding agent starts blank, so you keep a file. `CLAUDE.md`, `.cursorrules`, a notes doc in
+the repo. It only ever grows. Six months in it still says you use the database you migrated off
+last spring, because nothing ever told it that decision was over — and now both answers are in
+there and the agent picks one.
 
-Knowl is **persistent memory across sessions** for Claude Code, Cursor and Codex: a
-repository-local store of **typed knowledge atoms** — decisions, constraints, architecture, facts,
-goals, state, and skills — read and written over an [MCP](https://modelcontextprotocol.io) memory
-server or the `knowl` CLI, where **a replacement retires its predecessor at write time** instead of
-sitting beside it.
+Knowl is **persistent memory across sessions** for Claude Code, Cursor and Codex, over
+[MCP](https://modelcontextprotocol.io) or the `knowl` CLI. The difference from a file, and from
+every append-only memory store: **a replacement retires its predecessor at write time.** The stale
+value stops being retrievable instead of competing with the new one forever.
+
+On MemoryAgentBench's FactConsolidation task, that one behaviour is worth **17 points** — 90 with
+supersession on, 73 with it off, same corpus, same retrieval, same reader.
+[See the benchmark ↓](#verified-end-to-end-in-the-benchmarks-own-harness)
 
 ## Quick start
 
