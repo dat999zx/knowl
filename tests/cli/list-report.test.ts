@@ -11,7 +11,7 @@ function atom(over: Record<string, unknown> = {}): any {
 }
 
 const ESC = String.fromCharCode(27);
-const ANSI = new RegExp(ESC + '\[[0-9;]*m', 'g');
+const ANSI = new RegExp(ESC + '[[]' + '[0-9;]*m', 'g');
 /** Output lines with colour removed, so column positions can be asserted. */
 function plainLines(text: string): string[] {
   return text.replace(ANSI, '').split(String.fromCharCode(10));

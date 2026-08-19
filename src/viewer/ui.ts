@@ -1066,7 +1066,7 @@ export const VIEWER_HTML = `<!doctype html>
 
     // knowl edit <id> deep-links here. Open the row rather than leaving somebody to hunt for
     // a dot in a physics simulation, which is the whole reason that command exists.
-    var wanted = /^#\/atom\/(.+)$/.exec(window.location.hash || "");
+    var wanted = /^#[/]atom[/](.+)$/.exec(window.location.hash || "");
     if (wanted) {
       var target = byId[decodeURIComponent(wanted[1])];
       if (target) { setView("list"); openInspector(target); }

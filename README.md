@@ -407,6 +407,8 @@ The commands worth knowing on day one:
 
 ```bash
 knowl query "auth design"              # search project memory
+knowl list --unread                    # browse it — and see what nothing ever reads
+knowl edit <item-id>                   # open one memory in the viewer to fix it
 knowl state                            # the active memory, as a hierarchy
 knowl conflicts                        # items that contradict each other
 knowl timeline <item-id>               # every version an atom ever had
@@ -568,10 +570,18 @@ knowl view
   <img src="docs/assets/viewer-inspect.png" alt="Knowl local viewer showing details for a selected knowledge atom" width="48%" />
 </p>
 
-Search, filter by category, spot stale rings, focus a neighborhood, and open any atom to read its
-evidence and timeline. The graph links atoms through shared tags and category-derived edges — a
-navigation aid, not a causal or evidence graph. It shows full local content across every status, so
-loopback binding is the privacy boundary: do not put it behind a public proxy or tunnel.
+**This is where you fix what your agents got wrong.** Open any atom to read its evidence and
+timeline, then edit it, archive it, or write a new one by hand. Archiving is reversible — Restore
+is on the same panel.
+
+Beside the graph there is a list, with a lens for **what nothing has ever read**. That one earns
+its place: search only reaches memory you already suspect exists, and an atom carrying no
+information is precisely the one nobody thinks to look for. Sorted oldest-first, it surfaces on its
+own. `knowl list --unread` asks the same question from the terminal.
+
+The graph links atoms through shared tags and category-derived edges — a navigation aid, not a
+causal or evidence graph. It shows full local content across every status, so loopback binding is
+the privacy boundary: do not put it behind a public proxy or tunnel.
 
 → [Local viewer](docs/reference.md#local-viewer)
 
@@ -618,7 +628,7 @@ usually what you actually need to know.
 | How several repos share memory safely | [Workspaces](docs/reference.md#workspaces) |
 | How a procedure becomes reusable | [Skills and synthesis](docs/reference.md#learned-skills-and-synthesis) |
 | How to export, snapshot, or restore | [Portability and maintenance](docs/reference.md#portability-and-maintenance) |
-| What the viewer shows, and its privacy boundary | [Local viewer](docs/reference.md#local-viewer) |
+| How to read, correct and add memory by hand | [Local viewer](docs/reference.md#local-viewer) |
 | How the pieces fit, and where the trust boundaries are | [Architecture](docs/reference.md#architecture-and-security-boundaries) |
 | How to wire a specific host | [Agent setup](docs/reference.md#agent-setup) |
 | How the numbers on this page were measured | [Benchmarks](docs/reference.md#benchmarks) |
