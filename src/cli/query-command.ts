@@ -16,7 +16,7 @@ import { resolveWorkspace } from '../workspace/resolve.js';
  */
 export const CLI_QUERY_LIMIT = 20;
 
-export type CliQueryItem = KnowledgeItem & { repo?: string; score?: number; abstained?: boolean };
+export type CliQueryItem = KnowledgeItem & { repo?: string; score?: number; cosine?: number; abstained?: boolean };
 
 export type CliQueryResult = {
   /**
@@ -55,13 +55,17 @@ function flat(items: CliQueryItem[]): CliQueryResult {
  * item, and the two numbers a reader acts on are these. `--as-of` carries neither, because
  * historical reconstruction does not run through the ranker at all.
  */
-function withRankerVerdict<T extends { explanation?: { finalScore?: number; abstained?: boolean } }>(
+function withRankerVerdict<T extends { explanation?: { finalScore?: number; abstained?: boolean; cosine?: number } }>(
   entry: T,
-): Omit<T, 'explanation'> & { score?: number; abstained?: boolean } {
+): Omit<T, 'explanation'> & { score?: number; cosine?: number; abstained?: boolean } {
   const { explanation, ...item } = entry;
   return {
     ...item,
     ...(typeof explanation?.finalScore === 'number' ? { score: Number(explanation.finalScore.toFixed(3)) } : {}),
+    // Three numbers now, still not the dozen contribution terms. `cosine` earns its place
+    // because it is the only one comparable to the floor and to another query's -- `score` is
+    // min-max scaled across this page, so on a two-row page its top is 1.0 regardless.
+    ...(typeof explanation?.cosine === 'number' ? { cosine: Number(explanation.cosine.toFixed(3)) } : {}),
     ...(explanation?.abstained ? { abstained: true } : {}),
   };
 }

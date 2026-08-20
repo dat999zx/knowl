@@ -227,7 +227,16 @@ Each `knowl_query` result is compacted before it is returned:
   no opinion on strength, so judge the content rather than the position. Reasons are
   `lexical-only` (no semantic half ran), `not embedded` (vector ran but never saw this row), and
   `layered namespaces` (each namespace scored against its own corpus, so the numbers are not
-  comparable to each other).
+  comparable to each other). **`score` orders one page and nothing more.** The semantic half is
+  min-max scaled across the candidates, so the top row sits near 1.0 whatever its similarity
+  was — on a two-item store an off-topic query and a perfect match both publish 0.96.
+- **`cosine`** — the raw similarity in [0,1], on the absolute scale `MODEL_RELEVANCE_FLOORS` is
+  measured against, so it means the same thing on every query and against every store. This is
+  the number to gate on when deciding whether memory holds the answer at all: for the pair
+  above, the cosines were 0.7928 and 0.9296. Present only where the row was actually judged
+  semantically — that is, absent on exactly the rows `score` reports as `uncalibrated`, because
+  an unjudged row's similarity is 0 by absence rather than by verdict. Unlike `score` it
+  survives layering, since an absolute similarity stays comparable across namespaces.
 
 Titles are capped separately at 200 characters, and previews of things retrievable in full
 elsewhere — evidence excerpts, timeline assertions, skill markdown, `knowl_skill_run` output —
