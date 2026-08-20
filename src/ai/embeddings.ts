@@ -117,8 +117,15 @@ export function estimateTokens(text: string): number {
  *
  * Exported for tests. It is a pure string function, and reaching it through `embed()` would
  * make a model download a prerequisite for asserting a slice.
+ *
+ * **`clipped` reports that some of the text was not embedded**, from either cause -- the
+ * 8,000-character pre-clip or the token budget. It exists because the loss was previously
+ * undetectable from outside: the return said what survived and nothing said that anything had
+ * not, so an author who wrote a 12 KB atom got a vector covering the first two-thirds of it and
+ * no way to find out (#132). No caller could reconstruct it either, short of comparing lengths
+ * against a constant this module does not export.
  */
-export function clipToTokenBudget(text: string): { text: string; tokens: number } {
+export function clipToTokenBudget(text: string): { text: string; tokens: number; clipped: boolean } {
   const capped = text.length > MAX_EMBED_CHARS ? text.slice(0, MAX_EMBED_CHARS) : text;
 
   let tokens = 0;
@@ -136,13 +143,14 @@ export function clipToTokenBudget(text: string): { text: string; tokens: number 
         return {
           text: capped.slice(0, Math.max(1, Math.floor(MAX_EMBED_TOKENS * charsPerToken))),
           tokens: MAX_EMBED_TOKENS,
+          clipped: true,
         };
       }
-      return { text: capped.slice(0, match.index), tokens };
+      return { text: capped.slice(0, match.index), tokens, clipped: true };
     }
     tokens += cost;
   }
-  return { text: capped, tokens };
+  return { text: capped, tokens, clipped: capped.length < text.length };
 }
 
 /** What the planner returns: the text to embed and where its vector belongs. */
@@ -387,6 +395,9 @@ export async function createLocalEmbeddingProvider(
     // Null for a model this build has not measured, which switches abstention off rather than
     // borrowing another model's number. See MODEL_RELEVANCE_FLOORS.
     relevanceFloor: relevanceFloorFor(vector.model),
+    // The same function `planEmbeddingBatches` runs on the way in, exposed so a caller holding
+    // the atom can say which one lost text. Pure and cheap -- a regex scan, no model.
+    clipToBudget: clipToTokenBudget,
     embed: async (texts: string[], options?: EmbedOptions) => {
       const vectors: number[][] = [];
       for (const batch of planEmbeddingBatches(texts, options)) {

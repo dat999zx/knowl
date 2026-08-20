@@ -113,10 +113,36 @@ export async function indexKnowledgeItemsBestEffort(projectId: string, items: Kn
   try {
     const embedder = await resolveEmbedder();
     if (!embedder) return;
+    const texts = items.map(buildKnowledgeEmbeddingText);
+    // Say so when part of an atom will not be searchable. This is the one moment the author is
+    // still present and can act on it -- by the time it is a vector covering the first
+    // two-thirds of a finding, nothing distinguishes it from one covering all of a shorter one.
+    //
+    // Deliberately only on the WRITE path. The reindex in `vector-index.ts` clips the same way,
+    // but it re-embeds the whole corpus and would reprint the same line for every over-long
+    // atom on every run, addressed to whoever happened to be reindexing rather than to whoever
+    // wrote it. A warning nobody can act on is the noise that teaches people to ignore the ones
+    // they can.
+    //
+    // Counted on the embedding text, not on `content`: `buildKnowledgeEmbeddingText` feeds the
+    // model title, content, reasoning and tags together, and it is that combined length the cap
+    // applies to. Quoting `content.length` here would name a number the author could not
+    // reconcile with the limit.
+    texts.forEach((text, index) => {
+      // No report available is not a claim that nothing was clipped -- see `clipToBudget`.
+      const report = embedder.clipToBudget?.(text);
+      if (!report?.clipped) return;
+      const embedded = report.text;
+      console.error(
+        `Note: embedded the first ${embedded.length} of ${text.length} characters of `
+        + `"${items[index].title}". The rest is stored but will not be found by search — `
+        + 'split it into smaller atoms.',
+      );
+    });
     // One text per forward pass. A single write already got that for free; a batch write of
     // several atoms did not, and its vectors then disagreed with the ones a reindex produced
     // for the same text. See `EmbedOptions`.
-    const vectors = await embedder.embed(items.map(buildKnowledgeEmbeddingText), { maxBatch: 1 });
+    const vectors = await embedder.embed(texts, { maxBatch: 1 });
     // One transaction for the batch. Each row written on its own is an implicit commit, and
     // this schema fsyncs the WAL on every one -- 11.57 ms per row against 0.088 ms inside a
     // transaction. A single-item write, which is the common case here, still takes the plain

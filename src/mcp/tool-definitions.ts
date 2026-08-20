@@ -309,7 +309,7 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
               content: {
                 type: 'string',
                 minLength: 1,
-                description: 'Knowledge content in markdown or plain text.',
+                description: 'The knowledge itself, and why it matters. One finding per atom: aim for about 2,000 characters, and split rather than trim. Bodies dense with file paths, backslashes or fenced code are the ones that fail before reaching the server -- prefer forward slashes, and use `knowl_ingest_atoms` for several findings at once. Content past 8,000 characters is stored but never embedded, so search will not find it.',
               },
               reasoning: {
                 type: 'string',
