@@ -79,8 +79,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check lockfile version
-        run: npm run check:lockfile
+      - name: Check version sync
+        run: npm run check:versions
 
       - name: Build
         run: npm run build

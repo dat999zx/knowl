@@ -3,6 +3,55 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.7.0 — 2026-08-20
+
+Knowl installs as a Claude Code plugin, and four places that described the product incorrectly
+now describe it correctly. No schema change, nothing removed.
+
+### Installable as a Claude Code plugin
+
+A `.claude-plugin/plugin.json` at the repository root makes the repo itself installable, the same
+whole-repo layout the marketplace uses for other external plugins. The manifest wires one MCP
+server — `npx -y @dat999zx/knowl serve` — so an install gets the full tool surface with no
+credentials and no build step. Validated with `claude plugin validate .`, the command the
+directory's CI runs.
+
+### The no-AI notice said conflict detection was off, one line above doing it
+
+`knowl decide` without an AI provider printed *"Falling back to direct insertion without conflict
+detection"* and then, on the next line, reported a superseded predecessor. Both cannot be true.
+
+Same-subject reconciliation is deterministic and runs regardless; what a provider adds is
+contradiction detection **across** subjects, where the new atom does not name the thing it
+invalidates. The notice now says that, and only appears alongside `Left active beside …` — the one
+outcome where a configured provider might have reconciled instead. On the common path, where the
+predecessor was retired cleanly, the provider's absence changed nothing and the line was noise.
+
+That wording had a measurable cost. It was read as *"supersession needs an API key"*, which is
+false, and that misreading reached the README before being caught. It was also the loudest line in
+the recorded demo, arguing against the feature the recording exists to show.
+
+### Documentation that contradicted the code
+
+Five comments across `drift-auto.ts`, `host-lifecycle.ts`, `schema.ts` and `tier.ts` still said the
+drift check leaves `freshness` alone. It has passed `apply: true` since 2026-08-13 — one of them
+sat 88 lines above the call that contradicts it. Two atoms in this project's own store were
+faithful transcriptions of those comments, and a session read them, concluded a shipped feature did
+not exist, and said so. Documentation drift became memory drift.
+
+The reference now also states the consequence of its own reconciliation threshold: a title needs
+two significant tokens to reconcile, so `"Database choice"` supersedes cleanly later and
+`"Use SQLite"` does not (`use` is a stopword). The example in the docs used the failing shape.
+
+### Version drift is checked rather than remembered
+
+`.claude-plugin/plugin.json` carries the version by hand and nothing kept it in step — the same
+shape as the demo Dockerfile that stayed pinned to `3.2.2` while users installed 5.5.0. The
+lockfile guard became `npm run check:versions` and now covers the manifest too. It caught the
+drift on this release, which was the first one after it was written.
+
+The README demo was re-recorded from a tarball packed out of the checkout rather than an npm pin,
+so it cannot fall behind the repository it sits in again.
 ## 5.6.0 — 2026-08-19
 
 A person can now read, correct and add memory by hand — `knowl view` became an editor, and two new
