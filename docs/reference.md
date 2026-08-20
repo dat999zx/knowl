@@ -73,10 +73,11 @@ It also prepares the local embedding model on a best-effort basis. If the model 
 setup still completes; the CLI lexical query remains available, and MCP can run BM25-only after
 vectors are disabled.
 
-Record a decision:
+Record a decision. **Title the subject, not the claim** — the reconciliation rules below
+explain why `"Database choice"` supersedes cleanly later and `"Use SQLite"` does not:
 
 ```bash
-knowl decide "Use SQLite" "Use SQLite for local project memory." \
+knowl decide "Database choice" "Use SQLite for local project memory." \
   --reasoning "Keeps storage repository-local and simple to operate." \
   --alternatives PostgreSQL MongoDB \
   --tags database local-first
@@ -172,6 +173,11 @@ and raw-output size limits still apply. Accepted writes then follow these reconc
 2. Knowl examines up to the top three active BM25 candidates in the same category.
    A normalized title subset with at least two significant shared tokens and at least `0.35`
    significant-token overlap identifies the same subject and retires the predecessor.
+   **That two-token floor is why a title should name the subject rather than assert the claim.**
+   `"Database choice"` and `"Cache backend"` carry two significant tokens and reconcile;
+   `"Redis"` and `"Use SQLite"` carry one (`use` is a stopword), so a later decision on the same
+   subject is left active beside the first. Rule 4 reports it and prints the `knowl supersede`
+   command, so nothing is lost silently — but the title decides whether it is automatic.
 3. If no detected candidate qualifies for supersession, an explicitly named active
    `supersedes` item is retired. A qualifying detected same-subject candidate currently takes
    priority when it differs from that explicit ID.
