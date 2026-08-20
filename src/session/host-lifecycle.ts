@@ -775,7 +775,9 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // A read-set with nothing collecting it grows for as long as the repository is used.
     await sweepReadSetsBestEffort(plusHoursIso(-READ_SET_RETENTION_HOURS));
     await closeInactiveHostSessionBindings();
-    // Detection only: names what moved and the command to review it, leaving `freshness` alone.
+    // Flips survivors to `needs_review` and stamps `last_drift_at`, then names what moved and
+    // the command to review it. Detection-only until 2026-08-13; see `drift-auto.ts` for why
+    // the narrowed signal made the flip survivable.
     const drift = await runAutoDriftCheckBestEffort(projectId, input.projectRoot);
     // Strictly after drift, and only when drift actually ran. `checked` is false on the run
     // that learns a baseline and on the re-baseline after a rebase -- both skip a window of

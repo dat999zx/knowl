@@ -146,10 +146,10 @@ export type ObservedUseResult = {
  * same "one proof of wrongness outweighs any history of usefulness" rule applied above.
  *
  * `last_drift_at` closes the hole stored freshness leaves, and it has to be a stored column
- * rather than the live candidate list. The session-start drift check is detection only — by
- * deliberate design it names what moved without flipping `freshness` — so an item whose files
- * changed this morning still reads `fresh` until somebody runs `knowl pr` by hand, which
- * is the same voluntary act this feature exists to stop depending on. But the live list only
+ * rather than the live candidate list. Since 2026-08-13 the session-start check does flip
+ * survivors to `needs_review`, which the `freshness = 'fresh'` clause above already excludes;
+ * the stamp is not redundant with it, because `updateKnowledgeItem` clears the two on
+ * different conditions. But the live list only
  * covers the one session that happened to straddle the commit: the watermark then advances,
  * the next session computes no candidates at all, and an item refused an hour ago sails
  * through unchanged. Measured on this store, 12 of the 85 items the recurrence gate selects

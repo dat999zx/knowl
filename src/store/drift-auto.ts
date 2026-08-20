@@ -4,7 +4,8 @@ import { checkKnowledgeDrift, getCurrentGitCommit, listChangedFilesSince, listRe
 export type AutoDriftResult = {
   /** False on the run that only learns the baseline; nothing was compared. */
   checked: boolean;
-  /** Items whose files changed since the watermark. Detection only — nothing is flipped. */
+  /** Items whose cited files moved since the watermark and survived classification. Each is
+   *  flipped to `needs_review` and stamped with `last_drift_at`; see `apply: true` below. */
   candidateCount: number;
   /** Up to the first few candidate titles, for the session-start warning. */
   candidateTitles: string[];
@@ -117,10 +118,10 @@ const DRIFT_STAMP_CHUNK = 250;
 /**
  * Record that these items' files moved, so a later pass can still tell.
  *
- * This is the one thing detection has to leave behind, and it is why the watermark advancing
- * is survivable. `freshness` stays untouched for the measured reason above; `last_drift_at`
- * is a separate column nothing reads at retrieval time, so recording an observation costs no
- * ranking and no warning volume. Without it the only trace of a window is the one warning
+ * This is what the check leaves behind besides the `needs_review` flip, and it is why the
+ * watermark advancing is survivable. `last_drift_at` is a separate column nothing reads at
+ * retrieval time, so the stamp itself costs no further ranking and no warning volume beyond
+ * what the flip already does. Without it the only trace of a window is the one warning
  * line, and the very next session — which finds `watermark === current` and computes no
  * candidates at all — has no way to know that an item reading `fresh` is a claim about files
  * that changed this morning and that nobody has looked at since.
