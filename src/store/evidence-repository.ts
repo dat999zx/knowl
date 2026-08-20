@@ -3,9 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Evidence, EvidenceInput, EvidenceRelationship, EvidenceType, KnowledgeEvidence, KnowledgeItem } from '../core/types.js';
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
-import { getClient } from './database.js';
+import { getClient, getProjectRoot } from './database.js';
 import { getKnowledgeItem } from './repository.js';
-import { containedRepoPath, normalizeLocator as normalizeReadSetLocator } from './read-set.js';
+import { containedRepoPath, normalizeLocator as normalizeReadSetLocator, repoRelativePath } from './read-set.js';
 
 const MAX_EXCERPT_LENGTH = 2_000;
 
@@ -21,43 +21,44 @@ function generateId(): string {
 /**
  * Canonical locator form, which is per type rather than global.
  *
- * - **`file` — a bare repo-relative path.** `isEvidenceStale` hands it straight to
+ * - **`file` -- a bare repo-relative path.** `isEvidenceStale` hands it straight to
  *   `path.resolve(projectRoot, ...)`, so a `file://` prefix would resolve to `<root>/file:/...`,
- *   which cannot exist, and every file evidence row would report stale permanently.
- * - **`symbol` — keeps its `symbol://path#name` scheme.** That string is `code_symbols.locator`,
+ *   which cannot exist, and every file evidence row would report stale permanently. An absolute
+ *   path inside the repository and a trailing slash are both recovered rather than kept, because
+ *   `D:/repo/src/a.ts` and `src/a.ts` name one file and storing both spellings means the
+ *   staleness check never matches -- a failure that is silent by construction.
+ * - **`symbol` -- keeps its `symbol://path#name` scheme.** That string is `code_symbols.locator`,
  *   the primary key `resolveSymbolEvidence` looks up; stripped of the scheme it matches no row
  *   and every symbol evidence falls through to the rename path or straight to stale.
- * - **Everything else — an opaque identifier, left alone.** A commit SHA, an agent name. None of
+ * - **Everything else -- an opaque identifier, left alone.** A commit SHA, an agent name. None of
  *   them reach the filesystem in `isEvidenceStale`, and running a path validator over a SHA would
  *   reject data that is perfectly valid.
  *
- * `file` and `symbol` are also the only two types whose locator can escape the project root, and
- * a locator that names a file outside the repository is not a locator -- so it is refused here
- * rather than stored and resolved later. `isEvidenceStale` checks containment a second time at
- * the point of use, because rows also arrive from `cloud/sync-apply.ts` and `store/portability.ts`
- * without passing through this function at all.
+ * **A locator that cannot be brought inside the root is stored as given, not refused.** Containment
+ * is enforced in `isEvidenceStale`, at the point the string would reach the filesystem, and that is
+ * where it has to be regardless: `cloud/sync-apply.ts` and `store/portability.ts` both insert
+ * without passing through here, so a write-side refusal buys no safety it does not already have.
+ * What it would buy is a failed write -- `attachEvidenceToKnowledge` turns every `affectedPaths`
+ * entry into a `file` locator, so one path naming a sibling checkout would reject the whole
+ * `knowl_store` call and lose the atom. This store holds such rows today, written by real agents.
  */
-function normalizeEvidenceLocator(type: EvidenceType, locator: string): string {
+export function normalizeEvidenceLocator(type: EvidenceType, locator: string): string {
   const trimmed = (locator ?? '').trim().replace(/\\/g, '/');
 
   if (type === 'symbol') {
     const normalized = normalizeReadSetLocator(trimmed.startsWith('symbol://') ? trimmed : `symbol://${trimmed}`);
-    if (normalized === null) {
-      throw new Error(`Invalid symbol evidence locator, expected symbol://<repo-relative path>#<name>: ${locator}`);
-    }
-    return normalized;
+    return normalized ?? trimmed;
   }
 
-  if (type === 'file') {
-    const bare = trimmed.startsWith('file://') ? trimmed.slice('file://'.length) : trimmed;
-    const contained = containedRepoPath(bare);
-    if (contained === null) {
-      throw new Error(`Invalid file evidence locator, expected a repo-relative path inside the project: ${locator}`);
-    }
-    return contained;
-  }
+  if (type !== 'file') return trimmed;
 
-  return trimmed;
+  const bare = trimmed.startsWith('file://') ? trimmed.slice('file://'.length) : trimmed;
+  // Resolve first, then check: `repoRelativePath` recovers the spellings that name a file inside
+  // the repo by a different route, and `containedRepoPath` is what decides whether the result is
+  // actually repo-relative -- it rejects a drive letter on every platform, which resolution alone
+  // only does on one.
+  const resolved = repoRelativePath(getProjectRoot(), bare) ?? bare;
+  return containedRepoPath(resolved) ?? bare;
 }
 
 function parseMetadata(value: unknown): Record<string, unknown> | null {
@@ -118,8 +119,10 @@ function nameSimilarity(left: string, right: string): number {
  * that string is `code_symbols.locator`; every other type is an opaque identifier and is stored
  * as given. See `normalizeEvidenceLocator`.
  *
- * **Throws on a `file` or `symbol` locator that escapes the project root**, rather than storing
- * a row that cites a file the repository does not contain.
+ * **A locator that escapes the project root is stored as given, not refused.** Refusing here would
+ * fail the whole write for one bad `affectedPaths` entry while buying no safety, since rows also
+ * arrive from `cloud/sync-apply.ts` and `store/portability.ts`. `isEvidenceStale` is where
+ * containment is enforced, at the point the string would reach the filesystem.
  */
 export async function createEvidence(input: Omit<Evidence, 'id'>): Promise<Evidence> {
   const client = getClient();

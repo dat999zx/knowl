@@ -58,23 +58,41 @@ describe('evidence repository', () => {
     expect(first.excerpt!.length).toBeLessThanOrEqual(2_000);
   });
 
-  it('refuses a file locator that resolves outside the project root', async () => {
+  it('stores a locator that escapes the project root instead of failing the write', async () => {
     const observedAt = '2026-07-11T00:00:00.000Z';
 
     // `..` segments and a drive letter are the two ways out of the root, and only the first is
     // caught by segment inspection alone -- `C:/Windows/win.ini` contains no empty, `.` or `..`
     // segment, yet `path.resolve` abandons the root for it on any platform that has drives.
-    await expect(createEvidence({
-      type: 'file', locator: '../../../Windows/win.ini', contentHash: 'a'.repeat(64), observedAt,
-    })).rejects.toThrow(/repo-relative path inside the project/);
+    //
+    // Neither is refused here. `attachEvidenceToKnowledge` turns every `affectedPaths` entry into
+    // a `file` locator inside the write transaction, so throwing would lose the whole atom over
+    // one path naming a sibling checkout -- a shape this project's own store already holds. The
+    // row is inert instead: `isEvidenceStale` refuses to resolve it, which is the assertion below
+    // and the one that actually closes the traversal.
+    for (const locator of ['../../../Windows/win.ini', 'C:/Windows/win.ini', '/etc/passwd']) {
+      const stored = await createEvidence({ type: 'file', locator, contentHash: 'a'.repeat(64), observedAt });
+      expect(stored.locator).toBe(locator);
+      expect(await isEvidenceStale(stored, TEST_ROOT)).toBe(true);
+    }
+  });
 
-    await expect(createEvidence({
-      type: 'file', locator: 'C:/Windows/win.ini', contentHash: 'a'.repeat(64), observedAt,
-    })).rejects.toThrow(/repo-relative path inside the project/);
+  it('recovers a locator that names a file inside the repository by another spelling', async () => {
+    const observedAt = '2026-07-11T00:00:00.000Z';
 
-    await expect(createEvidence({
-      type: 'file', locator: '/etc/passwd', contentHash: 'a'.repeat(64), observedAt,
-    })).rejects.toThrow(/repo-relative path inside the project/);
+    // An absolute path under the root and `src/a.ts` name one file. Storing both spellings means
+    // the staleness check never matches on either -- a miss that is silent by construction, since
+    // comparing two unequal strings does not throw, it just never fires.
+    const absolute = await createEvidence({
+      type: 'file', locator: path.join(TEST_ROOT, 'src/auth/token.ts'), contentHash: 'e'.repeat(64), observedAt,
+    });
+    expect(absolute.locator).toBe('src/auth/token.ts');
+
+    // A trailing slash is not an escape, and a directory is a legitimate citation.
+    const directory = await createEvidence({
+      type: 'file', locator: 'src/transcripts/', contentHash: 'f'.repeat(64), observedAt,
+    });
+    expect(directory.locator).toBe('src/transcripts');
   });
 
   it('canonicalizes a file:// locator to the bare path rather than containing it by accident', async () => {
