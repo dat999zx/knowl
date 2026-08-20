@@ -37,8 +37,8 @@ still names the database you migrated off last spring, and now the agent gets bo
 
 Knowl is persistent memory for Claude Code, Cursor and Codex, over
 [MCP](https://modelcontextprotocol.io) or the CLI. When a fact is replaced, the old one is retired
-instead of competing with the new one — automatically if you configure an AI provider to spot the
-contradiction, or explicitly with `knowl supersede <old> <new>`.
+instead of competing with the new one. No API key needed. When Knowl isn't sure the new fact
+replaces the old, it leaves both active and hands you the `knowl supersede` command to say so.
 
 Turn that off and retrieval drops from 98% to 47%. End to end, 90 to 73.
 [How it was measured ↓](#the-idea-memory-that-retires-itself)
