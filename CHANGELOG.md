@@ -3,7 +3,23 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.8.0 — 2026-08-20
+
+### `knowl reviewed <itemId>` — the verb that clears a review flag
+
+`knowl pr` raises `needs_review` and, on a connected repo, tells the team. Nothing discharged
+either, so a workspace could only accumulate reviews with no way to close one. A republish says
+nothing about freshness and leaves an open flag standing.
+
+It is a command a person types, deliberately, rather than something an edit does on their behalf:
+the remote half sends `expectedVersion`, which is a positive claim about specific text, and
+vouching for text the caller did not read is exactly the failure that check exists to prevent.
+
+Local first and unconditional — the flag and `last_drift_at` clear whether or not a workspace is
+attached, since a repo that never connected still accumulates drift flags. The upward half
+borrows `knowl pr`'s refusal policy: `not-connected`, `not-published` and `gated` are ordinary
+states and stay silent. `conflict` is the one worth saying out loud, because the remote text moved
+under the reviewer and what they vouched for is no longer what is there.
 
 ### Retrieval publishes the raw cosine, the one number a caller can judge with
 
