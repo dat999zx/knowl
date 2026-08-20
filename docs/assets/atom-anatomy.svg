@@ -7,9 +7,9 @@
   <!-- the atom card -->
   <rect x="28" y="82" width="420" height="234" rx="12" fill="#0d1117" stroke="#30363d"/>
 
-  <rect x="48" y="100" width="66" height="20" rx="10" fill="#132b47" stroke="#1f4b7a"/>
-  <text x="81" y="114" font-size="11" font-weight="600" fill="#58a6ff" text-anchor="middle">decision</text>
-  <rect x="122" y="100" width="52" height="20" rx="10" fill="#0f2e1f" stroke="#1c5c3c"/>
+  <rect x="48" y="100" width="66" height="20" rx="10" fill="#2a2410" stroke="#6b5c25"/>
+  <text x="81" y="114" font-size="11" font-weight="600" fill="#cab049" text-anchor="middle">decision</text>
+  <rect x="122" y="100" width="52" height="20" rx="10" fill="#152e0f" stroke="#275c1c"/>
   <text x="148" y="114" font-size="11" font-weight="600" fill="#3fb950" text-anchor="middle">active</text>
 
   <text x="48" y="146" font-size="15" font-weight="700" fill="#ffffff">Use SQLite</text>
@@ -32,28 +32,28 @@
   <text x="48" y="291" font-size="11.5" fill="#6e7681">affected paths</text>
   <text x="166" y="291" font-size="11.5" fill="#c9d1d9">src/store/database.ts</text>
 
-  <circle cx="52" cy="308" r="3.5" fill="#eda100"/>
+  <circle cx="52" cy="308" r="3.5" fill="#edbd00"/>
   <text x="66" y="312" font-size="11.5" fill="#6e7681">evidence</text>
-  <text x="166" y="312" font-size="11.5" fill="#eda100">symbol://openDatabase</text>
+  <text x="166" y="312" font-size="11.5" fill="#edbd00">symbol://openDatabase</text>
 
   <!-- connectors -->
-  <path d="M448 110 H482" stroke="#3987e5" stroke-width="1.2"/>
-  <path d="M448 225 H482" stroke="#3987e5" stroke-width="1.2"/>
-  <path d="M448 280 H482" stroke="#3987e5" stroke-width="1.2"/>
-  <path d="M448 312 H482" stroke="#eda100" stroke-width="1.2"/>
+  <path d="M448 110 H482" stroke="#39d3e5" stroke-width="1.2"/>
+  <path d="M448 225 H482" stroke="#39d3e5" stroke-width="1.2"/>
+  <path d="M448 280 H482" stroke="#39d3e5" stroke-width="1.2"/>
+  <path d="M448 312 H482" stroke="#edbd00" stroke-width="1.2"/>
 
   <!-- callouts -->
-  <text x="492" y="106" font-size="12.5" font-weight="700" fill="#3987e5">status</text>
+  <text x="492" y="106" font-size="12.5" font-weight="700" fill="#39d3e5">status</text>
   <text x="492" y="125" font-size="12" fill="#898781">Retired the moment it stops being true —</text>
   <text x="492" y="142" font-size="12" fill="#898781">not left beside its replacement.</text>
 
-  <text x="492" y="204" font-size="12.5" font-weight="700" fill="#3987e5">freshness · confidence · tags</text>
+  <text x="492" y="204" font-size="12.5" font-weight="700" fill="#39d3e5">freshness · confidence · tags</text>
   <text x="492" y="223" font-size="12" fill="#898781">Retrieval ranks on these, and freshness ages</text>
   <text x="492" y="240" font-size="12" fill="#898781">on its own. You cannot rank a paragraph.</text>
 
-  <text x="492" y="277" font-size="12.5" font-weight="700" fill="#3987e5">source commit · affected paths</text>
+  <text x="492" y="277" font-size="12.5" font-weight="700" fill="#39d3e5">source commit · affected paths</text>
   <text x="492" y="296" font-size="12" fill="#898781">Which version of the code this was true about.</text>
 
-  <text x="492" y="316" font-size="12.5" font-weight="700" fill="#eda100">evidence</text>
+  <text x="492" y="316" font-size="12.5" font-weight="700" fill="#edbd00">evidence</text>
   <text x="492" y="333" font-size="12" fill="#898781">Went stale by itself when the symbol moved.</text>
 </svg>

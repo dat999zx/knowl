@@ -62,7 +62,19 @@ export async function extractSessionMemoryCandidates(sessionId: string): Promise
     for (const commit of parseCommitSubjects(command)) {
       if (commit.type && SKIPPED_COMMIT_TYPES.has(commit.type)) continue;
       if (/^merge\b/i.test(commit.subject)) continue;
-      const content = (commit.body ? `${commit.subject}\n\n${commit.body}` : commit.subject).slice(0, MAX_CONTENT_CHARS);
+      // A commit with no body yields an atom whose content is its title: it consumes a
+      // retrieval slot to repeat what the slot already showed. The subject alone is still in
+      // the git log, which is where "what changed" belongs.
+      //
+      // This is only honest because `parseCommitSubjects` reads git's repeated-`-m`
+      // subject/body form. While it read the first `-m` alone, "no body" meant "no body was
+      // captured", and dropping on it discarded messages that did carry one.
+      //
+      // Scale, measured 2026-08-19 over knowl-cloud's store (a sibling repo, sharing this
+      // extractor): of 226 commit-derived atoms, 48 had content identical to their title.
+      // That is a count of empty ones, not a judgement that the other 178 are all valuable.
+      if (!commit.body) continue;
+      const content = `${commit.subject}\n\n${commit.body}`.slice(0, MAX_CONTENT_CHARS);
       candidates.push({
         candidateType: 'commit',
         sessionId,

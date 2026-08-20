@@ -107,6 +107,9 @@ import { exportKnowledge, importKnowledge } from '../store/portability.js';
 import { importOwnershipNotice } from './import-ownership-notice.js';
 import { synthesizeKnowledge } from '../store/synthesis.js';
 import { startViewer } from '../viewer/server.js';
+import { atomEditUrl, resolveAtomId } from './edit-link.js';
+import { positiveInt } from './parse-options.js';
+import { formatListRows, selectListRows } from './list-report.js';
 import { createAgentReminderOutput } from './agents/reminder.js';
 import { rebuildTranscriptIndex } from '../transcripts/backfill.js';
 import { closeTranscriptDbs, openTranscriptDb } from '../transcripts/database.js';
@@ -2198,6 +2201,75 @@ program.command('import').argument('<path>').description('Load portable JSONL me
 program.command('synthesize').description('Summarize knowledge for a path or tag into one item').requiredOption('--scope <path-or-tag>').action(async options => { try { const root = await findProjectRoot(process.cwd()); await initDb(root); const project = await repo.getProjectByRootPath(root); if (!project) throw new Error('Project not found in database.'); console.log(JSON.stringify(await synthesizeKnowledge(project.id, options.scope), null, 2)); await closeDb(); } catch (error: any) { console.error(`Error synthesizing knowledge: ${error.message}`); process.exit(1); } });
 
 program
+  .command('list')
+  .description('Browse stored memories')
+  .option('--unread', 'Only memories that have never been retrieved')
+  .option('--stale', 'Only memories that are not fresh')
+  .option('--category <category>', 'Filter by category')
+  .option('--limit <n>', 'Maximum rows to show', positiveInt('--limit'))
+  .action(async options => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const [items, summary] = await Promise.all([repo.listKnowledgeItems(), getAccessSummary()]);
+      const counts = new Map<string, number>();
+      for (const [id, entry] of summary) counts.set(id, entry.retrievalCount);
+      const lens = options.unread ? 'unread' : options.stale ? 'stale' : 'all';
+      const { rows, matched } = selectListRows(items, counts, {
+        lens, category: options.category, limit: options.limit ?? 50,
+      });
+      console.log(formatListRows(rows, matched));
+      await closeDb();
+    } catch (error: any) {
+      console.error(`Error listing memories: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+program
+  .command('edit <id>')
+  .description('Open a memory in the local viewer to edit it')
+  .option('--port <port>')
+  .action(async (id: string, options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      // Resolved and refused before the server starts. A viewer opened on a typo'd id is an
+      // unexplained empty page plus a process the user now has to go and kill.
+      // Active only, matching what `knowl list` shows. Resolving across every status would let
+      // `knowl edit <prefix>` report an ambiguity between a visible atom and a superseded one
+      // the user cannot see — the two commands disagreeing about what an id is, which is the
+      // complaint prefix support exists to prevent.
+      const all = (await repo.listKnowledgeItems()).filter(each => each.status === 'active');
+      const match = resolveAtomId(all.map(each => each.id), id);
+      if (match.kind === 'none') {
+        console.error(`No memory with id ${id}. Run \`knowl list\` to find it.`);
+        process.exit(1);
+      }
+      if (match.kind === 'many') {
+        console.error(`${id} matches ${match.ids.length} memories. Name more of the id:`);
+        for (const candidate of match.ids) {
+          const found = all.find(each => each.id === candidate);
+          console.error(`  ${candidate}  ${found ? found.title : ''}`);
+        }
+        process.exit(1);
+      }
+      const item = all.find(each => each.id === match.id)!;
+      const viewer = await startViewer(root, { port: options.port === undefined ? 0 : Number(options.port) });
+      console.log(`Editing "${item.title}"`);
+      console.log(atomEditUrl(viewer, match.id));
+      // Same shape as `view`: a signal handler has no caller, so a failing close would surface
+      // as an unhandled rejection on the one path that exists to shut the server down in order.
+      const stop = () => { void viewer.close().catch(() => {}).then(() => process.exit(0)); };
+      process.once('SIGINT', stop);
+      process.once('SIGTERM', stop);
+    } catch (error: any) {
+      console.error(`Error opening the editor: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+program
   .command('view')
   .description('Serve the local knowledge viewer in a browser')
   .option('--port <port>')
@@ -2787,7 +2859,7 @@ async function openCandidateStore(root: string) {
 transcripts
   .command('extract')
   .description('Run the configured model over unextracted sessions and stage what it finds')
-  .option('--limit <n>', `Sessions to extract in this run (default ${DEFAULT_EXTRACT_LIMIT})`, parseInt)
+  .option('--limit <n>', `Sessions to extract in this run (default ${DEFAULT_EXTRACT_LIMIT})`, positiveInt('--limit'))
   .option('--budget <minutes>', 'Stop after this many minutes; the next run resumes', parseFloat)
   .option('--yes', 'Skip the cost estimate and run')
   .action(async (options) => {
@@ -2834,7 +2906,7 @@ transcripts
   .command('candidates')
   .description('List staged candidates awaiting a decision')
   .option('--status <status>', 'pending, approved or discarded', 'pending')
-  .option('--limit <n>', 'Maximum rows to show', parseInt)
+  .option('--limit <n>', 'Maximum rows to show', positiveInt('--limit'))
   .action(async (options) => {
     try {
       const root = await findProjectRoot(process.cwd());

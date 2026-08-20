@@ -41,6 +41,22 @@ describe('parseCommitSubjects', () => {
     expect(found[0].type).toBeNull();
   });
 
+  it("reads git's own subject-and-body form, where the body is a second -m", () => {
+    const found = parseCommitSubjects('git commit -m "fix(x): the subject" -m "The real body explaining why."');
+    expect(found).toEqual([
+      { type: 'fix', subject: 'fix(x): the subject', body: 'The real body explaining why.' },
+    ]);
+  });
+
+  it('joins three -m values the way git does, as separate paragraphs', () => {
+    const found = parseCommitSubjects('git commit -m "feat: a" -m "First para." -m "Second para."');
+    expect(found[0].body).toBe(['First para.', '', 'Second para.'].join('\n'));
+  });
+
+  it('still reports no body when there is only one -m', () => {
+    expect(parseCommitSubjects('git commit -m "fix: alone"')[0].body).toBeNull();
+  });
+
   it('ignores a -m message flag that does not belong to a git commit', () => {
     // A naive /-m\s+"([^"]+)"/ would capture this. Only anchoring on `git commit`
     // rejects it, so this is the test that pins the anchor.

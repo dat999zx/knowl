@@ -3,11 +3,63 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.6.0 — 2026-08-19
 
-Two changes to what a stored atom is allowed to lose. One is about delivery — a long body arriving
-with its conclusion cut off — and the other about the write path, where a claim could be retired by
-its own negation.
+A person can now read, correct and add memory by hand — `knowl view` became an editor, and two new
+commands make the store browsable from the terminal. Plus two changes to what a stored atom is
+allowed to lose.
+
+### The local viewer is an editor, and it opens on a list
+
+`knowl view` served a force-directed canvas and answered nothing but `GET`. On a real store that is
+unusable in both directions: several hundred atoms averaging around two thousand characters cannot
+be found by hunting a dot in a physics simulation, and once found, nothing could be corrected.
+
+There is now a list beside the graph with three lenses. **Unread** is the one that earns its place —
+it sorts by never-retrieved, oldest first, which is how you find memory you would never search for,
+because you cannot search for what you do not know is there. Clicking a row opens the atom with its
+evidence and timeline, and the panel carries **Edit**, **Archive** and **Restore**; `+ New memory`
+writes one by hand. Archiving is reversible and Restore sits on the same panel. Permanent removal
+stays with `knowl forget`, which asks first.
+
+Atom bodies are markdown and were being printed as source, so on a real store most of the memory
+read as literal asterisks and pipes. They render now — bold, inline code, tables, lists, headings —
+escaped before any markup is applied, so no atom field can introduce an element or an attribute.
+
+Writes are refused unless the request names this viewer as its origin. `SameSite` is not sufficient
+here and reasoning that it is would be a mistake: it does not scope by port, so a page served from
+any other `127.0.0.1` port is same-site with the viewer and the browser attaches the cookie
+unprompted.
+
+The graph also says less. A tag that dozens of atoms share is a category, not a relationship, and
+drawing it as edges buried the mesh that meant something; atoms nothing else is about are now left
+unlinked rather than tied to an arbitrary neighbour. On a 675-atom store that took 1,556 links down
+to 484.
+
+### `knowl list` and `knowl edit`
+
+`knowl query` searches, which requires knowing what you are looking for. `knowl list` browses:
+
+```bash
+knowl list --unread --limit 20     # what nothing has ever retrieved, oldest first
+knowl list --stale --category fact
+```
+
+`knowl edit <id>` opens one atom in the viewer and prints a deep link. It accepts the eight-character
+id `knowl list` prints, and names the candidates when a prefix is ambiguous.
+
+### A commit with no body is no longer stored as knowledge
+
+The session finalizer minted an atom from every `git commit` it found in the captured commands. With
+no body, that atom's content is its title — it consumes a retrieval slot to repeat what the slot
+already showed. Measured on one real store: 48 of 226 commit-derived atoms were exactly that.
+
+Commits with bodies are still captured, and `git commit -m "subject" -m "body"` — git's own way of
+writing one — is now read correctly rather than reported as having no body at all.
+
+Two further changes cover what a stored atom is allowed to lose. One is about delivery — a long body
+arriving with its conclusion cut off — and the other about the write path, where a claim could be
+retired by its own negation.
 
 ### A truncated body keeps both ends, not just the head
 
