@@ -637,3 +637,11 @@ conventions this codebase follows. Contributors are asked to agree to the
 
 Knowl is licensed under the [Apache License 2.0](LICENSE). Apache-2.0 does not grant trademark
 rights.
+
+---
+
+<div align="center">
+
+[![knowl MCP server](https://glama.ai/mcp/servers/dat999zx/knowl/badges/card.svg)](https://glama.ai/mcp/servers/dat999zx/knowl)
+
+</div>
