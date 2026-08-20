@@ -70,6 +70,52 @@ describe('abstention requires a calibrated floor', () => {
     expect(onGranite.every(row => row.explanation.abstained === true)).toBe(true);
   });
 
+  it('publishes the RAW cosine, not the rescaled one the ranking uses', () => {
+    // The whole point of the field (#146). `rescaleSemantic` min-max scales the semantic half
+    // across the page, so the top row's contribution is 1.0 whether its cosine was 0.93 or
+    // 0.20 -- which is why the fused `score` could not separate an off-topic query from a
+    // perfect match on a small store. `cosine` must survive that untouched.
+    const scored = scoreCandidates(
+      [
+        { item: item('top'), embedded: true, vectorRank: 1, vectorScore: 0.62 },
+        { item: item('mid'), embedded: true, vectorRank: 2, vectorScore: 0.30 },
+        { item: item('low'), embedded: true, vectorRank: 3, vectorScore: 0.05 },
+      ],
+      { limit: 10, usingVector: true, minRelevance: 0.16 },
+    );
+
+    expect(scored.map(row => row.explanation.cosine)).toEqual([0.62, 0.30, 0.05]);
+    // Min-max put the top row at 1.0 and the bottom at 0. If `cosine` were read off the
+    // rescaled term instead, the first assertion would see 1 and the last 0.
+    expect(scored[0].explanation.contributions.semantic).toBe(0.62);
+  });
+
+  it('publishes cosine on an abstained row, which is exactly when it is needed', () => {
+    const scored = scoreCandidates(weak, { limit: 10, usingVector: true, minRelevance: 0.30 });
+
+    expect(scored.every(row => row.explanation.abstained === true)).toBe(true);
+    expect(scored.map(row => row.explanation.cosine)).toEqual([0.06, 0.04]);
+  });
+
+  it('withholds cosine where the row was never judged semantically', () => {
+    // Same predicate `uncalibrated` fires on, and for the same reason: an unjudged row's
+    // semantic half is 0 by ABSENCE, and publishing that 0 as a cosine would read as
+    // "certainly irrelevant" where the truth is "vector never saw it".
+    const lexicalOnly = scoreCandidates(
+      [{ item: item('a'), bm25Rank: 1, lexicalScore: 2 }],
+      { limit: 10, usingVector: false },
+    );
+    expect(lexicalOnly[0].explanation.uncalibrated).toBe('lexical-only');
+    expect(lexicalOnly[0].explanation.cosine).toBeUndefined();
+
+    const notEmbedded = scoreCandidates(
+      [{ item: item('b'), embedded: false, bm25Rank: 1, lexicalScore: 2 }],
+      { limit: 10, usingVector: true, minRelevance: 0.16 },
+    );
+    expect(notEmbedded[0].explanation.uncalibrated).toBe('not embedded');
+    expect(notEmbedded[0].explanation.cosine).toBeUndefined();
+  });
+
   it('does not let a floor change the ranking, whatever it is', () => {
     // The non-destructive guarantee, restated per-floor: recall and order must be identical at
     // every value, or the constant becomes load-bearing again.

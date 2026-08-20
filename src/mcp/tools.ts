@@ -933,15 +933,26 @@ export function registerTools(
           if (explanation?.uncalibrated) return uncalibratedScore(explanation.uncalibrated);
           return scored && typeof explanation?.finalScore === 'number' ? explanation.finalScore : undefined;
         };
+        // The predicate lives in the ranker, not here: it publishes `cosine` on exactly the rows
+        // it judged semantically and omits it everywhere else, so this reads the verdict rather
+        // than re-deriving it. Deliberately NOT gated on `layered` the way `scoreOf` is -- what
+        // layering breaks is comparability between per-namespace rankings, and a cosine is
+        // absolute, so it survives the one condition that invalidates the fused score.
+        const cosineOf = (item: any): number | undefined => {
+          const explanation = item.explanation as { cosine?: number } | undefined;
+          return typeof explanation?.cosine === 'number' ? explanation.cosine : undefined;
+        };
         // Evidence and staleness resolve against THIS repo's filesystem and database, so a
         // foreign item would be judged against the wrong checkout -- reporting "stale" for a
         // file that is simply somewhere else. Omitting it beats answering wrongly.
         const isForeign = (item: any) => Boolean(active) && item.repo && item.repo !== active!.repo;
         const compact = (item: any) => {
           const score = scoreOf(item);
+          const cosine = cosineOf(item);
           const { affectedPaths, ...rest } = compactItemResponse(item, {
             ...(item.repo ? { repo: item.repo } : {}),
             ...(score === undefined ? {} : { score }),
+            ...(cosine === undefined ? {} : { cosine }),
           });
           return {
             ...rest,
@@ -1085,7 +1096,7 @@ export function registerTools(
               : '');
           blocks.push({
             type: 'text',
-            text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `score` and judge. If none of them answers the question, treat this as a miss and go to the files.'
+            text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `cosine` and judge, not `score`: `cosine` is the absolute similarity the floor itself is measured against, while `score` only orders this page. If none of them answers the question, treat this as a miss and go to the files.'
               + transcriptRoute,
           });
         }

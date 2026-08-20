@@ -122,6 +122,16 @@ export type CompactKnowledgeItem = Pick<KnowledgeItem, 'id' | 'category' | 'titl
    * absence now means the caller supplied nothing, not that the ranker had no opinion.
    */
   score?: number | UncalibratedScore;
+  /**
+   * The raw cosine, on the absolute scale the relevance floor is measured against -- so unlike
+   * `score` it means the same thing across queries and across stores. Absent where the row was
+   * never judged semantically, which is every case `score` reports as `uncalibrated`.
+   *
+   * `score` answers "where does this row sit on this page", which is all a min-max scaled fused
+   * number can answer. This answers "is this row actually about the query", which is what a
+   * caller injecting memory into a prompt is deciding.
+   */
+  cosine?: number;
 };
 
 /** What the caller knows about this result that the item itself does not carry. */
@@ -142,6 +152,15 @@ export type CompactProvenance = {
    * decision served on the paths where no calibrated number exists -- see `UncalibratedReason`.
    */
   score?: number | UncalibratedScore;
+  /**
+   * The raw cosine for this row, where the ranker judged one. Same reason it is supplied rather
+   * than read off the item: it is a property of this query.
+   *
+   * Separate from `score` rather than replacing it, so anything already keyed on `score` keeps
+   * working and the new field is self-documenting at the call site -- a silently changed
+   * meaning would not be.
+   */
+  cosine?: number;
 };
 
 /**
@@ -239,6 +258,11 @@ export function compactKnowledgeItem(item: KnowledgeItem, extras: CompactProvena
     // useful one this field can carry, and `extras.score ? ...` would be the one value it drops.
     ...(typeof extras.score === 'number' && Number.isFinite(extras.score)
       ? { score: Number(extras.score.toFixed(SCORE_DECIMALS)) }
+      : {}),
+    // Same three decimals and the same undefined-not-falsy test as `score` above, for the same
+    // two reasons: the digits past that are noise, and 0 is a real cosine.
+    ...(typeof extras.cosine === 'number' && Number.isFinite(extras.cosine)
+      ? { cosine: Number(extras.cosine.toFixed(SCORE_DECIMALS)) }
       : {}),
   };
 }

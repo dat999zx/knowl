@@ -215,6 +215,19 @@ export type KnowledgeSearchExplanation = {
    * third reason a caller can add, `layered namespaces`, belongs to the path that layers.
    */
   uncalibrated?: 'lexical-only' | 'not embedded';
+  /**
+   * The raw cosine this row scored, on the absolute scale `MODEL_RELEVANCE_FLOORS` is measured
+   * against. Present only where it is a verdict rather than an absence -- the same predicate
+   * `uncalibrated` is absent on.
+   *
+   * This is the number a caller deciding "does this store hold the answer" needs, and
+   * `finalScore` cannot be it: `rescaleSemantic` min-max scales the semantic half across the
+   * candidate page, so the top row's is ~1.0 whether its cosine was 0.93 or 0.20. Measured on a
+   * two-atom store (#146), an off-topic query and a perfect match both published 0.96 while
+   * their cosines were 0.7928 and 0.9296 -- the fused number cannot separate them and this one
+   * can.
+   */
+  cosine?: number;
 };
 
 export type ExplainedKnowledgeItem = KnowledgeItem & { explanation: KnowledgeSearchExplanation };

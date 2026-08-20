@@ -751,6 +751,12 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
         ...(abstained.has(result.item.id) ? { abstained: true } : {}),
         // Same economy: present only on a row whose number is not a calibrated relevance.
         ...(uncalibrated ? { uncalibrated } : {}),
+        // The raw cosine, straight off `contributions.semantic` -- `rescaleSemantic` is applied
+        // only inside `relevance` above, so this one never went through it. Published on
+        // exactly the rows `uncalibrated` leaves alone, because the two answer the same
+        // question: an unjudged row's semantic half is 0 by absence, and handing that over as a
+        // cosine would read as "certainly irrelevant" where the truth is "never looked at".
+        ...(uncalibrated ? {} : { cosine: contributions.semantic }),
         contributions: { ...contributions, diversity },
         reason: `relevance=${contributions.relevance.toFixed(3)} `
           + `(semantic=${contributions.semantic.toFixed(3)}, lexical=${contributions.lexical.toFixed(3)}, `

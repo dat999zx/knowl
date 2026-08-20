@@ -706,7 +706,7 @@ program.command('query').argument('[query]').description('Search project memory 
     // The floor's verdict, said out loud. Results below it are printed rather than withheld,
     // so without this line a weak page looks exactly like a strong one.
     if (items.some((item: { abstained?: boolean }) => item.abstained)) {
-      console.error('Note: every result scored below the relevance floor — this store probably does not hold the answer. Read "score" and judge.');
+      console.error('Note: every result scored below the relevance floor — this store probably does not hold the answer. Read "cosine" and judge, not "score": "cosine" is the absolute similarity the floor is measured against, while "score" only orders this page.');
     }
     // Names and counts, never content: the knowledge stays findable without this line being
     // able to stand in for it.
