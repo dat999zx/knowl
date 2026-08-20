@@ -5,6 +5,33 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+### Retrieval publishes the raw cosine, the one number a caller can judge with
+
+`score` is min-max scaled across the candidate page, so the top row sits near 1.0 whatever its
+similarity actually was. On a small store an off-topic query and a perfect match both publish
+0.96, while their cosines are 0.7928 and 0.9296 -- and every surface nonetheless told the caller
+to read `score` and judge, with `knowl_query` claiming outright that it "is comparable across
+queries". It is not.
+
+Results now carry `cosine` beside `score`: the uncalibrated similarity the relevance floor
+already judges by. Published as a **new field** rather than by changing what `score` means, so
+anything keyed on the old one keeps working.
+
+### `knowl store` says when part of an atom will not be searchable
+
+The embedding text is capped, by a character slice and by a token budget, and both cut silently.
+An author who wrote a 12 KB atom got a vector covering the first two thirds of it and no way to
+find out; no caller could reconstruct it either. The write path now names the atom and the real
+numbers:
+
+```
+Note: embedded the first 7729 of 12487 characters of "Payment reconciler ledger comparison".
+The rest is stored but will not be found by search -- split it into smaller atoms.
+```
+
+Counted on the combined embedding text -- title, content, reasoning and tags -- because that is
+what the cap applies to.
+
 ### `knowl view` reads as a graph rather than as confetti
 
 The memory graph was unreadable on a real store, and the reason was measurable: **589 of 1,070
@@ -41,6 +68,12 @@ darker and less blue than the docs site's, since that palette carries prose and 
 thousand saturated dots; hue family and every accent token are unchanged. The rail is narrower and
 flat, controls share one radius, and the list's title column takes the slack instead of stranding
 Category, Age and Reads against the far edge.
+
+### Removed
+
+Two `EvidenceType` members, `command` and `url`, that nothing ever produced or read. Evidence
+staleness only ever handled `symbol` and `file` and returned false for everything else, so the
+two were reachable by hand-writing the string and by nothing else.
 
 ## 5.7.0 — 2026-08-20
 
