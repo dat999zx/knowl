@@ -2,8 +2,10 @@ import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ProjectConfig } from '../core/types.js';
 import { findProjectRoot, loadConfig } from '../core/config.js';
+import { ProjectNotFoundError } from '../core/errors.js';
 import { initDb } from '../store/database.js';
 import { getProjectByRootPath } from '../store/repository.js';
+import { adoptProject, scaffoldProject, scaffoldTarget, serveAutoInitAllowed } from './auto-init.js';
 import { registerTools } from './tools.js';
 import { registerResources } from './resources.js';
 import { PACKAGE_VERSION } from '../version.js';
@@ -30,6 +32,8 @@ export interface DeferredServerState {
   getInitError?: () => string | null;
   /** Resolves once initialization has settled, successfully or not. */
   whenReady?: () => Promise<void>;
+  /** Appended to the instructions card verbatim; auto-init announces itself through this. */
+  instructionsSuffix?: string;
 }
 
 /**
@@ -63,7 +67,11 @@ export function createMcpServer(
       // The SDK captures this string in the constructor and replays it in the initialize
       // response, so it cannot be recomputed later; `startMcpServer` settles the config read
       // before building the server for exactly that reason.
-      instructions: mcpServerInstructions(getConfig()),
+      // The suffix exists for auto-init: stderr is dropped by most hosts, so a banner there
+      // is invisible, while this card is captured at construction and replayed to the model.
+      // One line naming the directory serve created state in is the difference between a
+      // silent store and an invisible one.
+      instructions: mcpServerInstructions(getConfig()) + (deferred.instructionsSuffix ?? ''),
     }
   );
 
@@ -128,11 +136,38 @@ export async function startMcpServer(): Promise<void> {
   // two things that do. Neither is the database open the handshake is racing -- one walks
   // directories and one reads a JSON file -- and the `instructions` card is captured by the
   // SDK at construction, so a config that arrives afterwards can never reach a client.
+  let autoInitialized = false;
   try {
     projectRoot = await tracePhase('findProjectRoot', () => findProjectRoot(process.cwd()));
     config = await tracePhase('loadConfig', () => loadConfig(projectRoot!));
   } catch (error: any) {
-    initError = error.message;
+    // The catalog-install case: nobody ever ran `knowl init`, and nobody could have -- no
+    // marketplace install flow contains a step that would (see auto-init.ts). Scaffold here,
+    // because it is filesystem-only and the config it writes is what the `instructions` card
+    // needs before the server is built; the database half waits for `ready` below.
+    //
+    // `scaffoldTarget` may refuse -- no git repository to anchor on, or the target is the
+    // machine's Knowl home -- and the refusal deliberately lands on the ordinary
+    // ProjectNotFoundError message: for a directory whose owner expressed no intent, "run
+    // knowl init" is the right guidance, not a store they never asked for.
+    const target = error instanceof ProjectNotFoundError && serveAutoInitAllowed()
+      ? await tracePhase('autoInitTarget', () => scaffoldTarget(process.cwd()))
+      : null;
+    if (target) {
+      try {
+        projectRoot = target;
+        await tracePhase('autoInitScaffold', () => scaffoldProject(target));
+        config = await tracePhase('autoInitLoadConfig', () => loadConfig(target));
+        autoInitialized = true;
+      } catch (scaffoldError: any) {
+        // Prefixed so `formatInitError` can tell "serve tried to create a store and could
+        // not" apart from "there is no store" -- the guidance differs, because the agent
+        // reading it must not be told to run the thing that just failed.
+        initError = `Automatic initialization failed: ${scaffoldError.message}`;
+      }
+    } else {
+      initError = error.message;
+    }
   }
 
   // Never rejects: every failure is captured as `initError`, which the tools already render
@@ -145,6 +180,15 @@ export async function startMcpServer(): Promise<void> {
 
       // Get project details
       project = await tracePhase('getProject', () => getProjectByRootPath(projectRoot!));
+      if (autoInitialized) {
+        // The scaffold above made the directory a root; this finishes what init would have:
+        // the machine registry entry and the `.gitignore` line. Not gated on `!project`,
+        // because `getProjectByRootPath` synthesizes the local project for any root — a
+        // truthy project says nothing about whether those two side effects ever happened.
+        // Behind the handshake because it opens the database, which is the work the connect
+        // deadline must not wait on.
+        project = await tracePhase('adoptProject', () => adoptProject(projectRoot!));
+      }
       if (!project) {
         throw new Error('Knowl project is not initialized. Run "knowl init" first.');
       }
@@ -159,6 +203,12 @@ export async function startMcpServer(): Promise<void> {
     getConfig: () => config,
     getInitError: () => initError,
     whenReady: () => ready,
+    ...(autoInitialized ? {
+      instructionsSuffix:
+        `\nNOTE: no Knowl store existed here, so serve created an empty one at ${projectRoot}` +
+        ' (KNOWL_DISABLE_SERVE_AUTO_INIT=1 prevents this). Memory starts empty; what you store' +
+        ' this session is what later sessions will find.',
+    } : {}),
   });
 
   const transport = new StdioServerTransport();
@@ -173,13 +223,15 @@ export async function startMcpServer(): Promise<void> {
   // the server is built (see above) is what the `instructions` card needs, and it means the
   // very first line a host log gets can name its repository instead of saying `unresolved`
   // and correcting itself later.
-  process.stderr.write(serveBanner({ pid: process.pid, projectRoot }) + '\n');
+  process.stderr.write(serveBanner({ pid: process.pid, projectRoot, autoInitialized }) + '\n');
 
   void ready.then(() => {
     // The second line is about the database, which the first could not wait for. `readyMs`
     // is the number that separates "connected and working" from "connected and stuck".
     process.stderr.write(
-      serveBanner({ pid: process.pid, projectRoot, readyMs: Date.now() - connectedAt }) + '\n',
+      serveBanner({
+        pid: process.pid, projectRoot, autoInitialized, readyMs: Date.now() - connectedAt,
+      }) + '\n',
     );
     finishStartupTrace({
       ok: !initError,

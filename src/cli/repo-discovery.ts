@@ -3,7 +3,7 @@ import path from 'node:path';
 import { isProjectRoot } from '../core/config.js';
 import { readManifest } from '../workspace/manifest.js';
 import { listKnownWorkspaces, workspaceManifestPath } from '../workspace/paths.js';
-import { listKnownRepos, recordKnownRepo } from './repo-registry.js';
+import { listKnownRepos, recordKnownRepo } from '../core/repo-registry.js';
 
 export type RepoSource = 'workspace' | 'registry' | 'scan';
 export type DiscoveredRepo = { root: string; source: RepoSource };

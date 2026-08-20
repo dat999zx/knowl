@@ -3,6 +3,24 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### `knowl serve` auto-initializes an uninitialized repository
+
+Marketplace installs (the OpenHands catalog, MCP directories) launch `serve` with no step that
+could run `knowl init` first — so serve advertised its full tool set and failed every call with
+"run knowl init", which is what closed OpenHands/extensions#486. Now, in a git repository that
+was never initialized, serve scaffolds a minimal store before the handshake and finishes the
+adoption behind it, on the tool-call clock the connect deadline allows.
+
+Narrower than init on purpose: no guidance files, no agent setup, no model download — and the
+anchor is the repository root, never a bare working directory. A directory with no git
+repository, or one whose store would land in the machine's Knowl home, is refused and gets the
+ordinary not-initialized guidance; a failed scaffold gets its own message rather than advice to
+run the thing that just failed. The ignore entry is a self-ignoring `.gitignore` inside
+`.knowl/` (venv's shape) — serve edits no file the user owns. The banner and the instructions
+card both announce what was created and where. `KNOWL_DISABLE_SERVE_AUTO_INIT=1` turns it off.
+
 ## 5.8.0 — 2026-08-20
 
 ### `knowl reviewed <itemId>` — the verb that clears a review flag

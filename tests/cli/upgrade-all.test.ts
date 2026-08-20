@@ -8,7 +8,7 @@ import * as repo from '../../src/store/repository.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 import { isKnowlProjectGuidanceCurrent } from '../../src/core/agents-guidance.js';
 import { resetWriteOwnershipCache } from '../../src/store/write-ownership.js';
-import { recordKnownRepo } from '../../src/cli/repo-registry.js';
+import { recordKnownRepo } from '../../src/core/repo-registry.js';
 import { formatSweepReport, sweepRepos } from '../../src/cli/upgrade-all.js';
 
 const HOME = path.resolve('./.knowl-sweep-home');

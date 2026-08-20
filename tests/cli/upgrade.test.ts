@@ -10,7 +10,7 @@ import { workspaceManifestPath } from '../../src/workspace/paths.js';
 import { joinWorkspace } from '../../src/workspace/membership.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 import { resetWriteOwnershipCache } from '../../src/store/write-ownership.js';
-import { listKnownRepos } from '../../src/cli/repo-registry.js';
+import { listKnownRepos } from '../../src/core/repo-registry.js';
 import { upgradeExistingRepository } from '../../src/cli/upgrade.js';
 
 const HOME = path.resolve('./.knowl-upgrade-home');

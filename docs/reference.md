@@ -1889,7 +1889,16 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 
 ## MCP tools and resources
 
-Run `knowl serve` to expose Knowl over stdio MCP. The recommended agent flow is:
+Run `knowl serve` to expose Knowl over stdio MCP. In a git repository that was never
+initialized, serve creates a minimal store on its own — marketplace installs launch it with no
+step that could run `knowl init` first. It anchors on the repository root (never a bare working
+directory, never the Knowl home), writes a self-ignoring `.gitignore` inside `.knowl/` instead
+of editing the repository's, and skips the guidance files, agent setup, and model download that
+`knowl init` performs. The startup banner and the server's instructions card both say when this
+happened. Set `KNOWL_DISABLE_SERVE_AUTO_INIT=1` to turn it off; serve then reports the ordinary
+not-initialized guidance instead.
+
+The recommended agent flow is:
 
 1. Use lifecycle bootstrap context when available; otherwise use `knowl_recent`.
 2. Call `knowl_query` before inspecting repository files, using the words that name the subject.

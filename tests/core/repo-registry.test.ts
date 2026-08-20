@@ -6,7 +6,7 @@ import {
   readKnownRepos,
   recordKnownRepo,
   repoRegistryPath,
-} from '../../src/cli/repo-registry.js';
+} from '../../src/core/repo-registry.js';
 import { discoverRepos } from '../../src/cli/repo-discovery.js';
 
 const HOME = path.resolve('./.knowl-registry-home');
