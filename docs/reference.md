@@ -605,6 +605,24 @@ The check considers `affectedPaths`, source strings, path-like tags, and stale s
 Without `--dry-run`, matching candidates are changed to `needs_review`. It does not rewrite their
 content or decide a replacement.
 
+When a repo is connected to a workspace, `knowl pr` also tells the team, so a flag it raises is
+visible to everyone. The other end of that is:
+
+```bash
+knowl reviewed <itemId>
+knowl reviewed <itemId> --note "still true, the rename did not change the behaviour"
+```
+
+This records that you re-read the item and it still holds: locally it clears the review flag, and
+on a connected repo it discharges the one `knowl pr` raised for the team. It is the only way to
+clear a team review flag — republishing an item says nothing about freshness and leaves the flag
+standing.
+
+It is a command you type rather than something an edit does for you, and deliberately so: it
+vouches for specific text, so it should be the act of someone who just read that text. If the
+team's copy has changed since it was published, the review is refused and says so — what you
+vouched for is not what is there.
+
 Retrieval access logging stores a query fingerprint rather than the raw query. Agents can append
 feedback only after using or rejecting a result:
 
@@ -1864,6 +1882,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl gc [--apply] [--stale-days N] [--compress-days N] [--min-bytes N] [--ignore-access] [--tombstone-days N]` | Preview or apply duplicate, archive, compression, and tombstone maintenance |
 | `knowl forget-log [--limit N] [--repo <name>] [--json] [--prune-days N]` | Show why knowledge items were destroyed — policy, reason, and the retrieval evidence it overruled — or prune those records |
 | `knowl pr --since <commit> [--dry-run]` | Find drift candidates and, unless dry-run, mark them for review |
+| `knowl reviewed <itemId> [--note <text>]` | Record that an item was re-read and still holds, clearing its review flag here and on the team's copy |
 | `knowl view [--port <port>]` | Start the local viewer: browse, read, edit, add and archive memory |
 | `knowl serve` | Start the stdio MCP server |
 | `knowl agent-event\|agent-hook\|agent-reminder` | Host-integration commands used by installed lifecycle configuration |

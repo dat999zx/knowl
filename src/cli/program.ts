@@ -63,7 +63,7 @@ import { recommendedTotal, WITHHELD_BY_DEFAULT } from '../core/sharing-defaults.
 import { runConnect } from '../cloud/connect.js';
 import { runPull } from '../cloud/pull.js';
 import { computePushSnapshot, countStageable, pushStaged, stagePublish } from '../cloud/publish.js';
-import { reportDrift } from '../cloud/drift-report.js';
+import { reportDrift, reportReviewed } from '../cloud/drift-report.js';
 import { retractItem } from '../cloud/retract.js';
 import {
   listSends, previewSend, receiveKnowledge, refusalMessage, revokeSend, sendKnowledge,
@@ -3924,6 +3924,67 @@ program
         // Ignore close errors while reporting the root cause.
       }
       console.error(`Error checking PR drift: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+/**
+ * The other end of `knowl pr`: say an atom was read and still holds.
+ *
+ * `reportReviewed` shipped complete, gated and tested with no production caller, and until
+ * `reportDrift` gained one above that was merely untidy. It is not any more -- `knowl pr` now
+ * raises `needsReview` on the workspace, and this is the only verb that clears one. Without it
+ * a team accumulates review flags with nothing able to discharge them.
+ *
+ * A COMMAND rather than an automatic call, and that is the whole design. `reportReviewed` sends
+ * `expectedVersion` because it is a positive claim about specific text, and vouching for text
+ * the caller did not read is the failure that asymmetry exists to prevent. Hanging it off an
+ * edit, or off `updateKnowledgeItem` clearing `last_drift_at`, would vouch on the author's
+ * behalf for words nobody re-read. Somebody has to type this.
+ *
+ * Local first, and unconditionally. Setting `freshness` is what `repository.ts` recognises as a
+ * review, so this clears `last_drift_at` here whether or not a workspace is attached -- a repo
+ * with no cloud still has drift flags to discharge, and a command that only worked when
+ * connected would be a different command.
+ *
+ * The upward half borrows `knowl pr`'s refusal policy exactly: `not-connected`, `not-published`
+ * and `gated` are ordinary states rather than errors, so none of them fails the command or
+ * undoes the local review. `conflict` is the one that is worth saying out loud -- the remote
+ * text moved under the reviewer, so what they vouched for is not what is there.
+ */
+program
+  .command('reviewed')
+  .argument('<itemId>')
+  .description('Record that an item was re-read and still holds, clearing any review flag')
+  .option('--note <text>', 'Why it still holds, for whoever raised the review')
+  .action(async (itemId, options) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      if (!(await repo.getKnowledgeItem(itemId))) {
+        throw new Error(`No knowledge item "${itemId}". Nothing was reviewed.`);
+      }
+
+      const updated = await repo.updateKnowledgeItem(itemId, { freshness: 'fresh' });
+      console.log(`Reviewed ${itemId}: ${updated?.title ?? ''}`);
+
+      const config = await loadConfig(root);
+      if (config.cloud) {
+        const outcome = await reportReviewed({
+          projectRoot: root, config, itemId,
+          ...(options.note === undefined ? {} : { note: options.note }),
+        }).catch(() => 'not-connected' as const);
+        if (outcome === 'reviewed') console.log('Told the team.');
+        // Everything the reviewer cannot act on stays quiet, exactly as `knowl pr` does. This
+        // one they can: it means the remote content is not what they just vouched for.
+        if (outcome === 'conflict') {
+          console.error('Note: the team\'s copy has changed since it was published, so the review was not recorded. Pull and read it again.');
+        }
+      }
+      await closeDb();
+    } catch (error: any) {
+      await closeDb().catch(() => {});
+      console.error(`Error recording review: ${error.message}`);
       process.exit(1);
     }
   });
