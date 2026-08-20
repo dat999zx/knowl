@@ -641,6 +641,67 @@ describe('CLI Integration', () => {
     }
   }, 60_000);
 
+  it('should clear a review flag with knowl reviewed', async () => {
+    // The other end of `knowl pr`. That command raises `needs_review` and, on a connected repo,
+    // tells the team; this is the only thing that discharges either. The local half has to work
+    // with no cloud attached, which is what this asserts -- a repo that never connected still
+    // accumulates drift flags, and a command that only worked when connected would be a
+    // different command.
+    const reviewDir = path.join(os.tmpdir(), 'knowl-cli-reviewed-test');
+    await fs.rm(reviewDir, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(reviewDir, { recursive: true });
+
+    try {
+      execSync(`node "${CLI_PATH}" init --yes`, { cwd: reviewDir, encoding: 'utf-8' });
+      execSync(
+        `node "${CLI_PATH}" decide "Refund window" "Refunds are accepted for 30 days." -r "Reviewing restores freshness."`,
+        { cwd: reviewDir, encoding: 'utf-8' },
+      );
+
+      const client = createClient({ url: `file:${path.join(reviewDir, '.knowl', 'knowl.db')}` });
+      try {
+        const itemId = String((await client.execute({
+          sql: 'SELECT id FROM knowledge_items WHERE title = ?',
+          args: ['Refund window'],
+        })).rows[0].id);
+
+        // The state `knowl pr` leaves behind: flagged, and stamped with when the check saw it.
+        await client.execute({
+          sql: 'UPDATE knowledge_items SET freshness = ?, last_drift_at = ? WHERE id = ?',
+          args: ['needs_review', '2026-08-20T00:00:00.000Z', itemId],
+        });
+
+        const output = execSync(`node "${CLI_PATH}" reviewed ${itemId} --note "still true"`, {
+          cwd: reviewDir,
+          encoding: 'utf-8',
+        });
+        expect(output).toContain('Refund window');
+
+        const updated = await client.execute({
+          sql: 'SELECT freshness, last_drift_at FROM knowledge_items WHERE id = ?',
+          args: [itemId],
+        });
+        expect(updated.rows[0].freshness).toBe('fresh');
+        // Setting freshness is what `repository.ts` recognises as a review, and clearing this is
+        // what unblocks standing promotion. If `reviewed` ever stops going through
+        // `updateKnowledgeItem`, the flag would clear while this stamp silently persisted.
+        expect(updated.rows[0].last_drift_at).toBeNull();
+      } finally {
+        client.close();
+      }
+
+      // A typo must not report success on an item that does not exist.
+      const missing = spawnSync(process.execPath, [CLI_PATH, 'reviewed', 'no-such-item'], {
+        cwd: reviewDir,
+        encoding: 'utf-8',
+      });
+      expect(missing.status).not.toBe(0);
+      expect(missing.stderr).toContain('no-such-item');
+    } finally {
+      await fs.rm(reviewDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }, 60_000);
+
   it('should report agent readiness with doctor', async () => {
     const doctorDir = path.join(os.tmpdir(), 'knowl-cli-doctor-test');
     await fs.rm(doctorDir, { recursive: true, force: true }).catch(() => {});
