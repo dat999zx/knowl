@@ -145,7 +145,24 @@ export interface KnowledgeCommit {
   createdAt: string;
 }
 
-export type EvidenceType = 'file' | 'symbol' | 'commit' | 'test' | 'command' | 'url' | 'user' | 'agent';
+/**
+ * What a piece of evidence points at.
+ *
+ * `command` and `url` were members until 2026-08-20 and are gone because nothing ever reached
+ * them: `isEvidenceStale` handles `symbol` and `file` and returns false for everything else, and
+ * both stores held zero rows of either across 2,173 evidence rows (#145). They were storable,
+ * syncable, and checked by nothing.
+ *
+ * Removing an exported union member is a breaking type change, which is why it happened while
+ * the count was zero rather than later. `evidence.type` is `TEXT NOT NULL` with no CHECK
+ * constraint, so this is a compile-time narrowing and needs no migration -- a row written by an
+ * older client still reads back, it simply has no type here to be.
+ *
+ * A future verification mechanism should add what it implements rather than reviving these. A
+ * stored free-text `command` that something later executes is a different security posture than
+ * this codebase has today, and the moment to argue that is when something proposes to run one.
+ */
+export type EvidenceType = 'file' | 'symbol' | 'commit' | 'test' | 'user' | 'agent';
 export type EvidenceRelationship = 'supports' | 'contradicts' | 'derived_from';
 
 export interface Evidence {
