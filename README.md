@@ -17,8 +17,6 @@
   <a href="#what-knowl-is-for"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-local.svg"><img src="docs/assets/chips/stat-local.svg" alt="100% local, no egress" height="38" /></picture></a>
 </p>
 
-<img src="docs/assets/overview.gif" alt="A decision recorded as active, a replacement typed at the command line, the predecessor struck through and marked superseded, then the benchmark result and the full capability set — 98% against 47% on conflict resolution, 27 MCP tools, no API key" width="96%" />
-
 [Quick start](#quick-start) ·
 [Why supersession](#the-idea-memory-that-retires-itself) ·
 [What gets stored](#what-gets-stored) ·

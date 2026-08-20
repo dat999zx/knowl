@@ -2401,18 +2401,20 @@ program
           console.log(`ℹ️ Decision was identified as a duplicate and skipped.`);
         }
       } else {
-        // Says what is actually unavailable. Same-subject reconciliation is deterministic and
-        // still runs here -- the AI pipeline adds contradiction detection ACROSS subjects. The
-        // old wording claimed there was no conflict detection at all, immediately above a line
-        // reporting a superseded predecessor.
-        console.log(`ℹ️ No AI provider configured. Same-subject writes still reconcile; cross-subject contradiction detection is off.`);
         const decision = await recordDecisionDirect(project.id, atom, `Record decision: ${title}`, config);
         console.log(decision.action === 'duplicate'
           ? `ℹ️ Already recorded verbatim, nothing written. ID: ${decision.item.id}`
           : `✅ Recorded decision successfully! ID: ${decision.item.id}`);
         for (const line of formatCrossRepoNotice(decision.crossRepo)) console.log(line);
         if (decision.superseded) console.log(`🔄 Superseded older decision: ${decision.superseded.id}`);
-        if (decision.nearDuplicate) console.log(`⚠️ Left active beside "${decision.nearDuplicate.title}" (${decision.nearDuplicate.id}) — run \`knowl supersede ${decision.nearDuplicate.id} ${decision.item.id}\` if it replaces that one.`);
+        if (decision.nearDuplicate) {
+          console.log(`⚠️ Left active beside "${decision.nearDuplicate.title}" (${decision.nearDuplicate.id}) — run \`knowl supersede ${decision.nearDuplicate.id} ${decision.item.id}\` if it replaces that one.`);
+          // Only here. A clean same-subject retirement did not need the AI pipeline, so saying it
+          // is missing is noise on the common path -- and it was the loudest line in the recorded
+          // demo, arguing against the feature the recording exists to show. `knowl status` and
+          // `knowl doctor` both report AI configuration for anyone who wants it.
+          console.log(`ℹ️  No AI provider configured, so contradictions across different subjects are not detected.`);
+        }
       }
 
       await closeDb();
