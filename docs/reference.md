@@ -1439,8 +1439,8 @@ pile. Search, category filters, stale rings, neighborhood focus, and the item in
 locate content, evidence, and timeline assertions.
 
 <p align="center">
-  <img src="assets/viewer-graph.png" alt="The Knowl local viewer: the memory graph, linked only through tags few atoms share, with unlinked atoms settling at the rim" width="48%" />
-  <img src="assets/viewer-inspect.png" alt="The Knowl local viewer list: every atom with an unread mark in the margin, and one atom open in the inspector with its markdown rendered" width="48%" />
+  <img src="assets/viewer-graph.png" alt="The Knowl local viewer: the memory graph, each atom a lit point coloured by kind, linked only through tags few atoms share, with unlinked atoms scattered on the rim" width="48%" />
+  <img src="assets/viewer-inspect.png" alt="The Knowl local viewer list: every atom with an unread mark in the margin, and one atom open in the inspector with its markdown, tags and timeline rendered" width="48%" />
 </p>
 
 The graph and filter UI do not write telemetry. A direct GET to `/api/retrieval` records retrieval

@@ -565,8 +565,8 @@ knowl view
 ```
 
 <p align="center">
-  <img src="docs/assets/viewer-graph.png" alt="The Knowl local viewer: the memory graph, linked only through tags few atoms share, with unlinked atoms settling at the rim" width="48%" />
-  <img src="docs/assets/viewer-inspect.png" alt="The Knowl local viewer list: every atom with an unread mark in the margin, and one atom open in the inspector with its markdown rendered" width="48%" />
+  <img src="docs/assets/viewer-graph.png" alt="The Knowl local viewer: the memory graph, each atom a lit point coloured by kind, linked only through tags few atoms share, with unlinked atoms scattered on the rim" width="48%" />
+  <img src="docs/assets/viewer-inspect.png" alt="The Knowl local viewer list: every atom with an unread mark in the margin, and one atom open in the inspector with its markdown, tags and timeline rendered" width="48%" />
 </p>
 
 **This is where you fix what your agents got wrong.** Open any atom to read its evidence and
