@@ -58,6 +58,106 @@ describe('evidence repository', () => {
     expect(first.excerpt!.length).toBeLessThanOrEqual(2_000);
   });
 
+  it('stores a locator that escapes the project root instead of failing the write', async () => {
+    const observedAt = '2026-07-11T00:00:00.000Z';
+
+    // `..` segments and a drive letter are the two ways out of the root, and only the first is
+    // caught by segment inspection alone -- `C:/Windows/win.ini` contains no empty, `.` or `..`
+    // segment, yet `path.resolve` abandons the root for it on any platform that has drives.
+    //
+    // Neither is refused here. `attachEvidenceToKnowledge` turns every `affectedPaths` entry into
+    // a `file` locator inside the write transaction, so throwing would lose the whole atom over
+    // one path naming a sibling checkout -- a shape this project's own store already holds. The
+    // row is inert instead: `isEvidenceStale` refuses to resolve it, which is the assertion below
+    // and the one that actually closes the traversal.
+    for (const locator of ['../../../Windows/win.ini', 'C:/Windows/win.ini', '/etc/passwd']) {
+      const stored = await createEvidence({ type: 'file', locator, contentHash: 'a'.repeat(64), observedAt });
+      expect(stored.locator).toBe(locator);
+      expect(await isEvidenceStale(stored, TEST_ROOT)).toBe(true);
+    }
+  });
+
+  it('recovers a locator that names a file inside the repository by another spelling', async () => {
+    const observedAt = '2026-07-11T00:00:00.000Z';
+
+    // An absolute path under the root and `src/a.ts` name one file. Storing both spellings means
+    // the staleness check never matches on either -- a miss that is silent by construction, since
+    // comparing two unequal strings does not throw, it just never fires.
+    const absolute = await createEvidence({
+      type: 'file', locator: path.join(TEST_ROOT, 'src/auth/token.ts'), contentHash: 'e'.repeat(64), observedAt,
+    });
+    expect(absolute.locator).toBe('src/auth/token.ts');
+
+    // A trailing slash is not an escape, and a directory is a legitimate citation.
+    const directory = await createEvidence({
+      type: 'file', locator: 'src/transcripts/', contentHash: 'f'.repeat(64), observedAt,
+    });
+    expect(directory.locator).toBe('src/transcripts');
+  });
+
+  it('canonicalizes a file:// locator to the bare path rather than containing it by accident', async () => {
+    // Prefixed locators resolve to `<root>/file:/...` today, which cannot exist, so they are
+    // "safe" only in the sense that they never match anything. Pinning that as the intended
+    // behaviour would be wrong: the prefix is a legitimate spelling of the same file and is
+    // canonicalized, which is what stops two formats sharing one column.
+    const evidence = await createEvidence({
+      type: 'file', locator: 'file://src/auth/token.ts', contentHash: 'b'.repeat(64),
+      observedAt: '2026-07-11T00:00:00.000Z',
+    });
+
+    expect(evidence.locator).toBe('src/auth/token.ts');
+  });
+
+  it('accepts evidence for extensionless files, which the read-set heuristic would refuse', async () => {
+    // `normalizeFilePath` requires an extension to reject directories, an acceptable loss for a
+    // tier allowed to be incomplete. Evidence is a deliberate citation, so it takes the
+    // containment rule without that bias.
+    const evidence = await createEvidence({
+      type: 'file', locator: 'Makefile', contentHash: 'c'.repeat(64),
+      observedAt: '2026-07-11T00:00:00.000Z',
+    });
+
+    expect(evidence.locator).toBe('Makefile');
+  });
+
+  it('leaves non-path locators opaque and keeps the symbol scheme', async () => {
+    const observedAt = '2026-07-11T00:00:00.000Z';
+
+    // A commit SHA is an identifier, not a path; `isEvidenceStale` never takes it to the
+    // filesystem, and validating it as a path would reject the 168 commit rows already stored.
+    const commit = await createEvidence({ type: 'commit', locator: 'a'.repeat(40), observedAt });
+    expect(commit.locator).toBe('a'.repeat(40));
+
+    // `symbol://path#name` is `code_symbols.locator`, the key `resolveSymbolEvidence` looks up.
+    // Stripped to a bare path it would match no row.
+    const symbol = await createEvidence({
+      type: 'symbol', locator: 'symbol://src/auth/token.ts#verify', observedAt,
+    });
+    expect(symbol.locator).toBe('symbol://src/auth/token.ts#verify');
+  });
+
+  it('refuses to read an escaping locator that reached the table without createEvidence', async () => {
+    // `cloud/sync-apply.ts` upserts locator and content_hash straight from a peer's payload and
+    // `store/portability.ts` inserts on import, so the write-side guard is not sufficient on its
+    // own. Inserted directly here to reproduce that shape.
+    const db = getDb() as any;
+    await db.run(sql`
+      INSERT INTO evidence (id, type, locator, content_hash, excerpt, observed_at, metadata)
+      VALUES ('escapes0000000001', 'file', '../../../Windows/win.ini', ${'d'.repeat(64)}, NULL, '2026-07-11T00:00:00.000Z', NULL)
+    `);
+
+    const rows = await listEvidenceForItem('nonexistent');
+    expect(rows).toEqual([]);
+
+    // The answer must not depend on whether that file exists on the machine running the test,
+    // so it is a constant rather than the result of a read that happens to fail.
+    const escaping = {
+      id: 'escapes0000000001', type: 'file' as const, locator: '../../../Windows/win.ini',
+      contentHash: 'd'.repeat(64), excerpt: null, observedAt: '2026-07-11T00:00:00.000Z', metadata: null,
+    };
+    expect(await isEvidenceStale(escaping, TEST_ROOT)).toBe(true);
+  });
+
   it('links, lists, unlinks, and finds items by evidence', async () => {
     const item = await repo.createKnowledgeItem(projectId, {
       category: 'fact', title: 'Evidence target', content: 'Evidence-backed fact.',

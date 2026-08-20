@@ -175,15 +175,41 @@ export function normalizeLocator(raw: string): string | null {
   return null;
 }
 
-function normalizeFilePath(raw: string): string | null {
+/**
+ * Repo-relative, forward-slashed, and unable to leave the root -- the containment half of a
+ * locator's contract, without the directory heuristic `normalizeFilePath` layers on top.
+ *
+ * Split out and exported because `evidence-repository.ts` needs exactly this and nothing else.
+ * Evidence cites files a read-set is allowed to miss -- `Makefile`, `LICENSE`, `.gitignore` -- so
+ * it cannot take the extension requirement, while a locator that climbs out of the root is wrong
+ * for both. Keeping the `..` rule in one place is the point: two functions disagreeing about what
+ * a locator may look like is what made the containment question hard to answer in the first place.
+ */
+export function containedRepoPath(raw: string): string | null {
   // Windows separators are normalized rather than rejected, matching `symbol-index.ts:36`. A host
   // that emits `src\store\a.ts` is describing the same file as `src/store/a.ts`, and storing both
   // spellings means the detector's equality never fires on that platform -- which is this one.
   const filePath = raw.trim().replace(/\\/g, '/');
   if (filePath.length === 0) return null;
 
+  // A drive letter survives the segment check below -- `C:/Windows/win.ini` contains no empty,
+  // `.` or `..` segment -- but `path.resolve` treats it as absolute and abandons the root
+  // entirely. Refused on every platform, because a repo-relative path begins with one nowhere.
+  if (/^[a-zA-Z]:/.test(filePath)) return null;
+
   const segments = filePath.split('/');
+  // An empty segment covers both a leading slash and a UNC prefix, since `\\host\share` has
+  // become `//host/share` by this point; each resolves outside the root.
   if (segments.some(segment => segment === '' || segment === '.' || segment === '..')) return null;
+
+  return filePath;
+}
+
+function normalizeFilePath(raw: string): string | null {
+  const filePath = containedRepoPath(raw);
+  if (filePath === null) return null;
+
+  const segments = filePath.split('/');
 
   const basename = segments[segments.length - 1];
   const dot = basename.indexOf('.', 1);

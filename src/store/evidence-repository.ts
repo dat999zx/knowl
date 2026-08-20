@@ -3,8 +3,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { Evidence, EvidenceInput, EvidenceRelationship, EvidenceType, KnowledgeEvidence, KnowledgeItem } from '../core/types.js';
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
-import { getClient } from './database.js';
+import { getClient, getProjectRoot } from './database.js';
 import { getKnowledgeItem } from './repository.js';
+import { containedRepoPath, normalizeLocator as normalizeReadSetLocator, repoRelativePath } from './read-set.js';
 
 const MAX_EXCERPT_LENGTH = 2_000;
 
@@ -17,8 +18,47 @@ function generateId(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 }
 
-function normalizeLocator(locator: string): string {
-  return locator.trim().replace(/\\/g, '/');
+/**
+ * Canonical locator form, which is per type rather than global.
+ *
+ * - **`file` -- a bare repo-relative path.** `isEvidenceStale` hands it straight to
+ *   `path.resolve(projectRoot, ...)`, so a `file://` prefix would resolve to `<root>/file:/...`,
+ *   which cannot exist, and every file evidence row would report stale permanently. An absolute
+ *   path inside the repository and a trailing slash are both recovered rather than kept, because
+ *   `D:/repo/src/a.ts` and `src/a.ts` name one file and storing both spellings means the
+ *   staleness check never matches -- a failure that is silent by construction.
+ * - **`symbol` -- keeps its `symbol://path#name` scheme.** That string is `code_symbols.locator`,
+ *   the primary key `resolveSymbolEvidence` looks up; stripped of the scheme it matches no row
+ *   and every symbol evidence falls through to the rename path or straight to stale.
+ * - **Everything else -- an opaque identifier, left alone.** A commit SHA, an agent name. None of
+ *   them reach the filesystem in `isEvidenceStale`, and running a path validator over a SHA would
+ *   reject data that is perfectly valid.
+ *
+ * **A locator that cannot be brought inside the root is stored as given, not refused.** Containment
+ * is enforced in `isEvidenceStale`, at the point the string would reach the filesystem, and that is
+ * where it has to be regardless: `cloud/sync-apply.ts` and `store/portability.ts` both insert
+ * without passing through here, so a write-side refusal buys no safety it does not already have.
+ * What it would buy is a failed write -- `attachEvidenceToKnowledge` turns every `affectedPaths`
+ * entry into a `file` locator, so one path naming a sibling checkout would reject the whole
+ * `knowl_store` call and lose the atom. This store holds such rows today, written by real agents.
+ */
+export function normalizeEvidenceLocator(type: EvidenceType, locator: string): string {
+  const trimmed = (locator ?? '').trim().replace(/\\/g, '/');
+
+  if (type === 'symbol') {
+    const normalized = normalizeReadSetLocator(trimmed.startsWith('symbol://') ? trimmed : `symbol://${trimmed}`);
+    return normalized ?? trimmed;
+  }
+
+  if (type !== 'file') return trimmed;
+
+  const bare = trimmed.startsWith('file://') ? trimmed.slice('file://'.length) : trimmed;
+  // Resolve first, then check: `repoRelativePath` recovers the spellings that name a file inside
+  // the repo by a different route, and `containedRepoPath` is what decides whether the result is
+  // actually repo-relative -- it rejects a drive letter on every platform, which resolution alone
+  // only does on one.
+  const resolved = repoRelativePath(getProjectRoot(), bare) ?? bare;
+  return containedRepoPath(resolved) ?? bare;
 }
 
 function parseMetadata(value: unknown): Record<string, unknown> | null {
@@ -69,9 +109,24 @@ function nameSimilarity(left: string, right: string): number {
   return row[b.length] / Math.max(a.length, b.length);
 }
 
+/**
+ * Record one piece of evidence, normalizing its locator to the canonical form for its type.
+ *
+ * **The canonical form is per type, and the `file` case is a bare repo-relative path** --
+ * `src/store/read-set.ts`, never `file://src/store/read-set.ts`. That is what every row in the
+ * table already holds and the only form `isEvidenceStale` can resolve, since it passes the
+ * locator to `path.resolve` unchanged. `symbol` keeps its `symbol://path#name` scheme because
+ * that string is `code_symbols.locator`; every other type is an opaque identifier and is stored
+ * as given. See `normalizeEvidenceLocator`.
+ *
+ * **A locator that escapes the project root is stored as given, not refused.** Refusing here would
+ * fail the whole write for one bad `affectedPaths` entry while buying no safety, since rows also
+ * arrive from `cloud/sync-apply.ts` and `store/portability.ts`. `isEvidenceStale` is where
+ * containment is enforced, at the point the string would reach the filesystem.
+ */
 export async function createEvidence(input: Omit<Evidence, 'id'>): Promise<Evidence> {
   const client = getClient();
-  const locator = normalizeLocator(input.locator);
+  const locator = normalizeEvidenceLocator(input.type, input.locator);
   // Both columns are nullable and both inputs are optional, so absent becomes null once,
   // here, rather than at each of the three places that go on to use it. The driver binds
   // null; undefined it refuses outright.
@@ -175,6 +230,12 @@ export async function isEvidenceStale(evidence: Evidence, projectRoot: string): 
     return (await resolveSymbolEvidence(evidence)).stale;
   }
   if (evidence.type !== 'file' || !evidence.contentHash) return false;
+  // Checked here as well as on write, because `createEvidence` is not the only writer:
+  // `cloud/sync-apply.ts` upserts locator and content_hash verbatim from a sync payload and
+  // `store/portability.ts` inserts on import, neither passing through any normalizer. Refusing
+  // outright rather than resolving and letting `readFile` fail keeps the answer independent of
+  // anything outside the root -- a locator that escapes reveals nothing about the file it names.
+  if (containedRepoPath(evidence.locator) === null) return true;
   try {
     const content = await fs.readFile(path.resolve(projectRoot, evidence.locator));
     return crypto.createHash('sha256').update(content).digest('hex') !== evidence.contentHash;

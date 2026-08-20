@@ -1,4 +1,4 @@
-import { CommitChange, EvidenceInput, KnowledgeCategory, KnowledgeItem, KnowledgeProvenance, KnowledgeWriteValidationOptions } from '../core/types.js';
+import { CommitChange, EvidenceInput, EvidenceType, KnowledgeCategory, KnowledgeItem, KnowledgeProvenance, KnowledgeWriteValidationOptions } from '../core/types.js';
 import { assertConfidenceInRange } from '../core/knowledge-validation.js';
 import { searchKnowledgeItems } from './search.js';
 import * as repo from './repository.js';
@@ -7,7 +7,7 @@ import { KnowledgeConflictError } from '../core/errors.js';
 import { getConfigRoot, withClientTransaction } from './database.js';
 import type { CrossRepoOverlap, OverlapSubject } from '../workspace/cross-repo-overlap.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
-import { attachEvidenceToKnowledge, listEvidenceForItem } from './evidence-repository.js';
+import { attachEvidenceToKnowledge, listEvidenceForItem, normalizeEvidenceLocator } from './evidence-repository.js';
 import { normalizeAffectedPaths } from './freshness.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
 import { governingDecisionForWrite, type GoverningDecision } from './governing-decision.js';
@@ -336,9 +336,16 @@ export function carriesNothingNew(incoming: KnowledgePayload, held: KnowledgePay
       || (held.steps !== undefined && held.steps.join('\n') === incoming.steps.join('\n')));
 }
 
-/** Evidence identity, matched the way `createEvidence` stores it. */
+/**
+ * Evidence identity, matched the way `createEvidence` stores it.
+ *
+ * Through the same normalizer, not a copy of it. The two drifted apart the moment the
+ * canonical form stopped being `trim` plus separator folding: a re-store citing
+ * `file://src/a.ts` keyed differently from the stored `src/a.ts`, so a write that added
+ * nothing read as new information and retired the record it duplicated.
+ */
 function evidenceKey(type: string, locator: string): string {
-  return `${type}:${locator.trim().replace(/\\/g, '/')}`;
+  return `${type}:${normalizeEvidenceLocator(type as EvidenceType, locator)}`;
 }
 
 /**
