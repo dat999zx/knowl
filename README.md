@@ -54,30 +54,48 @@ knowl init
 ```
 
 `knowl init` creates `.knowl/`, installs the project guidance files, updates `.gitignore`, and
-offers MCP and lifecycle setup for whichever agents it detects — Claude Code, Codex, Cursor,
-Gemini CLI, Claude Desktop. It also warms the local embedding model, but never depends on that
-download succeeding.
+registers Knowl with whichever agents it detects. It also warms a local embedding model (~53 MB)
+in the background — `init` succeeds either way, and without it you still get keyword search.
 
-Record something worth keeping:
+That is the whole setup. You do not record memory by hand: your agent reads and writes it as it
+works.
 
-```bash
-knowl decide "Use SQLite" "Use SQLite for local project memory." \
-  --reasoning "Keeps storage repository-local and simple to operate." \
-  --alternatives PostgreSQL MongoDB \
-  --tags database local-first
-```
+## Connecting an agent
 
-Read it back, from the CLI or from any connected agent:
+<table>
+<tr>
+<td align="center" width="20%">
+<a href="https://claude.com/product/claude-code"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="48" height="48" /></a><br/>
+<strong>Claude Code</strong><br/>
+<sub>MCP · lifecycle · subagents</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex" width="48" height="48" /></a><br/>
+<strong>Codex</strong><br/>
+<sub>MCP · lifecycle · subagents</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://cursor.com"><img src="https://github.com/getcursor.png?size=120" alt="Cursor" width="48" height="48" /></a><br/>
+<strong>Cursor</strong><br/>
+<sub>MCP · lifecycle</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://github.com/google-gemini/gemini-cli"><img src="https://github.com/google-gemini.png?size=120" alt="Gemini CLI" width="48" height="48" /></a><br/>
+<strong>Gemini CLI</strong><br/>
+<sub>MCP · manual loop</sub>
+</td>
+<td align="center" width="20%">
+<a href="https://claude.ai/download"><img src="https://github.com/anthropics.png?size=120" alt="Claude Desktop" width="48" height="48" /></a><br/>
+<strong>Claude Desktop</strong><br/>
+<sub>MCP · manual loop</sub>
+</td>
+</tr>
+</table>
 
-```bash
-knowl query "why sqlite"     # search project memory
-knowl state                  # the active memory, as a hierarchy
-knowl status                 # repository, memory, AI, and workspace status
-knowl doctor                 # check setup, retrieval, and agent registration
-```
+`knowl init` registers the MCP server for every host it finds. Start a new session afterwards so
+the agent picks up its guidance, and it will query and write memory on its own.
 
-Then start a new agent session so the host picks up its guidance and MCP registration. The CLI and
-`knowl_query` read the same store under the same governance rules.
+→ [How agents use it](#how-agents-use-it) · [MCP tools and resources](docs/reference.md#mcp-tools-and-resources)
 
 ## The idea: memory that retires itself
 
@@ -177,6 +195,18 @@ Not a mock-up — the same sequence against the published CLI, recorded from
 <img src="docs/assets/demo.gif" alt="Terminal recording: knowl decide records a database decision, a second decide on the same subject reports Superseded older decision, and knowl status then reports one active item and one superseded" width="88%" />
 </div>
 
+## Sharing memory across a team: knowl.cloud
+
+Everything above is local and needs no account. [knowl.cloud](https://knowl.cloud) is the optional
+hosted layer for when one machine is not enough:
+
+- **Shared workspaces.** Knowledge written in one checkout reaches teammates' agents, with each
+  repository still owning what it publishes.
+- **Browser agents.** claude.ai and chatgpt.com cannot run a local process, so they connect over a
+  remote MCP endpoint with a token scoped to one workspace.
+
+Local-only remains a first-class way to run Knowl. Nothing here is required to use anything above.
+
 ## What gets stored
 
 Every atom has exactly one of seven categories:
@@ -208,37 +238,7 @@ over files the host already wrote.
 
 → [Knowledge model reference](docs/reference.md#core-knowledge-model)
 
-## Connecting an agent
-
-<table>
-<tr>
-<td align="center" width="20%">
-<a href="https://claude.com/product/claude-code"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="48" height="48" /></a><br/>
-<strong>Claude Code</strong><br/>
-<sub>MCP · lifecycle · subagents</sub>
-</td>
-<td align="center" width="20%">
-<a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex" width="48" height="48" /></a><br/>
-<strong>Codex</strong><br/>
-<sub>MCP · lifecycle · subagents</sub>
-</td>
-<td align="center" width="20%">
-<a href="https://cursor.com"><img src="https://github.com/getcursor.png?size=120" alt="Cursor" width="48" height="48" /></a><br/>
-<strong>Cursor</strong><br/>
-<sub>MCP · lifecycle</sub>
-</td>
-<td align="center" width="20%">
-<a href="https://github.com/google-gemini/gemini-cli"><img src="https://github.com/google-gemini.png?size=120" alt="Gemini CLI" width="48" height="48" /></a><br/>
-<strong>Gemini CLI</strong><br/>
-<sub>MCP · manual loop</sub>
-</td>
-<td align="center" width="20%">
-<a href="https://claude.ai/download"><img src="https://github.com/anthropics.png?size=120" alt="Claude Desktop" width="48" height="48" /></a><br/>
-<strong>Claude Desktop</strong><br/>
-<sub>MCP · manual loop</sub>
-</td>
-</tr>
-</table>
+## How agents use it
 
 `knowl serve` exposes the store over stdio MCP; `knowl init` registers it for you. The workflow the
 installed guidance asks agents to follow is short:
