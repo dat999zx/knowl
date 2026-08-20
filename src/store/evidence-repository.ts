@@ -5,6 +5,7 @@ import { Evidence, EvidenceInput, EvidenceRelationship, EvidenceType, KnowledgeE
 import { validateKnowledgeWrite } from '../core/knowledge-validation.js';
 import { getClient } from './database.js';
 import { getKnowledgeItem } from './repository.js';
+import { containedRepoPath, normalizeLocator as normalizeReadSetLocator } from './read-set.js';
 
 const MAX_EXCERPT_LENGTH = 2_000;
 
@@ -17,8 +18,46 @@ function generateId(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 }
 
-function normalizeLocator(locator: string): string {
-  return locator.trim().replace(/\\/g, '/');
+/**
+ * Canonical locator form, which is per type rather than global.
+ *
+ * - **`file` — a bare repo-relative path.** `isEvidenceStale` hands it straight to
+ *   `path.resolve(projectRoot, ...)`, so a `file://` prefix would resolve to `<root>/file:/...`,
+ *   which cannot exist, and every file evidence row would report stale permanently.
+ * - **`symbol` — keeps its `symbol://path#name` scheme.** That string is `code_symbols.locator`,
+ *   the primary key `resolveSymbolEvidence` looks up; stripped of the scheme it matches no row
+ *   and every symbol evidence falls through to the rename path or straight to stale.
+ * - **Everything else — an opaque identifier, left alone.** A commit SHA, an agent name. None of
+ *   them reach the filesystem in `isEvidenceStale`, and running a path validator over a SHA would
+ *   reject data that is perfectly valid.
+ *
+ * `file` and `symbol` are also the only two types whose locator can escape the project root, and
+ * a locator that names a file outside the repository is not a locator -- so it is refused here
+ * rather than stored and resolved later. `isEvidenceStale` checks containment a second time at
+ * the point of use, because rows also arrive from `cloud/sync-apply.ts` and `store/portability.ts`
+ * without passing through this function at all.
+ */
+function normalizeEvidenceLocator(type: EvidenceType, locator: string): string {
+  const trimmed = (locator ?? '').trim().replace(/\\/g, '/');
+
+  if (type === 'symbol') {
+    const normalized = normalizeReadSetLocator(trimmed.startsWith('symbol://') ? trimmed : `symbol://${trimmed}`);
+    if (normalized === null) {
+      throw new Error(`Invalid symbol evidence locator, expected symbol://<repo-relative path>#<name>: ${locator}`);
+    }
+    return normalized;
+  }
+
+  if (type === 'file') {
+    const bare = trimmed.startsWith('file://') ? trimmed.slice('file://'.length) : trimmed;
+    const contained = containedRepoPath(bare);
+    if (contained === null) {
+      throw new Error(`Invalid file evidence locator, expected a repo-relative path inside the project: ${locator}`);
+    }
+    return contained;
+  }
+
+  return trimmed;
 }
 
 function parseMetadata(value: unknown): Record<string, unknown> | null {
@@ -69,9 +108,22 @@ function nameSimilarity(left: string, right: string): number {
   return row[b.length] / Math.max(a.length, b.length);
 }
 
+/**
+ * Record one piece of evidence, normalizing its locator to the canonical form for its type.
+ *
+ * **The canonical form is per type, and the `file` case is a bare repo-relative path** --
+ * `src/store/read-set.ts`, never `file://src/store/read-set.ts`. That is what every row in the
+ * table already holds and the only form `isEvidenceStale` can resolve, since it passes the
+ * locator to `path.resolve` unchanged. `symbol` keeps its `symbol://path#name` scheme because
+ * that string is `code_symbols.locator`; every other type is an opaque identifier and is stored
+ * as given. See `normalizeEvidenceLocator`.
+ *
+ * **Throws on a `file` or `symbol` locator that escapes the project root**, rather than storing
+ * a row that cites a file the repository does not contain.
+ */
 export async function createEvidence(input: Omit<Evidence, 'id'>): Promise<Evidence> {
   const client = getClient();
-  const locator = normalizeLocator(input.locator);
+  const locator = normalizeEvidenceLocator(input.type, input.locator);
   // Both columns are nullable and both inputs are optional, so absent becomes null once,
   // here, rather than at each of the three places that go on to use it. The driver binds
   // null; undefined it refuses outright.
@@ -175,6 +227,12 @@ export async function isEvidenceStale(evidence: Evidence, projectRoot: string): 
     return (await resolveSymbolEvidence(evidence)).stale;
   }
   if (evidence.type !== 'file' || !evidence.contentHash) return false;
+  // Checked here as well as on write, because `createEvidence` is not the only writer:
+  // `cloud/sync-apply.ts` upserts locator and content_hash verbatim from a sync payload and
+  // `store/portability.ts` inserts on import, neither passing through any normalizer. Refusing
+  // outright rather than resolving and letting `readFile` fail keeps the answer independent of
+  // anything outside the root -- a locator that escapes reveals nothing about the file it names.
+  if (containedRepoPath(evidence.locator) === null) return true;
   try {
     const content = await fs.readFile(path.resolve(projectRoot, evidence.locator));
     return crypto.createHash('sha256').update(content).digest('hex') !== evidence.contentHash;
