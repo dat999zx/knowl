@@ -53,9 +53,10 @@ export const knowledgeItems = sqliteTable('knowledge_items', {
   tierSince: text('tier_since'),
   /**
    * When the automatic drift check last saw this item's cited files move, and NULL once
-   * somebody has revisited the item since. Deliberately NOT `freshness`: flipping that would
-   * do the corpus-wide ranking damage `drift-auto.ts` measured and refused, whereas this
-   * column changes nothing an agent reads. Standing promotion is its only consumer.
+   * somebody has revisited the item since. Distinct from `freshness`, which the same check
+   * also flips to `needs_review` since 2026-08-13: this column is read by nothing at
+   * retrieval time, so it costs no ranking of its own. Standing promotion is its only
+   * consumer, and the two are cleared by different events -- see `updateKnowledgeItem`.
    *
    * Store-internal, so it is absent from `KnowledgeItem` and from every export: it records
    * what THIS machine's git history did to the item, which is not a portable property of the
