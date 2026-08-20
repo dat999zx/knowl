@@ -34,6 +34,19 @@ export type KnowledgeEmbedder = {
    * already passes an embedding passes this beside it and needs to know nothing more.
    */
   relevanceFloor: number | null;
+  /**
+   * What this embedder would actually turn into a vector, and whether that is all of it.
+   *
+   * Same reasoning as `relevanceFloor` above: the budget belongs to the model that imposes it,
+   * so the thing that does the clipping is the thing that can report it. It is also the only
+   * way the store layer can ask -- `store` may not import `ai`, and the clip is decided there.
+   *
+   * OPTIONAL because the interface has a dozen test doubles and an alternative provider owes
+   * nobody a token budget. A caller that gets `undefined` learns nothing and must not conclude
+   * "nothing was clipped"; every one here treats it as "no report available" and stays quiet,
+   * which is right for a double and moot for the one real implementation.
+   */
+  clipToBudget?(text: string): { text: string; tokens: number; clipped: boolean };
   embed(texts: string[], options?: EmbedOptions): Promise<number[][]>;
   /**
    * A QUERY, not a document.

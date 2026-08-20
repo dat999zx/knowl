@@ -433,4 +433,41 @@ describe('clipping to the token budget', () => {
   it('leaves a text inside the budget untouched', () => {
     expect(clipToTokenBudget('a short atom').text).toBe('a short atom');
   });
+
+  it('reports whether anything was dropped, from either cause', () => {
+    // The whole point of the flag (#132): the loss was previously undetectable from outside,
+    // so a 12 KB atom embedded its first two-thirds and nothing said so. Both causes have to
+    // report, because an author cannot tell them apart and does not need to.
+    expect(clipToTokenBudget('a short atom').clipped).toBe(false);
+
+    // The character pre-clip, well inside the token budget: 8,000 chars of 'ab ' is ~2,666
+    // tokens, so this one is cut by MAX_EMBED_CHARS on the way in.
+    const byChars = clipToTokenBudget('x'.repeat(9_000));
+    expect(byChars.clipped).toBe(true);
+    expect(byChars.text.length).toBeLessThan(9_000);
+
+    // The token budget, via the mid-segment path digits reach and letters cannot.
+    expect(clipToTokenBudget('1'.repeat(9_000)).clipped).toBe(true);
+
+    // The boundary cut, the third return point.
+    expect(clipToTokenBudget('ab '.repeat(4_000)).clipped).toBe(true);
+  });
+
+  it('does not claim a clip at exactly the character cap', () => {
+    // Off-by-one on the boundary: `text.length > MAX_EMBED_CHARS` is a strict comparison, so a
+    // text of exactly 8,000 characters passes through whole. `>=` would report every one of
+    // them as clipped and send authors splitting atoms that were never cut.
+    //
+    // `word ` and not `ab `: this has to be under the TOKEN budget too or the other cut fires
+    // and the assertion stops being about the character cap. 5 chars costing 1 token puts
+    // 8,000 characters at 1,600 tokens, comfortably under 2,048; `ab ` would be ~2,666 and
+    // clip for the other reason entirely.
+    const exact = 'word '.repeat(1_600);
+    expect(exact.length).toBe(8_000);
+
+    const result = clipToTokenBudget(exact);
+    expect(result.tokens).toBeLessThan(EMBEDDING_LIMITS.maxTokens);
+    expect(result.clipped).toBe(false);
+    expect(result.text).toBe(exact);
+  });
 });
