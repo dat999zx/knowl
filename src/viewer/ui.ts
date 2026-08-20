@@ -13,14 +13,17 @@ export const VIEWER_HTML = `<!doctype html>
 <style>
   :root {
     /* docs.knowl.cloud's own tokens (design/site/_knowl/base.css in knowl-cloud). The viewer
-       used to run a palette of its own, which is how one product ended up with three. */
-    --bg: #04121a;
-    --stage: #04121a;
-    --panel: #081f28f5;
-    --panel-solid: #0a1f29;
-    --raised: #0d2733f7;
-    --line: #78becd29;
-    --line-strong: #78becd4a;
+       used to run a palette of its own, which is how one product ended up with three.
+       The grounds are darker and less blue than the site's, because the site puts prose on
+       them and this puts a thousand saturated dots on them: the same #04121a that reads as
+       ink behind text reads as haze behind a graph. Hue and every accent are unchanged. */
+    --bg: #070a0c;
+    --stage: #070a0c;
+    --panel: #0d1418f2;
+    --panel-solid: #0e1519;
+    --raised: #141d22;
+    --line: #7fa8b81f;
+    --line-strong: #7fa8b840;
     --ink: #faf8f5;
     --tusk: #e6faff;
     --muted: #a9c2cb;
@@ -60,7 +63,7 @@ export const VIEWER_HTML = `<!doctype html>
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
   }
-  #app { display: grid; grid-template-columns: 288px 1fr; height: 100vh; }
+  #app { display: grid; grid-template-columns: 244px 1fr; height: 100vh; }
 
   .eyebrow {
     font-family: var(--mono);
@@ -73,11 +76,11 @@ export const VIEWER_HTML = `<!doctype html>
   /* ---- left rail ---- */
   .rail {
     border-right: 1px solid var(--line);
-    background: linear-gradient(180deg, #061821, #04121a);
-    padding: 20px 18px;
+    background: var(--bg);
+    padding: 18px 14px;
     display: flex;
     flex-direction: column;
-    gap: 22px;
+    gap: 20px;
     overflow-y: auto;
     z-index: 3;
   }
@@ -97,16 +100,16 @@ export const VIEWER_HTML = `<!doctype html>
   }
   .search input {
     width: 100%;
-    background: var(--stage);
-    border: 1px solid var(--line);
-    border-radius: 3px;
+    background: var(--panel-solid);
+    border: 1px solid transparent;
+    border-radius: 6px;
     color: var(--ink);
     font: 13px var(--sans);
-    padding: 9px 11px 9px 30px;
+    padding: 8px 11px 8px 30px;
     outline: none;
     transition: border-color 0.15s, box-shadow 0.15s;
   }
-  .search input:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(79,216,232,0.2); }
+  .search input:focus { border-color: var(--line-strong); background: var(--raised); }
   .search input::placeholder { color: var(--faint); }
   .search svg { position: absolute; left: 9px; top: 9px; width: 14px; height: 14px; stroke: var(--faint); fill: none; }
 
@@ -116,13 +119,13 @@ export const VIEWER_HTML = `<!doctype html>
   .legend button {
     display: flex; align-items: center; gap: 10px;
     background: none; border: 0; cursor: pointer;
-    padding: 4px 6px; border-radius: 2px; width: 100%;
+    padding: 5px 7px; border-radius: 5px; width: 100%;
     color: var(--ink); font: 12.5px var(--sans); text-align: left;
     transition: background 0.12s, opacity 0.12s;
   }
   .legend button:hover { background: var(--raised); }
   .legend button.off { opacity: 0.38; }
-  .legend .dot { width: 9px; height: 9px; flex: none; }
+  .legend .dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
   .legend .label { flex: 1; text-transform: lowercase; letter-spacing: .01em; }
   .legend .count { font-family: var(--mono); font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
 
@@ -144,12 +147,11 @@ export const VIEWER_HTML = `<!doctype html>
   .tally.unread .n { color: var(--mark); }
   .tally.unread .k { color: var(--muted); }
 
-  /* ---- stage ---- */
+  /* ---- stage ----
+     Flat. The teal radial that used to sit here washed the top-right quadrant a full step
+     lighter than the bottom-left, so identical dots read as two different colours depending
+     on where the layout happened to drop them -- decoration actively lying about the data. */
   .stage { position: relative; overflow: hidden; background: var(--stage); }
-  .stage::before {
-    content: ""; position: absolute; inset: 0; pointer-events: none;
-    background: radial-gradient(1100px 620px at 78% 8%, #0a2f3d 0%, transparent 62%);
-  }
   .stage > * { position: relative; }
   canvas { display: block; width: 100%; height: 100%; cursor: grab; }
   canvas.grabbing { cursor: grabbing; }
@@ -193,7 +195,12 @@ export const VIEWER_HTML = `<!doctype html>
   }
   table.atoms td { border-bottom: 1px solid var(--line); padding: 7px 8px; color: var(--muted); }
   table.atoms tbody tr:hover td { background: var(--panel-solid); cursor: pointer; }
-  table.atoms td.t { color: var(--ink); max-width: 52ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The title takes the slack and everything else shrinks to its content. Capping the title at
+     52ch instead left a hand's width of empty table between it and the category, with age and
+     reads stranded against the far edge -- three columns that read as unrelated to the row. */
+  table.atoms th.t, table.atoms td.t { width: 100%; }
+  table.atoms td.t { color: var(--ink); max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  table.atoms th:not(.t), table.atoms td:not(.t) { white-space: nowrap; width: 1%; }
   table.atoms .num { text-align: right; font-variant-numeric: tabular-nums; }
   /* td.zero wins on specificity; this used a category token for a non-category meaning. */
   .empty-list { color: var(--muted); padding: 18px 8px; }
@@ -420,11 +427,11 @@ export const VIEWER_HTML = `<!doctype html>
         <button data-lens="stale" role="tab">Stale <span class="n" id="n-stale"></span></button>
       </div>
       <table class="atoms"><thead><tr>
-        <th><span class="vh">Retrieved</span></th><th>Title</th><th>Category</th><th><span class="vh">Freshness</span></th><th class="num">Age</th><th class="num">Reads</th>
+        <th><span class="vh">Retrieved</span></th><th class="t">Title</th><th>Category</th><th><span class="vh">Freshness</span></th><th class="num">Age</th><th class="num">Reads</th>
       </tr></thead><tbody id="atomrows"></tbody></table>
       <p class="empty-list" id="listempty" hidden>Nothing matches.</p>
     </div>
-    <div class="hint">drag node to pull · drag canvas to pan · scroll to zoom · click to inspect</div>
+    <div class="hint">click an atom to open it · zoom in for names</div>
     <div class="empty" id="empty" hidden>
       <span class="eyebrow">Empty brain</span>
       <h2>No atoms stored yet</h2>
@@ -476,6 +483,14 @@ export const VIEWER_HTML = `<!doctype html>
   var selected = null, hovered = null, query = "";
   var showAllLabels = false, dimStale = true;
   var view = { scale: 1, x: 0, y: 0 };
+  // The atom the camera is flying to, or null when it is idle. Held as a node rather than as
+  // fixed coordinates because the layout is still settling underneath: a frozen target would
+  // land next to the atom instead of on it.
+  var camNode = null, camScale = 1;
+  // The scale fit() chose. Every zoom-dependent threshold is a multiple of this rather than
+  // an absolute, because fit() picks ~0.35 for a 960-atom store and ~1.4 for a small one --
+  // an absolute cutoff would mean 'zoom in a bit' on one store and 'zoom in 4x' on another.
+  var baseScale = 1;
   var dragNode = null, panning = false, moved = false, last = { x: 0, y: 0 };
   var W = 0, H = 0, dpr = 1, alpha = 1, t = 0;
 
@@ -627,7 +642,40 @@ export const VIEWER_HTML = `<!doctype html>
   }
 
   function short(id) { return String(id).slice(0, 8); }
-  function radius(n) { return 4.5 + Math.sqrt(n.degree || 0) * 2.3; }
+  // One size, in screen pixels, at every zoom. Sizing by degree meant the densest part of the
+  // graph also carried the biggest dots, so the core sealed into a solid mass exactly where
+  // the structure was — and zooming in grew the dots along with the gaps, so it never opened
+  // up. Hierarchy is carried by which atoms get named and by the link mesh instead.
+  var DOT = 3.6;
+  function radius(n) { return n === selected ? DOT + 2.4 : (n === hovered ? DOT + 1.2 : DOT); }
+
+  // One radial-gradient tile per category, drawn once and blitted per atom. Seven of these
+  // exist for the life of the page.
+  var SPRITE = 64, sprites = {};
+  function glowSprite(hex) {
+    if (sprites[hex]) return sprites[hex];
+    var h = String(hex).replace("#", "");
+    var cr = parseInt(h.slice(0, 2), 16), cg = parseInt(h.slice(2, 4), 16), cb = parseInt(h.slice(4, 6), 16);
+    var head = "rgba(" + cr + "," + cg + "," + cb + ",";
+    var tile = document.createElement("canvas");
+    tile.width = tile.height = SPRITE;
+    var g = tile.getContext("2d");
+    var mid = SPRITE / 2;
+    var grad = g.createRadialGradient(mid, mid, 0, mid, mid, mid);
+    // The peak sits at 0.3, not at 0. The white core covers the middle of this tile, so any
+    // colour placed at the centre is painted over and thrown away -- the first attempt put
+    // 0.85 alpha there and the graph came out grey. What has to carry the category is the
+    // ring that clears the dot.
+    grad.addColorStop(0, head + "0.95)");
+    grad.addColorStop(0.30, head + "0.80)");
+    grad.addColorStop(0.52, head + "0.30)");
+    grad.addColorStop(0.76, head + "0.08)");
+    grad.addColorStop(1, head + "0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, SPRITE, SPRITE);
+    sprites[hex] = tile;
+    return tile;
+  }
   function isVisible(n) { return !hiddenCat[n.category]; }
   function matchesQuery(n) {
     if (!query) return true;
@@ -648,38 +696,146 @@ export const VIEWER_HTML = `<!doctype html>
 
   function fit() {
     if (!nodes.length) return;
-    // Frame the dense core: centre on the centroid and scale to the 90th-percentile
-    // radius so a few far-flung outliers don't shrink everything into a speck.
+    // Frame the connected core, and let the rim of unlinked atoms run past the edges. Fitting
+    // the rim in too shrinks the only part with structure in it down to a speck -- the rim is
+    // 55% of the store and none of the shape.
+    var core = [];
+    for (var c = 0; c < nodes.length; c++) if (nodes[c].degree) core.push(nodes[c]);
+    if (!core.length) core = nodes;
     var cx = 0, cy = 0;
-    for (var i = 0; i < nodes.length; i++) { cx += nodes[i].x; cy += nodes[i].y; }
-    cx /= nodes.length; cy /= nodes.length;
+    for (var i = 0; i < core.length; i++) { cx += core[i].x; cy += core[i].y; }
+    cx /= core.length; cy /= core.length;
     var dists = [];
-    for (var j = 0; j < nodes.length; j++) {
-      var dx = nodes[j].x - cx, dy = nodes[j].y - cy;
+    for (var j = 0; j < core.length; j++) {
+      var dx = core[j].x - cx, dy = core[j].y - cy;
       dists.push(Math.sqrt(dx * dx + dy * dy));
     }
     dists.sort(function (a, b) { return a - b; });
-    var r = dists[Math.floor(dists.length * 0.9)] || 200;
-    var s = (Math.min(W, H) / 2) * 0.82 / Math.max(60, r);
+    var r = dists[Math.floor(dists.length * 0.97)] || 200;
+    var s = (Math.min(W, H) / 2) * 0.66 / Math.max(60, r);
     view.scale = Math.max(0.2, Math.min(2.2, s));
+    baseScale = view.scale;
     view.x = -cx * view.scale;
     view.y = -cy * view.scale;
   }
 
-  function sx(n) { return W / 2 + view.x + n.x * view.scale; }
-  function sy(n) { return H / 2 + view.y + n.y * view.scale; }
+  // Ambient drift. A settled force layout is a still image, and a still image of 957 dots
+  // reads as a printed poster rather than something holding live memory. Each atom breathes
+  // on its own phase and its own amplitude, hashed from its id so it is stable across
+  // reloads. In screen pixels, not world units: a world-space wobble is invisible at the
+  // overview scale and a seasick 15px swing once the camera has flown in.
+  function breathe(n) {
+    if (n.ph == null) {
+      var h = 0, s = String(n.id || "");
+      for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+      var a = Math.abs(h);
+      n.ph = (a % 628) / 100;
+      n.ph2 = ((a >> 4) % 628) / 100;
+      n.amp = 2.6 + ((a >> 9) & 7) * 0.72;
+      // Its own tempo, not just its own phase. One shared frequency across every atom is what
+      // made the first version read as a single mechanism ticking -- the amplitudes differed
+      // but the field still moved as one. Spread the rates and it reads as many things each
+      // going about their own business.
+      n.spd = 0.5 + ((a >> 3) & 7) * 0.19;
+    }
+    return n;
+  }
+  // Undrifted projection. Used wherever a decision has to be stable from frame to frame --
+  // label collision above all: resolving overlap against moving boxes makes labels blink in
+  // and out as their neighbours wander past, and the bigger the drift the worse it gets.
+  function bx(n) { return W / 2 + view.x + n.x * view.scale; }
+  function by(n) { return H / 2 + view.y + n.y * view.scale; }
+  function sx(n) {
+    breathe(n);
+    if (reduce) return bx(n);
+    // Two harmonics: a quick shimmer, and a slow wander about three times its period that
+    // carries the atom somewhere. One sine alone is a vibration, not movement.
+    return bx(n) + Math.sin(t * 0.0062 * n.spd + n.ph) * n.amp
+      + Math.sin(t * 0.0019 * n.spd + n.ph2) * n.amp * 1.15;
+  }
+  function sy(n) {
+    breathe(n);
+    if (reduce) return by(n);
+    // A different rate on each axis, so the path is a slow Lissajous rather than a circle
+    // every atom traces in lockstep.
+    return by(n) + Math.cos(t * 0.0049 * n.spd + n.ph * 1.7) * n.amp
+      + Math.cos(t * 0.0015 * n.spd + n.ph2 * 1.3) * n.amp * 1.15;
+  }
+
+  /** Fly the camera to one atom and hold it centred. */
+  function focusOn(n) {
+    if (!n) return;
+    camNode = n;
+    // Zoom in, but never back out: arriving from a closer view by pulling away loses the
+    // context the reader just built up.
+    camScale = Math.max(view.scale, baseScale * 3.2);
+    if (reduce) camStep(1);
+  }
+  function releaseCamera() { camNode = null; }
+  /** One frame of the flight; k is how much of the remaining distance to close. */
+  function camStep(k) {
+    if (!camNode) return;
+    // The inspector overlays the right of the canvas rather than shrinking it, so centring on
+    // W/2 puts the atom under the panel's edge. Bias left by half the panel to land it in the
+    // middle of what the reader can actually see.
+    var covered = inspector.classList.contains("open") ? Math.min(372, W * 0.4) : 0;
+    var tx = -camNode.x * camScale - covered / 2, ty = -camNode.y * camScale;
+    view.scale += (camScale - view.scale) * k;
+    view.x += (tx - view.x) * k;
+    view.y += (ty - view.y) * k;
+    // Done once it is within a pixel of the target and the layout under it has settled.
+    if (Math.abs(tx - view.x) < 1 && Math.abs(ty - view.y) < 1 &&
+      Math.abs(camScale - view.scale) < 0.01 && alpha < 0.02) camNode = null;
+  }
 
   function step() {
+    var n = nodes.length;
+    // Over half a real store is unlinked — 589 of 1,070 here — and running those atoms through
+    // the same forces as the connected ones packed the whole store into one even disc, which
+    // is why the graph read as confetti: the structure was buried under its own orphans.
+    // They get a rim instead, placed by golden angle rather than simulated, so the core is
+    // the only thing physics decides. It also takes 55% of the nodes out of an O(n^2) loop.
+    var meanR = 0, connected = 0;
+    for (var c = 0; c < n; c++) {
+      if (!nodes[c].degree) continue;
+      meanR += Math.sqrt(nodes[c].x * nodes[c].x + nodes[c].y * nodes[c].y);
+      connected++;
+    }
+    var rim = Math.max(200, (connected ? meanR / connected : 120) * 1.9);
+    var orphans = n - connected, seen = 0;
+    for (var o = 0; o < n; o++) {
+      var u = nodes[o];
+      if (u.degree || u.pinned) continue;
+      // sqrt over the annulus, so they spread evenly instead of crowding its inner edge.
+      var band = rim * Math.sqrt(1 + (orphans > 1 ? seen / (orphans - 1) : 0) * 0.55);
+      // Golden angle alone draws visible spiral arms, which is a fact about the placement
+      // formula rather than about the store. Jitter breaks them into scatter; it is hashed
+      // from the index so it is the same on every frame and every reload.
+      var h1 = Math.sin(seen * 12.9898) * 43758.5453; h1 -= Math.floor(h1);
+      var h2 = Math.sin(seen * 78.233) * 24634.6345; h2 -= Math.floor(h2);
+      var h3 = Math.sin(seen * 39.4271) * 17631.9137; h3 -= Math.floor(h3);
+      // Enough jitter to read as scatter rather than as a ring of evenly spaced beads. The
+      // third hash clumps: a low h3 pulls an atom well inside the band, so the rim gathers
+      // into drifts and gaps the way a real scatter does instead of holding one even density.
+      var ang = seen * 2.39996323 + (h2 - 0.5) * 1.15;
+      band *= 0.78 + h1 * 0.44 - (h3 < 0.22 ? 0.18 : 0);
+      u.x = Math.cos(ang) * band; u.y = Math.sin(ang) * band; u.vx = 0; u.vy = 0;
+      seen++;
+    }
+
     // Cool to a calm rest, then freeze — only the glow keeps breathing in draw().
     // Forces are scaled by alpha and speed is clamped so nodes settle instead of flying.
     if (alpha < 0.004 && !dragNode) return;
-    var n = nodes.length;
-    var repel = 3400, spring = 0.045, gravity = 0.03, maxV = 10;
+    // Repulsion carries the spacing and gravity only keeps the core from drifting apart. The
+    // old 3400/0.03 pair let 481 connected atoms pack into a solid disc where the links —
+    // the only thing on this canvas that says anything — were hidden under the dots.
+    var repel = 38000, spring = 0.085, gravity = 0.022, maxV = 12;
     for (var i = 0; i < n; i++) {
       var a = nodes[i];
-      if (a === dragNode) continue;
+      if (a === dragNode || (!a.degree && !a.pinned)) continue;
       for (var j = i + 1; j < n; j++) {
         var b = nodes[j];
+        if (!b.degree && !b.pinned) continue;
         var dx = a.x - b.x, dy = a.y - b.y;
         var d2 = dx * dx + dy * dy + 0.01;
         var d = Math.sqrt(d2);
@@ -695,7 +851,7 @@ export const VIEWER_HTML = `<!doctype html>
       if (!s || !tg) continue;
       var dx2 = tg.x - s.x, dy2 = tg.y - s.y;
       var dist = Math.sqrt(dx2 * dx2 + dy2 * dy2) + 0.01;
-      var ideal = 70 + 26 / (l.weight || 1);
+      var ideal = 132 + 40 / (l.weight || 1);
       var force = (dist - ideal) * spring * alpha;
       var ux = (dx2 / dist) * force, uy = (dy2 / dist) * force;
       if (s !== dragNode) { s.vx += ux; s.vy += uy; }
@@ -703,14 +859,14 @@ export const VIEWER_HTML = `<!doctype html>
     }
     for (var m = 0; m < n; m++) {
       var p = nodes[m];
-      if (p === dragNode) continue;
+      if (p === dragNode || (!p.degree && !p.pinned)) continue;
       p.vx -= p.x * gravity * alpha; p.vy -= p.y * gravity * alpha;
       p.vx *= 0.8; p.vy *= 0.8;
       var sp = Math.sqrt(p.vx * p.vx + p.vy * p.vy);
       if (sp > maxV) { p.vx = p.vx / sp * maxV; p.vy = p.vy / sp * maxV; }
       p.x += p.vx; p.y += p.vy;
     }
-    alpha *= 0.985;
+    alpha *= 0.991;
   }
   function reheat(v) { alpha = Math.max(alpha, v); }
 
@@ -725,12 +881,18 @@ export const VIEWER_HTML = `<!doctype html>
     // Boxes of labels already painted this frame. A label that would overlap one of them is
     // dropped rather than drawn on top of it: with hundreds of nodes on screen, overlapping
     // text is not dense, it is illegible, and the reader cannot tell which dot it belongs to.
-    var labelBoxes = [];
+    var labelBoxes = [], labelQueue = [];
 
     ctx.clearRect(0, 0, W, H);
     var focusNode = hovered || selected;
     var focusSet = focusNode ? neighborhood(focusNode) : null;
     var searching = !!query;
+    // Names resolve as the camera comes in, the way a map does. At the overview scale one
+    // label is ~150px of text over a field of 3.6px dots, so the 60 that used to show there
+    // blotted out the middle of the graph — the one part worth looking at. Nothing ambient
+    // until the camera is actually near; hover, selection and search are always answered.
+    var z = view.scale / (baseScale || 1);
+    var ambientDeg = z < 1.5 ? Infinity : (z < 2.4 ? 6 : (z < 3.6 ? 3 : 1));
 
     // links
     ctx.lineWidth = 1;
@@ -739,13 +901,16 @@ export const VIEWER_HTML = `<!doctype html>
       var s = byId[l.source], tg = byId[l.target];
       if (!s || !tg || !isVisible(s) || !isVisible(tg)) continue;
       var lit = focusSet && (focusSet[s.id] && focusSet[tg.id]);
-      var op = lit ? 0.5 : (focusNode ? 0.05 : (searching ? 0.05 : 0.14));
+      // At 0.14 the links were not faint, they were invisible: the one thing on this canvas
+      // that carries a relationship was the one thing you could not see. Neutral grey rather
+      // than the brand teal, so the only hues on the stage are the seven that mean something.
+      var op = lit ? 0.75 : (focusNode ? 0.06 : (searching ? 0.06 : 0.27));
       if (op <= 0.001) continue;
       ctx.beginPath();
       ctx.moveTo(sx(s), sy(s));
       ctx.lineTo(sx(tg), sy(tg));
-      ctx.strokeStyle = lit ? "rgba(79,216,232," + op + ")" : "rgba(120,190,205," + op + ")";
-      ctx.lineWidth = lit ? 1.4 : 1;
+      ctx.strokeStyle = lit ? "rgba(79,216,232," + op + ")" : "rgba(158,178,188," + op + ")";
+      ctx.lineWidth = lit ? 1.5 : 1;
       ctx.stroke();
     }
 
@@ -760,27 +925,37 @@ export const VIEWER_HTML = `<!doctype html>
       else if (searching && !matchesQuery(n)) dim = 0.12;
       var stale = n.freshness && n.freshness !== "fresh";
       if (dimStale && stale && dim === 1) dim = 0.5;
+      // The rim is context, not the subject. Drawn at full strength it competes with the core
+      // for attention and wins on sheer count.
+      if (!n.degree) dim *= 0.55;
 
       var x = sx(n), y = sy(n);
-      var pulse = reduce ? 0 : Math.sin(t / 34 + i) * 0.5 + 0.5;
-      // Glow only carries meaning on the selected atom and its neighbours. Every dot having
-      // a halo is what made this read as a screensaver rather than a catalogue.
-      var glow = n === selected ? 14 : (focusSet && focusSet[n.id] ? 9 : 0) + pulse * (focusSet ? 2 : 0);
+      // Slow: about a six-second breath, on the atom's own phase so the field shimmers
+      // instead of flashing in unison.
+      var pulse = reduce ? 0.5 : Math.sin(t * 0.018 + n.ph * 3) * 0.5 + 0.5;
 
-      ctx.globalAlpha = dim;
+      // A tinted halo under a white core. Category stays readable -- it is the colour of the
+      // light -- while the atom itself reads as a point of light rather than a coloured
+      // sticker, and overlapping halos in the core blend into a haze that shows where a kind
+      // of knowledge is concentrated. Blitted from a per-category sprite rather than drawn
+      // with shadowBlur: 960 blurred arcs a frame is the one thing that would actually cost
+      // frames here, and a cached gradient costs one drawImage.
+      var bright = n === selected || (focusSet && focusSet[n.id]);
+      var halo = (bright ? 44 : 23) * (0.85 + pulse * 0.15);
+      ctx.globalAlpha = dim * (bright ? 1 : 0.62 + pulse * 0.22);
+      ctx.drawImage(glowSprite(color), x - halo / 2, y - halo / 2, halo, halo);
+
+      ctx.globalAlpha = dim * (0.82 + pulse * 0.18);
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = color;
-      ctx.shadowColor = color;
-      ctx.shadowBlur = glow * (dim);
+      ctx.fillStyle = "#ffffff";
       ctx.fill();
-      ctx.shadowBlur = 0;
 
       if (stale) {
         ctx.beginPath();
-        ctx.arc(x, y, r + 3, 0, Math.PI * 2);
-        ctx.strokeStyle = "rgba(242,226,196,0.7)";
-        ctx.setLineDash([2, 3]); ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
+        ctx.arc(x, y, r + 2.5, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(242,226,196,0.6)";
+        ctx.setLineDash([1.5, 2.5]); ctx.lineWidth = 1; ctx.stroke(); ctx.setLineDash([]);
       }
       if (n === selected) {
         ctx.beginPath();
@@ -789,31 +964,54 @@ export const VIEWER_HTML = `<!doctype html>
       }
       ctx.globalAlpha = 1;
 
-      var showLabel = showAllLabels || n === selected || n === hovered ||
+      var showLabel = showAllLabels || n === selected || n === hovered || n.degree >= ambientDeg ||
         (focusSet && focusSet[n.id]) || (searching && matchesQuery(n));
+      // Queued, not painted. Drawn here it was overpainted by every node after it in the loop,
+      // which is why the labels read as smeared into the dots rather than sitting on them.
       if (showLabel && dim > 0.3) {
-        var label = n.title.length > 30 ? n.title.slice(0, 29) + "…" : n.title;
-        ctx.font = "11px system-ui, sans-serif";
-        var half = ctx.measureText(label).width / 2 + 3;
-        var ly = y + r + 12;
-        var box = [x - half, ly - 9, x + half, ly + 3];
-        var clear = true;
-        // Selected and hovered always win: they are what the reader asked to see.
-        if (n !== selected && n !== hovered) {
-          for (var lb = 0; lb < labelBoxes.length; lb++) {
-            var o = labelBoxes[lb];
-            if (box[0] < o[2] && box[2] > o[0] && box[1] < o[3] && box[3] > o[1]) { clear = false; break; }
-          }
-        }
-        if (clear) {
-        labelBoxes.push(box);
-        ctx.globalAlpha = Math.min(1, dim + 0.2);
-        ctx.fillStyle = "#faf8f5";
-        ctx.textAlign = "center";
-        ctx.fillText(label, x, ly);
-        ctx.globalAlpha = 1;
-        }
+        labelQueue.push({
+          // Painted at the drifting position so the name stays attached to its atom, but
+          // collision-tested at the still one so the set of visible labels does not churn.
+          n: n, x: x, y: y + r + 12, cx: bx(n), cy: by(n) + r + 12,
+          alpha: Math.min(1, dim + 0.2),
+          text: n.title.length > 30 ? n.title.slice(0, 29) + "…" : n.title,
+        });
       }
+    }
+
+    // labels, over every node
+    ctx.font = "10.5px system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.lineJoin = "round";
+    // Selected and hovered first: they are what the reader asked to see, so they claim their
+    // box before anything else can take it.
+    labelQueue.sort(function (a, b) {
+      var pa = a.n === selected || a.n === hovered ? 0 : 1;
+      var pb = b.n === selected || b.n === hovered ? 0 : 1;
+      return pa - pb || (b.n.degree || 0) - (a.n.degree || 0);
+    });
+    for (var q = 0; q < labelQueue.length; q++) {
+      var it = labelQueue[q];
+      var half = ctx.measureText(it.text).width / 2 + 5;
+      var box = [it.cx - half, it.cy - 11, it.cx + half, it.cy + 5];
+      var clear = true;
+      for (var lb = 0; lb < labelBoxes.length; lb++) {
+        var o = labelBoxes[lb];
+        if (box[0] < o[2] && box[2] > o[0] && box[1] < o[3] && box[3] > o[1]) { clear = false; break; }
+      }
+      if (!clear) continue;
+      labelBoxes.push(box);
+      ctx.globalAlpha = it.alpha;
+      // A halo stroked in the ground colour, not a blurred shadow. The blur spread a dark
+      // smudge across every dot the label passed over -- it separated the text from the graph
+      // by damaging the graph. A 3px round-joined stroke cuts exactly the glyph shape out of
+      // whatever is behind it and touches nothing else.
+      ctx.strokeStyle = "#070a0c";
+      ctx.lineWidth = 3;
+      ctx.strokeText(it.text, it.x, it.y);
+      ctx.fillStyle = "#faf8f5";
+      ctx.fillText(it.text, it.x, it.y);
+      ctx.globalAlpha = 1;
     }
   }
 
@@ -824,6 +1022,7 @@ export const VIEWER_HTML = `<!doctype html>
     looping = true;
     t++;
     step();
+    camStep(0.12);
     draw();
     requestAnimationFrame(frame);
   }
@@ -835,7 +1034,7 @@ export const VIEWER_HTML = `<!doctype html>
       if (!isVisible(n)) continue;
       var dx = px - sx(n), dy = py - sy(n);
       var d = dx * dx + dy * dy;
-      var rr = radius(n) + 6;
+      var rr = radius(n) + 9;
       if (d <= rr * rr && d < bestD) { bestD = d; best = n; }
     }
     return best;
@@ -896,6 +1095,9 @@ export const VIEWER_HTML = `<!doctype html>
   // ---- inspector ----
   function openInspector(n) {
     selected = n;
+    // Every route into the inspector flies the camera too -- canvas click, list row, deep
+    // link -- so opening an atom from the list does not leave the graph pointed elsewhere.
+    focusOn(n);
     var color = CAT[n.category] || "#a9c2cb";
     var stale = n.freshness && n.freshness !== "fresh";
     var meta = [];
@@ -1025,6 +1227,7 @@ export const VIEWER_HTML = `<!doctype html>
   }
   function closeInspector() {
     selected = null;
+    releaseCamera();
     inspector.classList.remove("open");
     inspector.setAttribute("aria-hidden", "true");
   }
@@ -1034,7 +1237,9 @@ export const VIEWER_HTML = `<!doctype html>
     canvas.setPointerCapture(e.pointerId);
     moved = false; last.x = e.clientX; last.y = e.clientY;
     var n = nodeAt(e.offsetX, e.offsetY);
-    if (n) { dragNode = n; n.vx = 0; n.vy = 0; }
+    // Pinned once dragged: an unlinked atom lives on the rim, and without this the next step
+    // would teleport it back there mid-gesture.
+    if (n) { dragNode = n; n.pinned = true; n.vx = 0; n.vy = 0; }
     else { panning = true; canvas.classList.add("grabbing"); }
   });
   canvas.addEventListener("pointermove", function (e) {
@@ -1047,6 +1252,9 @@ export const VIEWER_HTML = `<!doctype html>
       return;
     }
     if (panning) {
+      // Any hand on the camera ends the flight; fighting the user for the viewport is worse
+      // than not animating at all.
+      releaseCamera();
       view.x += dx; view.y += dy; last.x = e.clientX; last.y = e.clientY; return;
     }
     var hit = nodeAt(e.offsetX, e.offsetY);
@@ -1072,6 +1280,7 @@ export const VIEWER_HTML = `<!doctype html>
   canvas.addEventListener("pointerleave", function () { tooltip.hidden = true; hovered = null; });
   canvas.addEventListener("wheel", function (e) {
     e.preventDefault();
+    releaseCamera();
     var factor = e.deltaY < 0 ? 1.1 : 0.9;
     var mx = e.offsetX - W / 2, my = e.offsetY - H / 2;
     view.x = mx - (mx - view.x) * factor;

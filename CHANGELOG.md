@@ -3,6 +3,45 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+### `knowl view` reads as a graph rather than as confetti
+
+The memory graph was unreadable on a real store, and the reason was measurable: **589 of 1,070
+atoms have no link at all**. Running those through the same forces as the 481 connected ones packed
+the whole store into one evenly-filled disc, so the structure was buried under its own orphans.
+Unlinked atoms now sit on a scattered rim, placed rather than simulated, which also takes 55% of the
+nodes out of an O(n^2) force loop.
+
+Everything else follows from being able to see the core at all. Links were drawn at 0.14 opacity --
+not faint, invisible -- and are now visible and neutral grey, so the only hues on the stage are the
+seven that mean a category. Every atom is one fixed-size dot at every zoom: sizing by degree put the
+largest dots in the densest region, and since dots are drawn in screen space, zooming grew them
+along with the gaps so the crowding never opened up.
+
+Atoms render as white cores inside category-tinted halos, breathing on roughly a six-second cycle,
+each on its own phase and its own tempo. The category is still readable -- it is the colour of the
+light -- and overlapping halos show where a kind of knowledge concentrates, which flat coloured dots
+never did. The drift lives in the projection rather than in the physics, so the layout stays frozen
+and clickable while the render never stops moving.
+
+### Names resolve as you zoom in
+
+Labels used to show for every atom above a degree threshold, which on a real store meant ~60 blocks
+of text over the densest part of the graph. They now appear as the camera comes closer, with the
+threshold dropping as it does; hover, selection and search still name things at any zoom. Clicking
+an atom flies the camera to it and holds it centred, biased for the inspector panel. Label halos are
+stroked rather than blurred -- the blur smudged every dot a label passed over.
+
+### A flatter ground
+
+The stage lost its teal radial gradient, which washed one corner a full step lighter than the other
+so identical atoms read as different colours depending on where the layout dropped them. Grounds are
+darker and less blue than the docs site's, since that palette carries prose and this one carries a
+thousand saturated dots; hue family and every accent token are unchanged. The rail is narrower and
+flat, controls share one radius, and the list's title column takes the slack instead of stranding
+Category, Age and Reads against the far edge.
+
 ## 5.7.0 — 2026-08-20
 
 Knowl installs as a Claude Code plugin, and four places that described the product incorrectly
