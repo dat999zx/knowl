@@ -1,6 +1,6 @@
 {
   "name": "@dat999zx/knowl",
-  "version": "5.6.0",
+  "version": "5.7.0",
   "description": "Governed project memory for AI coding agents. Local-first, typed knowledge atoms over MCP, with stale decisions retired instead of accumulated.",
   "main": "dist/index.js",
   "type": "module",
@@ -30,7 +30,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "check:lockfile": "node scripts/check-lockfile-version.mjs",
+    "check:versions": "node scripts/check-version-sync.mjs",
     "bench:embeddings": "npm run build && node scripts/benchmark-embedding-models.mjs",
     "benchmark:build": "tsup benchmarks/accuracy/src/cli.ts --format esm --out-dir benchmarks/accuracy/dist --clean",
     "benchmark:generate": "npm run benchmark:build && node benchmarks/accuracy/dist/cli.js generate",
