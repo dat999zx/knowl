@@ -204,8 +204,11 @@ export async function startMcpServer(): Promise<void> {
     getInitError: () => initError,
     whenReady: () => ready,
     ...(autoInitialized ? {
+      // The path is collapsed to single spaces before it goes in: this card is the
+      // highest-trust text the server hands a model, and a POSIX directory name may contain
+      // a newline, which would let a crafted checkout append its own lines to it.
       instructionsSuffix:
-        `\nNOTE: no Knowl store existed here, so serve created an empty one at ${projectRoot}` +
+        `\nNOTE: no Knowl store existed here, so serve created an empty one at "${projectRoot!.replace(/\s+/g, ' ')}"` +
         ' (KNOWL_DISABLE_SERVE_AUTO_INIT=1 prevents this). Memory starts empty; what you store' +
         ' this session is what later sessions will find.',
     } : {}),

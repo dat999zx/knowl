@@ -330,7 +330,7 @@ export function serveBanner(state: {
     state.projectRoot ? `projectRoot=${state.projectRoot}` : 'projectRoot=pending',
     // Announced so a host log shows the store was serve's own doing -- the difference between
     // "found your repository" and "made one here", which matters the day it made one in the
-    // wrong directory. KNOWL_SERVE_AUTO_INIT=0 disables the behavior.
+    // wrong directory. KNOWL_DISABLE_SERVE_AUTO_INIT=1 disables the behavior.
     state.autoInitialized ? 'auto-initialized' : null,
     state.readyMs === undefined ? null : `ready=${state.readyMs}ms`,
     state.projectRoot

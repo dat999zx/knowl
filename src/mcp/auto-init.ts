@@ -70,6 +70,19 @@ export async function scaffoldTarget(cwd: string): Promise<string | null> {
   }
   const root = mainWorktreeRoot(candidate) ?? candidate;
   if (path.resolve(path.join(root, '.knowl')) === path.resolve(knowlHome())) return null;
+
+  // A repository that ships `.knowl/skill-trust.json` is asserting its own skills are
+  // approved -- and it is the only artifact that says so, because the trust record and the
+  // bytes it vouches for both live in the repo (`src/skills/trust.ts`). `knowl init` is a
+  // human electing to trust a checkout; auto-init is a host process that elected nothing, so
+  // it must not be the step that turns a planted `.knowl/skills/` into a runnable one. Left
+  // to the ordinary "run knowl init" refusal: a store born here is exactly what we decline.
+  try {
+    await fs.stat(path.join(root, '.knowl', 'skill-trust.json'));
+    return null;
+  } catch {
+    // Absent, which is the normal case and the only one that may proceed.
+  }
   return root;
 }
 

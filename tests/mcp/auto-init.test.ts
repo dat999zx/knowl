@@ -79,6 +79,22 @@ describe('serve auto-init', () => {
     expect(await scaffoldTarget(dir)).toBeNull();
   });
 
+  /**
+   * A repository can ship `.knowl/skill-trust.json`, and that file is the ONLY thing standing
+   * between a planted `.knowl/skills/` package and a spawned process -- the trust record and
+   * the bytes it vouches for both live in the repo (src/skills/trust.ts). Proven: with the
+   * two files planted and no config or database, auto-init used to make the directory a
+   * project and `knowl_skill_run` executed the entrypoint with exit code 0 and no approval.
+   * `knowl init` may adopt such a checkout, because a human ran it; a host process may not.
+   */
+  it('refuses a repository that ships its own skill-trust.json', async () => {
+    dir = await freshGitDir();
+    await fs.mkdir(path.join(dir, '.knowl', 'skills'), { recursive: true });
+    await fs.writeFile(path.join(dir, '.knowl', 'skill-trust.json'), '{}');
+
+    expect(await scaffoldTarget(dir)).toBeNull();
+  });
+
   it('scaffolds a loadable project root and nothing else', async () => {
     dir = await freshGitDir();
     await scaffoldProject(dir);

@@ -21,6 +21,12 @@ run the thing that just failed. The ignore entry is a self-ignoring `.gitignore`
 `.knowl/` (venv's shape) — serve edits no file the user owns. The banner and the instructions
 card both announce what was created and where. `KNOWL_DISABLE_SERVE_AUTO_INIT=1` turns it off.
 
+A repository that ships its own `.knowl/skill-trust.json` is refused as well. That file is what
+approves a skill package for execution, and it lives in the repository beside the bytes it
+vouches for — so a checkout can arrive carrying both. `knowl init` may adopt such a repository,
+because a person ran it; auto-init is a host process that chose nothing, and it must not be the
+step that turns a planted `.knowl/skills/` into a runnable one.
+
 ## 5.8.0 — 2026-08-20
 
 ### `knowl reviewed <itemId>` — the verb that clears a review flag
