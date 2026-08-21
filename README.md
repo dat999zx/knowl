@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/hero.svg" alt="Knowl — persistent memory across sessions for Claude Code, Cursor and Codex, over MCP" width="100%" />
+<img src="docs/assets/hero.png" alt="Knowl — persistent memory across sessions for Claude Code, Cursor and Codex, over MCP" width="100%" />
 
 **Your CLAUDE.md only grows. Knowl retires facts when they change.**
 
