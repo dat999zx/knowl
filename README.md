@@ -41,6 +41,12 @@ replaces the old, it leaves both active and hands you the `knowl supersede` comm
 Turn that off and retrieval drops from 98% to 47%. End to end, 90 to 73.
 [How it was measured ↓](#the-idea-memory-that-retires-itself)
 
+Forty seconds, one decision, three agents:
+
+<div align="center">
+<img src="docs/assets/knowl-showcase.webp" alt="Claude Code answers which database the project uses from memory, records the move to Postgres and retires the MySQL decision; Codex answers the same question from that memory in a second terminal; the Claude app answers from the same store over the hosted connector" width="88%" />
+</div>
+
 ## Quick start
 
 Requires Node.js 22 or later.
