@@ -3,7 +3,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createManifest, writeManifest } from '../../src/workspace/manifest.js';
 import { workspaceManifestPath } from '../../src/workspace/paths.js';
-import { recordKnownRepo } from '../../src/cli/repo-registry.js';
+import { recordKnownRepo } from '../../src/core/repo-registry.js';
 import { discoverRepos } from '../../src/cli/repo-discovery.js';
 
 const HOME = path.resolve('./.knowl-discovery-home');

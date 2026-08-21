@@ -317,11 +317,21 @@ export function installProcessHooks(
  * you tell which repository a serve process in a host log belongs to, and a log full of
  * anonymous processes is worse than the stall this was meant to diagnose.
  */
-export function serveBanner(state: { pid: number; projectRoot: string | null; readyMs?: number }): string {
+export function serveBanner(state: {
+  pid: number;
+  projectRoot: string | null;
+  readyMs?: number;
+  /** True when serve created the store itself because nothing had run `knowl init` here. */
+  autoInitialized?: boolean;
+}): string {
   return [
     '[knowl serve]',
     `pid=${state.pid}`,
     state.projectRoot ? `projectRoot=${state.projectRoot}` : 'projectRoot=pending',
+    // Announced so a host log shows the store was serve's own doing -- the difference between
+    // "found your repository" and "made one here", which matters the day it made one in the
+    // wrong directory. KNOWL_DISABLE_SERVE_AUTO_INIT=1 disables the behavior.
+    state.autoInitialized ? 'auto-initialized' : null,
     state.readyMs === undefined ? null : `ready=${state.readyMs}ms`,
     state.projectRoot
       ? null

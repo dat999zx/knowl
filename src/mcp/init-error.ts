@@ -20,5 +20,11 @@ export function formatInitError(initError: string): string {
   if (/written by a newer Knowl \(schema/i.test(initError)) {
     return `❌ Knowl MCP Server could not open the project database: its schema version stamp is newer than this build accepts.\nReason: ${initError}\n\nThe repository is set up correctly -- the fault is the version stamp in the database header, not the project. Either a newer Knowl wrote this file, in which case upgrading to that version opens it, or no newer Knowl was ever published, in which case the stamp came from a build that no longer exists and the file is held behind a version nobody can install. Check the published versions before concluding the data is unreadable.`;
   }
+  // Serve already tried to create the store and could not -- "run knowl init" would send the
+  // reader to repeat the same failing filesystem work. The prefix is stamped by
+  // startMcpServer's scaffold catch; keep the two in step.
+  if (/^Automatic initialization failed/.test(initError)) {
+    return `❌ Knowl MCP Server tried to create a store in this directory and could not.\nReason: ${initError}\n\nThe directory is likely not writable by this process. Start the server from a writable project directory, or set the project up on a machine where you can run commands and open it there.`;
+  }
   return `❌ Knowl MCP Server is active but not initialized for the current directory.\nReason: ${initError}\n\nPlease run 'knowl init' in your project root to initialize this project.`;
 }

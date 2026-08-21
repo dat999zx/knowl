@@ -11,7 +11,7 @@ import { resolveVectorProfile } from '../core/vector-profile.js';
 import { backfillOriginRepo } from '../workspace/membership.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { knowlHome } from '../core/paths.js';
-import { listKnownRepos, recordKnownRepo } from './repo-registry.js';
+import { listKnownRepos, recordKnownRepo } from '../core/repo-registry.js';
 
 export type UpgradeResult = {
   project: Awaited<ReturnType<typeof repo.createProject>>;

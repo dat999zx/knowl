@@ -55,4 +55,17 @@ describe('formatInitError', () => {
     expect(message).toContain('not initialized');
     expect(message).toContain('knowl init');
   });
+
+  /**
+   * The auto-init case: serve already tried to create the store and failed — usually a
+   * directory the process cannot write. Telling the agent to run `knowl init` sends it to
+   * repeat the same failing filesystem work, which is the exact class of wrong advice the
+   * two branches above exist to prevent.
+   */
+  it('does not tell a failed auto-init to run the thing that just failed', () => {
+    const message = formatInitError("Automatic initialization failed: EACCES: permission denied, mkdir '/app/.knowl'");
+    expect(message).not.toContain('knowl init');
+    expect(message).toContain('could not');
+    expect(message).toContain('EACCES');
+  });
 });

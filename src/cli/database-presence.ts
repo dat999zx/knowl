@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { resolveStorage } from '../store/storage-roles.js';
 import { mainWorktreeRoot } from '../core/config.js';
-import { repoRegistryPath } from './repo-registry.js';
+import { repoRegistryPath } from '../core/repo-registry.js';
 
 /**
  * A missing database file is a missing file, not an empty memory.

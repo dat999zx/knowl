@@ -130,6 +130,17 @@ describe('serve banner', () => {
     expect(line).toContain('projectRoot=D:\\coding\\knowl');
     expect(line).toContain('ready=1234ms');
   });
+
+  /**
+   * The difference between "found your repository" and "made one here" — which matters most
+   * on the day it made one in the wrong directory. A host log without this token has no way
+   * to tell a store the user initialized from one the server created on its own.
+   */
+  it('says when the store was serve\'s own doing', () => {
+    const line = serveBanner({ pid: 7, projectRoot: 'D:\\coding\\knowl', autoInitialized: true });
+    expect(line).toContain('auto-initialized');
+    expect(serveBanner({ pid: 7, projectRoot: 'D:\\coding\\knowl' })).not.toContain('auto-initialized');
+  });
 });
 
 /**

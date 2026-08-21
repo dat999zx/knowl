@@ -41,7 +41,7 @@ import { assertOwnedItem } from '../workspace/ownership.js';
 import { storeKnowledgeItemDeduped } from '../store/knowledge-writer.js';
 import { formatDoctorReport, runDoctor } from './doctor-report.js';
 import { upgradeExistingRepository, type UpgradeResult } from './upgrade.js';
-import { readKnownRepos, recordKnownRepo } from './repo-registry.js';
+import { readKnownRepos, recordKnownRepo } from '../core/repo-registry.js';
 import { discoverRepos } from './repo-discovery.js';
 import { applyDoctorRemedies } from './doctor-fix.js';
 import { formatSweepReport, sweepRepos } from './upgrade-all.js';
