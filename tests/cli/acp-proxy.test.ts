@@ -81,3 +81,58 @@ describe('ACP proxy', () => {
     vi.restoreAllMocks();
   });
 });
+
+describe('ACP proxy shutdown and framing', () => {
+  it('forwards EOF, so an agent that exits on stdin close actually does', async () => {
+    // The bug this pins was invisible to every relay test: lines went through fine and the
+    // agent simply never learned the client had gone, so it waited forever and the proxy with
+    // it -- the editor exits and two processes stay holding a pipe nobody reads.
+    const { child, stdin: agentIn } = fakeAgent();
+    const clientIn = new PassThrough();
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(clientIn as any);
+    vi.spyOn(process, 'stdout', 'get').mockReturnValue(new PassThrough() as any);
+
+    const ended = new Promise<void>(resolve => agentIn.on('finish', () => resolve()));
+    const done = runAcpProxy('agent', [], { spawnAgent: (() => child) as any, cwd: process.cwd() });
+    clientIn.end();
+    await expect(ended).resolves.toBeUndefined();
+    child.emit('close', 0);
+    await done;
+    vi.restoreAllMocks();
+  });
+
+  it('preserves a CRLF terminator and a final line that has none', async () => {
+    // readline strips terminators, so the previous relay turned every CRLF into a bare LF and
+    // gave a trailing partial line a newline it never had. Harmless for NDJSON, and not what
+    // "forwarded exactly as received" means.
+    const { child, stdout: agentOut } = fakeAgent();
+    const clientOut = new PassThrough();
+    let captured = '';
+    clientOut.on('data', chunk => { captured += chunk; });
+    vi.spyOn(process, 'stdin', 'get').mockReturnValue(new PassThrough() as any);
+    vi.spyOn(process, 'stdout', 'get').mockReturnValue(clientOut as any);
+
+    const done = runAcpProxy('agent', [], { spawnAgent: (() => child) as any, cwd: process.cwd() });
+    agentOut.write('{"a":1}\r\n');
+    agentOut.end('{"b":2}');
+    await new Promise(resolve => setTimeout(resolve, 40));
+    child.emit('close', 0);
+    await done;
+
+    expect(captured).toBe('{"a":1}\r\n{"b":2}');
+    vi.restoreAllMocks();
+  });
+
+  it('observes a completed tool call as a write, with a repo-relative path', async () => {
+    // The end-to-end shape: locations name the files, kind declares read vs edit, and what
+    // reaches the lifecycle has to be what the impact subsystem can act on.
+    const { normalizeHostHook } = await import('../../src/cli/agents/host-hook.js');
+    const root = process.cwd();
+    const normalized = normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: root, type: 'checkpoint', tool_name: 'Edit',
+      changedPaths: [`${root}/src/a.ts`],
+    });
+    expect(normalized.toolName).toBe('Edit');
+    expect(normalized.payload.changedPaths).toEqual(['src/a.ts']);
+  });
+});

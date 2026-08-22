@@ -127,9 +127,10 @@ export function createClaudeCodeAdapter(environment: AgentEnvironment) {
  * Cline has lifecycle hooks -- `beforeRun`, `afterRun`, `beforeTool`, `afterTool` -- but they
  * are TypeScript objects (`AgentPlugin` from `@cline/sdk`) loaded into its runtime, not a hooks
  * file and not a shell command. A `HostProfile` cannot reach them at all, so Cline is
- * deliberately an `AgentName` and not a `HookHost`: an adapter that configures memory, and no
- * profile claiming a lifecycle it has no way to receive. Reaching those hooks means publishing
- * an npm plugin, which is a product decision rather than a file in `src/session/hosts/`.
+ * an `AgentName` whose adapter writes MCP config and no hooks file, because there is no hooks
+ * file to write. It *is* a `HookHost` -- `integrations/cline/knowl-plugin.mjs` maps Cline's
+ * method calls onto `knowl agent-hook cline`, so it sends like every other host even though
+ * nothing here can configure it. Installation is a path in the person's Cline config.
  */
 export function createClineAdapter(environment: AgentEnvironment) {
   return createJsonProjectAdapter('cline', 'Cline', 'cline', root => path.join(root, '.cline', 'mcp.json'), environment);

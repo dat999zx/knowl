@@ -217,11 +217,33 @@ function normalizeGeneric(
   for (const key of ['command', 'exitCode', 'passed', 'summary', 'message', 'code', 'text', 'changedPaths', 'commit', 'status', 'error', 'error_code', 'error_message', 'goal', 'completed', 'nextAction', 'blocker', 'artifactRefs', 'verificationStatus']) {
     if (raw[key] !== undefined) payload[key] = Array.isArray(raw[key]) ? raw[key] : typeof raw[key] === 'string' ? String(raw[key]).slice(0, MAX_STRING) : raw[key];
   }
+  // Absolute paths are made repo-relative, the way every other host's already are.
+  //
+  // This branch copies `changedPaths` verbatim while every other host routes through
+  // `changedPaths(projectRoot, ...)`, so a generic caller that reported absolute paths -- which
+  // is what a program integrating over this contract naturally has -- stored a spelling nothing
+  // else in the codebase uses, and every lookup against it missed. Already-relative entries are
+  // left alone: resolving one against the *process* cwd rather than the project root is how a
+  // valid path turns into `..` and gets dropped.
+  if (Array.isArray(payload.changedPaths)) {
+    payload.changedPaths = (payload.changedPaths as unknown[])
+      .map(value => (typeof value === 'string' && path.isAbsolute(value)
+        ? relativePath(projectRoot, value)
+        : typeof value === 'string' ? value : undefined))
+      .filter((value): value is string => Boolean(value))
+      .slice(0, 50);
+  }
+  const toolName = stringValue(raw.toolName) ?? stringValue(raw.tool_name);
   return {
     host: 'generic', event, ...ids, projectRoot,
     title: event === 'turn-start' ? stringValue(raw.title) ?? 'Agent turn' : stringValue(raw.title),
     status: event === 'turn-stop' || event === 'session-stop' ? (raw.status === 'failed' ? 'failed' : 'finished') : undefined,
     type: type as SessionEventType | undefined,
+    // Carried, where it used to be dropped. `toolName` is the only thing that separates "this
+    // session read that file" from "this session wrote it", so a generic caller that named its
+    // tool got neither a read-set entry nor impact detection -- silently, because capture
+    // itself worked fine and the subsystem simply never fired.
+    ...(toolName ? { toolName } : {}),
     payload,
   };
 }

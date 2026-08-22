@@ -255,3 +255,44 @@ describe('PreToolUse registration', () => {
     expect(config.hooks.StopFailure).toEqual([{ matcher: '.*', hooks: [{ type: 'command', command: 'someone-elses-hook' }] }]);
   });
 });
+
+describe('the generic contract carries what impact detection needs', () => {
+  it('keeps the tool name a caller supplied', () => {
+    // It used to be dropped here and nowhere else -- every other host routes through
+    // `toolEvent`, which sets it. Without it `toolReadsFile`/`toolWritesFile` both see '',
+    // so a generic caller got neither a read-set entry nor impact detection, silently,
+    // because capture itself worked fine and the subsystem simply never fired.
+    const result = normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: ROOT, type: 'checkpoint', tool_name: 'Read',
+    });
+    expect(result.toolName).toBe('Read');
+    expect(normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: ROOT, type: 'checkpoint', toolName: 'Edit',
+    }).toolName).toBe('Edit');
+  });
+
+  it('makes an absolute path repo-relative, and leaves a relative one alone', () => {
+    // A program integrating over this contract naturally has absolute paths, and storing them
+    // verbatim wrote a spelling nothing else in the codebase looks up.
+    const absolute = normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: ROOT, type: 'checkpoint',
+      changedPaths: [path.join(ROOT, 'src', 'a.ts')],
+    });
+    expect(absolute.payload.changedPaths).toEqual(['src/a.ts']);
+
+    // Resolving an already-relative entry against the *process* cwd is how a valid path turns
+    // into `..` and gets dropped.
+    const relative = normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: ROOT, type: 'checkpoint', changedPaths: ['src/b.ts'],
+    });
+    expect(relative.payload.changedPaths).toEqual(['src/b.ts']);
+  });
+
+  it('drops a path outside the project rather than inventing one', () => {
+    const result = normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: ROOT, type: 'checkpoint',
+      changedPaths: [path.resolve('/elsewhere/x.ts'), path.join(ROOT, 'src', 'c.ts')],
+    });
+    expect(result.payload.changedPaths).toEqual(['src/c.ts']);
+  });
+});

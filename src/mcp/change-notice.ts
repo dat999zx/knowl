@@ -12,7 +12,7 @@ import { recordMcpCallCommits } from '../store/mcp-call-commits.js';
 import { hostProfile, isHookHost } from '../session/hosts/index.js';
 import { resolveWorkspace, type ActiveWorkspace } from '../workspace/resolve.js';
 import { captureNudgeMode } from '../store/capture-config.js';
-import { isDurableWriteTool, renderSilenceNudge } from '../store/capture-outcome.js';
+import { isDurableWriteTool, renderMidSessionSilenceNudge } from '../store/capture-outcome.js';
 import type { ProjectConfig } from '../core/types.js';
 
 /**
@@ -266,7 +266,7 @@ export async function consumeCaptureNudge(
     if (state.nudged || state.durableWrites > 0 || state.reads < MIN_MCP_READS) return undefined;
     if (await hookChannelOwnsTheNudge(projectRoot)) return undefined;
     state.nudged = true;
-    return renderSilenceNudge();
+    return renderMidSessionSilenceNudge();
   } catch {
     return undefined; // never worth failing a tool call over
   }

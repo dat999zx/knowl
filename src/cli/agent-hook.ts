@@ -62,14 +62,18 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
     else if (!profile.nativeOutput) console.log(JSON.stringify(result));
     await closeDb();
 
-    // The other convention, for hosts whose refusal is the exit status rather than stdout --
-    // see `denyExitCode`. The reason goes to stderr because that is where a host with no
-    // verdict channel looks for it, and it is the same string the envelope carries, so the two
-    // channels cannot disagree. Reached only when a refusal was actually deliverable:
-    // `runWriteGate` leaves `denied` unset when the profile declined to build an envelope.
-    if (result.denied !== undefined && profile.denyExitCode !== undefined) {
+    // A refusal always says why on stderr, whatever channel carried the verdict.
+    //
+    // For a host with `denyExitCode` that is the *only* place the reason can go -- there is no
+    // JSON verdict to put it in. For the rest it is a second copy, and worth it: without it a
+    // block on a host whose stdout verdict we got subtly wrong is completely silent, which is
+    // exactly how a gate becomes impossible to diagnose from a bug report.
+    //
+    // Reached only when a refusal was actually deliverable: `runWriteGate` leaves `denied`
+    // unset when the profile declined to build an envelope.
+    if (result.denied !== undefined) {
       console.error(result.denied);
-      process.exitCode = profile.denyExitCode;
+      if (profile.denyExitCode !== undefined) process.exitCode = profile.denyExitCode;
     }
   } catch (error: any) {
     // Two silences, for two things that are not faults.

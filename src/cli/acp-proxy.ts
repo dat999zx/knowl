@@ -1,5 +1,4 @@
 import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
 import { findProjectRoot } from '../core/config.js';
 import { ProjectNotFoundError } from '../core/errors.js';
 import { closeDb, initDb } from '../store/database.js';
@@ -20,10 +19,16 @@ import type { NormalizedHookEventName } from '../core/host-hook-types.js';
  *
  * ## The one design property that makes this safe to ship
  *
- * **Every byte is forwarded exactly as received, and observation happens on a copy.** Lines are
- * relayed verbatim -- never parsed and re-serialized -- so this cannot reorder a field, drop an
- * unknown one, or change number formatting in a stream two other programs are speaking. Parsing
- * happens beside the relay, for reading only, and every failure there is swallowed.
+ * **Every byte is forwarded exactly as received, and observation happens on a copy.** The relay
+ * splits on a newline and writes back the original slice *including its terminator*, so a CRLF
+ * stays a CRLF and a final line without a newline gains none. Nothing is parsed and
+ * re-serialized, so this cannot reorder a field, drop an unknown one, or change number
+ * formatting in a stream two other programs are speaking. Parsing happens beside the relay, for
+ * reading only, and every failure there is swallowed.
+ *
+ * This is why the relay is hand-rolled rather than `readline`: `createInterface` strips the
+ * terminator, so putting one back means guessing which it was -- and it holds `process.stdin`
+ * ref'd, which left the proxy alive as a zombie after the agent had exited.
  *
  * That makes the failure mode "Knowl recorded nothing" rather than "your editor broke", which is
  * the same direction every other Knowl hook fails in. It is also why this can ship before anyone
@@ -55,6 +60,7 @@ const METHOD_EVENTS: Record<string, NormalizedHookEventName> = {
 };
 
 type JsonRpc = {
+  id?: string | number;
   method?: string;
   params?: Record<string, unknown>;
   result?: Record<string, unknown>;
@@ -95,13 +101,34 @@ const KIND_TOOL_NAMES: Record<string, string> = {
   move: 'Edit',
 };
 
-/** One observed message, turned into a lifecycle event, or nothing. */
-function eventFor(message: JsonRpc): { event: NormalizedHookEventName; raw: Record<string, unknown> } | undefined {
+/**
+ * One observed message, turned into a lifecycle event, or nothing.
+ *
+ * `pendingPrompts` is what makes a *normal* turn end observable at all. `session/cancel` is the
+ * only method that means "this turn is over"; an ordinary turn ends with the **response** to
+ * `session/prompt`, which carries a `stopReason` and, being a response, no method name to match
+ * on. Without pairing the id, turns started and never stopped, and every memory session was
+ * left to the abandoned-session sweeper.
+ */
+function eventFor(
+  message: JsonRpc,
+  pendingPrompts: Map<string | number, string>,
+): { event: NormalizedHookEventName; raw: Record<string, unknown> } | undefined {
   const params = message.params ?? {};
   const sessionId = text(params.sessionId);
 
+  if (message.method === undefined && message.id !== undefined && message.result) {
+    const promptSession = pendingPrompts.get(message.id);
+    if (promptSession === undefined) return undefined;
+    pendingPrompts.delete(message.id);
+    return { event: 'turn-stop', raw: { conversation_id: promptSession, status: 'finished' } };
+  }
+
   const boundary = message.method ? METHOD_EVENTS[message.method] : undefined;
   if (boundary) {
+    if (message.method === 'session/prompt' && message.id !== undefined) {
+      pendingPrompts.set(message.id, sessionId ?? 'acp');
+    }
     return { event: boundary, raw: { conversation_id: sessionId ?? 'acp', status: 'finished' } };
   }
 
@@ -119,7 +146,7 @@ function eventFor(message: JsonRpc): { event: NormalizedHookEventName; raw: Reco
     raw: {
       conversation_id: sessionId ?? 'acp',
       tool_name: toolName,
-      changed_paths: paths,
+      changedPaths: paths,
       title: text(update.title),
     },
   };
@@ -145,6 +172,10 @@ export async function runAcpProxy(
   const cwd = options.cwd ?? process.cwd();
   const spawnFn = options.spawnAgent ?? spawn;
   const child = spawnFn(command, args, { cwd, stdio: ['pipe', 'pipe', 'inherit'] });
+  /** Prompt request ids awaiting their response, so a normal turn end is observable. */
+  const pendingPrompts = new Map<string | number, string>();
+  /** In-flight observations, so shutdown does not close the store out from under one. */
+  const observing = new Set<Promise<void>>();
 
   // Resolved once, lazily, and never retried: an ACP session outlives many messages, and a
   // directory that is not a Knowl project stays one for the life of the process.
@@ -170,7 +201,7 @@ export async function runAcpProxy(
   async function observe(line: string): Promise<void> {
     try {
       const message = JSON.parse(line) as JsonRpc;
-      const mapped = eventFor(message);
+      const mapped = eventFor(message, pendingPrompts);
       if (!mapped) return;
       const found = await knowlProject();
       if (!found) return;
@@ -178,8 +209,9 @@ export async function runAcpProxy(
         ...mapped.raw,
         cwd: found.root,
         sessionId: text(mapped.raw.conversation_id) ?? 'acp',
+        // `normalizeGeneric` requires a type on a session-event and rejects the event without
+        // one, so this is not optional decoration.
         type: mapped.event === 'session-event' ? 'checkpoint' : undefined,
-        changedPaths: mapped.raw.changed_paths,
       });
       await handleHostLifecycleEvent(found.id, normalized);
     } catch {
@@ -188,20 +220,44 @@ export async function runAcpProxy(
     }
   }
 
-  /** Relay a stream line by line, forwarding the original text and observing a parsed copy. */
-  const relay = (from: NodeJS.ReadableStream, to: NodeJS.WritableStream, watch: boolean) => {
-    const lines = createInterface({ input: from, crlfDelay: Infinity });
-    lines.on('line', line => {
-      // Forwarded first and unchanged. Observation must never sit between two programs and
-      // their next message, and must never be able to alter one.
-      to.write(`${line}\n`);
-      if (watch) void observe(line);
+  /**
+   * Relay one direction, forwarding each line's original bytes and observing a parsed copy.
+   *
+   * **EOF is forwarded too.** Leaving it out was not a missing nicety: an ACP agent that shuts
+   * down when its stdin closes never sees the close, so the editor exits and the agent -- and
+   * this proxy with it -- keeps running, holding a pipe nobody is reading.
+   */
+  const relay = (from: NodeJS.ReadableStream, to: NodeJS.WritableStream) => {
+    let buffer = '';
+    from.on('data', chunk => {
+      buffer += chunk;
+      let index = buffer.indexOf('\n');
+      while (index !== -1) {
+        // The slice keeps its own terminator, so a CRLF survives as a CRLF. Forwarded first and
+        // unchanged: observation must never sit between two programs and their next message,
+        // and must never be able to alter one.
+        const line = buffer.slice(0, index + 1);
+        buffer = buffer.slice(index + 1);
+        to.write(line);
+        const watching = observe(line.trim());
+        observing.add(watching);
+        void watching.finally(() => observing.delete(watching));
+        index = buffer.indexOf('\n');
+      }
     });
-    return lines;
+    from.on('end', () => {
+      // A trailing line with no newline is forwarded without one, then the close is passed on.
+      if (buffer.length > 0) to.write(buffer);
+      to.end();
+    });
+    // An EPIPE on either side is the other program going away, which the close handler below
+    // already answers. Unhandled, it is an uncaught exception that takes the relay down with it.
+    from.on('error', () => {});
+    to.on('error', () => {});
   };
 
-  relay(process.stdin, child.stdin!, true);
-  relay(child.stdout!, process.stdout, true);
+  relay(process.stdin, child.stdin!);
+  relay(child.stdout!, process.stdout);
 
   return new Promise<number>(resolve => {
     child.on('error', error => {
@@ -209,7 +265,16 @@ export async function runAcpProxy(
       resolve(1);
     });
     child.on('close', async code => {
+      // Settle observations before closing the store, or the last few throw into the observer's
+      // own catch and are lost -- and the memoized project promise would keep handing every
+      // later one a closed handle.
+      await Promise.allSettled([...observing]);
       await closeDb().catch(() => {});
+      // The editor is talking to this process as if it were the agent, so once the agent is
+      // gone there is nothing left to relay. Without releasing stdin its read handle keeps the
+      // event loop alive and the proxy lingers, still holding the editor's pipe.
+      process.stdin.pause();
+      process.stdin.unref?.();
       resolve(code ?? 0);
     });
   });

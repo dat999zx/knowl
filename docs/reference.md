@@ -1888,7 +1888,8 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl pr --since <commit> [--dry-run]` | Find drift candidates and, unless dry-run, mark them for review |
 | `knowl reviewed <itemId> [--note <text>]` | Record that an item was re-read and still holds, clearing its review flag here and on the team's copy |
 | `knowl view [--port <port>]` | Start the local viewer: browse, read, edit, add and archive memory |
-| `knowl serve` | Start the stdio MCP server |
+| `knowl serve [--host <host>]` | Start the stdio MCP server. `--host` is written by `knowl init` so the guidance card can name this host's lifecycle mode exactly |
+| `knowl acp -- <agent-command>` | Run an Agent Client Protocol agent (Zed, JetBrains, Neovim, Kiro) behind Knowl memory. Relays the protocol byte for byte and observes a copy; see [docs/hosts.md](hosts.md#the-acp-lane) |
 | `knowl agent-event\|agent-hook\|agent-reminder` | Host-integration commands used by installed lifecycle configuration |
 
 ## MCP tools and resources
