@@ -48,8 +48,16 @@ export const codexProfile: HostProfile = {
   promptEvent: 'UserPromptSubmit',
   sharesSessionBinding: true,
   nativeOutput: true,
+  lifecycleClaimable: false,
   midTurnDeliveryVerified: true,
   hookConfigStyle: 'claude-nested',
+  // **Codex does not use Claude's tool names**, so the shared fallback matched nothing here and
+  // the write gate answered "no opinion" before consulting the deny envelope below. Verified by
+  // the same string inspection of codex.exe 0.147.0 that established the event list: `Edit`,
+  // `Read`, `MultiEdit` and `NotebookEdit` are absent from the binary; `apply_patch` occurs 77
+  // times and `shell` 221. Codex applies every edit through one patch tool.
+  readsFiles: (_event, tool) => tool === 'read_file',
+  writesFiles: (_event, tool) => tool === 'apply_patch',
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id) ?? hostString(raw.thread_id),

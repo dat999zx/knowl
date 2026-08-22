@@ -54,8 +54,6 @@ export interface HostProfile {
   readonly hookConfigStyle:
     /** `{hooks: {Event: [{matcher, hooks: [...]}]}}` -- Claude Code, Codex. */
     | 'claude-nested'
-    /** The same, plus the `"version": 1` key Copilot rejects a file without. */
-    | 'copilot-nested'
     /** `{"<hook-name>": {Event: [{matcher, hooks: [...]}]}}` -- one level deeper. */
     | 'antigravity-nested'
     /** Events at the **top level**, with no `hooks` wrapper around them. */
@@ -88,32 +86,53 @@ export interface HostProfile {
    */
   readonly refusesOnAnyNonZeroExit?: true;
   /**
-   * How this host names the tools that read and write files.
+   * Whether this event read or wrote a file, in this host's own vocabulary.
    *
    * The impact subsystem has to tell "this session read that file" from "this session wrote
-   * it" -- opposite facts that arrive as the same normalized event, separable only by the
-   * host's own tool name. Those two sets were hardcoded as Claude Code's vocabulary (`Edit`,
-   * `Write`, `MultiEdit`, `NotebookEdit`, `Read`, `NotebookRead`), so on any other host every
-   * lookup missed: no read was ever recorded, no write ever triggered detection, and the write
-   * gate returned "no opinion" before it ever consulted `denyToolCall`. A host could declare a
-   * refusal channel and never once reach it.
+   * it" -- opposite facts that arrive as the same normalized event. That distinction was
+   * hardcoded as Claude Code's tool names (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`,
+   * `Read`, `NotebookRead`) and consulted for every host, so on any other one every lookup
+   * missed: no read recorded, no write detected, and the write gate answering "no opinion"
+   * before it ever consulted `denyToolCall`. A host could declare a refusal channel and be
+   * structurally unable to reach it.
    *
-   * Some hosts do not name a tool at all -- Windsurf's events *are* the classification
-   * (`pre_write_code` says it) -- so this is optional and the event mapping answers instead;
-   * see `writesFiles`. Matched verbatim and case-sensitively against the raw name, and a host
-   * whose vocabulary has not been read stays silent rather than guessing.
-   */
-  readonly readToolNames?: readonly string[];
-  readonly writeToolNames?: readonly string[];
-  /**
-   * True when this host event means "a file is being written", for hosts that say so in the
-   * event name rather than in a tool name.
+   * A predicate rather than a name list because the hosts genuinely disagree about where the
+   * answer lives. Most name a tool; Windsurf names the *action* (`pre_write_code` says it and
+   * carries no tool name at all). One shape covers both, and a host that names tools writes a
+   * one-line `includes`.
    *
-   * Defaulted rather than required: every host that names its tools answers from
-   * `writeToolNames` and never implements this.
+   * Omitted means "Claude Code's names", which is what `claude` and `generic` use -- not a
+   * guess for anyone else, because every other host declares its own. A vocabulary that has
+   * not been read stays absent rather than being invented.
    */
   readsFiles?: (hostEvent: string, toolName: string) => boolean;
   writesFiles?: (hostEvent: string, toolName: string) => boolean;
+  /**
+   * The top-level keys this host's hooks file must carry beside its events.
+   *
+   * Copilot rejects a file without `"version": 1`; Cursor requires the same key. Data rather
+   * than a config-shape variant, because that is what it is -- treating it as a shape gave
+   * Copilot its own enum member and left the dispatcher branching on `host === 'cursor'` for
+   * the identical need, which is the branching `hookConfigStyle` exists to remove.
+   */
+  readonly hookFileExtraKeys?: Readonly<Record<string, unknown>>;
+  /**
+   * Whether the MCP card may state, unconditionally, that this host's hooks own the lifecycle.
+   *
+   * Registering hook events is not the same as those hooks running, and the card is the one
+   * place where being wrong is expensive: an agent told "never call knowl_task_start" that then
+   * gets no hooks records nothing at all, and the sentence is what caused it.
+   *
+   * False for three shapes of "registered but maybe not running":
+   * - **Codex**, whose hooks are behind `[features].codex_hooks` and do not run on Windows.
+   * - **Antigravity and Windsurf**, whose MCP entry is written once at user scope while their
+   *   hooks are per project -- so the same server answers in projects that have no hooks file.
+   *
+   * Those hosts get the neutral line, which says hooks own the lifecycle *when active* and
+   * otherwise to use the manual loop. That is exactly right for them, and it is what they were
+   * getting before the card learned to be specific.
+   */
+  readonly lifecycleClaimable?: boolean;
   identity(raw: Record<string, unknown>): HostIdentity;
   normalizedEvent(hostEvent: string): NormalizedHookEventName | undefined;
   isShellEvent(hostEvent: string, toolName: string): boolean;

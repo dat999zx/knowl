@@ -62,16 +62,24 @@ export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: Ag
     label: spec.label,
     async detect(root): Promise<AgentDetection> {
       const configPath = spec.mcp.configPath(root);
+      const installed = await environment.commandExists(spec.command);
       return {
-        installed: await environment.commandExists(spec.command),
-        // A `manual` target reports configured, and that is not optimism -- it is the only
-        // answer that is not a lie. `init` treats a failed `verify` as a fatal configuration
-        // error, drops the adapter's own message and never reaches `configureLifecycle`, so
-        // reporting false meant `knowl init openhands` exited 1, printed "Configuration
-        // verification failed" instead of the TOML stanza to paste, and wrote no hooks file at
-        // all. There is no automatic repair for a host we do not write MCP config for, so a
-        // permanent "not configured" would also give `doctor` a remedy that cannot help.
-        configured: spec.mcp.kind === 'json' ? await jsonMcpConfigured(configPath, entry) : true,
+        installed,
+        // A `manual` target reports configured **only when the host is actually installed**, and
+        // both halves of that matter.
+        //
+        // Reporting `false` outright made `knowl init openhands` impossible: init treats a failed
+        // `verify` as a fatal configuration error, so it exited 1 with "Configuration
+        // verification failed" instead of the TOML stanza, and never reached `configureLifecycle`
+        // to write the hooks file at all.
+        //
+        // Reporting `true` outright was worse in the other direction: `doctor` gates its WARN on
+        // `configured` alone and never reads `installed`, so every repository on earth grew a
+        // "openhands lifecycle hooks missing or stale" warning whose remedy `doctor --fix` then
+        // ran unattended -- writing `.openhands/hooks.json` into projects that had never heard of
+        // OpenHands. That is the same defect the Copilot `.mcp.json` collision caused, arriving
+        // through a different door.
+        configured: spec.mcp.kind === 'json' ? await jsonMcpConfigured(configPath, entry) : installed,
         scope: mcpScope,
         configPath,
       };
@@ -128,7 +136,8 @@ export function hookHostSpecs(environment: AgentEnvironment): HookHostAdapterSpe
         kind: 'manual',
         configPath: root => path.join(root, 'config.toml'),
         message: 'OpenHands registers MCP servers as [[mcp.stdio_servers]] in config.toml. '
-          + 'Add: name = "knowl", command = "knowl", args = ["serve"]. Lifecycle hooks were configured.',
+          + 'Add: name = "knowl", command = "knowl", args = ["serve", "--host", "openhands"]. '
+          + 'Lifecycle hooks were configured.',
       },
       hooksPath: root => path.join(root, '.openhands', 'hooks.json'),
     },

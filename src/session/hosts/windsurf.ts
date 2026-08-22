@@ -29,7 +29,7 @@ const WINDSURF_EVENT_MAP: Record<string, NormalizedHookEventName> = {
  * The registered subset.
  *
  * `pre_read_code`, `pre_mcp_tool_use` and `pre_run_command` are mapped but not registered: the
- * gate only ever refuses writes (`IMPACT_WRITE_TOOLS`), so a pre-hook on a read would fire in
+ * gate only ever refuses writes (`writesFiles` below), so a pre-hook on a read would fire in
  * front of every file the agent opens to answer "no opinion" -- latency on the hottest path in
  * the session, for a verdict that is decided before it is computed. `pre_write_code` is the one
  * that can say no.
@@ -69,6 +69,7 @@ export const windsurfProfile: HostProfile = {
   promptEvent: undefined,
   sharesSessionBinding: true,
   nativeOutput: true,
+  lifecycleClaimable: false,
   midTurnDeliveryVerified: false,
   hookConfigStyle: 'flat-commands',
   denyExitCode: 2,

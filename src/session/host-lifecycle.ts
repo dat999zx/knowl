@@ -115,19 +115,19 @@ const IMPACT_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'
  * behaviour they had. A host that says it in the event name instead implements `writesFiles`.
  */
 function toolReadsFile(input: NormalizedHostHook): boolean {
-  const profile = hostProfile(input.host);
+  const { readsFiles } = hostProfile(input.host);
   const toolName = input.toolName ?? '';
-  if (profile.readsFiles?.(input.hostEvent ?? '', toolName)) return true;
-  if (profile.readToolNames) return profile.readToolNames.includes(toolName);
-  return IMPACT_READ_TOOLS.has(toolName);
+  return readsFiles
+    ? readsFiles(input.hostEvent ?? '', toolName)
+    : IMPACT_READ_TOOLS.has(toolName);
 }
 
 function toolWritesFile(input: NormalizedHostHook): boolean {
-  const profile = hostProfile(input.host);
+  const { writesFiles } = hostProfile(input.host);
   const toolName = input.toolName ?? '';
-  if (profile.writesFiles?.(input.hostEvent ?? '', toolName)) return true;
-  if (profile.writeToolNames) return profile.writeToolNames.includes(toolName);
-  return IMPACT_WRITE_TOOLS.has(toolName);
+  return writesFiles
+    ? writesFiles(input.hostEvent ?? '', toolName)
+    : IMPACT_WRITE_TOOLS.has(toolName);
 }
 
 

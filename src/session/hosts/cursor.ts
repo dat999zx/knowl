@@ -29,6 +29,7 @@ export const cursorProfile: HostProfile = {
   // already-notified. Flip to true once an upstream release is confirmed to show it.
   midTurnDeliveryVerified: false,
   hookConfigStyle: 'flat-commands',
+  hookFileExtraKeys: { version: 1 },
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.conversation_id),
@@ -38,6 +39,13 @@ export const cursorProfile: HostProfile = {
   },
   normalizedEvent(hostEvent) {
     return CURSOR_EVENT_MAP[hostEvent];
+  },
+  // Cursor's `afterFileEdit` carries a path and no tool name, so nothing matched the shared
+  // Claude-name fallback and impact detection never fired on this host. Like Windsurf, the
+  // event is the classification. Cursor has no pre-tool event, so this feeds detection only --
+  // there is no gate here to reach.
+  writesFiles(hostEvent) {
+    return hostEvent === 'afterFileEdit';
   },
   isShellEvent(hostEvent) {
     return hostEvent === 'afterShellExecution';

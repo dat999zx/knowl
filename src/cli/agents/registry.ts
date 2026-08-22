@@ -51,7 +51,26 @@ export interface DetectedAgent {
   detection: AgentDetection;
 }
 
+/**
+ * Detection is per-adapter best-effort, because one host's broken file is not another host's
+ * problem.
+ *
+ * `Promise.all` with no catch meant a single unreadable config aborted detection for every
+ * host, and `knowl init` died before it could even show the picker. That is not hypothetical:
+ * Gemini CLI leaves a **0-byte** `~/.gemini/config/mcp_config.json` behind, which is where
+ * Antigravity keeps its MCP list, so `JSON.parse` threw `Unexpected end of JSON input` on
+ * machines that had merely once installed a tool Knowl no longer supports. The
+ * `detection.installed` filter never ran, so not having Antigravity did not save anyone.
+ *
+ * A host whose config cannot be read reports not-installed rather than throwing: it is the same
+ * answer `knowl init` would reach anyway, and it is reached without taking the other eight down.
+ */
 export async function detectAgents(projectRoot: string, registry: Map<AgentName, AgentAdapter>): Promise<DetectedAgent[]> {
-  const agents = await Promise.all([...registry.values()].map(async adapter => ({ adapter, detection: await adapter.detect(projectRoot) })));
+  const agents = await Promise.all([...registry.values()].map(async adapter => ({
+    adapter,
+    detection: await adapter.detect(projectRoot).catch((): AgentDetection => ({
+      installed: false, configured: false, scope: 'project', configPath: '',
+    })),
+  })));
   return agents.filter(agent => agent.detection.installed);
 }

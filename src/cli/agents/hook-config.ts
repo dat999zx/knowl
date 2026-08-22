@@ -127,13 +127,7 @@ export async function mergeNestedHookConfig(
   configPath: string,
   platform: NodeJS.Platform,
   host: HookHost,
-  /**
-   * Top-level keys this host's file must carry beside `hooks`.
-   *
-   * Copilot rejects a hooks file without `"version": 1`. Passed in rather than derived from the
-   * profile because it is a property of the file format, which is what `hookConfigStyle` already
-   * names -- the dispatcher that knows the style is the one place that knows this too.
-   */
+  /** Top-level keys this host's file must carry beside its events; see `hookFileExtraKeys`. */
   extraKeys: Record<string, unknown> = {},
 ): Promise<MergeStatus> {
   const existing = await readTextIfExists(configPath);
@@ -339,6 +333,9 @@ export async function verifyAntigravityHookConfig(
  * level, OpenHands having no wrapper at all. Every caller asks for a host and gets the right
  * file; none of them repeats the host name a second time to pick a writer.
  */
+const extraKeys = (host: HookHost): Record<string, unknown> =>
+  ({ ...hostProfile(host).hookFileExtraKeys });
+
 export async function mergeHookConfig(
   configPath: string,
   platform: NodeJS.Platform,
@@ -346,10 +343,9 @@ export async function mergeHookConfig(
 ): Promise<MergeStatus> {
   switch (hostProfile(host).hookConfigStyle) {
     case 'none': return 'unchanged';
-    case 'flat-commands': return mergeFlatHookConfig(configPath, platform, host, host === 'cursor' ? { version: 1 } : {});
-    case 'copilot-nested': return mergeNestedHookConfig(configPath, platform, host, { version: 1 });
+    case 'flat-commands': return mergeFlatHookConfig(configPath, platform, host, extraKeys(host));
     case 'antigravity-nested': return mergeAntigravityHookConfig(configPath, platform, host);
-    default: return mergeNestedHookConfig(configPath, platform, host);
+    default: return mergeNestedHookConfig(configPath, platform, host, extraKeys(host));
   }
 }
 
@@ -360,9 +356,8 @@ export async function verifyHookConfig(
 ): Promise<boolean> {
   switch (hostProfile(host).hookConfigStyle) {
     case 'none': return true;
-    case 'flat-commands': return verifyFlatHookConfig(configPath, platform, host, host === 'cursor' ? { version: 1 } : {});
-    case 'copilot-nested': return verifyNestedHookConfig(configPath, platform, host, { version: 1 });
+    case 'flat-commands': return verifyFlatHookConfig(configPath, platform, host, extraKeys(host));
     case 'antigravity-nested': return verifyAntigravityHookConfig(configPath, platform, host);
-    default: return verifyNestedHookConfig(configPath, platform, host);
+    default: return verifyNestedHookConfig(configPath, platform, host, extraKeys(host));
   }
 }

@@ -53,10 +53,15 @@ export const antigravityProfile: HostProfile = {
   promptEvent: undefined,
   sharesSessionBinding: true,
   nativeOutput: true,
+  lifecycleClaimable: false,
   midTurnDeliveryVerified: false,
   hookConfigStyle: 'antigravity-nested',
-  readToolNames: ['read_file', 'view_file', 'ReadFile'],
-  writeToolNames: ['write_file', 'edit_file', 'replace_file_content', 'WriteFile', 'EditFile'],
+  // Not quoted from a reference -- Antigravity documents its hook payload, not its agent's tool
+  // vocabulary. A wrong name costs detection here and nothing else: the gate degrades to "no
+  // opinion", which is its designed failure direction.
+  readsFiles: (_event, tool) => ['read_file', 'view_file', 'ReadFile'].includes(tool),
+  writesFiles: (_event, tool) =>
+    ['write_file', 'edit_file', 'replace_file_content', 'WriteFile', 'EditFile'].includes(tool),
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id) ?? hostString(raw.thread_id),

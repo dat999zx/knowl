@@ -1,27 +1,36 @@
 import type { NormalizedHookEventName } from '../../core/host-hook-types.js';
 import type { HostIdentity, HostProfile } from './profile.js';
 import { agentIdentityFrom, hostString, toolNameIsShell } from './profile.js';
-import { anthropicDenyToolCall, anthropicStopContext, hookSpecificOutput } from './claude.js';
+import { anthropicStopContext, hookSpecificOutput } from './claude.js';
 
 /**
  * GitHub Copilot's events, in the casing its reference documents as canonical.
  *
- * PascalCase aliases exist "for VS Code compatibility", but they are aliases and the list of
- * them is not the same list -- `SubagentStart` has no camelCase original, so registering it
- * would repeat exactly the mistake this release removes from Codex: a handler for an event the
- * host has never fired. Only names the reference lists are here.
+ * Verified against docs.github.com/en/copilot/reference/hooks-reference on 2026-08-22, because
+ * the first version of this file guessed and got two wrong: it registered `stop` and
+ * `userPromptSubmit`, and the canonical names are `agentStop` and `userPromptSubmitted`. Both
+ * were handlers under keys GitHub never fires -- the same dead-entry failure this release
+ * removes from Codex, introduced in the commit that removed it.
+ *
+ * The PascalCase set is a *different list*, not a casing of this one, so the two cannot be
+ * derived from each other.
  */
 const COPILOT_EVENT_MAP: Record<string, NormalizedHookEventName> = {
   sessionStart: 'session-start',
-  userPromptSubmit: 'turn-start',
+  userPromptSubmitted: 'turn-start',
   preToolUse: 'tool-precheck',
   postToolUse: 'session-event',
-  stop: 'turn-stop',
+  postToolUseFailure: 'session-event',
+  subagentStart: 'agent-start',
+  subagentStop: 'agent-stop',
+  preCompact: 'checkpoint',
+  agentStop: 'turn-stop',
   sessionEnd: 'session-stop',
 };
 
 export const COPILOT_HOOK_EVENTS = [
-  'sessionStart', 'preToolUse', 'postToolUse', 'stop', 'sessionEnd',
+  'sessionStart', 'subagentStart', 'preToolUse', 'postToolUse', 'postToolUseFailure',
+  'preCompact', 'agentStop', 'subagentStop', 'sessionEnd',
 ] as const;
 
 /**
@@ -47,15 +56,22 @@ export const COPILOT_HOOK_EVENTS = [
 export const copilotProfile: HostProfile = {
   host: 'copilot',
   hookEvents: COPILOT_HOOK_EVENTS,
-  promptEvent: 'userPromptSubmit',
+  promptEvent: 'userPromptSubmitted',
   sharesSessionBinding: true,
   nativeOutput: true,
   midTurnDeliveryVerified: false,
-  hookConfigStyle: 'copilot-nested',
+  hookConfigStyle: 'claude-nested',
+  // Copilot rejects a hooks file without it.
+  hookFileExtraKeys: { version: 1 },
   // Copilot's editing tools, not Claude's. Without these the impact subsystem recognises
   // neither reads nor writes here, and the deny channel below is unreachable.
-  readToolNames: ['view', 'read', 'str_replace_editor'],
-  writeToolNames: ['create', 'str_replace', 'str_replace_editor', 'edit', 'write'],
+  //
+  // These names are the weakest assertion in this file: unlike the events and the verdict
+  // shape they are not quoted from the hooks reference, which documents the hook payload and
+  // not the agent's tool vocabulary. A wrong name costs detection on this host and nothing
+  // else -- the gate degrades to "no opinion", which is its designed failure direction.
+  readsFiles: (_event, tool) => ['view', 'read', 'str_replace_editor'].includes(tool),
+  writesFiles: (_event, tool) => ['create', 'str_replace', 'str_replace_editor', 'edit', 'write'].includes(tool),
   denyExitCode: 2,
   refusesOnAnyNonZeroExit: true,
   identity(raw): HostIdentity {
@@ -76,11 +92,18 @@ export const copilotProfile: HostProfile = {
   // stamped with a different `hookEventName` is discarded, so returning 'sessionStart' for the
   // prompt hook silently drops the per-turn card.
   startContext(event, context) {
-    return hookSpecificOutput(event === 'session-start' ? 'sessionStart' : 'userPromptSubmit', context);
+    return hookSpecificOutput(event === 'session-start' ? 'sessionStart' : 'userPromptSubmitted', context);
   },
   midTurnContext(text) {
     return hookSpecificOutput('postToolUse', text);
   },
-  denyToolCall: anthropicDenyToolCall,
+  // **Flat, not `hookSpecificOutput`.** Copilot's reference puts `permissionDecision` at the
+  // top level; Claude Code nests it. Reusing the shared Anthropic builder here emitted a field
+  // Copilot does not read, so the refusal arrived through `denyExitCode` alone -- blocking the
+  // write with no reason attached, which is the one failure `denyToolCall`'s contract says a
+  // gate cannot survive.
+  denyToolCall(reason) {
+    return { permissionDecision: 'deny', permissionDecisionReason: reason };
+  },
   stopContext: anthropicStopContext,
 };

@@ -200,7 +200,7 @@ describe('the --host flag on the MCP entry', () => {
 
     expect(mcpModeLineForHost('claude')).toContain('Claude hooks own lifecycle');
     expect(mcpModeLineForHost('claude')).not.toContain('when active');
-    expect(mcpModeLineForHost('copilot')).toContain('copilot hooks own lifecycle');
+    expect(mcpModeLineForHost('copilot')).toContain('Copilot hooks own lifecycle');
     // No hook channel at all: told it owns the loop, rather than left with a conditional.
     expect(mcpModeLineForHost('claude-desktop')).toContain('you own the work loop');
     expect(mcpModeLineForHost('claude-desktop')).not.toContain('when active');
@@ -208,5 +208,67 @@ describe('the --host flag on the MCP entry', () => {
     // a command line, and a hand-edited config must not stop the server booting.
     expect(mcpModeLineForHost(undefined)).toBe(KNOWL_HOST_NEUTRAL_MODE_LINE);
     expect(mcpModeLineForHost('not-a-host')).toBe(KNOWL_HOST_NEUTRAL_MODE_LINE);
+  });
+});
+
+describe('the deny path each host actually declared', () => {
+  it('recognises each host’s own write tool, which is what reaches the deny channel at all', async () => {
+    const { normalizeHostHook } = await import('../../src/cli/agents/host-hook.js');
+    const root = await workspace();
+
+    // The bug this pins: `runWriteGate` returns before consulting `denyToolCall` unless the
+    // profile recognises the tool, so a host with a perfect deny envelope and an unrecognised
+    // tool name is silently ungated. Every row is a *host's own* vocabulary, not Claude's.
+    const cases: Array<[string, string, Record<string, unknown>]> = [
+      ['claude', 'PreToolUse', { session_id: 's', tool_name: 'Edit' }],
+      ['codex', 'PreToolUse', { session_id: 's', tool_name: 'apply_patch' }],
+      ['copilot', 'preToolUse', { session_id: 's', tool_name: 'str_replace' }],
+      ['openhands', 'pre_tool_use', { conversation_id: 's', tool_name: 'str_replace_editor' }],
+      ['antigravity', 'PreToolUse', { session_id: 's', tool_name: 'edit_file' }],
+      // Windsurf names the action and sends no tool name at all.
+      ['windsurf', 'pre_write_code', { conversation_id: 's' }],
+    ];
+
+    for (const [host, event, raw] of cases) {
+      const normalized = normalizeHostHook(host, event, {
+        ...raw, cwd: root, tool_input: { file_path: path.join(root, 'src/a.ts') },
+      });
+      expect(normalized.event, host).toBe('tool-precheck');
+      expect(normalized.hostEvent, host).toBe(event);
+      expect(normalized.payload.changedPaths, host).toEqual(['src/a.ts']);
+      // The reason must survive into whatever envelope this host declared.
+      const envelope = hostProfile(host as any).denyToolCall?.('re-read src/a.ts');
+      expect(JSON.stringify(envelope), host).toContain('re-read src/a.ts');
+    }
+  });
+
+  it('does not treat a read as a write on any host', async () => {
+    const { normalizeHostHook } = await import('../../src/cli/agents/host-hook.js');
+    const root = await workspace();
+    const normalized = normalizeHostHook('codex', 'PostToolUse', {
+      session_id: 's', cwd: root, tool_name: 'read_file',
+      tool_input: { file_path: path.join(root, 'src/a.ts') },
+    });
+    // `read_file` is codex's reader; the shared Claude fallback would have matched neither.
+    expect(hostProfile('codex').readsFiles?.('PostToolUse', 'read_file')).toBe(true);
+    expect(hostProfile('codex').writesFiles?.('PostToolUse', 'read_file')).toBe(false);
+    expect(normalized.toolName).toBe('read_file');
+  });
+
+  it('never promises hooks own the lifecycle for a host whose hooks may not be running', async () => {
+    const { mcpModeLineForHost } = await import('../../src/session/hosts/index.js');
+    const { KNOWL_HOST_NEUTRAL_MODE_LINE } = await import('../../src/core/knowl-guidance.js');
+
+    // Codex hooks are behind a feature flag and absent on Windows; Antigravity and Windsurf
+    // register MCP once at user scope but hooks per project. Telling any of them "never call
+    // knowl_task_start" leaves a session with no hooks and no manual loop either.
+    for (const host of ['codex', 'antigravity', 'windsurf']) {
+      expect(mcpModeLineForHost(host), host).toBe(KNOWL_HOST_NEUTRAL_MODE_LINE);
+    }
+    // Hosts whose hooks land with the MCP entry, in the same directory, may say it outright.
+    expect(mcpModeLineForHost('claude')).toContain('Claude hooks own lifecycle');
+    expect(mcpModeLineForHost('copilot')).toContain('Copilot hooks own lifecycle');
+    // An MCP-only agent owns the loop; it is the case the manual line was written for.
+    expect(mcpModeLineForHost('cline')).toContain('you own the work loop');
   });
 });

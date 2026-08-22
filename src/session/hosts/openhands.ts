@@ -56,8 +56,8 @@ export const openhandsProfile: HostProfile = {
   // argument -- which this layer does not see. It is listed as a writer only: a false write is
   // a re-index and a detection pass, while a false read is a belief the session does not hold,
   // and the second is the one that manufactures a finding against nobody.
-  readToolNames: ['read', 'view'],
-  writeToolNames: ['str_replace_editor', 'edit', 'write', 'create'],
+  readsFiles: (_event, tool) => ['read', 'view'].includes(tool),
+  writesFiles: (_event, tool) => ['str_replace_editor', 'edit', 'write', 'create'].includes(tool),
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.conversation_id) ?? hostString(raw.session_id),

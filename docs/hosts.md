@@ -26,8 +26,8 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 | **GitHub Copilot** | ✅ | ✅ | ⚠️ MCP | ✅ | ✅ |
 | **OpenHands** | ✅ | ✅ | ⚠️ MCP | ✅ | ✅ |
 | **Google Antigravity** | via MCP | ❌ no prompt event | via MCP | ✅ | ✅ |
-| **Windsurf** (Devin Desktop) | ✅ | ❌ | via MCP | ✅ | ❌ no stop event |
-| **Cursor** | ✅ | ❌ | ⚠️ MCP | ❌ | ❌ |
+| **Windsurf** (Devin Desktop) | via MCP | ❌ | via MCP | ✅ | ❌ no stop event |
+| **Cursor** | ✅ | ❌ | ⚠️ MCP | ❌ no pre-tool event | ❌ stop cannot block |
 | **Claude Desktop** | via MCP | ❌ | via MCP | ❌ | ❌ |
 | **Cline, Zed, JetBrains, Roo, Continue, Amp, Goose, Aider, …** | via MCP | ❌ | via MCP | ❌ | ❌ |
 
@@ -54,20 +54,24 @@ knowl doctor               # what is configured, what is stale
 | Cursor | `.cursor/mcp.json` | `.cursor/hooks.json` |
 | Claude Desktop | platform config directory | — |
 
-**Codex** hooks are behind `[features].codex_hooks = true` in `~/.codex/config.toml`, are experimental, and **do not run on Windows at all**. Everything else works there; only the hook-driven capabilities are unavailable.
+**Codex** hooks are behind `[features].codex_hooks = true` in `~/.codex/config.toml`, are experimental, and **do not run on Windows at all**. Everything else works there; only the hook-driven capabilities are unavailable. Because of that, Codex — like Antigravity and Windsurf, whose MCP entry is global while their hooks are per project — keeps the conditional lifecycle card rather than being told outright that its hooks own the session.
 
-**OpenHands** registers MCP servers as `[[mcp.stdio_servers]]` in `config.toml`, a shape documented only in secondary sources, so `knowl init` writes the hooks file and prints the stanza instead of guessing at the TOML:
+**OpenCode** has no hooks yet ([opencode#39275](https://github.com/anomalyco/opencode/issues/39275)); it uses Knowl over MCP like the hosts in the last row, and graduates when that lands.
+
+**OpenHands** runs agents in isolated containers by default. Hooks reach Knowl only if `knowl` is on the runtime image's PATH and `.knowl/` is on a mounted volume; local and CLI mode are unaffected. Image documentation for the hosted case does not exist yet.
+
+OpenHands registers MCP servers as `[[mcp.stdio_servers]]` in `config.toml`, a shape documented only in secondary sources, so `knowl init` writes the hooks file and prints the stanza instead of guessing at the TOML:
 
 ```toml
 [[mcp.stdio_servers]]
 name = "knowl"
 command = "knowl"
-args = ["serve"]
+args = ["serve", "--host", "openhands"]
 ```
 
 ## Why some hosts get less
 
-**Cursor's mid-turn card.** Cursor accepts `additional_context` on `postToolUse`, logs it, and does not show it to the model — vendor ticket T-C20310, still open. Knowl emits it anyway, so it starts working the day that ships, and meanwhile Cursor is notified over MCP.
+**Cursor.** Three separate gaps. Its mid-turn card is emitted, accepted, logged and never shown to the model — vendor ticket T-C20310, still open, so Knowl emits it anyway and it starts working the day that ships. It has no pre-tool event, so there is nothing for the write gate to hook. And its `stop` is fire-and-forget: it cannot withhold the stop, so the capture nudge has nothing to withhold.
 
 **Windsurf's capture nudge.** Windsurf has twelve hook events and none of them is a stop. `post_cascade_response` fires *after* a response and cannot withhold it. This is absence, not uncertainty — there is nothing to enable.
 
@@ -87,7 +91,7 @@ That is worth building. It is not worth smuggling into a change that adds profil
 
 ## Adding a host
 
-One file in [`src/session/hosts/`](../src/session/hosts/), registered in `index.ts`. Core code never branches on a host name; it asks the profile.
+One file in [`src/session/hosts/`](../src/session/hosts/), registered in `index.ts`. The lifecycle engine never branches on a host name; it asks the profile. (The config *writer* still has one branch, for a `timeout` field Cursor documents and Windsurf does not.)
 
 The rule that matters most: **capability is expressed by return value, and an unverified capability is an absent one.** A host that cannot receive context returns `undefined` rather than setting a flag, so nothing can claim support an envelope does not deliver. A profile that declares a channel it has not been observed to have will report blocking writes it in fact let through — and that failure is invisible, because the refusal is computed correctly and only the delivery is missing.
 
