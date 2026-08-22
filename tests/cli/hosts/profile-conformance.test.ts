@@ -42,6 +42,29 @@ describe('host profile registry', () => {
     }
   });
 
+  it('codex declares exactly the lifecycle events codex 0.147.0 implements', () => {
+    // Verified 2026-08-22 by string inspection of the shipped codex.exe (0.147.0, win32-x64).
+    // `PostToolUseFailure` and `StopFailure` are absent from that binary and were declared here
+    // for years; `PostCompact` and `PermissionRequest` are present but deliberately not
+    // registered -- see the profile's header for why registering either would double-count or
+    // answer with the wrong event name.
+    expect([...hostProfile('codex').hookEvents]).toEqual([
+      'SessionStart', 'SubagentStart', 'PreToolUse', 'PostToolUse',
+      'PreCompact', 'Stop', 'SubagentStop', 'SessionEnd',
+    ]);
+    expect(hostProfile('codex').promptEvent).toBe('UserPromptSubmit');
+  });
+
+  it('codex can refuse a tool call and withhold a stop', () => {
+    const profile = hostProfile('codex');
+    expect(profile.denyToolCall?.('nope')).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'nope',
+      },
+    });
+    expect(profile.stopContext?.('store it')).toEqual({ decision: 'block', reason: 'store it' });
+  });
+
   describe.each(ALL_HOSTS)('%s', host => {
     const profile = () => hostProfile(host);
 

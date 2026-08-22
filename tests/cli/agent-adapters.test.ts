@@ -197,7 +197,11 @@ describe('agent adapters', () => {
     expect(codexHooks.hooks.Stop[0].hooks[0].command).toBe('existing');
     expect(JSON.stringify(codexHooks)).toContain('knowl.cmd agent-hook codex SessionStart --json');
     expect(codexHooks.hooks.SessionStart[0].matcher).toBe('.*');
-    expect(codexHooks.hooks.UserPromptSubmit).toBeUndefined();
+    // Codex declares a prompt event since 0.147.0, so this key holds the reminder -- and only
+    // the reminder. A lifecycle handler here would be overwritten by it on the next merge.
+    expect(JSON.stringify(codexHooks.hooks.UserPromptSubmit)).toContain('agent-reminder codex');
+    expect(JSON.stringify(codexHooks.hooks.UserPromptSubmit)).not.toContain('agent-hook codex');
+    expect(codexHooks.hooks.PostToolUseFailure).toBeUndefined();
     expect(claudeSettings.permissions.allow).toEqual(['Bash(npm test)']);
     expect(JSON.stringify(claudeSettings)).toContain('knowl.cmd agent-hook claude SessionStart --json');
     expect(claudeSettings.hooks.SessionStart[0].matcher).toBe('.*');
@@ -296,7 +300,11 @@ describe('agent adapters', () => {
     const codexHooks = await readJson(path.join(PROJECT, '.codex', 'hooks.json'));
     const claudeHooks = await readJson(path.join(PROJECT, '.claude', 'settings.local.json'));
     const cursorHooks = await readJson(path.join(PROJECT, '.cursor', 'hooks.json'));
-    expect(codexHooks.hooks.UserPromptSubmit).toEqual([{ matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] }]);
+    // The retired lifecycle handler goes; the foreign one stays; the reminder is appended.
+    expect(codexHooks.hooks.UserPromptSubmit).toEqual([
+      { matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] },
+      { hooks: [{ type: 'command', command: 'knowl.cmd agent-reminder codex --json', timeout: 30, statusMessage: '' }] },
+    ]);
     expect(claudeHooks.hooks.UserPromptSubmit[0]).toEqual({
       matcher: 'custom',
       description: 'preserve matcher metadata',

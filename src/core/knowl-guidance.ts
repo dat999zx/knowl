@@ -213,12 +213,28 @@ export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the 
 // Short per-prompt reminder (UserPromptSubmit). The full tool routing lives in
 // KNOWL.md and the MCP initialize instructions, so the per-prompt card only needs
 // the core loop — keeping it ~1/3 the size of the operational card.
-export const KNOWL_CLAUDE_PROMPT_REMINDER = [
-  'KNOWL — project memory is active.',
-  'For any project question or new subtask, call knowl_query BEFORE reading files, using the words that name the subject and no padding; use a relevant active hit directly and inspect files only on a miss, conflict, or stale/low-confidence result.',
-  'Store durable decisions, facts, state, constraints, stated goals, and recurring diagnoses as you go with knowl_store / knowl_decide / knowl_update — intent counts before it settles; never store secrets or routine noise.',
-  'Claude hooks own the lifecycle — do not call knowl_task_start/checkpoint/finish. Full tool routing is in KNOWL.md.',
-].join(' ');
+export const KNOWL_CLAUDE_PROMPT_REMINDER = promptReminderFor('Claude');
+
+/**
+ * The per-prompt card, naming the host whose hooks are actually running.
+ *
+ * The last line asserts that this host's hooks own the lifecycle, which is the whole point of
+ * the card: it is what stops the agent opening a manual task loop on top of one the hooks
+ * already own. Naming the wrong host there is worse than saying nothing, because an agent that
+ * reads "Claude hooks own the lifecycle" inside a Codex session can reasonably conclude the
+ * sentence is about somebody else and start the loop anyway.
+ *
+ * `KNOWL_CLAUDE_PROMPT_REMINDER` stays exported and unchanged in content so that the tests and
+ * callers pinning Claude's exact wording keep working.
+ */
+export function promptReminderFor(hostLabel: string): string {
+  return [
+    'KNOWL — project memory is active.',
+    'For any project question or new subtask, call knowl_query BEFORE reading files, using the words that name the subject and no padding; use a relevant active hit directly and inspect files only on a miss, conflict, or stale/low-confidence result.',
+    'Store durable decisions, facts, state, constraints, stated goals, and recurring diagnoses as you go with knowl_store / knowl_decide / knowl_update — intent counts before it settles; never store secrets or routine noise.',
+    `${hostLabel} hooks own the lifecycle — do not call knowl_task_start/checkpoint/finish. Full tool routing is in KNOWL.md.`,
+  ].join(' ');
+}
 
 /**
  * Guidance delivered with a subagent's bootstrap context.
