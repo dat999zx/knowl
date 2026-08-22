@@ -30,7 +30,8 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 | **Cursor** | ✅ | ❌ | ⚠️ MCP | ✅ | ✅ |
 | **Claude Desktop** | via MCP | ❌ | via MCP | ❌ | via MCP |
 | **Cline** (with the plugin) | ✅ | ✅ | ✅ | — | via MCP |
-| **OpenCode, Zed, JetBrains, Roo, Continue, Amp, Goose, Aider, …** | via MCP | ❌ | via MCP | ❌ | via MCP |
+| **Zed, JetBrains, Neovim, Kiro** (via `knowl acp`) | ✅ | ❌ | ✅ | ❌ | via MCP |
+| **OpenCode, Roo, Continue, Amp, Goose, Aider, …** | via MCP | ❌ | via MCP | ❌ | via MCP |
 
 "via MCP" is not a degradation, but it is a weaker guarantee, and the two cases differ. A **change card** delivered this way is complete — the host just learns on its next Knowl call rather than its next tool call. A **capture nudge** delivered this way rides a tool result the agent may read and ignore, where a stop hook could withhold the stop. Both beat the alternative, which for a hookless client was nothing at all.
 
@@ -104,13 +105,21 @@ Everything else that is not a ✅ is one of three temporary things, and the tabl
 
 Windsurf's capture nudge used to be listed here as impossible, and it is not: Windsurf has no stop hook, but it speaks MCP, and the nudge now rides a tool result on every host whose hooks cannot carry it.
 
-## Not built: the ACP lane
+## The ACP lane
 
-**Zed, JetBrains (IntelliJ, Junie), Neovim, Kiro, Factory Droid** and the rest of the Agent Client Protocol registry share one channel that would give all of them the write gate at once: `session/request_permission`, plus `session/update` streaming tool calls live.
+**Zed, JetBrains (IntelliJ, Junie), Neovim, Kiro, Factory Droid** and the rest of the Agent Client Protocol registry cannot be profiles: ACP's interesting traffic runs **agent → client**, so there is no hook to register. The only seat available is between them.
 
-It is deferred, for a structural reason rather than a scheduling one. ACP's permission request runs **agent → client**: the agent asks the editor, and nothing in between is invited. To answer it, Knowl would have to sit as a proxy between the two and speak ACP in both directions — a long-lived component with its own lifecycle, failure modes and version surface, not a file in `src/session/hosts/`.
+```bash
+knowl acp -- <agent-command>        # point the editor at this instead of the agent
+```
 
-That is worth building. It is not worth smuggling into a change that adds profiles.
+The proxy relays every line **byte for byte** and observes a parsed copy alongside. It never re-serializes, so it cannot reorder a field, drop an unknown one, or change a number's formatting in a stream two other programs are speaking — which means its failure mode is "Knowl recorded nothing", the same direction every other Knowl hook fails in.
+
+What it captures: `session/new` and `session/prompt` as session and turn boundaries, and completed `session/update` tool calls, whose `locations` name the files touched and whose `kind` (`read`, `edit`, …) is the agent's own classification — better evidence than a tool name, because the protocol asks the agent to declare it.
+
+**It does not answer `session/request_permission`, so the write gate is not available on this lane.** That request is where the gate would live, and answering it means choosing one of the `PermissionOption`s the agent offered — a shape the published schema names `RequestPermissionOutcome` without enumerating. Guessing wrong there does not fail quietly: it resolves a prompt the person was meant to see, in their editor, with an answer Knowl invented. Permission traffic is relayed untouched until someone reads that shape off a real session.
+
+Treat the lane as new. It is tested against a fake agent pair, not against every agent in the registry.
 
 ## Adding a host
 

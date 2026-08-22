@@ -3457,6 +3457,16 @@ program
   });
 
 program
+  .command('acp')
+  .description('Run an ACP agent (Zed, JetBrains, Neovim, Kiro) behind Knowl memory')
+  .argument('<agent...>', 'the agent command to run, after --')
+  .action(async (agent: string[]) => {
+    const { runAcpProxy } = await import('./acp-proxy.js');
+    const [command, ...args] = agent;
+    process.exitCode = await runAcpProxy(command, args);
+  });
+
+program
   .command('agent-hook')
   .description('Translate a project-local agent host hook into bounded Knowl memory events')
   .argument('<host>', 'codex, claude, cursor, claude-desktop, or generic')

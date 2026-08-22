@@ -307,7 +307,8 @@ which the code cannot tell it, because rejected alternatives leave no trace in a
 | Windsurf | Yes | Yes | Yes | Yes | Nudge rides MCP; no stop hook |
 | Cursor | Yes | Yes | Yes | Yes | Finalizes per turn |
 | Cline | Yes | Yes | No | Yes | Lifecycle via the shipped plugin |
-| Claude Desktop, OpenCode, Zed, JetBrains, … | Yes | No | No | Yes | MCP plus the manual work loop |
+| Zed, JetBrains, Neovim, Kiro | Yes | Yes | No | Yes | Via `knowl acp --` |
+| Claude Desktop, OpenCode, Roo, … | Yes | No | No | Yes | MCP plus the manual work loop |
 
 Full detail, and why each gap exists, in [docs/hosts.md](docs/hosts.md).
 
