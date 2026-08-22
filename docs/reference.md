@@ -1477,7 +1477,9 @@ flowchart TB
         H1["Codex"]
         H2["Claude Code"]
         H3["Cursor"]
-        H4["Claude Desktop / Cline / Zed"]
+        H4["Copilot / OpenHands / Antigravity / Windsurf"]
+        H5["Zed · JetBrains · Neovim (ACP)"]
+        H6["Claude Desktop / OpenCode (MCP only)"]
     end
 
     subgraph adapters["Protocol adapters"]
@@ -1571,25 +1573,36 @@ one `knowl_store` or one hook capture is a single write — and better under con
 
 ## Agent setup
 
-`knowl init` detects Codex, Claude Code, Cursor, GitHub Copilot, OpenHands, Antigravity,
-Windsurf, Cline and Claude Desktop. Run it
-interactively or name the integrations explicitly:
+`knowl init` detects Claude Code, Codex, GitHub Copilot, Cursor, OpenHands, Antigravity,
+Windsurf, Cline, OpenCode and Claude Desktop. Run it interactively or name the integrations
+explicitly:
 
 ```bash
 knowl init
-knowl init codex claude cursor copilot openhands antigravity windsurf cline claude-desktop
+knowl init claude codex copilot cursor openhands antigravity windsurf cline opencode claude-desktop
 knowl doctor
 ```
 
-`KNOWL.md` contains the canonical workflow. `AGENTS.md` receives a synchronized managed section;
-`CLAUDE.md` imports `@KNOWL.md`, and `GEMINI.md` imports `@./KNOWL.md`. For Claude Code, the
-installed prompt hook invokes `knowl agent-reminder claude --json`. Existing unrelated MCP
-servers and host rules are preserved, and changed configuration files are backed up.
+`KNOWL.md` contains the canonical workflow. `AGENTS.md` receives a synchronized managed section
+and `CLAUDE.md` imports `@KNOWL.md`. On every host that declares a prompt event — Claude Code,
+Codex, Copilot and OpenHands — the installed prompt hook invokes `knowl agent-reminder <host>
+--json`. Existing unrelated MCP servers and host rules are preserved, and changed configuration
+files are backed up.
+
+Two hosts need one extra step, because neither keeps a hooks file `knowl init` could write:
+
+- **Cline** loads lifecycle as a plugin. Point it at the shipped file:
+  `ClineCore.start({ pluginPaths: ['./node_modules/@dat999zx/knowl/integrations/cline/knowl-plugin.mjs'] })`
+- **Zed, JetBrains, Neovim and Kiro** speak the Agent Client Protocol, whose traffic runs
+  agent-to-client with no hook to register. Point the editor at `knowl acp -- <agent-command>`
+  instead of at the agent.
 
 Start a new agent session after setup. Re-run `knowl init` after an upgrade that adds lifecycle
 events so host registrations and managed guidance are refreshed; database migrations apply when
-Knowl next opens the project. Claude Desktop and Cline retain MCP access but require the
-manual work loop for lifecycle capture.
+Knowl next opens the project. Claude Desktop, OpenCode and any other MCP-only client retain full
+memory access and use the manual work loop for lifecycle capture.
+
+Per-host capabilities, and the reason behind every gap, are in [docs/hosts.md](hosts.md).
 
 ## Benchmarks
 
@@ -1890,7 +1903,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl view [--port <port>]` | Start the local viewer: browse, read, edit, add and archive memory |
 | `knowl serve [--host <host>]` | Start the stdio MCP server. `--host` is written by `knowl init` so the guidance card can name this host's lifecycle mode exactly |
 | `knowl acp -- <agent-command>` | Run an Agent Client Protocol agent (Zed, JetBrains, Neovim, Kiro) behind Knowl memory. Relays the protocol byte for byte and observes a copy; see [docs/hosts.md](hosts.md#the-acp-lane) |
-| `knowl agent-event\|agent-hook\|agent-reminder` | Host-integration commands used by installed lifecycle configuration |
+| `knowl agent-event\|agent-hook\|agent-reminder` | Host-integration commands used by installed lifecycle configuration. `agent-hook` accepts any supported host; `agent-reminder` accepts one that declares a prompt event |
 
 ## MCP tools and resources
 

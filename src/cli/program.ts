@@ -3445,7 +3445,7 @@ program
 program
   .command('agent-reminder')
   .description('Emit fixed workflow guidance for an agent host prompt hook')
-  .argument('<host>', 'claude')
+  .argument('<host>', 'a host that declares a prompt event: claude, codex, copilot, openhands')
   .option('--json')
   .action(host => {
     try {
@@ -3469,7 +3469,7 @@ program
 program
   .command('agent-hook')
   .description('Translate a project-local agent host hook into bounded Knowl memory events')
-  .argument('<host>', 'codex, claude, cursor, claude-desktop, or generic')
+  .argument('<host>', 'claude, codex, copilot, cursor, openhands, antigravity, windsurf, cline, claude-desktop, or generic')
   .argument('<event>', 'host lifecycle event name')
   .option('--json')
   // Registered so `knowl --help` still describes it, but a real hook invocation never

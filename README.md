@@ -102,12 +102,12 @@ works.
 <td align="center" width="20%">
 <a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex" width="48" height="48" /></a><br/>
 <strong>Codex</strong><br/>
-<sub>MCP · lifecycle · subagents</sub>
+<sub>MCP · lifecycle · gate</sub>
 </td>
 <td align="center" width="20%">
 <a href="https://cursor.com"><img src="https://github.com/getcursor.png?size=120" alt="Cursor" width="48" height="48" /></a><br/>
 <strong>Cursor</strong><br/>
-<sub>MCP · lifecycle</sub>
+<sub>MCP · lifecycle · gate</sub>
 </td>
 <td align="center" width="20%">
 <a href="https://github.com/features/copilot"><img src="https://github.com/github.png?size=120" alt="GitHub Copilot" width="48" height="48" /></a><br/>
@@ -125,7 +125,10 @@ works.
 `knowl init` registers the MCP server for every host it finds. Start a new session afterwards so
 the agent picks up its guidance, and it will query and write memory on its own.
 
-→ [How agents use it](#how-agents-use-it) · [MCP tools and resources](docs/reference.md#mcp-tools-and-resources)
+Also supported: OpenHands, Antigravity, Windsurf, Cline and OpenCode, plus Zed, JetBrains,
+Neovim and Kiro through `knowl acp`. Any MCP client works even with no integration at all.
+
+→ [Every host, and what each one can do](docs/hosts.md) · [How agents use it](#how-agents-use-it) · [MCP tools and resources](docs/reference.md#mcp-tools-and-resources)
 
 ## The idea: memory that retires itself
 
