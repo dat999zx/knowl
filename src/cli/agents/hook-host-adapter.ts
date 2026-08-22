@@ -163,7 +163,13 @@ export function hookHostSpecs(environment: AgentEnvironment): HookHostAdapterSpe
       mcp: {
         kind: 'json',
         scope: 'global',
-        configPath: () => path.join(environment.homeDir, '.gemini', 'config', 'mcp_config.json'),
+        // `.gemini/antigravity/`, not `.gemini/config/`. Verified against a real install on
+        // 2026-08-22: the antigravity one held a live server list and a recent mtime, while
+        // `config/mcp_config.json` was **0 bytes** from a migration months earlier -- and that
+        // dead file is the exact one whose parse error used to take `knowl init` down for every
+        // host. Google's own docs name the antigravity path as what the IDE's "View raw config"
+        // opens, which is the one a person can check against what they see.
+        configPath: () => path.join(environment.homeDir, '.gemini', 'antigravity', 'mcp_config.json'),
       },
       hooksPath: root => path.join(root, '.agents', 'hooks.json'),
     },

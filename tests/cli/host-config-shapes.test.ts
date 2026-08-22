@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { afterAll, describe, expect, it } from 'vitest';
 import { mergeHookConfig, verifyHookConfig } from '../../src/cli/agents/hook-config.js';
-import { hostProfile } from '../../src/session/hosts/index.js';
+import { HOST_PROFILES as HOST_PROFILES_ALL, hostProfile } from '../../src/session/hosts/index.js';
 
 /**
  * Each host's hooks file, asserted against the shape its own vendor documents.
@@ -376,5 +376,34 @@ describe('channels that exist under a different name than expected', () => {
       expect(hostProfile(host).midTurnContext('x'), host).toBeDefined();
       expect(hostProfile(host).midTurnDeliveryVerified, host).toBe(false);
     }
+  });
+});
+
+describe('what a refusal actually does to the hook process', () => {
+  it('sets the exit status only for hosts whose deny channel is the exit status', () => {
+    // The subject of an entire fix commit had no test at all. `denyExitCode` present means the
+    // host reads no stdout verdict; absent means the envelope IS the refusal and a non-zero
+    // exit would make Claude and Codex discard it and run the tool anyway.
+    expect(hostProfile('windsurf').denyExitCode).toBe(2);
+    expect(hostProfile('openhands').denyExitCode).toBe(2);
+    for (const host of ['claude', 'codex', 'copilot', 'cursor', 'antigravity'] as const) {
+      expect(hostProfile(host).denyExitCode, host).toBeUndefined();
+    }
+  });
+
+  it('marks the one host where our own crash would deny the user’s edit', () => {
+    // Copilot reads any unexpected non-zero exit as a denial, so the hook entry withholds its
+    // error status there. Everywhere else a crashed hook allows the write, which is the failure
+    // direction the whole subsystem is built on.
+    expect(hostProfile('copilot').refusesOnAnyNonZeroExit).toBe(true);
+    for (const profile of Object.values(HOST_PROFILES_ALL)) {
+      if (profile.host === 'copilot') continue;
+      expect(profile.refusesOnAnyNonZeroExit, profile.host).toBeUndefined();
+    }
+  });
+
+  it('reads a flat host’s timeout off its profile, not off its name', () => {
+    expect(hostProfile('cursor').hookEntryTimeout).toBe(30);
+    expect(hostProfile('windsurf').hookEntryTimeout).toBeUndefined();
   });
 });

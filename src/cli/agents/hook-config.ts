@@ -115,10 +115,16 @@ function nestedEntry(platform: NodeJS.Platform, host: HookHost, event: string): 
  * `working_directory`, and no timeout. An undocumented key is usually ignored and occasionally
  * rejected, and a hooks file a host refuses to parse takes every *other* handler in it down
  * too -- so each host gets exactly the fields its own reference lists.
+ *
+ * Read off the profile rather than branched on the host name here. This was the last place the
+ * writer still asked which vendor it was serving, which made `docs/hosts.md`'s claim that
+ * nothing branches on a host name false by exactly one line.
  */
 const flatEntry = (platform: NodeJS.Platform, host: HookHost, event: string): FlatEntry => ({
   command: knowlHookCommand(platform, host, event),
-  ...(host === 'cursor' ? { timeout: 30 } : {}),
+  ...(hostProfile(host).hookEntryTimeout === undefined
+    ? {}
+    : { timeout: hostProfile(host).hookEntryTimeout }),
 });
 
 const equal = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);

@@ -51,12 +51,12 @@ knowl doctor               # what is configured, what is stale
 | Codex CLI | `.codex/config.toml` | `.codex/hooks.json` |
 | GitHub Copilot | `.github/mcp.json` | `.github/hooks/knowl.json` |
 | OpenHands | `config.toml` — **manual, see below** | `.openhands/hooks.json` |
-| Antigravity | `~/.gemini/config/mcp_config.json` † | `.agents/hooks.json` |
+| Antigravity | `~/.gemini/antigravity/mcp_config.json` † | `.agents/hooks.json` |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | `.windsurf/hooks.json` |
 | Cursor | `.cursor/mcp.json` | `.cursor/hooks.json` |
 | Claude Desktop | platform config directory | — |
 
-† Antigravity's MCP path is the least-verified line on this page. Its hooks location is quoted from Google's reference; the MCP path is not, and it is the same file Gemini CLI leaves behind empty. If Knowl's server does not appear in Antigravity, check where that build actually reads its MCP list.
+† The MCP path is confirmed against a real Antigravity install, and is **not** `~/.gemini/config/mcp_config.json` — that one is a migration leftover left at 0 bytes, and it is what the IDE's "View raw config" does *not* open. The hooks path and event names are still quoted from Google's reference rather than observed; the installed build here predates the 2.0 hooks feature, so it could not settle them.
 
 **Codex** hooks are behind `[features].codex_hooks = true` in `~/.codex/config.toml`, are experimental, and **do not run on Windows at all**. Everything else works there; only the hook-driven capabilities are unavailable. Because of that, Codex — like Antigravity and Windsurf, whose MCP entry is global while their hooks are per project — keeps the conditional lifecycle card rather than being told outright that its hooks own the session.
 
@@ -123,7 +123,7 @@ Treat the lane as new. It is tested against a fake agent pair, not against every
 
 ## Adding a host
 
-One file in [`src/session/hosts/`](../src/session/hosts/), registered in `index.ts`. The lifecycle engine never branches on a host name; it asks the profile. (The config *writer* still has one branch, for a `timeout` field Cursor documents and Windsurf does not.)
+One file in [`src/session/hosts/`](../src/session/hosts/), registered in `index.ts`. The lifecycle engine never branches on a host name; it asks the profile.
 
 The rule that matters most: **capability is expressed by return value, and an unverified capability is an absent one.** A host that cannot receive context returns `undefined` rather than setting a flag, so nothing can claim support an envelope does not deliver. A profile that declares a channel it has not been observed to have will report blocking writes it in fact let through — and that failure is invisible, because the refusal is computed correctly and only the delivery is missing.
 

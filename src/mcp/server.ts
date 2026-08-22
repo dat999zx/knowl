@@ -43,6 +43,8 @@ export interface DeferredServerState {
    * simply keeps reading the conditional line.
    */
   modeLine?: string;
+  /** The host name from `serve --host`, for anything that must not double up with its hooks. */
+  host?: string;
 }
 
 /**
@@ -93,7 +95,8 @@ export function createMcpServer(
     deferred.getProjectRoot ?? (() => projectRoot),
     getConfig,
     getInitError,
-    deferred.whenReady ?? (async () => {})
+    deferred.whenReady ?? (async () => {}),
+    () => deferred.host
   );
 
   registerResources(
@@ -213,6 +216,7 @@ export async function startMcpServer(options: { host?: string } = {}): Promise<v
     getInitError: () => initError,
     whenReady: () => ready,
     modeLine: mcpModeLineForHost(options.host),
+    host: options.host,
     ...(autoInitialized ? {
       // The path is collapsed to single spaces before it goes in: this card is the
       // highest-trust text the server hands a model, and a POSIX directory name may contain

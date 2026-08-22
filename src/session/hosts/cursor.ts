@@ -39,6 +39,7 @@ export const cursorProfile: HostProfile = {
   midTurnDeliveryVerified: false,
   hookConfigStyle: 'flat-commands',
   hookFileExtraKeys: { version: 1 },
+  hookEntryTimeout: 30,
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.conversation_id),

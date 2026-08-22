@@ -223,10 +223,15 @@ const MIN_MCP_READS = 5;
  * Absence of any live binding is the normal case for the hosts this path exists for -- they have
  * no hooks to bind with.
  */
-async function hookChannelOwnsTheNudge(projectRoot: string): Promise<boolean> {
+async function hookChannelOwnsTheNudge(projectRoot: string, host?: string): Promise<boolean> {
+  // The installed host, when `knowl init` recorded one, is better evidence than a binding: it
+  // is true from the first tool call, whereas a binding only exists once that host's
+  // SessionStart has landed. A Claude session that reached five Knowl calls before its hook
+  // bound would otherwise have taken both nudges.
+  if (host && isHookHost(host) && typeof hostProfile(host).stopContext === 'function') return true;
   const since = new Date(Date.now() - HOOK_LIVENESS_MS).toISOString();
   const hosts = await listLiveHostBindings(projectRoot, since);
-  return hosts.some(host => isHookHost(host) && typeof hostProfile(host).stopContext === 'function');
+  return hosts.some(live => isHookHost(live) && typeof hostProfile(live).stopContext === 'function');
 }
 
 /**
@@ -253,6 +258,7 @@ export async function consumeCaptureNudge(
   projectRoot: string | null,
   toolName: string,
   config: ProjectConfig | null,
+  host?: string,
 ): Promise<string | undefined> {
   if (!projectRoot) return undefined;
   try {
@@ -264,7 +270,7 @@ export async function consumeCaptureNudge(
     }
     state.reads += 1;
     if (state.nudged || state.durableWrites > 0 || state.reads < MIN_MCP_READS) return undefined;
-    if (await hookChannelOwnsTheNudge(projectRoot)) return undefined;
+    if (await hookChannelOwnsTheNudge(projectRoot, host)) return undefined;
     state.nudged = true;
     return renderMidSessionSilenceNudge();
   } catch {

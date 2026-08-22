@@ -65,3 +65,31 @@ describe('MCP capture nudge', () => {
     }
   });
 });
+
+describe('the installed host is better evidence than a live binding', () => {
+  it('stands down for a host whose hooks carry the nudge, before any binding exists', async () => {
+    // A binding only appears once that host's SessionStart has landed. A Claude session that
+    // reached five Knowl calls first would otherwise take both nudges -- one here and one at
+    // stop time -- which reads, to the agent, as memory nagging it.
+    vi.mocked(listLiveHostBindings).mockResolvedValue([]);
+    for (let call = 0; call < 8; call += 1) {
+      expect(await consumeCaptureNudge(ROOT, 'knowl_query', enforce, 'claude')).toBeUndefined();
+    }
+  });
+
+  it('still fires for an installed host whose hooks cannot carry it', async () => {
+    // Windsurf has twelve hook events and none at stop time, so knowing the host does not mean
+    // the nudge is being delivered elsewhere.
+    for (let call = 0; call < 4; call += 1) {
+      await consumeCaptureNudge(ROOT, 'knowl_query', enforce, 'windsurf');
+    }
+    expect(await consumeCaptureNudge(ROOT, 'knowl_query', enforce, 'windsurf')).toContain('stored');
+  });
+
+  it('ignores a host string it does not recognise rather than trusting it', async () => {
+    for (let call = 0; call < 4; call += 1) {
+      await consumeCaptureNudge(ROOT, 'knowl_query', enforce, 'not-a-host');
+    }
+    expect(await consumeCaptureNudge(ROOT, 'knowl_query', enforce, 'not-a-host')).toContain('stored');
+  });
+});

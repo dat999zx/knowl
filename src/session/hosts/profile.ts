@@ -117,6 +117,14 @@ export interface HostProfile {
    */
   readonly hookFileExtraKeys?: Readonly<Record<string, unknown>>;
   /**
+   * Seconds a flat-shaped host allows one handler, when its schema defines the field at all.
+   *
+   * Cursor documents `timeout`; Windsurf documents four other keys and no timeout. Emitting a
+   * field a host does not define is usually ignored and occasionally fatal to parsing the whole
+   * file -- which would take every other handler in it down too, including somebody else's.
+   */
+  readonly hookEntryTimeout?: number;
+  /**
    * Whether the MCP card may state, unconditionally, that this host's hooks own the lifecycle.
    *
    * Registering hook events is not the same as those hooks running, and the card is the one

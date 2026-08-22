@@ -176,6 +176,8 @@ export async function runAcpProxy(
   const pendingPrompts = new Map<string | number, string>();
   /** In-flight observations, so shutdown does not close the store out from under one. */
   const observing = new Set<Promise<void>>();
+  /** Session ids seen, so the agent's exit can close them rather than stranding them open. */
+  const sessions = new Set<string>();
 
   // Resolved once, lazily, and never retried: an ACP session outlives many messages, and a
   // directory that is not a Knowl project stays one for the life of the process.
@@ -198,25 +200,33 @@ export async function runAcpProxy(
     return project;
   };
 
-  async function observe(line: string): Promise<void> {
+  async function observeEvent(event: NormalizedHookEventName, raw: Record<string, unknown>): Promise<void> {
     try {
-      const message = JSON.parse(line) as JsonRpc;
-      const mapped = eventFor(message, pendingPrompts);
-      if (!mapped) return;
       const found = await knowlProject();
       if (!found) return;
-      const normalized = normalizeHostHook('generic', mapped.event, {
-        ...mapped.raw,
+      const sessionId = text(raw.conversation_id) ?? 'acp';
+      sessions.add(sessionId);
+      const normalized = normalizeHostHook('generic', event, {
+        ...raw,
         cwd: found.root,
-        sessionId: text(mapped.raw.conversation_id) ?? 'acp',
+        sessionId,
         // `normalizeGeneric` requires a type on a session-event and rejects the event without
         // one, so this is not optional decoration.
-        type: mapped.event === 'session-event' ? 'checkpoint' : undefined,
+        type: event === 'session-event' ? 'checkpoint' : undefined,
       });
       await handleHostLifecycleEvent(found.id, normalized);
     } catch {
       // Observation is never worth interrupting the relay for. A message this build does not
       // understand is the normal case for a protocol both ends may be ahead of us on.
+    }
+  }
+
+  async function observe(line: string): Promise<void> {
+    try {
+      const mapped = eventFor(JSON.parse(line) as JsonRpc, pendingPrompts);
+      if (mapped) await observeEvent(mapped.event, mapped.raw);
+    } catch {
+      // An unparseable line is somebody else's framing, not an error here.
     }
   }
 
@@ -238,7 +248,13 @@ export async function runAcpProxy(
         // and must never be able to alter one.
         const line = buffer.slice(0, index + 1);
         buffer = buffer.slice(index + 1);
-        to.write(line);
+        // Backpressure is honoured rather than ignored: a slow reader on the far side otherwise
+        // buffers the whole conversation in this process's heap, and an ACP session streams
+        // every token of every response through here.
+        if (!to.write(line)) {
+          from.pause();
+          to.once('drain', () => from.resume());
+        }
         const watching = observe(line.trim());
         observing.add(watching);
         void watching.finally(() => observing.delete(watching));
@@ -265,6 +281,12 @@ export async function runAcpProxy(
       resolve(1);
     });
     child.on('close', async code => {
+      // The agent going away ends the ACP session, and nothing else here says so: `session/new`
+      // has no counterpart the client sends. Without this every memory session is left open for
+      // the abandoned-session sweeper to close hours later, which loses the finalization pass.
+      for (const sessionId of new Set(sessions)) {
+        observing.add(observeEvent('session-stop', { conversation_id: sessionId, status: 'finished' }));
+      }
       // Settle observations before closing the store, or the last few throw into the observer's
       // own catch and are lost -- and the memoized project promise would keep handing every
       // later one a closed handle.
