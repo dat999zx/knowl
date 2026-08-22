@@ -38,6 +38,122 @@ export interface HostProfile {
    * silences the fallback channel for precisely the host that depends on it.
    */
   readonly midTurnDeliveryVerified: boolean;
+  /**
+   * The shape of the file `knowl init` writes this host's handlers into.
+   *
+   * A shape rather than a host name, because the shapes are shared and the vendors are not:
+   * Claude and Codex take the same nested object, Copilot takes it with a `version` key,
+   * Antigravity nests a hook *name* above the event, Cursor and the two flat hosts take a
+   * command list per event. Keying the merge here is what keeps adding a host to one file --
+   * the alternative is a widening union repeated in three function signatures, which is where
+   * the host name had already started to reappear.
+   *
+   * `none` is a real value rather than `undefined` so a profile that simply forgot to declare
+   * a shape fails conformance instead of silently registering nothing.
+   */
+  readonly hookConfigStyle:
+    /** `{hooks: {Event: [{matcher, hooks: [...]}]}}` -- Claude Code, Codex. */
+    | 'claude-nested'
+    /** `{"<hook-name>": {Event: [{matcher, hooks: [...]}]}}` -- one level deeper. */
+    | 'antigravity-nested'
+    /** Events at the **top level**, with no `hooks` wrapper around them. */
+    | 'openhands-toplevel'
+    /** `{hooks: {event: [{command, ...}]}}` -- a flat command list, no matcher. Cursor, Windsurf. */
+    | 'flat-commands'
+    | 'none';
+  /**
+   * The process exit status this host reads as a refusal, when its deny channel is the exit
+   * code rather than stdout.
+   *
+   * Two conventions, opposite rules, and both fail silently. Claude Code and Codex read a
+   * `PreToolUse` verdict from stdout **only on exit 0** -- a non-zero exit reads as a crashed
+   * hook and the verdict is discarded, so the tool runs anyway. Windsurf has no stdout verdict
+   * at all and blocks on **exit 2**, so returning JSON and exiting 0 there allows the write
+   * while reporting a block. OpenHands accepts both and lets the JSON win.
+   *
+   * Absent means the envelope is the refusal, which is the existing behaviour and the default.
+   */
+  readonly denyExitCode?: number;
+  /**
+   * True when this host treats *any* unexpected non-zero exit as a refusal.
+   *
+   * Copilot does: its reference states a non-zero exit other than 2 denies the tool call. That
+   * inverts the failure direction the rest of this subsystem is built on -- everywhere else a
+   * broken hook allows the write, and here a broken hook blocks somebody's edit with no reason
+   * attached, from a code path that was only trying to report its own crash. The hook entry
+   * reads this to suppress its error exit, so a Knowl bug degrades to "nothing was recorded for
+   * this call" rather than "you cannot edit this file".
+   */
+  readonly refusesOnAnyNonZeroExit?: true;
+  /**
+   * Whether this event read or wrote a file, in this host's own vocabulary.
+   *
+   * The impact subsystem has to tell "this session read that file" from "this session wrote
+   * it" -- opposite facts that arrive as the same normalized event. That distinction was
+   * hardcoded as Claude Code's tool names (`Edit`, `Write`, `MultiEdit`, `NotebookEdit`,
+   * `Read`, `NotebookRead`) and consulted for every host, so on any other one every lookup
+   * missed: no read recorded, no write detected, and the write gate answering "no opinion"
+   * before it ever consulted `denyToolCall`. A host could declare a refusal channel and be
+   * structurally unable to reach it.
+   *
+   * A predicate rather than a name list because the hosts genuinely disagree about where the
+   * answer lives. Most name a tool; Windsurf names the *action* (`pre_write_code` says it and
+   * carries no tool name at all). One shape covers both, and a host that names tools writes a
+   * one-line `includes`.
+   *
+   * Omitted means "Claude Code's names", which is what `claude` and `generic` use -- not a
+   * guess for anyone else, because every other host declares its own. A vocabulary that has
+   * not been read stays absent rather than being invented.
+   */
+  readsFiles?: (hostEvent: string, toolName: string) => boolean;
+  writesFiles?: (hostEvent: string, toolName: string) => boolean;
+  /**
+   * The top-level keys this host's hooks file must carry beside its events.
+   *
+   * Copilot rejects a file without `"version": 1`; Cursor requires the same key. Data rather
+   * than a config-shape variant, because that is what it is -- treating it as a shape gave
+   * Copilot its own enum member and left the dispatcher branching on `host === 'cursor'` for
+   * the identical need, which is the branching `hookConfigStyle` exists to remove.
+   */
+  readonly hookFileExtraKeys?: Readonly<Record<string, unknown>>;
+  /**
+   * Seconds a flat-shaped host allows one handler, when its schema defines the field at all.
+   *
+   * Cursor documents `timeout`; Windsurf documents four other keys and no timeout. Emitting a
+   * field a host does not define is usually ignored and occasionally fatal to parsing the whole
+   * file -- which would take every other handler in it down too, including somebody else's.
+   */
+  readonly hookEntryTimeout?: number;
+  /**
+   * Whether the MCP card may state, unconditionally, that this host's hooks own the lifecycle.
+   *
+   * Registering hook events is not the same as those hooks running, and the card is the one
+   * place where being wrong is expensive: an agent told "never call knowl_task_start" that then
+   * gets no hooks records nothing at all, and the sentence is what caused it.
+   *
+   * False for three shapes of "registered but maybe not running":
+   * - **Codex**, whose hooks are behind `[features].codex_hooks` and do not run on Windows.
+   * - **Antigravity and Windsurf**, whose MCP entry is written once at user scope while their
+   *   hooks are per project -- so the same server answers in projects that have no hooks file.
+   *
+   * Those hosts get the neutral line, which says hooks own the lifecycle *when active* and
+   * otherwise to use the manual loop. That is exactly right for them, and it is what they were
+   * getting before the card learned to be specific.
+   */
+  readonly lifecycleClaimable?: boolean;
+  /**
+   * The working directory this event happened in, if this host does not name it `cwd`.
+   *
+   * `cwd` then `workspace_roots[0]` was hardcoded for every host, and it is the one field with
+   * no graceful degradation: a host that names it something else throws
+   * `IncompleteHostHookPayloadError` on *every* event, which the hook entry deliberately
+   * swallows in silence -- so the integration reports nothing, logs nothing, and looks exactly
+   * like a host nobody has configured.
+   *
+   * Optional because the two default names cover every host read so far. It exists so the next
+   * one can say so in its profile rather than having the default quietly decide for it.
+   */
+  projectRoot?: (raw: Record<string, unknown>) => string | undefined;
   identity(raw: Record<string, unknown>): HostIdentity;
   normalizedEvent(hostEvent: string): NormalizedHookEventName | undefined;
   isShellEvent(hostEvent: string, toolName: string): boolean;

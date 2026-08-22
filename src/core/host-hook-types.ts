@@ -10,7 +10,9 @@ import { SessionEventType } from './types.js';
  * the bottom where both sides can reach it without either depending on the other.
  */
 
-export type HookHost = 'codex' | 'claude' | 'cursor' | 'claude-desktop' | 'generic';
+export type HookHost =
+  | 'codex' | 'claude' | 'cursor' | 'claude-desktop' | 'generic'
+  | 'copilot' | 'openhands' | 'antigravity' | 'windsurf' | 'cline';
 
 export type NormalizedHookEventName =
   | 'session-start'
@@ -35,6 +37,17 @@ export type NormalizedHookEventName =
 export interface NormalizedHostHook {
   host: HookHost;
   event: NormalizedHookEventName;
+  /**
+   * The host's own name for the event, kept beside the normalized one.
+   *
+   * Normalization is lossy on purpose -- several host events map to one normalized event, which
+   * is what lets the engine stay host-agnostic. But two consumers need the original back.
+   * Windsurf names the *action* rather than the tool (`pre_write_code` says a file is being
+   * written and carries no tool name at all), so its writes are unclassifiable without this;
+   * and anything answering a pre-tool question has to know which event it is answering, since
+   * a verdict stamped with the wrong event name is discarded by the host.
+   */
+  hostEvent?: string;
   externalSessionId: string;
   externalTurnId?: string;
   projectRoot: string;

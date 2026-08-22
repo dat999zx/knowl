@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { HOST_PROFILES, hostProfile } from '../../../src/session/hosts/index.js';
 import { HookHost } from '../../../src/cli/agents/host-hook.js';
 
-const ALL_HOSTS: HookHost[] = ['codex', 'claude', 'cursor', 'claude-desktop', 'generic'];
+const ALL_HOSTS: HookHost[] = [
+  'codex', 'claude', 'cursor', 'claude-desktop', 'generic',
+  'copilot', 'openhands', 'antigravity', 'windsurf', 'cline',
+];
 
 describe('host profile registry', () => {
   it('has exactly one profile per HookHost', () => {
@@ -12,6 +15,57 @@ describe('host profile registry', () => {
 
   it('rejects an unknown host', () => {
     expect(() => hostProfile('nope' as HookHost)).toThrow('Unsupported hook host');
+  });
+
+  it('a profile that refuses by exit status also renders a reason', () => {
+    for (const profile of Object.values(HOST_PROFILES)) {
+      if (profile.denyExitCode === undefined) continue;
+      expect(profile.denyExitCode, profile.host).toBeGreaterThan(0);
+      expect(typeof profile.denyToolCall, profile.host).toBe('function');
+    }
+  });
+
+  it('a host that registers hook handlers declares the shape of the file they go in', () => {
+    for (const profile of Object.values(HOST_PROFILES)) {
+      // `generic` declares events so third-party callers can send them, but `knowl init`
+      // never writes a file for it -- it is invoked directly, never installed.
+      const installs = profile.hookEvents.length > 0 && profile.host !== 'generic';
+      expect(profile.hookConfigStyle === 'none', profile.host).toBe(!installs);
+    }
+  });
+
+  it('never declares its prompt event as a lifecycle event as well', () => {
+    // `mergeNestedHookConfig` writes the lifecycle handler under the event key and then
+    // overwrites that same key with the reminder entry, rebuilt from the pre-merge map. A
+    // host declaring both loses its lifecycle handler permanently -- re-running `knowl init`
+    // reproduces it, and `verifyNestedHookConfig` then reports stale hooks forever.
+    for (const profile of Object.values(HOST_PROFILES)) {
+      if (!profile.promptEvent) continue;
+      expect(profile.hookEvents, profile.host).not.toContain(profile.promptEvent);
+    }
+  });
+
+  it('codex declares exactly the lifecycle events codex 0.147.0 implements', () => {
+    // Verified 2026-08-22 by string inspection of the shipped codex.exe (0.147.0, win32-x64).
+    // `PostToolUseFailure` and `StopFailure` are absent from that binary and were declared here
+    // for years; `PostCompact` and `PermissionRequest` are present but deliberately not
+    // registered -- see the profile's header for why registering either would double-count or
+    // answer with the wrong event name.
+    expect([...hostProfile('codex').hookEvents]).toEqual([
+      'SessionStart', 'SubagentStart', 'PreToolUse', 'PostToolUse',
+      'PreCompact', 'Stop', 'SubagentStop', 'SessionEnd',
+    ]);
+    expect(hostProfile('codex').promptEvent).toBe('UserPromptSubmit');
+  });
+
+  it('codex can refuse a tool call and withhold a stop', () => {
+    const profile = hostProfile('codex');
+    expect(profile.denyToolCall?.('nope')).toEqual({
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'nope',
+      },
+    });
+    expect(profile.stopContext?.('store it')).toEqual({ decision: 'block', reason: 'store it' });
   });
 
   describe.each(ALL_HOSTS)('%s', host => {
@@ -55,7 +109,13 @@ describe('host profile registry', () => {
 
     it('declares mid-turn support only when it registers a tool event', () => {
       // A host with no tool-call event has nowhere to attach a mid-turn card.
-      const hasToolEvent = profile().hookEvents.some(event => /posttooluse|aftershellexecution/i.test(event));
+      //
+      // Asked of the profile rather than matched against a list of spellings. The regex this
+      // replaces (`/posttooluse|aftershellexecution/i`) had to be edited every time a host
+      // named the same event differently, and it failed open: an unrecognised spelling read as
+      // "no tool event", so the assertion it exists to make quietly stopped being made.
+      // `session-event` *is* the definition of a mid-turn attachment point.
+      const hasToolEvent = profile().hookEvents.some(event => profile().normalizedEvent(event) === 'session-event');
       if (profile().midTurnContext('x') !== undefined) expect(hasToolEvent).toBe(true);
     });
   });

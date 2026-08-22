@@ -284,8 +284,15 @@ describe('canonical Knowl agent guidance', () => {
     expect(documentedTools).toEqual([...KNOWL_MCP_TOOL_NAMES]);
     expect(new Set(documentedTools).size).toBe(27);
     expect(reference).toContain('KNOWL.md');
-    expect(reference).toContain('GEMINI.md');
-    expect(reference).toContain('agent-reminder claude --json');
+    // The instruction files Knowl actually writes. `GEMINI.md` was here until the Gemini CLI
+    // adapter was retired; a doc-coverage assertion that outlives the thing it covers keeps
+    // passing on prose nobody reads and starts failing only when the prose is finally correct.
+    expect(reference).toContain('AGENTS.md');
+    expect(reference).toContain('CLAUDE.md');
+    // The reference names the command generically now, because four hosts declare a prompt
+    // event rather than one. Pinning `agent-reminder claude` would have kept the docs describing
+    // Claude as the only host that gets a per-turn card long after that stopped being true.
+    expect(reference).toContain('agent-reminder <host>');
     expect(reference).toContain('previewed maintenance after explicit approval');
   });
 

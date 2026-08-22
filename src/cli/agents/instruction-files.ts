@@ -3,11 +3,10 @@ import { KNOWL_GUIDANCE_START_MARKER } from '../../core/knowl-guidance.js';
 import { stripManagedKnowlGuidance } from '../../core/agents-guidance.js';
 import { MergeStatus, readTextIfExists, writeWithBackup } from './files.js';
 
-export type NativeInstructionHost = 'claude' | 'gemini';
+export type NativeInstructionHost = 'claude';
 
 const HOST_INSTRUCTIONS = {
   claude: { file: 'CLAUDE.md', importLine: '@KNOWL.md' },
-  gemini: { file: 'GEMINI.md', importLine: '@./KNOWL.md' },
 } as const;
 
 function hasActiveGuidanceImport(source: string): boolean {

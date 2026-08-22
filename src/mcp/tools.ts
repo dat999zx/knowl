@@ -1,7 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { captureChangeWatermark, consumeChangeNotice } from './change-notice.js';
+import { captureChangeWatermark, consumeCaptureNudge, consumeChangeNotice } from './change-notice.js';
 import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem, findForeignItem } from '../workspace/ownership.js';
@@ -442,7 +442,14 @@ export function registerTools(
   // Startup completes the handshake before the database is open (see `startMcpServer`), so a
   // tool call can arrive while project id, root and config are all still null. Awaiting this
   // is what makes that restructure invisible to every handler below.
-  whenReady: () => Promise<void> = async () => {}
+  whenReady: () => Promise<void> = async () => {},
+  /**
+   * The host `knowl init` registered this server for, from `serve --host`.
+   *
+   * Used only to decide whether the hook path already owns the capture nudge. Better evidence
+   * than a live binding, which does not exist until that host's SessionStart has landed.
+   */
+  getHost: () => string | undefined = () => undefined
 ): void {
   // 1. List tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: knowlToolDefinitions(getConfig()) }));
@@ -1893,7 +1900,14 @@ export function registerTools(
     const watermark = await captureChangeWatermark(projectRoot);
     const result = await callToolAsRepo(request);
     const notice = await consumeChangeNotice(projectRoot, request.params.name, watermark);
-    if (!notice) return result;
-    return { ...result, content: [...result.content, { type: 'text' as const, text: notice }] };
+    // Two independent appends, both best-effort. The nudge is the MCP twin of the stop-hook
+    // one, for clients that have no stop hook to carry it -- see `consumeCaptureNudge`.
+    const nudge = await consumeCaptureNudge(projectRoot, request.params.name, getConfig(), getHost());
+    const extra = [notice, nudge].filter((text): text is string => Boolean(text));
+    if (extra.length === 0) return result;
+    return {
+      ...result,
+      content: [...result.content, ...extra.map(text => ({ type: 'text' as const, text }))],
+    };
   });
 }

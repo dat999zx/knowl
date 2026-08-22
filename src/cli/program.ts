@@ -3445,7 +3445,7 @@ program
 program
   .command('agent-reminder')
   .description('Emit fixed workflow guidance for an agent host prompt hook')
-  .argument('<host>', 'claude')
+  .argument('<host>', 'a host that declares a prompt event: claude, codex, copilot, openhands')
   .option('--json')
   .action(host => {
     try {
@@ -3457,9 +3457,19 @@ program
   });
 
 program
+  .command('acp')
+  .description('Run an ACP agent (Zed, JetBrains, Neovim, Kiro) behind Knowl memory')
+  .argument('<agent...>', 'the agent command to run, after --')
+  .action(async (agent: string[]) => {
+    const { runAcpProxy } = await import('./acp-proxy.js');
+    const [command, ...args] = agent;
+    process.exitCode = await runAcpProxy(command, args);
+  });
+
+program
   .command('agent-hook')
   .description('Translate a project-local agent host hook into bounded Knowl memory events')
-  .argument('<host>', 'codex, claude, cursor, claude-desktop, or generic')
+  .argument('<host>', 'claude, codex, copilot, cursor, openhands, antigravity, windsurf, cline, claude-desktop, or generic')
   .argument('<event>', 'host lifecycle event name')
   .option('--json')
   // Registered so `knowl --help` still describes it, but a real hook invocation never
@@ -4138,13 +4148,17 @@ program
 program
   .command('serve')
   .description('Start the Model Context Protocol (MCP) server for KNOWL')
-  .action(async () => {
+  // Written by `knowl init` into each host's own MCP config. The `initialize` card is captured
+  // by the SDK at construction, before the client handshake, so the client's identity arrives
+  // too late to be read from it -- but the install already knew which host it was writing for.
+  .option('--host <host>', 'the host this server was registered for, so its guidance card can be exact')
+  .action(async (options: { host?: string }) => {
     try {
       console.error(`🚀 Starting KNOWL MCP Server...`);
       // Imported here, not at module scope: the MCP SDK costs ~530ms to load and only this
       // command needs it, so every other CLI invocation was paying for it.
       const { startMcpServer } = await import('../mcp/server.js');
-      await startMcpServer();
+      await startMcpServer({ host: options.host });
     } catch (error: any) {
       console.error(`❌ Failed to start MCP Server: ${error.message}`);
       process.exit(1);

@@ -6,7 +6,7 @@ import { handleHostLifecycleEvent } from '../session/host-lifecycle.js';
 import { assertKnowledgeDatabasePresent } from './database-presence.js';
 import { readLifecyclePayload } from './agents/lifecycle.js';
 import { IncompleteHostHookPayloadError, normalizeHostHook } from './agents/host-hook.js';
-import { hostProfile } from '../session/hosts/index.js';
+import { hostProfile, isHookHost } from '../session/hosts/index.js';
 
 /**
  * The agent lifecycle hook, in its own module and off the CLI's import graph.
@@ -57,9 +57,24 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
     //
     // So the deny returns normally from here. Do not add a `process.exit` to this branch, and do
     // not "signal failure" from a hook that produced a verdict.
+    const profile = hostProfile(normalized.host);
     if (result.hostOutput) console.log(JSON.stringify(result.hostOutput));
-    else if (!hostProfile(normalized.host).nativeOutput) console.log(JSON.stringify(result));
+    else if (!profile.nativeOutput) console.log(JSON.stringify(result));
     await closeDb();
+
+    // A refusal always says why on stderr, whatever channel carried the verdict.
+    //
+    // For a host with `denyExitCode` that is the *only* place the reason can go -- there is no
+    // JSON verdict to put it in. For the rest it is a second copy, and worth it: without it a
+    // block on a host whose stdout verdict we got subtly wrong is completely silent, which is
+    // exactly how a gate becomes impossible to diagnose from a bug report.
+    //
+    // Reached only when a refusal was actually deliverable: `runWriteGate` leaves `denied`
+    // unset when the profile declined to build an envelope.
+    if (result.denied !== undefined) {
+      console.error(result.denied);
+      if (profile.denyExitCode !== undefined) process.exitCode = profile.denyExitCode;
+    }
   } catch (error: any) {
     // Two silences, for two things that are not faults.
     //
@@ -78,6 +93,9 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
     }
     console.error(`Error handling agent hook: ${error.message}`);
     await closeDb().catch(() => {});
+    // See `refusesOnAnyNonZeroExit`: on those hosts this exit would deny the agent's edit
+    // rather than report our own crash. The error still reaches stderr; only the status goes.
+    if (isHookHost(host) && hostProfile(host).refusesOnAnyNonZeroExit) return;
     process.exit(1);
   }
 }

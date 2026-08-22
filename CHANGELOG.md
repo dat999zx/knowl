@@ -3,7 +3,12 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.9.0 — 2026-08-22
+
+Knowl reaches every host it can reach. Four new lifecycle integrations, a Codex profile that was
+wrong in both directions, a plugin for the one host that cannot be configured, and a proxy for
+the protocol that has no hook to register at all — eleven hosts and the ACP registry, up from
+five. Plus a `serve` that can start in a repository nobody ran `init` in.
 
 ### `knowl serve` auto-initializes an uninitialized repository
 
@@ -26,6 +31,138 @@ approves a skill package for execution, and it lives in the repository beside th
 vouches for — so a checkout can arrive carrying both. `knowl init` may adopt such a repository,
 because a person ran it; auto-init is a host process that chose nothing, and it must not be the
 step that turns a planted `.knowl/skills/` into a runnable one.
+
+### GitHub Copilot, OpenHands, Antigravity and Windsurf
+
+Full lifecycle on all four: session bootstrap, capture, the change and CODE IMPACT cards, and —
+where the host has a channel for it — the `impact.gate` write refusal and the `capture.nudge`
+stop.
+
+Each hooks file is written in the shape its own vendor documents, which turned out to matter more
+than anything else here. Copilot needs `"version": 1` and camelCase events, and denies with a
+**flat** `permissionDecision` rather than Claude's nested one. OpenHands puts its events at the
+**top level** with no `hooks` wrapper. Antigravity nests a hook *name* above the event.
+Windsurf takes a flat command list with no matcher and refuses on **exit code 2** with no JSON
+verdict at all. A hooks file in the wrong shape parses without error and fires nothing, so every
+one of these was read off a vendor reference rather than inferred from the host next door.
+
+Copilot alone treats any unexpected non-zero exit as a denial, which inverts this codebase's
+failure direction — everywhere else a broken hook allows the write. The hook entry now withholds
+its own error status there, so a Knowl crash degrades to "nothing was recorded" instead of
+blocking somebody's edit.
+
+### Codex declares the events it has, and retires two it never had
+
+Verified against the shipped `codex.exe` 0.147.0: `PreToolUse`, `PermissionRequest`,
+`permissionDecision`, `UserPromptSubmit` and `SessionEnd` are all present, and
+`PostToolUseFailure` and `StopFailure` are not. The profile had it backwards — two handlers for
+events no Codex build implements, sitting in every `.codex/hooks.json` Knowl ever wrote, and no
+pre-tool event. Codex reaches full parity: prompt card, write gate and capture nudge, through the
+same envelopes as Claude Code.
+
+Existing configs are swept on the next `knowl init codex` or `knowl doctor --fix`. Nothing removed
+retired handlers before, because the merge copied unknown keys through and `verify` only looked
+for what was missing.
+
+Codex hooks remain behind `[features].codex_hooks` and do not run on Windows, so the MCP guidance
+card keeps its conditional wording for that host rather than claiming its hooks own the session.
+
+### Cursor gains a write gate and a capture nudge
+
+Both were previously recorded as impossible, on two premises that are true and neither of which
+supports the conclusion. Cursor has no `beforeFileEdit`, which is not the same as having no
+pre-tool event: `preToolUse` fires before every tool with `tool_name` and `tool_input`. And its
+`stop` cannot block, but it returns `followup_message`, which Cursor submits as the user's next
+message — reaching the model is what the nudge requires; blocking never was.
+
+Cursor also populates a read-set for the first time, so it can receive a CODE IMPACT card at all.
+Registering `preToolUse` does mean a hook process before every tool call; Cursor's config format
+has no matcher to scope it with.
+
+### Cline, through a plugin
+
+Cline's hooks are TypeScript objects loaded into its runtime, so there is no file `knowl init`
+can write. `integrations/cline/knowl-plugin.mjs` maps its method calls onto the same
+`knowl agent-hook` entry point every other host uses. A local path, not a package — point Cline
+at it and there is nothing to publish or keep in version step:
+
+```js
+ClineCore.start({ pluginPaths: ['./node_modules/@dat999zx/knowl/integrations/cline/knowl-plugin.mjs'] })
+```
+
+### `knowl acp` — Zed, JetBrains, Neovim and Kiro
+
+The Agent Client Protocol's traffic runs agent-to-client, so there is no hook to register and the
+only seat is between them:
+
+```bash
+knowl acp -- <agent-command>
+```
+
+Every line is forwarded byte for byte, terminator included, and observed on a parsed copy — never
+re-serialized, so it cannot reorder a field or drop an unknown one in a stream two other programs
+are speaking. `session/update` carries `locations` naming the files a call touched and `kind`
+declaring whether it read or edited, which is the agent's own classification rather than something
+recognised after the fact.
+
+It does **not** answer `session/request_permission`, so there is no write gate on this lane.
+Answering means selecting one of the `PermissionOption`s the agent offered, a shape the published
+schema names without enumerating — and guessing there resolves a prompt the person was meant to
+see, in their editor, with an answer Knowl invented.
+
+### The capture nudge reaches hosts with no stop hook
+
+It rides a tool result, the way the change card already does, so Claude Desktop, OpenCode,
+Windsurf, Zed and any unlisted MCP client get it. A host whose hooks can carry it stands down, so
+nobody is nudged twice. Still `capture.nudge = enforce` only, still off by default.
+
+### `knowl serve --host <host>`
+
+`knowl init` writes it into each host's MCP config so the guidance card can state that host's
+lifecycle mode outright, instead of handing every agent the same conditional and leaving it to
+work out which branch applies. The MCP `initialize` card is captured before the client handshake,
+so the client's own identity arrives too late to read.
+
+Existing configs without the flag keep working and keep the conditional card. The entry
+comparison tolerates its absence deliberately: a strict match would have reported every install
+written before this release as unconfigured and invited `doctor --fix` to rewrite working files.
+
+### Removed
+
+The Gemini CLI adapter. The host is discontinued upstream, and the adapter was instructions-only —
+`.gemini/settings.json` plus a `GEMINI.md` import line, with no hook channel. Antigravity replaces
+it. **`knowl init gemini` now fails**; any existing `GEMINI.md` is left on disk, because deleting
+a file somebody owns on upgrade is not ours to do.
+
+### Fixed
+
+- `knowl init` crashed outright on a zero-byte `~/.gemini/config/mcp_config.json`, which Gemini
+  CLI leaves behind. Detection ran with no per-adapter catch, so one unreadable file took all
+  nine hosts down before the picker appeared. Detection is best-effort per adapter now, and the
+  Antigravity entry points at `~/.gemini/antigravity/mcp_config.json`, which is where a live
+  install actually keeps it.
+- The impact subsystem consulted Claude Code's tool names for every host, so on any other one no
+  read was recorded and the write gate answered "no opinion" before ever consulting the host's
+  deny channel. Tool vocabulary is per host now. Codex writes through `apply_patch`; Cursor's
+  `afterFileEdit` names no tool at all.
+- A `generic` caller's events lost their tool name and kept absolute paths, alone among the
+  hosts — so anything integrating over that contract got capture and neither read-set nor impact
+  detection, silently.
+- `verifyNestedHookConfig` checked Claude's prompt-event key for every host, so merge and verify
+  disagreed about which key held the reminder for any host that names it differently.
+- The prompt reminder said "Claude hooks own the lifecycle" inside every session, whichever host
+  was running.
+
+### Known limits
+
+Copilot, OpenHands, Windsurf and Cline are not installed on the machine this was built on and have
+not been run against a live session; the ACP lane is tested against a fake agent pair rather than
+a real editor. Every profile is written so that an unverified capability is an absent one, so the
+failure mode is "Knowl recorded nothing" rather than a gate that reports blocking a write it let
+through — but `impact.gate` and `capture.nudge` are opt-in on every host for a reason, and this is
+it. Per-host detail, and which claims are observed versus quoted, is in
+[docs/hosts.md](docs/hosts.md).
+
 
 ## 5.8.0 — 2026-08-20
 

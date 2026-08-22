@@ -101,6 +101,36 @@ const IMPACT_READ_TOOLS = new Set(['Read', 'NotebookRead']);
 /** The write tools whose paths trigger a re-index and certain-tier detection. */
 const IMPACT_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
+/**
+ * Whether this event read or wrote a file, in the vocabulary of the host that sent it.
+ *
+ * The two sets above are Claude Code's names, and they were consulted for every host. On any
+ * other one they matched nothing: reads were never recorded, so the detector had no beliefs to
+ * invalidate, and writes were never recognised, so `runWriteGate` returned "no opinion" before
+ * it ever asked the profile whether it could refuse. A host could therefore declare a working
+ * deny channel and be structurally unable to reach it.
+ *
+ * A declared predicate **replaces** the fallback rather than layering over it, so a host that
+ * declares one is saying "these and nothing else". The fallback remains Claude Code's names,
+ * which is what `claude`, `generic` and `claude-desktop` still use; every other host now
+ * declares its own, including `codex`, whose tool is `apply_patch`.
+ */
+function toolReadsFile(input: NormalizedHostHook): boolean {
+  const { readsFiles } = hostProfile(input.host);
+  const toolName = input.toolName ?? '';
+  return readsFiles
+    ? readsFiles(input.hostEvent ?? '', toolName)
+    : IMPACT_READ_TOOLS.has(toolName);
+}
+
+function toolWritesFile(input: NormalizedHostHook): boolean {
+  const { writesFiles } = hostProfile(input.host);
+  const toolName = input.toolName ?? '';
+  return writesFiles
+    ? writesFiles(input.hostEvent ?? '', toolName)
+    : IMPACT_WRITE_TOOLS.has(toolName);
+}
+
 
 /**
  * Symbols above which one read records a single `file://` row instead of one row per symbol.
@@ -148,6 +178,17 @@ export type HostLifecycleResult = {
   promotion?: Awaited<ReturnType<typeof finalizeMemorySession>>;
   handoff?: Awaited<ReturnType<typeof recordPendingSessionHandoff>>;
   hostOutput?: Record<string, unknown>;
+  /**
+   * The refusal text, present only when this result *is* a deliverable refusal.
+   *
+   * The reason itself rather than a flag, so a host whose deny channel carries no JSON renders
+   * the same string the envelope carries and the two channels cannot drift into disagreeing
+   * about what the agent was told. Set only once `denyToolCall` has actually produced an
+   * envelope: a host that declines to produce one degrades to allowing the write, and a bare
+   * boolean here would have turned that documented degradation into a block with an invented
+   * reason attached.
+   */
+  denied?: string;
   changes?: ChangeSummary;
   drift?: AutoDriftResult;
 };
@@ -566,11 +607,10 @@ async function runToolEventImpact(input: NormalizedHostHook, sessionId: string):
   try {
     if (!await impactEnabled(input.projectRoot)) return [];
 
-    const toolName = input.toolName ?? '';
     const paths = impactChangedPaths(input.payload);
-    if (paths.length > 0 && IMPACT_READ_TOOLS.has(toolName)) {
+    if (paths.length > 0 && toolReadsFile(input)) {
       await recordToolReads(input, sessionId, paths);
-    } else if (paths.length > 0 && IMPACT_WRITE_TOOLS.has(toolName)) {
+    } else if (paths.length > 0 && toolWritesFile(input)) {
       await detectCertainImpactBestEffort(input.projectRoot, paths, sessionId);
     }
     return await openImpactCardEntries(sessionId);
@@ -597,7 +637,7 @@ async function runToolEventImpact(input: NormalizedHostHook, sessionId: string):
  */
 async function runWriteGate(input: NormalizedHostHook): Promise<HostLifecycleResult> {
   try {
-    if (!IMPACT_WRITE_TOOLS.has(input.toolName ?? '')) return { accepted: true };
+    if (!toolWritesFile(input)) return { accepted: true };
     const paths = impactChangedPaths(input.payload);
     if (paths.length === 0) return { accepted: true };
 
@@ -617,7 +657,9 @@ async function runWriteGate(input: NormalizedHostHook): Promise<HostLifecycleRes
     // spent its one-shot, so the write proceeds and the finding stays open for the card to carry.
     // Silence is the right degradation -- the alternative is holding the block armed for a host
     // that has no way to explain it, which is a refusal with no reason attached.
-    return { accepted: true, sessionId: session.id, hostOutput: denyToolCall(decision.reason) };
+    const envelope = denyToolCall(decision.reason);
+    if (!envelope) return { accepted: true, sessionId: session.id };
+    return { accepted: true, sessionId: session.id, denied: decision.reason, hostOutput: envelope };
   } catch {
     return { accepted: true };
   }

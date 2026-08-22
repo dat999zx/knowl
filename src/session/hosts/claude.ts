@@ -17,18 +17,63 @@ export const PASCAL_EVENT_MAP: Record<string, NormalizedHookEventName> = {
 };
 
 /**
- * Claude's map: the shared one plus the pre-tool event.
+ * The shared map plus the pre-tool event, for hosts that implement the permission route.
  *
- * Kept out of `PASCAL_EVENT_MAP` deliberately. Codex imports that map, and its own event
- * list was verified against codex 0.145.0's dispatcher enum, which carries no PreToolUse --
- * so adding it there would teach Codex to normalise an event it never registers and can
- * never answer, and the gate downstream would treat that host as gated when it is not.
- * A name a host does not implement has to keep being rejected.
+ * This used to be Claude-only, on the grounds that codex 0.145.0's dispatcher enum carried no
+ * `PreToolUse` -- true when it was written, and no longer true: codex 0.147.0's binary carries
+ * `PreToolUse`, `PermissionRequest`, `permissionDecision` and `permissionDecisionReason`
+ * (verified 2026-08-22 by string inspection of the shipped `codex.exe`). The rule the old
+ * comment protected still stands and is what keeps this separate from `PASCAL_EVENT_MAP`: a
+ * name a host does not implement has to keep being rejected, because the gate downstream reads
+ * a mapping as evidence the host can answer.
+ *
+ * `PermissionRequest` is deliberately **not** here even though both hosts have it. It would
+ * normalize to `tool-precheck` like `PreToolUse` does, and `normalizeHostHook` discards the
+ * host event name at that point -- so the refusal would come back stamped
+ * `hookEventName: "PreToolUse"` while answering a different event, and the write would land
+ * while the caller was told it was blocked. One event per verdict, until the normalized shape
+ * can carry which one it is answering.
  */
-const CLAUDE_EVENT_MAP: Record<string, NormalizedHookEventName> = {
+export const PASCAL_EVENT_MAP_WITH_PRETOOL: Record<string, NormalizedHookEventName> = {
   ...PASCAL_EVENT_MAP,
   PreToolUse: 'tool-precheck',
 };
+
+/**
+ * Claude Code's documented refusal envelope, shared by every host that reuses the route.
+ *
+ * Deliberately not the `additionalContext` envelope above -- that one is advice attached to a
+ * call that already ran, and reusing it here would let the write through while the reason
+ * explains why it was stopped.
+ *
+ * The reason passes through whole. Every other host string in this file is truncated at
+ * MAX_HOST_STRING, but this one is the recovery instruction itself: cutting it mid-sentence
+ * leaves the agent blocked and not told what to do about it, which is the one failure a gate
+ * cannot survive.
+ */
+export function anthropicDenyToolCall(reason: string): HostOutput {
+  return {
+    hookSpecificOutput: {
+      hookEventName: 'PreToolUse',
+      permissionDecision: 'deny',
+      permissionDecisionReason: reason,
+    },
+  };
+}
+
+/**
+ * Claude Code's documented Stop shape: a top-level `decision`/`reason` pair, not the
+ * `hookSpecificOutput` envelope the context helpers use.
+ *
+ * `block` withholds the stop and shows the model the reason, which is the only way anything
+ * reaches an agent at stop time -- `SessionEnd` fires once the model is already gone. So this
+ * necessarily costs a turn, and the caller treats it as expensive: it is claimed once per
+ * session against `capture_outcomes.nudged` before it is ever returned, because a block keyed
+ * on a condition the agent may rightly decline to clear would otherwise repeat forever.
+ */
+export function anthropicStopContext(reason: string): HostOutput {
+  return { decision: 'block', reason };
+}
 
 /** `hookSpecificOutput` envelope used by Claude Code and Codex CLI. */
 export function hookSpecificOutput(hookEventName: string, context: string): HostOutput {
@@ -53,6 +98,7 @@ export const claudeProfile: HostProfile = {
   sharesSessionBinding: true,
   nativeOutput: true,
   midTurnDeliveryVerified: true,
+  hookConfigStyle: 'claude-nested',
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id) ?? hostString(raw.thread_id),
@@ -61,7 +107,7 @@ export const claudeProfile: HostProfile = {
     };
   },
   normalizedEvent(hostEvent) {
-    return CLAUDE_EVENT_MAP[hostEvent];
+    return PASCAL_EVENT_MAP_WITH_PRETOOL[hostEvent];
   },
   isShellEvent(_hostEvent, toolName) {
     return toolNameIsShell(toolName);
@@ -72,34 +118,6 @@ export const claudeProfile: HostProfile = {
   midTurnContext(text) {
     return hookSpecificOutput('PostToolUse', text);
   },
-  // Claude Code's documented refusal: it reads the decision, blocks the tool call, and shows
-  // the model `permissionDecisionReason`. Deliberately not the `additionalContext` envelope
-  // above -- that one is advice attached to a call that already ran, and reusing it here
-  // would let the write through while the reason explains why it was stopped.
-  //
-  // The reason is passed through whole. Every other host string in this file is truncated at
-  // MAX_HOST_STRING, but this one is the recovery instruction itself: cutting it mid-sentence
-  // leaves the agent blocked and not told what to do about it, which is the one failure a
-  // gate cannot survive.
-  denyToolCall(reason) {
-    return {
-      hookSpecificOutput: {
-        hookEventName: 'PreToolUse',
-        permissionDecision: 'deny',
-        permissionDecisionReason: reason,
-      },
-    };
-  },
-  // Claude Code's documented Stop shape: a top-level `decision`/`reason` pair, not the
-  // `hookSpecificOutput` envelope the other two use. `block` withholds the stop and shows the
-  // model the reason, which is the only way anything reaches an agent at stop time -- `SessionEnd`
-  // fires once the model is already gone.
-  //
-  // So this necessarily costs a turn, and the caller treats it as expensive: it is claimed
-  // once per session against `capture_outcomes.nudged` before it is ever returned, because a
-  // block keyed on a condition the agent may rightly decline to clear would otherwise repeat
-  // forever.
-  stopContext(reason) {
-    return { decision: 'block', reason };
-  },
+  denyToolCall: anthropicDenyToolCall,
+  stopContext: anthropicStopContext,
 };

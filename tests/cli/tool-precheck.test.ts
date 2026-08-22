@@ -83,11 +83,29 @@ describe('PreToolUse normalization', () => {
   });
 
   it('keeps the event off hosts that do not register it', () => {
-    // Codex's event list was verified against its dispatcher enum and has no PreToolUse.
-    expect(hostProfile('codex').normalizedEvent('PreToolUse')).toBeUndefined();
+    // Cursor has no pre-tool event of any name. Codex used to be here too, on the strength of
+    // its 0.145.0 dispatcher enum; 0.147.0's binary carries PreToolUse, PermissionRequest and
+    // permissionDecision, so it moved to the test below.
     expect(hostProfile('cursor').normalizedEvent('PreToolUse')).toBeUndefined();
-    expect(() => normalizeHostHook('codex', 'PreToolUse', { session_id: 's', cwd: ROOT }))
-      .toThrow('Unsupported codex hook event');
+    expect(hostProfile('claude-desktop').normalizedEvent('PreToolUse')).toBeUndefined();
+    expect(() => normalizeHostHook('cursor', 'PreToolUse', { conversation_id: 's', cwd: ROOT }))
+      .toThrow('Unsupported cursor hook event');
+  });
+
+  it('normalizes the event on codex, which implements the same route', () => {
+    expect(hostProfile('codex').normalizedEvent('PreToolUse')).toBe('tool-precheck');
+    expect(normalizeHostHook('codex', 'PreToolUse', { session_id: 's', cwd: ROOT }).event)
+      .toBe('tool-precheck');
+  });
+
+  it('rejects PermissionRequest, which would answer with the wrong event name', () => {
+    // Codex has the event, but `tool-precheck` discards the host event name and the refusal is
+    // stamped `hookEventName: "PreToolUse"`. Answering a PermissionRequest with it would land
+    // the write while telling the caller it was blocked.
+    for (const host of ['codex', 'claude'] as const) {
+      expect(hostProfile(host).normalizedEvent('PermissionRequest'), host).toBeUndefined();
+      expect(hostProfile(host).hookEvents, host).not.toContain('PermissionRequest');
+    }
   });
 
   it('leaves the existing events byte-identical', () => {
@@ -99,9 +117,12 @@ describe('PreToolUse normalization', () => {
       host: 'claude', event: 'session-event', externalSessionId: 'session-2', externalTurnId: undefined,
       projectRoot: ROOT, type: 'command', payload: { command: 'npm test', exitCode: 0 },
       status: undefined, toolName: 'Bash', knowlTool: false,
+      // The host's own event name, kept beside the normalized one: Windsurf classifies writes
+      // by event rather than by tool, and a pre-tool verdict has to name the event it answers.
+      hostEvent: 'PostToolUse',
     });
     expect(normalizeHostHook('claude', 'SessionStart', { session_id: 's', cwd: ROOT }))
-      .toEqual({ host: 'claude', event: 'session-start', externalSessionId: 's', externalTurnId: undefined, projectRoot: ROOT, title: 'Agent session', payload: {} });
+      .toEqual({ host: 'claude', event: 'session-start', externalSessionId: 's', externalTurnId: undefined, projectRoot: ROOT, title: 'Agent session', payload: {}, hostEvent: 'SessionStart' });
   });
 });
 
@@ -126,9 +147,27 @@ describe('tool-call denial', () => {
   });
 
   it('yields undefined for every host whose refusal channel is unconfirmed', () => {
-    for (const host of ['codex', 'cursor', 'claude-desktop', 'generic'] as const) {
+    // Codex left this list at 0.147.0 and Cursor left it once `preToolUse` was read properly --
+    // Cursor has no `beforeFileEdit`, which is not the same as having no pre-tool event.
+    for (const host of ['claude-desktop', 'generic'] as const) {
       expect(hostProfile(host).denyToolCall?.('nope'), host).toBeUndefined();
     }
+  });
+
+  it('gives cursor its own verdict shape, shared with no other host', () => {
+    // `permission`, not `permissionDecision`, and the reason is split across a message for the
+    // person and a message for the model.
+    expect(hostProfile('cursor').denyToolCall?.('re-read src/a.ts')).toEqual({
+      permission: 'deny',
+      user_message: 're-read src/a.ts',
+      agent_message: 're-read src/a.ts',
+    });
+  });
+
+  it('gives codex the same envelope as claude, from one shared builder', () => {
+    const reason = 're-read src/a.ts: it changed';
+    expect(hostProfile('codex').denyToolCall?.(reason))
+      .toEqual(hostProfile('claude').denyToolCall?.(reason));
   });
 });
 
@@ -180,11 +219,80 @@ describe('PreToolUse registration', () => {
     expect(await verifyNestedHookConfig(configPath, 'linux', 'claude')).toBe(true);
   });
 
-  it('leaves Codex without the event', async () => {
+  it('registers the event for Codex too, and retires the two events it never had', async () => {
     const dir = await workspace();
     const configPath = path.join(dir, 'settings.json');
+    // Seeded as an older build wrote it: two handlers for events no codex build implements.
+    await writeFile(configPath, JSON.stringify({ hooks: {
+      PostToolUseFailure: [{ matcher: '.*', hooks: [{ type: 'command', command: 'knowl agent-hook codex PostToolUseFailure --json' }] }],
+      StopFailure: [{ matcher: '.*', hooks: [{ type: 'command', command: 'knowl agent-hook codex StopFailure --json' }] }],
+    } }), 'utf8');
+
     await mergeNestedHookConfig(configPath, 'linux', 'codex');
     const config = JSON.parse(await readFile(configPath, 'utf8'));
-    expect(config.hooks.PreToolUse).toBeUndefined();
+
+    expect(config.hooks.PreToolUse[0].hooks[0].command).toBe('knowl agent-hook codex PreToolUse --json');
+    expect(config.hooks.PostToolUseFailure).toBeUndefined();
+    expect(config.hooks.StopFailure).toBeUndefined();
+    // The prompt event carries the reminder and never a lifecycle handler.
+    expect(JSON.stringify(config.hooks.UserPromptSubmit)).toContain('agent-reminder codex');
+    expect(JSON.stringify(config.hooks.UserPromptSubmit)).not.toContain('agent-hook codex');
+    expect(await verifyNestedHookConfig(configPath, 'linux', 'codex')).toBe(true);
+  });
+
+  it('keeps a foreign handler on a retired event, removing only the Knowl one', async () => {
+    const dir = await workspace();
+    const configPath = path.join(dir, 'settings.json');
+    await writeFile(configPath, JSON.stringify({ hooks: {
+      StopFailure: [
+        { matcher: '.*', hooks: [{ type: 'command', command: 'knowl agent-hook codex StopFailure --json' }] },
+        { matcher: '.*', hooks: [{ type: 'command', command: 'someone-elses-hook' }] },
+      ],
+    } }), 'utf8');
+
+    await mergeNestedHookConfig(configPath, 'linux', 'codex');
+    const config = JSON.parse(await readFile(configPath, 'utf8'));
+    expect(config.hooks.StopFailure).toEqual([{ matcher: '.*', hooks: [{ type: 'command', command: 'someone-elses-hook' }] }]);
+  });
+});
+
+describe('the generic contract carries what impact detection needs', () => {
+  it('keeps the tool name a caller supplied', () => {
+    // It used to be dropped here and nowhere else -- every other host routes through
+    // `toolEvent`, which sets it. Without it `toolReadsFile`/`toolWritesFile` both see '',
+    // so a generic caller got neither a read-set entry nor impact detection, silently,
+    // because capture itself worked fine and the subsystem simply never fired.
+    const result = normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: ROOT, type: 'checkpoint', tool_name: 'Read',
+    });
+    expect(result.toolName).toBe('Read');
+    expect(normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: ROOT, type: 'checkpoint', toolName: 'Edit',
+    }).toolName).toBe('Edit');
+  });
+
+  it('makes an absolute path repo-relative, and leaves a relative one alone', () => {
+    // A program integrating over this contract naturally has absolute paths, and storing them
+    // verbatim wrote a spelling nothing else in the codebase looks up.
+    const absolute = normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: ROOT, type: 'checkpoint',
+      changedPaths: [path.join(ROOT, 'src', 'a.ts')],
+    });
+    expect(absolute.payload.changedPaths).toEqual(['src/a.ts']);
+
+    // Resolving an already-relative entry against the *process* cwd is how a valid path turns
+    // into `..` and gets dropped.
+    const relative = normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: ROOT, type: 'checkpoint', changedPaths: ['src/b.ts'],
+    });
+    expect(relative.payload.changedPaths).toEqual(['src/b.ts']);
+  });
+
+  it('drops a path outside the project rather than inventing one', () => {
+    const result = normalizeHostHook('generic', 'session-event', {
+      sessionId: 's1', cwd: ROOT, type: 'checkpoint',
+      changedPaths: [path.resolve('/elsewhere/x.ts'), path.join(ROOT, 'src', 'c.ts')],
+    });
+    expect(result.payload.changedPaths).toEqual(['src/c.ts']);
   });
 });

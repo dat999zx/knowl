@@ -51,13 +51,37 @@ Forty seconds, one decision, three agents:
 
 ## Quick start
 
-Requires Node.js 22 or later.
+Requires Node.js 22 or later. macOS, Linux and Windows.
 
 ```bash
 npm install -g @dat999zx/knowl
 cd your-project
 knowl init
 ```
+
+<details>
+<summary>Other package managers</summary>
+
+The published package is the same one in every case; each of these installs it and puts `knowl`
+on your `PATH`.
+
+```bash
+pnpm add -g @dat999zx/knowl
+yarn global add @dat999zx/knowl
+bun add -g @dat999zx/knowl
+```
+
+Or run it without installing:
+
+```bash
+npx @dat999zx/knowl init
+```
+
+Knowl runs on Node.js in all of these — Bun installs it, Node executes it. It bundles native
+addons (SQLite, tree-sitter, the embedding runtime), so running the CLI under the Bun or Deno
+runtime directly is not supported.
+
+</details>
 
 `knowl init` creates `.knowl/`, installs the project guidance files, updates `.gitignore`, and
 registers Knowl with whichever agents it detects. It also warms a local embedding model (~53 MB)
@@ -70,28 +94,65 @@ works.
 
 <table>
 <tr>
-<td align="center" width="20%">
-<a href="https://claude.com/product/claude-code"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="48" height="48" /></a><br/>
+<td align="center" width="16%">
+<a href="https://claude.com/product/claude-code"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="44" height="44" /></a><br/>
 <strong>Claude Code</strong><br/>
-<sub>MCP · lifecycle · subagents</sub>
+<sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="20%">
-<a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex" width="48" height="48" /></a><br/>
+<td align="center" width="16%">
+<a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex" width="44" height="44" /></a><br/>
 <strong>Codex</strong><br/>
-<sub>MCP · lifecycle · subagents</sub>
+<sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="20%">
-<a href="https://cursor.com"><img src="https://github.com/getcursor.png?size=120" alt="Cursor" width="48" height="48" /></a><br/>
+<td align="center" width="16%">
+<a href="https://github.com/features/copilot"><img src="https://github.com/github.png?size=120" alt="GitHub Copilot" width="44" height="44" /></a><br/>
+<strong>Copilot</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://cursor.com"><img src="https://github.com/getcursor.png?size=120" alt="Cursor" width="44" height="44" /></a><br/>
 <strong>Cursor</strong><br/>
-<sub>MCP · lifecycle</sub>
+<sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="20%">
-<a href="https://github.com/google-gemini/gemini-cli"><img src="https://github.com/google-gemini.png?size=120" alt="Gemini CLI" width="48" height="48" /></a><br/>
-<strong>Gemini CLI</strong><br/>
+<td align="center" width="16%">
+<a href="https://github.com/OpenHands/OpenHands"><img src="https://github.com/OpenHands.png?size=120" alt="OpenHands" width="44" height="44" /></a><br/>
+<strong>OpenHands</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://antigravity.google"><img src="https://github.com/google-gemini.png?size=120" alt="Google Antigravity" width="44" height="44" /></a><br/>
+<strong>Antigravity</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="16%">
+<a href="https://windsurf.com"><img src="https://github.com/codeium.png?size=120" alt="Windsurf" width="44" height="44" /></a><br/>
+<strong>Windsurf</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://github.com/cline/cline"><img src="https://github.com/cline.png?size=120" alt="Cline" width="44" height="44" /></a><br/>
+<strong>Cline</strong><br/>
+<sub>MCP · lifecycle · plugin</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://zed.dev"><img src="https://github.com/zed-industries.png?size=120" alt="Zed" width="44" height="44" /></a><br/>
+<strong>Zed</strong><br/>
+<sub>MCP · capture · ACP</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://www.jetbrains.com"><img src="https://github.com/JetBrains.png?size=120" alt="JetBrains" width="44" height="44" /></a><br/>
+<strong>JetBrains</strong><br/>
+<sub>MCP · capture · ACP</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://github.com/anomalyco/opencode"><img src="https://github.com/anomalyco.png?size=120" alt="OpenCode" width="44" height="44" /></a><br/>
+<strong>OpenCode</strong><br/>
 <sub>MCP · manual loop</sub>
 </td>
-<td align="center" width="20%">
-<a href="https://claude.ai/download"><img src="https://github.com/anthropics.png?size=120" alt="Claude Desktop" width="48" height="48" /></a><br/>
+<td align="center" width="16%">
+<a href="https://claude.ai/download"><img src="https://github.com/anthropics.png?size=120" alt="Claude Desktop" width="44" height="44" /></a><br/>
 <strong>Claude Desktop</strong><br/>
 <sub>MCP · manual loop</sub>
 </td>
@@ -101,7 +162,11 @@ works.
 `knowl init` registers the MCP server for every host it finds. Start a new session afterwards so
 the agent picks up its guidance, and it will query and write memory on its own.
 
-→ [How agents use it](#how-agents-use-it) · [MCP tools and resources](docs/reference.md#mcp-tools-and-resources)
+**gate** means Knowl can refuse an edit that invalidates code another session is holding.
+Neovim and Kiro work the same way as Zed and JetBrains, through `knowl acp`. Cline needs one
+line pointing it at the shipped plugin. Any other MCP client works with no integration at all.
+
+→ [Every host, and what each one can do](docs/hosts.md) · [How agents use it](#how-agents-use-it) · [MCP tools and resources](docs/reference.md#mcp-tools-and-resources)
 
 ## The idea: memory that retires itself
 
@@ -273,13 +338,20 @@ Agent   → knowl_query "sqlite postgres database choice"
 The agent answered before opening a single file, and it knew the options you *rejected* —
 which the code cannot tell it, because rejected alternatives leave no trace in a codebase.
 
-| Host | MCP | Automatic lifecycle | Subagents | Notes |
-| --- | --- | --- | --- | --- |
-| Claude Code | Yes | Yes | Yes | Prompt guidance is installed as well |
-| Codex | Yes | Yes | Yes | Main turns share one memory session |
-| Cursor | Yes | Yes | No | Finalizes per turn |
-| Gemini CLI | Yes | No | No | MCP plus the manual work loop |
-| Claude Desktop | Yes | No | No | MCP plus the manual work loop |
+| Host | MCP | Automatic lifecycle | Write gate | Capture nudge | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Claude Code | Yes | Yes | Yes | Yes | Prompt guidance is installed as well |
+| Codex CLI | Yes | Yes | Yes | Yes | Hooks need `codex_hooks`; not on Windows |
+| GitHub Copilot | Yes | Yes | Yes | Yes | Reuses Claude Code's hook format |
+| OpenHands | Yes | Yes | Yes | Yes | MCP entry is added by hand |
+| Antigravity | Yes | Yes | Yes | Yes | Context rides `injectSteps` |
+| Windsurf | Yes | Yes | Yes | Yes | Nudge rides MCP; no stop hook |
+| Cursor | Yes | Yes | Yes | Yes | Finalizes per turn |
+| Cline | Yes | Yes | No | Yes | Lifecycle via the shipped plugin |
+| Zed, JetBrains, Neovim, Kiro | Yes | Yes | No | Yes | Via `knowl acp --` |
+| Claude Desktop, OpenCode, Roo, … | Yes | No | No | Yes | MCP plus the manual work loop |
+
+Full detail, and why each gap exists, in [docs/hosts.md](docs/hosts.md).
 
 <div align="center">
 <img src="docs/assets/lifecycle.svg" alt="Session lifecycle: bootstrap injects relevant memory, capture records bounded events, checkpoints record milestones, finalization distills durable candidates" width="88%" />

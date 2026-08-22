@@ -11,6 +11,9 @@ import { listLiveHostBindings } from '../session/host-session-bindings.js';
 import { recordMcpCallCommits } from '../store/mcp-call-commits.js';
 import { hostProfile, isHookHost } from '../session/hosts/index.js';
 import { resolveWorkspace, type ActiveWorkspace } from '../workspace/resolve.js';
+import { captureNudgeMode } from '../store/capture-config.js';
+import { isDurableWriteTool, renderMidSessionSilenceNudge } from '../store/capture-outcome.js';
+import type { ProjectConfig } from '../core/types.js';
 
 /**
  * Change notification for MCP clients, independent of hooks.
@@ -26,7 +29,14 @@ import { resolveWorkspace, type ActiveWorkspace } from '../workspace/resolve.js'
  * to attribute writes by matching titles.
  */
 type Watermark = { local: number; peers: Record<string, number> };
-type RootState = { seen: Watermark | null; workspace?: Promise<ActiveWorkspace | null> };
+type RootState = {
+  seen: Watermark | null;
+  workspace?: Promise<ActiveWorkspace | null>;
+  /** Knowl reads this process has served, and durable writes it has accepted. See `consumeCaptureNudge`. */
+  reads: number;
+  durableWrites: number;
+  nudged: boolean;
+};
 
 /**
  * Keyed by project root rather than held in a bare module variable.
@@ -41,7 +51,7 @@ const byRoot = new Map<string, RootState>();
 const stateFor = (projectRoot: string): RootState => {
   const existing = byRoot.get(projectRoot);
   if (existing) return existing;
-  const created: RootState = { seen: null };
+  const created: RootState = { seen: null, reads: 0, durableWrites: 0, nudged: false };
   byRoot.set(projectRoot, created);
   return created;
 };
@@ -188,6 +198,83 @@ export async function consumeChangeNotice(
     return await anotherChannelIsDelivering(projectRoot) ? undefined : renderChangeCard(merged);
   } catch {
     return undefined;
+  }
+}
+
+/**
+ * Knowl calls a process must have served before its silence means anything.
+ *
+ * The hook path counts assistant *turns* (`MIN_SUBSTANTIVE_TURNS`, 3) because the sessions worth
+ * catching are long on turns and short on tool calls. That signal does not exist here -- an MCP
+ * server sees only its own tool calls -- so this counts those instead, and sets the bar higher
+ * to compensate. Five reads with nothing stored is an agent that has been consulting memory
+ * steadily and contributing nothing back, which is exactly the shape being looked for.
+ */
+const MIN_MCP_READS = 5;
+
+/**
+ * Whether the hook path already owns this project's capture nudge.
+ *
+ * Same shape as `anotherChannelIsDelivering` and the same reason, one member over: a host with a
+ * live binding and a `stopContext` gets the nudge at stop time, where it can actually withhold
+ * something. Sending a second copy here would spend the message twice and read, to the agent,
+ * as memory nagging it.
+ *
+ * Absence of any live binding is the normal case for the hosts this path exists for -- they have
+ * no hooks to bind with.
+ */
+async function hookChannelOwnsTheNudge(projectRoot: string, host?: string): Promise<boolean> {
+  // The installed host, when `knowl init` recorded one, is better evidence than a binding: it
+  // is true from the first tool call, whereas a binding only exists once that host's
+  // SessionStart has landed. A Claude session that reached five Knowl calls before its hook
+  // bound would otherwise have taken both nudges.
+  if (host && isHookHost(host) && typeof hostProfile(host).stopContext === 'function') return true;
+  const since = new Date(Date.now() - HOOK_LIVENESS_MS).toISOString();
+  const hosts = await listLiveHostBindings(projectRoot, since);
+  return hosts.some(live => isHookHost(live) && typeof hostProfile(live).stopContext === 'function');
+}
+
+/**
+ * The capture nudge, for hosts that have no stop hook to carry it.
+ *
+ * `evaluateSilenceNudge` on the hook path is the real one: it fires at a turn boundary and
+ * withholds the stop. Neither is available here -- an MCP server has no turn signal and nothing
+ * to withhold -- so this is the weaker twin, and deliberately so. It rides a tool result, which
+ * the agent may read and ignore. That is a worse guarantee than blocking and an infinitely
+ * better one than the alternative, which for `claude-desktop`, `opencode`, Zed and every other
+ * MCP-only client was nothing at all.
+ *
+ * **Per process, not per stored conversation.** The first attempt at this reused
+ * `capture_outcomes`, and it could never fire: those rows are keyed on a `conversationKey` built
+ * from a host session id this path does not have, and their `turns` counter is incremented only
+ * from the hook path -- so on a genuinely hookless host the row never existed and the threshold
+ * was never met. A stdio server is spawned per connected client, so the process *is* the
+ * conversation, which is the same reasoning the watermark above already relies on.
+ *
+ * Spent once per process, like the stop-path claim: "you stored nothing" is a condition an agent
+ * may rightly decline to clear, and without a one-shot it would repeat on every call forever.
+ */
+export async function consumeCaptureNudge(
+  projectRoot: string | null,
+  toolName: string,
+  config: ProjectConfig | null,
+  host?: string,
+): Promise<string | undefined> {
+  if (!projectRoot) return undefined;
+  try {
+    if (captureNudgeMode(config ?? undefined) !== 'enforce') return undefined;
+    const state = stateFor(projectRoot);
+    if (isDurableWriteTool(toolName)) {
+      state.durableWrites += 1;
+      return undefined;
+    }
+    state.reads += 1;
+    if (state.nudged || state.durableWrites > 0 || state.reads < MIN_MCP_READS) return undefined;
+    if (await hookChannelOwnsTheNudge(projectRoot, host)) return undefined;
+    state.nudged = true;
+    return renderMidSessionSilenceNudge();
+  } catch {
+    return undefined; // never worth failing a tool call over
   }
 }
 

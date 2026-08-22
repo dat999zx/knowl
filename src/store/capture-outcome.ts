@@ -211,6 +211,22 @@ export async function captureHealth(): Promise<CaptureHealth> {
 }
 
 /** The nudge text, and the only place it is written. */
+/**
+ * The mid-session variant, for the MCP channel.
+ *
+ * The stop-hook text opens "this session is ending", which is true where it fires and false
+ * here: this rides a tool result on the fifth Knowl call of a live session. A nudge that
+ * misdescribes when it is speaking invites the agent to defer -- the session is not ending, so
+ * there is nothing to do yet -- which is the opposite of what it is for.
+ */
+export function renderMidSessionSilenceNudge(): string {
+  return [
+    'KNOWL: this session has consulted memory several times and stored nothing durable.',
+    'If anything you have established here would help a later session -- a verified finding, a decision and its reasoning, a diagnosis that will recur -- store it now with knowl_store or knowl_decide.',
+    'If there is genuinely nothing durable yet, carry on; this will not ask again.',
+  ].join(' ');
+}
+
 export function renderSilenceNudge(): string {
   return [
     'KNOWL: this session is ending and nothing durable was stored.',

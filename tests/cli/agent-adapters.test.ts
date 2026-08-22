@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parse } from 'smol-toml';
 import { mergeCodexTomlConfig, mergeJsonMcpConfig } from '../../src/cli/agents/files.js';
-import { createClaudeCodeAdapter, createCodexAdapter, createGeminiAdapter } from '../../src/cli/agents/project-adapters.js';
+import { createClaudeCodeAdapter, createCodexAdapter } from '../../src/cli/agents/project-adapters.js';
 import { createCursorAdapter } from '../../src/cli/agents/cursor.js';
 import { createClaudeDesktopAdapter } from '../../src/cli/agents/desktop-adapter.js';
 import { knowlHookCommand } from '../../src/cli/agents/hook-config.js';
@@ -76,7 +76,7 @@ describe('agent adapters', () => {
     platform: 'win32' as NodeJS.Platform,
     homeDir: HOME,
     appDataDir: path.join(HOME, 'AppData', 'Roaming'),
-    commandExists: async (command: string) => ['codex', 'claude', 'cursor', 'gemini'].includes(command),
+    commandExists: async (command: string) => ['codex', 'claude', 'cursor'].includes(command),
   };
 
   it('configures Codex in the project TOML config', async () => {
@@ -85,7 +85,7 @@ describe('agent adapters', () => {
     await adapter.configure(PROJECT);
     const config = parse(await fs.readFile(path.join(PROJECT, '.codex', 'config.toml'), 'utf8')) as Record<string, any>;
     expect(config.mcp_servers.knowl.command).toBe('knowl.cmd');
-    expect(config.mcp_servers.knowl.args).toEqual(['serve']);
+    expect(config.mcp_servers.knowl.args).toEqual(['serve', '--host', 'codex']);
     expect(await adapter.verify(PROJECT)).toBe(true);
   });
 
@@ -95,7 +95,7 @@ describe('agent adapters', () => {
     await claude.configure(PROJECT);
     await cursor.configure(PROJECT);
     expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.command).toBe('knowl.cmd');
-    expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.args).toEqual(['serve']);
+    expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.args).toEqual(['serve', '--host', 'claude']);
     expect((await readJson(path.join(PROJECT, '.cursor', 'mcp.json'))).mcpServers.knowl.command).toBe('knowl.cmd');
   });
 
@@ -109,21 +109,6 @@ describe('agent adapters', () => {
     expect(await claude.verifyInstructions!(PROJECT)).toBe(true);
   });
 
-  it('configures Gemini MCP and native instructions with manual lifecycle fallback', async () => {
-    const gemini = createGeminiAdapter(environment);
-    expect((await gemini.detect(PROJECT)).installed).toBe(true);
-    await fs.mkdir(path.join(PROJECT, '.gemini'), { recursive: true });
-    await writeJson(path.join(PROJECT, '.gemini', 'settings.json'), { theme: 'dark' });
-    expect(await gemini.configure(PROJECT)).toMatchObject({ agent: 'gemini', status: 'configured' });
-    expect(await gemini.configureInstructions!(PROJECT)).toMatchObject({ status: 'configured' });
-    const settings = await readJson(path.join(PROJECT, '.gemini', 'settings.json'));
-    expect(settings.theme).toBe('dark');
-    expect(settings.mcpServers.knowl).toEqual({ command: 'knowl.cmd', args: ['serve'] });
-    expect(await fs.readFile(path.join(PROJECT, 'GEMINI.md'), 'utf8')).toBe('@./KNOWL.md\n');
-    expect(await gemini.verify(PROJECT)).toBe(true);
-    expect(await gemini.verifyInstructions!(PROJECT)).toBe(true);
-    expect(await gemini.lifecycleCapability!(PROJECT)).toBe('unsupported');
-  });
 
   it('marks Claude Desktop as global and writes its platform config', async () => {
     const adapter = createClaudeDesktopAdapter(environment);
@@ -151,7 +136,6 @@ describe('agent adapters', () => {
       createCodexAdapter(environment),
       createClaudeCodeAdapter(environment),
       createCursorAdapter(environment),
-      createGeminiAdapter(environment),
       createClaudeDesktopAdapter(environment),
     ];
 
@@ -167,9 +151,6 @@ describe('agent adapters', () => {
     expect(() => parseAgentNames(['unknown'])).toThrow('Unsupported agent "unknown"');
   });
 
-  it('accepts Gemini as an explicit agent name', () => {
-    expect(parseAgentNames(['gemini'])).toEqual(['gemini']);
-  });
 
   it('configures verified project-local lifecycle hooks for Codex, Claude Code, and Cursor', async () => {
     const codex = createCodexAdapter(environment);
@@ -197,7 +178,11 @@ describe('agent adapters', () => {
     expect(codexHooks.hooks.Stop[0].hooks[0].command).toBe('existing');
     expect(JSON.stringify(codexHooks)).toContain('knowl.cmd agent-hook codex SessionStart --json');
     expect(codexHooks.hooks.SessionStart[0].matcher).toBe('.*');
-    expect(codexHooks.hooks.UserPromptSubmit).toBeUndefined();
+    // Codex declares a prompt event since 0.147.0, so this key holds the reminder -- and only
+    // the reminder. A lifecycle handler here would be overwritten by it on the next merge.
+    expect(JSON.stringify(codexHooks.hooks.UserPromptSubmit)).toContain('agent-reminder codex');
+    expect(JSON.stringify(codexHooks.hooks.UserPromptSubmit)).not.toContain('agent-hook codex');
+    expect(codexHooks.hooks.PostToolUseFailure).toBeUndefined();
     expect(claudeSettings.permissions.allow).toEqual(['Bash(npm test)']);
     expect(JSON.stringify(claudeSettings)).toContain('knowl.cmd agent-hook claude SessionStart --json');
     expect(claudeSettings.hooks.SessionStart[0].matcher).toBe('.*');
@@ -296,7 +281,11 @@ describe('agent adapters', () => {
     const codexHooks = await readJson(path.join(PROJECT, '.codex', 'hooks.json'));
     const claudeHooks = await readJson(path.join(PROJECT, '.claude', 'settings.local.json'));
     const cursorHooks = await readJson(path.join(PROJECT, '.cursor', 'hooks.json'));
-    expect(codexHooks.hooks.UserPromptSubmit).toEqual([{ matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] }]);
+    // The retired lifecycle handler goes; the foreign one stays; the reminder is appended.
+    expect(codexHooks.hooks.UserPromptSubmit).toEqual([
+      { matcher: '.*', hooks: [{ type: 'command', command: 'user-hook' }] },
+      { hooks: [{ type: 'command', command: 'knowl.cmd agent-reminder codex --json', timeout: 30, statusMessage: '' }] },
+    ]);
     expect(claudeHooks.hooks.UserPromptSubmit[0]).toEqual({
       matcher: 'custom',
       description: 'preserve matcher metadata',
