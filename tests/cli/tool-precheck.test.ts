@@ -147,11 +147,21 @@ describe('tool-call denial', () => {
   });
 
   it('yields undefined for every host whose refusal channel is unconfirmed', () => {
-    // Codex left this list at 0.147.0: its binary carries permissionDecision and
-    // permissionDecisionReason, so it reuses the same route rather than lacking one.
-    for (const host of ['cursor', 'claude-desktop', 'generic'] as const) {
+    // Codex left this list at 0.147.0 and Cursor left it once `preToolUse` was read properly --
+    // Cursor has no `beforeFileEdit`, which is not the same as having no pre-tool event.
+    for (const host of ['claude-desktop', 'generic'] as const) {
       expect(hostProfile(host).denyToolCall?.('nope'), host).toBeUndefined();
     }
+  });
+
+  it('gives cursor its own verdict shape, shared with no other host', () => {
+    // `permission`, not `permissionDecision`, and the reason is split across a message for the
+    // person and a message for the model.
+    expect(hostProfile('cursor').denyToolCall?.('re-read src/a.ts')).toEqual({
+      permission: 'deny',
+      user_message: 're-read src/a.ts',
+      agent_message: 're-read src/a.ts',
+    });
   });
 
   it('gives codex the same envelope as claude, from one shared builder', () => {

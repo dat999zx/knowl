@@ -305,7 +305,7 @@ which the code cannot tell it, because rejected alternatives leave no trace in a
 | OpenHands | Yes | Yes | Yes | Yes | MCP entry is added by hand |
 | Antigravity | Yes | Yes | Yes | Yes | No prompt event upstream |
 | Windsurf | Yes | Yes | Yes | No | No stop event upstream |
-| Cursor | Yes | Yes | No | No | Finalizes per turn |
+| Cursor | Yes | Yes | Yes | Yes | Finalizes per turn |
 | Claude Desktop, Cline, Zed, JetBrains, … | Yes | No | No | No | MCP plus the manual work loop |
 
 Full detail, and why each gap exists, in [docs/hosts.md](docs/hosts.md).

@@ -27,7 +27,7 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 | **OpenHands** | ✅ | ✅ | ⚠️ MCP | ✅ | ✅ |
 | **Google Antigravity** | via MCP | ❌ no prompt event | via MCP | ✅ | ✅ |
 | **Windsurf** (Devin Desktop) | via MCP | ❌ | via MCP | ✅ | ❌ no stop event |
-| **Cursor** | ✅ | ❌ | ⚠️ MCP | ❌ no pre-write event | ❌ stop cannot block |
+| **Cursor** | ✅ | ❌ | ⚠️ MCP | ✅ | ✅ |
 | **Claude Desktop** | via MCP | ❌ | via MCP | ❌ | ❌ |
 | **Cline, Zed, JetBrains, Roo, Continue, Amp, Goose, Aider, …** | via MCP | ❌ | via MCP | ❌ | ❌ |
 
@@ -73,7 +73,9 @@ args = ["serve", "--host", "openhands"]
 
 ## Why some hosts get less
 
-**Cursor.** Three separate gaps. Its mid-turn card is emitted, accepted, logged and never shown to the model — vendor ticket T-C20310, still open, so Knowl emits it anyway and it starts working the day that ships. It has no pre-tool event, so there is nothing for the write gate to hook. And its `stop` is fire-and-forget: it cannot withhold the stop, so the capture nudge has nothing to withhold.
+**Cursor's mid-turn card.** Emitted, accepted, logged, and never shown to the model — vendor ticket T-C20310, still open. Knowl emits it anyway so it starts working the day that ships, and meanwhile Cursor is notified over MCP.
+
+Cursor's write gate and capture nudge *do* work, through channels shaped unlike anyone else's. It has no `beforeFileEdit`, which is not the same as having no pre-tool event: `preToolUse` fires before every tool with `tool_name` and `tool_input`, and denies with `{"permission":"deny", user_message, agent_message}`. Its `stop` cannot withhold a stop, but it returns `followup_message`, which Cursor submits as the user's next message — which is all the capture nudge needs, and arguably a better shape than blocking.
 
 **Windsurf's capture nudge.** Windsurf has twelve hook events and none of them is a stop. `post_cascade_response` fires *after* a response and cannot withhold it. This is absence, not uncertainty — there is nothing to enable.
 
