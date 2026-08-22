@@ -133,6 +133,19 @@ export interface HostProfile {
    * getting before the card learned to be specific.
    */
   readonly lifecycleClaimable?: boolean;
+  /**
+   * The working directory this event happened in, if this host does not name it `cwd`.
+   *
+   * `cwd` then `workspace_roots[0]` was hardcoded for every host, and it is the one field with
+   * no graceful degradation: a host that names it something else throws
+   * `IncompleteHostHookPayloadError` on *every* event, which the hook entry deliberately
+   * swallows in silence -- so the integration reports nothing, logs nothing, and looks exactly
+   * like a host nobody has configured.
+   *
+   * Optional because the two default names cover every host read so far. It exists so the next
+   * one can say so in its profile rather than having the default quietly decide for it.
+   */
+  projectRoot?: (raw: Record<string, unknown>) => string | undefined;
   identity(raw: Record<string, unknown>): HostIdentity;
   normalizedEvent(hostEvent: string): NormalizedHookEventName | undefined;
   isShellEvent(hostEvent: string, toolName: string): boolean;

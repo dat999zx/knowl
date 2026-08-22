@@ -78,7 +78,11 @@ export const copilotProfile: HostProfile = {
   // read manufactures a finding against nobody.
   readsFiles: (_event, tool) => ['view', 'read'].includes(tool),
   writesFiles: (_event, tool) => ['create', 'str_replace', 'str_replace_editor', 'edit', 'write'].includes(tool),
-  denyExitCode: 2,
+  // **No `denyExitCode`.** Copilot reads a stdout verdict *and* treats exit 2 as a denial, so
+  // declaring both meant emitting two refusals and letting whichever it checks first win. They
+  // agreed, so it worked by luck rather than by decision. The JSON channel is the one that
+  // carries the reason, so it is the one kept -- `refusesOnAnyNonZeroExit` below is a guard
+  // against our own crashes, not a second way to say no.
   refusesOnAnyNonZeroExit: true,
   identity(raw): HostIdentity {
     return {

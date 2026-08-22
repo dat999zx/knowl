@@ -70,7 +70,7 @@ export function createCodexAdapter(environment: AgentEnvironment): AgentAdapter 
 }
 
 function createJsonProjectAdapter(
-  name: 'claude' | 'cursor' | 'cline',
+  name: 'claude' | 'cursor' | 'cline' | 'opencode',
   label: string,
   command: string,
   configPath: (root: string) => string,
@@ -133,6 +133,19 @@ export function createClaudeCodeAdapter(environment: AgentEnvironment) {
  */
 export function createClineAdapter(environment: AgentEnvironment) {
   return createJsonProjectAdapter('cline', 'Cline', 'cline', root => path.join(root, '.cline', 'mcp.json'), environment);
+}
+
+/**
+ * OpenCode, over MCP only -- for now, and the "for now" is upstream's.
+ *
+ * OpenCode has no lifecycle hooks yet; the feature is an open request
+ * (anomalyco/opencode#39275) asking for the same PreToolUse/Stop/SessionStart router Claude
+ * Code and Codex already have. When it lands this becomes a profile like any other, and until
+ * then an adapter is the whole integration: memory works, lifecycle does not, and `knowl init`
+ * says so rather than leaving a popular host undiscoverable.
+ */
+export function createOpenCodeAdapter(environment: AgentEnvironment) {
+  return createJsonProjectAdapter('opencode', 'OpenCode', 'opencode', root => path.join(root, 'opencode.json'), environment);
 }
 
 export function createCursorProjectAdapter(environment: AgentEnvironment) {

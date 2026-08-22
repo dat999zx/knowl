@@ -1,7 +1,7 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { captureChangeWatermark, consumeChangeNotice } from './change-notice.js';
+import { captureChangeWatermark, consumeCaptureNudge, consumeChangeNotice } from './change-notice.js';
 import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem, findForeignItem } from '../workspace/ownership.js';
@@ -1893,7 +1893,14 @@ export function registerTools(
     const watermark = await captureChangeWatermark(projectRoot);
     const result = await callToolAsRepo(request);
     const notice = await consumeChangeNotice(projectRoot, request.params.name, watermark);
-    if (!notice) return result;
-    return { ...result, content: [...result.content, { type: 'text' as const, text: notice }] };
+    // Two independent appends, both best-effort. The nudge is the MCP twin of the stop-hook
+    // one, for clients that have no stop hook to carry it -- see `consumeCaptureNudge`.
+    const nudge = await consumeCaptureNudge(projectRoot, request.params.name, getConfig());
+    const extra = [notice, nudge].filter((text): text is string => Boolean(text));
+    if (extra.length === 0) return result;
+    return {
+      ...result,
+      content: [...result.content, ...extra.map(text => ({ type: 'text' as const, text }))],
+    };
   });
 }

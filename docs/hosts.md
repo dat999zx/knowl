@@ -26,12 +26,13 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 | **GitHub Copilot** | ✅ | ✅ | ⚠️ MCP | ✅ | ✅ |
 | **OpenHands** | ✅ | ✅ | ⚠️ MCP | ✅ | ✅ |
 | **Google Antigravity** | ⚠️ | ⚠️ | ⚠️ MCP | ✅ | ✅ |
-| **Windsurf** (Devin Desktop) | via MCP | ❌ | via MCP | ✅ | ❌ no stop event |
+| **Windsurf** (Devin Desktop) | via MCP | ❌ | via MCP | ✅ | via MCP |
 | **Cursor** | ✅ | ❌ | ⚠️ MCP | ✅ | ✅ |
-| **Claude Desktop** | via MCP | ❌ | via MCP | ❌ | ❌ |
-| **Cline, Zed, JetBrains, Roo, Continue, Amp, Goose, Aider, …** | via MCP | ❌ | via MCP | ❌ | ❌ |
+| **Claude Desktop** | via MCP | ❌ | via MCP | ❌ | via MCP |
+| **Cline** (with the plugin) | ✅ | ✅ | ✅ | — | via MCP |
+| **OpenCode, Zed, JetBrains, Roo, Continue, Amp, Goose, Aider, …** | via MCP | ❌ | via MCP | ❌ | via MCP |
 
-"via MCP" is not a degradation. Every `knowl_*` tool result carries any unseen change, so a host with no hook channel still learns that memory moved under it — it learns on its next Knowl call rather than on its next tool call.
+"via MCP" is not a degradation, but it is a weaker guarantee, and the two cases differ. A **change card** delivered this way is complete — the host just learns on its next Knowl call rather than its next tool call. A **capture nudge** delivered this way rides a tool result the agent may read and ignore, where a stop hook could withhold the stop. Both beat the alternative, which for a hookless client was nothing at all.
 
 ⚠️ means Knowl emits the envelope and the host accepts it, but nobody has watched it reach the model. Anything deciding "has this agent already been told" reads `midTurnDeliveryVerified`, never the presence of an envelope — so a ⚠️ host keeps getting the MCP copy and is never left silent on a guess. Flipping one to ✅ is a one-line change once someone observes a real session.
 
@@ -81,17 +82,27 @@ Cursor's write gate and capture nudge *do* work, through channels shaped unlike 
 
 **Antigravity has no prompt-submit or session-start event**, which reads as "no context channel" and is not. `injectSteps` on `PreInvocation` splices an `ephemeralMessage` into the conversation trajectory before every model invocation — the same slot a prompt event occupies — so bootstrap and the per-turn card both ride it.
 
-**Cline has no profile at all.** Cline's hooks are TypeScript objects — `AgentPlugin` from `@cline/sdk`, with `beforeRun`/`afterRun`/`beforeTool`/`afterTool` — loaded into its runtime. There is no hooks file and no shell-command channel, so a `HostProfile` cannot reach them. Integrating would mean publishing and maintaining an npm plugin, which is a product decision rather than a profile. Cline uses Knowl over MCP like any other editor.
+**Cline needs one extra line of setup.** Its hooks are `AgentPlugin` objects loaded into its own runtime, not a file Knowl can write — so `knowl init cline` configures memory and stops, and the lifecycle ships as a plugin you point Cline at:
+
+```js
+ClineCore.start({ pluginPaths: ['./node_modules/@dat999zx/knowl/integrations/cline/knowl-plugin.mjs'] })
+```
+
+That file is [`integrations/cline/knowl-plugin.mjs`](../integrations/cline/knowl-plugin.mjs). It maps Cline's method names and shells out to the same `knowl agent-hook` entry point every other host's hooks use — no npm package to install, nothing to keep in version step. Its write gate is deliberately not wired: `beforeTool` can refuse, but the plugin runs *inside* Cline's process, where a hung child stalls the agent instead of timing out a hook runner. Capture first.
 
 **Gemini CLI is gone.** Discontinued upstream; its adapter was instructions-only and was removed. Antigravity replaces it. An existing `GEMINI.md` is left on disk.
 
 ## What is actually impossible
 
-Only one thing in the table above is impossible rather than unbuilt: **Windsurf's capture nudge**. Windsurf has twelve hook events and not one of them fires at stop time, so there is nothing to intercept and nothing to auto-submit. It needs an upstream event.
+**One thing, and it is the same one for every host in the last two rows: blocking the host's own edit tool.** A tool result can refuse Knowl's tools and nothing else. No architecture recovers that; it needs a pre-tool hook the host does not have.
 
-Everything else marked ❌ is one of: *blocked on a vendor bug someone else has to fix* (Cursor's mid-turn card, ticket T-C20310), *waiting on a host to ship hooks at all* (OpenCode, [#39275](https://github.com/anomalyco/opencode/issues/39275)), or *a different product* (Cline's npm plugin, the ACP proxy below).
+Everything else that is not a ✅ is one of three temporary things, and the table says which:
 
-For MCP-only hosts, one thing is structurally out of reach and always will be: **blocking the host's own edit tool**. A tool result can refuse Knowl's tools and nothing else. What those hosts get instead is every capability that rides a tool result.
+- **A vendor bug somebody else must fix** — Cursor's mid-turn card, [ticket T-C20310](https://forum.cursor.com/t/native-posttooluse-hooks-accept-and-log-additional-context-successfully-but-the-injected-context-is-not-surfaced-to-the-model/155689), still open.
+- **A host that has not shipped hooks yet** — OpenCode, [#39275](https://github.com/anomalyco/opencode/issues/39275). Its adapter is here and its profile lands the day that does.
+- **A prompt card with nowhere to go** — Windsurf's `pre_user_prompt` fires before the prompt is processed and injects nothing, and it is the only host left with no context channel of any kind.
+
+Windsurf's capture nudge used to be listed here as impossible, and it is not: Windsurf has no stop hook, but it speaks MCP, and the nudge now rides a tool result on every host whose hooks cannot carry it.
 
 ## Not built: the ACP lane
 

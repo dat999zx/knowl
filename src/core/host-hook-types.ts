@@ -12,7 +12,7 @@ import { SessionEventType } from './types.js';
 
 export type HookHost =
   | 'codex' | 'claude' | 'cursor' | 'claude-desktop' | 'generic'
-  | 'copilot' | 'openhands' | 'antigravity' | 'windsurf';
+  | 'copilot' | 'openhands' | 'antigravity' | 'windsurf' | 'cline';
 
 export type NormalizedHookEventName =
   | 'session-start'

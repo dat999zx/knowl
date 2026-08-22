@@ -304,9 +304,10 @@ which the code cannot tell it, because rejected alternatives leave no trace in a
 | GitHub Copilot | Yes | Yes | Yes | Yes | Reuses Claude Code's hook format |
 | OpenHands | Yes | Yes | Yes | Yes | MCP entry is added by hand |
 | Antigravity | Yes | Yes | Yes | Yes | Context rides `injectSteps` |
-| Windsurf | Yes | Yes | Yes | No | No stop event upstream |
+| Windsurf | Yes | Yes | Yes | Yes | Nudge rides MCP; no stop hook |
 | Cursor | Yes | Yes | Yes | Yes | Finalizes per turn |
-| Claude Desktop, Cline, Zed, JetBrains, … | Yes | No | No | No | MCP plus the manual work loop |
+| Cline | Yes | Yes | No | Yes | Lifecycle via the shipped plugin |
+| Claude Desktop, OpenCode, Zed, JetBrains, … | Yes | No | No | Yes | MCP plus the manual work loop |
 
 Full detail, and why each gap exists, in [docs/hosts.md](docs/hosts.md).
 

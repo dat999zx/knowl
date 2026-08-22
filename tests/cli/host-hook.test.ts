@@ -238,8 +238,10 @@ describe('host hook normalization', () => {
 
   it('does not treat an MCP-only agent name as a verified lifecycle hook host', () => {
     // The point survives the Gemini adapter it was written for: an agent Knowl can configure
-    // over MCP is not thereby a host it accepts hook payloads from.
-    expect(() => normalizeHostHook('cline', 'SessionStart', {})).toThrow('Unsupported hook host: cline');
+    // over MCP is not thereby a host it accepts hook payloads from. Cline stopped being the
+    // example once its plugin shipped -- it sends normalized events now -- so OpenCode, which
+    // has no hook channel upstream at all, took its place.
+    expect(() => normalizeHostHook('opencode', 'SessionStart', {})).toThrow('Unsupported hook host: opencode');
   });
 
   it('carries agent identity on subagent tool events and omits it on main-thread events', () => {

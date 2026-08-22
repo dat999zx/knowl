@@ -36,7 +36,9 @@ const stringValue = (value: unknown, max = MAX_STRING): string | undefined =>
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
-function requireProjectRoot(raw: Record<string, unknown>): string {
+function requireProjectRoot(host: HookHost, raw: Record<string, unknown>): string {
+  const declared = stringValue(hostProfile(host).projectRoot?.(raw));
+  if (declared) return path.resolve(declared);
   const cwd = stringValue(raw.cwd);
   if (cwd) return path.resolve(cwd);
   const roots = Array.isArray(raw.workspace_roots) ? raw.workspace_roots : [];
@@ -244,7 +246,7 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
   if (!isHookHost(host)) throw new Error(`Unsupported hook host: ${host}`);
   const normalizedHost = host;
   const profile = hostProfile(normalizedHost);
-  const projectRoot = requireProjectRoot(raw);
+  const projectRoot = requireProjectRoot(normalizedHost, raw);
   const identity = profile.identity(raw);
   if (!identity.externalSessionId) throw new IncompleteHostHookPayloadError('Host hook payload requires a session id.');
   const ids = { externalSessionId: identity.externalSessionId, externalTurnId: identity.externalTurnId };

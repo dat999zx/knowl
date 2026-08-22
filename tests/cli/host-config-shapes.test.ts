@@ -269,7 +269,10 @@ describe('the deny path each host actually declared', () => {
     expect(mcpModeLineForHost('claude')).toContain('Claude hooks own lifecycle');
     expect(mcpModeLineForHost('copilot')).toContain('Copilot hooks own lifecycle');
     // An MCP-only agent owns the loop; it is the case the manual line was written for.
-    expect(mcpModeLineForHost('cline')).toContain('you own the work loop');
+    expect(mcpModeLineForHost('opencode')).toContain('you own the work loop');
+    // Cline is neither: it registers no file and still has a lifecycle, through a plugin the
+    // person opts into, so the conditional line is the only true one.
+    expect(mcpModeLineForHost('cline')).toBe(KNOWL_HOST_NEUTRAL_MODE_LINE);
   });
 });
 

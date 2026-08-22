@@ -12,6 +12,7 @@ import { copilotProfile } from './copilot.js';
 import { openhandsProfile } from './openhands.js';
 import { antigravityProfile } from './antigravity.js';
 import { windsurfProfile } from './windsurf.js';
+import { clineProfile } from './cline.js';
 
 export type { HostIdentity, HostOutput, HostProfile } from './profile.js';
 
@@ -25,6 +26,7 @@ export const HOST_PROFILES: Record<HookHost, HostProfile> = {
   openhands: openhandsProfile,
   antigravity: antigravityProfile,
   windsurf: windsurfProfile,
+  cline: clineProfile,
 };
 
 export function hostProfile(host: HookHost): HostProfile {
@@ -60,16 +62,17 @@ export function mcpModeLineForHost(host?: string): string {
   if (MCP_ONLY_AGENTS.has(host)) return KNOWL_MANUAL_MODE_LINE;
   if (!isHookHost(host)) return KNOWL_HOST_NEUTRAL_MODE_LINE;
   const profile = hostProfile(host);
-  if (profile.hookEvents.length === 0) return KNOWL_MANUAL_MODE_LINE;
-  // Registered is not running: see `lifecycleClaimable`. A host that cannot promise its hooks
-  // are live keeps the conditional line rather than telling an agent never to open the manual
-  // loop it is about to need.
+  // Registered is not running: see `lifecycleClaimable`. Asked *before* the empty-events check,
+  // because Cline is both -- it registers no file and still has a lifecycle, through a plugin
+  // the person opts into. Telling it "you own the manual loop" would be as wrong as telling it
+  // its hooks own the session.
   if (profile.lifecycleClaimable === false) return KNOWL_HOST_NEUTRAL_MODE_LINE;
+  if (profile.hookEvents.length === 0) return KNOWL_MANUAL_MODE_LINE;
   return KNOWL_CLAUDE_MODE_LINE.replace('Claude hooks', `${HOST_DISPLAY_NAMES[host] ?? host} hooks`);
 }
 
 /** Agent names Knowl configures over MCP that are not hook hosts. */
-const MCP_ONLY_AGENTS = new Set(['cline']);
+const MCP_ONLY_AGENTS = new Set(['opencode']);
 
 /** Hosts whose key does not read as their own name in a sentence. */
 const HOST_DISPLAY_NAMES: Record<string, string> = {
@@ -82,4 +85,5 @@ const HOST_DISPLAY_NAMES: Record<string, string> = {
   cursor: 'Cursor',
   'claude-desktop': 'Claude Desktop',
   generic: 'Your host’s',
+  cline: 'Cline',
 };

@@ -183,8 +183,12 @@ export async function mergeNestedHookConfig(
     hadOwnEntry ||= withoutReminder.removed;
     nextHooks[promptEvent] = [...withoutReminder.entries, reminderEntry(platform, host)];
   }
+  // For the top-level container `nextHooks` *is* the whole file -- it started as a copy of
+  // `config`, so foreign keys are already in it. Spreading `config` in front of it again put
+  // back every key the retired-event loop had just deleted, which is latent only because no
+  // top-level host has a retired event yet.
   const next = topLevel
-    ? { ...config, ...nextHooks, ...extraKeys }
+    ? { ...nextHooks, ...extraKeys }
     : { ...config, ...extraKeys, hooks: nextHooks };
   if (existing !== undefined && equal(config, next)) return 'unchanged';
   await writeWithBackup(configPath, `${JSON.stringify(next, null, 2)}\n`, existing);
