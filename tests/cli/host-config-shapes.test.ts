@@ -272,3 +272,69 @@ describe('the deny path each host actually declared', () => {
     expect(mcpModeLineForHost('cline')).toContain('you own the work loop');
   });
 });
+
+describe('two failures that only show up on a host nobody has installed', () => {
+  it('stamps every context envelope with the event that actually fired', () => {
+    // Output whose `hookEventName` does not match the firing event is discarded. Copilot wrote
+    // this as a two-way ternary, so registering `subagentStart` silently answered it with the
+    // prompt event's name and dropped every subagent bootstrap card.
+    const expected: Record<string, Record<string, string>> = {
+      claude: { 'session-start': 'SessionStart', 'agent-start': 'SubagentStart', 'turn-start': 'UserPromptSubmit' },
+      codex: { 'session-start': 'SessionStart', 'agent-start': 'SubagentStart', 'turn-start': 'UserPromptSubmit' },
+      copilot: { 'session-start': 'sessionStart', 'agent-start': 'subagentStart', 'turn-start': 'userPromptSubmitted' },
+    };
+    for (const [host, events] of Object.entries(expected)) {
+      for (const [event, name] of Object.entries(events)) {
+        const output = hostProfile(host as any).startContext(event as any, 'x') as any;
+        expect(output?.hookSpecificOutput?.hookEventName, `${host}:${event}`).toBe(name);
+      }
+    }
+  });
+
+  it('never classifies one tool as both a read and a write', () => {
+    // `runToolEventImpact` tests reads first, so a dual-purpose editor listed in both records
+    // every edit as a read: no re-index, no detection, and a belief the session does not hold.
+    const dualPurpose = ['str_replace_editor', 'edit', 'write', 'create', 'apply_patch', 'view', 'read', 'read_file'];
+    for (const host of ['codex', 'cursor', 'copilot', 'openhands', 'antigravity', 'windsurf'] as const) {
+      const profile = hostProfile(host);
+      for (const tool of dualPurpose) {
+        const reads = profile.readsFiles?.('', tool) ?? false;
+        const writes = profile.writesFiles?.('', tool) ?? false;
+        expect(reads && writes, `${host}:${tool}`).toBe(false);
+      }
+    }
+  });
+
+  it('lets a host be initialised when its MCP config is ours to write by hand', async () => {
+    // OpenHands runs through Docker or uvx, so the binary is often not on PATH. `verify` must
+    // not answer "is this host installed" -- there is nothing to verify for a config Knowl
+    // deliberately does not write, and answering false makes init exit 1 before it ever writes
+    // the hooks file.
+    const { createHookHostAdapter, hookHostSpecs } = await import('../../src/cli/agents/hook-host-adapter.js');
+    const dir = await workspace();
+    const environment = {
+      platform: 'linux' as const, homeDir: dir, appDataDir: dir, commandExists: async () => false,
+    };
+    const spec = hookHostSpecs(environment).find(s => s.name === 'openhands')!;
+    const adapter = createHookHostAdapter(spec, environment);
+
+    expect(await adapter.verify(dir)).toBe(true);
+    // ...while doctor still stays silent, because nothing here is installed.
+    expect((await adapter.detect(dir)).configured).toBe(false);
+  });
+
+  it('survives a config file another vendor left empty', async () => {
+    // Gemini CLI leaves a 0-byte mcp_config.json at the path Antigravity reads. Rethrowing the
+    // parse error took detection for all nine hosts down before `knowl init` showed its picker.
+    const { createAgentRegistry, detectAgents } = await import('../../src/cli/agents/registry.js');
+    const dir = await workspace();
+    await import('node:fs/promises').then(fs => fs.mkdir(path.join(dir, '.gemini', 'config'), { recursive: true }));
+    await writeFile(path.join(dir, '.gemini', 'config', 'mcp_config.json'), '', 'utf8');
+
+    const registry = createAgentRegistry({
+      platform: 'linux', homeDir: dir, appDataDir: dir, commandExists: async () => true,
+    });
+    const detected = await detectAgents(dir, registry);
+    expect(detected.map(d => d.adapter.name)).toContain('antigravity');
+  });
+});

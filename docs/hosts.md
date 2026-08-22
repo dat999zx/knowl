@@ -27,7 +27,7 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 | **OpenHands** | ✅ | ✅ | ⚠️ MCP | ✅ | ✅ |
 | **Google Antigravity** | via MCP | ❌ no prompt event | via MCP | ✅ | ✅ |
 | **Windsurf** (Devin Desktop) | via MCP | ❌ | via MCP | ✅ | ❌ no stop event |
-| **Cursor** | ✅ | ❌ | ⚠️ MCP | ❌ no pre-tool event | ❌ stop cannot block |
+| **Cursor** | ✅ | ❌ | ⚠️ MCP | ❌ no pre-write event | ❌ stop cannot block |
 | **Claude Desktop** | via MCP | ❌ | via MCP | ❌ | ❌ |
 | **Cline, Zed, JetBrains, Roo, Continue, Amp, Goose, Aider, …** | via MCP | ❌ | via MCP | ❌ | ❌ |
 
@@ -49,10 +49,12 @@ knowl doctor               # what is configured, what is stale
 | Codex CLI | `.codex/config.toml` | `.codex/hooks.json` |
 | GitHub Copilot | `.github/mcp.json` | `.github/hooks/knowl.json` |
 | OpenHands | `config.toml` — **manual, see below** | `.openhands/hooks.json` |
-| Antigravity | `~/.gemini/config/mcp_config.json` | `.agents/hooks.json` |
+| Antigravity | `~/.gemini/config/mcp_config.json` † | `.agents/hooks.json` |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | `.windsurf/hooks.json` |
 | Cursor | `.cursor/mcp.json` | `.cursor/hooks.json` |
 | Claude Desktop | platform config directory | — |
+
+† Antigravity's MCP path is the least-verified line on this page. Its hooks location is quoted from Google's reference; the MCP path is not, and it is the same file Gemini CLI leaves behind empty. If Knowl's server does not appear in Antigravity, check where that build actually reads its MCP list.
 
 **Codex** hooks are behind `[features].codex_hooks = true` in `~/.codex/config.toml`, are experimental, and **do not run on Windows at all**. Everything else works there; only the hook-driven capabilities are unavailable. Because of that, Codex — like Antigravity and Windsurf, whose MCP entry is global while their hooks are per project — keeps the conditional lifecycle card rather than being told outright that its hooks own the session.
 
@@ -60,7 +62,7 @@ knowl doctor               # what is configured, what is stale
 
 **OpenHands** runs agents in isolated containers by default. Hooks reach Knowl only if `knowl` is on the runtime image's PATH and `.knowl/` is on a mounted volume; local and CLI mode are unaffected. Image documentation for the hosted case does not exist yet.
 
-OpenHands registers MCP servers as `[[mcp.stdio_servers]]` in `config.toml`, a shape documented only in secondary sources, so `knowl init` writes the hooks file and prints the stanza instead of guessing at the TOML:
+OpenHands registers MCP servers as `[[mcp.stdio_servers]]` in `config.toml`, a shape documented only in secondary sources, so `knowl init` writes the hooks file and prints the stanza instead of guessing at the TOML. Name it explicitly — `knowl init openhands` — since OpenHands is usually run through Docker or `uvx` and detection looks for an `openhands` binary on PATH:
 
 ```toml
 [[mcp.stdio_servers]]

@@ -81,4 +81,5 @@ const HOST_DISPLAY_NAMES: Record<string, string> = {
   windsurf: 'Windsurf',
   cursor: 'Cursor',
   'claude-desktop': 'Claude Desktop',
+  generic: 'Your host’s',
 };

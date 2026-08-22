@@ -528,7 +528,7 @@ from the transcripts, which is what makes that safe.
 | Codex | Yes | Yes | Yes | Main turns share one memory session |
 | Claude Code | Yes | Yes | Yes | Main turns share one memory session; prompt guidance is also installed |
 | Cursor | Yes | Yes | No | Finalizes per turn; supplied `additional_context` may not surface to the model |
-| GitHub Copilot | Yes | Yes | No | Reuses Claude Code's hook format |
+| GitHub Copilot | Yes | Yes | Yes | Reuses Claude Code's hook format |
 | OpenHands | Yes | Yes | No | MCP entry is added by hand |
 | Antigravity | Yes | Yes | No | No prompt event upstream |
 | Windsurf | Yes | Yes | No | No stop event upstream |

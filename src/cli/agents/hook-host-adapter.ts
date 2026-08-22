@@ -39,9 +39,12 @@ async function jsonMcpConfigured(pathname: string, expected: McpEntry): Promise<
     const config = JSON.parse(await fs.readFile(pathname, 'utf8')) as Record<string, any>;
     // The shared matcher, which tolerates an entry written before `--host` existed.
     return mcpEntryMatches(config.mcpServers?.[KNOWL_MCP_SERVER_KEY], expected);
-  } catch (error: any) {
-    if (error.code === 'ENOENT') return false;
-    throw error;
+  } catch {
+    // Absent, unreadable, empty or malformed all mean the same thing here: not configured by us.
+    // Rethrowing a parse error took detection for every *other* host down with it -- Gemini CLI
+    // leaves a 0-byte file at the path Antigravity reads, so `knowl init` died before its picker
+    // on machines that had merely once installed a tool Knowl no longer supports.
+    return false;
   }
 }
 
@@ -93,6 +96,18 @@ export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: Ag
       return { agent: spec.name, status, scope: mcpScope, configPath };
     },
     async verify(root) {
+      // **Not `detect().configured` for a manual target.** The two answer different questions
+      // and conflating them broke `knowl init openhands` twice, in opposite directions.
+      // `configured` drives doctor's WARN, so it must be false where the host is not installed
+      // -- otherwise every repository grows a warning whose automatic remedy writes a hooks
+      // file into a project that never chose the host. `verify` drives init's gate, and there
+      // is nothing to verify for a config we deliberately do not write, so it must be true or
+      // init exits 1 without ever reaching `configureLifecycle`.
+      //
+      // The distinction is load-bearing precisely for OpenHands, which is usually run through
+      // Docker or `uvx` and often has no `openhands` on the developer's PATH at all -- the very
+      // case its own profile documents, where hooks run inside the container.
+      if (spec.mcp.kind === 'manual') return true;
       return (await this.detect(root)).configured;
     },
     async lifecycleCapability() { return 'supported'; },

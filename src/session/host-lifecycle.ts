@@ -110,9 +110,10 @@ const IMPACT_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'
  * it ever asked the profile whether it could refuse. A host could therefore declare a working
  * deny channel and be structurally unable to reach it.
  *
- * The profile answers when it has a vocabulary, and falls back to Claude's names when it does
- * not -- which is exactly the set `claude`, `codex` and `generic` use, so those hosts keep the
- * behaviour they had. A host that says it in the event name instead implements `writesFiles`.
+ * A declared predicate **replaces** the fallback rather than layering over it, so a host that
+ * declares one is saying "these and nothing else". The fallback remains Claude Code's names,
+ * which is what `claude`, `generic` and `claude-desktop` still use; every other host now
+ * declares its own, including `codex`, whose tool is `apply_patch`.
  */
 function toolReadsFile(input: NormalizedHostHook): boolean {
   const { readsFiles } = hostProfile(input.host);

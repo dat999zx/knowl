@@ -62,8 +62,10 @@ export interface DetectedAgent {
  * machines that had merely once installed a tool Knowl no longer supports. The
  * `detection.installed` filter never ran, so not having Antigravity did not save anyone.
  *
- * A host whose config cannot be read reports not-installed rather than throwing: it is the same
- * answer `knowl init` would reach anyway, and it is reached without taking the other eight down.
+ * `jsonMcpConfigured` now answers `false` for an unreadable file rather than throwing, which is
+ * the narrower fix and keeps `installed` truthful for a host that IS present with a corrupt
+ * config. This catch stays as the outer guard: an adapter is third-party-ish code reading
+ * files Knowl does not own, and one of them failing must never cost the other eight.
  */
 export async function detectAgents(projectRoot: string, registry: Map<AgentName, AgentAdapter>): Promise<DetectedAgent[]> {
   const agents = await Promise.all([...registry.values()].map(async adapter => ({

@@ -70,7 +70,13 @@ export const copilotProfile: HostProfile = {
   // shape they are not quoted from the hooks reference, which documents the hook payload and
   // not the agent's tool vocabulary. A wrong name costs detection on this host and nothing
   // else -- the gate degrades to "no opinion", which is its designed failure direction.
-  readsFiles: (_event, tool) => ['view', 'read', 'str_replace_editor'].includes(tool),
+  // `str_replace_editor` reads *and* writes, discriminated by an argument this layer does not
+  // see, and it appears in the write list only -- deliberately, and matching `openhands.ts`,
+  // which faces the identical dual tool. `runToolEventImpact` tests reads first, so listing it
+  // in both made every Copilot edit record as a read: no re-index, no detection, and a
+  // read-set belief the session does not hold. A false write costs a detection pass; a false
+  // read manufactures a finding against nobody.
+  readsFiles: (_event, tool) => ['view', 'read'].includes(tool),
   writesFiles: (_event, tool) => ['create', 'str_replace', 'str_replace_editor', 'edit', 'write'].includes(tool),
   denyExitCode: 2,
   refusesOnAnyNonZeroExit: true,
@@ -87,12 +93,16 @@ export const copilotProfile: HostProfile = {
   isShellEvent(_hostEvent, toolName) {
     return toolNameIsShell(toolName);
   },
-  // Copilot's start and prompt events take the same `hookSpecificOutput` shape as Claude's, but
-  // name the event in its own casing -- and the name has to match the event that fired. Output
-  // stamped with a different `hookEventName` is discarded, so returning 'sessionStart' for the
-  // prompt hook silently drops the per-turn card.
+  // The same `hookSpecificOutput` shape as Claude's, in Copilot's own casing -- and the name
+  // has to match the event that fired, because output stamped with a different `hookEventName`
+  // is discarded. This is `startEventName` for Copilot's vocabulary; writing it as a two-way
+  // ternary dropped the subagent card the moment `subagentStart` was registered, by answering
+  // it with the prompt event's name.
   startContext(event, context) {
-    return hookSpecificOutput(event === 'session-start' ? 'sessionStart' : 'userPromptSubmitted', context);
+    const name = event === 'session-start' ? 'sessionStart'
+      : event === 'agent-start' ? 'subagentStart'
+        : 'userPromptSubmitted';
+    return hookSpecificOutput(name, context);
   },
   midTurnContext(text) {
     return hookSpecificOutput('postToolUse', text);
