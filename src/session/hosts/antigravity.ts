@@ -5,21 +5,30 @@ import { agentIdentityFrom, hostString, toolNameIsShell } from './profile.js';
 const ANTIGRAVITY_EVENT_MAP: Record<string, NormalizedHookEventName> = {
   PreToolUse: 'tool-precheck',
   PostToolUse: 'session-event',
-  PreInvocation: 'session-event',
+  // Antigravity has no session-start and no prompt-submit event. `PreInvocation` fires before
+  // every model invocation, which is the same slot a prompt event occupies: it is where the
+  // turn's context has to arrive if it is going to arrive at all.
+  PreInvocation: 'turn-start',
   PostInvocation: 'session-event',
   Stop: 'turn-stop',
 };
 
-/**
- * `PreInvocation` is left unregistered on purpose.
- *
- * It and `PostInvocation` bracket the same model call, so registering both records two
- * session-events for one thing. `PostInvocation` is the one kept, because it is the half that
- * knows what happened.
- */
 export const ANTIGRAVITY_HOOK_EVENTS = [
-  'PreToolUse', 'PostToolUse', 'PostInvocation', 'Stop',
+  'PreInvocation', 'PreToolUse', 'PostToolUse', 'PostInvocation', 'Stop',
 ] as const;
+
+/**
+ * Antigravity's context channel: steps spliced into the conversation trajectory.
+ *
+ * `ephemeralMessage` is the transient variant -- the other two are `userMessage`, which would
+ * put words in the person's mouth, and `toolCall`, which would have Knowl execute something on
+ * the agent's behalf. Neither is what a memory card is.
+ *
+ * Only `PreInvocation` and `PostInvocation` read this field. It is still returned for the
+ * post-tool card, where Antigravity ignores it -- an unknown key costs nothing, and
+ * `midTurnDeliveryVerified` stays false so the MCP channel keeps talking either way.
+ */
+const injectEphemeral = (text: string) => ({ injectSteps: [{ ephemeralMessage: text }] });
 
 /**
  * Google Antigravity 2.0 -- PascalCase events like Claude's, and nothing else like Claude's.
@@ -37,11 +46,14 @@ export const ANTIGRAVITY_HOOK_EVENTS = [
  *    system message into the conversation -- which is the one thing a stop channel has to do
  *    for the capture nudge to be worth spending, so `stopContext` is declared.
  *
- * **No prompt event exists**, so there is no per-turn card here, and `startContext` returns
- * undefined: context injection on Antigravity goes through `injectSteps` on the invocation
- * events, which is a different mechanism with a different payload and is not wired up. Session
- * bootstrap therefore arrives over MCP, and `midTurnDeliveryVerified` stays false to keep that
- * channel talking.
+ * **There is no prompt-submit event and no session-start event**, which read at first as "no
+ * context channel". Antigravity has one, shaped unlike anyone else's: `injectSteps` on the
+ * invocation events splices steps into the conversation trajectory, and `PreInvocation` fires
+ * before every model invocation -- the same slot a prompt event occupies. So bootstrap and the
+ * per-turn card both ride `PreInvocation` here, rather than the host having neither.
+ *
+ * `midTurnDeliveryVerified` stays false regardless: nobody has watched one arrive, and the MCP
+ * channel keeps talking until someone does.
  *
  * **Replaces the Gemini CLI adapter**, which was instructions-only and whose host was
  * discontinued. Its config still lives under `~/.gemini/config/` at global scope, which is the
@@ -75,11 +87,11 @@ export const antigravityProfile: HostProfile = {
   isShellEvent(_hostEvent, toolName) {
     return toolNameIsShell(toolName);
   },
-  startContext() {
-    return undefined;
+  startContext(_event, context) {
+    return injectEphemeral(context);
   },
-  midTurnContext() {
-    return undefined;
+  midTurnContext(text) {
+    return injectEphemeral(text);
   },
   denyToolCall(reason) {
     return { decision: 'deny', reason };

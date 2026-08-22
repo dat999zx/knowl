@@ -303,7 +303,7 @@ which the code cannot tell it, because rejected alternatives leave no trace in a
 | Codex CLI | Yes | Yes | Yes | Yes | Hooks need `codex_hooks`; not on Windows |
 | GitHub Copilot | Yes | Yes | Yes | Yes | Reuses Claude Code's hook format |
 | OpenHands | Yes | Yes | Yes | Yes | MCP entry is added by hand |
-| Antigravity | Yes | Yes | Yes | Yes | No prompt event upstream |
+| Antigravity | Yes | Yes | Yes | Yes | Context rides `injectSteps` |
 | Windsurf | Yes | Yes | Yes | No | No stop event upstream |
 | Cursor | Yes | Yes | Yes | Yes | Finalizes per turn |
 | Claude Desktop, Cline, Zed, JetBrains, … | Yes | No | No | No | MCP plus the manual work loop |

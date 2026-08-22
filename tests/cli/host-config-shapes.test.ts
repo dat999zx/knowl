@@ -338,3 +338,40 @@ describe('two failures that only show up on a host nobody has installed', () => 
     expect(detected.map(d => d.adapter.name)).toContain('antigravity');
   });
 });
+
+describe('channels that exist under a different name than expected', () => {
+  it('cursor gates on preToolUse, which is not the same as beforeFileEdit', () => {
+    const profile = hostProfile('cursor');
+    expect(profile.hookEvents).toContain('preToolUse');
+    expect(profile.normalizedEvent('preToolUse')).toBe('tool-precheck');
+    // Cursor names its tools the same words Claude does, which is why afterFileEdit was the
+    // half that silently did not work rather than the half that did.
+    expect(profile.writesFiles?.('preToolUse', 'Write')).toBe(true);
+    expect(profile.writesFiles?.('afterFileEdit', '')).toBe(true);
+    expect(profile.readsFiles?.('postToolUse', 'Read')).toBe(true);
+    // Fire-and-forget stop, but followup_message is submitted as the next user message.
+    expect(profile.stopContext?.('store what you learned'))
+      .toEqual({ followup_message: 'store what you learned' });
+  });
+
+  it('antigravity carries context as trajectory steps, not as an additionalContext field', () => {
+    const profile = hostProfile('antigravity');
+    // No prompt-submit and no session-start event; PreInvocation is the slot both use.
+    expect(profile.normalizedEvent('PreInvocation')).toBe('turn-start');
+    expect(profile.hookEvents).toContain('PreInvocation');
+    expect(profile.startContext('turn-start', 'remember this'))
+      .toEqual({ injectSteps: [{ ephemeralMessage: 'remember this' }] });
+    // ephemeral, not userMessage (which would put words in the person's mouth) and not
+    // toolCall (which would have Knowl execute something as the agent).
+    expect(JSON.stringify(profile.midTurnContext('x'))).not.toContain('userMessage');
+    expect(JSON.stringify(profile.midTurnContext('x'))).not.toContain('toolCall');
+  });
+
+  it('still refuses to claim delivery nobody has observed', () => {
+    // Both hosts now emit a context envelope. Neither may claim it lands.
+    for (const host of ['cursor', 'antigravity'] as const) {
+      expect(hostProfile(host).midTurnContext('x'), host).toBeDefined();
+      expect(hostProfile(host).midTurnDeliveryVerified, host).toBe(false);
+    }
+  });
+});

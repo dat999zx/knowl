@@ -25,7 +25,7 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 | **Codex CLI** | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **GitHub Copilot** | ✅ | ✅ | ⚠️ MCP | ✅ | ✅ |
 | **OpenHands** | ✅ | ✅ | ⚠️ MCP | ✅ | ✅ |
-| **Google Antigravity** | via MCP | ❌ no prompt event | via MCP | ✅ | ✅ |
+| **Google Antigravity** | ⚠️ | ⚠️ | ⚠️ MCP | ✅ | ✅ |
 | **Windsurf** (Devin Desktop) | via MCP | ❌ | via MCP | ✅ | ❌ no stop event |
 | **Cursor** | ✅ | ❌ | ⚠️ MCP | ✅ | ✅ |
 | **Claude Desktop** | via MCP | ❌ | via MCP | ❌ | ❌ |
@@ -79,11 +79,19 @@ Cursor's write gate and capture nudge *do* work, through channels shaped unlike 
 
 **Windsurf's capture nudge.** Windsurf has twelve hook events and none of them is a stop. `post_cascade_response` fires *after* a response and cannot withhold it. This is absence, not uncertainty — there is nothing to enable.
 
-**Antigravity's prompt card.** No prompt-submit event exists. Its context injection runs through `injectSteps` on the invocation events, a different mechanism with a different payload, not wired up here.
+**Antigravity has no prompt-submit or session-start event**, which reads as "no context channel" and is not. `injectSteps` on `PreInvocation` splices an `ephemeralMessage` into the conversation trajectory before every model invocation — the same slot a prompt event occupies — so bootstrap and the per-turn card both ride it.
 
 **Cline has no profile at all.** Cline's hooks are TypeScript objects — `AgentPlugin` from `@cline/sdk`, with `beforeRun`/`afterRun`/`beforeTool`/`afterTool` — loaded into its runtime. There is no hooks file and no shell-command channel, so a `HostProfile` cannot reach them. Integrating would mean publishing and maintaining an npm plugin, which is a product decision rather than a profile. Cline uses Knowl over MCP like any other editor.
 
 **Gemini CLI is gone.** Discontinued upstream; its adapter was instructions-only and was removed. Antigravity replaces it. An existing `GEMINI.md` is left on disk.
+
+## What is actually impossible
+
+Only one thing in the table above is impossible rather than unbuilt: **Windsurf's capture nudge**. Windsurf has twelve hook events and not one of them fires at stop time, so there is nothing to intercept and nothing to auto-submit. It needs an upstream event.
+
+Everything else marked ❌ is one of: *blocked on a vendor bug someone else has to fix* (Cursor's mid-turn card, ticket T-C20310), *waiting on a host to ship hooks at all* (OpenCode, [#39275](https://github.com/anomalyco/opencode/issues/39275)), or *a different product* (Cline's npm plugin, the ACP proxy below).
+
+For MCP-only hosts, one thing is structurally out of reach and always will be: **blocking the host's own edit tool**. A tool result can refuse Knowl's tools and nothing else. What those hosts get instead is every capability that rides a tool result.
 
 ## Not built: the ACP lane
 
