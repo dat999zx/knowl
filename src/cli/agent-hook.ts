@@ -6,7 +6,7 @@ import { handleHostLifecycleEvent } from '../session/host-lifecycle.js';
 import { assertKnowledgeDatabasePresent } from './database-presence.js';
 import { readLifecyclePayload } from './agents/lifecycle.js';
 import { IncompleteHostHookPayloadError, normalizeHostHook } from './agents/host-hook.js';
-import { hostProfile } from '../session/hosts/index.js';
+import { hostProfile, isHookHost } from '../session/hosts/index.js';
 
 /**
  * The agent lifecycle hook, in its own module and off the CLI's import graph.
@@ -57,9 +57,20 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
     //
     // So the deny returns normally from here. Do not add a `process.exit` to this branch, and do
     // not "signal failure" from a hook that produced a verdict.
+    const profile = hostProfile(normalized.host);
     if (result.hostOutput) console.log(JSON.stringify(result.hostOutput));
-    else if (!hostProfile(normalized.host).nativeOutput) console.log(JSON.stringify(result));
+    else if (!profile.nativeOutput) console.log(JSON.stringify(result));
     await closeDb();
+
+    // The other convention, for hosts whose refusal is the exit status rather than stdout --
+    // see `denyExitCode`. The reason goes to stderr because that is where a host with no
+    // verdict channel looks for it, and it is the same string the envelope carries, so the two
+    // channels cannot disagree. Reached only when a refusal was actually deliverable:
+    // `runWriteGate` leaves `denied` unset when the profile declined to build an envelope.
+    if (result.denied !== undefined && profile.denyExitCode !== undefined) {
+      console.error(result.denied);
+      process.exitCode = profile.denyExitCode;
+    }
   } catch (error: any) {
     // Two silences, for two things that are not faults.
     //
@@ -78,6 +89,12 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
     }
     console.error(`Error handling agent hook: ${error.message}`);
     await closeDb().catch(() => {});
+    // A host that reads *any* unexpected non-zero status as a refusal must never see one from
+    // a crash. Copilot does exactly that, so exiting 1 here to report a Knowl bug would block
+    // the edit the agent was making, with no reason attached and nothing on screen tying the
+    // two together. The error still goes to stderr; only the status is withheld. Every other
+    // host keeps the loud exit, where it means what it says.
+    if (isHookHost(host) && hostProfile(host).refusesOnAnyNonZeroExit) return;
     process.exit(1);
   }
 }

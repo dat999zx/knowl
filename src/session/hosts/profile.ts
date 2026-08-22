@@ -38,6 +38,46 @@ export interface HostProfile {
    * silences the fallback channel for precisely the host that depends on it.
    */
   readonly midTurnDeliveryVerified: boolean;
+  /**
+   * The shape of the file `knowl init` writes this host's handlers into.
+   *
+   * A shape rather than a host name, because the shapes are shared and the vendors are not:
+   * Claude and Codex take the same nested object, Copilot takes it with a `version` key,
+   * Antigravity nests a hook *name* above the event, Cursor and the two flat hosts take a
+   * command list per event. Keying the merge here is what keeps adding a host to one file --
+   * the alternative is a widening union repeated in three function signatures, which is where
+   * the host name had already started to reappear.
+   *
+   * `none` is a real value rather than `undefined` so a profile that simply forgot to declare
+   * a shape fails conformance instead of silently registering nothing.
+   */
+  readonly hookConfigStyle:
+    | 'claude-nested' | 'copilot-nested' | 'antigravity-nested'
+    | 'cursor-flat' | 'openhands-flat' | 'windsurf-flat' | 'none';
+  /**
+   * The process exit status this host reads as a refusal, when its deny channel is the exit
+   * code rather than stdout.
+   *
+   * Two conventions, opposite rules, and both fail silently. Claude Code and Codex read a
+   * `PreToolUse` verdict from stdout **only on exit 0** -- a non-zero exit reads as a crashed
+   * hook and the verdict is discarded, so the tool runs anyway. Windsurf has no stdout verdict
+   * at all and blocks on **exit 2**, so returning JSON and exiting 0 there allows the write
+   * while reporting a block. OpenHands accepts both and lets the JSON win.
+   *
+   * Absent means the envelope is the refusal, which is the existing behaviour and the default.
+   */
+  readonly denyExitCode?: number;
+  /**
+   * True when this host treats *any* unexpected non-zero exit as a refusal.
+   *
+   * Copilot does: its reference states a non-zero exit other than 2 denies the tool call. That
+   * inverts the failure direction the rest of this subsystem is built on -- everywhere else a
+   * broken hook allows the write, and here a broken hook blocks somebody's edit with no reason
+   * attached, from a code path that was only trying to report its own crash. The hook entry
+   * reads this to suppress its error exit, so a Knowl bug degrades to "nothing was recorded for
+   * this call" rather than "you cannot edit this file".
+   */
+  readonly refusesOnAnyNonZeroExit?: true;
   identity(raw: Record<string, unknown>): HostIdentity;
   normalizedEvent(hostEvent: string): NormalizedHookEventName | undefined;
   isShellEvent(hostEvent: string, toolName: string): boolean;

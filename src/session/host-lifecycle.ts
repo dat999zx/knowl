@@ -148,6 +148,17 @@ export type HostLifecycleResult = {
   promotion?: Awaited<ReturnType<typeof finalizeMemorySession>>;
   handoff?: Awaited<ReturnType<typeof recordPendingSessionHandoff>>;
   hostOutput?: Record<string, unknown>;
+  /**
+   * The refusal text, present only when this result *is* a deliverable refusal.
+   *
+   * The reason itself rather than a flag, so a host whose deny channel carries no JSON renders
+   * the same string the envelope carries and the two channels cannot drift into disagreeing
+   * about what the agent was told. Set only once `denyToolCall` has actually produced an
+   * envelope: a host that declines to produce one degrades to allowing the write, and a bare
+   * boolean here would have turned that documented degradation into a block with an invented
+   * reason attached.
+   */
+  denied?: string;
   changes?: ChangeSummary;
   drift?: AutoDriftResult;
 };
@@ -617,7 +628,9 @@ async function runWriteGate(input: NormalizedHostHook): Promise<HostLifecycleRes
     // spent its one-shot, so the write proceeds and the finding stays open for the card to carry.
     // Silence is the right degradation -- the alternative is holding the block armed for a host
     // that has no way to explain it, which is a refusal with no reason attached.
-    return { accepted: true, sessionId: session.id, hostOutput: denyToolCall(decision.reason) };
+    const envelope = denyToolCall(decision.reason);
+    if (!envelope) return { accepted: true, sessionId: session.id };
+    return { accepted: true, sessionId: session.id, denied: decision.reason, hostOutput: envelope };
   } catch {
     return { accepted: true };
   }

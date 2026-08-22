@@ -20,6 +20,7 @@ export const codexProfile: HostProfile = {
   sharesSessionBinding: true,
   nativeOutput: true,
   midTurnDeliveryVerified: true,
+  hookConfigStyle: 'claude-nested',
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id) ?? hostString(raw.thread_id),

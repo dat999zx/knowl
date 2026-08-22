@@ -13,6 +13,7 @@ export const claudeDesktopProfile: HostProfile = {
   sharesSessionBinding: false,
   nativeOutput: true,
   midTurnDeliveryVerified: false,
+  hookConfigStyle: 'none',
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id),

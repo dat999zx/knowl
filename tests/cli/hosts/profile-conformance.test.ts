@@ -14,6 +14,34 @@ describe('host profile registry', () => {
     expect(() => hostProfile('nope' as HookHost)).toThrow('Unsupported hook host');
   });
 
+  it('a profile that refuses by exit status also renders a reason', () => {
+    for (const profile of Object.values(HOST_PROFILES)) {
+      if (profile.denyExitCode === undefined) continue;
+      expect(profile.denyExitCode, profile.host).toBeGreaterThan(0);
+      expect(typeof profile.denyToolCall, profile.host).toBe('function');
+    }
+  });
+
+  it('a host that registers hook handlers declares the shape of the file they go in', () => {
+    for (const profile of Object.values(HOST_PROFILES)) {
+      // `generic` declares events so third-party callers can send them, but `knowl init`
+      // never writes a file for it -- it is invoked directly, never installed.
+      const installs = profile.hookEvents.length > 0 && profile.host !== 'generic';
+      expect(profile.hookConfigStyle === 'none', profile.host).toBe(!installs);
+    }
+  });
+
+  it('never declares its prompt event as a lifecycle event as well', () => {
+    // `mergeNestedHookConfig` writes the lifecycle handler under the event key and then
+    // overwrites that same key with the reminder entry, rebuilt from the pre-merge map. A
+    // host declaring both loses its lifecycle handler permanently -- re-running `knowl init`
+    // reproduces it, and `verifyNestedHookConfig` then reports stale hooks forever.
+    for (const profile of Object.values(HOST_PROFILES)) {
+      if (!profile.promptEvent) continue;
+      expect(profile.hookEvents, profile.host).not.toContain(profile.promptEvent);
+    }
+  });
+
   describe.each(ALL_HOSTS)('%s', host => {
     const profile = () => hostProfile(host);
 
