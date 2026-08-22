@@ -10,7 +10,9 @@ import { SessionEventType } from './types.js';
  * the bottom where both sides can reach it without either depending on the other.
  */
 
-export type HookHost = 'codex' | 'claude' | 'cursor' | 'claude-desktop' | 'generic';
+export type HookHost =
+  | 'codex' | 'claude' | 'cursor' | 'claude-desktop' | 'generic'
+  | 'copilot' | 'openhands' | 'antigravity' | 'windsurf';
 
 export type NormalizedHookEventName =
   | 'session-start'

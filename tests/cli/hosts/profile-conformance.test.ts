@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { HOST_PROFILES, hostProfile } from '../../../src/session/hosts/index.js';
 import { HookHost } from '../../../src/cli/agents/host-hook.js';
 
-const ALL_HOSTS: HookHost[] = ['codex', 'claude', 'cursor', 'claude-desktop', 'generic'];
+const ALL_HOSTS: HookHost[] = [
+  'codex', 'claude', 'cursor', 'claude-desktop', 'generic',
+  'copilot', 'openhands', 'antigravity', 'windsurf',
+];
 
 describe('host profile registry', () => {
   it('has exactly one profile per HookHost', () => {
@@ -106,7 +109,13 @@ describe('host profile registry', () => {
 
     it('declares mid-turn support only when it registers a tool event', () => {
       // A host with no tool-call event has nowhere to attach a mid-turn card.
-      const hasToolEvent = profile().hookEvents.some(event => /posttooluse|aftershellexecution/i.test(event));
+      //
+      // Asked of the profile rather than matched against a list of spellings. The regex this
+      // replaces (`/posttooluse|aftershellexecution/i`) had to be edited every time a host
+      // named the same event differently, and it failed open: an unrecognised spelling read as
+      // "no tool event", so the assertion it exists to make quietly stopped being made.
+      // `session-event` *is* the definition of a mid-turn attachment point.
+      const hasToolEvent = profile().hookEvents.some(event => profile().normalizedEvent(event) === 'session-event');
       if (profile().midTurnContext('x') !== undefined) expect(hasToolEvent).toBe(true);
     });
   });

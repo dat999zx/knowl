@@ -5,6 +5,10 @@ import { codexProfile } from './codex.js';
 import { cursorProfile } from './cursor.js';
 import { claudeDesktopProfile } from './claude-desktop.js';
 import { genericProfile } from './generic.js';
+import { copilotProfile } from './copilot.js';
+import { openhandsProfile } from './openhands.js';
+import { antigravityProfile } from './antigravity.js';
+import { windsurfProfile } from './windsurf.js';
 
 export type { HostIdentity, HostOutput, HostProfile } from './profile.js';
 
@@ -14,6 +18,10 @@ export const HOST_PROFILES: Record<HookHost, HostProfile> = {
   cursor: cursorProfile,
   'claude-desktop': claudeDesktopProfile,
   generic: genericProfile,
+  copilot: copilotProfile,
+  openhands: openhandsProfile,
+  antigravity: antigravityProfile,
+  windsurf: windsurfProfile,
 };
 
 export function hostProfile(host: HookHost): HostProfile {

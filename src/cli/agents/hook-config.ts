@@ -4,7 +4,8 @@ import { hostProfile } from '../../session/hosts/index.js';
 
 type NestedHook = { type: 'command'; command: string; timeout: number; statusMessage: string };
 type NestedEntry = { matcher: string; hooks: NestedHook[] };
-type CursorEntry = { command: string; timeout: number };
+// One entry in a flat command list. `timeout` is Cursor's; Windsurf documents no such field.
+type FlatEntry = { command: string; timeout?: number };
 
 // One definition per host, in that host's profile. These re-exports keep existing
 // importers working without duplicating the lists.
@@ -99,9 +100,17 @@ function nestedEntry(platform: NodeJS.Platform, host: HookHost, event: string): 
   };
 }
 
-const cursorEntry = (platform: NodeJS.Platform, event: string): CursorEntry => ({
-  command: knowlHookCommand(platform, 'cursor', event),
-  timeout: 30,
+/**
+ * One entry in a flat command list.
+ *
+ * Cursor documents `timeout`; Windsurf documents `command`, `powershell`, `show_output` and
+ * `working_directory`, and no timeout. An undocumented key is usually ignored and occasionally
+ * rejected, and a hooks file a host refuses to parse takes every *other* handler in it down
+ * too -- so each host gets exactly the fields its own reference lists.
+ */
+const flatEntry = (platform: NodeJS.Platform, host: HookHost, event: string): FlatEntry => ({
+  command: knowlHookCommand(platform, host, event),
+  ...(host === 'cursor' ? { timeout: 30 } : {}),
 });
 
 const equal = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
@@ -211,7 +220,12 @@ export async function verifyNestedHookConfig(
   }
 }
 
-export async function mergeCursorHookConfig(configPath: string, platform: NodeJS.Platform): Promise<MergeStatus> {
+export async function mergeFlatHookConfig(
+  configPath: string,
+  platform: NodeJS.Platform,
+  host: HookHost,
+  extraKeys: Record<string, unknown> = {},
+): Promise<MergeStatus> {
   const existing = await readTextIfExists(configPath);
   const config = existing === undefined ? {} as Record<string, unknown> : JSON.parse(existing) as Record<string, unknown>;
   const hooks = config.hooks && typeof config.hooks === 'object' && !Array.isArray(config.hooks)
@@ -219,35 +233,181 @@ export async function mergeCursorHookConfig(configPath: string, platform: NodeJS
     : {};
   let hadOwnEntry = false;
   const nextHooks = { ...hooks };
-  for (const event of retiredEventsFor('cursor')) {
+  for (const event of retiredEventsFor(host)) {
     const current = Array.isArray(hooks[event]) ? hooks[event] as Record<string, unknown>[] : [];
-    const retained = current.filter(entry => !ownsCommand(entry.command, 'cursor'));
+    const retained = current.filter(entry => !ownsCommand(entry.command, host));
     hadOwnEntry ||= retained.length !== current.length;
     if (retained.length > 0) nextHooks[event] = retained;
     else delete nextHooks[event];
   }
-  for (const event of CURSOR_HOOK_EVENTS) {
+  for (const event of hostProfile(host).hookEvents) {
     const current = Array.isArray(hooks[event]) ? hooks[event] as Record<string, unknown>[] : [];
     const retained = current.filter(entry => {
-      const owned = ownsCommand(entry.command, 'cursor');
+      const owned = ownsCommand(entry.command, host);
       hadOwnEntry ||= owned;
       return !owned;
     });
-    nextHooks[event] = [...retained, cursorEntry(platform, event)];
+    nextHooks[event] = [...retained, flatEntry(platform, host, event)];
   }
-  const next = { ...config, version: 1, hooks: nextHooks };
+  const next = { ...config, ...extraKeys, hooks: nextHooks };
   if (existing !== undefined && equal(config, next)) return 'unchanged';
   await writeWithBackup(configPath, `${JSON.stringify(next, null, 2)}\n`, existing);
   return hadOwnEntry ? 'updated' : 'configured';
 }
 
-export async function verifyCursorHookConfig(configPath: string, platform: NodeJS.Platform): Promise<boolean> {
+export async function verifyFlatHookConfig(
+  configPath: string,
+  platform: NodeJS.Platform,
+  host: HookHost,
+  extraKeys: Record<string, unknown> = {},
+): Promise<boolean> {
   try {
     const config = JSON.parse(await readTextIfExists(configPath) ?? '{}') as Record<string, any>;
-    return config.version === 1 && retiredEventsFor('cursor').every(event => !(config.hooks?.[event] as unknown[] | undefined)?.some(entry => ownsCommand((entry as Record<string, unknown>).command, 'cursor')))
-      && CURSOR_HOOK_EVENTS.every(event => Array.isArray(config.hooks?.[event])
-      && config.hooks[event].some((entry: unknown) => equal(entry, cursorEntry(platform, event))));
+    return Object.entries(extraKeys).every(([key, value]) => equal(config[key], value))
+      && retiredEventsFor(host).every(event => !(config.hooks?.[event] as unknown[] | undefined)?.some(entry => ownsCommand((entry as Record<string, unknown>).command, host)))
+      && hostProfile(host).hookEvents.every(event => Array.isArray(config.hooks?.[event])
+      && config.hooks[event].some((entry: unknown) => equal(entry, flatEntry(platform, host, event))));
   } catch {
     return false;
+  }
+}
+
+/** Cursor's file is the flat shape plus `version: 1`. Kept for existing importers. */
+export const mergeCursorHookConfig = (configPath: string, platform: NodeJS.Platform) =>
+  mergeFlatHookConfig(configPath, platform, 'cursor', { version: 1 });
+export const verifyCursorHookConfig = (configPath: string, platform: NodeJS.Platform) =>
+  verifyFlatHookConfig(configPath, platform, 'cursor', { version: 1 });
+
+/**
+ * OpenHands: the same matcher-and-hooks arrays, but with the **events at the top level**.
+ *
+ * There is no `hooks` wrapper. Writing one produces a file OpenHands parses without error and
+ * acts on not at all, which is the worst shape of failure available here -- `verify` passes,
+ * `doctor` is quiet, and nothing ever fires.
+ */
+export async function mergeOpenHandsHookConfig(
+  configPath: string,
+  platform: NodeJS.Platform,
+  host: HookHost,
+): Promise<MergeStatus> {
+  const existing = await readTextIfExists(configPath);
+  const config = existing === undefined ? {} as Record<string, unknown> : JSON.parse(existing) as Record<string, unknown>;
+  let hadOwnEntry = false;
+  const next = { ...config };
+  for (const event of retiredEventsFor(host)) {
+    const current = Array.isArray(config[event]) ? config[event] as Record<string, any>[] : [];
+    const retained = removeOwnedNestedHandlers(current, command => ownsCommand(command, host));
+    hadOwnEntry ||= retained.removed;
+    if (retained.entries.length > 0) next[event] = retained.entries;
+    else delete next[event];
+  }
+  for (const event of hostProfile(host).hookEvents) {
+    const current = Array.isArray(config[event]) ? config[event] as Record<string, any>[] : [];
+    const filtered = removeOwnedNestedHandlers(current, command => ownsCommand(command, host));
+    hadOwnEntry ||= filtered.removed;
+    next[event] = [...filtered.entries, openHandsEntry(platform, host, event)];
+  }
+  if (existing !== undefined && equal(config, next)) return 'unchanged';
+  await writeWithBackup(configPath, `${JSON.stringify(next, null, 2)}\n`, existing);
+  return hadOwnEntry ? 'updated' : 'configured';
+}
+
+// `type` and `async` are optional and default correctly; `statusMessage` is not in OpenHands'
+// schema at all, so the nested writer's entry shape cannot be reused verbatim.
+const openHandsEntry = (platform: NodeJS.Platform, host: HookHost, event: string) => ({
+  matcher: '*',
+  hooks: [{ command: knowlHookCommand(platform, host, event), timeout: 30 }],
+});
+
+export async function verifyOpenHandsHookConfig(
+  configPath: string,
+  platform: NodeJS.Platform,
+  host: HookHost,
+): Promise<boolean> {
+  try {
+    const config = JSON.parse(await readTextIfExists(configPath) ?? '{}') as Record<string, any>;
+    return retiredEventsFor(host).every(event => !(config[event] as any[] | undefined)?.some((entry: any) =>
+      (Array.isArray(entry.hooks) ? entry.hooks : []).some((hook: any) => ownsCommand(hook.command, host))))
+      && hostProfile(host).hookEvents.every(event => Array.isArray(config[event])
+      && config[event].some((entry: unknown) => equal(entry, openHandsEntry(platform, host, event))));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Antigravity: one level deeper again -- a *hook name* above the event.
+ *
+ * `{"knowl": {"PreToolUse": [{matcher, hooks: [...]}]}}`. Owning only the `"knowl"` key is what
+ * makes this safe to merge: every other top-level key is somebody else's hook set, and this
+ * never reads or rewrites one.
+ */
+const ANTIGRAVITY_HOOK_NAME = 'knowl';
+
+export async function mergeAntigravityHookConfig(
+  configPath: string,
+  platform: NodeJS.Platform,
+  host: HookHost,
+): Promise<MergeStatus> {
+  const existing = await readTextIfExists(configPath);
+  const config = existing === undefined ? {} as Record<string, unknown> : JSON.parse(existing) as Record<string, unknown>;
+  const ours: Record<string, unknown> = {};
+  for (const event of hostProfile(host).hookEvents) ours[event] = [nestedEntry(platform, host, event)];
+  const next = { ...config, [ANTIGRAVITY_HOOK_NAME]: ours };
+  if (existing !== undefined && equal(config, next)) return 'unchanged';
+  const hadOwnEntry = config[ANTIGRAVITY_HOOK_NAME] !== undefined;
+  await writeWithBackup(configPath, `${JSON.stringify(next, null, 2)}\n`, existing);
+  return hadOwnEntry ? 'updated' : 'configured';
+}
+
+export async function verifyAntigravityHookConfig(
+  configPath: string,
+  platform: NodeJS.Platform,
+  host: HookHost,
+): Promise<boolean> {
+  try {
+    const config = JSON.parse(await readTextIfExists(configPath) ?? '{}') as Record<string, any>;
+    const ours = config[ANTIGRAVITY_HOOK_NAME];
+    return Boolean(ours) && hostProfile(host).hookEvents.every(event => Array.isArray(ours[event])
+      && ours[event].some((entry: unknown) => equal(entry, nestedEntry(platform, host, event))));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Write this host's hook handlers in whatever shape its profile declares.
+ *
+ * The one place that knows a shape's quirks -- Copilot's `version` key, Antigravity's extra
+ * level, OpenHands having no wrapper at all. Every caller asks for a host and gets the right
+ * file; none of them repeats the host name a second time to pick a writer.
+ */
+export async function mergeHookConfig(
+  configPath: string,
+  platform: NodeJS.Platform,
+  host: HookHost,
+): Promise<MergeStatus> {
+  switch (hostProfile(host).hookConfigStyle) {
+    case 'none': return 'unchanged';
+    case 'flat-commands': return mergeFlatHookConfig(configPath, platform, host, host === 'cursor' ? { version: 1 } : {});
+    case 'copilot-nested': return mergeNestedHookConfig(configPath, platform, host, { version: 1 });
+    case 'antigravity-nested': return mergeAntigravityHookConfig(configPath, platform, host);
+    case 'openhands-toplevel': return mergeOpenHandsHookConfig(configPath, platform, host);
+    default: return mergeNestedHookConfig(configPath, platform, host);
+  }
+}
+
+export async function verifyHookConfig(
+  configPath: string,
+  platform: NodeJS.Platform,
+  host: HookHost,
+): Promise<boolean> {
+  switch (hostProfile(host).hookConfigStyle) {
+    case 'none': return true;
+    case 'flat-commands': return verifyFlatHookConfig(configPath, platform, host, host === 'cursor' ? { version: 1 } : {});
+    case 'copilot-nested': return verifyNestedHookConfig(configPath, platform, host, { version: 1 });
+    case 'antigravity-nested': return verifyAntigravityHookConfig(configPath, platform, host);
+    case 'openhands-toplevel': return verifyOpenHandsHookConfig(configPath, platform, host);
+    default: return verifyNestedHookConfig(configPath, platform, host);
   }
 }

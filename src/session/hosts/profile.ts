@@ -52,8 +52,17 @@ export interface HostProfile {
    * a shape fails conformance instead of silently registering nothing.
    */
   readonly hookConfigStyle:
-    | 'claude-nested' | 'copilot-nested' | 'antigravity-nested'
-    | 'cursor-flat' | 'openhands-flat' | 'windsurf-flat' | 'none';
+    /** `{hooks: {Event: [{matcher, hooks: [...]}]}}` -- Claude Code, Codex. */
+    | 'claude-nested'
+    /** The same, plus the `"version": 1` key Copilot rejects a file without. */
+    | 'copilot-nested'
+    /** `{"<hook-name>": {Event: [{matcher, hooks: [...]}]}}` -- one level deeper. */
+    | 'antigravity-nested'
+    /** Events at the **top level**, with no `hooks` wrapper around them. */
+    | 'openhands-toplevel'
+    /** `{hooks: {event: [{command, ...}]}}` -- a flat command list, no matcher. Cursor, Windsurf. */
+    | 'flat-commands'
+    | 'none';
   /**
    * The process exit status this host reads as a refusal, when its deny channel is the exit
    * code rather than stdout.

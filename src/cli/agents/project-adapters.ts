@@ -4,7 +4,7 @@ import { parse } from 'smol-toml';
 import { mergeCodexTomlConfig, mergeJsonMcpConfig, McpEntry } from './files.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentIntegrationResult } from './types.js';
 import { unsupportedLifecycleResult } from './lifecycle-config.js';
-import { mergeNestedHookConfig, verifyNestedHookConfig } from './hook-config.js';
+import { mergeHookConfig, verifyHookConfig } from './hook-config.js';
 import {
   installKnowlHostInstructions,
   NativeInstructionHost,
@@ -59,10 +59,10 @@ export function createCodexAdapter(environment: AgentEnvironment): AgentAdapter 
     async lifecycleCapability() { return 'supported'; },
     async configureLifecycle(root) {
       const pathname = lifecyclePath(root);
-      const status = await mergeNestedHookConfig(pathname, environment.platform, 'codex');
+      const status = await mergeHookConfig(pathname, environment.platform, 'codex');
       return { agent: 'codex', status, scope: 'project', configPath: pathname };
     },
-    async verifyLifecycle(root) { return verifyNestedHookConfig(lifecyclePath(root), environment.platform, 'codex'); },
+    async verifyLifecycle(root) { return verifyHookConfig(lifecyclePath(root), environment.platform, 'codex'); },
   };
 }
 
@@ -96,11 +96,11 @@ function createJsonProjectAdapter(
     async configureLifecycle(root) {
       if (name !== 'claude') return unsupportedLifecycleResult(name, 'project', configPath(root));
       const pathname = lifecyclePath(root);
-      const status = await mergeNestedHookConfig(pathname, environment.platform, 'claude');
+      const status = await mergeHookConfig(pathname, environment.platform, 'claude');
       return { agent: name, status, scope: 'project', configPath: pathname };
     },
     async verifyLifecycle(root) {
-      return name === 'claude' && verifyNestedHookConfig(lifecyclePath(root), environment.platform, 'claude');
+      return name === 'claude' && verifyHookConfig(lifecyclePath(root), environment.platform, 'claude');
     },
     ...(instructionHost ? {
       async configureInstructions(root: string) {
