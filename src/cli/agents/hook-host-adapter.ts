@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { mergeJsonMcpConfig, McpEntry } from './files.js';
+import { mcpEntryMatches, mergeJsonMcpConfig, McpEntry } from './files.js';
 import { mergeHookConfig, verifyHookConfig } from './hook-config.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentIntegrationResult, AgentName, IntegrationScope } from './types.js';
 import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
@@ -29,14 +29,16 @@ export interface HookHostAdapterSpec {
   hooksPath: (root: string) => string;
 }
 
-const commandEntry = (environment: AgentEnvironment): McpEntry =>
-  ({ command: environment.platform === 'win32' ? 'knowl.cmd' : 'knowl', args: ['serve'] });
+const commandEntry = (environment: AgentEnvironment, host: string): McpEntry => ({
+  command: environment.platform === 'win32' ? 'knowl.cmd' : 'knowl',
+  args: ['serve', '--host', host],
+});
 
 async function jsonMcpConfigured(pathname: string, expected: McpEntry): Promise<boolean> {
   try {
     const config = JSON.parse(await fs.readFile(pathname, 'utf8')) as Record<string, any>;
-    const value = config.mcpServers?.[KNOWL_MCP_SERVER_KEY];
-    return value?.command === expected.command && JSON.stringify(value.args) === JSON.stringify(expected.args);
+    // The shared matcher, which tolerates an entry written before `--host` existed.
+    return mcpEntryMatches(config.mcpServers?.[KNOWL_MCP_SERVER_KEY], expected);
   } catch (error: any) {
     if (error.code === 'ENOENT') return false;
     throw error;
@@ -53,7 +55,7 @@ async function jsonMcpConfigured(pathname: string, expected: McpEntry): Promise<
  * no profile at all: `hostProfile` throws for those, from inside `lifecycleCapability`.
  */
 export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: AgentEnvironment): AgentAdapter {
-  const entry = commandEntry(environment);
+  const entry = commandEntry(environment, spec.name);
   const mcpScope: IntegrationScope = spec.mcp.kind === 'json' ? spec.mcp.scope : 'project';
   return {
     name: spec.name,

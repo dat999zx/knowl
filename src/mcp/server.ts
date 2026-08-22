@@ -1,4 +1,5 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { mcpModeLineForHost } from '../session/hosts/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { ProjectConfig } from '../core/types.js';
 import { findProjectRoot, loadConfig } from '../core/config.js';
@@ -34,6 +35,14 @@ export interface DeferredServerState {
   whenReady?: () => Promise<void>;
   /** Appended to the instructions card verbatim; auto-init announces itself through this. */
   instructionsSuffix?: string;
+  /**
+   * The lifecycle sentence for the host that registered this server, from `serve --host`.
+   *
+   * Absent keeps today's neutral card, which is what every MCP config written before this
+   * existed still produces -- so an install that predates the flag keeps working unchanged and
+   * simply keeps reading the conditional line.
+   */
+  modeLine?: string;
 }
 
 /**
@@ -71,7 +80,7 @@ export function createMcpServer(
       // is invisible, while this card is captured at construction and replayed to the model.
       // One line naming the directory serve created state in is the difference between a
       // silent store and an invisible one.
-      instructions: mcpServerInstructions(getConfig()) + (deferred.instructionsSuffix ?? ''),
+      instructions: mcpServerInstructions(getConfig(), deferred.modeLine) + (deferred.instructionsSuffix ?? ''),
     }
   );
 
@@ -124,7 +133,7 @@ export function createMcpServer(
  * The startup trace deliberately stays armed until initialization settles, so a database that
  * is still stuck at 25s says so on stderr even though the handshake itself already succeeded.
  */
-export async function startMcpServer(): Promise<void> {
+export async function startMcpServer(options: { host?: string } = {}): Promise<void> {
   beginStartupTrace({ version: PACKAGE_VERSION });
 
   let projectRoot: string | null = null;
@@ -203,6 +212,7 @@ export async function startMcpServer(): Promise<void> {
     getConfig: () => config,
     getInitError: () => initError,
     whenReady: () => ready,
+    modeLine: mcpModeLineForHost(options.host),
     ...(autoInitialized ? {
       // The path is collapsed to single spaces before it goes in: this card is the
       // highest-trust text the server hands a model, and a POSIX directory name may contain

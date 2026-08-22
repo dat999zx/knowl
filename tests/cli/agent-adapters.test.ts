@@ -85,7 +85,7 @@ describe('agent adapters', () => {
     await adapter.configure(PROJECT);
     const config = parse(await fs.readFile(path.join(PROJECT, '.codex', 'config.toml'), 'utf8')) as Record<string, any>;
     expect(config.mcp_servers.knowl.command).toBe('knowl.cmd');
-    expect(config.mcp_servers.knowl.args).toEqual(['serve']);
+    expect(config.mcp_servers.knowl.args).toEqual(['serve', '--host', 'codex']);
     expect(await adapter.verify(PROJECT)).toBe(true);
   });
 
@@ -95,7 +95,7 @@ describe('agent adapters', () => {
     await claude.configure(PROJECT);
     await cursor.configure(PROJECT);
     expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.command).toBe('knowl.cmd');
-    expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.args).toEqual(['serve']);
+    expect((await readJson(path.join(PROJECT, '.mcp.json'))).mcpServers.knowl.args).toEqual(['serve', '--host', 'claude']);
     expect((await readJson(path.join(PROJECT, '.cursor', 'mcp.json'))).mcpServers.knowl.command).toBe('knowl.cmd');
   });
 
@@ -118,7 +118,7 @@ describe('agent adapters', () => {
     expect(await gemini.configureInstructions!(PROJECT)).toMatchObject({ status: 'configured' });
     const settings = await readJson(path.join(PROJECT, '.gemini', 'settings.json'));
     expect(settings.theme).toBe('dark');
-    expect(settings.mcpServers.knowl).toEqual({ command: 'knowl.cmd', args: ['serve'] });
+    expect(settings.mcpServers.knowl).toEqual({ command: 'knowl.cmd', args: ['serve', '--host', 'gemini'] });
     expect(await fs.readFile(path.join(PROJECT, 'GEMINI.md'), 'utf8')).toBe('@./KNOWL.md\n');
     expect(await gemini.verify(PROJECT)).toBe(true);
     expect(await gemini.verifyInstructions!(PROJECT)).toBe(true);

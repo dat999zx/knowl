@@ -166,3 +166,47 @@ describe('every host with a deny channel can actually deliver a refusal', () => 
     }
   });
 });
+
+describe('the --host flag on the MCP entry', () => {
+  it('names the host, so the initialize card can be exact', async () => {
+    const { createHookHostAdapter, hookHostSpecs } = await import('../../src/cli/agents/hook-host-adapter.js');
+    const dir = await workspace();
+    const environment = {
+      platform: 'linux' as const, homeDir: dir, appDataDir: dir, commandExists: async () => true,
+    };
+    const copilot = hookHostSpecs(environment).find(spec => spec.name === 'copilot')!;
+    await createHookHostAdapter(copilot, environment).configure(dir);
+
+    const config = await readJson(path.join(dir, '.github', 'mcp.json'));
+    expect(config.mcpServers.knowl.args).toEqual(['serve', '--host', 'copilot']);
+  });
+
+  it('does not report an install written before the flag existed as unconfigured', async () => {
+    // The upgrade case. A strict positional comparison would have put every existing user into
+    // doctor's drift list and invited `doctor --fix` to rewrite files that were working.
+    const { mcpEntryMatches } = await import('../../src/cli/agents/files.js');
+    const withHost = { command: 'knowl', args: ['serve', '--host', 'claude'] };
+
+    expect(mcpEntryMatches({ command: 'knowl', args: ['serve'] }, withHost)).toBe(true);
+    expect(mcpEntryMatches(withHost, withHost)).toBe(true);
+    // An entry somebody edited on purpose is still a mismatch.
+    expect(mcpEntryMatches({ command: 'knowl', args: ['serve', '--verbose'] }, withHost)).toBe(false);
+    expect(mcpEntryMatches({ command: 'other', args: ['serve'] }, withHost)).toBe(false);
+  });
+
+  it('gives each host a mode line it can act on without inferring which branch applies', async () => {
+    const { mcpModeLineForHost } = await import('../../src/session/hosts/index.js');
+    const { KNOWL_HOST_NEUTRAL_MODE_LINE } = await import('../../src/core/knowl-guidance.js');
+
+    expect(mcpModeLineForHost('claude')).toContain('Claude hooks own lifecycle');
+    expect(mcpModeLineForHost('claude')).not.toContain('when active');
+    expect(mcpModeLineForHost('copilot')).toContain('copilot hooks own lifecycle');
+    // No hook channel at all: told it owns the loop, rather than left with a conditional.
+    expect(mcpModeLineForHost('claude-desktop')).toContain('you own the work loop');
+    expect(mcpModeLineForHost('claude-desktop')).not.toContain('when active');
+    // An unknown or absent host keeps today's card rather than throwing: this string comes off
+    // a command line, and a hand-edited config must not stop the server booting.
+    expect(mcpModeLineForHost(undefined)).toBe(KNOWL_HOST_NEUTRAL_MODE_LINE);
+    expect(mcpModeLineForHost('not-a-host')).toBe(KNOWL_HOST_NEUTRAL_MODE_LINE);
+  });
+});

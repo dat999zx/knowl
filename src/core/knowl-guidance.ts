@@ -128,6 +128,8 @@ export function renderManagedKnowlGuidanceSection(): string {
   return `${KNOWL_GUIDANCE_START_MARKER}\n${renderFullKnowlGuidance()}\n${KNOWL_GUIDANCE_END_MARKER}\n`;
 }
 
+/** The manual-loop line, for a host with no hook channel at all. */
+export const KNOWL_MANUAL_MODE_LINE = 'Mode: this host has no lifecycle hooks, so you own the work loop. Use knowl_task_start once for resumable work, knowl_task_checkpoint at milestones, and knowl_task_finish once after verification.';
 export const KNOWL_CLAUDE_MODE_LINE = 'Mode: Claude hooks own lifecycle. Never call knowl_task_start, knowl_task_checkpoint, knowl_task_finish, or knowl_session_finish while active.';
 export const KNOWL_HOST_NEUTRAL_MODE_LINE = 'Mode: verified hooks, when active, own lifecycle. Never call knowl_task_start, knowl_task_checkpoint, knowl_task_finish, or knowl_session_finish while active; otherwise use the manual fallback.';
 
@@ -204,9 +206,28 @@ export const KNOWL_MCP_SERVER_INSTRUCTIONS = renderCompactKnowlGuidance(KNOWL_HO
  * Returns the shared constant when the feature is off, so the common case allocates nothing and
  * stays byte-identical to what every existing test asserts.
  */
-export function mcpServerInstructions(config: ProjectConfig | null): string {
-  if (!config || !isTranscriptSearchEnabled(config)) return KNOWL_MCP_SERVER_INSTRUCTIONS;
-  return renderCompactKnowlGuidance(KNOWL_HOST_NEUTRAL_MODE_LINE, { transcripts: true });
+/**
+ * The `initialize` card, told which host is reading it when the install knows.
+ *
+ * Without a host this sends the neutral line -- *"verified hooks, when active, own lifecycle
+ * ... otherwise use the manual fallback"* -- which hands the agent a conditional and leaves it
+ * to work out which branch applies. That is a question the install already answered: `knowl
+ * init` writes the host's own MCP config and can put the name in the command line, so a Claude
+ * session can be told its hooks own the lifecycle, full stop, and Claude Desktop can be told it
+ * owns the loop, full stop.
+ *
+ * `KNOWL_CLAUDE_OPERATIONAL_CARD` has been built and pinned by tests since PR #12 and never
+ * sent; this is what sends it.
+ *
+ * Takes the resolved line rather than the host name: this module is layer 0 and the profiles are
+ * layer 3, so it cannot ask which line a host wants. `mcpModeLineForHost` in
+ * `src/session/hosts/` answers that, and the MCP layer sits above both.
+ */
+export function mcpServerInstructions(config: ProjectConfig | null, modeLine?: string): string {
+  const transcripts = Boolean(config && isTranscriptSearchEnabled(config));
+  const line = modeLine ?? KNOWL_HOST_NEUTRAL_MODE_LINE;
+  if (!transcripts && line === KNOWL_HOST_NEUTRAL_MODE_LINE) return KNOWL_MCP_SERVER_INSTRUCTIONS;
+  return renderCompactKnowlGuidance(line, transcripts ? { transcripts: true } : {});
 }
 export const KNOWL_CLAUDE_CONTINUATION_REMINDER = 'KNOWL CONTINUATION: Keep the project-memory workflow active. Use relevant active memory. Before entering a new project area, call knowl_query with the words that name the subject before repository files or commands. Store durable findings, stated goals, and recurring diagnoses. Claude hooks own lifecycle; do not start the manual task loop.';
 

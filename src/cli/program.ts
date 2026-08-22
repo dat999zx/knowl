@@ -4138,13 +4138,17 @@ program
 program
   .command('serve')
   .description('Start the Model Context Protocol (MCP) server for KNOWL')
-  .action(async () => {
+  // Written by `knowl init` into each host's own MCP config. The `initialize` card is captured
+  // by the SDK at construction, before the client handshake, so the client's identity arrives
+  // too late to be read from it -- but the install already knew which host it was writing for.
+  .option('--host <host>', 'the host this server was registered for, so its guidance card can be exact')
+  .action(async (options: { host?: string }) => {
     try {
       console.error(`🚀 Starting KNOWL MCP Server...`);
       // Imported here, not at module scope: the MCP SDK costs ~530ms to load and only this
       // command needs it, so every other CLI invocation was paying for it.
       const { startMcpServer } = await import('../mcp/server.js');
-      await startMcpServer();
+      await startMcpServer({ host: options.host });
     } catch (error: any) {
       console.error(`❌ Failed to start MCP Server: ${error.message}`);
       process.exit(1);
