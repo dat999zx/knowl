@@ -101,6 +101,35 @@ const IMPACT_READ_TOOLS = new Set(['Read', 'NotebookRead']);
 /** The write tools whose paths trigger a re-index and certain-tier detection. */
 const IMPACT_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
+/**
+ * Whether this event read or wrote a file, in the vocabulary of the host that sent it.
+ *
+ * The two sets above are Claude Code's names, and they were consulted for every host. On any
+ * other one they matched nothing: reads were never recorded, so the detector had no beliefs to
+ * invalidate, and writes were never recognised, so `runWriteGate` returned "no opinion" before
+ * it ever asked the profile whether it could refuse. A host could therefore declare a working
+ * deny channel and be structurally unable to reach it.
+ *
+ * The profile answers when it has a vocabulary, and falls back to Claude's names when it does
+ * not -- which is exactly the set `claude`, `codex` and `generic` use, so those hosts keep the
+ * behaviour they had. A host that says it in the event name instead implements `writesFiles`.
+ */
+function toolReadsFile(input: NormalizedHostHook): boolean {
+  const profile = hostProfile(input.host);
+  const toolName = input.toolName ?? '';
+  if (profile.readsFiles?.(input.hostEvent ?? '', toolName)) return true;
+  if (profile.readToolNames) return profile.readToolNames.includes(toolName);
+  return IMPACT_READ_TOOLS.has(toolName);
+}
+
+function toolWritesFile(input: NormalizedHostHook): boolean {
+  const profile = hostProfile(input.host);
+  const toolName = input.toolName ?? '';
+  if (profile.writesFiles?.(input.hostEvent ?? '', toolName)) return true;
+  if (profile.writeToolNames) return profile.writeToolNames.includes(toolName);
+  return IMPACT_WRITE_TOOLS.has(toolName);
+}
+
 
 /**
  * Symbols above which one read records a single `file://` row instead of one row per symbol.
@@ -577,11 +606,10 @@ async function runToolEventImpact(input: NormalizedHostHook, sessionId: string):
   try {
     if (!await impactEnabled(input.projectRoot)) return [];
 
-    const toolName = input.toolName ?? '';
     const paths = impactChangedPaths(input.payload);
-    if (paths.length > 0 && IMPACT_READ_TOOLS.has(toolName)) {
+    if (paths.length > 0 && toolReadsFile(input)) {
       await recordToolReads(input, sessionId, paths);
-    } else if (paths.length > 0 && IMPACT_WRITE_TOOLS.has(toolName)) {
+    } else if (paths.length > 0 && toolWritesFile(input)) {
       await detectCertainImpactBestEffort(input.projectRoot, paths, sessionId);
     }
     return await openImpactCardEntries(sessionId);
@@ -608,7 +636,7 @@ async function runToolEventImpact(input: NormalizedHostHook, sessionId: string):
  */
 async function runWriteGate(input: NormalizedHostHook): Promise<HostLifecycleResult> {
   try {
-    if (!IMPACT_WRITE_TOOLS.has(input.toolName ?? '')) return { accepted: true };
+    if (!toolWritesFile(input)) return { accepted: true };
     const paths = impactChangedPaths(input.payload);
     if (paths.length === 0) return { accepted: true };
 

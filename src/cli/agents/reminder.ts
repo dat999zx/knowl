@@ -2,19 +2,14 @@ import { promptReminderFor } from '../../core/knowl-guidance.js';
 import { hostProfile, isHookHost, HostOutput } from '../../session/hosts/index.js';
 
 /**
- * The label the prompt card uses for a host, where the host key is not what a person calls it.
+ * Hosts whose key does not title-case into their own name.
  *
- * Only hosts whose key reads badly in a sentence need an entry; everything else is title-cased
- * from the key, so adding a host does not mean remembering to add a line here.
+ * Every other host does -- `codex` -> `Codex`, `windsurf` -> `Windsurf` -- so listing them here
+ * would be six lines restating what the fallback already returns, and a seventh host would be
+ * assumed to need one.
  */
 const HOST_LABELS: Record<string, string> = {
-  claude: 'Claude',
-  codex: 'Codex',
-  copilot: 'Copilot',
   openhands: 'OpenHands',
-  antigravity: 'Antigravity',
-  windsurf: 'Windsurf',
-  'claude-desktop': 'Claude Desktop',
 };
 
 const hostLabel = (host: string): string =>

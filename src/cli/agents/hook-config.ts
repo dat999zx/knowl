@@ -2,7 +2,8 @@ import { readTextIfExists, MergeStatus, writeWithBackup } from './files.js';
 import { HookHost } from './host-hook.js';
 import { hostProfile } from '../../session/hosts/index.js';
 
-type NestedHook = { type: 'command'; command: string; timeout: number; statusMessage: string };
+// `statusMessage` is in the Anthropic-shaped hosts' schema and not in OpenHands'.
+type NestedHook = { type: 'command'; command: string; timeout: number; statusMessage?: string };
 type NestedEntry = { matcher: string; hooks: NestedHook[] };
 // One entry in a flat command list. `timeout` is Cursor's; Windsurf documents no such field.
 type FlatEntry = { command: string; timeout?: number };
@@ -51,15 +52,17 @@ export function knowlReminderCommand(platform: NodeJS.Platform, host: HookHost):
 const ownsReminderCommand = (value: unknown, host: HookHost) =>
   typeof value === 'string' && value.includes(` agent-reminder ${host} `);
 
-type PromptEntry = { hooks: NestedHook[] };
-
-function reminderEntry(platform: NodeJS.Platform, host: HookHost): PromptEntry {
+function reminderEntry(platform: NodeJS.Platform, host: HookHost): { hooks: NestedHook[] } {
+  // Same schema rule as `nestedEntry`: only fields this host's reference defines. This one had
+  // its own copy of the entry shape and so kept emitting `statusMessage` into OpenHands' file
+  // after the lifecycle entry had stopped.
+  const openHands = hostProfile(host).hookConfigStyle === 'openhands-toplevel';
   return {
     hooks: [{
       type: 'command',
       command: knowlReminderCommand(platform, host),
       timeout: 30,
-      statusMessage: '',
+      ...(openHands ? {} : { statusMessage: '' }),
     }],
   };
 }
@@ -89,13 +92,18 @@ function nestedStatusMessage(event: string): string {
 }
 
 function nestedEntry(platform: NodeJS.Platform, host: HookHost, event: string): NestedEntry {
+  // OpenHands' schema has no `statusMessage`, and its matcher wildcard is `*` rather than the
+  // regex `.*` the Anthropic-shaped hosts take. Emitting a field a host does not define is
+  // usually ignored and occasionally fatal to parsing the whole file, which would take every
+  // other handler in it down too.
+  const openHands = hostProfile(host).hookConfigStyle === 'openhands-toplevel';
   return {
-    matcher: '.*',
+    matcher: openHands ? '*' : '.*',
     hooks: [{
       type: 'command',
       command: knowlHookCommand(platform, host, event),
       timeout: 30,
-      statusMessage: nestedStatusMessage(event),
+      ...(openHands ? {} : { statusMessage: nestedStatusMessage(event) }),
     }],
   };
 }
@@ -130,9 +138,14 @@ export async function mergeNestedHookConfig(
 ): Promise<MergeStatus> {
   const existing = await readTextIfExists(configPath);
   const config = existing === undefined ? {} as Record<string, unknown> : JSON.parse(existing) as Record<string, unknown>;
-  const hooks = config.hooks && typeof config.hooks === 'object' && !Array.isArray(config.hooks)
+  // OpenHands keeps its events at the top level; everyone else nests them under `hooks`. That is
+  // the *only* structural difference, and hand-rolling a second writer for it is what dropped
+  // OpenHands' prompt-reminder block on the first attempt -- the copy was made before the block
+  // was read. One writer, one container decision.
+  const topLevel = hostProfile(host).hookConfigStyle === 'openhands-toplevel';
+  const hooks = !topLevel && config.hooks && typeof config.hooks === 'object' && !Array.isArray(config.hooks)
     ? config.hooks as Record<string, unknown>
-    : {};
+    : topLevel ? config : {};
   const events = hostProfile(host).hookEvents;
   let hadOwnEntry = false;
   // Spread first, so an event added to a profile after a settings.json was written appends
@@ -176,7 +189,9 @@ export async function mergeNestedHookConfig(
     hadOwnEntry ||= withoutReminder.removed;
     nextHooks[promptEvent] = [...withoutReminder.entries, reminderEntry(platform, host)];
   }
-  const next = { ...config, ...extraKeys, hooks: nextHooks };
+  const next = topLevel
+    ? { ...config, ...nextHooks, ...extraKeys }
+    : { ...config, ...extraKeys, hooks: nextHooks };
   if (existing !== undefined && equal(config, next)) return 'unchanged';
   await writeWithBackup(configPath, `${JSON.stringify(next, null, 2)}\n`, existing);
   return hadOwnEntry ? 'updated' : 'configured';
@@ -189,7 +204,10 @@ export async function verifyNestedHookConfig(
   extraKeys: Record<string, unknown> = {},
 ): Promise<boolean> {
   try {
-    const config = JSON.parse(await readTextIfExists(configPath) ?? '{}') as Record<string, any>;
+    const parsed = JSON.parse(await readTextIfExists(configPath) ?? '{}') as Record<string, any>;
+    const config = hostProfile(host).hookConfigStyle === 'openhands-toplevel'
+      ? { ...parsed, hooks: parsed }
+      : parsed;
     const events = hostProfile(host).hookEvents;
     // The host's own prompt event, not Claude's. Reading `CLAUDE_PROMPT_EVENT` here inspected
     // the wrong key for every host that names its prompt event differently, so verify and merge
@@ -272,68 +290,7 @@ export async function verifyFlatHookConfig(
   }
 }
 
-/** Cursor's file is the flat shape plus `version: 1`. Kept for existing importers. */
-export const mergeCursorHookConfig = (configPath: string, platform: NodeJS.Platform) =>
-  mergeFlatHookConfig(configPath, platform, 'cursor', { version: 1 });
-export const verifyCursorHookConfig = (configPath: string, platform: NodeJS.Platform) =>
-  verifyFlatHookConfig(configPath, platform, 'cursor', { version: 1 });
 
-/**
- * OpenHands: the same matcher-and-hooks arrays, but with the **events at the top level**.
- *
- * There is no `hooks` wrapper. Writing one produces a file OpenHands parses without error and
- * acts on not at all, which is the worst shape of failure available here -- `verify` passes,
- * `doctor` is quiet, and nothing ever fires.
- */
-export async function mergeOpenHandsHookConfig(
-  configPath: string,
-  platform: NodeJS.Platform,
-  host: HookHost,
-): Promise<MergeStatus> {
-  const existing = await readTextIfExists(configPath);
-  const config = existing === undefined ? {} as Record<string, unknown> : JSON.parse(existing) as Record<string, unknown>;
-  let hadOwnEntry = false;
-  const next = { ...config };
-  for (const event of retiredEventsFor(host)) {
-    const current = Array.isArray(config[event]) ? config[event] as Record<string, any>[] : [];
-    const retained = removeOwnedNestedHandlers(current, command => ownsCommand(command, host));
-    hadOwnEntry ||= retained.removed;
-    if (retained.entries.length > 0) next[event] = retained.entries;
-    else delete next[event];
-  }
-  for (const event of hostProfile(host).hookEvents) {
-    const current = Array.isArray(config[event]) ? config[event] as Record<string, any>[] : [];
-    const filtered = removeOwnedNestedHandlers(current, command => ownsCommand(command, host));
-    hadOwnEntry ||= filtered.removed;
-    next[event] = [...filtered.entries, openHandsEntry(platform, host, event)];
-  }
-  if (existing !== undefined && equal(config, next)) return 'unchanged';
-  await writeWithBackup(configPath, `${JSON.stringify(next, null, 2)}\n`, existing);
-  return hadOwnEntry ? 'updated' : 'configured';
-}
-
-// `type` and `async` are optional and default correctly; `statusMessage` is not in OpenHands'
-// schema at all, so the nested writer's entry shape cannot be reused verbatim.
-const openHandsEntry = (platform: NodeJS.Platform, host: HookHost, event: string) => ({
-  matcher: '*',
-  hooks: [{ command: knowlHookCommand(platform, host, event), timeout: 30 }],
-});
-
-export async function verifyOpenHandsHookConfig(
-  configPath: string,
-  platform: NodeJS.Platform,
-  host: HookHost,
-): Promise<boolean> {
-  try {
-    const config = JSON.parse(await readTextIfExists(configPath) ?? '{}') as Record<string, any>;
-    return retiredEventsFor(host).every(event => !(config[event] as any[] | undefined)?.some((entry: any) =>
-      (Array.isArray(entry.hooks) ? entry.hooks : []).some((hook: any) => ownsCommand(hook.command, host))))
-      && hostProfile(host).hookEvents.every(event => Array.isArray(config[event])
-      && config[event].some((entry: unknown) => equal(entry, openHandsEntry(platform, host, event))));
-  } catch {
-    return false;
-  }
-}
 
 /**
  * Antigravity: one level deeper again -- a *hook name* above the event.
@@ -392,7 +349,6 @@ export async function mergeHookConfig(
     case 'flat-commands': return mergeFlatHookConfig(configPath, platform, host, host === 'cursor' ? { version: 1 } : {});
     case 'copilot-nested': return mergeNestedHookConfig(configPath, platform, host, { version: 1 });
     case 'antigravity-nested': return mergeAntigravityHookConfig(configPath, platform, host);
-    case 'openhands-toplevel': return mergeOpenHandsHookConfig(configPath, platform, host);
     default: return mergeNestedHookConfig(configPath, platform, host);
   }
 }
@@ -407,7 +363,6 @@ export async function verifyHookConfig(
     case 'flat-commands': return verifyFlatHookConfig(configPath, platform, host, host === 'cursor' ? { version: 1 } : {});
     case 'copilot-nested': return verifyNestedHookConfig(configPath, platform, host, { version: 1 });
     case 'antigravity-nested': return verifyAntigravityHookConfig(configPath, platform, host);
-    case 'openhands-toplevel': return verifyOpenHandsHookConfig(configPath, platform, host);
     default: return verifyNestedHookConfig(configPath, platform, host);
   }
 }

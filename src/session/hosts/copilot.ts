@@ -31,11 +31,7 @@ export const COPILOT_HOOK_EVENTS = [
  * they diverge in one place. What is *not* shared is the failure direction, and that is the
  * whole reason this profile needs two fields nothing else sets.
  *
- * **Copilot fails closed.** Its reference states that a non-zero exit other than 2 denies the
- * tool call. Every other host in this directory treats a crashed hook as "no opinion" and lets
- * the write through; here a Knowl bug would block somebody's edit with no reason attached and
- * nothing on screen connecting the two. `refusesOnAnyNonZeroExit` is read by the hook entry to
- * withhold its own error status for exactly this host -- see `src/cli/agent-hook.ts`.
+ * **Copilot fails closed**, which is why `refusesOnAnyNonZeroExit` exists -- see that field.
  *
  * **`midTurnDeliveryVerified` stays false.** GitHub's reference asserts that `additionalContext`
  * from `postToolUse` is appended to `textResultForLlm` so the model sees it, which is a stronger
@@ -56,6 +52,10 @@ export const copilotProfile: HostProfile = {
   nativeOutput: true,
   midTurnDeliveryVerified: false,
   hookConfigStyle: 'copilot-nested',
+  // Copilot's editing tools, not Claude's. Without these the impact subsystem recognises
+  // neither reads nor writes here, and the deny channel below is unreachable.
+  readToolNames: ['view', 'read', 'str_replace_editor'],
+  writeToolNames: ['create', 'str_replace', 'str_replace_editor', 'edit', 'write'],
   denyExitCode: 2,
   refusesOnAnyNonZeroExit: true,
   identity(raw): HostIdentity {
@@ -71,10 +71,12 @@ export const copilotProfile: HostProfile = {
   isShellEvent(_hostEvent, toolName) {
     return toolNameIsShell(toolName);
   },
-  startContext(_event, context) {
-    // Copilot's start and prompt events take the same `hookSpecificOutput` shape as Claude's,
-    // but name the event in its own casing.
-    return hookSpecificOutput('sessionStart', context);
+  // Copilot's start and prompt events take the same `hookSpecificOutput` shape as Claude's, but
+  // name the event in its own casing -- and the name has to match the event that fired. Output
+  // stamped with a different `hookEventName` is discarded, so returning 'sessionStart' for the
+  // prompt hook silently drops the per-turn card.
+  startContext(event, context) {
+    return hookSpecificOutput(event === 'session-start' ? 'sessionStart' : 'userPromptSubmit', context);
   },
   midTurnContext(text) {
     return hookSpecificOutput('postToolUse', text);

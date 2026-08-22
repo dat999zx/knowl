@@ -55,6 +55,8 @@ export const antigravityProfile: HostProfile = {
   nativeOutput: true,
   midTurnDeliveryVerified: false,
   hookConfigStyle: 'antigravity-nested',
+  readToolNames: ['read_file', 'view_file', 'ReadFile'],
+  writeToolNames: ['write_file', 'edit_file', 'replace_file_content', 'WriteFile', 'EditFile'],
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id) ?? hostString(raw.thread_id),

@@ -46,14 +46,11 @@ async function jsonMcpConfigured(pathname: string, expected: McpEntry): Promise<
 /**
  * One adapter for every host whose integration is "an MCP entry plus a hooks file".
  *
- * The four hosts added in this release differ only in three strings and one enum, all of which
- * already live somewhere declarative -- the paths here, the file shape in the profile. Writing
- * four near-identical adapters would have put the host name in a fifth place per host, which is
- * the sprawl `HostProfile` was introduced to end; it just had not reached the adapter layer yet.
+ * The four hosts here differ only in three strings and one enum, all of which already live
+ * somewhere declarative -- the paths below, the file shape in the profile.
  *
- * Deliberately not folded into `createJsonProjectAdapter`: that one is keyed on an `AgentName`
- * and serves hosts that are not `HookHost`s at all, so generalising it would need a cast on
- * every call and would throw from `lifecycleCapability` for any agent without a profile.
+ * Separate from `createJsonProjectAdapter`, which is keyed on `AgentName` and serves agents with
+ * no profile at all: `hostProfile` throws for those, from inside `lifecycleCapability`.
  */
 export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: AgentEnvironment): AgentAdapter {
   const entry = commandEntry(environment);
@@ -65,9 +62,14 @@ export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: Ag
       const configPath = spec.mcp.configPath(root);
       return {
         installed: await environment.commandExists(spec.command),
-        // A host we cannot configure is never reported as configured, so `doctor` keeps saying
-        // there is something left to do -- which there is.
-        configured: spec.mcp.kind === 'json' ? await jsonMcpConfigured(configPath, entry) : false,
+        // A `manual` target reports configured, and that is not optimism -- it is the only
+        // answer that is not a lie. `init` treats a failed `verify` as a fatal configuration
+        // error, drops the adapter's own message and never reaches `configureLifecycle`, so
+        // reporting false meant `knowl init openhands` exited 1, printed "Configuration
+        // verification failed" instead of the TOML stanza to paste, and wrote no hooks file at
+        // all. There is no automatic repair for a host we do not write MCP config for, so a
+        // permanent "not configured" would also give `doctor` a remedy that cannot help.
+        configured: spec.mcp.kind === 'json' ? await jsonMcpConfigured(configPath, entry) : true,
         scope: mcpScope,
         configPath,
       };
@@ -86,7 +88,6 @@ export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: Ag
     async lifecycleCapability() { return 'supported'; },
     async configureLifecycle(root) {
       const pathname = spec.hooksPath(root);
-      await fs.mkdir(path.dirname(pathname), { recursive: true });
       const status = await mergeHookConfig(pathname, environment.platform, spec.name);
       return { agent: spec.name, status, scope: 'project', configPath: pathname };
     },
@@ -109,7 +110,12 @@ export function hookHostSpecs(environment: AgentEnvironment): HookHostAdapterSpe
       name: 'copilot',
       label: 'GitHub Copilot',
       command: 'copilot',
-      mcp: { kind: 'json', scope: 'project', configPath: root => path.join(root, '.mcp.json') },
+      // NOT `.mcp.json`, which Claude Code already owns. Copilot reads both, and sharing the
+      // file made `copilot.detect()` report configured in every repo that had ever run
+      // `knowl init claude` -- which put Copilot into doctor's WARN list and let `doctor --fix`
+      // run `knowl init copilot` unattended, opting repositories into a host nobody chose.
+      // `.github/mcp.json` is Copilot's own documented project path and collides with nothing.
+      mcp: { kind: 'json', scope: 'project', configPath: root => path.join(root, '.github', 'mcp.json') },
       hooksPath: root => path.join(root, '.github', 'hooks', 'knowl.json'),
     },
     {

@@ -89,11 +89,8 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
     }
     console.error(`Error handling agent hook: ${error.message}`);
     await closeDb().catch(() => {});
-    // A host that reads *any* unexpected non-zero status as a refusal must never see one from
-    // a crash. Copilot does exactly that, so exiting 1 here to report a Knowl bug would block
-    // the edit the agent was making, with no reason attached and nothing on screen tying the
-    // two together. The error still goes to stderr; only the status is withheld. Every other
-    // host keeps the loud exit, where it means what it says.
+    // See `refusesOnAnyNonZeroExit`: on those hosts this exit would deny the agent's edit
+    // rather than report our own crash. The error still reaches stderr; only the status goes.
     if (isHookHost(host) && hostProfile(host).refusesOnAnyNonZeroExit) return;
     process.exit(1);
   }

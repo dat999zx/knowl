@@ -82,6 +82,15 @@ export const windsurfProfile: HostProfile = {
   normalizedEvent(hostEvent) {
     return WINDSURF_EVENT_MAP[hostEvent];
   },
+  // Windsurf names the action, so the event *is* the classification and there is no tool name
+  // to match. This is the case `readsFiles`/`writesFiles` exist for: a host that says outright
+  // what happened, instead of naming a tool and leaving us to recognise it.
+  readsFiles(hostEvent) {
+    return hostEvent === 'post_read_code';
+  },
+  writesFiles(hostEvent) {
+    return hostEvent === 'pre_write_code' || hostEvent === 'post_write_code';
+  },
   isShellEvent(hostEvent) {
     // The event name says it, so there is no tool name to classify.
     return hostEvent === 'pre_run_command' || hostEvent === 'post_run_command';

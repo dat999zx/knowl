@@ -87,6 +87,33 @@ export interface HostProfile {
    * this call" rather than "you cannot edit this file".
    */
   readonly refusesOnAnyNonZeroExit?: true;
+  /**
+   * How this host names the tools that read and write files.
+   *
+   * The impact subsystem has to tell "this session read that file" from "this session wrote
+   * it" -- opposite facts that arrive as the same normalized event, separable only by the
+   * host's own tool name. Those two sets were hardcoded as Claude Code's vocabulary (`Edit`,
+   * `Write`, `MultiEdit`, `NotebookEdit`, `Read`, `NotebookRead`), so on any other host every
+   * lookup missed: no read was ever recorded, no write ever triggered detection, and the write
+   * gate returned "no opinion" before it ever consulted `denyToolCall`. A host could declare a
+   * refusal channel and never once reach it.
+   *
+   * Some hosts do not name a tool at all -- Windsurf's events *are* the classification
+   * (`pre_write_code` says it) -- so this is optional and the event mapping answers instead;
+   * see `writesFiles`. Matched verbatim and case-sensitively against the raw name, and a host
+   * whose vocabulary has not been read stays silent rather than guessing.
+   */
+  readonly readToolNames?: readonly string[];
+  readonly writeToolNames?: readonly string[];
+  /**
+   * True when this host event means "a file is being written", for hosts that say so in the
+   * event name rather than in a tool name.
+   *
+   * Defaulted rather than required: every host that names its tools answers from
+   * `writeToolNames` and never implements this.
+   */
+  readsFiles?: (hostEvent: string, toolName: string) => boolean;
+  writesFiles?: (hostEvent: string, toolName: string) => boolean;
   identity(raw: Record<string, unknown>): HostIdentity;
   normalizedEvent(hostEvent: string): NormalizedHookEventName | undefined;
   isShellEvent(hostEvent: string, toolName: string): boolean;

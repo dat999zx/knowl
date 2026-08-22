@@ -326,7 +326,9 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
 }
 
 export function normalizeHostHook(host: string, eventName: string, raw: Record<string, unknown>): NormalizedHostHook {
-  const normalized = normalizeHostHookUnchecked(host, eventName, raw);
+  // Stamped once here rather than in each branch: every branch would otherwise have to remember
+  // to carry it, and the one that forgot would be the one a host-specific consumer needed.
+  const normalized = { ...normalizeHostHookUnchecked(host, eventName, raw), hostEvent: eventName };
   // A precheck is answered and thrown away, never written, so the write validator is
   // guarding nothing here -- and it rejects on a sensitive path, which would turn "the
   // agent is about to touch .env" into a hook error printed in front of that call and

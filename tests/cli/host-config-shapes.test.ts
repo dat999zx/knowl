@@ -69,11 +69,15 @@ describe('OpenHands hooks file', () => {
     // The whole point: `{ pre_tool_use: [...] }`, not `{ hooks: { pre_tool_use: [...] } }`.
     expect(config.hooks).toBeUndefined();
     expect(config.pre_tool_use).toEqual([{
+      // `*`, not the regex `.*` the Anthropic-shaped hosts take. `type` is in OpenHands' own
+      // field table (optional, defaulting to "command"), so emitting it is valid.
       matcher: '*',
-      hooks: [{ command: 'knowl agent-hook openhands pre_tool_use --json', timeout: 30 }],
+      hooks: [{ type: 'command', command: 'knowl agent-hook openhands pre_tool_use --json', timeout: 30 }],
     }]);
-    // `statusMessage` is not in OpenHands' schema; the nested writer's entry is not reusable.
+    // `statusMessage` is not in OpenHands' schema at all, so it must not be emitted.
     expect(JSON.stringify(config)).not.toContain('statusMessage');
+    // The prompt reminder, which the first hand-rolled OpenHands writer silently dropped.
+    expect(JSON.stringify(config.user_prompt_submit)).toContain('agent-reminder openhands');
     expect(await verifyHookConfig(file, 'linux', 'openhands')).toBe(true);
   });
 

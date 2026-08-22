@@ -117,9 +117,12 @@ describe('PreToolUse normalization', () => {
       host: 'claude', event: 'session-event', externalSessionId: 'session-2', externalTurnId: undefined,
       projectRoot: ROOT, type: 'command', payload: { command: 'npm test', exitCode: 0 },
       status: undefined, toolName: 'Bash', knowlTool: false,
+      // The host's own event name, kept beside the normalized one: Windsurf classifies writes
+      // by event rather than by tool, and a pre-tool verdict has to name the event it answers.
+      hostEvent: 'PostToolUse',
     });
     expect(normalizeHostHook('claude', 'SessionStart', { session_id: 's', cwd: ROOT }))
-      .toEqual({ host: 'claude', event: 'session-start', externalSessionId: 's', externalTurnId: undefined, projectRoot: ROOT, title: 'Agent session', payload: {} });
+      .toEqual({ host: 'claude', event: 'session-start', externalSessionId: 's', externalTurnId: undefined, projectRoot: ROOT, title: 'Agent session', payload: {}, hostEvent: 'SessionStart' });
   });
 });
 
