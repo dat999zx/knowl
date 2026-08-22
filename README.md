@@ -94,28 +94,65 @@ works.
 
 <table>
 <tr>
-<td align="center" width="20%">
-<a href="https://claude.com/product/claude-code"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="48" height="48" /></a><br/>
+<td align="center" width="16%">
+<a href="https://claude.com/product/claude-code"><img src="https://github.com/anthropics.png?size=120" alt="Claude Code" width="44" height="44" /></a><br/>
 <strong>Claude Code</strong><br/>
-<sub>MCP · lifecycle · subagents</sub>
+<sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="20%">
-<a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex" width="48" height="48" /></a><br/>
+<td align="center" width="16%">
+<a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex" width="44" height="44" /></a><br/>
 <strong>Codex</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="20%">
-<a href="https://cursor.com"><img src="https://github.com/getcursor.png?size=120" alt="Cursor" width="48" height="48" /></a><br/>
-<strong>Cursor</strong><br/>
-<sub>MCP · lifecycle · gate</sub>
-</td>
-<td align="center" width="20%">
-<a href="https://github.com/features/copilot"><img src="https://github.com/github.png?size=120" alt="GitHub Copilot" width="48" height="48" /></a><br/>
+<td align="center" width="16%">
+<a href="https://github.com/features/copilot"><img src="https://github.com/github.png?size=120" alt="GitHub Copilot" width="44" height="44" /></a><br/>
 <strong>Copilot</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="20%">
-<a href="https://claude.ai/download"><img src="https://github.com/anthropics.png?size=120" alt="Claude Desktop" width="48" height="48" /></a><br/>
+<td align="center" width="16%">
+<a href="https://cursor.com"><img src="https://github.com/getcursor.png?size=120" alt="Cursor" width="44" height="44" /></a><br/>
+<strong>Cursor</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://github.com/OpenHands/OpenHands"><img src="https://github.com/OpenHands.png?size=120" alt="OpenHands" width="44" height="44" /></a><br/>
+<strong>OpenHands</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://antigravity.google"><img src="https://github.com/google-gemini.png?size=120" alt="Google Antigravity" width="44" height="44" /></a><br/>
+<strong>Antigravity</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
+</td>
+</tr>
+<tr>
+<td align="center" width="16%">
+<a href="https://windsurf.com"><img src="https://github.com/codeium.png?size=120" alt="Windsurf" width="44" height="44" /></a><br/>
+<strong>Windsurf</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://github.com/cline/cline"><img src="https://github.com/cline.png?size=120" alt="Cline" width="44" height="44" /></a><br/>
+<strong>Cline</strong><br/>
+<sub>MCP · lifecycle · plugin</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://zed.dev"><img src="https://github.com/zed-industries.png?size=120" alt="Zed" width="44" height="44" /></a><br/>
+<strong>Zed</strong><br/>
+<sub>MCP · capture · ACP</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://www.jetbrains.com"><img src="https://github.com/JetBrains.png?size=120" alt="JetBrains" width="44" height="44" /></a><br/>
+<strong>JetBrains</strong><br/>
+<sub>MCP · capture · ACP</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://github.com/anomalyco/opencode"><img src="https://github.com/anomalyco.png?size=120" alt="OpenCode" width="44" height="44" /></a><br/>
+<strong>OpenCode</strong><br/>
+<sub>MCP · manual loop</sub>
+</td>
+<td align="center" width="16%">
+<a href="https://claude.ai/download"><img src="https://github.com/anthropics.png?size=120" alt="Claude Desktop" width="44" height="44" /></a><br/>
 <strong>Claude Desktop</strong><br/>
 <sub>MCP · manual loop</sub>
 </td>
@@ -125,8 +162,9 @@ works.
 `knowl init` registers the MCP server for every host it finds. Start a new session afterwards so
 the agent picks up its guidance, and it will query and write memory on its own.
 
-Also supported: OpenHands, Antigravity, Windsurf, Cline and OpenCode, plus Zed, JetBrains,
-Neovim and Kiro through `knowl acp`. Any MCP client works even with no integration at all.
+**gate** means Knowl can refuse an edit that invalidates code another session is holding.
+Neovim and Kiro work the same way as Zed and JetBrains, through `knowl acp`. Cline needs one
+line pointing it at the shipped plugin. Any other MCP client works with no integration at all.
 
 → [Every host, and what each one can do](docs/hosts.md) · [How agents use it](#how-agents-use-it) · [MCP tools and resources](docs/reference.md#mcp-tools-and-resources)
 
