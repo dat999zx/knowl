@@ -51,13 +51,37 @@ Forty seconds, one decision, three agents:
 
 ## Quick start
 
-Requires Node.js 22 or later.
+Requires Node.js 22 or later. macOS, Linux and Windows.
 
 ```bash
 npm install -g @dat999zx/knowl
 cd your-project
 knowl init
 ```
+
+<details>
+<summary>Other package managers</summary>
+
+The published package is the same one in every case; each of these installs it and puts `knowl`
+on your `PATH`.
+
+```bash
+pnpm add -g @dat999zx/knowl
+yarn global add @dat999zx/knowl
+bun add -g @dat999zx/knowl
+```
+
+Or run it without installing:
+
+```bash
+npx @dat999zx/knowl init
+```
+
+Knowl runs on Node.js in all of these — Bun installs it, Node executes it. It bundles native
+addons (SQLite, tree-sitter, the embedding runtime), so running the CLI under the Bun or Deno
+runtime directly is not supported.
+
+</details>
 
 `knowl init` creates `.knowl/`, installs the project guidance files, updates `.gitignore`, and
 registers Knowl with whichever agents it detects. It also warms a local embedding model (~53 MB)
@@ -86,9 +110,9 @@ works.
 <sub>MCP · lifecycle</sub>
 </td>
 <td align="center" width="20%">
-<a href="https://github.com/google-gemini/gemini-cli"><img src="https://github.com/google-gemini.png?size=120" alt="Gemini CLI" width="48" height="48" /></a><br/>
-<strong>Gemini CLI</strong><br/>
-<sub>MCP · manual loop</sub>
+<a href="https://github.com/features/copilot"><img src="https://github.com/github.png?size=120" alt="GitHub Copilot" width="48" height="48" /></a><br/>
+<strong>Copilot</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
 </td>
 <td align="center" width="20%">
 <a href="https://claude.ai/download"><img src="https://github.com/anthropics.png?size=120" alt="Claude Desktop" width="48" height="48" /></a><br/>
@@ -273,13 +297,18 @@ Agent   → knowl_query "sqlite postgres database choice"
 The agent answered before opening a single file, and it knew the options you *rejected* —
 which the code cannot tell it, because rejected alternatives leave no trace in a codebase.
 
-| Host | MCP | Automatic lifecycle | Subagents | Notes |
-| --- | --- | --- | --- | --- |
-| Claude Code | Yes | Yes | Yes | Prompt guidance is installed as well |
-| Codex | Yes | Yes | Yes | Main turns share one memory session |
-| Cursor | Yes | Yes | No | Finalizes per turn |
-| Gemini CLI | Yes | No | No | MCP plus the manual work loop |
-| Claude Desktop | Yes | No | No | MCP plus the manual work loop |
+| Host | MCP | Automatic lifecycle | Write gate | Capture nudge | Notes |
+| --- | --- | --- | --- | --- | --- |
+| Claude Code | Yes | Yes | Yes | Yes | Prompt guidance is installed as well |
+| Codex CLI | Yes | Yes | Yes | Yes | Hooks need `codex_hooks`; not on Windows |
+| GitHub Copilot | Yes | Yes | Yes | Yes | Reuses Claude Code's hook format |
+| OpenHands | Yes | Yes | Yes | Yes | MCP entry is added by hand |
+| Antigravity | Yes | Yes | Yes | Yes | No prompt event upstream |
+| Windsurf | Yes | Yes | Yes | No | No stop event upstream |
+| Cursor | Yes | Yes | No | No | Finalizes per turn |
+| Claude Desktop, Cline, Zed, JetBrains, … | Yes | No | No | No | MCP plus the manual work loop |
+
+Full detail, and why each gap exists, in [docs/hosts.md](docs/hosts.md).
 
 <div align="center">
 <img src="docs/assets/lifecycle.svg" alt="Session lifecycle: bootstrap injects relevant memory, capture records bounded events, checkpoints record milestones, finalization distills durable candidates" width="88%" />

@@ -528,7 +528,10 @@ from the transcripts, which is what makes that safe.
 | Codex | Yes | Yes | Yes | Main turns share one memory session |
 | Claude Code | Yes | Yes | Yes | Main turns share one memory session; prompt guidance is also installed |
 | Cursor | Yes | Yes | No | Finalizes per turn; supplied `additional_context` may not surface to the model |
-| Gemini CLI | Yes | No | No | MCP plus the manual work loop |
+| GitHub Copilot | Yes | Yes | No | Reuses Claude Code's hook format |
+| OpenHands | Yes | Yes | No | MCP entry is added by hand |
+| Antigravity | Yes | Yes | No | No prompt event upstream |
+| Windsurf | Yes | Yes | No | No stop event upstream |
 | Claude Desktop | Yes | No | No | MCP plus the manual work loop |
 
 Claude Code and Codex subagents share their parent's memory session, but each subagent has its own
@@ -1474,7 +1477,7 @@ flowchart TB
         H1["Codex"]
         H2["Claude Code"]
         H3["Cursor"]
-        H4["Gemini CLI / Claude Desktop"]
+        H4["Claude Desktop / Cline / Zed"]
     end
 
     subgraph adapters["Protocol adapters"]
@@ -1568,12 +1571,13 @@ one `knowl_store` or one hook capture is a single write — and better under con
 
 ## Agent setup
 
-`knowl init` detects Codex, Claude Code, Cursor, Gemini CLI, and Claude Desktop. Run it
+`knowl init` detects Codex, Claude Code, Cursor, GitHub Copilot, OpenHands, Antigravity,
+Windsurf, Cline and Claude Desktop. Run it
 interactively or name the integrations explicitly:
 
 ```bash
 knowl init
-knowl init codex claude cursor gemini claude-desktop
+knowl init codex claude cursor copilot openhands antigravity windsurf cline claude-desktop
 knowl doctor
 ```
 
@@ -1584,7 +1588,7 @@ servers and host rules are preserved, and changed configuration files are backed
 
 Start a new agent session after setup. Re-run `knowl init` after an upgrade that adds lifecycle
 events so host registrations and managed guidance are refreshed; database migrations apply when
-Knowl next opens the project. Gemini CLI and Claude Desktop retain MCP access but require the
+Knowl next opens the project. Claude Desktop and Cline retain MCP access but require the
 manual work loop for lifecycle capture.
 
 ## Benchmarks

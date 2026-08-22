@@ -70,7 +70,7 @@ export function createCodexAdapter(environment: AgentEnvironment): AgentAdapter 
 }
 
 function createJsonProjectAdapter(
-  name: 'claude' | 'cursor',
+  name: 'claude' | 'cursor' | 'cline',
   label: string,
   command: string,
   configPath: (root: string) => string,
@@ -119,6 +119,20 @@ function createJsonProjectAdapter(
 
 export function createClaudeCodeAdapter(environment: AgentEnvironment) {
   return createJsonProjectAdapter('claude', 'Claude Code', 'claude', root => path.join(root, '.mcp.json'), environment, 'claude');
+}
+
+/**
+ * Cline, over MCP only.
+ *
+ * Cline has lifecycle hooks -- `beforeRun`, `afterRun`, `beforeTool`, `afterTool` -- but they
+ * are TypeScript objects (`AgentPlugin` from `@cline/sdk`) loaded into its runtime, not a hooks
+ * file and not a shell command. A `HostProfile` cannot reach them at all, so Cline is
+ * deliberately an `AgentName` and not a `HookHost`: an adapter that configures memory, and no
+ * profile claiming a lifecycle it has no way to receive. Reaching those hooks means publishing
+ * an npm plugin, which is a product decision rather than a file in `src/session/hosts/`.
+ */
+export function createClineAdapter(environment: AgentEnvironment) {
+  return createJsonProjectAdapter('cline', 'Cline', 'cline', root => path.join(root, '.cline', 'mcp.json'), environment);
 }
 
 export function createCursorProjectAdapter(environment: AgentEnvironment) {

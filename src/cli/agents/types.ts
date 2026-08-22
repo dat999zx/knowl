@@ -1,6 +1,6 @@
 export type AgentName =
   | 'codex' | 'claude' | 'cursor' | 'claude-desktop'
-  | 'copilot' | 'openhands' | 'antigravity' | 'windsurf';
+  | 'copilot' | 'openhands' | 'antigravity' | 'windsurf' | 'cline';
 export type IntegrationScope = 'project' | 'global';
 export type IntegrationStatus = 'configured' | 'updated' | 'unchanged' | 'skipped' | 'failed';
 export type LifecycleCapability = 'supported' | 'unsupported' | 'degraded';
