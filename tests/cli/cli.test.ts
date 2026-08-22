@@ -304,16 +304,15 @@ describe('CLI Integration', () => {
     expect(() => execFileSync(process.execPath, [CLI_PATH, 'init', 'unknown', '--yes'], {
       cwd: root, encoding: 'utf8', stdio: 'pipe',
     })).toThrow();
-    for (const entry of ['.knowl', '.gitignore', 'KNOWL.md', 'AGENTS.md', 'CLAUDE.md', 'GEMINI.md']) {
+    for (const entry of ['.knowl', '.gitignore', 'KNOWL.md', 'AGENTS.md', 'CLAUDE.md']) {
       await expect(fs.access(path.join(root, entry))).rejects.toMatchObject({ code: 'ENOENT' });
     }
     await fs.rm(root, { recursive: true, force: true });
   });
 
   it.each([
-    { name: 'base', agents: [], present: ['KNOWL.md', 'AGENTS.md'], absent: ['CLAUDE.md', 'GEMINI.md'] },
-    { name: 'claude', agents: ['claude'], present: ['KNOWL.md', 'AGENTS.md', 'CLAUDE.md'], absent: ['GEMINI.md'] },
-    { name: 'gemini', agents: ['gemini'], present: ['KNOWL.md', 'AGENTS.md', 'GEMINI.md', '.gemini/settings.json'], absent: ['CLAUDE.md'] },
+    { name: 'base', agents: [], present: ['KNOWL.md', 'AGENTS.md'], absent: ['CLAUDE.md'] },
+    { name: 'claude', agents: ['claude'], present: ['KNOWL.md', 'AGENTS.md', 'CLAUDE.md'], absent: [] },
   ])('applies the $name host-file creation policy', async ({ name, agents, present, absent }) => {
     const root = path.join(os.tmpdir(), `knowl-cli-creation-${name}-test`);
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});

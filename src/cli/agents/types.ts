@@ -1,5 +1,5 @@
 export type AgentName =
-  | 'codex' | 'claude' | 'cursor' | 'gemini' | 'claude-desktop'
+  | 'codex' | 'claude' | 'cursor' | 'claude-desktop'
   | 'copilot' | 'openhands' | 'antigravity' | 'windsurf';
 export type IntegrationScope = 'project' | 'global';
 export type IntegrationStatus = 'configured' | 'updated' | 'unchanged' | 'skipped' | 'failed';

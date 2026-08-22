@@ -236,8 +236,10 @@ describe('host hook normalization', () => {
     expect(() => normalizeHostHook('codex', 'UnknownEvent', { session_id: 's', cwd: ROOT })).toThrow('Unsupported codex hook event');
   });
 
-  it('does not treat Gemini MCP support as a verified lifecycle hook host', () => {
-    expect(() => normalizeHostHook('gemini', 'SessionStart', {})).toThrow('Unsupported hook host: gemini');
+  it('does not treat an MCP-only agent name as a verified lifecycle hook host', () => {
+    // The point survives the Gemini adapter it was written for: an agent Knowl can configure
+    // over MCP is not thereby a host it accepts hook payloads from.
+    expect(() => normalizeHostHook('cline', 'SessionStart', {})).toThrow('Unsupported hook host: cline');
   });
 
   it('carries agent identity on subagent tool events and omits it on main-thread events', () => {

@@ -161,13 +161,13 @@ describe('agent init flow', () => {
     expect(result.results[0]).toMatchObject({ status: 'configured', lifecycle: { capability: 'supported', status: 'configured' } });
   });
 
-  it('makes the Gemini manual lifecycle fallback explicit', () => {
+  it('makes a manual lifecycle fallback explicit', () => {
     expect(formatAgentInitSummary([{
-      agent: 'gemini',
+      agent: 'claude-desktop',
       status: 'configured',
-      scope: 'project',
-      configPath: '.gemini/settings.json',
-      instructions: { status: 'configured', configPath: 'GEMINI.md' },
+      scope: 'global',
+      configPath: 'claude_desktop_config.json',
+      instructions: { status: 'configured', configPath: 'CLAUDE.md' },
       lifecycle: { capability: 'unsupported', status: 'skipped', message: 'Lifecycle hooks are unavailable; use `knowl task run`.' },
     }])).toContain('use `knowl task run`');
   });

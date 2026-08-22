@@ -70,7 +70,7 @@ export function createCodexAdapter(environment: AgentEnvironment): AgentAdapter 
 }
 
 function createJsonProjectAdapter(
-  name: 'claude' | 'cursor' | 'gemini',
+  name: 'claude' | 'cursor',
   label: string,
   command: string,
   configPath: (root: string) => string,
@@ -108,7 +108,7 @@ function createJsonProjectAdapter(
     ...(instructionHost ? {
       async configureInstructions(root: string) {
         const status = await installKnowlHostInstructions(root, instructionHost);
-        return { status, configPath: path.join(root, instructionHost === 'claude' ? 'CLAUDE.md' : 'GEMINI.md') };
+        return { status, configPath: path.join(root, 'CLAUDE.md') };
       },
       async verifyInstructions(root: string) {
         return verifyKnowlHostInstructions(root, instructionHost);
@@ -119,17 +119,6 @@ function createJsonProjectAdapter(
 
 export function createClaudeCodeAdapter(environment: AgentEnvironment) {
   return createJsonProjectAdapter('claude', 'Claude Code', 'claude', root => path.join(root, '.mcp.json'), environment, 'claude');
-}
-
-export function createGeminiAdapter(environment: AgentEnvironment) {
-  return createJsonProjectAdapter(
-    'gemini',
-    'Gemini CLI',
-    'gemini',
-    root => path.join(root, '.gemini', 'settings.json'),
-    environment,
-    'gemini',
-  );
 }
 
 export function createCursorProjectAdapter(environment: AgentEnvironment) {

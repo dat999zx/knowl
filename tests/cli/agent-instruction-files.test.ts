@@ -10,9 +10,12 @@ import { renderManagedKnowlGuidanceSection } from '../../src/core/knowl-guidance
 const ROOT = path.resolve('.knowl-host-instructions-test');
 afterEach(() => fs.rm(ROOT, { recursive: true, force: true }));
 
+// A table of one since the Gemini adapter was retired. Kept as a table rather than inlined:
+// what these cases actually exercise is `hasActiveGuidanceImport`, which is host-independent
+// and is the part worth keeping -- fenced, inline-code and indented-code examples must not
+// count as an active import, and both `@KNOWL.md` and `@./KNOWL.md` spellings must.
 describe.each([
   ['claude', 'CLAUDE.md', '@KNOWL.md'],
-  ['gemini', 'GEMINI.md', '@./KNOWL.md'],
 ] as const)('%s native instructions', (host, filename, preferredImport) => {
   const pathname = path.join(ROOT, filename);
 

@@ -3,12 +3,12 @@ import path from 'node:path';
 import { commandExistsOnPath } from './command-exists.js';
 import { createClaudeDesktopAdapter } from './desktop-adapter.js';
 import { createCursorAdapter } from './cursor.js';
-import { createClaudeCodeAdapter, createCodexAdapter, createGeminiAdapter } from './project-adapters.js';
+import { createClaudeCodeAdapter, createCodexAdapter } from './project-adapters.js';
 import { createHookHostAdapter, hookHostSpecs } from './hook-host-adapter.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentName } from './types.js';
 
 export const SUPPORTED_AGENT_NAMES: AgentName[] = [
-  'codex', 'claude', 'cursor', 'gemini', 'claude-desktop',
+  'codex', 'claude', 'cursor', 'claude-desktop',
   'copilot', 'openhands', 'antigravity', 'windsurf',
 ];
 
@@ -26,7 +26,6 @@ export function createAgentRegistry(overrides: Partial<AgentEnvironment> = {}): 
   return new Map<AgentName, AgentAdapter>([
     ['codex', createCodexAdapter(environment)],
     ['claude', createClaudeCodeAdapter(environment)],
-    ['gemini', createGeminiAdapter(environment)],
     ['cursor', createCursorAdapter(environment)],
     ['claude-desktop', createClaudeDesktopAdapter(environment)],
     // Every host whose integration is "an MCP entry plus a hooks file" comes from one spec
