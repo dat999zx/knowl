@@ -10,6 +10,8 @@
 [![node](https://img.shields.io/badge/node-%E2%89%A522-70b6fd)](package.json)
 [![MCP](https://img.shields.io/badge/protocol-MCP-cab049)](https://modelcontextprotocol.io)
 
+<a href="https://www.producthunt.com/products/knowl?embed=true&amp;utm_source=badge-featured&amp;utm_medium=badge&amp;utm_campaign=badge-knowl" target="_blank" rel="noopener noreferrer"><img alt="Knowl - Agent memory that knows when to forget | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1228671&amp;theme=light&amp;t=1787366617137"></a>
+
 <p align="center">
   <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="Scores 90 on MemoryAgentBench FactConsolidation single-hop at 262K" height="38" /></picture></a>
   <a href="#quick-start"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-nokeys.svg"><img src="docs/assets/chips/stat-nokeys.svg" alt="0 API keys needed" height="38" /></picture></a>
