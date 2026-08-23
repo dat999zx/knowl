@@ -19,7 +19,7 @@ import { compactMcpJson, compactItemResponse, compactAssertionResponse, boundedE
 import { DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS, truncateMiddle, truncateText, uncalibratedScore, type UncalibratedScore } from '../core/token-budget.js';
 import { getRecentContext } from '../store/recent-context.js';
 import { storeKnowledgeItemDeduped, storeKnowledgeAtomsDeduped } from '../store/knowledge-writer.js';
-import { recordDecisionDirect, updateKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
+import { recordDecisionDirect, updateKnowledgeItemWithCommit, supersedeKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
 import { isVectorSearchEnabled, createLocalEmbeddingProvider } from '../ai/embeddings.js';
 import { queryKnowledgeForAgentExplained } from '../store/agent-query.js';
 import { previewKnowledgeGc, applyKnowledgeGc } from '../store/gc.js';
@@ -1325,7 +1325,7 @@ export function registerTools(
         // Checked BEFORE the update is written. It used to be resolved after, so an unknown
         // supersedeId threw once the update had already committed and the whole call was
         // reported as failed -- the agent believed nothing happened while memory had moved.
-        const { getKnowledgeItem: readItem, supersedeKnowledgeItem } = await import('../store/repository.js');
+        const { getKnowledgeItem: readItem } = await import('../store/repository.js');
         if (supersedeId) {
           if (supersedeId === id) {
             throw new Error('supersedeId names a DIFFERENT item to retire; it cannot be the item being updated.');
@@ -1354,7 +1354,11 @@ export function registerTools(
         let supersedeNote = '';
         if (supersedeId) {
           try {
-            await supersedeKnowledgeItem(supersedeId, updated.id);
+            // Through the committing wrapper, not `repo.supersedeKnowledgeItem`. That one
+            // writes the item row only, so the retirement never reached the change log and
+            // every reader of the log missed it -- most visibly the workspace change notice,
+            // which left a teammate reading a retired atom as current.
+            await supersedeKnowledgeItemWithCommit(projectId!, supersedeId, updated.id);
             supersedeNote = `; retired ${supersedeId}`;
           } catch (error) {
             supersedeNote = `. WARNING: the update IS saved, but retiring ${supersedeId} failed (${sanitizeToolErrorMessage(String((error as Error).message))}). Both items are still active`;

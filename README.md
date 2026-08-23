@@ -649,9 +649,24 @@ knowl view
   <img src="docs/assets/viewer-inspect.png" alt="The Knowl local viewer list: every atom with an unread mark in the margin, and one atom open in the inspector with its markdown, tags and timeline rendered" width="48%" />
 </p>
 
-**This is where you fix what your agents got wrong.** Open any atom to read its evidence and
+**Leave it open while you work and it shows you the agent thinking.** A retrieval lights the atoms
+it answered with, in rank order, and drops the rest of the graph away. A write arrives on a cleared
+stage. A retirement goes dark and stays dark. Each changed atom is captioned with what happened to
+it — `NEW`, `UPDATED`, `SUPERSEDED`.
+
+<p align="center">
+  <img src="docs/assets/viewer-pulse-supersede.png" alt="The Knowl viewer during a supersede: the retired atom marked SUPERSEDED and drawn dark at the edge of the graph, its replacement marked NEW and lit at the lower right, and a feed naming both events" width="80%" />
+</p>
+
+It watches the database rather than the agent, so it makes no difference which tool is working:
+Claude Code, Codex, Cursor, or you running `knowl query` in another terminal all light the same
+graph. Nothing was added to any write path to make this work, so **when no viewer is open, none of
+it runs.**
+
+**This is also where you fix what your agents got wrong.** Open any atom to read its evidence and
 timeline, then edit it, archive it, or write a new one by hand. Archiving is reversible — Restore
-is on the same panel.
+is on the same panel. Retired atoms stay on the graph as dark points: they are the history, and they
+no longer claim to be current.
 
 Beside the graph there is a list, with a lens for **what nothing has ever read**. That one earns
 its place: search only reaches memory you already suspect exists, and an atom carrying no

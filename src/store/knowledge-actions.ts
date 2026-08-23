@@ -154,12 +154,16 @@ export async function updateKnowledgeItemWithCommit(
     source?: string | null;
     sourceCommit?: string | null;
     affectedPaths?: string[] | null;
+    /** The replacement, when this update is a retirement. See `supersedeKnowledgeItemWithCommit`. */
+    supersededById?: string | null;
   },
   options?: {
     projectRoot?: string | null;
     sourceCommit?: string | null;
     freshness?: 'fresh' | 'stale' | 'needs_review';
     validationOptions?: KnowledgeWriteValidationOptions;
+    /** Overrides the default `Update item: <title>`, so a retirement does not read as an edit. */
+    commitMessage?: string;
   }
 ): Promise<KnowledgeItem> {
   const beforeItem = await repo.getKnowledgeItem(id);
@@ -201,7 +205,7 @@ export async function updateKnowledgeItemWithCommit(
     }
   }
 
-  await repo.createKnowledgeCommit(projectId, `Update item: ${updated.title}`, [
+  await repo.createKnowledgeCommit(projectId, options?.commitMessage ?? `Update item: ${updated.title}`, [
     {
       itemId: id,
       action,
@@ -238,4 +242,43 @@ export async function updateKnowledgeItemWithCommit(
   await stageWrittenItems([id]);
 
   return updated;
+}
+
+/**
+ * Retire `id` in favour of `supersededById`, AND record it.
+ *
+ * The whole point is the second half. `repo.supersedeKnowledgeItem` writes the item row and
+ * nothing else — it is the bare update, so it never reaches `createKnowledgeCommit`. That was
+ * survivable-looking because the row it writes is correct: retrieval honours the retirement,
+ * queries stop returning the retired atom, and nothing about asking questions looks wrong.
+ *
+ * What it lost is everything that reads the change LOG rather than the row:
+ *
+ * - the workspace change notice (`loadForeignChanges`), so a teammate was never told the atom
+ *   was retired and went on reading it as current
+ * - blast radius, which uses `knowledge_commit_items` to decide what to re-check when
+ *   something turns out to be wrong
+ * - `mcp_call_commits` attribution, which decides whose write a change was
+ *
+ * The store path (`storeKnowledgeItemDeduped` with `supersedes:`) always recorded both halves
+ * in one commit. This closes the gap for the other three callers rather than at each of them:
+ * `knowl_update --supersedeId`, the CLI supersede command, and duplicate repair in
+ * `integrity.ts` all routed through the same bare function.
+ *
+ * Note it also stages the retired item, because `updateKnowledgeItemWithCommit` does — which is
+ * the same fix in the sync dimension: a published atom that was retired has to reach the team
+ * as retired, or they keep the version that is still active on their side.
+ */
+export async function supersedeKnowledgeItemWithCommit(
+  projectId: string,
+  id: string,
+  supersededById: string,
+): Promise<KnowledgeItem> {
+  const item = await repo.getKnowledgeItem(id);
+  return updateKnowledgeItemWithCommit(
+    projectId,
+    id,
+    { status: 'superseded', supersededById },
+    { commitMessage: `Supersede item: ${item?.title ?? id}` },
+  );
 }

@@ -160,6 +160,28 @@ export const VIEWER_HTML = `<!doctype html>
     font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em;
     color: var(--faint); pointer-events: none; user-select: none;
   }
+  /* The live feed. Without a caption the graph flashing is pretty noise; with one a watcher
+     can see that the agent just asked memory a question and memory answered. Sits above the
+     hint and grows upward, so the newest line is always in the same place. */
+  .pulse {
+    position: absolute; left: 16px; bottom: 34px; z-index: 3;
+    /* Anchored by its bottom edge, so the box grows upward while the newest line stays put
+       just above the hint. A reader watching one spot sees every event pass through it. */
+    display: flex; flex-direction: column; gap: 4px;
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.04em;
+    pointer-events: none; user-select: none; max-width: 46ch;
+  }
+  .pulse div {
+    color: var(--muted); opacity: 0; animation: pulsein 0.22s ease-out forwards;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .pulse div.out { opacity: 0; transition: opacity 0.5s ease-in; }
+  .pulse b { color: var(--accent); font-weight: 500; }
+  .pulse i { color: var(--faint); font-style: normal; }
+  @keyframes pulsein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  @media (prefers-reduced-motion: reduce) {
+    .pulse div { animation: none; opacity: 1; }
+  }
   .stagehead {
     position: absolute; left: 18px; right: 18px; top: 16px; z-index: 3;
     display: flex; align-items: center; gap: 12px;
@@ -431,6 +453,7 @@ export const VIEWER_HTML = `<!doctype html>
       </tr></thead><tbody id="atomrows"></tbody></table>
       <p class="empty-list" id="listempty" hidden>Nothing matches.</p>
     </div>
+    <div class="pulse" id="pulse" aria-live="polite"></div>
     <div class="hint">click an atom to open it · zoom in for names</div>
     <div class="empty" id="empty" hidden>
       <span class="eyebrow">Empty brain</span>
@@ -877,15 +900,262 @@ export const VIEWER_HTML = `<!doctype html>
     return set;
   }
 
+  // The one place the client reconciles its graph with the store. Both callers need exactly
+  // this and nothing less: a save the user just made, and a write some other process made
+  // that the pulse noticed. Neither can patch a row locally and stay honest -- the store
+  // computes contentHash, freshness and updatedAt on write -- and neither can splice links,
+  // because links derive from shared tags, so ONE write can add and remove links between
+  // atoms it never touched. Refetching is not the lazy option here, it is the correct one.
+  function refetchGraph() {
+    return fetchJSON("/api/graph").then(function (data) {
+      var fresh = data.nodes || [], freshLinks = data.links || [];
+      var nextById = {}, nextAdj = {};
+      for (var i = 0; i < fresh.length; i++) { nextById[fresh[i].id] = fresh[i]; nextAdj[fresh[i].id] = []; }
+      for (var k = 0; k < freshLinks.length; k++) {
+        var l = freshLinks[k];
+        if (nextAdj[l.source]) nextAdj[l.source].push(l.target);
+        if (nextAdj[l.target]) nextAdj[l.target].push(l.source);
+      }
+      for (var j = 0; j < fresh.length; j++) {
+        var n = fresh[j], was = byId[n.id];
+        if (was) {
+          // Positions carry across by id. Rebuilding them would make the graph jump on every
+          // save, which reads as the edit having changed the shape of the knowledge rather
+          // than one atom's text.
+          n.x = was.x; n.y = was.y; n.vx = was.vx; n.vy = was.vy;
+        } else {
+          // A new atom is placed among the atoms it links to, not at a random point in the
+          // field. It has to read as arriving where it belongs; spawned anywhere else the eye
+          // follows it across the canvas and learns nothing from the trip. An atom that links
+          // to nothing has no such place, and falls back to the rim the layout gives it.
+          var near = nextAdj[n.id] || [], cx = 0, cy = 0, seen = 0;
+          for (var m = 0; m < near.length; m++) {
+            var peer = byId[near[m]];
+            if (peer) { cx += peer.x; cy += peer.y; seen++; }
+          }
+          if (seen) { n.x = cx / seen + (Math.random() - 0.5) * 30; n.y = cy / seen + (Math.random() - 0.5) * 30; }
+          else { n.x = (Math.random() - 0.5) * 420; n.y = (Math.random() - 0.5) * 420; }
+          n.vx = 0; n.vy = 0;
+        }
+      }
+      nodes = fresh; links = freshLinks; byId = nextById; adj = nextAdj;
+      // Re-point by id, because everything above replaced the node OBJECTS. draw() and the
+      // camera compare these by reference, so a stale one silently drops the selection ring
+      // and strands the camera on a node no longer in the field. Harmless while only a save
+      // could refetch -- it reopened the inspector afterwards -- but the pulse refetches with
+      // nobody touching the page.
+      if (selected) selected = byId[selected.id] || null;
+      if (hovered) hovered = byId[hovered.id] || null;
+      if (camNode) camNode = byId[camNode.id] || null;
+      renderLegend(); renderStats(); renderList();
+      // Boot returns before starting the render loop when the store is empty, so the very
+      // first atom would otherwise leave the graph blank and "Empty brain" on screen until a
+      // reload. Start it here if it was never started.
+      document.getElementById("empty").hidden = nodes.length > 0;
+      if (nodes.length && !looping) { fit(); frame(); }
+      // A new atom arrives with no velocity, and by now alpha is below the freeze threshold,
+      // so without reheating the layout it never actually gets placed.
+      reheat(0.35);
+    });
+  }
+
+  // ---- live pulse ----
+  // The page watches the DATABASE, not the agent. Every event drawn here is a row some other
+  // process already wrote -- knowledge_commits on a write, knowledge_access on a retrieval --
+  // so nothing was added to anyone's write path, Claude Code and Codex and a second terminal
+  // running "knowl query" all light the graph identically without knowing this page exists,
+  // and when the page is closed not one line of it runs.
+
+  var pulseFeed = document.getElementById("pulse");
+  var pulseAt = { commits: null, access: null };
+  var flare = {};        // id -> { kind, t0 } ; t0 may sit in the future, for the rank stagger
+  var litSet = null;     // id -> true, the atoms the last retrieval answered with
+  var litUntil = 0;
+
+  // Every verb the store can commit, as motion. "kick" is an outward shove into the force
+  // layout, so "drifts away" is the physics settling rather than an animation path -- and the
+  // neighbours it leaves visibly close the gap behind it.
+  //
+  // "len" is the whole flare in frames, and for the retiring verbs it is deliberately short:
+  // the note behind it was "light up then just dims down to no glow", and a slow fall reads as
+  // the atom being dimmed rather than as it going out. Roughly 0.9s there against 2.7s for a
+  // store, which is the difference between a light being switched off and one being turned down.
+  //
+  // 'delete' is absent on purpose: the atom is gone from the refetched graph, so there is no
+  // dot left to animate. Its disappearance IS the animation, and the feed line names it.
+  var FLARE = {
+    query:     { kick:  0,   len: 150 },
+    insert:    { kick:  0,   len: 165 },
+    restore:   { kick: -2.5, len: 140 },
+    update:    { kick:  0,   len: 100 },
+    supersede: { kick:  3.2, len: 55 },
+    deprecate: { kick:  2.2, len: 55 },
+    archive:   { kick:  2.2, len: 55 },
+    reject:    { kick:  2.2, len: 55 }
+  };
+
+  var VERB = {
+    insert: "stored", update: "updated", supersede: "superseded", "delete": "deleted",
+    deprecate: "deprecated", archive: "archived", reject: "rejected", restore: "restored"
+  };
+
+  // What floats above the atom while its flare runs. No entry for "query": a retrieval lights
+  // seven or eight atoms at once, and eight badges is not a caption, it is a wall of text over
+  // the one part of the graph worth looking at. A retrieval already names its hits -- they are
+  // in the focus set, so the label threshold shows their titles.
+  var BADGE = {
+    insert: "NEW", update: "UPDATED", restore: "RESTORED",
+    supersede: "SUPERSEDED", deprecate: "DEPRECATED", archive: "ARCHIVED", reject: "REJECTED"
+  };
+
+  // How long a badge lives, in frames -- about 1.8s, holding for the first two thirds. Set by
+  // reading rather than by looking: it is the floor for taking in a nine-letter word, and it
+  // is longer than the fastest verb's light on purpose.
+  var BADGE_LIFE = 108;
+
+  // Fast attack, quadratic decay. Null outside the envelope, INCLUDING before it opens: a
+  // retrieval staggers its hits by rank, so the ninth hit sits at a negative age while the
+  // first eight are already lit and the answer resolves in the order the ranker put it in
+  // rather than as one flash.
+  function flareAt(n) {
+    var f = flare[n.id];
+    if (!f) return null;
+    var spec = FLARE[f.kind], age = t - f.t0;
+    if (!spec || age < 0) return null;
+
+    // One envelope for every verb: a fast attack, then a quadratic decay back to nothing.
+    // What differs between them is only "len" and where the atom RESTS -- a retiring verb
+    // lands on ash because its status changed under it, not because the curve went negative.
+    // "wave" is the shockwave's own clock, 1 at the instant of the event and 0 once the ring
+    // has finished expanding, which is sooner than the light does.
+    //
+    // The BADGE runs on a clock of its own, and has to. Light and text are read at different
+    // speeds: a retiring verb is 55 frames because switching a light off should look abrupt,
+    // and that is nowhere near long enough to read the word SUPERSEDED. So the entry outlives
+    // the light -- "v" clamps to zero at spec.len while the badge holds and then fades.
+    var life = BADGE[f.kind] && BADGE_LIFE > spec.len ? BADGE_LIFE : spec.len;
+    if (age > life) { delete flare[n.id]; return null; }
+    var hold = BADGE_LIFE * 0.68;
+    return {
+      v: age >= spec.len ? 0 : (age < 9 ? age / 9 : Math.pow(1 - (age - 9) / (spec.len - 9), 2)),
+      wave: Math.max(0, 1 - age / (spec.len * 0.75)),
+      badge: !BADGE[f.kind] ? 0
+        : Math.min(age / 5, age < hold ? 1 : Math.max(0, 1 - (age - hold) / (BADGE_LIFE - hold))),
+      // Monotonic, so the badge drifts steadily upward instead of sinking back as the light
+      // decays. Over the badge's life, not the light's, or a fast verb would jerk to a stop.
+      rise: Math.min(1, age / life),
+      kind: f.kind
+    };
+  }
+
+  function ignite(id, kind, delay) {
+    var n = byId[id];
+    if (reduce || !n || !FLARE[kind]) return;
+    flare[id] = { kind: kind, t0: t + (delay || 0) };
+    var kick = FLARE[kind].kick;
+    if (kick) {
+      // Shoved along the ray from the centre of the field, so an atom being retired leaves by
+      // the shortest way out instead of crossing the graph to get there.
+      var d = Math.sqrt(n.x * n.x + n.y * n.y) || 1;
+      n.vx += (n.x / d) * kick; n.vy += (n.y / d) * kick;
+      reheat(0.3);
+    }
+  }
+
+  function feed(verb, detail) {
+    var line = document.createElement("div");
+    line.innerHTML = "<b>" + esc(verb) + "</b> <i>" + esc(detail) + "</i>";
+    pulseFeed.appendChild(line);
+    while (pulseFeed.childNodes.length > 5) pulseFeed.removeChild(pulseFeed.firstChild);
+    window.setTimeout(function () {
+      line.className = "out";
+      window.setTimeout(function () { if (line.parentNode) line.parentNode.removeChild(line); }, 600);
+    }, 6000);
+  }
+
+  function titleOf(id) {
+    var n = byId[id];
+    return n ? n.title : "(no longer in the store)";
+  }
+
+  function pollPulse() {
+    var path = "/api/pulse";
+    if (pulseAt.commits !== null) path += "?commits=" + pulseAt.commits + "&access=" + pulseAt.access;
+    return fetchJSON(path).then(function (p) {
+      var first = pulseAt.commits === null;
+      pulseAt.commits = p.commits; pulseAt.access = p.access;
+      // The first call only claims the watermarks. Replaying the store's whole history as the
+      // page loads is a demo of nothing, and the graph just fetched is already current.
+      if (first) return;
+
+      var changes = p.changes || [], retrievals = p.retrievals || [];
+      if (p.resync || changes.length) {
+        // Structure first, motion second: ignite() needs the new atom to exist before it can
+        // light it, and titleOf() needs it before it can name it.
+        refetchGraph().then(function () {
+          // resync means the burst clamp dropped the events. The graph above is still correct;
+          // what was skipped is the animation, never the state.
+          if (p.resync) return;
+          // A write clears the stage exactly the way a retrieval does, and for the same
+          // reason: one atom changing among 1,121 others is invisible until the rest gets out
+          // of its way. Everything this commit touched goes in the set together -- a supersede
+          // and the atom replacing it are one event, and dimming one to spotlight the other
+          // would hide the half that explains it.
+          var touched = null, hold = 0;
+          for (var i = 0; i < changes.length; i++) {
+            var id = changes[i].itemId, action = changes[i].action;
+            ignite(id, action, 0);
+            feed(VERB[action] || action, titleOf(id));
+            if (!reduce && byId[id] && FLARE[action]) {
+              if (!touched) touched = {};
+              touched[id] = true;
+              // The stage stays cleared for as long as there is something to read, not just
+              // something to see: a supersede's light is out in 0.9s but its badge is still
+              // up, and un-dimming a thousand atoms underneath a word being read takes the
+              // word with it.
+              var span = BADGE[action] && BADGE_LIFE > FLARE[action].len ? BADGE_LIFE : FLARE[action].len;
+              if (span > hold) hold = span;
+            }
+          }
+          if (touched) { litSet = touched; litUntil = t + hold; }
+        });
+      }
+
+      for (var r = 0; r < retrievals.length; r++) {
+        var hits = (retrievals[r].hits || []).slice();
+        if (!hits.length) continue;
+        // Sorted by rank rather than trusted to arrive that way, because the stagger below is
+        // the whole point: it has to run best-first.
+        hits.sort(function (a, b) { return a.rank - b.rank; });
+        litSet = {};
+        for (var h = 0; h < hits.length; h++) {
+          litSet[hits[h].itemId] = true;
+          ignite(hits[h].itemId, "query", h * 4);
+        }
+        litUntil = t + 150 + hits.length * 4;
+        feed(retrievals[r].surface === "viewer" ? "searched" : "queried",
+          hits.length + (hits.length === 1 ? " atom · " : " atoms · ") + titleOf(hits[0].itemId));
+      }
+    }, function () {
+      // A tick that fails is not worth reporting four times a second. The watermarks are
+      // untouched, so whatever happened during the outage arrives on the tick that recovers.
+    });
+  }
+
   function draw() {
     // Boxes of labels already painted this frame. A label that would overlap one of them is
     // dropped rather than drawn on top of it: with hundreds of nodes on screen, overlapping
     // text is not dense, it is illegible, and the reader cannot tell which dot it belongs to.
-    var labelBoxes = [], labelQueue = [];
+    var labelBoxes = [], labelQueue = [], badgeQueue = [];
 
     ctx.clearRect(0, 0, W, H);
     var focusNode = hovered || selected;
-    var focusSet = focusNode ? neighborhood(focusNode) : null;
+    // A live retrieval borrows the focus state rather than inventing one. It is the same
+    // shape -- a set of ids -- and focus already does every single thing the animation needs:
+    // drop everything outside the set to 16%, brighten the halos inside it, light only the
+    // links with both ends inside, and name the members. Hover and selection still win,
+    // because a person reading one atom must not have the view taken off them mid-read.
+    var focusSet = focusNode ? neighborhood(focusNode) : litSet;
     var searching = !!query;
     // Names resolve as the camera comes in, the way a map does. At the overview scale one
     // label is ~150px of text over a field of 3.6px dots, so the 60 that used to show there
@@ -925,6 +1195,13 @@ export const VIEWER_HTML = `<!doctype html>
       else if (searching && !matchesQuery(n)) dim = 0.12;
       var stale = n.freshness && n.freshness !== "fresh";
       if (dimStale && stale && dim === 1) dim = 0.5;
+      // Retired knowledge is drawn as ash: dark, and with no light of its own. The graph is
+      // the ONLY surface that shows it at all -- the list filters non-active out and the rail
+      // counts only active -- so until now 124 of this store's 1,125 atoms rendered exactly
+      // like live ones, asserting on screen that superseded knowledge is still in force.
+      // Keeping them visible is right; they are the history. Letting them glow was not.
+      var retired = n.status && n.status !== "active";
+      if (retired) dim *= 0.3;
       // The rim is context, not the subject. Drawn at full strength it competes with the core
       // for attention and wins on sheer count.
       if (!n.degree) dim *= 0.55;
@@ -942,14 +1219,47 @@ export const VIEWER_HTML = `<!doctype html>
       // frames here, and a cached gradient costs one drawImage.
       var bright = n === selected || (focusSet && focusSet[n.id]);
       var halo = (bright ? 44 : 23) * (0.85 + pulse * 0.15);
-      ctx.globalAlpha = dim * (bright ? 1 : 0.62 + pulse * 0.22);
-      ctx.drawImage(glowSprite(color), x - halo / 2, y - halo / 2, halo, halo);
+      // A live event overrides the ambient breath for as long as it runs: it widens the halo
+      // and lifts the atom CLEAR of whatever dimming is in force, rather than scaling by it.
+      // Scaling would make the flash on a retiring atom the faintest thing on screen, since by
+      // the time it runs that atom is already drawn as ash.
+      var fx = flareAt(n), lift = 1;
+      if (fx) { halo *= 1 + fx.v * 2.1; lift = 1 + fx.v * 2.4; dim = dim + fx.v * (1 - dim); }
 
-      ctx.globalAlpha = dim * (0.82 + pulse * 0.18);
+      // Retirement needs no envelope of its own. The refetch lands the new status BEFORE the
+      // flare starts, so the atom is already ash underneath: the flash lifts it clear, and the
+      // ordinary decay drops it onto the resting state instead of back to where it was. The
+      // animation ends where the atom now lives, which is the whole point of a retirement --
+      // an earlier cut ran a hand-built plunge to darkness and then crept back to ambient,
+      // which said the opposite.
+      var glow = retired ? (fx ? fx.v : 0) : 1;
+      if (glow > 0.004) {
+        ctx.globalAlpha = Math.min(1, dim * (bright ? 1 : 0.62 + pulse * 0.22) * lift * glow);
+        ctx.drawImage(glowSprite(color), x - halo / 2, y - halo / 2, halo, halo);
+      }
+
+      ctx.globalAlpha = Math.min(1, dim * (0.82 + pulse * 0.18) * lift);
       ctx.beginPath();
       ctx.arc(x, y, r, 0, Math.PI * 2);
-      ctx.fillStyle = "#ffffff";
+      // Ash rather than a dim star: a white core at low alpha still reads as a light someone
+      // turned down, and the point is that this one is out. The colour crossfades with the
+      // flare so the flash is white and what settles is grey.
+      ctx.fillStyle = retired && glow < 0.5 ? "#5d6f78" : "#ffffff";
       ctx.fill();
+
+      // The shockwave: a ring expanding out of the atom and fading as it goes. This is what
+      // carries "something happened HERE" at overview zoom, where the dot is 3.6px and a
+      // brightness change on it is invisible. A ring rather than a bigger dot, because dot
+      // area is spoken for -- it is fixed at every zoom by design, and swelling it would read
+      // as the atom having gained degree.
+      if (fx && fx.wave > 0) {
+        ctx.globalAlpha = 1;
+        ctx.beginPath();
+        ctx.arc(x, y, r + (1 - fx.wave) * 30, 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,255,255," + (fx.wave * 0.45).toFixed(3) + ")";
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
 
       if (stale) {
         ctx.beginPath();
@@ -963,6 +1273,13 @@ export const VIEWER_HTML = `<!doctype html>
         ctx.strokeStyle = "#4fd8e8"; ctx.lineWidth = 1.5; ctx.stroke();
       }
       ctx.globalAlpha = 1;
+
+      if (fx && fx.badge > 0.01) {
+        badgeQueue.push({
+          x: x, y: y - r - 11 - fx.rise * 9, text: BADGE[fx.kind], alpha: fx.badge,
+          retiring: fx.kind !== "restore" && FLARE[fx.kind].kick > 0
+        });
+      }
 
       var showLabel = showAllLabels || n === selected || n === hovered || n.degree >= ambientDeg ||
         (focusSet && focusSet[n.id]) || (searching && matchesQuery(n));
@@ -1013,6 +1330,37 @@ export const VIEWER_HTML = `<!doctype html>
       ctx.fillText(it.text, it.x, it.y);
       ctx.globalAlpha = 1;
     }
+
+    // Event badges, over everything including the labels. No collision test and no queue
+    // priority: a handful exist at a time, they last about a second, and one being dropped
+    // because a title got there first would silently lose the only caption that says WHAT
+    // happened. They are drawn as pills rather than as bare text so they never read as an
+    // atom's name -- the graph already spends plain text on titles.
+    //
+    // Two treatments, both neutral, because hue on this canvas is spoken for: the seven
+    // category colours mean something, and a badge inventing an eighth would say a thing it
+    // does not mean. Live verbs get the accent, retiring verbs get ash -- the same split the
+    // atoms themselves now use.
+    ctx.font = "9px ui-monospace, SFMono-Regular, Menlo, monospace";
+    for (var bq = 0; bq < badgeQueue.length; bq++) {
+      var bd = badgeQueue[bq];
+      if (bd.alpha <= 0.01) continue;
+      var tw = ctx.measureText(bd.text).width, pw = tw + 12, ph = 14;
+      ctx.globalAlpha = bd.alpha;
+      ctx.beginPath();
+      // roundRect is not everywhere; a plain rect is the same badge with square corners, and
+      // losing the radius is not worth a path-drawing helper.
+      if (ctx.roundRect) ctx.roundRect(bd.x - pw / 2, bd.y - ph, pw, ph, 7);
+      else ctx.rect(bd.x - pw / 2, bd.y - ph, pw, ph);
+      ctx.fillStyle = "#070a0cee";
+      ctx.fill();
+      ctx.strokeStyle = bd.retiring ? "#5d6f78" : "#4fd8e8";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = bd.retiring ? "#9fb4bd" : "#4fd8e8";
+      ctx.fillText(bd.text, bd.x, bd.y - 4);
+      ctx.globalAlpha = 1;
+    }
   }
 
   // Guards against a second render loop. Boot starts one, and save() starts one when the
@@ -1021,6 +1369,9 @@ export const VIEWER_HTML = `<!doctype html>
   function frame() {
     looping = true;
     t++;
+    // Released here rather than on a timer, so the graph comes back exactly as the last hit
+    // finishes fading instead of at some wall-clock moment unrelated to what is on screen.
+    if (litSet && t > litUntil) litSet = null;
     step();
     camStep(0.12);
     draw();
@@ -1323,40 +1674,7 @@ export const VIEWER_HTML = `<!doctype html>
       // Re-fetch rather than splicing the row in place. The store computes contentHash,
       // freshness and updatedAt on write, so a locally patched row would disagree with the
       // database in exactly the fields the list sorts and filters on.
-      return fetchJSON("/api/graph").then(function (data) {
-        var fresh = data.nodes || [];
-        for (var i = 0; i < fresh.length; i++) {
-          var was = byId[fresh[i].id];
-          // Positions carry across by id. Rebuilding them would make the graph jump on every
-          // save, which reads as the edit having changed the shape of the knowledge rather
-          // than one atom's text.
-          if (was) {
-            fresh[i].x = was.x; fresh[i].y = was.y; fresh[i].vx = was.vx; fresh[i].vy = was.vy;
-          } else {
-            fresh[i].x = (Math.random() - 0.5) * 420; fresh[i].y = (Math.random() - 0.5) * 420;
-            fresh[i].vx = 0; fresh[i].vy = 0;
-          }
-        }
-        nodes = fresh;
-        links = data.links || [];
-        // Rebuilt rather than preserved: links derive from tags and category, so editing
-        // either changes them, and a stale adj asserts a relationship the store no longer holds.
-        byId = {}; adj = {};
-        for (var j = 0; j < nodes.length; j++) { byId[nodes[j].id] = nodes[j]; adj[nodes[j].id] = []; }
-        for (var k = 0; k < links.length; k++) {
-          var l = links[k];
-          if (adj[l.source]) adj[l.source].push(l.target);
-          if (adj[l.target]) adj[l.target].push(l.source);
-        }
-        renderLegend(); renderStats(); renderList();
-        // Boot returns before starting the render loop when the store is empty, so the very
-        // first atom would otherwise leave the graph blank and "Empty brain" on screen until a
-        // reload. Start it here if it was never started.
-        document.getElementById("empty").hidden = nodes.length > 0;
-        if (nodes.length && !looping) { fit(); frame(); }
-        // A new atom spawns at a random position, and by now alpha is below the freeze
-        // threshold, so without reheating the layout it never actually gets placed.
-        reheat(0.35);
+      return refetchGraph().then(function () {
         // Reopen rather than close when the atom still exists. Archiving closed the panel and
         // the row then failed the active filter, so the Restore button this promises was
         // unreachable without hunting for a dot in the graph.
@@ -1543,6 +1861,11 @@ export const VIEWER_HTML = `<!doctype html>
       renderList();
       renderStats();
     });
+    // Started before the empty-store early return, so the very first atom an agent stores
+    // arrives live rather than leaving "Empty brain" up until somebody reloads. 250ms is
+    // indistinguishable from push over loopback and costs the server two indexed reads.
+    pollPulse();
+    window.setInterval(pollPulse, 250);
     if (!nodes.length) { document.getElementById("empty").hidden = false; return; }
     renderLegend();
     renderStats();
