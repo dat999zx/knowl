@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.10.0 — 2026-08-23
 
 The viewer stops being a snapshot. `knowl view` now watches the store while it is open and draws
 what happens: a retrieval lights the atoms it answered with, a write arrives on a cleared stage, a
