@@ -4,6 +4,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeDb, initDb } from '../../src/store/database.js';
 import * as repo from '../../src/store/repository.js';
 import { storeKnowledgeItemDeduped, storeKnowledgeAtomsDeduped } from '../../src/store/knowledge-writer.js';
+import { supersedeKnowledgeItemWithCommit } from '../../src/store/knowledge-actions.js';
+import { readCommitHead, loadForeignChanges } from '../../src/store/change-watermark.js';
 
 const ROOT = path.resolve('./.knowl-supersede-write-test');
 
@@ -375,5 +377,40 @@ describe('supersede on write', () => {
     expect(result.insertedCount).toBe(1);
     expect(result.supersededIds).toEqual([original.item.id]);
     expect((await repo.getKnowledgeItem(original.item.id))!.status).toBe('superseded');
+  });
+
+  /**
+   * The retirement half of a supersede has to reach the commit log, and for one of the two
+   * paths it did not. `knowl_store` with `supersedes:` recorded `insert` AND `supersede` in one
+   * commit; `knowl_update` with `supersedeId:` recorded only the update, because
+   * `repo.supersedeKnowledgeItem` is a bare row write.
+   *
+   * The item row was correct either way, which is why this survived: retrieval honoured the
+   * retirement, so nothing about querying looked wrong. What silently lost it was everything
+   * that reads the log instead of the row -- the workspace change notice, so a teammate is
+   * never told the atom was retired; blast radius, which decides what to re-check; and
+   * `mcp_call_commits` attribution.
+   */
+  it('records a supersede change in the commit log when retiring by id, not just on the item row', async () => {
+    const doomed = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Ferry timetable is read from the CSV drop', content: 'The 06:00 sailing is parsed out of the nightly CSV drop.',
+    });
+    const replacement = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Ferry timetable now arrives over the vendor API', content: 'The nightly CSV drop was retired; sailings come from the vendor API.',
+    });
+
+    const before = await readCommitHead();
+    await supersedeKnowledgeItemWithCommit(projectId, doomed.item.id, replacement.item.id);
+
+    // The row, which was always right.
+    const retired = await repo.getKnowledgeItem(doomed.item.id);
+    expect(retired!.status).toBe('superseded');
+    expect(retired!.supersededById).toBe(replacement.item.id);
+
+    // The log, which was not.
+    const changes = await loadForeignChanges(before);
+    const mine = changes.items.filter(item => item.itemId === doomed.item.id);
+    expect(mine).toHaveLength(1);
+    expect(mine[0].action).toBe('supersede');
   });
 });

@@ -82,6 +82,13 @@ async function auditConflictIdentities(db: any, repair: boolean): Promise<Integr
     const [winner, ...losers] = [...bucket]
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
     for (const loser of losers) {
+      // NOTE: this is the bare row write, so a repair made here would NOT reach the change
+      // log -- no `supersede` row in `knowledge_commits`, so the workspace change notice,
+      // blast radius and the viewer's pulse all miss it. Left as-is deliberately: nothing
+      // passes `repair: true` today (`knowl audit` is read-only and no repair command
+      // exists), and correcting it means threading a projectId through this function and its
+      // three callers, one of which is `restoreSnapshot`. Whoever wires up a repair command
+      // should switch this to `supersedeKnowledgeItemWithCommit` at the same time.
       if (repair) await supersedeKnowledgeItem(loser.id, winner.id);
       findings.push({
         code: 'duplicate-conflict-identity',

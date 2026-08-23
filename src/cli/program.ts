@@ -14,7 +14,7 @@ import {
 import { installKnowlGitignoreEntry } from '../core/gitignore.js';
 import { initDb, closeDb } from '../store/database.js';
 import * as repo from '../store/repository.js';
-import { recordDecisionDirect } from '../store/knowledge-actions.js';
+import { recordDecisionDirect, supersedeKnowledgeItemWithCommit } from '../store/knowledge-actions.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
 import { formatHierarchyToMarkdown } from '../core/format.js';
 import { formatStatusReport } from './status-report.js';
@@ -740,7 +740,12 @@ program.command('supersede').argument('<itemId>').argument('<replacementId>').de
     if (!(await repo.getKnowledgeItem(replacementId))) {
       throw new Error(`No knowledge item "${replacementId}" to supersede with. Nothing was retired.`);
     }
-    console.log(JSON.stringify(await repo.supersedeKnowledgeItem(itemId, replacementId), null, 2));
+    // Through the committing wrapper so the retirement reaches `knowledge_commits`. The bare
+    // `repo.supersedeKnowledgeItem` writes the item row only, which left every reader of the
+    // change log blind to it -- including the workspace notice that tells a teammate an atom
+    // they hold is no longer current.
+    const project = await repo.getProjectByRootPath(root) ?? await repo.createProject(root, 'knowl');
+    console.log(JSON.stringify(await supersedeKnowledgeItemWithCommit(project.id, itemId, replacementId), null, 2));
     await closeDb();
   } catch (error: any) { console.error(`Error superseding knowledge: ${error.message}`); process.exit(1); }
 });
