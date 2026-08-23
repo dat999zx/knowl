@@ -11,6 +11,7 @@ import { KnowledgeValidationError } from '../core/knowledge-validation.js';
 import { listSkillPackages } from '../skills/registry.js';
 import { queryKnowledgeForAgentExplained } from '../store/agent-query.js';
 import { listEvidenceForItem } from '../store/evidence-repository.js';
+import { readPulse } from '../store/pulse.js';
 import { VIEWER_HTML } from './ui.js';
 
 export type ViewerServer = {
@@ -413,6 +414,18 @@ export async function startViewer(projectRoot: string, options: { port?: number 
       const counts: Record<string, number> = {};
       for (const [id, entry] of summary) counts[id] = entry.retrievalCount;
       return json(response, counts);
+    }
+    if (pathname === '/api/pulse') {
+      // Absent watermarks are the page's first call, and mean "start from here". A number that
+      // does not parse is treated the same way rather than as 0, because `Number('') || 0` on a
+      // junk parameter would replay the entire store as a firework.
+      const since = (name: string): number | null => {
+        const raw = url.searchParams.get(name);
+        if (raw === null) return null;
+        const value = Number(raw);
+        return Number.isFinite(value) && value >= 0 ? Math.floor(value) : null;
+      };
+      return json(response, await readPulse(since('commits'), since('access')));
     }
     if (pathname === '/api/skills') return json(response, await listSkillPackages(projectRoot));
     if (pathname === '/api/retrieval') return json(response, await queryKnowledgeForAgentExplained('local', { query: url.searchParams.get('q') ?? '', limit: 10, surface: 'viewer' }));

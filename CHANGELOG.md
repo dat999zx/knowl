@@ -3,6 +3,58 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+The viewer stops being a snapshot. `knowl view` now watches the store while it is open and draws
+what happens: a retrieval lights the atoms it answered with, a write arrives on a cleared stage, a
+retirement goes dark and stays dark. Building it turned up two things that were wrong before it
+existed — retired atoms had never been drawn as retired, and one of the two supersede paths never
+reached the change log at all.
+
+### The viewer draws live store activity
+
+While a viewer tab is open it polls `/api/pulse` four times a second and animates what the store
+did: retrievals ignite their hits in rank order and dim everything else, writes clear the stage and
+flare, retirements go out. A caption above each changed atom says which verb it was — `NEW`,
+`UPDATED`, `SUPERSEDED` — and a feed at the bottom-left names what happened.
+
+It watches the **database**, not the agent, so Claude Code, Codex, Cursor and a second terminal
+running `knowl query` all light the graph identically, and none of them needs to know the viewer
+exists. Nothing was added to any write path: the two tables it reads, `knowledge_commits` and
+`knowledge_access`, were already written on every write and every retrieval. **With no viewer
+running, none of this executes.**
+
+### Retired atoms are drawn as retired
+
+**Behaviour change, visible on upgrade whether or not you ever open a viewer.** The graph never read
+an atom's `status`, so superseded, archived, deprecated and rejected atoms rendered exactly like
+live ones — full white core, full category halo. On a store of 1,127 atoms that was 124 of them,
+11%, asserting on screen that retired knowledge was still in force.
+
+They are now drawn as ash: dimmed, no halo, core in grey rather than white. They stay visible and
+still carry their links, because they are the history — they simply no longer claim to be current.
+The graph is the only surface that shows them at all; the list filters non-active out and the rail
+counts only active.
+
+### Fixed: retiring an atom by id never reached the change log
+
+`knowl_update --supersedeId`, `knowl supersede` and the MCP equivalent wrote the retirement to the
+item row and nowhere else. The row was always correct, so retrieval honoured the retirement and
+nothing about querying looked wrong — but no `supersede` entry reached `knowledge_commits`, and
+everything that reads the change log rather than the row missed it:
+
+- the workspace change notice, so a teammate in a linked workspace was never told an atom they hold
+  had been retired, and went on reading it as current
+- blast radius, which uses the commit trail to decide what to re-check when something turns out wrong
+- `mcp_call_commits` write attribution
+
+Storing with `supersedes:` always recorded both halves in one commit; only the retire-by-id path was
+affected. All callers now route through `supersedeKnowledgeItemWithCommit`, which records it.
+
+One consequence worth knowing: a retired atom now stages to a connected cloud workspace, because the
+committing path stages. That is the same fix in the sync dimension — a published atom that has been
+retired has to reach the team as retired — but it is new behaviour.
+
 ## 5.9.0 — 2026-08-22
 
 Knowl reaches every host it can reach. Four new lifecycle integrations, a Codex profile that was

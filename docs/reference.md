@@ -1387,6 +1387,47 @@ knowl view --port 4312
 This is where a person reads and corrects what their agents remember. It runs against
 `.knowl/knowl.db` on this machine — no account, no network, no sync round trip.
 
+### Live activity
+
+An open viewer draws what the store is doing, as it happens:
+
+| Event | On the graph |
+| --- | --- |
+| A retrieval | Its hits ignite in rank order, everything else drops away, and the hits are named |
+| A write | The stage clears and the new atom flares where its links put it, captioned `NEW` |
+| An edit | The atom ripples in place, captioned `UPDATED` |
+| A retirement | The atom flashes, goes dark, and stays dark — captioned `SUPERSEDED`, `ARCHIVED`, `DEPRECATED` or `REJECTED` |
+
+Everything one commit touched shares the stage, so a supersede and the atom replacing it stay lit
+together. A feed at the bottom-left names each event. A retrieval is deliberately not captioned:
+it lights seven or eight atoms at once, and their titles say more than a repeated word would.
+
+<p align="center">
+  <img src="assets/viewer-pulse-query.png" alt="The Knowl viewer answering a retrieval: seven atoms lit and named across the graph while every other atom drops away, and a feed reading queried 7 atoms" width="80%" />
+</p>
+<p align="center">
+  <img src="assets/viewer-pulse-new.png" alt="The Knowl viewer during a write: the graph dimmed and one atom flaring at its centre under a NEW caption, with a feed naming what was stored" width="48%" />
+  <img src="assets/viewer-pulse-supersede.png" alt="The Knowl viewer during a supersede: the retired atom marked SUPERSEDED and drawn dark, its replacement marked NEW and lit, and a feed naming both events" width="48%" />
+</p>
+
+**It watches the database, not the agent.** The page polls `/api/pulse` four times a second for
+what changed since it last looked, reading two tables that every write and every retrieval already
+populate — `knowledge_commits` and `knowledge_access`. So any host lights the graph identically
+without knowing the viewer exists, and **nothing runs at all when no viewer is open**: no
+instrumentation was added to any write path, because none was needed.
+
+A tab left in the background has its timers throttled by the browser, so it can return to a large
+backlog. Past a threshold the viewer takes the new watermark, reconciles the graph and skips the
+animation — what is dropped is the motion, never the state.
+
+`prefers-reduced-motion` disables every flare and all the dimming; the feed and the graph refresh
+still run.
+
+**Retired atoms are drawn as retired.** Any atom whose status is not `active` renders as ash —
+dimmed, no halo, grey rather than white — and has light only while an event is lifting it. The
+graph is the only surface that shows them: the list filters non-active out and the rail counts only
+active. They keep their links, because they are the history.
+
 ### Browsing, and finding what you cannot name
 
 The viewer opens on the graph and has a **List** view beside it, with three lenses:
@@ -1466,6 +1507,9 @@ locate content, evidence, and timeline assertions.
 
 The graph and filter UI do not write telemetry. A direct GET to `/api/retrieval` records retrieval
 access telemetry, so a read endpoint is not necessarily free of database writes either.
+`/api/pulse` is the other direction: it is polled continuously and writes nothing at all, reading
+two tables the store already maintains. It sits behind the same `Host` and token checks as every
+other route, and a request without a valid token is refused like any other.
 
 ## Architecture and security boundaries
 

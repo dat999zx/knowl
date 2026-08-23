@@ -45,4 +45,22 @@ describe('viewer template literal integrity', () => {
     // something; if it appears literally, the page is shipping template syntax as text.
     expect(VIEWER_HTML).not.toContain('$' + '{');
   });
+
+  /**
+   * The one check that runs the client code through a parser. Everything above proves the
+   * template is well-formed; none of it proves the ~2,000 lines of JS inside it are. A syntax
+   * error there ships a page whose script never executes -- a blank canvas and an empty rail --
+   * while `tsc`, eslint and every other test in this suite stay green, because to all of them
+   * that JS is the inside of a string.
+   *
+   * `new Function` parses without executing, which is the whole point: there is no DOM here.
+   * Parsed from VIEWER_HTML rather than from the source file, because unicode escapes are
+   * resolved by the template literal on the way out, and the raw source is not the program the
+   * browser receives.
+   */
+  it('ships client JS that actually parses', () => {
+    const script = /<script>([\s\S]*?)<\/script>/.exec(VIEWER_HTML)?.[1];
+    expect(script, 'the served page has no inline script at all').toBeTruthy();
+    expect(() => new Function(script as string)).not.toThrow();
+  });
 });
