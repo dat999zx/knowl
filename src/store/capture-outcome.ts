@@ -210,6 +210,158 @@ export async function captureHealth(): Promise<CaptureHealth> {
   }
 }
 
+/**
+ * Turn-scoped capture: the same negative signal, asked while the turn is still running.
+ *
+ * The conversation-scoped verdict above has a structural blind spot the incident record names:
+ * a session that stores plenty of unrelated atoms reads as healthy for the whole conversation,
+ * so the turn that diagnosed something hard and stored nothing is never spoken to. And the
+ * drift reminder cannot cover it either, because ANY knowl call resets that counter -- the
+ * memory-active session is precisely the one every existing reminder goes quiet for. These
+ * counters are keyed per turn, and the only thing that quiets the prompt is a durable write.
+ *
+ * Rows are working state, not history: the turn boundary deletes them, and `prompted` is the
+ * per-turn one-shot claim with a per-conversation ceiling behind it.
+ */
+
+export type TurnCaptureOutcome = {
+  turnKey: string;
+  conversation: string;
+  toolEvents: number;
+  fileWrites: number;
+  durableWrites: number;
+  prompted: string | null;
+};
+
+/**
+ * Tool events a turn must have produced, including at least one file write, before its
+ * silence is worth interrupting. Deliberately much higher than `MIN_SUBSTANTIVE_TURNS`' bar:
+ * most turns legitimately store nothing, and this prompt spends slot space in the middle of
+ * live work. Twelve tool events with a file write is a turn that built or fixed something.
+ */
+export const MIN_SUBSTANTIVE_TURN_EVENTS = 12;
+/** How many turns of one conversation may be prompted, ever. The fatigue ceiling. */
+export const MAX_TURN_CAPTURE_PROMPTS = 3;
+
+/** The stable identity of one turn, NUL-joined for the reason `conversationKey` gives. */
+export function turnCaptureKey(parts: {
+  host: string;
+  projectRoot: string;
+  externalSessionId?: string;
+  externalTurnId?: string;
+}): string {
+  return [parts.host, parts.projectRoot, parts.externalSessionId ?? '', parts.externalTurnId ?? ''].join('\u0000');
+}
+
+/** Count one tool event into the turn, and read the turn's counters back in the same write. */
+export async function recordTurnToolEvent(
+  turnKey: string,
+  conversation: string,
+  event: { fileWrite: boolean; durableWrite: boolean },
+): Promise<TurnCaptureOutcome | null> {
+  const key = (turnKey ?? '').trim();
+  if (!key) return null;
+  try {
+    const rows = await getClient().execute({
+      sql: `INSERT INTO capture_turn_outcomes (turn_key, conversation, tool_events, file_writes, durable_writes)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(turn_key) DO UPDATE SET
+              tool_events = tool_events + 1,
+              file_writes = file_writes + excluded.file_writes,
+              durable_writes = durable_writes + excluded.durable_writes
+            RETURNING turn_key, conversation, tool_events, file_writes, durable_writes, prompted`,
+      args: [key, conversation, event.fileWrite ? 1 : 0, event.durableWrite ? 1 : 0],
+    });
+    const row = rows.rows[0];
+    if (!row) return null;
+    return {
+      // The caller's key and conversation, NOT the row's columns. The keys are NUL-joined and
+      // SQLite stores the full bytes, but the driver's read path stops TEXT at the first NUL --
+      // so a key read back from a row is truncated to its first segment and can never match
+      // the stored value again. Every other claim in this file survives by recomputing its key
+      // instead of round-tripping it; this result must uphold the same rule for its caller.
+      turnKey: key,
+      conversation,
+      toolEvents: Number(row.tool_events ?? 0),
+      fileWrites: Number(row.file_writes ?? 0),
+      durableWrites: Number(row.durable_writes ?? 0),
+      prompted: row.prompted === null || row.prompted === undefined ? null : String(row.prompted),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Whether this turn's silence is worth one prompt. Pure, so the threshold is testable alone. */
+export function shouldPromptTurnCapture(outcome: TurnCaptureOutcome | null): boolean {
+  if (!outcome) return false;
+  if (outcome.prompted) return false;
+  return outcome.durableWrites === 0
+    && outcome.fileWrites > 0
+    && outcome.toolEvents >= MIN_SUBSTANTIVE_TURN_EVENTS;
+}
+
+/**
+ * Claim this turn's one prompt, then one of the conversation's. Two claims because the row
+ * that carries the first cannot carry the second: a Claude main thread reuses one turn key for
+ * every turn -- the boundary delete is what makes it per-turn -- so a ceiling kept on the turn
+ * row would be deleted with it. The ceiling lives on its own conversation row instead, exactly
+ * as the lesson gate's block budget does, and both claims are conditional writes.
+ *
+ * Order matters: the turn's one-shot is spent first, so losing the ceiling race afterwards
+ * leaves the turn marked and silent rather than eligible to race again.
+ */
+export async function claimTurnCapturePrompt(turnKey: string, conversation: string): Promise<boolean> {
+  const key = (turnKey ?? '').trim();
+  const convo = (conversation ?? '').trim();
+  if (!key || !convo) return false;
+  try {
+    const client = getClient();
+    const turn = await client.execute({
+      sql: "UPDATE capture_turn_outcomes SET prompted = 'prompted' WHERE turn_key = ? AND prompted IS NULL",
+      args: [key],
+    });
+    if (Number(turn.rowsAffected ?? 0) === 0) return false;
+    await client.execute({
+      sql: 'INSERT OR IGNORE INTO capture_turn_prompts (conversation, prompts) VALUES (?, 0)',
+      args: [convo],
+    });
+    const ceiling = await client.execute({
+      sql: 'UPDATE capture_turn_prompts SET prompts = prompts + 1 WHERE conversation = ? AND prompts < ?',
+      args: [convo, MAX_TURN_CAPTURE_PROMPTS],
+    });
+    return Number(ceiling.rowsAffected ?? 0) > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Delete a turn's counters at its boundary, so the next turn under a reused key starts from
+ * zero. The ceiling survives on its own row -- that is the reason it has one.
+ */
+export async function resetTurnCapture(turnKey: string): Promise<void> {
+  const key = (turnKey ?? '').trim();
+  if (!key) return;
+  try {
+    await getClient().execute({
+      sql: 'DELETE FROM capture_turn_outcomes WHERE turn_key = ?',
+      args: [key],
+    });
+  } catch {
+    // Advisory: a stale row costs at most one early prompt, and the per-turn one-shot holds.
+  }
+}
+
+/** The turn-scoped prompt. Mid-turn context, so it must say why it is speaking NOW. */
+export function renderTurnCapturePrompt(): string {
+  return [
+    'KNOWL CAPTURE: this turn has done substantial work and stored nothing durable.',
+    'If something here would help a later session -- a finding you verified, a decision and its reasoning, a diagnosis that will recur -- store it now with knowl_store or knowl_decide, while the details are still in front of you.',
+    'Querying memory does not persist anything; only a write does. If nothing durable exists yet, carry on -- this asks at most once per turn.',
+  ].join(' ');
+}
+
 /** The nudge text, and the only place it is written. */
 /**
  * The mid-session variant, for the MCP channel.

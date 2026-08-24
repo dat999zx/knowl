@@ -7,16 +7,34 @@ import { hostProfile } from './hosts/index.js';
 import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
 import { loadConfig } from '../core/config.js';
 import { isImpactEnabled } from '../store/impact-config.js';
-import { captureNudgeMode } from '../store/capture-config.js';
+import { captureEventsMode, captureNudgeMode, captureScope } from '../store/capture-config.js';
+import { classifyDestructiveCommand } from '../core/lesson-signals.js';
+import {
+  claimLessonBlock,
+  markPendingLessons,
+  openPendingLessons,
+  recordCorrectionLesson,
+  recordDestructiveLesson,
+  renderCorrectionNudge,
+  renderLessonNudge,
+  renderLessonStopReason,
+  resolveLessonsBefore,
+} from '../store/pending-lessons.js';
 import {
   claimSilenceNudge,
+  claimTurnCapturePrompt,
   conversationKey,
   isDurableWriteTool,
   readCaptureOutcome,
   recordDurableWrite,
   recordSessionTurn,
+  recordTurnToolEvent,
   renderSilenceNudge,
+  renderTurnCapturePrompt,
+  resetTurnCapture,
+  shouldPromptTurnCapture,
   shouldNudgeForSilence,
+  turnCaptureKey,
 } from '../store/capture-outcome.js';
 import { detectCertainImpactBestEffort, markFindingsDelivered, openFindingsForSession } from './impact.js';
 import {
@@ -749,6 +767,56 @@ async function evaluateSilenceNudge(input: NormalizedHostHook): Promise<Record<s
   }
 }
 
+/**
+ * Whether unresolved pending lessons should withhold this stop, and the envelope to say it in.
+ *
+ * `evaluateSilenceNudge`'s twin with the opposite scoping: that one speaks once per
+ * conversation about a total, this one speaks about specific events -- a destructive command,
+ * a correction -- that no durable write has settled since they happened. Same discipline
+ * throughout: the same off/shadow/enforce ladder, the delivery capability checked before
+ * anything is spent, the claim spent before the message is delivered, and fail-open without
+ * exception. Two extra rules of its own:
+ *
+ * - The lessons are marked resolved BEFORE the block is emitted, so this can cost at most one
+ *   extra turn per event and can never nag: if the agent stores nothing, the next stop passes.
+ * - The block budget (`MAX_LESSON_BLOCKS`) is a hard ceiling per conversation. Once spent,
+ *   everything else settles silently, whatever else happens.
+ *
+ * Evaluated before the silence nudge and suppressing it for this stop: both spend a blocked
+ * stop, a specific reason beats a general one, and two blocks on one stop is the fatigue that
+ * teaches agents to ignore the channel.
+ */
+async function evaluatePendingLessonStop(input: NormalizedHostHook): Promise<Record<string, unknown> | undefined> {
+  try {
+    const config = await loadConfig(input.projectRoot).catch(() => null);
+    const mode = captureEventsMode(config ?? undefined);
+    if (mode === 'off') return undefined;
+
+    const conversation = conversationKey(input);
+    const open = await openPendingLessons(conversation);
+    if (open.length === 0) return undefined;
+
+    if (mode === 'shadow') {
+      await markPendingLessons(open.map(lesson => lesson.id), 'shadow');
+      return undefined;
+    }
+
+    const profile = hostProfile(input.host);
+    if (!profile.stopContext) return undefined;
+    if (!await claimLessonBlock(conversation)) {
+      // Budget exhausted: settle silently so the rows cannot pile up behind a gate that will
+      // never speak again, and record that silence as what it was.
+      await markPendingLessons(open.map(lesson => lesson.id), 'budget');
+      return undefined;
+    }
+
+    await markPendingLessons(open.map(lesson => lesson.id), 'blocked');
+    return profile.stopContext(renderLessonStopReason(open));
+  } catch {
+    return undefined;
+  }
+}
+
 async function finalizeFailedStop(projectId: string, input: NormalizedHostHook, sessionId: string) {
   await finishMemorySession(
     sessionId,
@@ -865,6 +933,32 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
   }
 
   if (input.event === 'turn-start') {
+    // The correction signal arrives as a derived boolean -- the host hook classified the raw
+    // prompt and forwarded only the verdict, so no user text reaches this layer or the rows
+    // it writes. Recorded as a pending lesson either way; spoken only in enforce, riding the
+    // context envelope this event was already carrying, which is the one moment the lesson
+    // can be stored BEFORE the agent answers -- a correction acted on and not written down is
+    // exactly the shape that gets apologised for and repeated.
+    let correctionLine: string | undefined;
+    if (input.payload.correctionSignal === true) {
+      try {
+        const eventsConfig = await loadConfig(input.projectRoot).catch(() => null);
+        const eventsMode = captureEventsMode(eventsConfig ?? undefined);
+        if (eventsMode !== 'off' && await recordCorrectionLesson(conversationKey(input)) && eventsMode === 'enforce') {
+          correctionLine = renderCorrectionNudge();
+        }
+      } catch {
+        // Advisory.
+      }
+    }
+    const withCorrection = (context: string | undefined): string | undefined =>
+      correctionLine ? (context ? `${correctionLine}\n\n${context}` : correctionLine) : context;
+
+    // A new turn under a reused turn key must start its capture counters from zero. Cheap
+    // enough not to gate on config: one DELETE matching zero rows when the scope was never
+    // 'turn', at a turn boundary rather than on the tool path.
+    await resetTurnCapture(turnCaptureKey(bindingKey(input, 'turn')));
+
     const sessionBinding = await findHostSession(bindingKey(input, 'session'));
     if (!sessionBinding && hostProfile(input.host).sharesSessionBinding) {
       const started = await bootstrapWithHandoff(projectId, input, 'session', true);
@@ -874,7 +968,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
         sessionId: started.session.id,
         context: started.context,
         contextTruncated: started.truncated,
-        hostOutput: hostContextOutput(input, started.context),
+        hostOutput: hostContextOutput(input, withCorrection(started.context)),
       };
     }
     const started = await bootstrapWithHandoff(projectId, input, 'turn', !sessionBinding);
@@ -884,7 +978,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       sessionId: started.session.id,
       context: started.context,
       contextTruncated: started.truncated,
-      hostOutput: hostContextOutput(input, started.context),
+      hostOutput: hostContextOutput(input, withCorrection(started.context)),
     };
   }
 
@@ -916,6 +1010,8 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
 
   if (input.event === 'agent-stop') {
     const agentKey = bindingKey(input, 'turn');
+    // A subagent's turn key carries its agent id, so its counters are its own to clean up.
+    await resetTurnCapture(turnCaptureKey(agentKey));
     const closed = await closeHostSessionBinding(agentKey);
     // Emits no host output: SubagentStop may block a subagent from stopping and
     // this never does.
@@ -941,7 +1037,27 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       // later reads zero when it means "I no longer know". Keyed on the conversation and not on
       // `started.session.id`, which is turn-scoped and would scatter one conversation's writes
       // across a row per turn.
-      if (isDurableWriteTool(input.knowlToolName)) await recordDurableWrite(conversationKey(input));
+      if (isDurableWriteTool(input.knowlToolName)) {
+        await recordDurableWrite(conversationKey(input));
+        // A durable write settles the pending lessons that were already on the table when it
+        // landed -- temporal, not blanket. Clearing everything on any write would be the same
+        // flaw one level down that disarms the drift counter: unrelated activity reading as
+        // the thing it is not.
+        await resolveLessonsBefore(conversationKey(input), new Date().toISOString());
+      }
+      // One config read serves both capture features below; each is off for anyone who has
+      // not turned it on, and a missing config is simply "everything off".
+      const captureConfig = await loadConfig(input.projectRoot).catch(() => null);
+      // Turn-scoped capture counters (capture.scope = 'turn'). Counted for checkpoint events
+      // too, because hosts may report tool activity under that event -- but never for a
+      // failure, which produced nothing worth storing. The updated row comes back from the
+      // same write, so the slot logic below pays no second query.
+      const turnOutcome = input.status !== 'failed' && captureScope(captureConfig ?? undefined) === 'turn'
+        ? await recordTurnToolEvent(turnCaptureKey(bindingKey(input, 'turn')), conversationKey(input), {
+          fileWrite: toolWritesFile(input),
+          durableWrite: isDurableWriteTool(input.knowlToolName),
+        })
+        : null;
       // Runs for `checkpoint` events too -- a host that reports a tool under that event still
       // read or wrote the file it named -- but never for a failed one: a tool that failed
       // returned no contents, so a read-set row from it would record a belief the agent was
@@ -955,6 +1071,28 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       if (input.event === 'session-event' && input.status !== 'failed') {
         const key = bindingKey(input, 'turn');
         const profile = hostProfile(input.host);
+        // Event inspection, on the one path that sees command text. Recorded whatever the
+        // delivery situation is -- a host with no mid-turn channel still gets the stop gate --
+        // and only a successful, non-knowl command is inspected: a failed command did no
+        // damage, and knowl's own tools are not the hazard. Failed detection must not fail
+        // the event, so the classifier's verdict is advisory end to end.
+        let lessonCard: string | undefined;
+        const shellCommand = typeof input.payload.command === 'string' ? input.payload.command : '';
+        if (shellCommand && !input.knowlTool) {
+          try {
+            const eventsMode = captureEventsMode(captureConfig ?? undefined);
+            if (eventsMode !== 'off') {
+              const hit = classifyDestructiveCommand(shellCommand);
+              // `recordDestructiveLesson` is the once-per-class-per-conversation claim, so the
+              // nudge fires exactly when the row is new -- race-safe across hook processes.
+              if (hit && await recordDestructiveLesson(conversationKey(input), hit, shellCommand) && eventsMode === 'enforce') {
+                lessonCard = renderLessonNudge(hit, shellCommand);
+              }
+            }
+          } catch {
+            // Advisory.
+          }
+        }
         // The watermark runs for every host; only delivery depends on the host having a
         // mid-turn channel, which `midTurnContext` answers by returning an envelope.
         changes = await evaluateChangeNotification(input, key);
@@ -971,6 +1109,14 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
           // synthesising an empty one, and why there is still exactly one `hostOutput` here.
           await resetHostSuccessfulToolCount(key);
           hostOutput = profile.midTurnContext(renderChangeCard(changes, impact.length > 0 ? impact : undefined));
+        } else if (lessonCard && profile.midTurnContext('') !== undefined) {
+          // Below the change card, above everything else in the slot: an irreversible command
+          // that just ran is the one signal whose value decays with every tool call between
+          // the event and the asking -- "what else matched that predicate" is only answerable
+          // while the agent still remembers aiming. A "go store" signal resets the drift
+          // counter on the same reasoning as the skill nudges below.
+          await resetHostSuccessfulToolCount(key);
+          hostOutput = profile.midTurnContext(lessonCard);
         } else if (profile.midTurnContext('') !== undefined) {
           // A change card always wins the single mid-turn slot; below it, a specific
           // capture suggestion beats the generic continuation reminder.
@@ -1006,6 +1152,15 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
           } else if (existing) {
             await resetHostSuccessfulToolCount(key);
             hostOutput = profile.midTurnContext(renderSkillUseNudge(existing));
+          } else if (shouldPromptTurnCapture(turnOutcome)
+            && await claimTurnCapturePrompt(turnOutcome!.turnKey, turnOutcome!.conversation)) {
+            // Above the knowl-tool branch on purpose: this is the one reminder a query must
+            // not silence. The drift counter below goes quiet the moment any knowl tool runs,
+            // which is exactly how the memory-active session -- the one that queried five
+            // times, diagnosed the hard thing, and stored nothing -- never hears from it.
+            // Only a durable write quiets this one, by zeroing the verdict itself.
+            await resetHostSuccessfulToolCount(key);
+            hostOutput = profile.midTurnContext(renderTurnCapturePrompt());
           } else if (input.knowlTool) {
             // Adaptive continuation reminder: only nudge after a run of tool calls that
             // ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
@@ -1040,6 +1195,9 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // event that fires per turn, and turns -- not tool events -- are what tell a working
     // conversation apart from a single question answered.
     await recordSessionTurn(conversationKey(input));
+    // The turn is over, so its capture counters are too; the prompt ceiling lives on its own
+    // row and survives this.
+    await resetTurnCapture(turnCaptureKey(bindingKey(input, 'turn')));
 
     // gpt-5.5 often share one session binding across turns. Normal Stop only closes the turn
     // binding. Hard failures finish the session and record a host-scoped handoff.
@@ -1050,9 +1208,15 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
         await closeHostSessionBinding(bindingKey(input, 'session'));
         return { accepted: true, sessionId: session.id, promotion: result.promotion, handoff: result.handoff };
       }
-      const silence = await evaluateSilenceNudge(input);
+      // The lesson gate outranks the silence nudge and suppresses it for this stop: both
+      // withhold the stop, a specific reason beats a general one, and two blocks on one stop
+      // is the fatigue that teaches agents to ignore the channel. The silence nudge's claim
+      // is only spent on delivery, so it keeps its chance at a later stop.
+      const lessonStop = await evaluatePendingLessonStop(input);
+      const silence = lessonStop ? undefined : await evaluateSilenceNudge(input);
+      const stopOutput = lessonStop ?? silence;
       await closeHostSessionBinding(key);
-      return { accepted: true, sessionId: session.id, ...(silence ? { hostOutput: silence } : {}) };
+      return { accepted: true, sessionId: session.id, ...(stopOutput ? { hostOutput: stopOutput } : {}) };
     }
 
     if (input.status === 'failed') {
@@ -1074,9 +1238,13 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // `UserPromptSubmit` sequence gives the turn its own, so a normal Claude stop lands here.
     // Keying the counters on the conversation rather than on either memory session is what lets
     // one verdict serve both paths.
-    const silence = await evaluateSilenceNudge(input);
+    // Same precedence as the shared-binding path above: a specific unstored event beats the
+    // generic "stored nothing" verdict, and at most one of them may withhold this stop.
+    const lessonStop = await evaluatePendingLessonStop(input);
+    const silence = lessonStop ? undefined : await evaluateSilenceNudge(input);
+    const stopOutput = lessonStop ?? silence;
     await closeHostSessionBinding(key);
-    return { accepted: true, sessionId: session.id, promotion, ...(silence ? { hostOutput: silence } : {}) };
+    return { accepted: true, sessionId: session.id, promotion, ...(stopOutput ? { hostOutput: stopOutput } : {}) };
   }
 
   const key = bindingKey(input, 'session');

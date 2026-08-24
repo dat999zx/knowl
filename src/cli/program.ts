@@ -2813,6 +2813,66 @@ configCommand.on('command:*', () => {
   process.exitCode = 1;
 });
 
+/**
+ * The recall/capture posture, as one word instead of six keys.
+ *
+ * Every key it touches exists on its own and stays the contract; this is the convenience for
+ * the user whose answer to "how much should memory do" is a stance rather than a matrix.
+ * `maximal` is the all-knowing posture: the recall chain runs the transcript fallback inside a
+ * missed query, capture asks per turn and per event and may withhold a stop, impact detection
+ * runs with the gate in shadow. `frugal` resets the same keys to their defaults -- which is
+ * knowl exactly as it ships.
+ */
+const POSTURE_KEYS = [
+  'search.transcripts.enabled', 'search.transcripts.fallback',
+  'capture.nudge', 'capture.events', 'capture.scope',
+  'impact.enabled', 'impact.gate',
+] as const;
+const MAXIMAL_POSTURE: Array<{ key: (typeof POSTURE_KEYS)[number]; raw: string }> = [
+  { key: 'search.transcripts.enabled', raw: 'true' },
+  { key: 'search.transcripts.fallback', raw: 'true' },
+  { key: 'capture.nudge', raw: 'enforce' },
+  { key: 'capture.events', raw: 'enforce' },
+  { key: 'capture.scope', raw: 'turn' },
+  { key: 'impact.enabled', raw: 'true' },
+  // Shadow, not enforce, even here: the write gate refuses tool calls, and its own contract
+  // requires the measured precision bar before anything is permitted to block.
+  { key: 'impact.gate', raw: 'shadow' },
+];
+
+program
+  .command('posture')
+  .argument('[stance]', "'maximal', 'frugal', or omit to show the current values")
+  .description('Set the recall and capture posture: maximal (all-knowing) or frugal (the defaults)')
+  .action(async (stance?: string) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      if (stance && stance !== 'maximal' && stance !== 'frugal') {
+        throw new Error(`Unknown posture "${stance}". Use 'maximal', 'frugal', or no argument to show the current values.`);
+      }
+      const before = await loadConfig(root);
+      if (stance === 'maximal') {
+        await setConfigValues(root, MAXIMAL_POSTURE);
+      } else if (stance === 'frugal') {
+        for (const key of POSTURE_KEYS) await resetConfigValue(root, key);
+      }
+      const after = await loadConfig(root);
+      console.log(stance ? `Posture: ${stance}` : 'Posture keys:');
+      for (const key of POSTURE_KEYS) {
+        console.log(`  ${key} = ${JSON.stringify(await getEffectiveConfigValue(root, key))}`);
+      }
+      if (stance === 'maximal' && before.search?.transcripts?.enabled !== true) {
+        console.log('Transcript search was off. Run `knowl reindex --transcripts` to make past sessions searchable -- the recall chain is only as deep as its index.');
+      }
+      // Turning transcripts off has teardown consequences the transition helper owns.
+      const teardown = describeTranscriptTeardown(await applyTranscriptConfigTransition(root, before, after));
+      if (teardown) console.log(teardown);
+    } catch (error: any) {
+      console.error(`❌ Posture error: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
 // --- 8. REINDEX COMMAND ---
 program
   .command('reindex')

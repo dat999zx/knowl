@@ -96,6 +96,13 @@ async function optionalEmbedder(config: ProjectConfig, projectRoot: string) {
   }
 }
 
+/**
+ * How an empty search opens its answer. Exported for the `knowl_query` fallback, which has to
+ * tell a negative from a hit without re-running the search: a shared constant is the only way
+ * the two surfaces cannot drift into disagreeing about what "nothing" looks like.
+ */
+export const NO_TRANSCRIPT_MATCHES_PREFIX = 'No transcript matches';
+
 export async function handleTranscriptSearch(input: {
   config: ProjectConfig | null;
   projectRoot: string | null;
@@ -145,7 +152,7 @@ export async function handleTranscriptSearch(input: {
 
   const lines: string[] = [];
   if (hits.length === 0) {
-    lines.push(`No transcript matches for "${query}".`);
+    lines.push(`${NO_TRANSCRIPT_MATCHES_PREFIX} for "${query}".`);
   } else {
     for (const hit of hits) {
       const parent = hit.parentSessionId ? ` (subagent of ${hit.parentSessionId})` : '';

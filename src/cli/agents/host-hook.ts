@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { validateKnowledgeWrite } from '../../core/knowledge-validation.js';
+import { detectCorrectionSignal } from '../../core/lesson-signals.js';
 import { SessionEventType } from '../../core/types.js';
 import type {
   HookHost, NormalizedHookEventName, NormalizedHostHook,
@@ -303,7 +304,18 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
     };
   }
   if (event === 'session-start' || event === 'turn-start') {
-    return { host: normalizedHost, event, ...ids, projectRoot, title: event === 'turn-start' ? 'Agent turn' : 'Agent session', payload: {} };
+    // The prompt text itself never enters the payload -- it would be persisted into
+    // `memory_session_events`, and raw user text is exactly what knowl promises never to
+    // store. Only the derived bit travels: the classification runs here, where the raw event
+    // still exists, and downstream sees a boolean it can act on but not a sentence it could
+    // leak. Hosts that send no prompt on this event simply never set it.
+    const correctionSignal = event === 'turn-start'
+      && typeof raw.prompt === 'string' && detectCorrectionSignal(raw.prompt);
+    return {
+      host: normalizedHost, event, ...ids, projectRoot,
+      title: event === 'turn-start' ? 'Agent turn' : 'Agent session',
+      payload: correctionSignal ? { correctionSignal: true } : {},
+    };
   }
   if (event === 'agent-start' || event === 'agent-stop') {
     if (!agent.agentId) throw new IncompleteHostHookPayloadError('Subagent hook payload requires agent_id.');

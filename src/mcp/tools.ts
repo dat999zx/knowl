@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -35,15 +37,15 @@ import { applyFeedbackToTierBestEffort } from '../store/tier.js';
 import { finishMemorySession, listActiveMemorySessions } from '../store/session-repository.js';
 import { isImpactEnabled } from '../store/impact-config.js';
 import { openFindingsForSession, resolveFinding, type ImpactFinding, type ImpactTier } from '../session/impact.js';
-import { activeReadSetForSession } from '../store/read-set.js';
+import { activeReadSetForSession, containedRepoPath } from '../store/read-set.js';
 import { formatPendingHandoffContext, recordDeliberateHandoff } from '../session/session-handoff.js';
 import { createResumePoint, formatResumeBrief, listResumePoints, readResumePoint } from '../session/resume-points.js';
 import { resumeInstruction } from '../session/resume-keys.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
-import { isTranscriptSearchEnabled } from '../transcripts/config.js';
+import { isTranscriptFallbackEnabled, isTranscriptSearchEnabled } from '../transcripts/config.js';
 import { hasIndexableArchive } from '../transcripts/paths.js';
-import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
+import { handleSessionList, handleTranscriptRead, handleTranscriptSearch, NO_TRANSCRIPT_MATCHES_PREFIX } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
 import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, IMPACT_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
 import { teamUpdateNotice } from '../cloud/team-update.js';
@@ -64,6 +66,13 @@ export const CLOUD_DISCONNECTED_MESSAGE =
  */
 /** Matches `MAX_RESPONSE_CHARS` in the transcript handlers, deliberately. */
 const MAX_RESPONSE_CHARS = 12_000;
+/**
+ * Bounds for the transcript search a missed query runs on its own behalf. Tighter than the
+ * standalone tool's, because this rides another tool's response: three hits answer "does the
+ * archive know this", and a caller who wants the rest has the real tool named in the block.
+ */
+const TRANSCRIPT_FALLBACK_LIMIT = 3;
+const TRANSCRIPT_FALLBACK_CHARS = 4_000;
 const MAX_SKILLS_LISTED = 30;
 const MAX_SKILL_PURPOSE_CHARS = 200;
 const MAX_TRIGGERS_LISTED = 5;
@@ -953,6 +962,55 @@ export function registerTools(
         // foreign item would be judged against the wrong checkout -- reporting "stale" for a
         // file that is simply somewhere else. Omitting it beats answering wrongly.
         const isForeign = (item: any) => Boolean(active) && item.repo && item.repo !== active!.repo;
+        // Whether the files a row cites have moved since the row was stored, answered per row
+        // and said only when true. The stale-atom failure this closes is on the READ side:
+        // impact detection tells the session that did the writing, but the session that
+        // retrieves the atom three weeks later gets a confident-sounding answer over files
+        // that changed underneath it, with nothing on the row saying so.
+        //
+        // mtime against `updatedAt`, deliberately -- no git and no hashing on a path that runs
+        // several times a turn. A touch with no edit flags a clean atom, which is the cheap
+        // direction to be wrong in: the field says "verify", never "wrong". Local rows only
+        // and containment-checked, both for the reason the evidence code gives: a foreign
+        // path resolves against a checkout that is not this one, and a path that escapes the
+        // root reveals nothing about the file it names. A missing file counts as changed --
+        // deletion is the strongest form of "moved".
+        //
+        // The grace window covers the one systematic false positive: "edit the file, then
+        // immediately store the atom citing it" is the ordinary write pattern, and a buffered
+        // write's mtime can land a moment AFTER the store's own clock reading (observed on
+        // macOS and Windows under node 22). A file that truly changed after the atom is
+        // seconds to weeks later, not milliseconds, so the window costs nothing real.
+        const PATHS_CHANGED_GRACE_MS = 2_000;
+        const pathsChangedNotes = new Map<string, string>();
+        if (projectRoot) {
+          await Promise.all(resolvedItems.map(async item => {
+            if (isForeign(item) || !item.affectedPaths?.length) return;
+            const storedAt = Date.parse(item.updatedAt ?? '');
+            if (!Number.isFinite(storedAt)) return;
+            let changed = 0;
+            let checked = 0;
+            await Promise.all(item.affectedPaths.map(async raw => {
+              // A path that will not resolve against THIS checkout -- absolute, drive-lettered,
+              // `./`-prefixed, escaping the root -- is skipped, not counted. A missing FILE is
+              // evidence the atom's ground moved; an unreadable PATH is only absence of
+              // evidence, and counting it as changed marked every such row stale forever.
+              const contained = containedRepoPath(raw);
+              if (!contained) return;
+              checked += 1;
+              try {
+                const stat = await fs.stat(path.resolve(projectRoot, contained));
+                if (stat.mtimeMs > storedAt + PATHS_CHANGED_GRACE_MS) changed += 1;
+              } catch {
+                changed += 1;
+              }
+            }));
+            if (changed > 0) {
+              pathsChangedNotes.set(item.id,
+                `${changed} of ${checked} affectedPaths modified since this was stored -- verify against the files before trusting.`);
+            }
+          })).catch(() => {});
+        }
         const compact = (item: any) => {
           const score = scoreOf(item);
           const cosine = cosineOf(item);
@@ -969,6 +1027,8 @@ export function registerTools(
             // to be linked are fork siblings, where the same path exists in both and means
             // different things. Same reasoning as the evidence omission directly above.
             ...(affectedPaths && !isForeign(item) ? { affectedPaths } : {}),
+            // Absent when clean, so a row that says nothing still means what it always meant.
+            ...(pathsChangedNotes.has(item.id) ? { pathsChanged: pathsChangedNotes.get(item.id) } : {}),
             ...(explain && item.explanation ? { explanation: item.explanation } : {}),
           };
         };
@@ -1106,6 +1166,48 @@ export function registerTools(
             text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `cosine` and judge, not `score`: `cosine` is the absolute similarity the floor itself is measured against, while `score` only orders this page. If none of them answers the question, treat this as a miss and go to the files.'
               + transcriptRoute,
           });
+        }
+        // The second link of the recall chain, run rather than suggested. The abstention notice
+        // above names transcript search in prose, and the measured failure mode is that the
+        // suggestion is not taken: the agent reads the miss, skips the second tool, and answers
+        // "that never happened" over an archive it never consulted. With
+        // `search.transcripts.fallback` on, the search this response would have asked for has
+        // already run by the time the response arrives, and a negative is a claim verified
+        // against both stores instead of a guess over one.
+        //
+        // The empty-result case is deliberately included: it takes no abstention block today --
+        // `some(abstained)` over nothing is false -- so a store with no lexical match at all was
+        // the one shape of miss that got no route anywhere.
+        //
+        // Fail open throughout, and appended after the verdict blocks so a fallback that breaks
+        // can only cost its own addendum, never the answer it rides on.
+        const queryMissed = resolvedItems.length === 0
+          || resolvedItems.some(item => (item.explanation as { abstained?: boolean } | undefined)?.abstained);
+        if (queryMissed && config && projectRoot && isTranscriptFallbackEnabled(config)
+          && typeof query === 'string' && query.trim()) {
+          try {
+            const fallback = await handleTranscriptSearch({
+              config,
+              projectRoot,
+              query,
+              repos: Array.isArray(repos) ? repos.map(String) : undefined,
+              limit: TRANSCRIPT_FALLBACK_LIMIT,
+            });
+            const negative = fallback.startsWith(NO_TRANSCRIPT_MATCHES_PREFIX);
+            const bounded = fallback.length > TRANSCRIPT_FALLBACK_CHARS
+              ? `${fallback.slice(0, TRANSCRIPT_FALLBACK_CHARS)}\n[fallback bounded -- run knowl_transcript_search for the rest]`
+              : fallback;
+            blocks.push({
+              type: 'text',
+              text: negative
+                ? 'RECALL CHAIN — VERIFIED NEGATIVE: the knowledge store missed and the transcript archive holds no match for these words either (coverage below). If the user believes this happened, it predates the archive or used different words — try knowl_transcript_search with other words before concluding, and state the negative truthfully rather than guessing.\n'
+                  + bounded
+                : 'RECALL CHAIN: the knowledge store missed, so the transcript archive was searched automatically with the same words:\n'
+                  + bounded,
+            });
+          } catch {
+            // The query result stands on its own; a broken fallback appends nothing.
+          }
         }
         // Last of the notices, because it is the only one that asks the agent to do something
         // rather than to interpret what it just got.

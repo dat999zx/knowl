@@ -24,3 +24,28 @@ export function captureNudgeMode(config?: ProjectConfig): CaptureNudgeMode {
   const mode = config?.capture?.nudge;
   return NUDGE_MODES.includes(mode as CaptureNudgeMode) ? mode as CaptureNudgeMode : 'off';
 }
+
+/**
+ * How event-shaped lessons -- a destructive command that ran, a prompt that reads as a user
+ * correction -- are handled. Same ladder and same typo rule as `capture.nudge`, and a separate
+ * switch from it for the reason `impact.gate` is separate from `impact.enabled`: the silence
+ * nudge speaks once per conversation about a total; this inspects individual events and can
+ * withhold a stop over one, which is a different risk armed by a different, deliberate act.
+ */
+export function captureEventsMode(config?: ProjectConfig): CaptureNudgeMode {
+  const mode = config?.capture?.events;
+  return NUDGE_MODES.includes(mode as CaptureNudgeMode) ? mode as CaptureNudgeMode : 'off';
+}
+
+export type CaptureScope = 'conversation' | 'turn';
+
+/**
+ * At what granularity the silence question is asked. `conversation` is today's behaviour and
+ * the default; `turn` additionally watches each turn as it runs and can prompt mid-turn --
+ * through the free context channel, never a blocked stop -- when a turn has done substantial
+ * work and stored nothing. A typo falls back to `conversation` by the same rule as the modes
+ * above: the narrower, quieter reading.
+ */
+export function captureScope(config?: ProjectConfig): CaptureScope {
+  return config?.capture?.scope === 'turn' ? 'turn' : 'conversation';
+}

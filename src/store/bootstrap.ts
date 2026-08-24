@@ -525,6 +525,53 @@ const SCHEMA_STATEMENTS = [
     nudged TEXT
   );`,
 
+  // Pending lessons: specific events -- a destructive command, a user correction -- whose
+  // knowledge has not been stored yet. The opposite scoping from `capture_outcomes` above,
+  // deliberately: that table asks "did this conversation store anything", which a session
+  // storing plenty of unrelated atoms satisfies while the one event that mattered goes
+  // unwritten. One row per event; `resolved` is NULL while open, then 'write' (a durable
+  // write landed after it), 'blocked' (delivered by withholding a stop), 'shadow' (would
+  // have been delivered), or 'budget' (the block ceiling was already spent, so it settled
+  // silently).
+  `CREATE TABLE IF NOT EXISTS pending_lessons (
+    id TEXT PRIMARY KEY,
+    conversation TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    class TEXT,
+    snippet TEXT,
+    observed_at TEXT NOT NULL,
+    resolved TEXT
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_pending_lessons_conversation ON pending_lessons(conversation);`,
+
+  // The block budget, its own row so the claim can be a conditional UPDATE: two stop hooks
+  // race, exactly one may spend a block, and after MAX_LESSON_BLOCKS the gate goes silent for
+  // the conversation forever. Same claim-before-deliver rule as `capture_outcomes.nudged`.
+  `CREATE TABLE IF NOT EXISTS pending_lesson_claims (
+    conversation TEXT PRIMARY KEY,
+    blocks INTEGER NOT NULL DEFAULT 0
+  );`,
+
+  // Turn-scoped capture counters (capture.scope = 'turn'). Working state, not history: the
+  // turn boundary deletes the row, which is what makes the counters per-turn under a host
+  // that reuses one turn key for every main-thread turn. `prompted` is the per-turn one-shot.
+  `CREATE TABLE IF NOT EXISTS capture_turn_outcomes (
+    turn_key TEXT PRIMARY KEY,
+    conversation TEXT NOT NULL,
+    tool_events INTEGER NOT NULL DEFAULT 0,
+    file_writes INTEGER NOT NULL DEFAULT 0,
+    durable_writes INTEGER NOT NULL DEFAULT 0,
+    prompted TEXT
+  );`,
+
+  // The per-conversation prompt ceiling, on its own row because the turn rows above are
+  // deleted at every boundary -- a ceiling kept there would be forgotten with them. Same
+  // one-shot-by-conditional-UPDATE rule as `pending_lesson_claims`.
+  `CREATE TABLE IF NOT EXISTS capture_turn_prompts (
+    conversation TEXT PRIMARY KEY,
+    prompts INTEGER NOT NULL DEFAULT 0
+  );`,
+
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
     VALUES (new.id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));

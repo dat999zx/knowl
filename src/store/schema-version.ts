@@ -173,8 +173,19 @@ export const KNOWL_SCHEMA_VERSION = 1;
  *
  * `KNOWL_SCHEMA_VERSION` does not move: an older build ignores both columns and pushes exactly
  * as it did before.
+ *
+ * Level 13 adds `pending_lessons` and `pending_lesson_claims`: events -- a destructive
+ * command, a user correction -- whose knowledge has not been stored yet, and the block budget
+ * their delivery spends. Two additive tables, no backfill, and none is possible for the same
+ * reason as level 9: the rows ride the events that cause them. `KNOWL_SCHEMA_VERSION` again
+ * does not move.
+ *
+ * Level 14 adds `capture_turn_outcomes` and `capture_turn_prompts`: the write-side negative
+ * signal at turn granularity, and the per-conversation ceiling its prompts spend. Additive
+ * tables, no backfill possible -- turn counters exist only while their turn does.
+ * `KNOWL_SCHEMA_VERSION` again does not move.
  */
-export const KNOWL_MIGRATION_LEVEL = 12;
+export const KNOWL_MIGRATION_LEVEL = 14;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

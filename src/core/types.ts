@@ -316,6 +316,15 @@ export interface ProjectConfig {
       enabled?: boolean;
       /** Let linked workspace repos open this index read-only. Requires `enabled`. */
       share?: boolean;
+      /**
+       * Run transcript search automatically inside a `knowl_query` that missed, instead of
+       * suggesting it in prose. Requires `enabled`, by the same AND rule as `share`.
+       *
+       * The suggestion path already existed and its failure mode is measured: the agent reads
+       * the miss, skips the second tool, and answers "no record" over an archive it never
+       * consulted. With this on, a negative is a claim verified against both stores.
+       */
+      fallback?: boolean;
     };
   };
   memory?: {
@@ -412,6 +421,29 @@ export interface ProjectConfig {
      * say otherwise -- the same ladder `impact.gate` climbs.
      */
     nudge?: 'off' | 'shadow' | 'enforce';
+    /**
+     * Event-shaped lessons: a destructive command that just ran, or a prompt that reads as
+     * the user correcting the agent, each recorded as a pending item that only a subsequent
+     * durable write settles. The class of knowledge the silence nudge above structurally
+     * cannot see -- its verdict is per conversation, so a session that stored plenty of
+     * unrelated atoms reads as healthy while the one event that mattered goes unwritten.
+     *
+     * Same ladder as `nudge`, and shadow is where it is expected to sit first: the detectors
+     * are precision-tuned regexes, and the measurement of how often they fire is what any
+     * decision to enforce has to be made on.
+     */
+    events?: 'off' | 'shadow' | 'enforce';
+    /**
+     * At what granularity the silence question is asked. `conversation` (the default) is the
+     * one-shot end-of-conversation verdict above. `turn` additionally watches each turn as it
+     * runs: a turn that crosses a substantive-work threshold with no durable write gets one
+     * capture prompt through the free mid-turn channel -- never a blocked stop -- at the
+     * moment the unstored knowledge actually exists. The property that distinguishes it from
+     * the drift reminder: querying memory does not reset it, only storing does, so the
+     * memory-active session -- precisely the one every other reminder goes quiet for -- is
+     * still asked.
+     */
+    scope?: 'conversation' | 'turn';
   };
   /**
    * This repo's half of workspace membership. The other half is the workspace manifest

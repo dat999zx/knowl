@@ -73,6 +73,14 @@ const SCHEMA_PINS: Record<number, string> = {
   // the skip predicate requires a non-null hash, so every pre-existing row keeps being sent.
   // Additive, so `KNOWL_SCHEMA_VERSION` again does not move.
   12: '8655428a61126c78a4117b827a103703',
+  // 13 adds `pending_lessons`, its conversation index, and `pending_lesson_claims` -- events
+  // whose knowledge has not been stored yet, and the block budget their delivery spends.
+  // Additive, so `KNOWL_SCHEMA_VERSION` again does not move.
+  13: '966fb32dc577094f2844ed942efe2f56',
+  // 14 adds `capture_turn_outcomes` and `capture_turn_prompts` -- the write-side negative
+  // signal at turn granularity and the ceiling its prompts spend. Additive, so
+  // `KNOWL_SCHEMA_VERSION` again does not move.
+  14: 'efef31ca11c9bddd7973ad0a9129eb86',
 };
 
 let root: string;
