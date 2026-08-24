@@ -708,10 +708,11 @@ program.command('query').argument('[query]').description('Search project memory 
     } else {
       console.log(JSON.stringify(items, null, 2));
     }
-    // The floor's verdict, said out loud. Results below it are printed rather than withheld,
-    // so without this line a weak page looks exactly like a strong one.
+    // The floor's verdict, said out loud, in the only terms the measurement supports. Results
+    // below it are printed rather than withheld, so without this line a weak page looks exactly
+    // like a strong one.
     if (items.some((item: { abstained?: boolean }) => item.abstained)) {
-      console.error('Note: every result scored below the relevance floor — this store probably does not hold the answer. Read "cosine" and judge, not "score": "cosine" is the absolute similarity the floor is measured against, while "score" only orders this page.');
+      console.error('Note: nothing here reads as being about this project. That is all the relevance floor can tell you — it does not mean the store lacks the answer, and a question in this project\'s own vocabulary scores like a real one either way. Read the results and judge.');
     }
     // Names and counts, never content: the knowledge stays findable without this line being
     // able to stand in for it.

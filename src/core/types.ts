@@ -213,12 +213,26 @@ export type KnowledgeSearchExplanation = {
   contributions: Record<string, number>;
   reason: string;
   /**
-   * The relevance floor found no confident match for this query, and this row is one of the
-   * stores it judged. Present only when true, so an answered query costs nothing.
+   * The query does not look like it is about this store, and this row is one the floor judged.
+   * Present only when true, so an answered query costs nothing.
    *
-   * A verdict rather than a filter. The floor used to delete the whole ranking here; it was
-   * measured deleting real answers, because a fixed absolute cosine does not transfer between
-   * corpora (docs/evals/floor-sweep.md).
+   * **READ THE NAME NARROWLY.** It says off-subject, NOT unanswerable, and the difference is the
+   * whole of what three separate measurements found. A question phrased in the store's own
+   * vocabulary is close to that store whether or not anything in it answers the question, so a
+   * high score cannot mean "the answer is here" and this flag's absence cannot mean it either.
+   * What it does support is the negative direction, and only loosely: a question written in a
+   * register foreign to the corpus tends to fall below.
+   *
+   * Why no threshold fixes this, so nobody re-tunes it a fourth time:
+   * - Cosine: on-topic and off-topic distributions OVERLAP on all five shipped presets, and the
+   *   current default has the smallest overlap of them, so there is no preset to move to
+   *   (docs/evals/preset-floor-sweep.md).
+   * - Lexical coverage: quantized at 1/n, so short vague on-topic queries land on the same
+   *   values as partially-matching junk (docs/evals/query-coverage-probe.md).
+   *
+   * A verdict rather than a filter. The floor used to delete the whole ranking here and was
+   * measured deleting real answers (docs/evals/floor-sweep.md), which is why the rows are
+   * returned and the caller is asked to judge them.
    */
   abstained?: boolean;
   /**
