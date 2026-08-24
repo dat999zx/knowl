@@ -1,0 +1,159 @@
+{
+  "results": [
+    {
+      "class": "off-technical",
+      "query": "sourdough hydration bulk ferment banneton",
+      "expect": "abstain",
+      "coverage": 0.2,
+      "terms": 5,
+      "hits": 10,
+      "matched": "Retargeted retrieval must retarget hydration too"
+    },
+    {
+      "class": "off-technical",
+      "query": "trombone slide positions overtone series",
+      "expect": "abstain",
+      "coverage": 0.2,
+      "terms": 5,
+      "hits": 5,
+      "matched": "Workspace v2 blocks on a contradiction: it promises cross-owner editing and forbids it"
+    },
+    {
+      "class": "off-technical",
+      "query": "perennial pruning espalier rootstock grafting",
+      "expect": "abstain",
+      "coverage": 0.2,
+      "terms": 5,
+      "hits": 2,
+      "matched": "Resolved failure in tests/store/snapshot-prune-race.probe.test.ts: RUN  v3.2.6 D:/coding/knowl"
+    },
+    {
+      "class": "off-technical",
+      "query": "sonnet volta iambic pentameter enjambment",
+      "expect": "abstain",
+      "coverage": 0.2,
+      "terms": 5,
+      "hits": 1,
+      "matched": "Verified MemoryAgentBench FC-SH @262k baselines from Table 2 — BM25 is 56 not 48, and Zep is not in the paper at all"
+    },
+    {
+      "class": "off-technical",
+      "query": "kayak eskimo roll paddle feathering",
+      "expect": "abstain",
+      "coverage": 0.2,
+      "terms": 5,
+      "hits": 10,
+      "matched": "JSONL skill import requires trusted input"
+    },
+    {
+      "class": "off-technical",
+      "query": "sourdough starter discard crumb",
+      "expect": "abstain",
+      "coverage": 0.5,
+      "terms": 4,
+      "hits": 10,
+      "matched": "Issue 146 root cause: granite-small-en-r2 off-topic cosine 0.7928 clears the 0.76 floor"
+    },
+    {
+      "class": "on-specific",
+      "query": "relevance floor per model preset cosine abstain",
+      "expect": "answer",
+      "coverage": 1,
+      "terms": 7,
+      "hits": 10,
+      "matched": "Relevance floor is per-model: measured floors for all five presets, and why scale-free rules fail"
+    },
+    {
+      "class": "on-specific",
+      "query": "supersession retired active retrieval benchmark",
+      "expect": "answer",
+      "coverage": 1,
+      "terms": 5,
+      "hits": 10,
+      "matched": "MemoryAgentBench CR measured: supersession is worth +56 points; LongMemEval fully removed"
+    },
+    {
+      "class": "on-specific",
+      "query": "workspace federated query grouping repo scope",
+      "expect": "answer",
+      "coverage": 1,
+      "terms": 6,
+      "hits": 10,
+      "matched": "3.4.0 published: workspace query results are keyed by owning repo"
+    },
+    {
+      "class": "on-vague",
+      "query": "how do we do releases",
+      "expect": "answer",
+      "coverage": 1,
+      "terms": 2,
+      "hits": 10,
+      "matched": "All 12 tags have GitHub releases; cd.yml now creates them automatically"
+    },
+    {
+      "class": "on-vague",
+      "query": "why is startup slow",
+      "expect": "answer",
+      "coverage": 0.5,
+      "terms": 2,
+      "hits": 10,
+      "matched": "Resolved failure in src/core/startup-trace.ts: ❯ tests/core/startup-trace.test.ts (8 tests | 8 failed) 23ms"
+    },
+    {
+      "class": "on-vague",
+      "query": "what happens when two facts disagree",
+      "expect": "answer",
+      "coverage": 0.5,
+      "terms": 4,
+      "hits": 10,
+      "matched": "Shadow mode must not release read-set rows, and that forces the unique index"
+    },
+    {
+      "class": "on-vague",
+      "query": "how does it decide what to show me",
+      "expect": "answer",
+      "coverage": 1,
+      "terms": 3,
+      "hits": 10,
+      "matched": "Dogfooding two linked repos: cross-repo advisory was silent for decisions"
+    },
+    {
+      "class": "on-vague",
+      "query": "where does the data live",
+      "expect": "answer",
+      "coverage": 1,
+      "terms": 2,
+      "hits": 10,
+      "matched": "withDbPath misroutes concurrent writes into the wrong namespace database"
+    },
+    {
+      "class": "on-vague",
+      "query": "what did we decide about staleness",
+      "expect": "answer",
+      "coverage": 0.8,
+      "terms": 5,
+      "hits": 10,
+      "matched": "Staleness for prose atoms (knowl#98) is deferred until the corpus ages, not built now; revisit at ~180 days old (~2027-02)"
+    },
+    {
+      "class": "on-vague",
+      "query": "is there a way to see all the settings",
+      "expect": "answer",
+      "coverage": 0.8,
+      "terms": 5,
+      "hits": 10,
+      "matched": "fix(transcripts): say what --all left behind, and match a Codex worktree the way the Claude half does"
+    },
+    {
+      "class": "on-vague",
+      "query": "how do agents talk to this",
+      "expect": "answer",
+      "coverage": 0.5,
+      "terms": 2,
+      "hits": 10,
+      "matched": "fix(serve): keep the startup trace from changing the process it observes"
+    }
+  ],
+  "onMin": 0.5,
+  "offMax": 0.5
+}

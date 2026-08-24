@@ -62,6 +62,16 @@ function queryTokenGroups(query: string): string[][] {
   return groups;
 }
 
+/**
+ * How many distinct terms a query contributes to coverage -- the DENOMINATOR `queryCoverage`
+ * divides by. Exported for measurement only: coverage is a fraction, and a fraction whose
+ * denominator is 1 carries no information, so any judgement about coverage as a relevance
+ * signal has to be able to see this number alongside it.
+ */
+export function queryTermCount(query: string): number {
+  return queryTokenGroups(query).length;
+}
+
 function tokenizeSearchQuery(query: string): string[] {
   return [...new Set(queryTokenGroups(query).flat())];
 }
@@ -80,6 +90,22 @@ function buildFtsQuery(query: string): string | null {
  * Coverage does, and unlike BM25 it means the same thing in every repo: it is a property of
  * the item and the query, with no corpus statistics in it. Prefix-matched, because that is
  * what the FTS query asked for.
+ *
+ * IT IS QUANTIZED AT `1 / groups.length`, AND THAT IS WHY IT CANNOT BE A RELEVANCE FLOOR.
+ * Measured 2026-08-24 against this repo's ~1,200-atom store (`scripts/probe-query-coverage.ts`,
+ * written up in `docs/evals/query-coverage-probe.md`), while looking for a corpus-free
+ * replacement for the cosine floor that issue #169 showed cannot exist per-model.
+ *
+ * A short query has few groups, so it has few reachable values: a two-term question can only
+ * score 0, 0.5 or 1. Genuinely on-topic questions are often short precisely because they are
+ * vague -- `why is startup slow` is two terms after stop-words and scored **0.500** against a
+ * store that answers it in detail. Partially-matching junk lands on the same value: `sourdough
+ * starter discard crumb` also scored **0.500**. On-topic min and off-topic max met exactly, a
+ * gap of 0.000, so no threshold divides them.
+ *
+ * Coverage is still the right thing to RANK with, which is what it does here. It is not a thing
+ * to abstain on, and the reason is arithmetic rather than tuning: the grid is too coarse at the
+ * query lengths where the question is hard.
  */
 function queryCoverage(item: KnowledgeItem, groups: string[][]): number {
   if (groups.length === 0) return 1;

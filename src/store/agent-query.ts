@@ -651,6 +651,14 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
       const contributions = {
         semantic, lexical, relevance, prior,
         category, recency, confidence, freshness, exactIdentifier, standing,
+        // `coverage` is the factor, published beside the product it disappears into. `lexical`
+        // above multiplies it by `raw / best`, and `best` is this page's top BM25 -- so `lexical`
+        // is min-max within the page and means nothing across queries, exactly like `score`.
+        // Coverage itself is the opposite: a property of the item and the query with no corpus
+        // statistics in it, so it is the same quantity in every repo. Folding the comparable
+        // number into the incomparable one and publishing only the product is the #146 defect,
+        // which was fixed for the semantic half by publishing `cosine` and stayed live here.
+        coverage,
       };
       return { result, score: relevance * prior, semantic, contributions };
     })
