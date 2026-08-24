@@ -493,6 +493,7 @@ knowl conflicts                        # items that contradict each other
 knowl timeline <item-id>               # every version an atom ever had
 knowl context --token-budget 1500      # a fixed-size briefing for an agent
 knowl pr --since origin/main           # knowledge your diff may invalidate
+knowl config list                      # every setting, its value, and how to change it
 knowl doctor                           # setup, retrieval, and registration
 ```
 
