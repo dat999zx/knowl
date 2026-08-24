@@ -1366,6 +1366,11 @@ export function registerTools(
         // Detected pairs beside the declared keys, or the command keeps missing the very pairs
         // the write path creates on purpose: a polarity clamp reports its pair once in a write
         // result and this was the only surface that could ever have shown it again.
+        //
+        // Polarity only. The cue-sentence reversal detector stays on the write path and is
+        // deliberately not listed here: measured at ~4% recall and 45 false candidates on this
+        // repo's own store (docs/evals/reversal-detector-recall.md), it is a dismissable note
+        // beside the sentence that triggered it and a work queue of false leads in a list.
         const detected = await scanContradictions();
         const conflictBlocks: { type: 'text'; text: string }[] = [
           {
@@ -1373,19 +1378,12 @@ export function registerTools(
             text: compactMcpJson({
               declared: items.slice(0, 3).map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness })),
               polarity: detected.polarity.slice(0, 5),
-              // Candidates, and labelled that way: each row quotes the sentence that fired so
-              // the reader can tell a reversal from a mention without opening either item.
-              reversalCandidates: detected.reversalCandidates.slice(0, 5).map(candidate => ({
-                ...candidate,
-                sentence: candidate.sentence.slice(0, 200),
-              })),
             }),
           },
         ];
         const hidden: string[] = [];
         if (items.length > 3) hidden.push(`${items.length - 3} declared`);
         if (detected.polarity.length > 5) hidden.push(`${detected.polarity.length - 5} polarity`);
-        if (detected.reversalCandidates.length > 5) hidden.push(`${detected.reversalCandidates.length - 5} reversal candidate(s)`);
         if (hidden.length) {
           conflictBlocks.push({ type: 'text', text: `CONFLICTS TRUNCATED: ${hidden.join(', ')} not shown.` });
         }

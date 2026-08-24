@@ -140,14 +140,15 @@ describe('the motivating pair through a real write', () => {
     expect((await repo.getKnowledgeItem(second.item.id))!.status).toBe('active');
   });
 
-  it('knowl conflicts sees the pair it could never see before', async () => {
+  it('knowl conflicts lists polarity pairs and NOT reversal candidates', async () => {
+    // The split, pinned. `detectReversal` runs on the write path (asserted above) and is
+    // deliberately absent from the inspection command: measured at ~4% recall against 101 real
+    // supersessions, with 45 false candidates among active items
+    // (docs/evals/reversal-detector-recall.md). A dismissable note beside the writer's own
+    // sentence survives that rate; a list an agent reads as a work queue does not.
     const detected = await scanContradictions();
-    const candidate = detected.reversalCandidates.find(
-      row => row.names.title === POSTGRES.title,
-    );
-    expect(candidate).toBeDefined();
-    expect(candidate!.asserts.title).toBe(SQLITE_REVERSAL.title);
-    expect(candidate!.sentence).toContain('Postgres-for-everything plan is abandoned');
+    expect(Object.keys(detected)).toEqual(['polarity']);
+    expect((detected as Record<string, unknown>).reversalCandidates).toBeUndefined();
   });
 
   it('a deliberate supersede is already resolved and gets no reversal note', async () => {
@@ -166,33 +167,28 @@ describe('the motivating pair through a real write', () => {
     expect(reversal.reversal).toBeUndefined();
   });
 
-  it('one enumerating sentence is one candidate, not one per title it brushes against', async () => {
-    // Measured on a real 1,033-item store: a single release-note sentence listing several
-    // fixes matched 11 unrelated titles, and the scan reported all 11. A sentence asserts one
-    // reversal, so the scan takes the best-covered title -- the rule the write advisory
-    // already used.
+  it('the write advisory names the best-covered item, not every title its sentence brushes', async () => {
+    // One sentence asserts one reversal. Before the scan dropped reversal candidates entirely
+    // this mattered on both surfaces; it still matters here, because a long enumerating
+    // sentence reaches several titles at once and only one of them is what it is about.
     await storeKnowledgeItemDeduped(projectId, {
       category: 'fact',
       title: 'Snapshot restore wipes the store on empty ATTACH',
       content: 'An empty ATTACH truncated every table during restore.',
     });
-    await storeKnowledgeItemDeduped(projectId, {
+    const near = await storeKnowledgeItemDeduped(projectId, {
       category: 'fact',
-      title: 'Pre-restore prune deletes the restore source',
+      title: 'Pre-restore prune deletes the restore source rows',
       content: 'The prune pass removed the very rows restore was about to read.',
     });
-    const before = (await scanContradictions()).reversalCandidates.length;
-    await storeKnowledgeItemDeduped(projectId, {
+    const notes = await storeKnowledgeItemDeduped(projectId, {
       category: 'state',
       title: 'Release notes for the recovery run',
-      content: 'Fixed: snapshot restore no longer wipes the store on empty ATTACH, and pre-restore prune no longer deletes the restore source.',
+      content: 'Pre-restore prune no longer deletes the restore source rows.',
     });
-    const rows = (await scanContradictions()).reversalCandidates;
-    const fromNotes = rows.filter(row => row.asserts.title === 'Release notes for the recovery run');
-    // Two cue sentences would be two rows; this is one sentence, so it is one row however many
-    // titles its tokens reach.
-    expect(fromNotes).toHaveLength(1);
-    expect(rows.length).toBe(before + 1);
+    // Exactly one advisory, and it is the item the sentence actually names.
+    expect(notes.reversal).toBeDefined();
+    expect(notes.reversal!.id).toBe(near.item.id);
   });
 
   it('the polarity pairs the write path clamps to coexist are listed too', async () => {

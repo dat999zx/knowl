@@ -726,7 +726,7 @@ program.command('query').argument('[query]').description('Search project memory 
   } catch (error: any) { console.error(`Error querying knowledge: ${error.message}`); process.exit(1); }
 });
 
-program.command('conflicts').description('List knowledge items that contradict each other: declared exclusive keys, detected polarity pairs, and reversal candidates').action(async () => {
+program.command('conflicts').description('List knowledge items that contradict each other: declared exclusive keys and detected polarity pairs').action(async () => {
   try {
     const root = await findProjectRoot(process.cwd());
     await initDb(root);
@@ -735,7 +735,6 @@ program.command('conflicts').description('List knowledge items that contradict e
     console.log(JSON.stringify({
       declared: (await listActiveConflictKeys()).map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness })),
       polarity: detected.polarity,
-      reversalCandidates: detected.reversalCandidates,
     }, null, 2));
     await closeDb();
   } catch (error: any) { console.error(`Error listing conflicts: ${error.message}`); process.exit(1); }

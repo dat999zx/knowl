@@ -95,3 +95,20 @@ reversals, which by definition leave both items active and so cannot appear in
 The two measurements agree from opposite directions, which is why the conclusion holds: on the
 declared population recall is 4%, and on the active population — where an undeclared reversal
 *would* live — all 25 fires are narrative mentions and none is a real contradiction.
+
+## Outcome
+
+The detector stays on the **write path** and was removed from **`knowl conflicts`**.
+
+The same 4%/8% rate reads differently on the two surfaces, and that is the whole of the
+decision. At write time it is one note, attached to the writer's own sentence, quoted back, on
+2.4% of writes — a reader who did not mean a reversal dismisses it in seconds, and the sentence
+is right there to judge. In an inspection command it is a *list*: an agent reads a list as a
+work queue, pages it, and acts on it out of context. 45 candidates with no true positive among
+them is worse than the empty list it replaces, because the empty list is at least honest about
+what the store knows.
+
+So `scanContradictions` returns polarity pairs only — exact by construction, since they are the
+pairs the write path's own guard deliberately creates and no other surface could show. That was
+always the load-bearing half: `knowl conflicts` read `conflictKey`/`conflictExclusive` and
+nothing else, set on 3 of 937 active items.
