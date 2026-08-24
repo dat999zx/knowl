@@ -5,7 +5,9 @@ import { NormalizedHostHook } from '../core/host-hook-types.js';
 import { renderChangeCard, type ImpactCardEntry } from './change-card.js';
 import { hostProfile } from './hosts/index.js';
 import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
-import { areSkillNudgesEnabled, driftReminderEvery, loadConfig } from '../core/config.js';
+import {
+  areSkillNudgesEnabled, driftReminderEvery, isDriftBackoffEnabled, loadConfig, shouldSendDriftReminder,
+} from '../core/config.js';
 import { isImpactEnabled } from '../store/impact-config.js';
 import { captureEventsMode, captureNudgeMode, captureScope } from '../store/capture-config.js';
 import { classifyDestructiveCommand } from '../core/lesson-signals.js';
@@ -1170,12 +1172,13 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
             // that is querying/storing memory never sees a reminder.
             await resetHostSuccessfulToolCount(key);
           } else {
-            // `reminders.driftEvery`, default 12, `0` off. The counter still advances when the
-            // reminder is off: it is shared state that the branches above reset as a "go use
-            // memory" signal, and freezing it would change what THEY mean.
-            const every = driftReminderEvery(captureConfig);
+            // `reminders.driftEvery` (default 12, `0` off) and `reminders.driftBackoff`
+            // (default on, gap doubles per delivery). The counter still advances when the
+            // reminder is silent: it is shared state that the branches above reset as a "go use
+            // memory" signal, and freezing it would change what THEY mean. It is also what the
+            // backoff schedule is read from, so it has to keep counting to back off at all.
             const drift = await incrementHostSuccessfulToolCount(key);
-            if (every > 0 && drift > 0 && drift % every === 0) {
+            if (shouldSendDriftReminder(drift, driftReminderEvery(captureConfig), isDriftBackoffEnabled(captureConfig))) {
               hostOutput = profile.midTurnContext(KNOWL_CLAUDE_CONTINUATION_REMINDER);
             }
           }

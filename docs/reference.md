@@ -568,8 +568,9 @@ and the capture prompts — turning one off does not give the others more room, 
 back.
 
 ```bash
-knowl config set reminders.driftEvery 24     # remind half as often; 0 turns it off
-knowl config set reminders.skills false      # stop the two skill nudges
+knowl config set reminders.driftEvery 24        # remind half as often; 0 turns it off
+knowl config set reminders.driftBackoff false   # repeat at that cadence forever
+knowl config set reminders.skills false         # stop the two skill nudges
 ```
 
 - **`reminders.driftEvery`** (default `12`) — how many consecutive successful tool calls that
@@ -580,6 +581,16 @@ knowl config set reminders.skills false      # stop the two skill nudges
   fires ~19 times per session and ~1,750 tokens with it — more than three times the guidance
   card, and unbounded, because it scales with how long the session runs rather than sitting at a
   fixed size. The heaviest session in that archive took it 242 times.
+- **`reminders.driftBackoff`** (default `true`) — double the gap after each delivery, so the
+  reminder lands at 12, 36, 84, 180, 372 rather than every 12 forever. The message is
+  byte-identical every time it is sent: after two or three the agent has either adopted the rule
+  or decided against it, and the rest is furniture. Over the same archive this removes 86% of
+  deliveries, and the worst session drops from 242 to 7.
+
+  It backs off rather than stopping, and that is the point. A hard cap of three would remove 89%
+  — barely more — but goes permanently silent after event 36 and says nothing across the
+  remaining 2,868 events of a long session, which is the same structural blind spot the capture
+  work exists to close. Set `false` for the old every-N-forever behaviour.
 - **`reminders.skills`** (default `true`) — the two skill nudges: *"you have run this three
   times, save it as a skill"* and *"a saved skill matches this command"*. One key for both,
   because both are the skills subsystem speaking. Worth turning off in a repository that does

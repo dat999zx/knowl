@@ -361,6 +361,17 @@ export interface ProjectConfig {
      */
     driftEvery?: number;
     /**
+     * Double the gap after each delivery -- 12, 24, 48, 96 -- rather than repeating at a fixed
+     * cadence forever. On by default.
+     *
+     * The reminder is byte-identical every time it is sent, so its value decays: after two or
+     * three the agent has either adopted the rule or decided against it, and the rest is
+     * furniture. Backing off keeps the long-session safety net the fixed cadence exists for
+     * while removing the nagging it was already criticised for. Set false for the old
+     * every-N-forever behaviour.
+     */
+    driftBackoff?: boolean;
+    /**
      * The two skill nudges: "you have run this three times, save it as a skill" and "a saved
      * skill matches this command". One key, because both are the skills subsystem speaking
      * and nobody has yet needed to keep one without the other.

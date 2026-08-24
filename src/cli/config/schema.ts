@@ -16,6 +16,7 @@ export type ConfigKey =
   | 'search.transcripts.fallback'
   | 'search.pathsChanged'
   | 'reminders.driftEvery'
+  | 'reminders.driftBackoff'
   | 'reminders.skills'
   | 'ai.provider'
   | 'ai.model'
@@ -299,6 +300,12 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: nonNegativeInteger, defaultValue: DEFAULT_DRIFT_REMINDER_EVERY,
     label: 'Continuation reminder cadence',
     description: 'Send the mid-turn "keep using memory" reminder after this many consecutive successful tool calls that used no Knowl tool. Any Knowl tool call resets the count. Set 0 to turn the reminder off; raise it to pay for it less often in long mechanical sessions.',
+  },
+  {
+    key: 'reminders.driftBackoff', category: 'Reminders', type: 'boolean',
+    parse: booleanValue, defaultValue: true,
+    label: 'Back the reminder off',
+    description: 'Double the gap after each reminder -- 12, 24, 48, 96 -- instead of repeating at the same cadence forever. The message is identical every time, so the fortieth is worth nothing; this keeps the long-session safety net without the nagging. Set false for the old every-N-forever behaviour.',
   },
   {
     key: 'reminders.skills', category: 'Reminders', type: 'boolean',
