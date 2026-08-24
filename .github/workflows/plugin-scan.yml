@@ -1,0 +1,33 @@
+name: Plugin Scan
+
+# HOL Guard scans this repository from the outside whenever it is listed in
+# hashgraph-online/awesome-ai-plugins, and gates the listing on a score of 80. Running the
+# same scanner here means a regression fails on our pull request instead of on theirs, and
+# a project that maintains the scanner in its own CI keeps the full trust score.
+#
+# Scope and suppressions live in .plugin-scanner.toml, which the scanner discovers on its
+# own -- so this workflow and their gate see the same result.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: HOL Guard plugin scanner
+        uses: hashgraph-online/ai-plugin-scanner-action@b11c05ef7ee17c7d84299de8a245e364c1cb070c # v1.2.533
+        with:
+          plugin_dir: '.'
+          # The same bar their listing gate applies, so a pass here is a pass there.
+          min_score: '80'
+          fail_on_severity: 'high'

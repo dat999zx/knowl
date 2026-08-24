@@ -1,0 +1,13 @@
+# HOL Guard plugin scanner (hashgraph-online/hol-guard).
+#
+# Knowl's secret detector is tested against real-shaped credentials -- ghp_, sk-, AKIA,
+# xoxb-, PEM headers -- because a detector tested on fake shapes proves nothing. Those
+# fixtures are, correctly, what a secret scanner flags. The CLI tests shell out through
+# execSync template literals, and one viewer test calls `new Function` purely to assert the
+# inline viewer script parses. None of it ships: package.json#files publishes dist/,
+# integrations/, and the three top-level docs.
+#
+# So the scan is scoped to what a user actually installs. src/ and integrations/ are NOT
+# ignored -- a real finding in shipped code still fails this.
+[scanner]
+ignore_paths = ["tests/*", "benchmarks/*", "docs/*"]

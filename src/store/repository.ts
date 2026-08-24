@@ -208,9 +208,9 @@ export async function createKnowledgeItem(
     updatedAt: now,
   };
 
-  const operation = async (exec: any) => {
+  const operation = async (tx: any) => {
     if (newItem.conflictExclusive && newItem.conflictKey) {
-      const conflicts = await exec.select().from(schema.knowledgeItems).where(and(
+      const conflicts = await tx.select().from(schema.knowledgeItems).where(and(
         eq(schema.knowledgeItems.status, 'active'), eq(schema.knowledgeItems.conflictExclusive, true),
         eq(schema.knowledgeItems.conflictKey, newItem.conflictKey),
         // Second of the two sites that compare this column. `eq(column, null)` renders
@@ -223,8 +223,8 @@ export async function createKnowledgeItem(
       ));
       if (conflicts.length) throw new KnowledgeConflictError(conflicts.map((item: any) => ({ id: item.id, title: item.title })));
     }
-    await exec.insert(schema.knowledgeItems).values(newItem);
-    await exec.insert(schema.knowledgeAssertions).values({
+    await tx.insert(schema.knowledgeItems).values(newItem);
+    await tx.insert(schema.knowledgeAssertions).values({
       id: generateId(), knowledgeItemId: id, content: item.content,
       validFrom: now, validTo: null, recordedAt: now, replacedAt: null,
       confidence: item.confidence ?? 1.0, sourceEvidenceId: null, conflictKey: newItem.conflictKey, conflictScope: newItem.conflictScope, conflictExclusive: newItem.conflictExclusive,
@@ -232,7 +232,7 @@ export async function createKnowledgeItem(
 
     if (item.category === 'skill') {
       // Create skill metadata
-      await exec.insert(schema.skillMetadata).values({
+      await tx.insert(schema.skillMetadata).values({
         knowledgeItemId: id,
         usageCount: 0,
         successCount: 0,
@@ -241,7 +241,7 @@ export async function createKnowledgeItem(
       // Create steps if provided
       if (steps && steps.length > 0) {
         for (let i = 0; i < steps.length; i++) {
-          await exec.insert(schema.skillSteps).values({
+          await tx.insert(schema.skillSteps).values({
             id: generateId(),
             knowledgeItemId: id,
             stepOrder: i + 1,
@@ -325,8 +325,8 @@ export async function updateKnowledgeItem(
   assertConfidenceInRange(updates.confidence, updates.title ?? id);
   const now = new Date().toISOString();
 
-  const operation = async (exec: any) => {
-    const current = await exec
+  const operation = async (tx: any) => {
+    const current = await tx
       .select()
       .from(schema.knowledgeItems)
       .where(eq(schema.knowledgeItems.id, id))
@@ -442,17 +442,17 @@ export async function updateKnowledgeItem(
       updatedAt: now,
     };
 
-    await exec
+    await tx
       .update(schema.knowledgeItems)
       .set(dbUpdates)
       .where(eq(schema.knowledgeItems.id, id));
 
     if (updates.title !== undefined || updates.content !== undefined || updates.reasoning !== undefined || updates.confidence !== undefined) {
-      const openAssertions = await exec.select().from(schema.knowledgeAssertions)
+      const openAssertions = await tx.select().from(schema.knowledgeAssertions)
         .where(and(eq(schema.knowledgeAssertions.knowledgeItemId, id), isNull(schema.knowledgeAssertions.validTo))).limit(1);
       if (!openAssertions[0]) throw new Error(`Knowledge item has no open assertion: ${id}`);
-      await exec.update(schema.knowledgeAssertions).set({ validTo: now, replacedAt: now }).where(eq(schema.knowledgeAssertions.id, openAssertions[0].id));
-      await exec.insert(schema.knowledgeAssertions).values({
+      await tx.update(schema.knowledgeAssertions).set({ validTo: now, replacedAt: now }).where(eq(schema.knowledgeAssertions.id, openAssertions[0].id));
+      await tx.insert(schema.knowledgeAssertions).values({
         id: generateId(), knowledgeItemId: id, content: merged.content, validFrom: now, validTo: null,
         // The same normalized identity the item row just took. The assertion history is what
         // `knowl_timeline` and conflict auditing read back, so a raw spelling here would
@@ -463,11 +463,11 @@ export async function updateKnowledgeItem(
 
     if (current[0].category === 'skill' && steps) {
       // Delete old steps
-      await exec.delete(schema.skillSteps).where(eq(schema.skillSteps.knowledgeItemId, id));
+      await tx.delete(schema.skillSteps).where(eq(schema.skillSteps.knowledgeItemId, id));
       
       // Insert new steps
       for (let i = 0; i < steps.length; i++) {
-        await exec.insert(schema.skillSteps).values({
+        await tx.insert(schema.skillSteps).values({
           id: generateId(),
           knowledgeItemId: id,
           stepOrder: i + 1,
@@ -477,7 +477,7 @@ export async function updateKnowledgeItem(
       }
     }
 
-    const updated = await exec
+    const updated = await tx
       .select()
       .from(schema.knowledgeItems)
       .where(eq(schema.knowledgeItems.id, id))
