@@ -711,8 +711,14 @@ program.command('query').argument('[query]').description('Search project memory 
     // The floor's verdict, said out loud, in the only terms the measurement supports. Results
     // below it are printed rather than withheld, so without this line a weak page looks exactly
     // like a strong one.
+    //
+    // The score/cosine warning stays even though this rewrite is about narrowing the floor's
+    // claim: that trap is a different one -- `score` is scaled per page, so an abstained page's
+    // top row still reads 0.98 -- and MCP callers get it from the knowl_query tool description
+    // while a CLI reader has no description to get it from. Dropping it here dropped it
+    // everywhere the moment it is needed.
     if (items.some((item: { abstained?: boolean }) => item.abstained)) {
-      console.error('Note: nothing here reads as being about this project. That is all the relevance floor can tell you — it does not mean the store lacks the answer, and a question in this project\'s own vocabulary scores like a real one either way. Read the results and judge.');
+      console.error('Note: nothing here reads as being about this project. That is all the relevance floor can tell you — it does not mean the store lacks the answer, and a question in this project\'s own vocabulary scores like a real one either way. Read the results and judge them by "cosine", the absolute similarity the floor is measured against, or by simply reading them — never by "score", which is min-max scaled across this page and so sits near 1.0 on the top row however weak that row is.');
     }
     // Names and counts, never content: the knowledge stays findable without this line being
     // able to stand in for it.
