@@ -166,6 +166,35 @@ describe('the motivating pair through a real write', () => {
     expect(reversal.reversal).toBeUndefined();
   });
 
+  it('one enumerating sentence is one candidate, not one per title it brushes against', async () => {
+    // Measured on a real 1,033-item store: a single release-note sentence listing several
+    // fixes matched 11 unrelated titles, and the scan reported all 11. A sentence asserts one
+    // reversal, so the scan takes the best-covered title -- the rule the write advisory
+    // already used.
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact',
+      title: 'Snapshot restore wipes the store on empty ATTACH',
+      content: 'An empty ATTACH truncated every table during restore.',
+    });
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact',
+      title: 'Pre-restore prune deletes the restore source',
+      content: 'The prune pass removed the very rows restore was about to read.',
+    });
+    const before = (await scanContradictions()).reversalCandidates.length;
+    await storeKnowledgeItemDeduped(projectId, {
+      category: 'state',
+      title: 'Release notes for the recovery run',
+      content: 'Fixed: snapshot restore no longer wipes the store on empty ATTACH, and pre-restore prune no longer deletes the restore source.',
+    });
+    const rows = (await scanContradictions()).reversalCandidates;
+    const fromNotes = rows.filter(row => row.asserts.title === 'Release notes for the recovery run');
+    // Two cue sentences would be two rows; this is one sentence, so it is one row however many
+    // titles its tokens reach.
+    expect(fromNotes).toHaveLength(1);
+    expect(rows.length).toBe(before + 1);
+  });
+
   it('the polarity pairs the write path clamps to coexist are listed too', async () => {
     await storeKnowledgeItemDeduped(projectId, {
       category: 'decision',

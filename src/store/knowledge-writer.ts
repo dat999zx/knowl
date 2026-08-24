@@ -90,8 +90,9 @@ const POLARITY_TOKENS = new Set([
  *
  * Kept to phrases that assert reversal rather than discuss it. "instead of", "dropped",
  * "rejected" and "retire" were measured on a real 831-item store and fire constantly in
- * ordinary engineering prose; the phrases below fired on 148 items' contents, and the full
- * detector (cue sentence naming another item's distinctive title tokens) flagged 6 pairs.
+ * ordinary engineering prose; the phrases below fired on 148 items' contents there, and 129 of
+ * 1,033 on this repo's store. See `detectReversal` for the end-to-end rate, which is higher
+ * than first reported and is stated rather than tuned away.
  */
 const REVERSAL_CUES = [
   'no longer', 'abandoned', 'superseded', 'supersedes', 'deprecated',
@@ -250,8 +251,18 @@ function normalizedIdentity(item: { title: string; content: string }): string {
 //
 // A one-token title ("Auth") is too coarse to carry this and is excluded.
 export function sameSubjectTitle(a: { title: string }, b: { title: string }): boolean {
-  const left = duplicateTokens(a.title);
-  const right = duplicateTokens(b.title);
+  return sameSubjectTokens(duplicateTokens(a.title), duplicateTokens(b.title));
+}
+
+/**
+ * `sameSubjectTitle` over token sets a caller already holds.
+ *
+ * Split out for the all-pairs scan in `contradiction-scan.ts`, which asks this and
+ * `polarityTokensDiffer` about every pair of active items: tokenizing both titles inside each
+ * predicate meant four tokenizations per pair, and at ~1,000 active items that is the dominant
+ * cost of `knowl conflicts`. Tokenize once per item, compare many times.
+ */
+export function sameSubjectTokens(left: Set<string>, right: Set<string>): boolean {
   const [smaller, larger] = left.size <= right.size ? [left, right] : [right, left];
   if (smaller.size < 2) return false;
   for (const token of smaller) {
@@ -274,8 +285,11 @@ export function sameSubjectTitle(a: { title: string }, b: { title: string }): bo
  * dangerous direction, because the negation is usually the correction.
  */
 export function differsOnlyInPolarity(a: { title: string }, b: { title: string }): boolean {
-  const left = duplicateTokens(a.title);
-  const right = duplicateTokens(b.title);
+  return polarityTokensDiffer(duplicateTokens(a.title), duplicateTokens(b.title));
+}
+
+/** `differsOnlyInPolarity` over token sets a caller already holds. See `sameSubjectTokens`. */
+export function polarityTokensDiffer(left: Set<string>, right: Set<string>): boolean {
   const [smaller, larger] = left.size <= right.size ? [left, right] : [right, left];
 
   let added = 0;
@@ -354,12 +368,24 @@ export type ReversalMatch = {
  * named by tokens at all and never matches, the same reasoning as `sameSubjectTitle`'s
  * one-token exclusion.
  *
- * This is a CANDIDATE detector, and every surface that reports it says so. On the real store it
- * was measured against, all 6 fires were narrative mentions rather than live contradictions --
- * but 6 advisory notes across 831 writes is under 1% noise, the note carries the cue sentence
- * so a reader dismisses a false one in seconds, and the true case it exists for (an explicit
- * reversal stored under an unrelated title) is otherwise silent everywhere, including the small
- * fresh stores where the statistical guard abstains by construction.
+ * This is a CANDIDATE detector, and every surface that reports it says so. Re-measured
+ * 2026-08-24 on this repo's own store (1,033 active items): 129 items carry a cue at all, and
+ * 25 of 1,033 -- 2.4% of writes -- would draw an advisory. ALL 25 are narrative mentions
+ * (release notes saying what a change stopped doing, items citing a `supersedes` id), not live
+ * contradictions; this store has no true reversal left unresolved, so the precision of the
+ * detector on a real positive is UNMEASURED, and the 2.4% is the noise floor a writer pays.
+ *
+ * That is a worse rate than the 831-item store this was first tuned against, and deliberately
+ * NOT met with another threshold. Both obvious ones -- a cap on cue-sentence length, and
+ * requiring the shared tokens to cover a share of the sentence too -- separate all 25 negatives
+ * from the single synthetic positive cleanly, which is exactly the shape of a constant fitted
+ * to one point. #182 records the same lesson for the relevance floor: when the signal does not
+ * support the stronger claim, say what it supports instead of adding a number.
+ *
+ * The note is affordable at 2.4% because it carries the cue sentence, so a reader dismisses a
+ * false one in seconds, and the true case it exists for (an explicit reversal stored under an
+ * unrelated title) is otherwise silent everywhere, including the small fresh stores where the
+ * statistical guard abstains by construction.
  */
 export function detectReversal(
   cueSentences: ReversalCueSentence[],
