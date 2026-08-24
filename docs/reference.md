@@ -242,6 +242,27 @@ Titles are capped separately at 200 characters, and previews of things retrievab
 elsewhere — evidence excerpts, timeline assertions, skill markdown, `knowl_skill_run` output —
 stay at 600.
 
+#### Reading `knowl query` from a script
+
+**`knowl query` writes pure JSON to stdout and every advisory line to stderr** — the `Note:`
+banner about linked repos, and the `WORKSPACE:`, `SCOPE:` and `NO CONFIDENT MATCH` notices. The
+split is deliberate, so a programmatic consumer gets a parseable stream without losing the
+advisories a human wants.
+
+It bites because most shells and wrappers merge the two by default. A parser fed the merged
+stream sees `Note: ...` before the JSON and throws, and the natural diagnosis — "the CLI emitted
+bad JSON" — sends you into the CLI instead of into your own stream handling. Read `stdout`
+explicitly:
+
+```bash
+knowl query "auth token design" 2>/dev/null | jq .
+```
+
+The parsed value is a **bare array** when every row belongs to this repo and an **object keyed by
+repo name** when at least one does not, so a parser that assumes one shape silently returns
+nothing in the other. The distinction carries meaning worth keeping: a fact under another repo's
+key describes *that* repo. Force one shape with `--scope local` or `--scope workspace`.
+
 ```bash
 # Current CLI query; single-repository candidates are lexical.
 knowl query "auth token design"
