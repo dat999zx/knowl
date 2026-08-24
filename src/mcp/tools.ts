@@ -989,9 +989,15 @@ export function registerTools(
             const storedAt = Date.parse(item.updatedAt ?? '');
             if (!Number.isFinite(storedAt)) return;
             let changed = 0;
+            let checked = 0;
             await Promise.all(item.affectedPaths.map(async raw => {
+              // A path that will not resolve against THIS checkout -- absolute, drive-lettered,
+              // `./`-prefixed, escaping the root -- is skipped, not counted. A missing FILE is
+              // evidence the atom's ground moved; an unreadable PATH is only absence of
+              // evidence, and counting it as changed marked every such row stale forever.
               const contained = containedRepoPath(raw);
-              if (!contained) { changed += 1; return; }
+              if (!contained) return;
+              checked += 1;
               try {
                 const stat = await fs.stat(path.resolve(projectRoot, contained));
                 if (stat.mtimeMs > storedAt + PATHS_CHANGED_GRACE_MS) changed += 1;
@@ -1001,7 +1007,7 @@ export function registerTools(
             }));
             if (changed > 0) {
               pathsChangedNotes.set(item.id,
-                `${changed} of ${item.affectedPaths.length} affectedPaths modified since this was stored -- verify against the files before trusting.`);
+                `${changed} of ${checked} affectedPaths modified since this was stored -- verify against the files before trusting.`);
             }
           })).catch(() => {});
         }

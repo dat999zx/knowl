@@ -134,13 +134,31 @@ describe('knowl_query pathsChanged marker', () => {
     expect(row.pathsChanged).toBeUndefined();
   });
 
-  it('a path that escapes the repository counts as changed rather than being resolved', async () => {
+  it('says nothing about a path that will not resolve against this checkout', async () => {
     const projectId = await seedRepo(A);
-    await storeCiting(projectId, 'Escaping citation', ['../outside.ts']);
+    // `./` is stripped on write, so what actually reaches here unresolvable is an escaping or
+    // absolute citation. Neither is evidence: the marker's sentence claims a MODIFICATION was
+    // observed, and none was -- a permanent "verify" on a row nobody can ever clear is the
+    // warning light that teaches readers to ignore the marker everywhere else.
+    await storeCiting(projectId, 'Escaping citation', ['../outside.ts', '/etc/hosts']);
 
     const result = await callQuery(A, await loadConfig(A), { query: 'escaping citation' });
     const row = rowsOf(result).find(r => String(r.title).includes('Escaping'));
     expect(row).toBeDefined();
+    expect(row.pathsChanged).toBeUndefined();
+  });
+
+  it('counts only the paths it could actually check', async () => {
+    const projectId = await seedRepo(A);
+    await fs.mkdir(path.join(A, 'src'), { recursive: true });
+    await fs.writeFile(path.join(A, 'src', 'auth.ts'), 'export const ttl = 15;');
+    await storeCiting(projectId, 'Mixed citation auth ttl', ['src/auth.ts', '../outside.ts']);
+
+    const result = await callQuery(A, await loadConfig(A), { query: 'mixed citation auth ttl' });
+    const row = rowsOf(result).find(r => String(r.title).includes('Mixed citation'));
+    expect(row).toBeDefined();
+    // One checkable path, and it moved. The unresolvable one is not in the denominator: the
+    // sentence would otherwise understate how much of what it looked at had changed.
     expect(row.pathsChanged).toContain('1 of 1');
   });
 
