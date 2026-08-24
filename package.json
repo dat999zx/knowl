@@ -102,7 +102,7 @@
     "tsx": "^4.23.8",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.66.0",
-    "vitest": "^3.0.2"
+    "vitest": "^4.1.11"
   },
   "overrides": {
     "sharp": "^0.35.0",
