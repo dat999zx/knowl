@@ -86,6 +86,20 @@ describe('formatStatusReport wiring', () => {
     expect(formatStatusReport(base)).not.toContain('WORKSPACE');
   });
 
+  // `knowl init` ends by pointing here and at nowhere else, and this report named item counts,
+  // capture health and workspace but never a feature. Someone who wanted to know what the tool
+  // could do, or whether a thing they had read about was on, had no surface to read.
+  it('carries the feature count and where to see it', () => {
+    const report = formatStatusReport({ ...base, features: '11 of 18 on · knowl config list' });
+    expect(report).toContain('FEATURES');
+    expect(report).toContain('11 of 18 on');
+    expect(report).toContain('knowl config list');
+  });
+
+  it('says nothing about features when the count was not gathered', () => {
+    expect(formatStatusReport(base)).not.toContain('FEATURES');
+  });
+
   it('names the cloud workspace and the staged split when connected', () => {
     // Same reason the workspace assertion above exists: cloud state was reachable from nowhere
     // in the report a developer actually runs, so a connected repo with queued atoms said

@@ -47,6 +47,7 @@ import { applyDoctorRemedies } from './doctor-fix.js';
 import { formatSweepReport, sweepRepos } from './upgrade-all.js';
 import { createLocalEmbeddingProvider, isVectorSearchEnabled } from '../ai/embeddings.js';
 import { getEffectiveConfigValue, resetAllConfig, resetConfigValue, setConfigValue, setConfigValues } from './config/service.js';
+import { buildConfigCatalog, formatFeatureSummary, renderConfigCatalog, renderConfigReference } from './config/catalog.js';
 import { runConfigUi } from './config/ui.js';
 import { defaultApiHost, runLogin, runLogout } from '../cloud/login.js';
 import { createCloudApi } from '../cloud/api-client.js';
@@ -465,6 +466,10 @@ program
         capture: await captureHealth(),
         captureNudgeMode: captureNudgeMode(config),
         cloud,
+        // Reads config.json a second time rather than threading `config` through: the catalog
+        // resolves preset-owned values through `resolveVectorProfile`, and duplicating that
+        // resolution here to save one small file read is how the two answers drift apart.
+        features: formatFeatureSummary(await buildConfigCatalog(root)),
       }));
 
       if (isUpdateCheckEnabled(config)) {
@@ -2667,7 +2672,16 @@ const configCommand = program
   // Commander 14 rejects excess arguments before the action runs. Left alone, `knowl config
   // ai.model gpt-4o` would answer "too many arguments for 'config'" instead of naming the
   // subcommand syntax the user was reaching for, which is the whole point of the check below.
-  .allowExcessArguments();
+  .allowExcessArguments()
+  // `gh config --help` is where gh documents every setting it respects, and it is the reference
+  // people actually read. Generated, so it cannot drift from what `config set` accepts.
+  .addHelpText('after', () => [
+    '',
+    'Settings, and what each one does:',
+    ...renderConfigReference(),
+    '',
+    'Current values, and which are on:  knowl config list',
+  ].join('\n'));
 
 configCommand.action(async () => {
   try {
@@ -2695,6 +2709,25 @@ configCommand.action(async () => {
     process.exitCode = 1;
   }
 });
+
+configCommand
+  .command('list')
+  .description('List every setting, whether it is on, and the command that changes it')
+  .option('--all', 'Include values that are filled in rather than switched, and preset internals')
+  .action(async (options: { all?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      const rows = await buildConfigCatalog(root, { all: options.all });
+      for (const line of renderConfigCatalog(rows)) console.log(line);
+      if (!options.all) {
+        console.log('');
+        console.log('Values that are filled in rather than switched: knowl config list --all');
+      }
+    } catch (error: any) {
+      console.error(`❌ Configuration error: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
 
 configCommand
   .command('get')

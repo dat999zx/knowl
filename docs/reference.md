@@ -29,7 +29,7 @@ which parts of a restore are deliberately not restored.
 | [Overview](#overview) · [Quick start](#quick-start) | What Knowl is and how to install it |
 | [Core knowledge model](#core-knowledge-model) | [Atom categories](#atom-categories) · [Metadata, history, ownership](#metadata-history-and-ownership) · [Governed writes](#governed-writes-and-current-truth) |
 | [Retrieval and context](#retrieval-and-context) | [Current retrieval](#current-retrieval) · [What a result carries](#what-a-result-carries) · [Embedding models](#choosing-an-embedding-model) · [Historical queries](#historical-retrieval-and-assertions) · [Context packs](#bounded-context-packs) |
-| [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-optional-off-by-default) · [Host behavior](#host-and-subagent-behavior) |
+| [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-optional-off-by-default) · [What exists and what is on](#seeing-what-exists-and-what-is-on--knowl-config-list) · [Host behavior](#host-and-subagent-behavior) |
 | [Evidence, code, drift](#evidence-code-intelligence-and-drift) | [Evidence and symbols](#evidence-and-symbols) · [PR drift and feedback](#pull-request-drift-and-retrieval-feedback) |
 | [Workspaces](#workspaces) | [Federation and ownership](#federation-and-ownership) · [Reading a peer's atom by id](#reading-a-linked-repos-atom-by-id) · [Doing a peer's work](#doing-a-linked-repos-work-from-here) · [Ownership stamping](#ownership) |
 | [Knowl Cloud](#knowl-cloud) | [Identity and connection](#identity-and-connection) · [Publishing and drift](#publishing-works-from-any-branch-reporting-drift-does-not) · [Staying current](#staying-current) |
@@ -504,6 +504,30 @@ because they are laid out differently: Claude Code names a directory after the p
 (`~/.claude/projects/<encoded-root>/`), while Codex partitions by date
 (`~/.codex/sessions/YYYY/MM/DD/`) and records the project inside each file as
 `session_meta.payload.cwd`. Every Codex candidate is therefore opened, with a bounded header read.
+
+### Seeing what exists and what is on — `knowl config list`
+
+Most of what Knowl can do is a setting, and several of the useful ones ship off. Until this
+command there was no surface that said so: `knowl status` reports item counts, capture health
+and workspace, `knowl doctor` reports readiness, and the one-line descriptions of every setting
+were reachable only from inside the interactive editor, which needs a TTY.
+
+```bash
+knowl config list          # every switch, whether it is on, and the command that changes it
+knowl config list --all    # plus values that are filled in rather than switched
+knowl config --help        # the same settings as a reference, with allowed values and defaults
+```
+
+`knowl status` carries the count and points here, because that is where `knowl init` sends a
+new repository and a feature the product never mentions there is a feature nobody finds.
+
+**When a change takes effect.** Transcript search, the cloud connection and workspace
+membership are obeyed immediately by a running agent session — those three gates re-read the
+config file on every call and fail closed if either the captured or the on-disk value says off.
+Every other setting is read when a session starts, so a session already running keeps the value
+it started with. A setting that decides whether a *tool exists* — the cloud and workspace tools
+are registered only when their config is present — can only add or remove that tool at session
+start, because the tool list is sent once when the connection opens.
 
 ### The recall and capture posture — `knowl posture`
 
@@ -2046,6 +2070,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl import <path> [--dry-run] [--on-divergence newer\|skip\|theirs\|fail]` | Import JSONL with an explicit divergence policy |
 | `knowl snapshot create` / `knowl snapshot restore <path> --confirm` | Create a checksummed SQLite snapshot, or restore one after verifying its manifest, size, checksum, and SQLite integrity |
 | `knowl config` | Edit configuration interactively |
+| `knowl config list [--all]` | List every setting, whether it is on, and the command that changes it |
 | `knowl config get <key>` | Print one configuration value |
 | `knowl config set <key> <value>` | Set one configuration value |
 | `knowl config reset [key]` | Restore one key, or all of them, to the default |
