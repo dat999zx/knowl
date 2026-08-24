@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import module from 'node:module';
 import dotenv from 'dotenv';
 
 /**
@@ -22,7 +23,24 @@ import dotenv from 'dotenv';
  *
  * `dotenv` stays here rather than in either branch: it is a few kilobytes, and a `.env` that
  * applied to some commands and not others would be a worse surprise than the cost.
+ *
+ * The compile cache is enabled here for the same reason, and it is the larger half: it caches
+ * V8's compiled bytecode for every module compiled *after* the call, which is both dynamic
+ * branches and everything they pull in. Measured at roughly 115ms off a cold start, against a
+ * ~218ms floor that `agent-hook` pays hundreds of times a session.
+ *
+ * Guarded twice on purpose. `engines` is `>=22` and `enableCompileCache` landed in 22.1.0, so
+ * the method can be absent; and the cache directory can be unwritable, so the call can throw.
+ * A startup optimisation must never be what fails a command. Called with no argument, so the
+ * cache lands in `NODE_COMPILE_CACHE` if the user set one and node's own default otherwise --
+ * choosing a directory for them is a decision this does not need to make.
  */
+try {
+  module.enableCompileCache?.();
+} catch {
+  // Pre-22.1, or a read-only cache directory. Neither is worth failing the command over.
+}
+
 // `quiet` is not optional decoration. dotenv 17 prints "injected env (N) from .env" plus a
 // rotating tip to STDOUT on every call, which lands in front of the JSON that `--json`
 // commands emit and makes it unparseable -- caught by four CLI suites on the upgrade.
