@@ -57,3 +57,8 @@ benchmarks/*/data/
 # `store/bootstrap.ts`, so this output is a scratch artifact rather than something to commit --
 # it has never been in the tree, and it appeared as untracked noise the moment anyone ran the tool.
 drizzle/
+
+# Agent instruction files are machine-maintained (`knowl init` rewrites the marked section) and
+# carry local guidance, so they are not tracked. Gitignore alone does nothing to a file already
+# in the index, which is why this landed with a `git rm --cached`.
+AGENTS.md
