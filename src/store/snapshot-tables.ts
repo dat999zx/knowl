@@ -89,6 +89,12 @@ export const SNAPSHOT_TABLE_POLICY: Readonly<Record<string, SnapshotTablePolicy>
   // from a week-old snapshot would clear the flag on conversations that were already nudged --
   // re-arming a stop-blocking interrupt against sessions that had answered it.
   capture_outcomes: 'preserved',
+  // Pending lessons and their block budget, preserved on exactly `capture_outcomes`' two
+  // reasons: the resolved rows are the measurement any decision to enforce reads, and the
+  // claims table is a spent one-shot -- refilling it from a snapshot would re-arm a
+  // stop-blocking interrupt against conversations that already answered it.
+  pending_lessons: 'preserved',
+  pending_lesson_claims: 'preserved',
   // What THIS machine has staged for, and pushed to, a cloud workspace. The server's copy is the
   // truer one and a snapshot cannot roll it back, so restoring an older ledger would only make
   // this machine forget the `remote_version` every republish needs -- turning the next publish

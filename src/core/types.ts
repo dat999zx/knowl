@@ -421,6 +421,18 @@ export interface ProjectConfig {
      * say otherwise -- the same ladder `impact.gate` climbs.
      */
     nudge?: 'off' | 'shadow' | 'enforce';
+    /**
+     * Event-shaped lessons: a destructive command that just ran, or a prompt that reads as
+     * the user correcting the agent, each recorded as a pending item that only a subsequent
+     * durable write settles. The class of knowledge the silence nudge above structurally
+     * cannot see -- its verdict is per conversation, so a session that stored plenty of
+     * unrelated atoms reads as healthy while the one event that mattered goes unwritten.
+     *
+     * Same ladder as `nudge`, and shadow is where it is expected to sit first: the detectors
+     * are precision-tuned regexes, and the measurement of how often they fire is what any
+     * decision to enforce has to be made on.
+     */
+    events?: 'off' | 'shadow' | 'enforce';
   };
   /**
    * This repo's half of workspace membership. The other half is the workspace manifest

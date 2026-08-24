@@ -525,6 +525,33 @@ const SCHEMA_STATEMENTS = [
     nudged TEXT
   );`,
 
+  // Pending lessons: specific events -- a destructive command, a user correction -- whose
+  // knowledge has not been stored yet. The opposite scoping from `capture_outcomes` above,
+  // deliberately: that table asks "did this conversation store anything", which a session
+  // storing plenty of unrelated atoms satisfies while the one event that mattered goes
+  // unwritten. One row per event; `resolved` is NULL while open, then 'write' (a durable
+  // write landed after it), 'blocked' (delivered by withholding a stop), 'shadow' (would
+  // have been delivered), or 'budget' (the block ceiling was already spent, so it settled
+  // silently).
+  `CREATE TABLE IF NOT EXISTS pending_lessons (
+    id TEXT PRIMARY KEY,
+    conversation TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    class TEXT,
+    snippet TEXT,
+    observed_at TEXT NOT NULL,
+    resolved TEXT
+  );`,
+  `CREATE INDEX IF NOT EXISTS idx_pending_lessons_conversation ON pending_lessons(conversation);`,
+
+  // The block budget, its own row so the claim can be a conditional UPDATE: two stop hooks
+  // race, exactly one may spend a block, and after MAX_LESSON_BLOCKS the gate goes silent for
+  // the conversation forever. Same claim-before-deliver rule as `capture_outcomes.nudged`.
+  `CREATE TABLE IF NOT EXISTS pending_lesson_claims (
+    conversation TEXT PRIMARY KEY,
+    blocks INTEGER NOT NULL DEFAULT 0
+  );`,
+
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
     VALUES (new.id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));
