@@ -177,6 +177,9 @@ const managedGuidance = renderManagedKnowlGuidanceSection();
 let guidanceStale = false;
 for (const name of ['KNOWL.md', 'AGENTS.md']) {
   const file = path.join(root, name);
+  // AGENTS.md is gitignored, so a fresh clone and every CI checkout arrive without it. Reading it
+  // unconditionally is what turned that absence into an ENOENT crash rather than a skipped check.
+  if (!fs.existsSync(file)) continue;
   const current = fs.readFileSync(file, 'utf8');
   const eol = current.includes('\r\n') ? '\r\n' : '\n';
   const unmanaged = stripManagedKnowlGuidance(current.replaceAll('\r\n', '\n')).trimEnd();
