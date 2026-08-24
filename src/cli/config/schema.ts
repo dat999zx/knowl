@@ -13,6 +13,7 @@ export type ConfigKey =
   | 'search.vector.cacheDir'
   | 'search.transcripts.enabled'
   | 'search.transcripts.share'
+  | 'search.transcripts.fallback'
   | 'ai.provider'
   | 'ai.model'
   | 'ai.temperature'
@@ -25,6 +26,8 @@ export type ConfigKey =
   | 'impact.enabled'
   | 'impact.gate'
   | 'capture.nudge'
+  | 'capture.events'
+  | 'capture.scope'
   | 'cloud.autoStage'
   | 'updateCheck.enabled';
 
@@ -94,6 +97,7 @@ const IMPACT_GATE_MODES = ['off', 'shadow', 'enforce'] as const;
 // than shared: they mean different things (one refuses a write, one withholds a stop), and a
 // shared list is how a fourth mode added for one of them silently becomes settable on the other.
 const CAPTURE_NUDGE_MODES = ['off', 'shadow', 'enforce'] as const;
+const CAPTURE_SCOPES = ['conversation', 'turn'] as const;
 
 export const CONFIG_FIELDS: ConfigField[] = [
   // The preset leads the Search list: it is the one setting most people should touch,
@@ -154,6 +158,12 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: booleanValue, defaultValue: false,
     label: 'Share transcripts with workspace',
     description: 'Let linked workspace repos search this repo\'s transcripts, read-only. Has no effect unless transcript search is on.',
+  },
+  {
+    key: 'search.transcripts.fallback', category: 'Search', type: 'boolean',
+    parse: booleanValue, defaultValue: false,
+    label: 'Transcript fallback on query miss',
+    description: 'A knowl_query that missed runs transcript search itself and reports a verified negative when both stores miss, instead of suggesting the second tool in prose. Has no effect unless transcript search is on.',
   },
   {
     key: 'security.rejectSecrets', category: 'Security', type: 'boolean',
@@ -247,6 +257,20 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: enumValue(CAPTURE_NUDGE_MODES), defaultValue: 'off',
     label: 'Empty-session nudge',
     description: 'When a conversation has run for several turns and stored nothing durable: shadow records the nudge it would have sent, enforce withholds the stop once and asks the agent to store what it learned. Measurement runs either way.',
+  },
+  {
+    // `defaultValue: 'off'` here and nowhere else, exactly as `capture.nudge` above: written
+    // into DEFAULT_CONFIG it would arm event inspection in every repository on the machine.
+    key: 'capture.events', category: 'Capture', type: 'enum', values: CAPTURE_NUDGE_MODES,
+    parse: enumValue(CAPTURE_NUDGE_MODES), defaultValue: 'off',
+    label: 'Event lessons',
+    description: 'Watch for destructive commands and user corrections, and hold each as a pending lesson until a durable write settles it: shadow records what it would have said, enforce nudges mid-turn and withholds a stop over unstored lessons, at most three times per conversation.',
+  },
+  {
+    key: 'capture.scope', category: 'Capture', type: 'enum', values: CAPTURE_SCOPES,
+    parse: enumValue(CAPTURE_SCOPES), defaultValue: 'conversation',
+    label: 'Capture scope',
+    description: 'Granularity of the stored-nothing question. conversation is the one-shot end-of-session verdict; turn additionally prompts once, through the free mid-turn channel, when a turn does substantial work and stores nothing -- and a query does not quiet it, only a write does.',
   },
   {
     // Absent from DEFAULT_CONFIG on purpose, like the three above: merged in, it would write
