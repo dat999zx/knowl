@@ -1166,7 +1166,7 @@ export function registerTools(
               : '');
           blocks.push({
             type: 'text',
-            text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `cosine` and judge, not `score`: `cosine` is the absolute similarity the floor itself is measured against, while `score` only orders this page. If none of them answers the question, treat this as a miss and go to the files.'
+            text: 'NO CONFIDENT MATCH: nothing above reads as being about this project. Take that narrowly — it means OFF-SUBJECT, not unanswerable, and it cannot tell you whether this store holds the answer. A question phrased in this project\'s own vocabulary scores like a real one whether or not anything here answers it, on every shipped embedding model, which is why the rows are returned rather than withheld. Read them and judge whether any actually answers the question; you are better at that than the score is. If none does, treat it as a miss and go to the files.'
               + transcriptRoute,
           });
         }

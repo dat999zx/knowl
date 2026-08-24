@@ -242,6 +242,34 @@ Titles are capped separately at 200 characters, and previews of things retrievab
 elsewhere — evidence excerpts, timeline assertions, skill markdown, `knowl_skill_run` output —
 stay at 600.
 
+#### What `abstained` means, and what it does not
+
+`abstained` (and the `NO CONFIDENT MATCH` notice that reports it) means **the query does not look
+like it is about this store**. It does **not** mean the store lacks the answer, and it must not be
+built on as though it did.
+
+The difference is not a caveat, it is the measured result. A question phrased in a store's own
+vocabulary is close to that store whether or not anything in it answers the question — so a score
+above the floor cannot mean "the answer is here", and one below it only weakly suggests the
+question reads as foreign. Two candidate signals were measured and both fail, for different
+reasons:
+
+- **Cosine similarity** — on-topic and off-topic distributions overlap on all five shipped presets,
+  and the current default has the *smallest* overlap of them, so there is no better preset to move
+  to. See [`evals/preset-floor-sweep.md`](evals/preset-floor-sweep.md).
+- **Lexical coverage** — quantized at `1 / terms`, so short vague on-topic questions land on the
+  same values as partially-matching junk. `why is startup slow` scores 0.500 against a store that
+  answers it in full. See [`evals/query-coverage-probe.md`](evals/query-coverage-probe.md).
+
+**So: do not drop abstained rows on the assumption they are irrelevant, and do not treat their
+absence as a relevance claim.** The rows are returned rather than withheld precisely because the
+floor is wrong often enough to matter. An agent reading three results can judge whether any answers
+its question far better than a single threshold can, and that is the intended use — the floor
+narrows what to read, it does not decide it.
+
+The honest consumer pattern is to surface abstained rows with the caveat attached rather than to
+filter on it, and to fall back to the files when nothing read actually answers the question.
+
 #### Reading `knowl query` from a script
 
 **`knowl query` writes pure JSON to stdout and every advisory line to stderr.** All four are
