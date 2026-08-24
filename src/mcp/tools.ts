@@ -55,7 +55,7 @@ import { stagePublishInRequest } from '../cloud/publish.js';
 import { excludeFromPublish } from '../cloud/exclusions.js';
 import { unstagePublish } from '../cloud/ledger.js';
 import { summarizeDemand } from '../workspace/demand-ledger.js';
-import { loadConfig } from '../core/config.js';
+import { isPathsChangedEnabled, loadConfig } from '../core/config.js';
 
 export const CLOUD_DISCONNECTED_MESSAGE =
   'This repository is not connected to a cloud workspace. Ask the user to run `knowl cloud connect` (and `knowl cloud login` first if they are not signed in).';
@@ -983,7 +983,10 @@ export function registerTools(
         // seconds to weeks later, not milliseconds, so the window costs nothing real.
         const PATHS_CHANGED_GRACE_MS = 2_000;
         const pathsChangedNotes = new Map<string, string>();
-        if (projectRoot) {
+        // `search.pathsChanged`, on unless a repository turns it off. Gated at the top so the
+        // `fs.stat` per cited path is not paid either -- the switch is there for the cost as
+        // much as for the field.
+        if (projectRoot && (!config || isPathsChangedEnabled(config))) {
           await Promise.all(resolvedItems.map(async item => {
             if (isForeign(item) || !item.affectedPaths?.length) return;
             const storedAt = Date.parse(item.updatedAt ?? '');

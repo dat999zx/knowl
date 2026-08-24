@@ -544,6 +544,19 @@ knowl posture frugal     # reset the same keys -- knowl exactly as it ships
 Query results also annotate staleness whatever the posture says: a row whose `affectedPaths`
 were modified after the row was stored carries `pathsChanged` ("n of m affectedPaths modified
 since this was stored — verify"), absent when clean. The field says *verify*, never *wrong*.
+Paths that cannot be resolved against this checkout — absolute, escaping the root — are skipped
+rather than counted, because an unreadable path is absence of evidence, not evidence.
+
+This one is **on by default**, alone among the keys on this page: it adds a field rather than a
+message, so it spends no mid-turn slot and withholds no stop. It is not free either — every
+returned local row costs an `fs.stat` per cited path — so it has a switch:
+
+```bash
+knowl config set search.pathsChanged false
+```
+
+Worth turning off in a repository whose atoms cite generated or build-time files, where the
+marker would be present on every row forever and stop meaning anything.
 
 ### `knowl transcripts` — turning sessions into candidates
 

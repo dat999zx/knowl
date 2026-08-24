@@ -14,6 +14,7 @@ export type ConfigKey =
   | 'search.transcripts.enabled'
   | 'search.transcripts.share'
   | 'search.transcripts.fallback'
+  | 'search.pathsChanged'
   | 'ai.provider'
   | 'ai.model'
   | 'ai.temperature'
@@ -164,6 +165,15 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: booleanValue, defaultValue: false,
     label: 'Transcript fallback on query miss',
     description: 'A knowl_query that missed runs transcript search itself and reports a verified negative when both stores miss, instead of suggesting the second tool in prose. Has no effect unless transcript search is on.',
+  },
+  {
+    // The one key here whose default is on, so it is `!== false` in the reader and absent from
+    // DEFAULT_CONFIG for the usual reason: merged in, it would be stamped into every config on
+    // the machine at the next upgrade. `defaultValue` only tells the editor what unset does.
+    key: 'search.pathsChanged', category: 'Search', type: 'boolean',
+    parse: booleanValue, defaultValue: true,
+    label: 'Stale-path marker on query rows',
+    description: 'Annotate a query row whose affectedPaths were modified after the row was stored, so a retrieved answer says when its ground moved. Absent from clean rows. Turn off in a repository whose atoms cite generated files, where the marker would never clear.',
   },
   {
     key: 'security.rejectSecrets', category: 'Security', type: 'boolean',

@@ -148,6 +148,21 @@ describe('knowl_query pathsChanged marker', () => {
     expect(row.pathsChanged).toBeUndefined();
   });
 
+  it('says nothing at all when search.pathsChanged is off', async () => {
+    const projectId = await seedRepo(A);
+    await fs.mkdir(path.join(A, 'src'), { recursive: true });
+    await fs.writeFile(path.join(A, 'src', 'auth.ts'), 'export const ttl = 15;');
+    await storeCiting(projectId, 'Auth token TTL is fifteen minutes', ['src/auth.ts']);
+    const config = await loadConfig(A);
+    await saveConfig(A, { ...config, search: { ...config.search, pathsChanged: false } });
+
+    const result = await callQuery(A, await loadConfig(A), { query: 'auth token ttl' });
+    const row = rowsOf(result).find(r => String(r.title).includes('Auth token TTL'));
+    expect(row).toBeDefined();
+    // The same row carries the marker with the key unset -- the first case in this suite.
+    expect(row.pathsChanged).toBeUndefined();
+  });
+
   it('counts only the paths it could actually check', async () => {
     const projectId = await seedRepo(A);
     await fs.mkdir(path.join(A, 'src'), { recursive: true });

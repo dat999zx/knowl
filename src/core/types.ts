@@ -326,6 +326,17 @@ export interface ProjectConfig {
        */
       fallback?: boolean;
     };
+    /**
+     * Annotate a query row whose `affectedPaths` were modified after the row was stored.
+     *
+     * ON unless explicitly set to false -- the only key here that defaults on, because it adds
+     * a field rather than a message: it spends no slot, blocks no stop, and is absent from
+     * every row whose files are clean. The escape hatch exists because it is not free either:
+     * every returned local row costs an `fs.stat` per cited path, and a repository whose
+     * atoms cite generated or checked-out-fresh files would carry the marker permanently,
+     * which is how a true signal becomes furniture.
+     */
+    pathsChanged?: boolean;
   };
   memory?: {
     organization?: { enabled?: boolean; path?: string };

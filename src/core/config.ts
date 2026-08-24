@@ -386,3 +386,16 @@ export function hasAiConfigured(config?: ProjectConfig): boolean {
 export function isTranscriptSearchEnabled(config: ProjectConfig): boolean {
   return config.search?.transcripts?.enabled === true;
 }
+
+/**
+ * Whether query rows carry the `pathsChanged` staleness marker.
+ *
+ * Reads `!== false`, not `=== true`, and is the only search predicate that does: the marker
+ * ships on, so absence must mean on. Writing the default into `DEFAULT_CONFIG` instead would
+ * stamp the key into every config on the machine at the next `knowl upgrade` -- the same trap
+ * `capture.nudge` and `impact.enabled` are kept out of it to avoid, arriving from the other
+ * direction.
+ */
+export function isPathsChangedEnabled(config: ProjectConfig): boolean {
+  return config.search?.pathsChanged !== false;
+}
