@@ -120,7 +120,12 @@ describe('knowl_query pathsChanged marker', () => {
     const projectId = await seedRepo(A);
     await fs.mkdir(path.join(A, 'src'), { recursive: true });
     await fs.writeFile(path.join(A, 'src', 'auth.ts'), 'export const ttl = 15;');
-    // Not backdated: the file was written before the row, so mtime <= updated_at.
+    // The mtime is pinned to a known past instant rather than trusted from the write: a
+    // buffered write's timestamp can land AFTER the store's own clock reading on some
+    // platforms (macOS and Windows on node 22, in CI), so "written before the row" does not
+    // guarantee mtime <= updated_at. utimes does.
+    const pinned = new Date('2019-01-01T00:00:00.000Z');
+    await fs.utimes(path.join(A, 'src', 'auth.ts'), pinned, pinned);
     await storeCiting(projectId, 'Auth token TTL is fifteen minutes', ['src/auth.ts'], false);
 
     const result = await callQuery(A, await loadConfig(A), { query: 'auth token ttl' });

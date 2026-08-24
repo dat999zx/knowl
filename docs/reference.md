@@ -440,7 +440,8 @@ spent in the guidance card.
 "search": {
   "transcripts": {
     "enabled": false,   // nothing is created, no MCP tools are registered
-    "share": false      // let linked workspace repos read this index
+    "share": false,     // let linked workspace repos read this index
+    "fallback": false   // a missed knowl_query runs transcript search itself
   }
 }
 ```
@@ -480,6 +481,48 @@ because they are laid out differently: Claude Code names a directory after the p
 (`~/.claude/projects/<encoded-root>/`), while Codex partitions by date
 (`~/.codex/sessions/YYYY/MM/DD/`) and records the project inside each file as
 `session_meta.payload.cwd`. Every Codex candidate is therefore opened, with a bounded header read.
+
+### The recall and capture posture — `knowl posture`
+
+How much memory should do on its own is a stance, not a matrix, so the stance has one command.
+Every key it touches exists on its own in `knowl config` and stays the contract; `posture` is
+the convenience over them.
+
+```bash
+knowl posture            # show the current values of the posture keys
+knowl posture maximal    # the all-knowing stance
+knowl posture frugal     # reset the same keys -- knowl exactly as it ships
+```
+
+`maximal` sets, and `frugal` resets:
+
+- **`search.transcripts.enabled` + `search.transcripts.fallback`** — the recall chain. With
+  `fallback` on, a `knowl_query` that missed runs transcript search itself instead of
+  suggesting the second tool in prose, and a miss in **both** stores returns
+  `RECALL CHAIN — VERIFIED NEGATIVE` with coverage lines: "that never happened" becomes a
+  claim checked against the atoms *and* the archive, not a guess over one of them. An AND
+  with `enabled`, by the same rule as `share`.
+- **`capture.nudge: enforce`** — the end-of-conversation silence nudge, delivered by
+  withholding one stop.
+- **`capture.events: enforce`** — event-shaped lessons. A destructive command (a broad
+  process kill, a git command that discards work, a recursive force-delete, a `DROP TABLE`)
+  or a prompt that reads as the user correcting the agent becomes a *pending lesson* that
+  only a subsequent durable write settles. In `enforce` the agent is nudged mid-turn while
+  it still knows what else the command matched, and an unstored lesson withholds one stop —
+  at most three per conversation, with "no such event actually happened" always a legal
+  answer. `shadow` records what it would have said and says nothing; the correction detector
+  runs in the host hook and forwards only a derived boolean, never the prompt text.
+- **`capture.scope: turn`** — the silence question asked per turn, through the free mid-turn
+  channel rather than a blocked stop, when a turn does substantial work and stores nothing.
+  Its defining property: a `knowl_query` does not quiet it, only a durable write does — the
+  memory-active session is precisely the one every other reminder goes silent for.
+- **`impact.enabled` + `impact.gate: shadow`** — change-impact detection on, with the write
+  gate in shadow: even the maximal stance does not arm a blocking gate ahead of its measured
+  precision bar.
+
+Query results also annotate staleness whatever the posture says: a row whose `affectedPaths`
+were modified after the row was stored carries `pathsChanged` ("n of m affectedPaths modified
+since this was stored — verify"), absent when clean. The field says *verify*, never *wrong*.
 
 ### `knowl transcripts` — turning sessions into candidates
 

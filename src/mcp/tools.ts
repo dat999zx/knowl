@@ -975,6 +975,13 @@ export function registerTools(
         // path resolves against a checkout that is not this one, and a path that escapes the
         // root reveals nothing about the file it names. A missing file counts as changed --
         // deletion is the strongest form of "moved".
+        //
+        // The grace window covers the one systematic false positive: "edit the file, then
+        // immediately store the atom citing it" is the ordinary write pattern, and a buffered
+        // write's mtime can land a moment AFTER the store's own clock reading (observed on
+        // macOS and Windows under node 22). A file that truly changed after the atom is
+        // seconds to weeks later, not milliseconds, so the window costs nothing real.
+        const PATHS_CHANGED_GRACE_MS = 2_000;
         const pathsChangedNotes = new Map<string, string>();
         if (projectRoot) {
           await Promise.all(resolvedItems.map(async item => {
@@ -987,7 +994,7 @@ export function registerTools(
               if (!contained) { changed += 1; return; }
               try {
                 const stat = await fs.stat(path.resolve(projectRoot, contained));
-                if (stat.mtimeMs > storedAt) changed += 1;
+                if (stat.mtimeMs > storedAt + PATHS_CHANGED_GRACE_MS) changed += 1;
               } catch {
                 changed += 1;
               }
