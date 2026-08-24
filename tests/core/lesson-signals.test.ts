@@ -36,6 +36,12 @@ describe('classifyDestructiveCommand', () => {
     ['echo then pkill', 'echo starting; pkill -f node', 'process-kill-broad'],
     ['cat then drop', 'cat notes.txt && psql -c "DROP TABLE users"', 'db-destructive'],
     ['cd then delete', 'cd /c/Code/app && rm -rf server/src/journey', 'recursive-delete'],
+    // The safe-target exemption is per SEGMENT. Tested against the whole command it read a
+    // build-dir clean anywhere in the line as a licence for everything after it.
+    ['safe clean then a real delete', 'rm -rf dist && rm -rf /c/Code/app/server/src', 'recursive-delete'],
+    ['safe word merely mentioned', 'echo scratchpad && rm -rf /c/Code/app/server/src', 'recursive-delete'],
+    // Bounded on the right: a path that merely STARTS with a build-dir name is not one.
+    ['a path that only looks like dist', 'rm -rf /var/dist-data', 'recursive-delete'],
     ['pipeline position', 'Get-Process chrome | Stop-Process', 'process-kill-broad'],
     ['own line', 'cd /c/Code/app\ngit clean -fdx', 'git-discard'],
     ['under sudo and timeout', 'sudo timeout 30 pkill -f node', 'process-kill-broad'],
@@ -48,7 +54,15 @@ describe('classifyDestructiveCommand', () => {
     ['kill by pipeline of PIDs', '$p = (Get-NetTCPConnection -LocalPort 5000 -State Listen).OwningProcess; $p | ForEach-Object { Stop-Process -Id $_ -Force }'],
     ['taskkill by PID', 'taskkill /PID 12345 /F'],
     ['rm -rf node_modules', 'rm -rf node_modules'],
-    ['rm -rf dist', 'rm -rf client/dist'],
+    ['rm -rf a nested dist', 'rm -rf client/dist'],
+    // Bare, no leading separator -- how the clean is actually written, and what the pattern
+    // used to miss. `npm run build && rm -rf dist` was firing the gate on every repo on earth.
+    ['rm -rf dist', 'rm -rf dist'],
+    ['rm -rf build', 'rm -rf build'],
+    ['rm -rf coverage', 'rm -rf coverage'],
+    ['rm -rf tmp', 'rm -rf tmp'],
+    ['build then clean', 'npm run build && rm -rf dist'],
+    ['several build dirs at once', 'rm -rf dist build coverage'],
     ['rm -rf a temp path', 'rm -rf /c/Users/Admin/AppData/Local/Temp/claude/scratchpad/x'],
     ['rm -rf a .tmp dir', 'rm -rf /c/Code/app/.tmp-build-123'],
     ['DELETE with WHERE', 'psql -c "DELETE FROM users WHERE id = 3"'],

@@ -17,10 +17,26 @@
  * exempted by design, so doing it the right way never trips anything.
  */
 
-export type DestructiveCommandHit = {
-  id: 'process-kill-broad' | 'git-discard' | 'git-rewrite-remote' | 'recursive-delete' | 'container-destroy' | 'db-destructive';
-  label: string;
+export type DestructiveCommandId =
+  'process-kill-broad' | 'git-discard' | 'git-rewrite-remote' | 'recursive-delete' | 'container-destroy' | 'db-destructive';
+
+export type DestructiveCommandHit = { id: DestructiveCommandId; label: string };
+
+/**
+ * One place the classes are named. The stop gate renders lessons from a stored `class` column
+ * long after the hit object is gone, so a second list over there drifts from this one -- it
+ * already had.
+ */
+export const DESTRUCTIVE_LABELS: Readonly<Record<DestructiveCommandId, string>> = {
+  'process-kill-broad': 'a process kill with a broad selector (name, image, filter or pipeline)',
+  'git-discard': 'a git command that discards uncommitted work',
+  'git-rewrite-remote': 'a git command that rewrites shared history or force-deletes a branch',
+  'recursive-delete': 'a recursive force-delete outside build or scratch directories',
+  'container-destroy': 'a container or image force-removal',
+  'db-destructive': 'a destructive database statement',
 };
+
+const hit = (id: DestructiveCommandId): DestructiveCommandHit => ({ id, label: DESTRUCTIVE_LABELS[id] });
 
 /**
  * Quoted spans collapse to a placeholder before any verb is matched, because the measured
@@ -51,8 +67,17 @@ const READ_ONLY_HEAD = /^(?:grep|rg|ag|ack|findstr|sls|select-string|cat|type|he
 /** Programs whose arguments are prose or patches, never executed SQL. */
 const SQL_EXEMPT_HEAD = /^(?:claude|codex|cursor|aider|gemini|gh|git|echo|printf)\b/i;
 
-/** Build artefacts and scratch space: blowing these away is routine, not a lesson. */
-const SAFE_RM_TARGET = /(node_modules|[\\/](?:dist|build|out|target|coverage|\.next|\.turbo|\.cache|\.vite|\.tmp[^\\/\s]*)(?:[\\/]|\s|$)|[\\/]te?mp[\\/]|scratchpad|\.knowl-[\w-]*test)/i;
+/**
+ * Build artefacts and scratch space: blowing these away is routine, not a lesson.
+ *
+ * Both boundaries are load-bearing and both were wrong once. A leading separator is
+ * OPTIONAL: `rm -rf dist` is how the clean is actually written, and requiring `/dist` made
+ * the most common safe delete there is fire. A trailing one is REQUIRED, so `/var/dist-data`
+ * is not read as the build directory. Tested per SEGMENT, never against the whole command --
+ * the whole-string form is the same defect as a whole-string read-only exemption, and it let
+ * `rm -rf dist && rm -rf ~/live` off entirely.
+ */
+const SAFE_RM_TARGET = /(?:^|[\s\\/])(?:node_modules|dist|build|out|target|coverage|\.next|\.turbo|\.cache|\.vite|\.tmp[^\\/\s]*|te?mp|scratchpad|\.knowl-[\w-]*test)(?:[\\/]|\s|$)/i;
 
 /** `-n` / `--dry-run` means nothing happened, so nothing was learned. Segment-scoped. */
 const DRY_RUN = /(?:^|\s)(?:--dry-run|-[a-z]*n)\b/i;
@@ -105,7 +130,7 @@ export function classifyDestructiveCommand(command: string): DestructiveCommandH
       || (/^taskkill\b/i.test(masked) && /\/(?:im|fi)\b/i.test(original))
       || /^(?:pkill|killall)\b/i.test(masked)
       || /^pm2\s+(?:kill|delete)\b/i.test(masked)) {
-      return { id: 'process-kill-broad', label: 'a process kill with a broad selector (name, image, filter or pipeline)' };
+      return hit('process-kill-broad');
     }
 
     if (/^git\s+reset\s+(?:--hard|--merge)\b/i.test(masked)
@@ -113,26 +138,26 @@ export function classifyDestructiveCommand(command: string): DestructiveCommandH
       || /^git\s+(?:checkout|restore)\s+(?:--\s+)?\.(?:\s|$)/i.test(masked)
       || /^git\s+stash\s+(?:drop|clear)\b/i.test(masked)
       || (/^git\s+worktree\s+remove\b/i.test(masked) && /(?:--force\b|\s-f\b)/i.test(original))) {
-      return { id: 'git-discard', label: 'a git command that discards uncommitted work' };
+      return hit('git-discard');
     }
 
     if ((/^git\s+push\b/i.test(masked) && /(?:--force(?!-with-lease)\b|\s-f\b)/i.test(original))
       || /^git\s+branch\s+(?:\S+\s+)*-D\b/.test(masked)
       || (/^git\s+(?:rebase|filter-branch)\b/i.test(masked) && /--(?:root|force-rebase|all)\b/i.test(original))) {
-      return { id: 'git-rewrite-remote', label: 'a git command that rewrites shared history or force-deletes a branch' };
+      return hit('git-rewrite-remote');
     }
 
     if ((rmFlagsRecursiveForce(masked)
       || (/^remove-item\b/i.test(masked) && /-recurse\b/i.test(original) && /-force\b/i.test(original))
       || (/^rmdir\b/i.test(masked) && /\/s\b/i.test(original))
       || (/^del\b/i.test(masked) && /\/s\b/i.test(original)))
-      && !SAFE_RM_TARGET.test(text)) {
-      return { id: 'recursive-delete', label: 'a recursive force-delete outside build or scratch directories' };
+      && !SAFE_RM_TARGET.test(original)) {
+      return hit('recursive-delete');
     }
 
     if ((/^docker\s+(?:rm|rmi)\b/i.test(masked) && /(?:\s-f\b|--force\b)/i.test(original))
       || /^docker\s+(?:system|volume|container|image)\s+prune\b/i.test(masked)) {
-      return { id: 'container-destroy', label: 'a container or image force-removal' };
+      return hit('container-destroy');
     }
 
     if (!SQL_EXEMPT_HEAD.test(masked)) {
@@ -141,7 +166,7 @@ export function classifyDestructiveCommand(command: string): DestructiveCommandH
         || /\btruncate\s+(?:table\s+)?\w/i.test(original)
         || (/\bdelete\s+from\s+\w+/i.test(original) && !/\bwhere\b/i.test(original))
         || (/\bupdate\s+\w+\s+set\b/i.test(original) && !/\bwhere\b/i.test(original))) {
-        return { id: 'db-destructive', label: 'a destructive database statement' };
+        return hit('db-destructive');
       }
     }
   }

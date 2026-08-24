@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { getClient } from './database.js';
-import type { DestructiveCommandHit } from '../core/lesson-signals.js';
+import { DESTRUCTIVE_LABELS, type DestructiveCommandHit, type DestructiveCommandId } from '../core/lesson-signals.js';
 
 /**
  * Pending lessons: specific events whose knowledge has not been stored yet.
@@ -66,7 +66,7 @@ export async function recordDestructiveLesson(conversation: string, hit: Destruc
   }
 }
 
-/** Record a correction lesson, capped: two corrections in a session are usually two different things. */
+/** Record a correction lesson, capped at `MAX_CORRECTION_LESSONS`: separate corrections are usually separate things. */
 export async function recordCorrectionLesson(conversation: string): Promise<boolean> {
   const id = (conversation ?? '').trim();
   if (!id) return false;
@@ -128,7 +128,13 @@ export async function resolveLessonsBefore(conversation: string, timestamp: stri
   }
 }
 
-async function markLessons(ids: string[], how: 'blocked' | 'shadow' | 'budget'): Promise<void> {
+/**
+ * Settle lessons with the reason they settled: 'blocked' was delivered, 'shadow' would have
+ * been, 'budget' hit the ceiling and was delivered nothing. Three words instead of one so the
+ * measurement this exists to produce cannot conflate a message the agent saw with one it never
+ * could have.
+ */
+export async function markPendingLessons(ids: string[], how: 'blocked' | 'shadow' | 'budget'): Promise<void> {
   if (ids.length === 0) return;
   try {
     const client = getClient();
@@ -138,16 +144,6 @@ async function markLessons(ids: string[], how: 'blocked' | 'shadow' | 'budget'):
   } catch {
     // Advisory.
   }
-}
-
-/**
- * Settle lessons with the reason they settled: 'blocked' was delivered, 'shadow' would have
- * been, 'budget' hit the ceiling and was delivered nothing. Three words instead of one so the
- * measurement this exists to produce cannot conflate a message the agent saw with one it never
- * could have.
- */
-export async function markPendingLessons(ids: string[], how: 'blocked' | 'shadow' | 'budget'): Promise<void> {
-  await markLessons(ids, how);
 }
 
 /**
@@ -177,13 +173,10 @@ export async function claimLessonBlock(conversation: string): Promise<boolean> {
 
 const describe = (lesson: PendingLesson): string => {
   if (lesson.kind === 'correction') return '  - the user corrected you';
-  const label = lesson.class === 'process-kill-broad' ? 'a process kill with a broad selector'
-    : lesson.class === 'git-discard' ? 'a git command that discards uncommitted work'
-    : lesson.class === 'git-rewrite-remote' ? 'a git command that rewrites shared history'
-    : lesson.class === 'recursive-delete' ? 'a recursive force-delete'
-    : lesson.class === 'container-destroy' ? 'a container or image force-removal'
-    : lesson.class === 'db-destructive' ? 'a destructive database statement'
-    : 'an irreversible command';
+  // From the classifier's own table, not a second copy: the two had already drifted, and a
+  // class this build does not know (an older row, a newer writer) falls back rather than
+  // renders blank.
+  const label = DESTRUCTIVE_LABELS[lesson.class as DestructiveCommandId] ?? 'an irreversible command';
   return `  - ${label}${lesson.snippet ? `: \`${lesson.snippet}\`` : ''}`;
 };
 
