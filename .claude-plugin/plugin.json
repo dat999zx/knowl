@@ -1,7 +1,7 @@
 {
   "name": "knowl",
   "description": "Governed project memory for AI coding agents. Local-first, typed knowledge atoms over MCP, with stale decisions retired instead of accumulated.",
-  "version": "5.10.0",
+  "version": "5.11.0",
   "author": {
     "name": "Knowl"
   },

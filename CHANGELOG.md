@@ -3,6 +3,101 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.11.0 — 2026-08-24
+
+Knowl gets a posture. Four recall and capture mechanisms that were previously the maintainer's
+private trade-offs are now switches you set, `knowl posture maximal|frugal` moves all of them at
+once, and — because a switch nobody can find is not a switch — `knowl config list` prints every
+setting Knowl has, what it is set to now, and the exact command to change it. Plus the mid-turn
+reminder stops repeating forever, and the entrypoint stops recompiling itself on every run.
+
+Thanks to **[@williamttruong](https://github.com/williamttruong)** for the recall posture (#166)
+and the config catalog (#173), and to **[@Adam13y](https://github.com/Adam13y)** for #165.
+
+### `knowl config list` — every setting, its value, and how to change it
+
+Knowl had accumulated more settings than any document listed, most of them off, and nothing told
+you which. `knowl config list` is a non-interactive catalog: every setting with its live value, a
+one-line description, and for anything currently off, the exact `config set` command that arms it.
+`--all` adds preset-derived values and internals. `knowl status` gained a matching line
+(`⚙️ FEATURES / N of M on · knowl config list`), and `knowl config --help` now generates the same
+registry as a reference.
+
+**Fixed before it shipped:** the three-mode ladders (`impact.gate`, `capture.events`) rendered as
+lit while sitting at `off`, so the marker contradicted the value printed beside it, `knowl status`
+over-counted what was on, and the `config set` hint — the one job the command exists for — stayed
+silent for exactly the two settings whose default is off. Ladders now get a hint like switches do,
+offering the first mode *above* off (`shadow`, not `enforce`).
+
+### A recall and capture posture, all of it off by default
+
+Four mechanisms, each independently switchable, plus `knowl posture maximal|frugal` to move the
+set. **Schema migration level 13 → 14.** Nothing here changes behaviour on upgrade until you turn
+it on.
+
+- **`search.transcripts.fallback`** — a missed `knowl_query` searches the transcript archive itself
+  rather than suggesting you do it, and reports `RECALL CHAIN — VERIFIED NEGATIVE` when both stores
+  miss. AND-gated on `search.transcripts.enabled`.
+- **`pathsChanged` on query rows** — a returned atom says when the files it cites moved after it was
+  stored. mtime against `updated_at`, a 2-second grace window, local rows only, and absent entirely
+  when nothing moved.
+- **`capture.events`** (`off`/`shadow`/`enforce`) — destructive commands and corrections become
+  pending lessons that only a subsequent durable write settles. The stop gate has a hard ceiling of
+  three blocks per conversation.
+- **`capture.scope: 'turn'`** — the silence question asked once per turn, through the mid-turn
+  channel, so a query cannot quiet it. Only a durable write does.
+
+### The continuation reminder backs off instead of repeating forever
+
+Measured against a 197-session archive: the mid-turn continuation reminder fired 3,700 times, in
+70.6% of sessions, at **~1,750 tokens per session** — 3.5× the guidance card, which has an eval and
+a hard character ceiling, while the reminder had no ceiling of any kind.
+
+Its gap now doubles after each delivery — 12, 36, 84, 180, 372 — removing 86% of deliveries.
+`reminders.driftBackoff` (default true) turns it off; `reminders.driftEvery` (default 12, `0` for
+off) scales the whole sequence. A hard cap of three scored three points better and was rejected
+deliberately: it goes permanently silent at drift event 36 and says nothing across the remaining
+~2,868 events of the longest session. Backoff never stops entirely, it just stops shouting.
+
+### The CLI starts faster
+
+`module.enableCompileCache()` at the entrypoint, so V8 bytecode for the command surface and
+everything it pulls in is cached between runs. Measured here at **41–66ms per invocation** (180ms
+against 219–246ms, node 24), which `agent-hook` pays hundreds of times a session — it is a fresh
+process per agent tool call.
+
+Guarded twice, and neither guard is decoration: `engines` is `>=22` while the API landed in 22.1.0,
+and the cache directory can be unwritable. A startup optimisation must never be what fails a
+command. Called with no argument, so the cache lands in `NODE_COMPILE_CACHE` if you set one and in
+node's own versioned temp directory otherwise — nothing new appears in your home or your repo.
+
+### Fixes
+
+- **Composite keys are no longer joined on NUL** (#167). Storage was always correct, but the libsql
+  driver truncates TEXT at the first NUL *on read*, so a key selected back out of a row was cut to
+  its first segment and could never match again — and `SELECT conversation FROM capture_outcomes`
+  showed `claude` for every row, making the table look collapsed onto one key when it was not. The
+  separator is now the unit separator (`U+001F`), which survives the read path and keeps rows
+  greppable. No migration: every reader recomputes the key from hook input rather than round-tripping
+  it, so old rows are simply never reached again and expire as the per-conversation counters they are.
+- **A path `pathsChanged` cannot resolve is not evidence that its atom went stale.** An unresolvable
+  cited path was being read as a change.
+- **`rm -rf dist` is a build clean.** The destructive-command classifier tested its exemption against
+  the whole command rather than the segment the verb was found in, so `rm -rf node_modules; rm -rf
+  /etc/nginx` classified as safe — and it required a separator before the directory name, so bare
+  `rm -rf dist`, `rm -rf build` and `npm run build && rm -rf dist` all fired. In
+  `capture.events=enforce` that is a blocked stop on essentially every repository that cleans before
+  it builds.
+
+### Also
+
+- **Measured: no embedding preset fixes the relevance floor** (#169). All five presets have a
+  negative on/off-topic gap against *technical* off-topic queries, and the current default,
+  `granite-small-en-r2`, is already the best of them. Reproduce with
+  `npx tsx scripts/sweep-preset-floor.ts`; written up in `docs/evals/preset-floor-sweep.md`.
+- The HOL Guard scanner runs in CI, scoped to what ships.
+- `AGENTS.md` is no longer tracked — it is generated.
+
 ## 5.10.0 — 2026-08-23
 
 The viewer stops being a snapshot. `knowl view` now watches the store while it is open and draws
