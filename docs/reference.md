@@ -520,6 +520,22 @@ canonical tool table below:
   `transcript://<repo>/<session>#L<line>` locators.
 - **`knowl_transcript_read`** — open one locator with the surrounding turns.
 
+Transcript search carries the same relevance verdict `knowl_query` does, and it means the same
+narrow thing: **off-subject, not unanswerable** (see [above](#what-abstained-means-and-what-it-does-not)).
+When a semantic half ran and the best hit falls below the model's floor, the results arrive under a
+`NO CONFIDENT MATCH` notice rather than silently — before this, a query of pure gibberish returned
+plausible-looking hits with nothing marking them.
+
+The two callers are treated differently on purpose:
+
+- **You typed `knowl_transcript_search`** — you asked for whatever is closest, so weak hits are
+  returned with the notice attached and you judge the bodies.
+- **The `search.transcripts.fallback` chain ran it for you** after a `knowl_query` miss — nobody
+  asked, so an off-subject page is withheld and reported as a verified negative. Appending
+  nearest-neighbour noise there spends context at the moment the agent is already lost, and it was
+  measured doing exactly that: across 40 replayed real misses it recovered **0**, while 7 of 15
+  healthy queries would have had junk appended.
+
 Disabling the feature **deletes** `.knowl/transcripts.db`. An index nothing will refresh is not
 something to leave on the disk of the person who just turned it off.
 

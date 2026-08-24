@@ -5,7 +5,7 @@ import { resolveStorage } from '../store/storage-roles.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
 import { isTranscriptSharingEnabled } from './config.js';
 import { openTranscriptDb, TranscriptIndexMissingError } from './database.js';
-import { fuseRankings, searchTranscripts, type TranscriptHit } from './search.js';
+import { fuseRankings, judgeRelevanceFloor, searchTranscripts, type TranscriptHit } from './search.js';
 
 export type FederatedTranscriptHit = TranscriptHit & { repo: string };
 export type TranscriptSkipReason = 'absent' | 'not-shared' | 'unreadable';
@@ -56,6 +56,15 @@ export async function searchTranscriptsFederated(input: {
    * which resolves a named repo against the workspace peer list -- answers "Unknown repo".
    */
   localRepo: string;
+  /**
+   * The query does not read as being about any archive that answered: a semantic half ran, and
+   * the best hit across every repo scored below this model's relevance floor.
+   *
+   * Off-subject, not unanswerable -- the narrow reading `abstained` carries on `knowl_query`.
+   * `undefined` means unjudged: no embedder, no measured floor for this model, or nothing
+   * returned carried a cosine.
+   */
+  belowRelevanceFloor?: boolean;
 }> {
   const localName = input.localRepoName ?? input.workspace?.repo ?? 'local';
   const wanted = input.repos?.length ? new Set(input.repos) : null;
@@ -140,5 +149,10 @@ export async function searchTranscriptsFederated(input: {
   // default key would silently merge two repos' message 5 into one hit.
   const hits = fuseRankings(rankings, input.limit, hit => `${hit.repo}:${hit.messageId}`);
 
-  return { hits, skipped, coverage, ambiguous, localRepo: localName };
+  // Re-judged on the FUSED page rather than carried from any one repo: the question is whether
+  // the query is about anything the workspace holds, and a repo that missed says nothing about
+  // the one that hit.
+  const belowRelevanceFloor = judgeRelevanceFloor(hits, input.embedder?.relevanceFloor ?? null);
+
+  return { hits, skipped, coverage, ambiguous, localRepo: localName, belowRelevanceFloor };
 }
