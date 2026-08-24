@@ -242,6 +242,29 @@ Titles are capped separately at 200 characters, and previews of things retrievab
 elsewhere — evidence excerpts, timeline assertions, skill markdown, `knowl_skill_run` output —
 stay at 600.
 
+#### Reading `knowl query` from a script
+
+**`knowl query` writes pure JSON to stdout and every advisory line to stderr.** All four are
+`Note:` lines: this repo returned nothing and the rows belong to a peer, every result fell below
+the relevance floor, linked repos hold matches the limit cut, and a linked repo was not searched.
+The split is deliberate, so a programmatic consumer gets a parseable stream without losing the
+advisories a human wants.
+
+It bites because most shells and wrappers merge the two by default, and an advisory line is not
+JSON wherever it lands relative to the document. A parser fed the merged stream throws, and the
+natural diagnosis — "the CLI emitted bad JSON" — sends you into the CLI instead of into your own
+stream handling. Read `stdout` explicitly:
+
+```bash
+knowl query "auth token design" 2>/dev/null | jq .
+```
+
+The parsed value is a **bare array** when every row belongs to this repo and an **object keyed by
+repo name** when at least one does not, so a parser that assumes one shape silently returns
+nothing in the other. The distinction carries meaning worth keeping: a fact under another repo's
+key describes *that* repo. The MCP tool takes a `scope` argument to force one shape; the CLI
+does not, so a script must handle both.
+
 ```bash
 # Current CLI query; single-repository candidates are lexical.
 knowl query "auth token design"
@@ -523,6 +546,55 @@ knowl posture frugal     # reset the same keys -- knowl exactly as it ships
 Query results also annotate staleness whatever the posture says: a row whose `affectedPaths`
 were modified after the row was stored carries `pathsChanged` ("n of m affectedPaths modified
 since this was stored — verify"), absent when clean. The field says *verify*, never *wrong*.
+Paths that cannot be resolved against this checkout — absolute, escaping the root — are skipped
+rather than counted, because an unreadable path is absence of evidence, not evidence.
+
+This one is **on by default**, alone among the keys on this page: it adds a field rather than a
+message, so it spends no mid-turn slot and withholds no stop. It is not free either — every
+returned local row costs an `fs.stat` per cited path — so it has a switch:
+
+```bash
+knowl config set search.pathsChanged false
+```
+
+Worth turning off in a repository whose atoms cite generated or build-time files, where the
+marker would be present on every row forever and stop meaning anything.
+
+### What Knowl says mid-turn — `reminders.*`
+
+Separate from what Knowl *stores*: these are the messages it sends the agent between tool
+calls. Both are **on by default**, and both share the single mid-turn slot with the change card
+and the capture prompts — turning one off does not give the others more room, it gives the turn
+back.
+
+```bash
+knowl config set reminders.driftEvery 24        # remind half as often; 0 turns it off
+knowl config set reminders.driftBackoff false   # repeat at that cadence forever
+knowl config set reminders.skills false         # stop the two skill nudges
+```
+
+- **`reminders.driftEvery`** (default `12`) — how many consecutive successful tool calls that
+  used no Knowl tool trigger the continuation reminder. Any Knowl tool call resets the count,
+  so a session already using memory never sees it. The cadence *is* the switch: `0` is off, and
+  raising it is the lever for a long mechanical session that pays the reminder repeatedly for a
+  rule it followed the first time. Measured against a 197-session archive, the shipped cadence
+  fires ~19 times per session and ~1,750 tokens with it — more than three times the guidance
+  card, and unbounded, because it scales with how long the session runs rather than sitting at a
+  fixed size. The heaviest session in that archive took it 242 times.
+- **`reminders.driftBackoff`** (default `true`) — double the gap after each delivery, so the
+  reminder lands at 12, 36, 84, 180, 372 rather than every 12 forever. The message is
+  byte-identical every time it is sent: after two or three the agent has either adopted the rule
+  or decided against it, and the rest is furniture. Over the same archive this removes 86% of
+  deliveries, and the worst session drops from 242 to 7.
+
+  It backs off rather than stopping, and that is the point. A hard cap of three would remove 89%
+  — barely more — but goes permanently silent after event 36 and says nothing across the
+  remaining 2,868 events of a long session, which is the same structural blind spot the capture
+  work exists to close. Set `false` for the old every-N-forever behaviour.
+- **`reminders.skills`** (default `true`) — the two skill nudges: *"you have run this three
+  times, save it as a skill"* and *"a saved skill matches this command"*. One key for both,
+  because both are the skills subsystem speaking. Worth turning off in a repository that does
+  not use skills, where they are pure context cost.
 
 ### `knowl transcripts` — turning sessions into candidates
 

@@ -59,6 +59,25 @@ export type CaptureOutcome = {
 };
 
 /**
+ * The separator inside every composite key in this file.
+ *
+ * NOT NUL, which is the obvious choice and the wrong one: the libsql client truncates a TEXT value
+ * at the first NUL on the READ path. Storage and bound comparisons were always correct -- what
+ * broke was round-tripping, where a key SELECTed back out of a row arrived as its first segment
+ * and matched nothing, and hand-inspection, where `SELECT conversation FROM capture_outcomes`
+ * showed a bare `claude` for every row on the machine and read as a table collapsed onto one key
+ * when it was not.
+ *
+ * Unit separator survives that read path and keeps the property NUL was chosen for: it is a C0
+ * control character, so it cannot appear in a project path, a host name, or a host session id.
+ *
+ * No migration. Both tables hold per-conversation counters whose key is recomputed from hook input
+ * on every call, so rows written under the old separator are simply never reached again and fall
+ * out of the health window on their own.
+ */
+const KEY_SEPARATOR = '\u001f';
+
+/**
  * The stable identity of one conversation, across every turn it contains.
  *
  * Deliberately not a memory session id. A Claude turn binds its own memory session and `Stop`
@@ -66,15 +85,15 @@ export type CaptureOutcome = {
  * forever, however long the conversation runs. The host's own session id does not move, and it is
  * already on every hook event, so reading it costs nothing on the tool path.
  *
- * NUL-joined because a separator that can appear inside a project path lets two different
- * conversations collide on one row.
+ * Joined on a separator that cannot appear inside a project path, a host name or a session id,
+ * so two different conversations cannot collide on one row.
  */
 export function conversationKey(input: {
   host: string;
   projectRoot: string;
   externalSessionId?: string;
 }): string {
-  return [input.host, input.projectRoot, input.externalSessionId ?? ''].join('\u0000');
+  return [input.host, input.projectRoot, input.externalSessionId ?? ''].join(KEY_SEPARATOR);
 }
 
 /** Every counter starts its row, so neither caller has to know which of them ran first. */
@@ -243,14 +262,14 @@ export const MIN_SUBSTANTIVE_TURN_EVENTS = 12;
 /** How many turns of one conversation may be prompted, ever. The fatigue ceiling. */
 export const MAX_TURN_CAPTURE_PROMPTS = 3;
 
-/** The stable identity of one turn, NUL-joined for the reason `conversationKey` gives. */
+/** The stable identity of one turn, joined for the reason `conversationKey` gives. */
 export function turnCaptureKey(parts: {
   host: string;
   projectRoot: string;
   externalSessionId?: string;
   externalTurnId?: string;
 }): string {
-  return [parts.host, parts.projectRoot, parts.externalSessionId ?? '', parts.externalTurnId ?? ''].join('\u0000');
+  return [parts.host, parts.projectRoot, parts.externalSessionId ?? '', parts.externalTurnId ?? ''].join(KEY_SEPARATOR);
 }
 
 /** Count one tool event into the turn, and read the turn's counters back in the same write. */

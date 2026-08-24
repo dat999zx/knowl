@@ -386,3 +386,65 @@ export function hasAiConfigured(config?: ProjectConfig): boolean {
 export function isTranscriptSearchEnabled(config: ProjectConfig): boolean {
   return config.search?.transcripts?.enabled === true;
 }
+
+/**
+ * Whether query rows carry the `pathsChanged` staleness marker.
+ *
+ * Reads `!== false`, not `=== true`, and is the only search predicate that does: the marker
+ * ships on, so absence must mean on. Writing the default into `DEFAULT_CONFIG` instead would
+ * stamp the key into every config on the machine at the next `knowl upgrade` -- the same trap
+ * `capture.nudge` and `impact.enabled` are kept out of it to avoid, arriving from the other
+ * direction.
+ */
+export function isPathsChangedEnabled(config: ProjectConfig): boolean {
+  return config.search?.pathsChanged !== false;
+}
+
+/** The default continuation-reminder cadence, in consecutive non-Knowl tool events. */
+export const DEFAULT_DRIFT_REMINDER_EVERY = 12;
+
+/**
+ * How many consecutive non-Knowl tool events trigger the continuation reminder; `0` is off.
+ *
+ * A negative or fractional value reads as the default rather than throwing, by the same rule
+ * the mode enums follow: this runs on the hook path, where a bad config must degrade to
+ * today's behaviour instead of failing a tool call. `config` may be null because `loadConfig`
+ * throws on an unreadable file and the callers catch it.
+ */
+export function driftReminderEvery(config?: ProjectConfig | null): number {
+  const value = config?.reminders?.driftEvery;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return DEFAULT_DRIFT_REMINDER_EVERY;
+  return value;
+}
+
+/** Whether the skill capture and skill use nudges may take the mid-turn slot. On unless set false. */
+export function areSkillNudgesEnabled(config?: ProjectConfig | null): boolean {
+  return config?.reminders?.skills !== false;
+}
+
+/** Whether the reminder's gap doubles after each delivery. On unless set false. */
+export function isDriftBackoffEnabled(config?: ProjectConfig | null): boolean {
+  return config?.reminders?.driftBackoff !== false;
+}
+
+/**
+ * Whether this drift count earns the continuation reminder.
+ *
+ * With backoff the gap doubles after every delivery -- 12, then 24, then 48 -- so deliveries
+ * land at cumulative `every * (2^k - 1)`: 12, 36, 84, 180, 372. Which is to say `drift/every+1`
+ * is a power of two at exactly those points, so the whole schedule is a test on the counter
+ * that already exists. No new column, no new row, nothing to reset.
+ *
+ * Why doubling and not a hard per-session cap: measured over a 197-session archive, doubling
+ * removes 86% of deliveries against a cap's 89%, and the three points it gives back buy the
+ * thing a cap destroys -- a cap goes permanently silent early and never speaks again, which is
+ * the same structural blind spot the capture work was written to close. The reminder is
+ * byte-identical on every delivery, so the second one is worth much less than the first and the
+ * fortieth is worth nothing; backing off spends attention where it still buys something.
+ */
+export function shouldSendDriftReminder(drift: number, every: number, backoff: boolean): boolean {
+  if (every <= 0 || drift <= 0 || drift % every !== 0) return false;
+  if (!backoff) return true;
+  const step = drift / every + 1;
+  return (step & (step - 1)) === 0;
+}

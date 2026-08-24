@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { closeDb, initDb } from '../../src/store/database.js';
+import { closeDb, getClient, initDb } from '../../src/store/database.js';
 import { releaseAll } from '../../src/store/connection-pool.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 import { captureNudgeMode } from '../../src/store/capture-config.js';
@@ -9,6 +9,7 @@ import {
   captureHealth,
   claimSilenceNudge,
   isDurableWriteTool,
+  conversationKey,
   MIN_SUBSTANTIVE_TURNS,
   readCaptureOutcome,
   recordDurableWrite,
@@ -165,5 +166,20 @@ describe('capture outcomes on disk', () => {
 
   it('reports no sessions rather than throwing when the table has never been written', async () => {
     expect(await captureHealth()).toEqual({ sessions: 0, silent: 0, substantiveSilent: 0, nudged: 0 });
+  });
+
+  it('round-trips a composite key through the row it was stored in', async () => {
+    // The separator is load-bearing and the failure is silent: under NUL the libsql client
+    // truncates this key on the READ path, so `stored` comes back as `claude` alone and binding
+    // it finds nothing -- while every assertion above still passes, because they all recompute
+    // the key rather than reading one. This is the only test that reads one back.
+    const key = conversationKey({ host: 'claude', projectRoot: 'D:/coding/knowl', externalSessionId: 's1' });
+    await recordSessionTurn(key);
+
+    const rows = await getClient().execute('SELECT conversation FROM capture_outcomes');
+    const stored = String(rows.rows[0]?.conversation);
+
+    expect(stored).toBe(key);
+    expect(await readCaptureOutcome(stored)).toMatchObject({ turns: 1 });
   });
 });

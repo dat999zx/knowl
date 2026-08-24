@@ -326,6 +326,57 @@ export interface ProjectConfig {
        */
       fallback?: boolean;
     };
+    /**
+     * Annotate a query row whose `affectedPaths` were modified after the row was stored.
+     *
+     * ON unless explicitly set to false -- the only key here that defaults on, because it adds
+     * a field rather than a message: it spends no slot, blocks no stop, and is absent from
+     * every row whose files are clean. The escape hatch exists because it is not free either:
+     * every returned local row costs an `fs.stat` per cited path, and a repository whose
+     * atoms cite generated or checked-out-fresh files would carry the marker permanently,
+     * which is how a true signal becomes furniture.
+     */
+    pathsChanged?: boolean;
+  };
+  /**
+   * What Knowl says to the agent mid-turn, as opposed to what it stores.
+   *
+   * Both default ON, because both ship on and a key that silently disabled a working feature
+   * would be a worse surprise than one that does nothing until set. Kept out of
+   * `DEFAULT_CONFIG` for the usual reason: merged in, they are stamped into every config on
+   * the machine at the next upgrade.
+   *
+   * These share the one mid-turn slot with the change card and the capture prompts, in that
+   * priority. Turning one off does not give the others more room -- it gives the turn back.
+   */
+  reminders?: {
+    /**
+     * How many consecutive successful non-Knowl tool events trigger the continuation
+     * reminder. `0` turns it off. Default 12.
+     *
+     * The cadence is the setting, not a separate on/off, because "how often" is the actual
+     * question -- the reminder is ~370 characters delivered on the tool path, so the cost is
+     * linear in how many tool calls a session makes, and a long mechanical session pays it
+     * repeatedly for a rule it followed the first time.
+     */
+    driftEvery?: number;
+    /**
+     * Double the gap after each delivery -- 12, 24, 48, 96 -- rather than repeating at a fixed
+     * cadence forever. On by default.
+     *
+     * The reminder is byte-identical every time it is sent, so its value decays: after two or
+     * three the agent has either adopted the rule or decided against it, and the rest is
+     * furniture. Backing off keeps the long-session safety net the fixed cadence exists for
+     * while removing the nagging it was already criticised for. Set false for the old
+     * every-N-forever behaviour.
+     */
+    driftBackoff?: boolean;
+    /**
+     * The two skill nudges: "you have run this three times, save it as a skill" and "a saved
+     * skill matches this command". One key, because both are the skills subsystem speaking
+     * and nobody has yet needed to keep one without the other.
+     */
+    skills?: boolean;
   };
   memory?: {
     organization?: { enabled?: boolean; path?: string };
