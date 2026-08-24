@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { closeTranscriptDbs, openTranscriptDb } from '../../src/transcripts/database.js';
 import { embedPendingMessages } from '../../src/transcripts/embed-pass.js';
+import { transcriptVectorFingerprint } from '../../src/transcripts/quantize.js';
 import { runIndexPass } from '../../src/transcripts/index-pass.js';
 import { encodeProjectDir } from '../../src/transcripts/paths.js';
 import { lexicalRank, resolveSessionScope, semanticRank, toMatchQuery } from '../../src/transcripts/search.js';
@@ -253,7 +254,7 @@ describe('an ambiguous session prefix scopes both halves the same way', () => {
     // ranking cannot distinguish them.
     await embedPendingMessages({ dbPath, embedder: stubEmbedder() });
 
-    const hits = await semanticRank(client, [1, 0, 0, 0], 'stub:scope', 10, 'session-');
+    const hits = await semanticRank(client, [1, 0, 0, 0], transcriptVectorFingerprint('stub:scope'), 10, 'session-');
 
     expect(hits).toEqual([]);
   });
@@ -265,7 +266,7 @@ describe('an ambiguous session prefix scopes both halves the same way', () => {
     await embedPendingMessages({ dbPath, embedder: stubEmbedder() });
 
     const lexical = await lexicalRank(client, 'shared subject', 10, 'alp');
-    const semantic = await semanticRank(client, [1, 0, 0, 0], 'stub:scope', 10, 'alp');
+    const semantic = await semanticRank(client, [1, 0, 0, 0], transcriptVectorFingerprint('stub:scope'), 10, 'alp');
 
     expect(lexical.map(hit => hit.sessionId)).toEqual(['alpha']);
     expect(semantic.map(hit => hit.sessionId)).toEqual(['alpha']);

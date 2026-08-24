@@ -1,7 +1,7 @@
 import type { Client } from '@libsql/client';
 import type { KnowledgeEmbedder } from '../store/vector-index.js';
 import { withWriteRetry } from './database.js';
-import { quantizeVector } from './quantize.js';
+import { quantizeVector, transcriptVectorFingerprint } from './quantize.js';
 import { readMessagesAt } from './read.js';
 
 /**
@@ -103,7 +103,7 @@ export async function embedPendingMessages(input: {
   // rows -- there is one vector per message, not per re-ranked candidate.
   await read(client => client.execute({
     sql: 'DELETE FROM transcript_vectors WHERE fingerprint <> ?',
-    args: [embedder.profileFingerprint],
+    args: [transcriptVectorFingerprint(embedder.profileFingerprint)],
   }));
 
   let embedded = 0;
@@ -244,7 +244,8 @@ async function embedVectorBatch(
               ON CONFLICT(message_id) DO UPDATE SET
                 fingerprint = excluded.fingerprint, dims = excluded.dims,
                 scale = excluded.scale, vec = excluded.vec`,
-        args: [targets[i].id, embedder.profileFingerprint, vector.length, scale, bytes],
+        args: [targets[i].id, transcriptVectorFingerprint(embedder.profileFingerprint),
+               vector.length, scale, bytes],
       });
       embedded++;
     }

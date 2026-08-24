@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dequantizeVector, dotQuantized, quantizeScale, quantizeVector } from '../../src/transcripts/quantize.js';
+import { dequantizeVector, dotQuantized, quantizeScale, quantizeVector, transcriptVectorFingerprint } from '../../src/transcripts/quantize.js';
 
 /** A unit-length vector, which is what the embedder produces (`normalize: true`). */
 function unitVector(dims: number, seed: number): number[] {
@@ -121,5 +121,73 @@ describe('dotQuantized', () => {
     });
 
     expect(order(quantizedScores)).toEqual(order(exactScores));
+  });
+});
+
+/**
+ * The round trip must preserve the vector, not merely a scaled copy of it.
+ *
+ * This is the test that was missing. `quantizeScale` clipped at `6/sqrt(dims)` on the argument
+ * that L2-normalised components sit near `1/sqrt(dims)` -- true on average, false in the tail
+ * that matters. `granite-small-en-r2`, the shipped default, carries a rogue component near 0.70
+ * against a 0.3062 threshold, so exactly one component of 384 clipped and cost 25% of the norm
+ * and ~22 degrees of direction. Nothing detected it: `dotQuantized` documents itself as cosine
+ * because "both sides are unit-length", and the stored side quietly was not.
+ *
+ * A synthetic smooth vector cannot catch this -- `Math.sin(i)` normalised has a max component
+ * around 0.07 and sails through the old scheme. The fixture below is shaped like a real
+ * embedding: one dominant dimension, the rest small.
+ */
+describe('quantize round trip preserves the vector', () => {
+  /** One rogue component, 383 ordinary ones — the shape a real transformer embedding has. */
+  const roguey = (): number[] => {
+    const v = new Array(384).fill(0).map((_, i) => Math.sin(i * 12.9898) * 0.05);
+    v[7] = 0.70;
+    const n = Math.hypot(...v);
+    return v.map(x => x / n);
+  };
+  const norm = (v: number[]) => Math.hypot(...v);
+  const cos = (a: number[], b: number[]) => {
+    const d = a.reduce((s, x, i) => s + x * b[i], 0);
+    return d / (norm(a) * norm(b));
+  };
+
+  it('keeps unit length when a component exceeds the old fixed threshold', () => {
+    const v = roguey();
+    expect(Math.max(...v.map(Math.abs))).toBeGreaterThan(quantizeScale(384));
+
+    const { scale, bytes } = quantizeVector(v);
+    const back = dequantizeVector(bytes, scale);
+
+    // The old fixed scale produced 0.75 here. Anything materially below 1 is a clipped component.
+    expect(norm(back)).toBeGreaterThan(0.99);
+    expect(norm(back)).toBeLessThan(1.01);
+  });
+
+  it('keeps direction, so a stored vector still means what it meant', () => {
+    const v = roguey();
+    const { scale, bytes } = quantizeVector(v);
+    // The old fixed scale produced 0.923 here.
+    expect(cos(v, dequantizeVector(bytes, scale))).toBeGreaterThan(0.999);
+  });
+
+  it('makes dotQuantized the cosine it claims to be', () => {
+    const v = roguey();
+    const { scale, bytes } = quantizeVector(v);
+    // Query against the document's own direction: a true cosine is 1, a norm-scaled one is not.
+    expect(dotQuantized(v, bytes, scale)).toBeGreaterThan(0.999);
+  });
+
+  it('does not divide by zero on a zero vector', () => {
+    const { scale, bytes } = quantizeVector(new Array(384).fill(0));
+    expect(Number.isFinite(scale)).toBe(true);
+    expect(dequantizeVector(bytes, scale).every(Number.isFinite)).toBe(true);
+  });
+
+  it('stamps a quantization version the profile fingerprint cannot see', () => {
+    // The repair path: `embedPendingMessages` deletes rows whose fingerprint differs, so a
+    // change in encoding has to change the fingerprint or stale rows are searched forever.
+    expect(transcriptVectorFingerprint('abc')).not.toBe('abc');
+    expect(transcriptVectorFingerprint('abc')).toContain('abc');
   });
 });
