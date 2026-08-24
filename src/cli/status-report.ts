@@ -40,6 +40,14 @@ export function formatStatusReport(input: {
   captureNudgeMode?: string;
   /** Absent or disconnected renders nothing, so an offline repo gains no noise. */
   cloud?: CloudStatus | null;
+  /**
+   * How many features are on, and where to read them. One line, because `knowl init` points
+   * every new user here and at nowhere else -- and because this is already the longest screen
+   * the CLI prints, so the catalog itself belongs behind the command this names.
+   *
+   * Absent renders no section, keeping a caller that has not gathered it byte-identical.
+   */
+  features?: string;
 }): string {
   const countsByCategory = input.activeItems.reduce((acc, item) => {
     acc[item.category] = (acc[item.category] || 0) + 1;
@@ -52,6 +60,7 @@ export function formatStatusReport(input: {
     STATUS_LINE,
     `Repository:     ${input.project.rootPath}`,
     `AI Config:      ${input.config.ai ? `${input.config.ai.provider} (${input.config.ai.model})` : 'not configured'}`,
+    ...(input.features ? [STATUS_LINE, '⚙️  FEATURES', `  ${input.features}`] : []),
     STATUS_LINE,
     '📝 KNOWLEDGE ITEMS',
     `  Active:        ${input.activeItems.length}`,
