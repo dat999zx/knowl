@@ -527,6 +527,28 @@ export async function listKnowledgeItems(dbConnection?: DbConnection): Promise<K
 }
 
 /**
+ * Just id and title of every active item, for checks that judge titles and nothing else.
+ *
+ * The reversal advisory on the write path needs every active title but no content, and
+ * `listKnowledgeItems` would haul the full body of every atom -- in a real store, megabytes --
+ * through the row mapper to read one short column. Selected columns keep the write path paying
+ * for what it uses.
+ */
+export async function listActiveKnowledgeTitles(
+  dbConnection?: DbConnection,
+): Promise<Array<{ id: string; title: string }>> {
+  const conn = dbConnection || getDb();
+  try {
+    return await conn
+      .select({ id: schema.knowledgeItems.id, title: schema.knowledgeItems.title })
+      .from(schema.knowledgeItems)
+      .where(eq(schema.knowledgeItems.status, 'active'));
+  } catch (error: any) {
+    throw new DatabaseError(`Failed to list active knowledge titles: ${error.message}`);
+  }
+}
+
+/**
  * The active skill items only, resolved by index rather than by scanning the table.
  *
  * The mid-turn skill lookup runs on every command tool event. `listKnowledgeItems` reads

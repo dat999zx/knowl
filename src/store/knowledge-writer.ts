@@ -69,6 +69,35 @@ const POLARITY_TOKENS = new Set([
   'couldn', 'shouldn', 'wouldn',
 ]);
 
+/**
+ * Phrases that assert a reversal of something recorded, as opposed to merely discussing change.
+ *
+ * THE FAILURE THIS EXISTS FOR. Store "Database choice: Postgres for everything", then store
+ * "We are moving persistence to SQLite" whose content says "The Postgres-for-everything plan is
+ * abandoned." The titles share no subset relation, the whole-text token overlap is 0.33 --
+ * just under the 0.35 duplicate gate -- and the write lands in silence: both decisions active,
+ * both returned fresh by the next query, nothing for `knowl conflicts` to see. Reproduced
+ * against this exact source (2026-08-24) through the MCP path a real agent uses.
+ *
+ * WHY LEXICAL AND NOT SEMANTIC. Similarity statistics were measured for exactly this job and
+ * lost: on the labelled pair set the motivating reversal scores 0.8593 under the default
+ * profile while a hand-labelled NEGATIVE pair scores 0.8575 -- five statistics (margin, ratio,
+ * margin-over-sd, z, exponential tail) all discriminate worse than the raw cosine, and no gate
+ * over any of them reaches this case at a shippable fire rate. What distinguishes a reversal is
+ * not how CLOSE the two texts are but that one of them SAYS the other is over -- a lexical
+ * fact, detectable deterministically, in stores of any size including the fresh two-item store
+ * where the CSLS guard abstains by construction.
+ *
+ * Kept to phrases that assert reversal rather than discuss it. "instead of", "dropped",
+ * "rejected" and "retire" were measured on a real 831-item store and fire constantly in
+ * ordinary engineering prose; the phrases below fired on 148 items' contents, and the full
+ * detector (cue sentence naming another item's distinctive title tokens) flagged 6 pairs.
+ */
+const REVERSAL_CUES = [
+  'no longer', 'abandoned', 'superseded', 'supersedes', 'deprecated',
+  'reversed', 'obsolete', 'replaced by', 'overturned', 'rescinded', 'retracted',
+];
+
 export interface StoreKnowledgeInput {
   category: KnowledgeCategory;
   title: string;
@@ -112,6 +141,12 @@ export interface StoreKnowledgeResult {
    * by only about a standard deviation. It exists so a writer is told the decision is there.
    */
   governingDecision?: GoverningDecision;
+  /**
+   * An active item this write's own content reads as reversing. Advisory and candidate-grade:
+   * the caller gets the cue sentence quoted back and is the one that can tell. See
+   * `detectReversal` for what fires it and the measured rate.
+   */
+  reversal?: ReversalAdvisory;
 }
 
 export interface StoreKnowledgeAtomOutcome {
@@ -125,6 +160,8 @@ export interface StoreKnowledgeAtomOutcome {
   crossRepo?: CrossRepoOverlap[];
   /** Per atom, for the same reason: five findings can fall under five different decisions. */
   governingDecision?: GoverningDecision;
+  /** Per atom: the active item this atom's content reads as reversing, if any. */
+  reversal?: ReversalAdvisory;
 }
 
 export interface StoreKnowledgeBatchResult {
@@ -137,7 +174,7 @@ export interface StoreKnowledgeBatchResult {
   outcomes: StoreKnowledgeAtomOutcome[];
 }
 
-function duplicateTokens(value: string): Set<string> {
+export function duplicateTokens(value: string): Set<string> {
   return new Set(
     value
       .toLowerCase()
@@ -250,6 +287,100 @@ export function differsOnlyInPolarity(a: { title: string }, b: { title: string }
   // Identical token sets add nothing and are not a polarity pair; that case is a plain duplicate
   // and belongs to the payload comparison above, which can still answer `no-op`.
   return added > 0;
+}
+
+/** A sentence of an incoming write that contains a reversal cue, with its own token set. */
+export type ReversalCueSentence = { cue: string; sentence: string; tokens: Set<string> };
+
+/**
+ * The sentences of `content` that contain a reversal cue. Empty for the overwhelming majority
+ * of writes, which is what makes the whole check affordable: everything downstream is gated on
+ * this being non-empty, and the cue scan itself is a handful of substring searches.
+ */
+export function reversalCueSentences(content: string): ReversalCueSentence[] {
+  const lower = content.toLowerCase();
+  if (!REVERSAL_CUES.some(cue => lower.includes(cue))) return [];
+  const found: ReversalCueSentence[] = [];
+  for (const sentence of content.split(/(?<=[.!?])\s+|\n+/)) {
+    const text = sentence.trim();
+    if (!text) continue;
+    const sentenceLower = text.toLowerCase();
+    const cue = REVERSAL_CUES.find(candidate => sentenceLower.includes(candidate));
+    if (cue) found.push({ cue, sentence: text, tokens: duplicateTokens(text) });
+  }
+  return found;
+}
+
+/**
+ * How many active titles a token may appear in and still count as naming a subject.
+ *
+ * Corpus-relative on purpose -- the same reasoning that moved the decision guard from a fitted
+ * constant to a percentile of the store's own distribution. Measured on a real 831-item store,
+ * the naive form of this detector (any 2 shared title tokens near a cue) flagged 13,678 pairs,
+ * and requiring the shared tokens to cover half the title still flagged 21 -- every one of them
+ * false, because the shared tokens were words like "web" and "site" that appear in dozens of
+ * titles. Judging distinctiveness against THIS store's title frequencies cut it to 6 flagged
+ * pairs on the same corpus, with the motivating case still detected in a two-item store.
+ */
+export function distinctiveTitleCap(activeItemCount: number): number {
+  return Math.max(2, Math.ceil(activeItemCount * 0.01));
+}
+
+/** Per-token count of active titles containing it, the denominator distinctiveness is judged on. */
+export function titleTokenFrequency(titles: string[]): Map<string, number> {
+  const frequency = new Map<string, number>();
+  for (const title of titles) {
+    for (const token of duplicateTokens(title)) {
+      frequency.set(token, (frequency.get(token) ?? 0) + 1);
+    }
+  }
+  return frequency;
+}
+
+export type ReversalMatch = {
+  cue: string;
+  sentence: string;
+  /** Share of the held title's distinctive tokens the cue sentence names. For ranking, not gating. */
+  coverage: number;
+};
+
+/**
+ * Whether one of `cueSentences` reads as reversing the item holding `heldTitle`.
+ *
+ * Fires only when a single sentence both contains a reversal cue and names the held item's
+ * subject: at least two of the title's distinctive tokens, covering at least half of them.
+ * Distinctive is relative to the store's own title frequencies (`titleTokenFrequency` /
+ * `distinctiveTitleCap`); a title with fewer than two distinctive tokens is too generic to be
+ * named by tokens at all and never matches, the same reasoning as `sameSubjectTitle`'s
+ * one-token exclusion.
+ *
+ * This is a CANDIDATE detector, and every surface that reports it says so. On the real store it
+ * was measured against, all 6 fires were narrative mentions rather than live contradictions --
+ * but 6 advisory notes across 831 writes is under 1% noise, the note carries the cue sentence
+ * so a reader dismisses a false one in seconds, and the true case it exists for (an explicit
+ * reversal stored under an unrelated title) is otherwise silent everywhere, including the small
+ * fresh stores where the statistical guard abstains by construction.
+ */
+export function detectReversal(
+  cueSentences: ReversalCueSentence[],
+  heldTitle: string,
+  titleFrequency: Map<string, number>,
+  cap: number,
+): ReversalMatch | null {
+  const distinctive = [...duplicateTokens(heldTitle)].filter(
+    token => (titleFrequency.get(token) ?? 0) <= cap,
+  );
+  if (distinctive.length < 2) return null;
+  for (const cueSentence of cueSentences) {
+    let shared = 0;
+    for (const token of distinctive) {
+      if (cueSentence.tokens.has(token)) shared++;
+    }
+    if (shared >= 2 && shared / distinctive.length >= 0.5) {
+      return { cue: cueSentence.cue, sentence: cueSentence.sentence, coverage: shared / distinctive.length };
+    }
+  }
+  return null;
 }
 
 /**
@@ -534,6 +665,67 @@ async function overlapFor(
   }
 }
 
+export type ReversalAdvisory = {
+  id: string;
+  title: string;
+  /** The cue phrase that fired, for the caller's own reporting. */
+  cue: string;
+  /** The incoming sentence that names the held item, quoted back so the reader can judge it. */
+  sentence: string;
+};
+
+/**
+ * Everything a reversal check needs about the store, read once. The batch path shares one of
+ * these across all its atoms; the single path builds one only after the cue gate passes.
+ */
+type ReversalScan = {
+  titles: Array<{ id: string; title: string }>;
+  frequency: Map<string, number>;
+  cap: number;
+};
+
+async function loadReversalScan(): Promise<ReversalScan> {
+  const titles = await repo.listActiveKnowledgeTitles();
+  return {
+    titles,
+    frequency: titleTokenFrequency(titles.map(entry => entry.title)),
+    cap: distinctiveTitleCap(titles.length),
+  };
+}
+
+/**
+ * The active item this write's content reads as reversing, or `undefined`.
+ *
+ * Advisory like its two neighbours in the result: never throws, never blocks, and every failure
+ * path is `undefined`. `exclude` carries the ids already reported through their own channels --
+ * the write itself, a retired predecessor, a coexisting near-duplicate -- so one pair is never
+ * announced twice in the same result. Of several matches the one naming the largest share of
+ * its title wins, because that is the one the sentence is most plainly about.
+ */
+async function reversalAdvisoryForWrite(
+  item: { content: string },
+  exclude: Set<string>,
+  scan?: ReversalScan,
+): Promise<ReversalAdvisory | undefined> {
+  try {
+    const cueSentences = reversalCueSentences(item.content);
+    if (cueSentences.length === 0) return undefined;
+    const { titles, frequency, cap } = scan ?? await loadReversalScan();
+    let best: (ReversalAdvisory & { coverage: number }) | undefined;
+    for (const held of titles) {
+      if (exclude.has(held.id)) continue;
+      const match = detectReversal(cueSentences, held.title, frequency, cap);
+      if (match && (!best || match.coverage > best.coverage)) {
+        best = { id: held.id, title: held.title, cue: match.cue, sentence: match.sentence, coverage: match.coverage };
+      }
+    }
+    if (!best) return undefined;
+    return { id: best.id, title: best.title, cue: best.cue, sentence: best.sentence };
+  } catch {
+    return undefined;
+  }
+}
+
 export async function storeKnowledgeItemDeduped(
   projectId: string,
   input: StoreKnowledgeInput,
@@ -606,6 +798,10 @@ export async function storeKnowledgeItemDeduped(
     // Read after the write is durable, like the cross-repo advisory above it. Computed against
     // the WRITTEN item rather than the input so the text scored is the text stored.
     governingDecision: await governingDecisionForWrite(projectId, item),
+    reversal: await reversalAdvisoryForWrite(item, new Set(
+      [item.id, superseded?.id, resolution === 'coexist' && duplicate ? duplicate.id : undefined]
+        .filter((id): id is string => Boolean(id)),
+    )),
   };
 }
 
@@ -750,9 +946,21 @@ export async function storeKnowledgeAtomsDeduped(
   // the next atom in the same batch is scored against the pool. Keyed by id so an atom that was
   // a verbatim duplicate (and therefore wrote nothing) is not scored against itself.
   const insertedById = new Map(written.inserted.map(item => [item.id, item]));
+  // One store scan for the whole batch, and only if some atom carries a cue at all -- the
+  // same lazy shape as the workspace resolution above the loop.
+  let reversalScan: ReversalScan | undefined;
   for (const { outcome } of written.overlapSubjects) {
     const item = insertedById.get(outcome.itemId);
-    if (item) outcome.governingDecision = await governingDecisionForWrite(projectId, item);
+    if (!item) continue;
+    outcome.governingDecision = await governingDecisionForWrite(projectId, item);
+    if (reversalCueSentences(item.content).length === 0) continue;
+    reversalScan ??= await loadReversalScan();
+    outcome.reversal = await reversalAdvisoryForWrite(
+      item,
+      new Set([item.id, outcome.supersededId, outcome.nearDuplicateId]
+        .filter((id): id is string => Boolean(id))),
+      reversalScan,
+    );
   }
 
   return {

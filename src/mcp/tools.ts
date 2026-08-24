@@ -99,6 +99,7 @@ export function describeWriteReconciliation(result: {
   nearDuplicate?: { id: string; title: string };
   crossRepo?: Array<{ repo: string; id: string; title: string; kind: 'conflict' | 'duplicate'; kin?: boolean; role?: string }>;
   governingDecision?: { id: string; title: string; score: number; via: string };
+  reversal?: { id: string; title: string; cue: string; sentence: string };
 }): string {
   const notes: string[] = [];
   if (result.superseded) {
@@ -130,6 +131,14 @@ export function describeWriteReconciliation(result: {
   if (result.governingDecision) {
     const { id, title } = result.governingDecision;
     notes.push(`AN ACTIVE DECISION MAY ALREADY GOVERN THIS: ${id} ("${title}"). Your write stands and nothing was blocked. Read that decision before acting on this write: if it settles the same question, follow it or clear whatever bar it states for re-opening; if it is about something else, ignore this note.`);
+  }
+  // Also a question, for the same reason -- and the evidence rides in the note. The cue
+  // sentence is the writer's OWN words quoted back, so a false fire (a narrative mention, a
+  // citation) is dismissed on sight, and a true one hands the agent the exact retire call the
+  // near-duplicate note above already teaches.
+  if (result.reversal) {
+    const { id, title, sentence } = result.reversal;
+    notes.push(`DOES THIS WRITE REVERSE ${id} ("${title}")? It says: "${sentence.slice(0, 200)}" -- and that item is still active, so memory now asserts both. If this write reverses it, retire it now with knowl_update using id "${result.item.id}" and supersedeId "${id}". If the sentence is only mentioning it, leave it.`);
   }
   return notes.length ? ` ${notes.join(' ')}` : '';
 }
@@ -672,6 +681,9 @@ export function registerTools(
           // and "something in this batch is governed" is not actionable.
           if (outcome.governingDecision) {
             parts.push(`AN ACTIVE DECISION MAY ALREADY GOVERN THIS: ${outcome.governingDecision.id} ("${outcome.governingDecision.title}") — read it before acting on this atom; nothing was blocked`);
+          }
+          if (outcome.reversal) {
+            parts.push(`DOES THIS ATOM REVERSE ${outcome.reversal.id} ("${outcome.reversal.title}")? It says: "${outcome.reversal.sentence.slice(0, 200)}" — if it does, retire that item with knowl_update using id "${outcome.itemId}" and supersedeId "${outcome.reversal.id}"; if it is only a mention, leave it`);
           }
           return parts.join('; ') + '.';
         });
@@ -1349,12 +1361,33 @@ export function registerTools(
 
       else if (name === 'knowl_conflicts') {
         const { listActiveConflictKeys } = await import('../store/conflicts.js');
+        const { scanContradictions } = await import('../store/contradiction-scan.js');
         const items = await listActiveConflictKeys();
+        // Detected pairs beside the declared keys, or the command keeps missing the very pairs
+        // the write path creates on purpose: a polarity clamp reports its pair once in a write
+        // result and this was the only surface that could ever have shown it again.
+        const detected = await scanContradictions();
         const conflictBlocks: { type: 'text'; text: string }[] = [
-          { type: 'text', text: compactMcpJson(items.slice(0, 3).map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness }))) },
+          {
+            type: 'text',
+            text: compactMcpJson({
+              declared: items.slice(0, 3).map(item => ({ id: item.id, title: item.title, conflictKey: item.conflictKey, conflictScope: item.conflictScope, freshness: item.freshness })),
+              polarity: detected.polarity.slice(0, 5),
+              // Candidates, and labelled that way: each row quotes the sentence that fired so
+              // the reader can tell a reversal from a mention without opening either item.
+              reversalCandidates: detected.reversalCandidates.slice(0, 5).map(candidate => ({
+                ...candidate,
+                sentence: candidate.sentence.slice(0, 200),
+              })),
+            }),
+          },
         ];
-        if (items.length > 3) {
-          conflictBlocks.push({ type: 'text', text: `CONFLICTS TRUNCATED: showing 3 of ${items.length} conflicting items.` });
+        const hidden: string[] = [];
+        if (items.length > 3) hidden.push(`${items.length - 3} declared`);
+        if (detected.polarity.length > 5) hidden.push(`${detected.polarity.length - 5} polarity`);
+        if (detected.reversalCandidates.length > 5) hidden.push(`${detected.reversalCandidates.length - 5} reversal candidate(s)`);
+        if (hidden.length) {
+          conflictBlocks.push({ type: 'text', text: `CONFLICTS TRUNCATED: ${hidden.join(', ')} not shown.` });
         }
         return { content: conflictBlocks };
       }
