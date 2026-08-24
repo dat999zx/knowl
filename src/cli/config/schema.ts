@@ -1,4 +1,4 @@
-import { DEFAULT_CONFIG } from '../../core/config.js';
+import { DEFAULT_CONFIG, DEFAULT_DRIFT_REMINDER_EVERY } from '../../core/config.js';
 import { DEFAULT_PRESET_ID, PRESET_IDS } from '../../core/vector-profile.js';
 
 export type ConfigKey =
@@ -15,6 +15,8 @@ export type ConfigKey =
   | 'search.transcripts.share'
   | 'search.transcripts.fallback'
   | 'search.pathsChanged'
+  | 'reminders.driftEvery'
+  | 'reminders.skills'
   | 'ai.provider'
   | 'ai.model'
   | 'ai.temperature'
@@ -34,7 +36,7 @@ export type ConfigKey =
 
 export type ConfigCategory =
   | 'Search' | 'Security' | 'AI provider' | 'Memory namespaces' | 'Change impact' | 'Capture'
-  | 'Cloud' | 'Updates';
+  | 'Reminders' | 'Cloud' | 'Updates';
 
 /**
  * How a value should be asked for. Without this the UI had only `parse`, so every field
@@ -82,6 +84,13 @@ const enumValue = <T extends string>(values: readonly T[]) => (raw: string): T =
 const optionalNumber = (raw: string) => {
   const value = Number(raw);
   if (!Number.isFinite(value)) throw new Error('Expected a number');
+  return value;
+};
+
+/** A cadence, in events. Rejects negatives and fractions here so the hook path never sees one. */
+const nonNegativeInteger = (raw: string) => {
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 0) throw new Error('Expected a whole number, 0 or greater');
   return value;
 };
 
@@ -281,6 +290,21 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: enumValue(CAPTURE_SCOPES), defaultValue: 'conversation',
     label: 'Capture scope',
     description: 'Granularity of the stored-nothing question. conversation is the one-shot end-of-session verdict; turn additionally prompts once, through the free mid-turn channel, when a turn does substantial work and stores nothing -- and a query does not quiet it, only a write does.',
+  },
+  // Both default ON and both stay out of DEFAULT_CONFIG, for the reason the Capture keys
+  // above give: merged in, they are written into every config on the machine at the next
+  // upgrade. `defaultValue` only tells the editor what unset does.
+  {
+    key: 'reminders.driftEvery', category: 'Reminders', type: 'number',
+    parse: nonNegativeInteger, defaultValue: DEFAULT_DRIFT_REMINDER_EVERY,
+    label: 'Continuation reminder cadence',
+    description: 'Send the mid-turn "keep using memory" reminder after this many consecutive successful tool calls that used no Knowl tool. Any Knowl tool call resets the count. Set 0 to turn the reminder off; raise it to pay for it less often in long mechanical sessions.',
+  },
+  {
+    key: 'reminders.skills', category: 'Reminders', type: 'boolean',
+    parse: booleanValue, defaultValue: true,
+    label: 'Skill nudges',
+    description: 'Let the skills subsystem take the mid-turn slot: "you have run this three times, save it as a skill", and "a saved skill matches this command". Turn off in a repository that does not use skills, where both are pure context cost.',
   },
   {
     // Absent from DEFAULT_CONFIG on purpose, like the three above: merged in, it would write

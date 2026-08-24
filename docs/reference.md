@@ -244,15 +244,16 @@ stay at 600.
 
 #### Reading `knowl query` from a script
 
-**`knowl query` writes pure JSON to stdout and every advisory line to stderr** — the `Note:`
-banner about linked repos, and the `WORKSPACE:`, `SCOPE:` and `NO CONFIDENT MATCH` notices. The
-split is deliberate, so a programmatic consumer gets a parseable stream without losing the
+**`knowl query` writes pure JSON to stdout and every advisory line to stderr.** All four are
+`Note:` lines: this repo returned nothing and the rows belong to a peer, every result fell below
+the relevance floor, linked repos hold matches the limit cut, and a linked repo was not searched.
+The split is deliberate, so a programmatic consumer gets a parseable stream without losing the
 advisories a human wants.
 
-It bites because most shells and wrappers merge the two by default. A parser fed the merged
-stream sees `Note: ...` before the JSON and throws, and the natural diagnosis — "the CLI emitted
-bad JSON" — sends you into the CLI instead of into your own stream handling. Read `stdout`
-explicitly:
+It bites because most shells and wrappers merge the two by default, and an advisory line is not
+JSON wherever it lands relative to the document. A parser fed the merged stream throws, and the
+natural diagnosis — "the CLI emitted bad JSON" — sends you into the CLI instead of into your own
+stream handling. Read `stdout` explicitly:
 
 ```bash
 knowl query "auth token design" 2>/dev/null | jq .
@@ -261,7 +262,8 @@ knowl query "auth token design" 2>/dev/null | jq .
 The parsed value is a **bare array** when every row belongs to this repo and an **object keyed by
 repo name** when at least one does not, so a parser that assumes one shape silently returns
 nothing in the other. The distinction carries meaning worth keeping: a fact under another repo's
-key describes *that* repo. Force one shape with `--scope local` or `--scope workspace`.
+key describes *that* repo. The MCP tool takes a `scope` argument to force one shape; the CLI
+does not, so a script must handle both.
 
 ```bash
 # Current CLI query; single-repository candidates are lexical.
@@ -557,6 +559,31 @@ knowl config set search.pathsChanged false
 
 Worth turning off in a repository whose atoms cite generated or build-time files, where the
 marker would be present on every row forever and stop meaning anything.
+
+### What Knowl says mid-turn — `reminders.*`
+
+Separate from what Knowl *stores*: these are the messages it sends the agent between tool
+calls. Both are **on by default**, and both share the single mid-turn slot with the change card
+and the capture prompts — turning one off does not give the others more room, it gives the turn
+back.
+
+```bash
+knowl config set reminders.driftEvery 24     # remind half as often; 0 turns it off
+knowl config set reminders.skills false      # stop the two skill nudges
+```
+
+- **`reminders.driftEvery`** (default `12`) — how many consecutive successful tool calls that
+  used no Knowl tool trigger the continuation reminder. Any Knowl tool call resets the count,
+  so a session already using memory never sees it. The cadence *is* the switch: `0` is off, and
+  raising it is the lever for a long mechanical session that pays the reminder repeatedly for a
+  rule it followed the first time. Measured against a 197-session archive, the shipped cadence
+  fires ~19 times per session and ~1,750 tokens with it — more than three times the guidance
+  card, and unbounded, because it scales with how long the session runs rather than sitting at a
+  fixed size. The heaviest session in that archive took it 242 times.
+- **`reminders.skills`** (default `true`) — the two skill nudges: *"you have run this three
+  times, save it as a skill"* and *"a saved skill matches this command"*. One key for both,
+  because both are the skills subsystem speaking. Worth turning off in a repository that does
+  not use skills, where they are pure context cost.
 
 ### `knowl transcripts` — turning sessions into candidates
 

@@ -5,7 +5,7 @@ import { NormalizedHostHook } from '../core/host-hook-types.js';
 import { renderChangeCard, type ImpactCardEntry } from './change-card.js';
 import { hostProfile } from './hosts/index.js';
 import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
-import { loadConfig } from '../core/config.js';
+import { areSkillNudgesEnabled, driftReminderEvery, loadConfig } from '../core/config.js';
 import { isImpactEnabled } from '../store/impact-config.js';
 import { captureEventsMode, captureNudgeMode, captureScope } from '../store/capture-config.js';
 import { classifyDestructiveCommand } from '../core/lesson-signals.js';
@@ -84,9 +84,8 @@ import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js
 import { describeAutoDrift, runAutoDriftCheckBestEffort, type AutoDriftResult } from '../store/drift-auto.js';
 import { describeObservedUsePromotions, promoteByObservedUseBestEffort } from '../store/tier.js';
 
-// Emit the mid-turn continuation reminder after this many consecutive non-Knowl
-// tool calls; any Knowl tool call resets the counter to zero.
-const KNOWL_REMINDER_DRIFT = 12;
+// The cadence moved to `reminders.driftEvery` (default DEFAULT_DRIFT_REMINDER_EVERY = 12, `0`
+// off), so the number lives beside its predicate in core/config.ts rather than twice.
 
 /**
  * The tools whose paths become a read-set entry -- and the two that look like they belong here
@@ -1140,7 +1139,11 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
           // repeating is worth more than pointing at one it has already started. The one
           // exception is a workflow already saved -- asking the agent to save a skill that
           // exists is how this loop failed to close in the first place.
-          const capturing = Boolean(command) && !failed && !existing
+          // `reminders.skills`, on unless the repository turned it off. Applied to both skill
+          // branches at once: they are one subsystem speaking, and a repo that does not use
+          // skills pays the slot for both or neither.
+          const skillNudges = areSkillNudgesEnabled(captureConfig);
+          const capturing = skillNudges && Boolean(command) && !failed && !existing
             && qualifiesForSkillCapture(command, repeats);
 
           if (capturing) {
@@ -1149,7 +1152,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
             // continuation reminder for this event rather than freezing it.
             await resetHostSuccessfulToolCount(key);
             hostOutput = profile.midTurnContext(renderSkillCaptureNudge(command, repeats));
-          } else if (existing) {
+          } else if (skillNudges && existing) {
             await resetHostSuccessfulToolCount(key);
             hostOutput = profile.midTurnContext(renderSkillUseNudge(existing));
           } else if (shouldPromptTurnCapture(turnOutcome)
@@ -1167,8 +1170,12 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
             // that is querying/storing memory never sees a reminder.
             await resetHostSuccessfulToolCount(key);
           } else {
+            // `reminders.driftEvery`, default 12, `0` off. The counter still advances when the
+            // reminder is off: it is shared state that the branches above reset as a "go use
+            // memory" signal, and freezing it would change what THEY mean.
+            const every = driftReminderEvery(captureConfig);
             const drift = await incrementHostSuccessfulToolCount(key);
-            if (drift > 0 && drift % KNOWL_REMINDER_DRIFT === 0) {
+            if (every > 0 && drift > 0 && drift % every === 0) {
               hostOutput = profile.midTurnContext(KNOWL_CLAUDE_CONTINUATION_REMINDER);
             }
           }

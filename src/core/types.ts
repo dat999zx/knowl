@@ -338,6 +338,35 @@ export interface ProjectConfig {
      */
     pathsChanged?: boolean;
   };
+  /**
+   * What Knowl says to the agent mid-turn, as opposed to what it stores.
+   *
+   * Both default ON, because both ship on and a key that silently disabled a working feature
+   * would be a worse surprise than one that does nothing until set. Kept out of
+   * `DEFAULT_CONFIG` for the usual reason: merged in, they are stamped into every config on
+   * the machine at the next upgrade.
+   *
+   * These share the one mid-turn slot with the change card and the capture prompts, in that
+   * priority. Turning one off does not give the others more room -- it gives the turn back.
+   */
+  reminders?: {
+    /**
+     * How many consecutive successful non-Knowl tool events trigger the continuation
+     * reminder. `0` turns it off. Default 12.
+     *
+     * The cadence is the setting, not a separate on/off, because "how often" is the actual
+     * question -- the reminder is ~370 characters delivered on the tool path, so the cost is
+     * linear in how many tool calls a session makes, and a long mechanical session pays it
+     * repeatedly for a rule it followed the first time.
+     */
+    driftEvery?: number;
+    /**
+     * The two skill nudges: "you have run this three times, save it as a skill" and "a saved
+     * skill matches this command". One key, because both are the skills subsystem speaking
+     * and nobody has yet needed to keep one without the other.
+     */
+    skills?: boolean;
+  };
   memory?: {
     organization?: { enabled?: boolean; path?: string };
     global?: { enabled?: boolean; path?: string };

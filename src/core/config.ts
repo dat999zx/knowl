@@ -399,3 +399,25 @@ export function isTranscriptSearchEnabled(config: ProjectConfig): boolean {
 export function isPathsChangedEnabled(config: ProjectConfig): boolean {
   return config.search?.pathsChanged !== false;
 }
+
+/** The default continuation-reminder cadence, in consecutive non-Knowl tool events. */
+export const DEFAULT_DRIFT_REMINDER_EVERY = 12;
+
+/**
+ * How many consecutive non-Knowl tool events trigger the continuation reminder; `0` is off.
+ *
+ * A negative or fractional value reads as the default rather than throwing, by the same rule
+ * the mode enums follow: this runs on the hook path, where a bad config must degrade to
+ * today's behaviour instead of failing a tool call. `config` may be null because `loadConfig`
+ * throws on an unreadable file and the callers catch it.
+ */
+export function driftReminderEvery(config?: ProjectConfig | null): number {
+  const value = config?.reminders?.driftEvery;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return DEFAULT_DRIFT_REMINDER_EVERY;
+  return value;
+}
+
+/** Whether the skill capture and skill use nudges may take the mid-turn slot. On unless set false. */
+export function areSkillNudgesEnabled(config?: ProjectConfig | null): boolean {
+  return config?.reminders?.skills !== false;
+}

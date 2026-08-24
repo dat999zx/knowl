@@ -76,4 +76,37 @@ describe('Claude continuation reminder CLI', () => {
     expect(post('mcp__knowl__knowl_query', 'query')).toBe('');
     expect(post('Bash', 'would-have-been-twelfth')).toBe('');
   }, 120_000);
+
+  // `reminders.driftEvery`. Through the built CLI rather than the predicate alone, because the
+  // thing worth pinning is that the config actually reaches the hook path -- the predicate
+  // returning 0 is no use if the branch never reads it.
+  it('reminders.driftEvery 0 silences the reminder entirely', () => {
+    run(['config', 'set', 'reminders.driftEvery', '0']);
+    const outputs = [];
+    // Twice the shipped cadence: a stale `% 12` would have fired at 12 and again at 24.
+    for (let index = 1; index <= 24; index++) {
+      outputs.push(run(['agent-hook', 'claude', 'PostToolUse', '--json'], JSON.stringify({
+        session_id: 'cli-drift-off', cwd: TEST_DIR, tool_name: 'Bash',
+        tool_input: { command: `off-${index}` }, tool_response: { exit_code: 0 },
+      })));
+    }
+    expect(outputs.every(output => output === '')).toBe(true);
+    run(['config', 'reset', 'reminders.driftEvery']);
+  }, 180_000);
+
+  it('reminders.driftEvery 24 moves the reminder to the 24th event', () => {
+    run(['config', 'set', 'reminders.driftEvery', '24']);
+    const outputs = [];
+    for (let index = 1; index <= 24; index++) {
+      outputs.push(run(['agent-hook', 'claude', 'PostToolUse', '--json'], JSON.stringify({
+        session_id: 'cli-drift-24', cwd: TEST_DIR, tool_name: 'Bash',
+        tool_input: { command: `slow-${index}` }, tool_response: { exit_code: 0 },
+      })));
+    }
+    // Silent where the default would have spoken, speaking where the default would not.
+    expect(outputs[11]).toBe('');
+    expect(JSON.parse(outputs[23]).hookSpecificOutput.additionalContext)
+      .toBe(KNOWL_CLAUDE_CONTINUATION_REMINDER);
+    run(['config', 'reset', 'reminders.driftEvery']);
+  }, 180_000);
 });
