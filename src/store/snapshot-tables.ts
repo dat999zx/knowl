@@ -95,6 +95,12 @@ export const SNAPSHOT_TABLE_POLICY: Readonly<Record<string, SnapshotTablePolicy>
   // stop-blocking interrupt against conversations that already answered it.
   pending_lessons: 'preserved',
   pending_lesson_claims: 'preserved',
+  // Turn-scoped capture counters and their prompt ceiling. Preserved for the claims reason
+  // above: `prompted` and the ceiling row are spent one-shots, and restoring an older copy
+  // would re-arm prompts against turns and conversations that already took them. The counter
+  // rows are additionally worthless to restore -- they describe turns that are over.
+  capture_turn_outcomes: 'preserved',
+  capture_turn_prompts: 'preserved',
   // What THIS machine has staged for, and pushed to, a cloud workspace. The server's copy is the
   // truer one and a snapshot cannot roll it back, so restoring an older ledger would only make
   // this machine forget the `remote_version` every republish needs -- turning the next publish

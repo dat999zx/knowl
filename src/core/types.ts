@@ -433,6 +433,17 @@ export interface ProjectConfig {
      * decision to enforce has to be made on.
      */
     events?: 'off' | 'shadow' | 'enforce';
+    /**
+     * At what granularity the silence question is asked. `conversation` (the default) is the
+     * one-shot end-of-conversation verdict above. `turn` additionally watches each turn as it
+     * runs: a turn that crosses a substantive-work threshold with no durable write gets one
+     * capture prompt through the free mid-turn channel -- never a blocked stop -- at the
+     * moment the unstored knowledge actually exists. The property that distinguishes it from
+     * the drift reminder: querying memory does not reset it, only storing does, so the
+     * memory-active session -- precisely the one every other reminder goes quiet for -- is
+     * still asked.
+     */
+    scope?: 'conversation' | 'turn';
   };
   /**
    * This repo's half of workspace membership. The other half is the workspace manifest

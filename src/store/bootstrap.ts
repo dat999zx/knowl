@@ -552,6 +552,26 @@ const SCHEMA_STATEMENTS = [
     blocks INTEGER NOT NULL DEFAULT 0
   );`,
 
+  // Turn-scoped capture counters (capture.scope = 'turn'). Working state, not history: the
+  // turn boundary deletes the row, which is what makes the counters per-turn under a host
+  // that reuses one turn key for every main-thread turn. `prompted` is the per-turn one-shot.
+  `CREATE TABLE IF NOT EXISTS capture_turn_outcomes (
+    turn_key TEXT PRIMARY KEY,
+    conversation TEXT NOT NULL,
+    tool_events INTEGER NOT NULL DEFAULT 0,
+    file_writes INTEGER NOT NULL DEFAULT 0,
+    durable_writes INTEGER NOT NULL DEFAULT 0,
+    prompted TEXT
+  );`,
+
+  // The per-conversation prompt ceiling, on its own row because the turn rows above are
+  // deleted at every boundary -- a ceiling kept there would be forgotten with them. Same
+  // one-shot-by-conditional-UPDATE rule as `pending_lesson_claims`.
+  `CREATE TABLE IF NOT EXISTS capture_turn_prompts (
+    conversation TEXT PRIMARY KEY,
+    prompts INTEGER NOT NULL DEFAULT 0
+  );`,
+
   `CREATE TRIGGER IF NOT EXISTS knowledge_items_fts_ai AFTER INSERT ON knowledge_items BEGIN
     INSERT INTO knowledge_items_fts(item_id, category, status, title, content, reasoning, tags)
     VALUES (new.id, new.category, new.status, new.title, new.content, coalesce(new.reasoning, ''), coalesce(new.tags, ''));

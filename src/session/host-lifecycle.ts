@@ -7,7 +7,7 @@ import { hostProfile } from './hosts/index.js';
 import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
 import { loadConfig } from '../core/config.js';
 import { isImpactEnabled } from '../store/impact-config.js';
-import { captureEventsMode, captureNudgeMode } from '../store/capture-config.js';
+import { captureEventsMode, captureNudgeMode, captureScope } from '../store/capture-config.js';
 import { classifyDestructiveCommand } from '../core/lesson-signals.js';
 import {
   claimLessonBlock,
@@ -22,13 +22,19 @@ import {
 } from '../store/pending-lessons.js';
 import {
   claimSilenceNudge,
+  claimTurnCapturePrompt,
   conversationKey,
   isDurableWriteTool,
   readCaptureOutcome,
   recordDurableWrite,
   recordSessionTurn,
+  recordTurnToolEvent,
   renderSilenceNudge,
+  renderTurnCapturePrompt,
+  resetTurnCapture,
+  shouldPromptTurnCapture,
   shouldNudgeForSilence,
+  turnCaptureKey,
 } from '../store/capture-outcome.js';
 import { detectCertainImpactBestEffort, markFindingsDelivered, openFindingsForSession } from './impact.js';
 import {
@@ -948,6 +954,11 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     const withCorrection = (context: string | undefined): string | undefined =>
       correctionLine ? (context ? `${correctionLine}\n\n${context}` : correctionLine) : context;
 
+    // A new turn under a reused turn key must start its capture counters from zero. Cheap
+    // enough not to gate on config: one DELETE matching zero rows when the scope was never
+    // 'turn', at a turn boundary rather than on the tool path.
+    await resetTurnCapture(turnCaptureKey(bindingKey(input, 'turn')));
+
     const sessionBinding = await findHostSession(bindingKey(input, 'session'));
     if (!sessionBinding && hostProfile(input.host).sharesSessionBinding) {
       const started = await bootstrapWithHandoff(projectId, input, 'session', true);
@@ -999,6 +1010,8 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
 
   if (input.event === 'agent-stop') {
     const agentKey = bindingKey(input, 'turn');
+    // A subagent's turn key carries its agent id, so its counters are its own to clean up.
+    await resetTurnCapture(turnCaptureKey(agentKey));
     const closed = await closeHostSessionBinding(agentKey);
     // Emits no host output: SubagentStop may block a subagent from stopping and
     // this never does.
@@ -1032,6 +1045,19 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
         // the thing it is not.
         await resolveLessonsBefore(conversationKey(input), new Date().toISOString());
       }
+      // One config read serves both capture features below; each is off for anyone who has
+      // not turned it on, and a missing config is simply "everything off".
+      const captureConfig = await loadConfig(input.projectRoot).catch(() => null);
+      // Turn-scoped capture counters (capture.scope = 'turn'). Counted for checkpoint events
+      // too, because hosts may report tool activity under that event -- but never for a
+      // failure, which produced nothing worth storing. The updated row comes back from the
+      // same write, so the slot logic below pays no second query.
+      const turnOutcome = input.status !== 'failed' && captureScope(captureConfig ?? undefined) === 'turn'
+        ? await recordTurnToolEvent(turnCaptureKey(bindingKey(input, 'turn')), conversationKey(input), {
+          fileWrite: toolWritesFile(input),
+          durableWrite: isDurableWriteTool(input.knowlToolName),
+        })
+        : null;
       // Runs for `checkpoint` events too -- a host that reports a tool under that event still
       // read or wrote the file it named -- but never for a failed one: a tool that failed
       // returned no contents, so a read-set row from it would record a belief the agent was
@@ -1054,8 +1080,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
         const shellCommand = typeof input.payload.command === 'string' ? input.payload.command : '';
         if (shellCommand && !input.knowlTool) {
           try {
-            const eventsConfig = await loadConfig(input.projectRoot).catch(() => null);
-            const eventsMode = captureEventsMode(eventsConfig ?? undefined);
+            const eventsMode = captureEventsMode(captureConfig ?? undefined);
             if (eventsMode !== 'off') {
               const hit = classifyDestructiveCommand(shellCommand);
               // `recordDestructiveLesson` is the once-per-class-per-conversation claim, so the
@@ -1127,6 +1152,15 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
           } else if (existing) {
             await resetHostSuccessfulToolCount(key);
             hostOutput = profile.midTurnContext(renderSkillUseNudge(existing));
+          } else if (shouldPromptTurnCapture(turnOutcome)
+            && await claimTurnCapturePrompt(turnOutcome!.turnKey, turnOutcome!.conversation)) {
+            // Above the knowl-tool branch on purpose: this is the one reminder a query must
+            // not silence. The drift counter below goes quiet the moment any knowl tool runs,
+            // which is exactly how the memory-active session -- the one that queried five
+            // times, diagnosed the hard thing, and stored nothing -- never hears from it.
+            // Only a durable write quiets this one, by zeroing the verdict itself.
+            await resetHostSuccessfulToolCount(key);
+            hostOutput = profile.midTurnContext(renderTurnCapturePrompt());
           } else if (input.knowlTool) {
             // Adaptive continuation reminder: only nudge after a run of tool calls that
             // ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
@@ -1161,6 +1195,9 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // event that fires per turn, and turns -- not tool events -- are what tell a working
     // conversation apart from a single question answered.
     await recordSessionTurn(conversationKey(input));
+    // The turn is over, so its capture counters are too; the prompt ceiling lives on its own
+    // row and survives this.
+    await resetTurnCapture(turnCaptureKey(bindingKey(input, 'turn')));
 
     // gpt-5.5 often share one session binding across turns. Normal Stop only closes the turn
     // binding. Hard failures finish the session and record a host-scoped handoff.
