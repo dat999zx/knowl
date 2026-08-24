@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { CallToolRequestSchema, ErrorCode, ListToolsRequestSchema, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { CallToolRequest, CallToolResult } from '@modelcontextprotocol/sdk/types.js';
@@ -35,7 +37,7 @@ import { applyFeedbackToTierBestEffort } from '../store/tier.js';
 import { finishMemorySession, listActiveMemorySessions } from '../store/session-repository.js';
 import { isImpactEnabled } from '../store/impact-config.js';
 import { openFindingsForSession, resolveFinding, type ImpactFinding, type ImpactTier } from '../session/impact.js';
-import { activeReadSetForSession } from '../store/read-set.js';
+import { activeReadSetForSession, containedRepoPath } from '../store/read-set.js';
 import { formatPendingHandoffContext, recordDeliberateHandoff } from '../session/session-handoff.js';
 import { createResumePoint, formatResumeBrief, listResumePoints, readResumePoint } from '../session/resume-points.js';
 import { resumeInstruction } from '../session/resume-keys.js';
@@ -960,6 +962,42 @@ export function registerTools(
         // foreign item would be judged against the wrong checkout -- reporting "stale" for a
         // file that is simply somewhere else. Omitting it beats answering wrongly.
         const isForeign = (item: any) => Boolean(active) && item.repo && item.repo !== active!.repo;
+        // Whether the files a row cites have moved since the row was stored, answered per row
+        // and said only when true. The stale-atom failure this closes is on the READ side:
+        // impact detection tells the session that did the writing, but the session that
+        // retrieves the atom three weeks later gets a confident-sounding answer over files
+        // that changed underneath it, with nothing on the row saying so.
+        //
+        // mtime against `updatedAt`, deliberately -- no git and no hashing on a path that runs
+        // several times a turn. A touch with no edit flags a clean atom, which is the cheap
+        // direction to be wrong in: the field says "verify", never "wrong". Local rows only
+        // and containment-checked, both for the reason the evidence code gives: a foreign
+        // path resolves against a checkout that is not this one, and a path that escapes the
+        // root reveals nothing about the file it names. A missing file counts as changed --
+        // deletion is the strongest form of "moved".
+        const pathsChangedNotes = new Map<string, string>();
+        if (projectRoot) {
+          await Promise.all(resolvedItems.map(async item => {
+            if (isForeign(item) || !item.affectedPaths?.length) return;
+            const storedAt = Date.parse(item.updatedAt ?? '');
+            if (!Number.isFinite(storedAt)) return;
+            let changed = 0;
+            await Promise.all(item.affectedPaths.map(async raw => {
+              const contained = containedRepoPath(raw);
+              if (!contained) { changed += 1; return; }
+              try {
+                const stat = await fs.stat(path.resolve(projectRoot, contained));
+                if (stat.mtimeMs > storedAt) changed += 1;
+              } catch {
+                changed += 1;
+              }
+            }));
+            if (changed > 0) {
+              pathsChangedNotes.set(item.id,
+                `${changed} of ${item.affectedPaths.length} affectedPaths modified since this was stored -- verify against the files before trusting.`);
+            }
+          })).catch(() => {});
+        }
         const compact = (item: any) => {
           const score = scoreOf(item);
           const cosine = cosineOf(item);
@@ -976,6 +1014,8 @@ export function registerTools(
             // to be linked are fork siblings, where the same path exists in both and means
             // different things. Same reasoning as the evidence omission directly above.
             ...(affectedPaths && !isForeign(item) ? { affectedPaths } : {}),
+            // Absent when clean, so a row that says nothing still means what it always meant.
+            ...(pathsChangedNotes.has(item.id) ? { pathsChanged: pathsChangedNotes.get(item.id) } : {}),
             ...(explain && item.explanation ? { explanation: item.explanation } : {}),
           };
         };
