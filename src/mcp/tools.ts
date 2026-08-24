@@ -41,9 +41,9 @@ import { createResumePoint, formatResumeBrief, listResumePoints, readResumePoint
 import { resumeInstruction } from '../session/resume-keys.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
 import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
-import { isTranscriptSearchEnabled } from '../transcripts/config.js';
+import { isTranscriptFallbackEnabled, isTranscriptSearchEnabled } from '../transcripts/config.js';
 import { hasIndexableArchive } from '../transcripts/paths.js';
-import { handleSessionList, handleTranscriptRead, handleTranscriptSearch } from '../transcripts/mcp-handlers.js';
+import { handleSessionList, handleTranscriptRead, handleTranscriptSearch, NO_TRANSCRIPT_MATCHES_PREFIX } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
 import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, IMPACT_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
 import { teamUpdateNotice } from '../cloud/team-update.js';
@@ -64,6 +64,13 @@ export const CLOUD_DISCONNECTED_MESSAGE =
  */
 /** Matches `MAX_RESPONSE_CHARS` in the transcript handlers, deliberately. */
 const MAX_RESPONSE_CHARS = 12_000;
+/**
+ * Bounds for the transcript search a missed query runs on its own behalf. Tighter than the
+ * standalone tool's, because this rides another tool's response: three hits answer "does the
+ * archive know this", and a caller who wants the rest has the real tool named in the block.
+ */
+const TRANSCRIPT_FALLBACK_LIMIT = 3;
+const TRANSCRIPT_FALLBACK_CHARS = 4_000;
 const MAX_SKILLS_LISTED = 30;
 const MAX_SKILL_PURPOSE_CHARS = 200;
 const MAX_TRIGGERS_LISTED = 5;
@@ -1106,6 +1113,48 @@ export function registerTools(
             text: 'NO CONFIDENT MATCH: every result above scored below the relevance floor, so this store probably does not hold the answer. They are returned rather than withheld because the floor is a fixed threshold on a corpus-dependent scale and is wrong often enough to matter — read `cosine` and judge, not `score`: `cosine` is the absolute similarity the floor itself is measured against, while `score` only orders this page. If none of them answers the question, treat this as a miss and go to the files.'
               + transcriptRoute,
           });
+        }
+        // The second link of the recall chain, run rather than suggested. The abstention notice
+        // above names transcript search in prose, and the measured failure mode is that the
+        // suggestion is not taken: the agent reads the miss, skips the second tool, and answers
+        // "that never happened" over an archive it never consulted. With
+        // `search.transcripts.fallback` on, the search this response would have asked for has
+        // already run by the time the response arrives, and a negative is a claim verified
+        // against both stores instead of a guess over one.
+        //
+        // The empty-result case is deliberately included: it takes no abstention block today --
+        // `some(abstained)` over nothing is false -- so a store with no lexical match at all was
+        // the one shape of miss that got no route anywhere.
+        //
+        // Fail open throughout, and appended after the verdict blocks so a fallback that breaks
+        // can only cost its own addendum, never the answer it rides on.
+        const queryMissed = resolvedItems.length === 0
+          || resolvedItems.some(item => (item.explanation as { abstained?: boolean } | undefined)?.abstained);
+        if (queryMissed && config && projectRoot && isTranscriptFallbackEnabled(config)
+          && typeof query === 'string' && query.trim()) {
+          try {
+            const fallback = await handleTranscriptSearch({
+              config,
+              projectRoot,
+              query,
+              repos: Array.isArray(repos) ? repos.map(String) : undefined,
+              limit: TRANSCRIPT_FALLBACK_LIMIT,
+            });
+            const negative = fallback.startsWith(NO_TRANSCRIPT_MATCHES_PREFIX);
+            const bounded = fallback.length > TRANSCRIPT_FALLBACK_CHARS
+              ? `${fallback.slice(0, TRANSCRIPT_FALLBACK_CHARS)}\n[fallback bounded -- run knowl_transcript_search for the rest]`
+              : fallback;
+            blocks.push({
+              type: 'text',
+              text: negative
+                ? 'RECALL CHAIN — VERIFIED NEGATIVE: the knowledge store missed and the transcript archive holds no match for these words either (coverage below). If the user believes this happened, it predates the archive or used different words — try knowl_transcript_search with other words before concluding, and state the negative truthfully rather than guessing.\n'
+                  + bounded
+                : 'RECALL CHAIN: the knowledge store missed, so the transcript archive was searched automatically with the same words:\n'
+                  + bounded,
+            });
+          } catch {
+            // The query result stands on its own; a broken fallback appends nothing.
+          }
         }
         // Last of the notices, because it is the only one that asks the agent to do something
         // rather than to interpret what it just got.

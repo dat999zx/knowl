@@ -16,3 +16,12 @@ export { isTranscriptSearchEnabled } from '../core/config.js';
 export function isTranscriptSharingEnabled(config: ProjectConfig): boolean {
   return isTranscriptSearchEnabled(config) && config.search?.transcripts?.share === true;
 }
+
+/**
+ * Whether a missed `knowl_query` runs transcript search itself rather than suggesting it.
+ * An AND for the same reason `share` is: a fallback into an index that does not exist would
+ * turn every miss into a second, slower miss.
+ */
+export function isTranscriptFallbackEnabled(config: ProjectConfig): boolean {
+  return isTranscriptSearchEnabled(config) && config.search?.transcripts?.fallback === true;
+}

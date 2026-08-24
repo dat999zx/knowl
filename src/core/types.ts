@@ -316,6 +316,15 @@ export interface ProjectConfig {
       enabled?: boolean;
       /** Let linked workspace repos open this index read-only. Requires `enabled`. */
       share?: boolean;
+      /**
+       * Run transcript search automatically inside a `knowl_query` that missed, instead of
+       * suggesting it in prose. Requires `enabled`, by the same AND rule as `share`.
+       *
+       * The suggestion path already existed and its failure mode is measured: the agent reads
+       * the miss, skips the second tool, and answers "no record" over an archive it never
+       * consulted. With this on, a negative is a claim verified against both stores.
+       */
+      fallback?: boolean;
     };
   };
   memory?: {
