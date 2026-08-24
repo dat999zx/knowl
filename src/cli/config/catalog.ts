@@ -63,11 +63,39 @@ function wrap(text: string, indent: string, width = 96): string[] {
   return lines;
 }
 
+/**
+ * The value a three-mode ladder uses to spell its own off state.
+ *
+ * Every enum in `CONFIG_FIELDS` that HAS an off state spells it this way and lists it first --
+ * `impact.gate`, `capture.nudge`, `capture.events` -- because the values are ordered by what
+ * they cost the person running them. An enum without this in its list (`capture.scope`,
+ * `ai.provider`, `search.vector.preset`) has no off state, and every value counts as on.
+ */
+const OFF = 'off';
+
 /** Whether a row counts as switched on, which is what the marker and the hint key off. */
 export function isOn(field: ConfigField, value: unknown): boolean {
   if (field.type === 'boolean') return value === true;
+  // An enum sitting at `off` is off. Without this it rendered ● beside the literal word `off`
+  // on the same line -- the marker contradicting the value it was printed next to -- and
+  // counted toward "N of M on", so `knowl status` reported two disarmed features as armed.
+  if (field.type === 'enum') return value !== OFF && value !== undefined && value !== null && value !== '';
   if (Array.isArray(value)) return value.length > 0;
   return value !== undefined && value !== null && value !== '';
+}
+
+/**
+ * What to suggest for a setting that is off: `true` for a switch, and for a ladder the first
+ * value above off.
+ *
+ * First-above-off rather than the last, deliberately: the mode lists are ordered "nothing, then
+ * measurement, then refusal", so the cheapest step up is both the safest recommendation and the
+ * one the schema comment says the modes are meant to be adopted in.
+ */
+function turnOnValue(field: ConfigField): string | undefined {
+  if (field.type === 'boolean') return 'true';
+  if (field.type === 'enum') return field.values?.find(candidate => candidate !== OFF);
+  return undefined;
 }
 
 /**
@@ -212,8 +240,12 @@ export function renderConfigCatalog(rows: CatalogRow[], options: RenderOptions =
       if (row.shadowed && field.derivedFrom) {
         // Says who owns it instead of offering the edit, which is the whole point of the flag.
         lines.push(`      set by ${field.derivedFrom}; writing this key changes nothing`);
-      } else if (!isOn(field, row.value) && field.type === 'boolean') {
-        lines.push(`      ${command} config set ${field.key} true`);
+      } else if (!isOn(field, row.value)) {
+        // Ladders get a hint too, not just switches. Gating this on `boolean` left the two
+        // settings that most need one -- a disarmed `impact.gate` and `capture.events` -- with
+        // no way shown to arm them, which is the one job this command has.
+        const target = turnOnValue(field);
+        if (target) lines.push(`      ${command} config set ${field.key} ${target}`);
       }
     }
   }

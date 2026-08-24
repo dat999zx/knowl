@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildConfigCatalog, formatFeatureSummary, isSwitch, renderConfigCatalog, renderConfigReference } from '../../src/cli/config/catalog.js';
+import { buildConfigCatalog, formatFeatureSummary, isOn, isSwitch, renderConfigCatalog, renderConfigReference } from '../../src/cli/config/catalog.js';
 import { CONFIG_FIELDS, type ConfigField } from '../../src/cli/config/schema.js';
 import { DEFAULT_CONFIG } from '../../src/core/config.js';
 
@@ -243,6 +243,57 @@ describe('buildConfigCatalog', () => {
  * the catalog is reachable at all; a command nobody is told about is the failure mode this was
  * meant to avoid.
  */
+/**
+ * The three-mode ladders, which the first pass got wrong in both directions at once: an enum
+ * sitting at `off` rendered ● beside the literal word `off` on the same line, and the hint was
+ * gated on `type === 'boolean'` so the settings that most needed one never got it. Live output
+ * said "15 of 20 on" where two of the fifteen printed `off`.
+ */
+describe('an enum that spells its own off state', () => {
+  const gate = field({
+    key: 'impact.gate', label: 'Write gate', type: 'enum',
+    values: ['off', 'shadow', 'enforce'] as const,
+  });
+
+  it('is off when it sits at off, and on at every other mode', () => {
+    expect(isOn(gate, 'off')).toBe(false);
+    expect(isOn(gate, 'shadow')).toBe(true);
+    expect(isOn(gate, 'enforce')).toBe(true);
+  });
+
+  it('renders the unlit marker rather than one contradicting the value beside it', () => {
+    const lines = renderConfigCatalog([{ field: gate, value: 'off' }]);
+    expect(lines.some(line => line.includes('○') && line.includes('off'))).toBe(true);
+    expect(lines.some(line => line.includes('●'))).toBe(false);
+  });
+
+  it('offers the first mode above off, which is the order the modes are adopted in', () => {
+    const lines = renderConfigCatalog([{ field: gate, value: 'off' }]);
+    expect(lines.join('\n')).toContain('knowl config set impact.gate shadow');
+  });
+
+  it('offers nothing once it is already armed', () => {
+    const lines = renderConfigCatalog([{ field: gate, value: 'enforce' }]);
+    expect(lines.join('\n')).not.toContain('config set impact.gate');
+  });
+
+  it('counts an enum with no off state as on at its default', () => {
+    // `capture.scope` and `ai.provider` list no `off`, so every value they hold is on.
+    const scope = field({
+      key: 'capture.scope', type: 'enum', values: ['conversation', 'turn'] as const,
+    });
+    expect(isOn(scope, 'conversation')).toBe(true);
+  });
+
+  it('does not count a disarmed ladder toward the status summary', () => {
+    const summary = formatFeatureSummary([
+      { field: gate, value: 'off' },
+      { field: field({ key: 'capture.nudge', type: 'enum', values: ['off', 'shadow'] as const }), value: 'shadow' },
+    ]);
+    expect(summary).toContain('1 of 2');
+  });
+});
+
 describe('formatFeatureSummary', () => {
   it('counts how many features are on out of how many exist', () => {
     const summary = formatFeatureSummary([
