@@ -8,6 +8,7 @@ import { runIndexPass } from '../../src/transcripts/index-pass.js';
 import * as parse from '../../src/transcripts/parse.js';
 import { encodeProjectDir } from '../../src/transcripts/paths.js';
 import { fuseRankings, searchTranscripts } from '../../src/transcripts/search.js';
+import { transcriptVectorFingerprint } from '../../src/transcripts/quantize.js';
 import type { KnowledgeEmbedder } from '../../src/store/vector-index.js';
 
 // Counts streaming passes. See tests/transcripts/read.test.ts for why spying on
@@ -303,7 +304,8 @@ describe('embedPendingMessages', () => {
     await embedPendingMessages({ dbPath, embedder: other });
 
     const rows = (await client.execute('SELECT DISTINCT fingerprint FROM transcript_vectors')).rows;
-    expect(rows.map(r => String(r.fingerprint))).toEqual(['stub:different']);
+    expect(rows.map(r => String(r.fingerprint)))
+      .toEqual([transcriptVectorFingerprint('stub:different')]);
   });
 
   it('stops at a deadline and reports itself incomplete', async () => {

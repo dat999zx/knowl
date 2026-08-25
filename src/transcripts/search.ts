@@ -1,7 +1,7 @@
 import type { Client } from '@libsql/client';
 import type { KnowledgeEmbedder } from '../store/vector-index.js';
 import { readTranscriptIndexState } from './database.js';
-import { dotQuantized } from './quantize.js';
+import { dotQuantized, transcriptVectorFingerprint } from './quantize.js';
 import { readMessagesFor } from './read.js';
 
 export type TranscriptHit = {
@@ -445,7 +445,7 @@ export async function searchTranscripts(
     try {
       const vector = await input.embedder.embedQuery(query);
       if (vector?.length) {
-        fingerprint = input.embedder.profileFingerprint;
+        fingerprint = transcriptVectorFingerprint(input.embedder.profileFingerprint);
         rankings.push(await semanticRank(client, vector, fingerprint, limit * 2, scope));
       }
     } catch {
