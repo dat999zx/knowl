@@ -375,6 +375,34 @@ export async function semanticRank(
  * absent, not adverse, and reading absence as a low score is how a half-indexed archive would
  * report every query as off-subject. `undefined` therefore means unjudged, never "fine".
  */
+/**
+ * The floor for TRANSCRIPT similarity -- which is not the floor for knowledge atoms, and is
+ * deliberately `null` because nobody has measured one.
+ *
+ * `null` means no verdict: `judgeRelevanceFloor` returns `undefined`, neither surface acts on it,
+ * and `cosine` is still published so a caller keeps the number and loses only the opinion.
+ *
+ * WHY THIS IS NOT `embedder.relevanceFloor` (issue #189). It was, and it was wrong. Those floors
+ * come from `docs/evals/per-model-floor.md`, measured over 50 knowledge-atom fixtures. Transcript
+ * messages are a different corpus with a different cosine distribution, and borrowing the number
+ * across corpora is the same mistake that document exists to prevent one level up -- it proved a
+ * floor cannot be borrowed across MODELS, and said nothing licensing a loan across CORPORA.
+ *
+ * Measured on a real 13MB archive with granite-small's 0.76 knowledge floor applied, every query
+ * was judged off-subject including ones the archive answers (`relevance floor cosine abstain`
+ * 0.4946, `transcript search fusion` 0.4817, `how do we do releases` 0.5626). On the typed tool
+ * that is a false notice; through `search.transcripts.fallback`, which withholds an off-subject
+ * page, it silently reported "nothing here" over an archive holding the answer.
+ *
+ * THE BAR FOR ARMING THIS. Not a guess and not another borrow: a measurement on transcript data
+ * quantized under `QUANTIZE_VERSION` 2 or later -- the pre-#186 scale was depressed ~25% by a
+ * clipped component, so anything measured before that measured the clip -- using the two-class
+ * probe method in `docs/evals/preset-floor-sweep.md`, general AND technical off-subject probes
+ * against real on-topic queries. If the classes overlap, as they did for knowledge atoms, this
+ * stays null and that is the honest answer rather than a failure.
+ */
+export const TRANSCRIPT_RELEVANCE_FLOOR: number | null = null;
+
 export function judgeRelevanceFloor(hits: TranscriptHit[], floor: number | null): boolean | undefined {
   if (floor === null) return undefined;
   const judged = hits.map(hit => hit.cosine).filter((value): value is number => value !== undefined);
@@ -456,7 +484,7 @@ export async function searchTranscripts(
 
   const fused = fuseRankings(rankings, limit);
 
-  const belowRelevanceFloor = judgeRelevanceFloor(fused, input.embedder?.relevanceFloor ?? null);
+  const belowRelevanceFloor = judgeRelevanceFloor(fused, TRANSCRIPT_RELEVANCE_FLOOR);
 
   // Bodies are read only for what is actually returned -- ranking never touches disk. Grouped
   // by file so one file is opened once for all of its hits, and each hit inside it is read by

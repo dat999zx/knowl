@@ -5,7 +5,10 @@ import { resolveStorage } from '../store/storage-roles.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
 import { isTranscriptSharingEnabled } from './config.js';
 import { openTranscriptDb, TranscriptIndexMissingError } from './database.js';
-import { fuseRankings, judgeRelevanceFloor, searchTranscripts, type TranscriptHit } from './search.js';
+import {
+  fuseRankings, judgeRelevanceFloor, searchTranscripts,
+  TRANSCRIPT_RELEVANCE_FLOOR, type TranscriptHit,
+} from './search.js';
 
 export type FederatedTranscriptHit = TranscriptHit & { repo: string };
 export type TranscriptSkipReason = 'absent' | 'not-shared' | 'unreadable';
@@ -152,7 +155,7 @@ export async function searchTranscriptsFederated(input: {
   // Re-judged on the FUSED page rather than carried from any one repo: the question is whether
   // the query is about anything the workspace holds, and a repo that missed says nothing about
   // the one that hit.
-  const belowRelevanceFloor = judgeRelevanceFloor(hits, input.embedder?.relevanceFloor ?? null);
+  const belowRelevanceFloor = judgeRelevanceFloor(hits, TRANSCRIPT_RELEVANCE_FLOOR);
 
   return { hits, skipped, coverage, ambiguous, localRepo: localName, belowRelevanceFloor };
 }

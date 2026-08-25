@@ -520,21 +520,20 @@ canonical tool table below:
   `transcript://<repo>/<session>#L<line>` locators.
 - **`knowl_transcript_read`** — open one locator with the surrounding turns.
 
-Transcript search carries the same relevance verdict `knowl_query` does, and it means the same
-narrow thing: **off-subject, not unanswerable** (see [above](#what-abstained-means-and-what-it-does-not)).
-When a semantic half ran and the best hit falls below the model's floor, the results arrive under a
-`NO CONFIDENT MATCH` notice rather than silently — before this, a query of pure gibberish returned
-plausible-looking hits with nothing marking them.
+Transcript hits carry `cosine`, the absolute similarity on a stable scale — the one number that
+means the same thing from one search to the next, where the fused `score` is a rank-position total
+and cannot. Use it to judge how strong a match actually is.
 
-The two callers are treated differently on purpose:
+**There is currently no relevance verdict on transcript search, deliberately.** The machinery
+exists and is wired, but its floor is `null`, so no `NO CONFIDENT MATCH` notice fires and the
+`search.transcripts.fallback` chain withholds nothing. The per-model floors are measured over
+knowledge-atom fixtures, and a floor cannot be borrowed across corpora any more than across models
+— applied to transcripts it judged *every* query off-subject, including ones the archive answers,
+which through the fallback chain reported "nothing here" over an archive holding the answer.
 
-- **You typed `knowl_transcript_search`** — you asked for whatever is closest, so weak hits are
-  returned with the notice attached and you judge the bodies.
-- **The `search.transcripts.fallback` chain ran it for you** after a `knowl_query` miss — nobody
-  asked, so an off-subject page is withheld and reported as a verified negative. Appending
-  nearest-neighbour noise there spends context at the moment the agent is already lost, and it was
-  measured doing exactly that: across 40 replayed real misses it recovered **0**, while 7 of 15
-  healthy queries would have had junk appended.
+Arming it needs a measurement on transcript data using the two-class probe method in
+[`evals/preset-floor-sweep.md`](evals/preset-floor-sweep.md). If the classes overlap there as they
+did for knowledge atoms, it stays off — `cosine` published with no verdict is the honest answer.
 
 Disabling the feature **deletes** `.knowl/transcripts.db`. An index nothing will refresh is not
 something to leave on the disk of the person who just turned it off.
