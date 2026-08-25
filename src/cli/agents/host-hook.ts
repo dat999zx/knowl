@@ -161,6 +161,52 @@ function toolCaptureKey(toolName: string, input: Record<string, unknown>): strin
   }
 }
 
+/**
+ * The decision a user just made, when the tool they answered was a question.
+ *
+ * `decision` events have had an extractor since the beginning (`session-candidates.ts`, the
+ * rule that turns one into a decision atom) and NOTHING has ever emitted one -- measured at
+ * zero across the whole store. This is the emitter. A question the user actually answered is
+ * the highest-signal capture point in a session: a real choice, made by a person, with the
+ * options they rejected sitting next to it.
+ *
+ * WHAT IS DEPRECIATED ON PURPOSE: only the question header and the label of the option chosen,
+ * and only when that label matches one the tool itself offered. Both are text the AGENT wrote.
+ * A free-text "Other" answer and any notes the user typed are dropped, because the hook
+ * boundary does not carry user prose -- the same rule that keeps prompts, stdout and diffs out
+ * of capture, and the one the README's "never prompts, transcripts" promise rests on. Matching
+ * against the offered labels enforces that mechanically instead of trusting a field name.
+ */
+function questionDecision(input: Record<string, unknown>, raw: Record<string, unknown>): string | undefined {
+  const questions = Array.isArray(input.questions) ? input.questions : undefined;
+  if (!questions) return undefined;
+  // Hosts have put the selections in either place; neither spelling is guaranteed across
+  // versions, so read both rather than pick one and silently capture nothing when it moves.
+  const answers = recordValue(recordValue(raw.tool_response)?.answers)
+    ?? recordValue(recordValue(raw.toolResponse)?.answers)
+    ?? recordValue(input.answers);
+  if (!answers) return undefined;
+  const decided: string[] = [];
+  for (const entry of questions) {
+    const question = recordValue(entry);
+    if (!question) continue;
+    const asked = stringValue(question.question);
+    if (!asked) continue;
+    const chosen = stringValue(answers[asked]);
+    if (!chosen) continue;
+    const offered = (Array.isArray(question.options) ? question.options : [])
+      .map(option => stringValue(recordValue(option)?.label))
+      .filter((label): label is string => Boolean(label));
+    // An answer that is not one of the offered labels is the user's own words. Drop it.
+    if (!offered.includes(chosen)) continue;
+    const rejected = offered.filter(label => label !== chosen);
+    decided.push(rejected.length > 0
+      ? `${stringValue(question.header) ?? asked}: ${chosen} (over ${rejected.join(', ')})`
+      : `${stringValue(question.header) ?? asked}: ${chosen}`);
+  }
+  return decided.length > 0 ? decided.join('; ').slice(0, MAX_STRING) : undefined;
+}
+
 function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'toolName' | 'knowlTool' | 'knowlToolName' | 'knowlChangeKeys' | 'captureKey'> {
   const input = toolInput(raw);
   const toolName = stringValue(raw.tool_name) ?? stringValue(raw.toolName) ?? '';
@@ -177,6 +223,8 @@ function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: 
   if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, ...named, knowlTool, ...changeKeys };
 
   const captureKey = toolCaptureKey(toolName, input);
+  const decision = questionDecision(input, raw);
+  if (decision) return { type: 'decision', payload: { text: decision }, ...named, knowlTool, captureKey, ...changeKeys };
   const paths = changedPaths(projectRoot, { ...raw, ...input });
   if (paths.length > 0) return { type: 'checkpoint', payload: { changedPaths: paths }, ...named, knowlTool, captureKey, ...changeKeys };
   return { type: 'checkpoint', payload: { summary: `${toolName || 'Tool'} completed`.slice(0, MAX_STRING) }, ...named, knowlTool, captureKey, ...changeKeys };
