@@ -3,15 +3,26 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.12.0 — 2026-08-25
 
-Knowl stops claiming more than it can show. Two independent threads arrived at the same shape in
-the same week: the relevance floor was telling callers a store lacked an answer when all it can
-detect is an off-subject question, and the reversal detector was listing candidate contradictions
-at a rate that only survives as a passing note. Both now say the narrower true thing.
+Knowl stops claiming more than it can show, and stops silently losing what it can.
 
-Thanks to **[@williamttruong](https://github.com/williamttruong)** for the conflicts work and for
-#183.
+Several threads arrived at the same shape in one week. The relevance floor was telling callers a
+store lacked an answer when all it can detect is an off-subject question. The reversal detector was
+listing candidate contradictions at a rate that only survives as a passing note. Both now say the
+narrower true thing, and where no measurement supports a verdict, none is given.
+
+The other half is the opposite failure — machinery quietly doing less than it reported. Cross-repo
+search had been keyword-only for any workspace whose repos sat on different Knowl versions, and
+every transcript vector was stored missing a quarter of its length. Neither surfaced as an error;
+both returned results that looked fine.
+
+**Upgrading with transcript search on? Run `knowl reindex --transcripts`** — the stored vectors are
+replaced, and nothing else asks you to act.
+
+Thanks to **[@williamttruong](https://github.com/williamttruong)**, who found or fixed most of what
+is below: the conflicts work, #183, the quantization clip, the federation diagnosis, and the
+checkpoint.
 
 ### The relevance floor says off-subject, not unanswerable
 
@@ -35,20 +46,27 @@ because it is too coarse. Neither is a tuning problem, so nothing here is a new 
 notice, the CLI note, the `abstained` doc comment and a new `docs/reference.md` section now state
 the narrow reading and point the caller at judging the results.
 
-### `knowl_transcript_search` reports when nothing matches
+### Transcript hits carry an absolute similarity you can judge
 
 It returned hits for input with no semantic content at all — `zzzzz qqqqq xxxxx vvvvv` came back
 with plausible-looking history and nothing marking it. The number needed to tell noise from recall
 already existed and was being discarded: `semanticRank` computes a real cosine, then Reciprocal Rank
 Fusion replaces every score with a total built from *positions*.
 
-`cosine` now survives the fusion, and an off-subject page is reported as one. **The two callers are
-treated differently on purpose:** when you type `knowl_transcript_search` you asked for whatever is
-closest, so weak hits come back with the notice attached; when the `search.transcripts.fallback`
-chain runs it for you after a miss, an off-subject page is withheld as a verified negative. Nobody
-asked for that search, and it fires exactly when the agent is already lost — measured across 40
-replayed real misses, it recovered **0**, while 7 of 15 healthy queries would have had junk
-appended.
+`cosine` now survives the fusion, so a caller can tell a strong match from the least bad of five
+bad ones.
+
+**The verdict built on it is deliberately switched off, and that is the honest state.** The
+machinery is wired — a notice on the typed tool, withholding on the automatic
+`search.transcripts.fallback` chain — but its floor is `null`, so neither fires. The per-model
+floors are measured over knowledge-atom fixtures, and a floor cannot be borrowed across corpora
+any more than across models: applied to transcripts it judged **every** query off-subject,
+including ones the archive answers, which through the fallback chain reported "nothing here" over
+an archive holding the answer. Arming it needs a measurement on transcript data, and if the classes
+overlap there as they did for atoms it stays off.
+
+So transcript search behaves as it always did, except that every hit now carries an absolute
+`cosine` you can judge for yourself.
 
 `contributions.coverage` is also published now, for the same reason `cosine` was: it is the one
 lexical number that means the same thing in every repo, and it was being multiplied into a
@@ -72,6 +90,71 @@ active items, so such a pair could appear nowhere at all.
 
 **`knowl conflicts` is also 22× faster** — 1,796ms to 79.5ms on a real 1,033-item store — now that
 the scan tokenizes each title once instead of re-tokenizing both inside a predicate on an O(n²) loop.
+
+### Cross-repo search stopped silently losing half itself
+
+**Fixes a silent failure that needed no misconfiguration to reach.** Federation applied *this*
+repo's embedding fingerprint to every linked repo's store, so a peer whose fingerprint differed
+contributed **no vector candidates at all** — cross-repo search quietly fell back to keyword-only
+while still returning rows, which reads as perfectly healthy.
+
+The link-time compatibility check compares provider, model, dtype and pooling. The filter applied
+to a peer's vectors compares a fingerprint that *also* covers the embedding recipe version. So two
+repos with identical vector config diverge the moment they sit on different Knowl versions, and
+nothing re-checks after linking. A cloud-connected repo cannot converge even in principle — its
+atoms must stay on the model its workspace serves — so `doctor`'s advice to align was unfollowable
+for exactly the repos that needed it.
+
+Each peer is now searched under **its own** profile, ranked against its own scale and judged
+against its own floor. Two consequences worth knowing: cosines from different models are never
+compared, so a model whose scores naturally run high cannot outrank one whose run low on scale
+alone; and a peer whose model cannot be loaded here degrades to keyword-only for that repo rather
+than failing the search. Repos sharing a profile still share one range, because their scores
+genuinely are comparable.
+
+Cost: one extra forward pass per distinct profile, and both models' weights resident.
+
+Thanks to **[@williamttruong](https://github.com/williamttruong)** for the diagnosis and for
+measuring what it cost — 0.5442 against 0.4157 MRR@10 over 160 queries on three corpora, which is
+to say the invisible half was also the better-retrieving half.
+
+### Transcript vectors were storing a quarter less than they measured
+
+**Action required if you use transcript search: run `knowl reindex --transcripts`.**
+
+Quantization clipped every component above `6/sqrt(dims)` — 0.3062 for the default model — on the
+reasoning that L2-normalised components sit near six sigma of that. True of the average component,
+false of the one that matters: `granite-small-en-r2` carries a rogue component near **0.75**, and
+clipping that single value cost **25% of the vector's norm** and ~22° of direction.
+
+Nothing caught it because the scoring function documents itself as cosine "since both sides are
+unit-length", and the stored side quietly was not. Every transcript score was `cos(q,d) × ‖d‖` with
+`‖d‖` ranging 0.69–0.81 across a real 9,000-message archive — a content-independent ±8%
+reweighting of the ranking, and a depressed cosine scale on top.
+
+Fixed with a per-vector scale, which needed no schema change: `scale` was already a per-row column.
+Old rows are invalidated through a new quantization version folded into the transcript fingerprint,
+so an ordinary reindex replaces them — deliberately *not* the shared embedding-recipe version,
+which is a cross-repo contract and would have forced a full knowledge reindex for a
+transcript-local change.
+
+Found and fixed by **[@williamttruong](https://github.com/williamttruong)**.
+
+### Ask what the session is relying on but never checked
+
+New: `capture.checkpoint`, off by default, armed by `knowl posture maximal`. Every 20 assistant
+turns it asks one question — **what is this session currently relying on that it has not actually
+verified?** A number taken from a summary rather than the source, a fix called done without
+re-running its proof, an attribution never confirmed, one observation generalised into a rule.
+
+It **asks the agent and calls no model**, so it costs nothing and adds no network dependency to the
+capture path — which is what let it join `posture maximal` at all. It **never withholds a stop**:
+flags are recorded so a durable write settles them, but they are excluded from the gate that can
+block, because that gate is for things that happened and a checkpoint fires on a counter.
+
+The idea, the measurements behind it, and the caution that a self-audit is not the same instrument
+as the independent judge those measurements used, are all
+**[@williamttruong](https://github.com/williamttruong)**'s.
 
 ## 5.11.0 — 2026-08-24
 
