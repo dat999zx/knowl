@@ -32,6 +32,7 @@ export type ConfigKey =
   | 'capture.nudge'
   | 'capture.events'
   | 'capture.scope'
+  | 'capture.checkpoint'
   | 'cloud.autoStage'
   | 'updateCheck.enabled';
 
@@ -108,6 +109,7 @@ const IMPACT_GATE_MODES = ['off', 'shadow', 'enforce'] as const;
 // than shared: they mean different things (one refuses a write, one withholds a stop), and a
 // shared list is how a fourth mode added for one of them silently becomes settable on the other.
 const CAPTURE_NUDGE_MODES = ['off', 'shadow', 'enforce'] as const;
+const CHECKPOINT_MODES = ['off', 'ask'] as const;
 const CAPTURE_SCOPES = ['conversation', 'turn'] as const;
 
 export const CONFIG_FIELDS: ConfigField[] = [
@@ -285,6 +287,12 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: enumValue(CAPTURE_NUDGE_MODES), defaultValue: 'off',
     label: 'Event lessons',
     description: 'Watch for destructive commands and user corrections, and hold each as a pending lesson until a durable write settles it: shadow records what it would have said, enforce nudges mid-turn and withholds a stop over unstored lessons, at most three times per conversation.',
+  },
+  {
+    key: 'capture.checkpoint', category: 'Capture', type: 'enum', values: CHECKPOINT_MODES,
+    parse: enumValue(CHECKPOINT_MODES), defaultValue: 'off',
+    label: 'Assumption checkpoint',
+    description: 'Every 20 assistant turns, ask the session what it is currently relying on that it never verified -- a number taken from a summary rather than the source, a fix called done without re-running its proof. Asks in the free mid-turn channel and never withholds a stop.',
   },
   {
     key: 'capture.scope', category: 'Capture', type: 'enum', values: CAPTURE_SCOPES,

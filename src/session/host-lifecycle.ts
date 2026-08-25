@@ -9,15 +9,20 @@ import {
   areSkillNudgesEnabled, driftReminderEvery, isDriftBackoffEnabled, loadConfig, shouldSendDriftReminder,
 } from '../core/config.js';
 import { isImpactEnabled } from '../store/impact-config.js';
-import { captureEventsMode, captureNudgeMode, captureScope } from '../store/capture-config.js';
+import {
+  captureCheckpointMode, captureEventsMode, captureNudgeMode, captureScope,
+  CHECKPOINT_EVERY_TURNS,
+} from '../store/capture-config.js';
 import { classifyDestructiveCommand } from '../core/lesson-signals.js';
 import {
   claimLessonBlock,
   markPendingLessons,
+  claimAssumptionCheckpoint,
   openPendingLessons,
   recordCorrectionLesson,
   recordDestructiveLesson,
   renderCorrectionNudge,
+  renderAssumptionCheckpoint,
   renderLessonNudge,
   renderLessonStopReason,
   resolveLessonsBefore,
@@ -1063,6 +1068,22 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       // read or wrote the file it named -- but never for a failed one: a tool that failed
       // returned no contents, so a read-set row from it would record a belief the agent was
       // never given, and the certain tier would later interrupt it over text it never saw.
+      // Which checkpoint window this conversation is in, or null when the feature is off.
+      //
+      // The read is gated on the mode so it costs nothing for anyone who has not armed it --
+      // and when armed it is one primary-key lookup, unlike the turn counters above which ride
+      // on a write that was happening anyway. Counted in TURNS rather than tool events, because
+      // the sessions worth checkpointing are long on reasoning and short on tools, which is the
+      // same reason `MIN_SUBSTANTIVE_TURNS` counts turns.
+      const checkpointWindow = captureCheckpointMode(captureConfig ?? undefined) === 'ask'
+        ? await readCaptureOutcome(conversationKey(input))
+          .then(outcome => {
+            const turns = outcome?.turns ?? 0;
+            const window = Math.floor(turns / CHECKPOINT_EVERY_TURNS);
+            return window >= 1 ? window : null;
+          })
+          .catch(() => null)
+        : null;
       const impact = input.status === 'failed' ? [] : await runToolEventImpact(input, started.session.id);
       // Adaptive continuation reminder: only nudge Claude after a run of tool calls
       // that ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
@@ -1166,6 +1187,20 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
             // Only a durable write quiets this one, by zeroing the verdict itself.
             await resetHostSuccessfulToolCount(key);
             hostOutput = profile.midTurnContext(renderTurnCapturePrompt());
+          } else if (checkpointWindow !== null
+            && await claimAssumptionCheckpoint(conversationKey(input), checkpointWindow)) {
+            // Below every observed-event branch and above the drift reminder, deliberately.
+            //
+            // It must not displace a change card or a destructive-command lesson: those carry
+            // something that HAPPENED, while this is raised on a counter. But it is strictly
+            // better than the byte-identical continuation reminder it sits above -- a specific
+            // question about this session's own work against a generic nudge -- which is the
+            // same trade the skill nudges already make for this slot.
+            //
+            // Not reset here: unlike the branches above, this is not a "go use memory" signal,
+            // and zeroing the drift counter on a timer would mute the reminder for sessions
+            // that genuinely are ignoring Knowl.
+            hostOutput = profile.midTurnContext(renderAssumptionCheckpoint());
           } else if (input.knowlTool) {
             // Adaptive continuation reminder: only nudge after a run of tool calls that
             // ignored Knowl. Using a Knowl tool resets the drift counter, so an agent

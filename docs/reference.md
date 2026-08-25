@@ -242,6 +242,30 @@ Titles are capped separately at 200 characters, and previews of things retrievab
 elsewhere — evidence excerpts, timeline assertions, skill markdown, `knowl_skill_run` output —
 stay at 600.
 
+#### The assumption checkpoint
+
+`capture.checkpoint` (`off` by default, `ask` to arm; `knowl posture maximal` arms it) asks one
+question every 20 assistant turns: **what is this session currently relying on that it never
+verified?**
+
+It is looking for claims that became load-bearing without being checked — a number taken from a
+summary rather than the source, a fix called done without re-running its proof, an attribution
+never confirmed, one observation generalised into a rule.
+
+It **asks the agent**, and calls no model. The proposal it came from measured a separate judge
+reading recorded sessions, because offline that is the only thing that can answer; in a live
+session the agent already holds the context, so a prompt costs nothing and keeps the capture path
+free of network calls. That matters concretely: `agent-hook` is a fresh process per tool call, and
+an inline model call there would block every tool the agent runs.
+
+The honest caveat: a self-audit is not the same instrument as an independent judge, so the ~90%
+precision measured for the judge version does not transfer, and this ships unmeasured on that axis.
+
+It **never withholds a stop.** Checkpoint flags are recorded as pending lessons so a durable write
+settles them, but they are excluded from the gate that can block — that gate is for things that
+happened, and a checkpoint fires on a counter. In the mid-turn channel it ranks below every
+observed-event card and above the generic continuation reminder.
+
 #### Cross-repo search when repos embed differently
 
 Each linked repo is searched under **its own** embedding profile, and its results are ranked

@@ -2875,7 +2875,7 @@ configCommand.on('command:*', () => {
  */
 const POSTURE_KEYS = [
   'search.transcripts.enabled', 'search.transcripts.fallback',
-  'capture.nudge', 'capture.events', 'capture.scope',
+  'capture.nudge', 'capture.events', 'capture.scope', 'capture.checkpoint',
   'impact.enabled', 'impact.gate',
 ] as const;
 const MAXIMAL_POSTURE: Array<{ key: (typeof POSTURE_KEYS)[number]; raw: string }> = [
@@ -2884,6 +2884,9 @@ const MAXIMAL_POSTURE: Array<{ key: (typeof POSTURE_KEYS)[number]; raw: string }
   { key: 'capture.nudge', raw: 'enforce' },
   { key: 'capture.events', raw: 'enforce' },
   { key: 'capture.scope', raw: 'turn' },
+  // Armed here and nowhere else. It asks the agent rather than calling a model, so unlike the
+  // rest of maximal it costs no provider and no network -- which is why it can be on at all.
+  { key: 'capture.checkpoint', raw: 'ask' },
   { key: 'impact.enabled', raw: 'true' },
   // Shadow, not enforce, even here: the write gate refuses tool calls, and its own contract
   // requires the measured precision bar before anything is permitted to block.
