@@ -69,6 +69,45 @@ describe('host hook normalization', () => {
     expect(JSON.stringify([success, failure])).not.toContain('discard me');
   });
 
+  it('turns an answered question into a decision event carrying the rejected options', () => {
+    const result = normalizeHostHook('claude', 'PostToolUse', {
+      session_id: 'session-decision',
+      cwd: ROOT,
+      tool_name: 'AskUserQuestion',
+      tool_input: {
+        questions: [{
+          question: 'Which database should we use?',
+          header: 'Database',
+          options: [{ label: 'SQLite' }, { label: 'Postgres' }, { label: 'MongoDB' }],
+        }],
+      },
+      tool_response: { answers: { 'Which database should we use?': 'SQLite' } },
+    });
+
+    expect(result.type).toBe('decision');
+    expect(result.payload).toMatchObject({ text: 'Database: SQLite (over Postgres, MongoDB)' });
+  });
+
+  it('drops a free-text answer rather than storing words the user typed', () => {
+    const result = normalizeHostHook('claude', 'PostToolUse', {
+      session_id: 'session-freetext',
+      cwd: ROOT,
+      tool_name: 'AskUserQuestion',
+      tool_input: {
+        questions: [{
+          question: 'Which database should we use?',
+          header: 'Database',
+          options: [{ label: 'SQLite' }, { label: 'Postgres' }],
+        }],
+      },
+      tool_response: { answers: { 'Which database should we use?': 'Private answer nobody offered' } },
+    });
+
+    // Not a decision, and the sentence the user typed reaches no field of the event.
+    expect(result.type).toBe('checkpoint');
+    expect(JSON.stringify(result)).not.toContain('Private answer');
+  });
+
   it('normalizes Cursor shell and file-edit events', () => {
     const command = normalizeHostHook('cursor', 'afterShellExecution', {
       conversation_id: 'session-3',
