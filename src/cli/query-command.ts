@@ -5,6 +5,7 @@ import { rankKnowledge, type RankOptions } from '../store/agent-query.js';
 import { queryKnowledgeBase } from '../store/queries.js';
 import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
+import { peerVectorResolver } from '../ai/embeddings.js';
 
 /**
  * How many results `knowl query` returns when no `--limit` is given.
@@ -122,6 +123,8 @@ export async function runCliQuery(input: {
   if (active) {
     const federated = await queryFederated({
       workspace: active, query: input.query ?? '', limit, vector,
+      // See the MCP call site: a peer's vectors live under the peer's profile (#187).
+      peerVector: peerVectorResolver(),
     });
     const groups = federated.groups.map(group => ({
       repo: group.repo,

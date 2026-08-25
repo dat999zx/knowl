@@ -170,10 +170,34 @@ export async function queryFederated(input: {
   /**
    * The local vector config, including the query embedding when one was produced.
    *
-   * A workspace pins one embedding identity (`assertSafeToLink`), so the peer's vectors live
-   * in the same space and the same provider/model filter is the right one to apply there.
+   * Applies to THIS repo's store and to the cloud replica, which is embedded under this
+   * project's own profile. Peers get `peerVector` instead -- see below for why they must.
    */
   vector?: RankOptions['vector'];
+  /**
+   * The vector option for one peer, embedded under THAT repo's profile.
+   *
+   * This file used to hand `vector` to every peer, on the stated grounds that a workspace pins
+   * one embedding identity at link time. It does not hold (#187). `assertEmbeddingCompatible`
+   * compares four fields -- provider, model, dtype, pooling -- while the filter applied to a
+   * peer store compares `profile_fingerprint`, a hash of those four PLUS
+   * `EMBEDDING_BATCH_POLICY` and `EMBED_RECIPE_VERSION`. So two repos with identical vector
+   * config mismatch whenever they sit on different knowl versions, and nothing re-checks after
+   * linking. A cloud-connected repo cannot align even in principle: its atoms must stay on the
+   * cloud's serving model while the manifest pins another.
+   *
+   * The failure was silent. A mismatched peer contributed zero vector candidates and the search
+   * degraded to BM25-only while still returning rows, so it read as healthy.
+   *
+   * Fusing per-repo native models is what this file already assumes elsewhere: ranking merges
+   * positions rather than raw scores precisely because scores are not comparable across repos,
+   * so arctic at 0.16 and granite at 0.76 never have to meet on one scale.
+   *
+   * Injected rather than imported: `workspace` and `ai` are the same layer, so `workspace -> ai`
+   * is a sideways edge the architecture test forbids. Returning `undefined` degrades that one
+   * peer to lexical, which is the honest answer when its model cannot be loaded here.
+   */
+  peerVector?: (peer: { name: string; root: string }, query: string) => Promise<RankOptions['vector'] | undefined>;
 }): Promise<FederatedResult> {
   const cap = input.perRepoCap ?? DEFAULT_PER_REPO_CAP;
   const named = input.repos && input.repos.length > 0 ? input.repos : null;
@@ -201,6 +225,28 @@ export async function queryFederated(input: {
     }
   }
 
+  // Per-corpus embedding facts, filled in as each peer is searched. Empty when every peer used
+  // this repo's profile, which is what keeps a single-profile workspace scoring exactly as it
+  // did: `scoreCandidates` falls back to one shared range and one floor.
+  //
+  // Every corpus gets an entry, including this repo's and the replica's, so that a peer sharing
+  // this repo's profile lands in the SAME bucket rather than a differently-named one. Keying
+  // local implicitly and peers explicitly would split a range that is genuinely shared, which is
+  // the regression the archetype baseline catches.
+  const semanticScaleByCorpus = new Map<string, string>();
+  const minRelevanceByCorpus = new Map<string, number | null>();
+  if (input.vector?.enabled && input.vector.embedding) {
+    const localScale = input.vector.profileFingerprint ?? '';
+    const localFloor = input.vector.relevanceFloor ?? null;
+    semanticScaleByCorpus.set(input.workspace.repo, localScale);
+    minRelevanceByCorpus.set(input.workspace.repo, localFloor);
+    // The replica is embedded under this project's own profile, so it shares both.
+    if (input.workspace.cloud) {
+      semanticScaleByCorpus.set(input.workspace.cloud.workspaceId, localScale);
+      minRelevanceByCorpus.set(input.workspace.cloud.workspaceId, localFloor);
+    }
+  }
+
   const selection: RankOptions = {
     query: input.query,
     category: input.category,
@@ -223,8 +269,21 @@ export async function queryFederated(input: {
     }
     try {
       const store = await openPeerStore(peer.databasePath);
+      // The peer's own profile, not this repo's. Absent resolver keeps the old behaviour for
+      // callers that have not been wired up; `undefined` from the resolver means this peer
+      // searches lexically, which is right when its model is unavailable here.
+      const peerVector = input.peerVector
+        ? await input.peerVector({ name: peer.name, root: peer.root }, input.query)
+        : input.vector;
+      // What scale this peer's cosines are on, and what floor may judge them. Recorded only
+      // when it actually searched with vectors -- a lexical-only peer has no cosines to place.
+      if (peerVector?.enabled && peerVector.embedding) {
+        semanticScaleByCorpus.set(peer.name, peerVector.profileFingerprint ?? '');
+        minRelevanceByCorpus.set(peer.name, peerVector.relevanceFloor ?? null);
+      }
       const found = await selectCandidates('local', {
         ...selection,
+        vector: peerVector,
         // Not a post-filter: the predicate is in the SQL, so a peer's repo-private row is
         // never read into this process at all.
         visibility: 'workspace',
@@ -317,6 +376,10 @@ export async function queryFederated(input: {
     // workspace is where "the store does not hold this" is most expensive to get wrong, because
     // the alternative on offer is the peer's near-miss. Same expression as `rankKnowledge`.
     minRelevance: input.vector?.relevanceFloor ?? null,
+    // Both empty unless a peer searched under a different profile, so the single-profile path
+    // is untouched. See #187.
+    semanticScaleByCorpus,
+    minRelevanceByCorpus,
   });
 
   // Which peers are the same lineage as the caller. Read from the manifest rather than from the
