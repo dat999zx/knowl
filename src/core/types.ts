@@ -509,6 +509,8 @@ export interface ProjectConfig {
      * still asked.
      */
     scope?: 'conversation' | 'turn';
+    /** The periodic assumption checkpoint. `ask` arms it; absent means off. See #184. */
+    checkpoint?: 'off' | 'ask';
   };
   /**
    * This repo's half of workspace membership. The other half is the workspace manifest

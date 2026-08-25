@@ -49,3 +49,34 @@ export type CaptureScope = 'conversation' | 'turn';
 export function captureScope(config?: ProjectConfig): CaptureScope {
   return config?.capture?.scope === 'turn' ? 'turn' : 'conversation';
 }
+
+/**
+ * How often, in assistant turns, the assumption checkpoint asks. `0` is off.
+ *
+ * Twenty because the checkpoint has to span enough work to have accumulated something taken on
+ * trust, and asking inside a short exchange finds nothing and costs a slot. Issue #184 measured
+ * a ~34% fire rate at three checkpoints per session on real transcripts.
+ */
+export const CHECKPOINT_EVERY_TURNS = 20;
+
+/**
+ * Whether the periodic assumption checkpoint is armed.
+ *
+ * `ask` puts one question into the mid-turn channel every `CHECKPOINT_EVERY_TURNS` turns: what
+ * is this session currently relying on that it never verified. Off by default; `knowl posture
+ * maximal` arms it.
+ *
+ * **It asks the agent rather than a judge model, and that is a deliberate departure from #184.**
+ * That issue proposed sending the recent window to a separate model, and measured ~90% precision
+ * doing so. The measurement was offline, over recorded sessions, where a judge was the only
+ * thing that COULD answer. In production the agent is already there with the full live context --
+ * which is the property #184 itself credits for the result -- so a prompt costs nothing, needs no
+ * provider, and keeps the capture path free of network calls. `agent-hook` is a fresh process per
+ * tool call; an inline model call there would block every tool the agent runs.
+ *
+ * The honest cost of that swap: a self-audit is not the same instrument as an independent judge,
+ * so #184's precision number does NOT transfer and this ships unmeasured on that axis.
+ */
+export function captureCheckpointMode(config?: ProjectConfig): 'off' | 'ask' {
+  return config?.capture?.checkpoint === 'ask' ? 'ask' : 'off';
+}

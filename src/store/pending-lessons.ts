@@ -18,7 +18,17 @@ import { DESTRUCTIVE_LABELS, type DestructiveCommandHit, type DestructiveCommand
  * host blocked on the answer, and a lost measurement is always cheaper than a lost session.
  */
 
-export type PendingLessonKind = 'destructive' | 'correction';
+export type PendingLessonKind = 'destructive' | 'correction' | 'assumption';
+
+/**
+ * The kinds the stop gate may withhold a stop over.
+ *
+ * `assumption` is deliberately absent. A checkpoint flag is a question about work that may be
+ * perfectly fine, raised on a counter rather than on an observed event -- blocking a stop over
+ * one would spend the annoyance budget on a guess. Issue #184 asked for exactly this: "flags go
+ * to `pending_lessons` as a question, never a block."
+ */
+const BLOCKING_KINDS: PendingLessonKind[] = ['destructive', 'correction'];
 
 export type PendingLesson = {
   id: string;
@@ -93,8 +103,14 @@ export async function openPendingLessons(conversation: string): Promise<PendingL
   if (!id) return [];
   try {
     const rows = await getClient().execute({
-      sql: 'SELECT id, conversation, kind, class, snippet, observed_at FROM pending_lessons WHERE conversation = ? AND resolved IS NULL ORDER BY observed_at',
-      args: [id],
+      // Filtered to BLOCKING_KINDS, and this is the whole guard. The one consumer is the stop
+      // gate, so a kind reaching this read is a kind that can withhold a stop -- returning
+      // assumption flags here would arm the gate on them the moment the checkpoint shipped.
+      sql: `SELECT id, conversation, kind, class, snippet, observed_at FROM pending_lessons
+            WHERE conversation = ? AND resolved IS NULL
+              AND kind IN (${BLOCKING_KINDS.map(() => '?').join(', ')})
+            ORDER BY observed_at`,
+      args: [id, ...BLOCKING_KINDS],
     });
     return rows.rows.map(row => ({
       id: String(row.id),
@@ -219,4 +235,48 @@ export function renderLessonStopReason(lessons: PendingLesson[]): string {
     '      gate -- an empty answer is a correct outcome, a fabricated memory is not.',
     'This gate has already disarmed itself for these events; it will not raise them again.',
   ].join('\n');
+}
+
+/**
+ * Claim this conversation's checkpoint for the current window, once.
+ *
+ * The window number is the class, so the existing "one row per conversation and class" shape
+ * gives idempotency for free: two hook processes racing the same window both try to insert, the
+ * second sees the row and returns false. No new table and no migration -- `kind` carries no CHECK
+ * constraint.
+ *
+ * Recorded as a lesson rather than a bare counter so a durable write settles it like any other:
+ * `resolveLessonsBefore` is kind-agnostic, so storing something after the checkpoint closes it.
+ * It never reaches the stop gate -- see `BLOCKING_KINDS`.
+ */
+export async function claimAssumptionCheckpoint(conversation: string, window: number): Promise<boolean> {
+  const id = (conversation ?? '').trim();
+  if (!id) return false;
+  const className = `checkpoint:${window}`;
+  try {
+    const client = getClient();
+    const existing = await client.execute({
+      sql: 'SELECT 1 FROM pending_lessons WHERE conversation = ? AND class = ? LIMIT 1',
+      args: [id, className],
+    });
+    if (existing.rows.length > 0) return false;
+    await client.execute({
+      sql: `INSERT INTO pending_lessons (id, conversation, kind, class, snippet, observed_at)
+            VALUES (?, ?, 'assumption', ?, NULL, ?)`,
+      args: [crypto.randomUUID(), id, className, new Date().toISOString()],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The checkpoint question, and the only place it is written. */
+export function renderAssumptionCheckpoint(): string {
+  return [
+    'KNOWL CHECKPOINT: what is this session currently relying on that it has not actually verified?',
+    'Look for claims that became load-bearing without being checked -- a number taken from a summary rather than the source, a fix called done without re-running its proof, an attribution never confirmed, one observation generalised into a rule.',
+    'Name each one with the cheap check that would settle it, and do the check if it is cheap. If something turns out to be true and worth keeping, store it; if it turns out wrong, say so now rather than building further on it.',
+    'If nothing here is unverified, carry on -- this asks once per stretch of work, not once per turn.',
+  ].join(' ');
 }
