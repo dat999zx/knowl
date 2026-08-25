@@ -110,6 +110,17 @@ export async function handleTranscriptSearch(input: {
   sessionId?: string;
   repos?: string[];
   limit?: number;
+  /**
+   * Treat an off-subject page as no matches at all, rather than returning it with a caveat.
+   *
+   * For the automatic fallback only. When the agent TYPED `knowl_transcript_search`, it asked
+   * for whatever is closest and can judge the bodies itself, so hits are returned with the
+   * notice attached. When the fallback runs the search on its own after a `knowl_query` miss,
+   * nobody asked -- and appending nearest-neighbour noise there spends context at the exact
+   * moment the agent is already lost, which is what #183 measured: 0 of 40 replayed misses
+   * recovered anything, and 7 of 15 healthy queries would have had junk appended.
+   */
+  confidentOnly?: boolean;
 }): Promise<string> {
   const { projectRoot } = input;
   if (!input.config || !projectRoot) return DISABLED_MESSAGE;
@@ -134,7 +145,7 @@ export async function handleTranscriptSearch(input: {
   const embedder = await optionalEmbedder(config, projectRoot);
   const workspace = await resolveWorkspace(projectRoot, config).catch(() => null);
 
-  const { hits, skipped, coverage, ambiguous, localRepo } = await searchTranscriptsFederated({
+  const { hits, skipped, coverage, ambiguous, localRepo, belowRelevanceFloor } = await searchTranscriptsFederated({
     projectRoot, workspace, query, limit,
     sessionId: input.sessionId, repos: input.repos,
     embedder: embedder ?? undefined,
@@ -150,8 +161,12 @@ export async function handleTranscriptSearch(input: {
       .join('\n');
   }
 
+  // An off-subject page IS no match, for a caller that did not ask for the search. Decided
+  // before the bodies are rendered so the noise never reaches the block at all.
+  const offSubject = belowRelevanceFloor === true && input.confidentOnly === true;
+
   const lines: string[] = [];
-  if (hits.length === 0) {
+  if (hits.length === 0 || offSubject) {
     lines.push(`${NO_TRANSCRIPT_MATCHES_PREFIX} for "${query}".`);
   } else {
     for (const hit of hits) {
@@ -179,6 +194,23 @@ export async function handleTranscriptSearch(input: {
         : fenceUntrusted(hit.text));
       lines.push('');
     }
+  }
+
+  // Said out loud, because otherwise nearest-neighbour noise is indistinguishable from a real
+  // recall -- which is #183: a query of pure gibberish returned hits and nothing marked them.
+  //
+  // The rows are still returned rather than withheld, for the reason `docs/reference.md` gives
+  // for `abstained`: the floor detects off-subject, not unanswerable, and a reader looking at
+  // the bodies judges better than the number does. What changes is that the reader is now told.
+  if (belowRelevanceFloor && hits.length > 0 && !offSubject) {
+    lines.push(
+      'NO CONFIDENT MATCH: none of these reads as being about the words you searched for.'
+      + ' Take that narrowly — it means off-subject, not that the archive lacks the answer, and'
+      + ' a search phrased in this project\'s own vocabulary scores like a real one either way.'
+      + ' Read the bodies and judge; if none of them is what you meant, the archive probably'
+      + ' predates it or it was said in other words.',
+    );
+    lines.push('');
   }
 
   // Required, not decorative. "BM25 + semantic" over 8% of an archive is a different claim
