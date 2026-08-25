@@ -49,7 +49,7 @@ export function quantizeScale(dims: number): number {
  *
  * NO SCHEMA CHANGE AND NO READER CHANGE: `scale` is already a per-row column and
  * `dequantizeVector` already multiplies by whatever that row carries, so existing rows keep
- * decoding exactly as before. They stay clipped, though -- hence the `EMBED_RECIPE_VERSION` bump
+ * decoding exactly as before. They stay clipped, though -- hence the `QUANTIZE_VERSION` bump
  * that makes an ordinary reindex replace them.
  */
 export function quantizeVector(vector: number[]): { scale: number; bytes: Uint8Array } {
