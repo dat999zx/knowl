@@ -3,6 +3,76 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+Knowl stops claiming more than it can show. Two independent threads arrived at the same shape in
+the same week: the relevance floor was telling callers a store lacked an answer when all it can
+detect is an off-subject question, and the reversal detector was listing candidate contradictions
+at a rate that only survives as a passing note. Both now say the narrower true thing.
+
+Thanks to **[@williamttruong](https://github.com/williamttruong)** for the conflicts work and for
+#183.
+
+### The relevance floor says off-subject, not unanswerable
+
+`abstained` and the `NO CONFIDENT MATCH` notice meant **"this question does not look like it is
+about this store"**, and said "this store probably does not hold the answer". That second claim is
+not something the floor can know, and integrators were building on it.
+
+The measurements behind the correction, both new:
+
+- **No embedding preset fixes it.** On-topic and off-topic cosine distributions overlap on all five
+  shipped presets against technical off-subject queries, and the current default,
+  `granite-small-en-r2`, has the *smallest* overlap of them — so there is nowhere better to move.
+  `docs/evals/preset-floor-sweep.md`, reproducible with `scripts/sweep-preset-floor.ts`.
+- **Lexical coverage cannot replace it either.** It is quantized at `1/terms`, so a short vague
+  on-topic question lands on the same values as partially-matching junk: `why is startup slow`
+  scores 0.500 against a store that answers it in full, and so does `sourdough starter discard
+  crumb`. `docs/evals/query-coverage-probe.md`.
+
+Cosine fails because a question in a store's own register is close to it either way; coverage fails
+because it is too coarse. Neither is a tuning problem, so nothing here is a new threshold — the
+notice, the CLI note, the `abstained` doc comment and a new `docs/reference.md` section now state
+the narrow reading and point the caller at judging the results.
+
+### `knowl_transcript_search` reports when nothing matches
+
+It returned hits for input with no semantic content at all — `zzzzz qqqqq xxxxx vvvvv` came back
+with plausible-looking history and nothing marking it. The number needed to tell noise from recall
+already existed and was being discarded: `semanticRank` computes a real cosine, then Reciprocal Rank
+Fusion replaces every score with a total built from *positions*.
+
+`cosine` now survives the fusion, and an off-subject page is reported as one. **The two callers are
+treated differently on purpose:** when you type `knowl_transcript_search` you asked for whatever is
+closest, so weak hits come back with the notice attached; when the `search.transcripts.fallback`
+chain runs it for you after a miss, an off-subject page is withheld as a verified negative. Nobody
+asked for that search, and it fires exactly when the agent is already lost — measured across 40
+replayed real misses, it recovered **0**, while 7 of 15 healthy queries would have had junk
+appended.
+
+`contributions.coverage` is also published now, for the same reason `cosine` was: it is the one
+lexical number that means the same thing in every repo, and it was being multiplied into a
+page-relative one before the caller saw it.
+
+### Reversals are raised where you can act on them
+
+A reversal stored under a title unrelated to the item it reverses now gets a **write-time
+advisory** — at the moment you write it, with the predecessor named — instead of appearing in a
+list you would have to go looking for.
+
+It is deliberately not in `knowl conflicts`. Measured against 101 real title-unrelated
+supersessions, the detector fires on **4**, with 45 false fires among active items — about 4%
+recall at ~8% precision, and no gate setting exceeds 5.9%. That rate is survivable as a note you can
+ignore in passing and not as a list that claims to be a work queue. `docs/evals/reversal-detector-recall.md`,
+replayable with `scripts/probe-reversal-recall.ts`.
+
+What `knowl conflicts` *gained* is the half that is exact by construction: pairs whose titles differ
+only by polarity tokens. It previously read only `conflictKey`/`conflictExclusive`, set on 3 of 937
+active items, so such a pair could appear nowhere at all.
+
+**`knowl conflicts` is also 22× faster** — 1,796ms to 79.5ms on a real 1,033-item store — now that
+the scan tokenizes each title once instead of re-tokenizing both inside a predicate on an O(n²) loop.
+
 ## 5.11.0 — 2026-08-24
 
 Knowl gets a posture. Four recall and capture mechanisms that were previously the maintainer's
