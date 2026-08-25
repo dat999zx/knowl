@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { fuseRankings, judgeRelevanceFloor, type TranscriptHit } from '../../src/transcripts/search.js';
+import {
+  fuseRankings, judgeRelevanceFloor, TRANSCRIPT_RELEVANCE_FLOOR, type TranscriptHit,
+} from '../../src/transcripts/search.js';
 
 /**
  * #183: transcript search returned nearest-neighbour noise with nothing marking it, because the
@@ -74,5 +76,19 @@ describe('judgeRelevanceFloor', () => {
 
   it('returns undefined on an empty page', () => {
     expect(judgeRelevanceFloor([], 0.76)).toBeUndefined();
+  });
+});
+
+describe('TRANSCRIPT_RELEVANCE_FLOOR', () => {
+  it('is null, so no page is judged until a floor is measured on transcripts', () => {
+    // Pins the #189 decision rather than the value. The knowledge floors are measured over
+    // atom fixtures, and borrowing one here judged EVERY query off-subject -- including ones the
+    // archive answers -- which the fallback chain turned into "nothing here" over an archive
+    // holding the answer. Arming this needs its own measurement, not a different borrow.
+    expect(TRANSCRIPT_RELEVANCE_FLOOR).toBeNull();
+
+    // A strong hit and pure noise reach the same verdict while the floor is null: none.
+    expect(judgeRelevanceFloor([hit(1, 5, 0.95)], TRANSCRIPT_RELEVANCE_FLOOR)).toBeUndefined();
+    expect(judgeRelevanceFloor([hit(2, 5, 0.10)], TRANSCRIPT_RELEVANCE_FLOOR)).toBeUndefined();
   });
 });
