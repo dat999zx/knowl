@@ -1207,6 +1207,9 @@ export function registerTools(
               query,
               repos: Array.isArray(repos) ? repos.map(String) : undefined,
               limit: TRANSCRIPT_FALLBACK_LIMIT,
+              // Nobody asked for this search, so it has to clear the floor to be worth the
+              // context it spends. The typed tool still returns weak hits with a caveat.
+              confidentOnly: true,
             });
             const negative = fallback.startsWith(NO_TRANSCRIPT_MATCHES_PREFIX);
             const bounded = fallback.length > TRANSCRIPT_FALLBACK_CHARS
@@ -1215,7 +1218,7 @@ export function registerTools(
             blocks.push({
               type: 'text',
               text: negative
-                ? 'RECALL CHAIN — VERIFIED NEGATIVE: the knowledge store missed and the transcript archive holds no match for these words either (coverage below). If the user believes this happened, it predates the archive or used different words — try knowl_transcript_search with other words before concluding, and state the negative truthfully rather than guessing.\n'
+                ? 'RECALL CHAIN — VERIFIED NEGATIVE: the knowledge store missed and the transcript archive holds no confident match for these words either (coverage below). Anything that scored as off-subject was withheld rather than shown, because nothing asked for this search — run knowl_transcript_search yourself to see it. If the user believes this happened, it predates the archive or used different words — try other words before concluding, and state the negative truthfully rather than guessing.\n'
                   + bounded
                 : 'RECALL CHAIN: the knowledge store missed, so the transcript archive was searched automatically with the same words:\n'
                   + bounded,

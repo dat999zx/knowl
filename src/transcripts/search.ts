@@ -13,6 +13,21 @@ export type TranscriptHit = {
   role: 'user' | 'assistant';
   score: number;
   /**
+   * The raw similarity from the semantic half, on the same absolute scale the per-model
+   * relevance floor is measured against -- and the only number here that means the same thing
+   * from one query to the next.
+   *
+   * `score` cannot: after `fuseRankings` it is a Reciprocal Rank Fusion total, built from
+   * POSITIONS, so the top hit scores about the same whether it was a perfect match or the least
+   * bad of five bad ones. That is exactly the shape that made `knowl_query` publish `cosine`
+   * alongside `score` (#146), and transcript search had the same hole (#183): the absolute
+   * number was computed in `semanticRank` and thrown away by the fusion.
+   *
+   * Absent when the semantic half never ran or never saw this row -- lexical-only, no embedder,
+   * or not embedded under this fingerprint. Absent means UNJUDGED, never "certainly irrelevant".
+   */
+  cosine?: number;
+  /**
    * Where the message's line starts, and how long its text was when indexed. Carried so the
    * body can be read with a seek instead of a scan, and so a stale offset can be rejected
    * rather than rendered as the wrong message. Null on rows indexed before offsets existed.
@@ -244,7 +259,13 @@ export function fuseRankings<T extends TranscriptHit>(
     ranking.forEach((hit, index) => {
       const key = keyOf(hit);
       scores.set(key, (scores.get(key) ?? 0) + 1 / (RRF_K + index + 1));
-      if (!byKey.has(key)) byKey.set(key, hit);
+      const kept = byKey.get(key);
+      if (!kept) byKey.set(key, hit);
+      // The first ranking wins the object, and the lexical arm is pushed first -- so a message
+      // found by BOTH halves would keep the lexical copy and silently lose the cosine the
+      // semantic half computed for it. Carry it across rather than reordering the arms, which
+      // would change which hit's metadata survives for every other field.
+      else if (kept.cosine === undefined && hit.cosine !== undefined) kept.cosine = hit.cosine;
     });
   }
 
@@ -317,19 +338,47 @@ export async function semanticRank(
   })).rows;
 
   return rows
-    .map(row => ({
-      messageId: Number(row.id),
-      path: String(row.path),
-      sessionId: String(row.session_id),
-      parentSessionId: row.parent_session_id === null ? null : String(row.parent_session_id),
-      line: Number(row.line),
-      role: String(row.role) as 'user' | 'assistant',
-      byteOffset: row.byte_offset === null || row.byte_offset === undefined ? null : Number(row.byte_offset),
-      chars: row.chars === null || row.chars === undefined ? null : Number(row.chars),
-      score: dotQuantized(queryVector, new Uint8Array(row.vec as ArrayBuffer), Number(row.scale)),
-    }))
+    .map(row => {
+      // Computed once and carried twice, on purpose: `score` is consumed by the fusion and
+      // replaced with a position total, `cosine` survives it. This runs over every embedded
+      // message in scope, so the similarity is not worth computing a second time to say it.
+      const similarity = dotQuantized(queryVector, new Uint8Array(row.vec as ArrayBuffer), Number(row.scale));
+      return {
+        messageId: Number(row.id),
+        path: String(row.path),
+        sessionId: String(row.session_id),
+        parentSessionId: row.parent_session_id === null ? null : String(row.parent_session_id),
+        line: Number(row.line),
+        role: String(row.role) as 'user' | 'assistant',
+        byteOffset: row.byte_offset === null || row.byte_offset === undefined ? null : Number(row.byte_offset),
+        chars: row.chars === null || row.chars === undefined ? null : Number(row.chars),
+        score: similarity,
+        cosine: similarity,
+      };
+    })
     .sort((left, right) => right.score - left.score)
     .slice(0, limit);
+}
+
+/**
+ * Whether a page of hits reads as off-subject for the corpus that produced it.
+ *
+ * One rule, exported because federation fuses a second time across repos and has to reach the
+ * same verdict -- two copies of this would drift, and the drift would be invisible.
+ *
+ * Judged on the BEST hit rather than per hit, because that is the only claim the floor was
+ * measured to support: it answers "is this query about this corpus at all", so one verdict
+ * covers the page. Applied per hit it would also cut the tail of a genuinely good recall, which
+ * is the mistake `knowl_query`'s floor already made once and was measured making.
+ *
+ * Rows with no cosine are SKIPPED, not counted as zero. An unembedded message's semantic half is
+ * absent, not adverse, and reading absence as a low score is how a half-indexed archive would
+ * report every query as off-subject. `undefined` therefore means unjudged, never "fine".
+ */
+export function judgeRelevanceFloor(hits: TranscriptHit[], floor: number | null): boolean | undefined {
+  if (floor === null) return undefined;
+  const judged = hits.map(hit => hit.cosine).filter((value): value is number => value !== undefined);
+  return judged.length === 0 ? undefined : Math.max(...judged) < floor;
 }
 
 export type SearchInput = {
@@ -361,6 +410,19 @@ export async function searchTranscripts(
    * which, and searching all of them is not what was asked.
    */
   ambiguousSession: string[] | null;
+  /**
+   * The query does not read as being about this archive: a semantic half ran, and every hit it
+   * judged scored below this model's relevance floor.
+   *
+   * **Off-subject, not unanswerable** -- the same narrow reading `abstained` carries on
+   * `knowl_query`, and for the same measured reason (see `docs/reference.md`). A question
+   * phrased in the archive's own vocabulary scores like a real one whether or not any session
+   * actually discussed it, so this cannot say the archive lacks the answer.
+   *
+   * `undefined` means UNJUDGED rather than fine: no embedder, the semantic half failed, this
+   * model has no measured floor, or nothing returned carried a cosine at all.
+   */
+  belowRelevanceFloor?: boolean;
 }> {
   const { client, query, limit, sessionId } = input;
 
@@ -394,6 +456,8 @@ export async function searchTranscripts(
 
   const fused = fuseRankings(rankings, limit);
 
+  const belowRelevanceFloor = judgeRelevanceFloor(fused, input.embedder?.relevanceFloor ?? null);
+
   // Bodies are read only for what is actually returned -- ranking never touches disk. Grouped
   // by file so one file is opened once for all of its hits, and each hit inside it is read by
   // seeking to the offset the indexer recorded rather than counting newlines from byte zero.
@@ -426,5 +490,8 @@ export async function searchTranscripts(
     coverage: { embedded, indexed },
     indexComplete: passState?.complete === true,
     ambiguousSession: null,
+    // Present only when the floor actually reached a verdict, so an ordinary answered query and
+    // an unjudged one stay distinguishable from a judged-and-passed one.
+    ...(belowRelevanceFloor === undefined ? {} : { belowRelevanceFloor }),
   };
 }
