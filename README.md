@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/hero.png" alt="Knowl — persistent memory across sessions for Claude Code, Cursor and Codex, over MCP" width="100%" />
+<img src="docs/assets/hero.png" alt="Knowl — the knowledge operating system for AI agents: memory, knowledge, context, continuity" width="100%" />
 
 **Your CLAUDE.md only grows. Knowl retires facts when they change.**
 
@@ -276,6 +276,10 @@ hosted layer for when one machine is not enough:
 - **Browser agents.** claude.ai and chatgpt.com cannot run a local process, so they connect over a
   remote MCP endpoint with a token scoped to one workspace.
 
+<p align="center">
+  <img src="docs/assets/knowl-cloud-explorer.png" alt="The knowl.cloud explorer: every repository in the workspace on one graph, clustered by repo with unlinked atoms on the rim, filtered by category, status, freshness and owning repository, with graph, list and timeline views over a workspace-wide search" width="88%" />
+</p>
+
 Local-only remains a first-class way to run Knowl. Nothing here is required to use anything above.
 
 ## What gets stored
@@ -378,9 +382,10 @@ Use `knowl.cmd` as the command on Windows. Codex reads the same entry under `mcp
 
 ## What Knowl is for
 
-Knowl does one job: keep a repository's engineering truth accurate for the agents working on it.
-Not user preferences, not chat history — the decisions, constraints, and architecture of a
-codebase, and which of them are still true today.
+Knowl does one job: keep a project's settled knowledge accurate for the agents working on it.
+Not user preferences, not chat history — the decisions, constraints, and architecture a project
+runs on, and which of them are still true today. Most stores sit in a codebase, and the drift and
+evidence tooling is aimed there, but nothing in the knowledge model requires one.
 
 <div align="center">
 <img src="docs/assets/demo-drift.svg" alt="One question answered four times over two years: append-only keeps every answer true forever so a query today matches four contradicting ones, while a governed store ends each replaced answer and matches one" width="92%" />
@@ -394,7 +399,7 @@ Three choices follow from that:
 - **Governed, not append-only.** Status, freshness, provenance, conflict identity, and supersession
   let the store tell you that something *stopped* being true. That is the whole difference between
   memory and an ever-growing pile of notes.
-- **Repository-local, not a service.** The database sits beside the code it describes. No account,
+- **Repository-local, not a service.** The database sits beside the project it describes. No account,
   no egress, no vendor between you and your own project history.
 
 Knowl is deliberately not a personalization layer. It has no opinion about your users, and it keeps
