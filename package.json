@@ -73,11 +73,13 @@
   ],
   "author": "",
   "license": "Apache-2.0",
+  "optionalDependencies": {
+    "@huggingface/transformers": "^4.2.0"
+  },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.12",
     "@ai-sdk/openai": "^4.0.11",
     "@clack/prompts": "^1.7.0",
-    "@huggingface/transformers": "^4.2.0",
     "@libsql/client": "^0.17.4",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@noble/hashes": "^2.3.0",
