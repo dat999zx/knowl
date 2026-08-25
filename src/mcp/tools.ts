@@ -38,6 +38,7 @@ import { finishMemorySession, listActiveMemorySessions } from '../store/session-
 import { isImpactEnabled } from '../store/impact-config.js';
 import { openFindingsForSession, resolveFinding, type ImpactFinding, type ImpactTier } from '../session/impact.js';
 import { activeReadSetForSession, containedRepoPath } from '../store/read-set.js';
+import { peerVectorResolver } from '../ai/embeddings.js';
 import { formatPendingHandoffContext, recordDeliberateHandoff } from '../session/session-handoff.js';
 import { createResumePoint, formatResumeBrief, listResumePoints, readResumePoint } from '../session/resume-points.js';
 import { resumeInstruction } from '../session/resume-keys.js';
@@ -916,6 +917,10 @@ export function registerTools(
             repos,
             scope,
             vector,
+            // Each peer searched under its own embedding profile (#187). Absent here, every
+            // peer was filtered on this repo's fingerprint and a mismatched one contributed
+            // no vector candidates at all -- silently, because BM25 still returned rows.
+            peerVector: peerVectorResolver(),
           });
           // Everything downstream of the payload -- the kin block, the abstention verdict, the
           // demand ledger -- asks questions about the result set rather than about its shape, so

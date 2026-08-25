@@ -242,6 +242,31 @@ Titles are capped separately at 200 characters, and previews of things retrievab
 elsewhere — evidence excerpts, timeline assertions, skill markdown, `knowl_skill_run` output —
 stay at 600.
 
+#### Cross-repo search when repos embed differently
+
+Each linked repo is searched under **its own** embedding profile, and its results are ranked
+against its own scale and judged against its own floor.
+
+This matters because a workspace does not in fact pin one embedding identity, though the code
+assumed it did. The link-time check compares provider, model, dtype and pooling; the filter
+applied to a peer's vectors compares a fingerprint that also covers the embedding recipe version.
+Two repos with identical vector config therefore diverge as soon as they sit on different knowl
+versions, and nothing re-checks after linking. A cloud-connected repo cannot converge even in
+principle — its atoms must stay on the model its workspace serves.
+
+Before this, a mismatched peer contributed **no vector candidates at all** and cross-repo search
+quietly fell back to keyword-only while still returning rows, so it read as healthy.
+
+Two consequences worth knowing:
+
+- **Cosines from different models are never compared.** Ranges are normalised per profile, so a
+  model whose scores naturally run high cannot outrank one whose scores run low on scale alone.
+  Repos sharing a profile still share one range, because their scores genuinely are comparable.
+- **A peer whose model cannot be loaded here degrades to keyword-only for that repo**, rather
+  than failing the search.
+
+The cost is one extra forward pass per distinct profile and both models' weights resident.
+
 #### What `abstained` means, and what it does not
 
 `abstained` (and the `NO CONFIDENT MATCH` notice that reports it) means **the query does not look

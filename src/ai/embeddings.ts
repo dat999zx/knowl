@@ -1,6 +1,7 @@
 ﻿import path from 'node:path';
 import fsPromises from 'node:fs/promises';
 import { ProjectConfig } from '../core/types.js';
+import { loadConfig } from '../core/config.js';
 import { EmbedOptions, KnowledgeEmbedder } from '../store/vector-index.js';
 import { fingerprintProfile, relevanceFloorFor, resolveVectorProfile, type VectorPooling } from '../core/vector-profile.js';
 import { noteModelLoad } from '../core/startup-trace.js';
@@ -281,14 +282,85 @@ export interface LocalEmbeddingProviderOptions {
   onFirstLoad?: (details: { model: string; cacheDir: string; cached: boolean }) => void;
 }
 
-let localPipeline: TransformersPipeline | null = null;
-let localPipelineKey: string | null = null;
+/**
+ * Built pipelines, keyed by profile, because a federated search embeds one query under several.
+ *
+ * This was a single slot, and the embedder returned by `createLocalEmbeddingProvider` read it at
+ * CALL time rather than closing over the pipeline it built. So a second provider for a different
+ * model silently repointed the first: embedder A would go on answering, using B's weights, with
+ * plausible vectors and nothing to notice at runtime -- the same failure mode the per-model
+ * pooling comment below warns about. Latent while nothing built two, and immediate the moment
+ * federation began embedding per peer.
+ *
+ * ponytail: unbounded map, keyed by `model:dtype:pooling:cacheDir`. Bounded in practice by the
+ * distinct profiles in one workspace, which is at most the preset count. Add eviction if a
+ * caller ever iterates models.
+ */
+const localPipelines = new Map<string, TransformersPipeline>();
 
-/** Drop the in-process pipeline. Tests need it; nothing in the product does. */
+/** Drop the in-process pipelines. Tests need it; nothing in the product does. */
 export function resetLocalEmbeddingPipeline(): void {
-  localPipeline = null;
-  localPipelineKey = null;
+  localPipelines.clear();
 }
+
+/**
+ * The embedder a given repo's OWN config describes, or null when it cannot have one.
+ *
+ * Federation reads peer stores whose vectors were written under the peer's profile, not this
+ * repo's, so the query has to be embedded under theirs to match anything (#187). Null rather
+ * than throwing: a peer with vectors off, or a model this machine cannot load, is a normal
+ * state that must degrade that peer to lexical rather than fail the whole search.
+ */
+export async function embedderForRepo(root: string): Promise<KnowledgeEmbedder | null> {
+  try {
+    const config = await loadConfig(root);
+    if (!isVectorSearchEnabled(config)) return null;
+    return await createLocalEmbeddingProvider(config, root);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A per-peer vector resolver for `queryFederated`, memoised by profile.
+ *
+ * Injected rather than imported because `workspace` and `ai` are the same layer, so
+ * `workspace -> ai` is a sideways edge the architecture test forbids. The caller lives in `cli`
+ * or `mcp` and may reach both.
+ *
+ * Memoised on the peer's fingerprint, not its path: several repos usually share one profile, and
+ * the whole point is that embedding the query is cheap ONCE PER DISTINCT PROFILE rather than
+ * once per repo. `createLocalEmbeddingProvider` already caches the pipeline itself, so the
+ * saving here is the forward pass.
+ */
+export function peerVectorResolver(
+  relevanceFloorOf?: (embedder: KnowledgeEmbedder) => number | null,
+): (peer: { root: string }, query: string) => Promise<VectorQueryOption | undefined> {
+  const byFingerprint = new Map<string, Promise<number[]>>();
+  return async (peer, query) => {
+    const embedder = await embedderForRepo(peer.root);
+    if (!embedder) return undefined;
+    let embedding = byFingerprint.get(embedder.profileFingerprint);
+    if (!embedding) {
+      embedding = embedder.embedQuery(query);
+      byFingerprint.set(embedder.profileFingerprint, embedding);
+    }
+    return {
+      enabled: true,
+      profileFingerprint: embedder.profileFingerprint,
+      embedding: await embedding,
+      relevanceFloor: relevanceFloorOf ? relevanceFloorOf(embedder) : embedder.relevanceFloor,
+    };
+  };
+}
+
+/** The shape `RankOptions['vector']` needs, declared here so `workspace` need not be imported. */
+export type VectorQueryOption = {
+  enabled: boolean;
+  profileFingerprint: string;
+  embedding: number[];
+  relevanceFloor: number | null;
+};
 
 export function isVectorSearchEnabled(config: ProjectConfig): boolean {
   return config.search?.vector?.enabled === true;
@@ -368,24 +440,28 @@ export async function createLocalEmbeddingProvider(
   const { dir: cacheDir, present: cached } = await resolveModelCache(config, projectRoot);
   const pipelineKey = `${vector.model}:${vector.dtype}:${vector.pooling}:${cacheDir}`;
 
-  if (!localPipeline || localPipelineKey !== pipelineKey) {
+  let pipeline = localPipelines.get(pipelineKey);
+  if (!pipeline) {
     options.onFirstLoad?.({ model: vector.model, cacheDir, cached });
     // How long building the pipeline actually costs, recorded rather than assumed. The model
     // was blamed for stalls it cannot cause -- serve never loads one during startup -- and the
     // only way that claim gets settled is a number per process, per model, cold and warm.
     const loadStartedAt = Date.now();
     if (options.loadPipeline) {
-      localPipeline = await options.loadPipeline(vector.model, vector.dtype, cacheDir);
+      pipeline = await options.loadPipeline(vector.model, vector.dtype, cacheDir);
     } else {
       const transformers = await import('@huggingface/transformers');
       transformers.env.cacheDir = cacheDir;
-      localPipeline = await transformers.pipeline('feature-extraction', vector.model, {
+      pipeline = await transformers.pipeline('feature-extraction', vector.model, {
         dtype: vector.dtype as any,
       }) as TransformersPipeline;
     }
     noteModelLoad(vector.model, cached, Date.now() - loadStartedAt);
-    localPipelineKey = pipelineKey;
+    localPipelines.set(pipelineKey, pipeline);
   }
+  // Captured, never re-read from the map: this embedder must keep answering with the weights it
+  // was built for, whatever another profile does to the cache afterwards.
+  const built = pipeline;
 
   return {
     provider: 'local',
@@ -401,7 +477,7 @@ export async function createLocalEmbeddingProvider(
     embed: async (texts: string[], options?: EmbedOptions) => {
       const vectors: number[][] = [];
       for (const batch of planEmbeddingBatches(texts, options)) {
-        const output = await localPipeline!(batch.map(entry => entry.text), {
+        const output = await built(batch.map(entry => entry.text), {
           // Per-model, not a constant: MiniLM is mean-pooled while both Granite R2
           // models and BGE are CLS-pooled. Using the wrong one produces plausible
           // vectors that rank badly, with nothing to notice at runtime.
@@ -417,7 +493,7 @@ export async function createLocalEmbeddingProvider(
       return vectors;
     },
     embedQuery: async (text: string) => {
-      const output = await localPipeline!([queryPrefixFor(vector.model, config) + text], {
+      const output = await built([queryPrefixFor(vector.model, config) + text], {
         pooling: vector.pooling,
         normalize: true,
       });

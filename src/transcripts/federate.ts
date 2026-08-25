@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import type { KnowledgeEmbedder } from '../store/vector-index.js';
 import { loadConfig } from '../core/config.js';
+import { embedderForRepo } from '../ai/embeddings.js';
 import { resolveStorage } from '../store/storage-roles.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
 import { isTranscriptSharingEnabled } from './config.js';
@@ -81,7 +82,7 @@ export async function searchTranscriptsFederated(input: {
   // Read-only for every repo including this one. Searching writes nothing, and a writable open
   // creates the file -- which would resurrect an index the user deleted by turning the feature
   // off, from a code path that only reads.
-  const search = async (repo: string, dbPath: string) => {
+  const search = async (repo: string, dbPath: string, embedder = input.embedder) => {
     const client = await openTranscriptDb(dbPath, { readOnly: true });
     const result = await searchTranscripts({
       client,
@@ -89,7 +90,7 @@ export async function searchTranscriptsFederated(input: {
       limit: input.limit,
       sessionId: input.sessionId,
       projectRoot: input.projectRoot,
-      embedder: input.embedder,
+      embedder,
     });
     rankings.push(result.hits.map(hit => ({ ...hit, repo })));
     coverage.push({ repo, ...result.coverage, indexComplete: result.indexComplete });
@@ -139,7 +140,12 @@ export async function searchTranscriptsFederated(input: {
         skipped.push({ repo: peer.name, reason: 'not-shared' });
         continue;
       }
-      await search(peer.name, peerDb);
+      // The peer's OWN embedder, not this repo's (#187). Its transcript vectors were written
+      // under its profile, so searching them with ours matched nothing and the peer degraded to
+      // lexical silently. `transcripts` sits above `ai`, so this import is a legal downward edge
+      // -- the knowledge half has to inject the equivalent because `workspace` is `ai`'s peer.
+      const peerEmbedder = (await embedderForRepo(peer.root)) ?? undefined;
+      await search(peer.name, peerDb, peerEmbedder);
     } catch (error) {
       skipped.push({
         repo: peer.name,

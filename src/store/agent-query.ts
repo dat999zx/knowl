@@ -532,6 +532,26 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     /** The sweep knob. Production callers omit it and get FUSION_ALPHA. */
     alpha?: number;
     /**
+     * Per-corpus relevance floors, keyed the way `corpusOf` keys a candidate -- the repo name,
+     * or `''` for the local store.
+     *
+     * Federation searches each peer under that peer's own embedding profile (#187), and a floor
+     * belongs to the model it was measured on. An entry here wins over `minRelevance` for that
+     * corpus; a corpus with no entry uses `minRelevance`, so a single-profile workspace is
+     * unaffected. An explicit `null` entry means that corpus has no measured floor and is not
+     * judged, which is the honest reading rather than borrowing the local number.
+     */
+    minRelevanceByCorpus?: Map<string, number | null>;
+    /**
+     * Which embedding scale each corpus's cosines are on, keyed the way `corpusOf` keys a
+     * candidate. Corpora sharing a value share one min-max range; corpora with no entry share
+     * the default one.
+     *
+     * Omit it -- the normal case -- and every row shares a single range, which is the behaviour
+     * this file had before federation could search peers under their own models.
+     */
+    semanticScaleByCorpus?: Map<string, string>;
+    /**
      * This model's relevance floor, from `relevanceFloorFor`. Also the sweep knob.
      *
      * `null` or absent means **do not abstain**. That is the honest reading of "no calibration
@@ -583,20 +603,39 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     corpusBest.set(corpus, Math.max(corpusBest.get(corpus) ?? 0, raw));
   }
   const anyLexical = corpusBest.size > 0;
-  // Semantic range across this candidate page, for the rescale below.
+  // Semantic range per EMBEDDING SCALE -- one shared range by default, and one per profile when
+  // the caller says the page holds more than one.
+  //
+  // It was a single min-max over the page, which is right exactly while every row's cosine came
+  // from the same model. Federation stopped guaranteeing that (#187): a peer is searched under
+  // its own profile now. Granite's distribution sits roughly 0.5 above arctic's on identical
+  // inputs, so one min-max over a mixed union rescales every granite row near 1 and every arctic
+  // row near 0 -- every local row beating every peer row on the semantic term regardless of what
+  // either says. That is not the bug #187 reported, it is a worse one pointing the other way.
+  //
+  // Keyed by PROFILE and not by corpus, which the cross-repo archetype baseline is what caught:
+  // repos sharing a profile produce genuinely comparable cosines, and splitting their ranges
+  // rescales each repo's own best hit to 1.0 however mediocre it is. `client-projects` recall@3
+  // fell 1.0 -> 0.9722 that way. Same-profile repos must share one range; only a different model
+  // earns a different one.
   //
   // Folded rather than spread: `Math.max(...values)` passes one argument per candidate and blows
   // the stack on a large page. The candidate set is bounded by `limit * OVERFETCH` in the normal
   // path but not in every caller, and a ranking helper must not carry a size ceiling nobody
   // states.
-  let semanticCeiling = 0;
-  let semanticFloor = 1;
+  const scaleOf = (candidate: { repo?: string }): string =>
+    options.semanticScaleByCorpus?.get(corpusOf(candidate)) ?? '';
+  const semanticRange = new Map<string, { floor: number; ceiling: number }>();
   for (const candidate of candidates) {
     const value = Math.min(Math.max(candidate.vectorScore ?? 0, 0), 1);
-    if (value > semanticCeiling) semanticCeiling = value;
-    if (value < semanticFloor) semanticFloor = value;
+    const scale = scaleOf(candidate);
+    const held = semanticRange.get(scale);
+    if (!held) semanticRange.set(scale, { floor: value, ceiling: value });
+    else {
+      if (value > held.ceiling) held.ceiling = value;
+      if (value < held.floor) held.floor = value;
+    }
   }
-  if (!candidates.length) semanticFloor = 0;
   // Alpha renormalises over the signals that exist, and does so globally rather than per
   // corpus: two repos scored under different alphas would not be comparable, which is the
   // whole reason scoring runs over the union.
@@ -606,6 +645,9 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     .map(result => {
       const raw = rawLexical(result);
       const best = corpusBest.get(corpusOf(result)) ?? 0;
+      // The range of the SCALE this row's cosine is on, which is one shared range unless the
+      // caller says otherwise. Absent only for an empty page.
+      const range = semanticRange.get(scaleOf(result)) ?? { floor: 0, ceiling: 0 };
       // No lexical evidence and the worst lexical evidence both score 0. That is deliberate:
       // "did lexical return this at all" used to be a step worth 0.0333 while the whole
       // lexical ordering was worth 0.0158 -- the presence of a signal outweighing what the
@@ -627,7 +669,7 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
       const lexical = raw === undefined ? 0 : (best > 0 ? Math.min(raw / best, 1) * coverage : coverage);
       const semantic = Math.min(Math.max(result.vectorScore ?? 0, 0), 1);
       const relevance = usingVector
-        ? alpha * rescaleSemantic(semantic, semanticFloor, semanticCeiling) + (1 - alpha) * lexical
+        ? alpha * rescaleSemantic(semantic, range.floor, range.ceiling) + (1 - alpha) * lexical
         : lexical;
 
       const recency = normalizedRecencyScore(result.item, timestamps);
@@ -698,13 +740,35 @@ export function scoreCandidates<T extends Candidate & { repo?: string }>(
     // calibrated score, so a weak answer arrives visibly weak, and silence was never the richer
     // signal: it could not be told apart from an empty store or a missing index.
     const judged = scored.filter(candidate => floorApplies(candidate.result));
-    const bestCosine = judged.reduce((best, candidate) => Math.max(best, candidate.semantic), 0);
     // No floor means no verdict. An uncalibrated model is one this build has never measured,
     // and "I cannot tell" has to read as silence rather than as confidence in either direction.
-    const floor = typeof options.minRelevance === 'number' && Number.isFinite(options.minRelevance)
-      ? options.minRelevance
-      : null;
-    const answerable = floor === null || judged.length === 0 || bestCosine >= floor;
+    const asFloor = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? value : null;
+    // PER CORPUS, because a floor is measured for one model and federation now searches each
+    // peer under its own (#187). Granite's 0.76 against an arctic row's 0.16-0.27 would judge
+    // every peer row off-subject on scale alone -- the same borrowed-threshold mistake as #189,
+    // one level out. A corpus with no entry falls back to the caller's single floor, so a
+    // workspace on one profile behaves exactly as before.
+    const floorOf = (corpus: string): number | null =>
+      options.minRelevanceByCorpus?.has(corpus)
+        ? asFloor(options.minRelevanceByCorpus.get(corpus))
+        : asFloor(options.minRelevance);
+    // The page answers if ANY corpus cleared its own bar. A corpus that judged nothing, or has
+    // no floor to judge against, reaches no verdict and cannot make the page unanswerable.
+    const bestByCorpus = new Map<string, number>();
+    for (const candidate of judged) {
+      const corpus = corpusOf(candidate.result);
+      bestByCorpus.set(corpus, Math.max(bestByCorpus.get(corpus) ?? 0, candidate.semantic));
+    }
+    let anyJudgedAgainstAFloor = false;
+    let answerable = false;
+    for (const [corpus, best] of bestByCorpus) {
+      const floor = floorOf(corpus);
+      if (floor === null) continue;
+      anyJudgedAgainstAFloor = true;
+      if (best >= floor) answerable = true;
+    }
+    if (!anyJudgedAgainstAFloor) answerable = true;
     // Exactly the set the destructive floor used to KEEP is the set left unlabelled; everything
     // it used to delete is returned and labelled. The rule is unchanged, only its consequence:
     //
