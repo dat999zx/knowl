@@ -62,3 +62,6 @@ drizzle/
 # carry local guidance, so they are not tracked. Gitignore alone does nothing to a file already
 # in the index, which is why this landed with a `git rm --cached`.
 AGENTS.md
+
+# PatchMesh ledger, journal and snapshot
+.patchmesh/
