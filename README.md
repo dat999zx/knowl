@@ -440,7 +440,11 @@ On Claude Code, Codex, and Cursor, hooks own bootstrap, capture, checkpoints, an
 finalization without the agent being asked. A clean finish distills up to eight durable
 candidates. Park a workstream under a key and pick it up in any session, from any directory.
 
-`task run` · `handoff` · `park` · `resume <key>`
+`knowl posture maximal` turns the watchful half on in one command — searching past sessions on a
+miss, flagging atoms whose files moved, and asking every so often what the session is relying on
+but never verified. All of it off until you ask.
+
+`task run` · `handoff` · `park` · `resume <key>` · `posture`
 
 </td>
 <td width="50%" valign="top">
