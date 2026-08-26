@@ -573,7 +573,8 @@ knowl doctor                           # setup, retrieval, and registration
   from any directory, any number of times later. `knowl resume <key>`
 - **Optional transcript search** — off by default, and off means nothing exists on disk. Turn it on
   and past session prose becomes searchable, so a memory miss degrades to a slower lookup instead
-  of amnesia.
+  of amnesia. Keyword indexing keeps up on its own; semantic coverage is filled by
+  `knowl reindex --transcripts`, because an embedding model does not belong in a per-turn hook.
 - **The recall gap** — how often an agent edited a file this store already knew something about
   without ever retrieving it. Invisible from inside a session, because an agent that never
   retrieved an atom cannot notice the atom exists. Counted on every tool call, shown to nobody but

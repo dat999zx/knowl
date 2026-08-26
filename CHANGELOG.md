@@ -3,6 +3,62 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+## 5.14.0 — 2026-08-26
+
+Knowl stops charging every turn for work that produced nothing.
+
+One release, four measurements, and the thread joining them is not performance for its own sake:
+each of these was paying a recurring cost for an outcome that never arrived. A guidance card
+repeated into a context window that already held it. An embedding pass that loaded a model and
+then embedded nothing. A pre-tool hook that spawned a process to ask a question only writes can
+answer. A counter that split one conversation across two rows and read the fragment.
+
+**The turn-start card follows the drift schedule now.** It used to print the same 613-character
+paragraph on every prompt, forever — and because turn-start context accumulates in the transcript
+rather than replacing the previous copy, a 40-turn session carried 40 identical copies, ~6k
+tokens. It is also a restatement of `KNOWL.md`/`AGENTS.md`, which every host already carries in
+its system prompt: `CLAUDE.md` → `@KNOWL.md` for Claude Code, the managed block in `AGENTS.md` for
+everyone else. It now lands on the first prompt of a conversation and then follows
+`reminders.driftEvery` / `reminders.driftBackoff` — turn 0, 12, 36, 84, 180 — counted in completed
+turns. `driftEvery 0` silences it. The command also moved onto the entry's fast path, so it costs
+137ms rather than 350ms despite now reading the store.
+
+**Transcript embedding left the hook path, because it was never working there.** `catchUpTranscripts`
+charged the model load to the same 1.5s budget it then enforced before doing any work — and a hook
+is a fresh process per turn, so the model was never warm and the ~1.8s load alone exhausted it.
+The pass found its deadline spent and returned 0, every turn. One real store held **12,598 indexed
+messages and 4 vectors**. The turn-stop hook now runs the lexical pass only, which needs no model,
+and embedding happens where a model stays warm: the search-time top-up inside `knowl serve`, or
+`knowl reindex --transcripts`. The budget also stopped charging setup to the work allowance, which
+is what lets the first call in a warm process do anything at all. Measured: `Stop` went **2595ms →
+492ms**.
+
+**The pre-tool hook only fires for tools that can write.** `runWriteGate` returns on its first line
+when the tool writes no file, so under a `.*` matcher every Read, Grep, Glob, Bash and Task paid a
+process spawn and a store open — ~170ms — to reach an immediate no-op. Host profiles gained
+`writeTools`; Claude Code declares the four names the fallback already used, and the matcher is
+built from that same list, so the gate and the matcher cannot drift apart. Measured over 12 real
+transcripts and 1,060 tool calls: 195 are write tools, so **865 spawns never start — 81.6%**.
+Cursor and Windsurf keep the wildcard deliberately, because their write rule keys off the event
+rather than the tool name.
+
+**One conversation was being counted as two.** `conversationKey` and `turnCaptureKey` built their
+key from the raw project root while the session bindings canonicalised theirs, and hosts do not
+agree on the case of a Windows drive letter. Three live conversations existed under both
+`D:\coding\knowl` and `d:\coding\knowl` at once — one holding 33 turns on one row and 1 on the
+other. Capture health, the `turns >= 3` silence threshold and the new turn-start gate all read a
+fragment. No migration: the key is recomputed from hook input on every call, so old rows fall out
+of the window on their own.
+
+### Upgrading
+
+- **Run `knowl init <host>`.** The pre-tool matcher changed, and `knowl doctor` reports hooks as
+  stale until the config is rewritten. `knowl doctor --fix` does it too.
+- **If transcript search was already on, run `knowl reindex --transcripts --budget 10` once.** This
+  release stops semantic coverage decaying; it does not backfill what never landed.
+
 ## 5.13.0 — 2026-08-26
 
 Knowl starts counting what it never asked for, and stops discarding the evidence that something

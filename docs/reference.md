@@ -560,6 +560,19 @@ Ranking fuses BM25 with whole-corpus semantic search over int8 vectors, so a mes
 no word with your query can still win. Semantic ranking follows `search.vector.enabled`; with
 vectors off, transcript search is keyword-only and every result says so.
 
+**The two halves are indexed on different schedules, and only one of them is automatic.** The
+lexical half rides the turn-stop hook, which needs no model and costs little. The semantic half
+does not: a hook is a fresh process per turn, so the embedding model would be cold every time, and
+loading it cost more than the whole catch-up budget — measured at ~1.8s against a 1.5s budget, in
+a repository with nothing to index. The pass then found its deadline already spent and embedded
+nothing, every turn. Before 5.14.0 that was the shipped behaviour and it was silent: one real
+store held 12,598 indexed messages and 4 vectors.
+
+So embedding now happens where a model stays warm — inside the long-lived `knowl serve` process,
+as a short top-up when you actually run `knowl_transcript_search` — or in bulk, under a budget you
+chose, with `knowl reindex --transcripts`. **If you enabled transcript search before 5.14.0, run
+that once**; the change stops coverage decaying but does not backfill what never landed.
+
 Three tools appear only when the feature is enabled, which is why they are absent from the
 canonical tool table below:
 
@@ -726,6 +739,14 @@ Separate from what Knowl *stores*: these are the messages it sends the agent bet
 calls. Both are **on by default**, and both share the single mid-turn slot with the change card
 and the capture prompts — turning one off does not give the others more room, it gives the turn
 back.
+
+Since 5.14.0 the same two keys also govern the **turn-start card**, the one a host's prompt hook
+delivers. It used to be unconditional: the same paragraph on every prompt, and because turn-start
+context accumulates in the transcript rather than replacing the previous copy, a 40-turn session
+carried 40 identical copies. It is also a restatement of `KNOWL.md`/`AGENTS.md`, which every host
+already carries in its system prompt. It now lands on the first prompt of a conversation and then
+follows the schedule below, counted in completed turns rather than tool calls — so `driftEvery 0`
+silences it too.
 
 ```bash
 knowl config set reminders.driftEvery 24        # remind half as often; 0 turns it off
