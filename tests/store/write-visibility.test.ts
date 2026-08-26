@@ -62,7 +62,7 @@ describe('default write visibility', { timeout: 60_000 }, () => {
     // permanent divergence that change-watermark and import-policy would never reconcile.
     expect(row.lifecycle_hash).toBe(hashKnowledgeLifecycle({
       status: 'active', freshness: DEFAULT_FRESHNESS, supersededById: null,
-      originRepo: 'notes', visibility: 'workspace',
+      originRepo: 'notes', visibility: 'workspace', category: 'fact',
     }));
     await closeDb();
   });
@@ -79,7 +79,7 @@ describe('default write visibility', { timeout: 60_000 }, () => {
     expect(row.visibility).toBe('repo');
     expect(row.lifecycle_hash).toBe(hashKnowledgeLifecycle({
       status: 'active', freshness: DEFAULT_FRESHNESS, supersededById: null,
-      originRepo: 'notes', visibility: 'repo',
+      originRepo: 'notes', visibility: 'repo', category: 'fact',
     }));
     await closeDb();
   });

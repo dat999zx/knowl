@@ -194,7 +194,7 @@ export async function createKnowledgeItem(
     // reconciles and nothing reports.
     visibility,
     lifecycleHash: hashKnowledgeLifecycle({
-      status: 'active', freshness, supersededById: null, originRepo, visibility,
+      status: 'active', freshness, supersededById: null, originRepo, visibility, category: item.category,
     }),
     freshness,
     confidence: item.confidence ?? 1.0,
@@ -385,6 +385,7 @@ export async function updateKnowledgeItem(
       supersededById: updates.supersededById !== undefined ? updates.supersededById : current[0].supersededById,
       originRepo: updates.originRepo !== undefined ? updates.originRepo : current[0].originRepo,
       visibility: updates.visibility !== undefined ? updates.visibility : current[0].visibility,
+      category: updates.category !== undefined ? updates.category : current[0].category,
     };
 
     // Normalized here as well as on create. A key written raw through update never collides

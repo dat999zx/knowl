@@ -58,6 +58,7 @@ export function hashKnowledgeLifecycle(input: {
   supersededById?: string | null;
   originRepo?: string | null;
   visibility?: string | null;
+  category?: string | null;
 }): string {
   const fingerprint = {
     status: input.status ?? 'active',
@@ -65,6 +66,14 @@ export function hashKnowledgeLifecycle(input: {
     supersededById: input.supersededById ?? null,
     originRepo: input.originRepo ?? null,
     visibility: input.visibility ?? 'repo',
+    // Here rather than in `content_hash` because a re-category leaves every word of the item
+    // alone. It is a lifecycle change in the literal sense: `category` is what GC archives on
+    // (`state` only) and what it refuses to purge (decision, constraint, architecture, skill),
+    // so promoting an atom out of `state` changes how long it lives and nothing else. Without
+    // it here, `classifyIncomingItem` compares two identical content hashes, finds matching
+    // lifecycle hashes, and calls the pair `identical` -- the re-category never travels, which
+    // is the same bug status and visibility had before this hash existed.
+    category: input.category ?? null,
   };
 
   return createHash('sha256')

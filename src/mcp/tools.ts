@@ -1459,7 +1459,7 @@ export function registerTools(
       }
       
       else if (name === 'knowl_update') {
-        const { id, title, content, status, reasoning, source, sourceCommit, affectedPaths, freshness, supersedeId } = args as any;
+        const { id, title, content, category, status, reasoning, source, sourceCommit, affectedPaths, freshness, supersedeId } = args as any;
         const owner = projectRoot ? await resolveWorkspace(projectRoot, config ?? undefined) : null;
         // Both ids, not just the one being edited. Retiring an item is a write to that item,
         // and `supersedeId` reached `supersedeKnowledgeItem` with no ownership check at all
@@ -1481,6 +1481,7 @@ export function registerTools(
         const updated = await updateKnowledgeItemWithCommit(projectId!, id, {
           title,
           content,
+          category: category as KnowledgeCategory,
           status: status as KnowledgeStatus,
           reasoning,
           source,

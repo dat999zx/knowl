@@ -619,6 +619,11 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
                 minLength: 1,
                 description: 'New content markdown.',
               },
+              category: {
+                type: 'string',
+                enum: ['fact', 'decision', 'goal', 'constraint', 'architecture', 'state', 'skill'],
+                description: 'Corrected category, when an item was filed as the wrong kind of thing. Use it rather than re-storing the item: category is what garbage collection reads, so an item that is really a decision but filed as state is on the archive path, and re-storing to fix that discards the assertion history and access record that show it mattered.',
+              },
               status: {
                 type: 'string',
                 enum: ['active', 'deprecated', 'rejected', 'archived', 'superseded'],
