@@ -108,6 +108,25 @@ export interface HostProfile {
   readsFiles?: (hostEvent: string, toolName: string) => boolean;
   writesFiles?: (hostEvent: string, toolName: string) => boolean;
   /**
+   * The write tools by name, when this host's write rule is a plain list.
+   *
+   * Serves two callers that must never disagree: `toolWritesFile`, which decides whether the
+   * write gate has anything to do, and the pre-tool hook entry's `matcher`, which decides
+   * whether the host bothers to *start the process that would ask*.
+   *
+   * That second one is the point. `runWriteGate` returns on its first line for any tool that
+   * does not write a file, so a `.*` matcher spent a process spawn and a database open on every
+   * Read, Grep, Glob, Bash and Task in a session to reach an immediate no-op -- measured at
+   * ~170ms each. A matcher built from this list means the host never starts it.
+   *
+   * Declared here rather than derived from `writesFiles`, because a predicate has no
+   * enumerable domain: nothing can turn `(_e, t) => t === 'apply_patch'` into a regex. A host
+   * whose rule is not a plain name list -- cursor and windsurf key off the *event* -- leaves
+   * this unset and keeps the wildcard, which is correct rather than merely safe: their pre-tool
+   * event only fires on writes already.
+   */
+  writeTools?: readonly string[];
+  /**
    * The top-level keys this host's hooks file must carry beside its events.
    *
    * Copilot rejects a file without `"version": 1`; Cursor requires the same key. Data rather

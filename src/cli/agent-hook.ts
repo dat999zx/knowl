@@ -40,9 +40,14 @@ export async function runAgentHook(host: string, event: string): Promise<void> {
     const result = await handleHostLifecycleEvent(project.id, normalized);
 
     // Best-effort and gated: returns null when transcript search is off, and never throws.
+    //
+    // `embed: false` because this process is fresh every turn and the embedding model is
+    // therefore always cold. See the option's docblock: paying the load here bought nothing --
+    // 0% vector coverage over 12,598 indexed messages -- and cost ~1.8s of every turn stop.
+    // The lexical pass stays; it needs no model.
     if (normalized.event === 'turn-stop' || normalized.event === 'session-stop') {
       const { catchUpTranscripts } = await import('../transcripts/catch-up.js');
-      await catchUpTranscripts(root);
+      await catchUpTranscripts(root, { embed: false });
     }
 
     // **This path must exit 0, including when the output is a refusal.**

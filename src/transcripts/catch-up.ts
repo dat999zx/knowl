@@ -38,6 +38,20 @@ export async function catchUpTranscripts(
      * connections this would close.
      */
     closeWhenDone?: boolean;
+    /**
+     * Whether to embed what was indexed. False for the lifecycle hook, and only for it.
+     *
+     * The hook is a fresh process per turn, so the embedding model is never warm and loading it
+     * cost more than the entire budget -- measured at ~1.8s against a 1.5s budget, in a project
+     * with nothing to index. The pass then found the deadline already gone and embedded nothing,
+     * every turn, for months: this repo's own store held 12,598 indexed messages and 4 vectors.
+     *
+     * So the hook pays for the lexical half, which is cheap and needs no model, and the semantic
+     * half happens where a model stays warm -- the long-lived `knowl serve` process, via the
+     * search-time top-up -- or in bulk under a budget a human chose, via
+     * `knowl reindex --transcripts`.
+     */
+    embed?: boolean;
   } = {},
 ): Promise<{ indexed: number; embedded: number } | null> {
   try {
@@ -52,10 +66,17 @@ export async function catchUpTranscripts(
     });
 
     let embedded = 0;
-    if (isVectorSearchEnabled(config)) {
+    if (options.embed !== false && isVectorSearchEnabled(config)) {
       try {
+        // The budget bounds *work*, not setup. Loading the model was charged to it, so a caller
+        // whose model was cold spent the whole budget on the load and then had nothing left to
+        // embed with -- `embedPendingMessages` enforces the deadline before the work, so it
+        // returned 0 rather than overrunning. Giving the load back keeps the budget meaning what
+        // its name says and lets the first call in a warm-model process do real work.
+        const loadStart = Date.now();
         const embedder = options.embedder ?? await createLocalEmbeddingProvider(config, projectRoot);
-        embedded = (await embedPendingMessages({ dbPath, embedder, deadline })).embedded;
+        const embedDeadline = deadline + (Date.now() - loadStart);
+        embedded = (await embedPendingMessages({ dbPath, embedder, deadline: embedDeadline })).embedded;
       } catch {
         // No model on disk yet, or it failed to load. The lexical index still landed; the next
         // turn or an explicit reindex fills the vectors in.

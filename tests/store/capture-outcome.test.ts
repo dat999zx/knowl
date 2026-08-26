@@ -182,4 +182,18 @@ describe('capture outcomes on disk', () => {
     expect(stored).toBe(key);
     expect(await readCaptureOutcome(stored)).toMatchObject({ turns: 1 });
   });
+
+  it('counts one conversation on one row however the host cased the project root', async () => {
+    // Claude Code sends `cwd` with the drive letter in either case, and the raw root split one
+    // conversation across two rows -- 33 turns on one, 1 on the other, on a real store. Every
+    // counter keyed this way then reads a fragment: capture health, the `turns >= 3` silence
+    // threshold, and the prompt reminder's drift gate.
+    const upper = conversationKey({ host: 'claude', projectRoot: 'D:/coding/knowl', externalSessionId: 's1' });
+    const lower = conversationKey({ host: 'claude', projectRoot: 'd:/coding/knowl', externalSessionId: 's1' });
+    expect(lower).toBe(upper);
+
+    await recordSessionTurn(upper);
+    await recordSessionTurn(lower);
+    expect(await readCaptureOutcome(upper)).toMatchObject({ turns: 2 });
+  });
 });

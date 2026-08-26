@@ -112,7 +112,6 @@ import { startViewer } from '../viewer/server.js';
 import { atomEditUrl, resolveAtomId } from './edit-link.js';
 import { positiveInt } from './parse-options.js';
 import { formatListRows, selectListRows } from './list-report.js';
-import { createAgentReminderOutput } from './agents/reminder.js';
 import { rebuildTranscriptIndex } from '../transcripts/backfill.js';
 import { closeTranscriptDbs, openTranscriptDb } from '../transcripts/database.js';
 import { isTranscriptSearchEnabled } from '../transcripts/config.js';
@@ -3564,12 +3563,16 @@ program
 
 program
   .command('agent-reminder')
-  .description('Emit fixed workflow guidance for an agent host prompt hook')
+  .description('Emit workflow guidance for an agent host prompt hook, on the drift schedule')
   .argument('<host>', 'a host that declares a prompt event: claude, codex, copilot, openhands')
   .option('--json')
-  .action(host => {
+  // Registered so `knowl --help` still describes it, but a real hook invocation never reaches
+  // here: `src/index.ts` dispatches straight to `runAgentReminder`, for the same reason it
+  // does for `agent-hook`. See that module.
+  .action(async host => {
     try {
-      console.log(JSON.stringify(createAgentReminderOutput(host)));
+      const { runAgentReminder } = await import('./agents/reminder.js');
+      await runAgentReminder(host);
     } catch (error: any) {
       console.error(`Error emitting agent reminder: ${error.message}`);
       process.exit(1);

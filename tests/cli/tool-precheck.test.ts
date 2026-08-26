@@ -178,8 +178,13 @@ describe('PreToolUse registration', () => {
     expect(await mergeNestedHookConfig(configPath, 'win32', 'claude')).toBe('configured');
 
     const config = JSON.parse(await readFile(configPath, 'utf8'));
+    // Same command shape as every other event, but NOT the same matcher. `runWriteGate` returns
+    // on its first line for a tool that does not write a file, so a wildcard here spent a
+    // process spawn and a database open (~170ms) on every Read, Grep, Glob, Bash and Task to
+    // reach an immediate no-op. The names come from `claudeProfile.writeTools`, which
+    // `toolWritesFile` reads too, so the matcher cannot drift from what the gate acts on.
     expect(config.hooks.PreToolUse).toEqual([{
-      matcher: '.*',
+      matcher: '^(Edit|Write|MultiEdit|NotebookEdit)$',
       hooks: [{ type: 'command', command: 'knowl.cmd agent-hook claude PreToolUse --json', timeout: 30, statusMessage: '' }],
     }]);
     expect(config.hooks.PreToolUse[0].hooks[0]).toEqual({

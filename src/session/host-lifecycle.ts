@@ -149,11 +149,13 @@ function toolReadsFile(input: NormalizedHostHook): boolean {
 }
 
 function toolWritesFile(input: NormalizedHostHook): boolean {
-  const { writesFiles } = hostProfile(input.host);
+  const { writesFiles, writeTools } = hostProfile(input.host);
   const toolName = input.toolName ?? '';
-  return writesFiles
-    ? writesFiles(input.hostEvent ?? '', toolName)
-    : IMPACT_WRITE_TOOLS.has(toolName);
+  if (writesFiles) return writesFiles(input.hostEvent ?? '', toolName);
+  // Preferred over the fallback set when a host declares it, so the gate and the pre-tool
+  // matcher built from the same list can never disagree about what a write is.
+  if (writeTools) return writeTools.includes(toolName);
+  return IMPACT_WRITE_TOOLS.has(toolName);
 }
 
 
