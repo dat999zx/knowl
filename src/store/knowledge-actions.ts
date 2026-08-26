@@ -1,4 +1,4 @@
-import { ProjectConfig, CommitChange, EvidenceInput, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
+import { ProjectConfig, CommitChange, EvidenceInput, KnowledgeCategory, KnowledgeItem, KnowledgeStatus } from '../core/types.js';
 import * as repo from './repository.js';
 import { crossRepoOverlapForWrite, findLikelyDuplicateKnowledgeItem, heldPayloadFor, resolveDuplicate } from './knowledge-writer.js';
 import type { CrossRepoOverlap } from '../workspace/cross-repo-overlap.js';
@@ -149,6 +149,15 @@ export async function updateKnowledgeItemWithCommit(
   updates: {
     title?: string;
     content?: string;
+    /**
+     * Correcting what kind of thing an item is, without rewriting it. A capture that landed as
+     * `state` and turned out to be a standing decision could previously only be fixed by storing
+     * it again and retiring the original, which throws away its assertion history, its access
+     * telemetry and its re-derivation count -- the evidence that it mattered -- to change one
+     * enum. The category is also the only thing GC reads to decide whether an item is archivable
+     * at all, so the misfiled copy was the one being collected.
+     */
+    category?: KnowledgeCategory;
     status?: KnowledgeStatus;
     reasoning?: string;
     source?: string | null;
