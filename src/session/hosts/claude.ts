@@ -99,6 +99,11 @@ export const claudeProfile: HostProfile = {
   nativeOutput: true,
   midTurnDeliveryVerified: true,
   hookConfigStyle: 'claude-nested',
+  // The same four names `IMPACT_WRITE_TOOLS` in `host-lifecycle.ts` falls back to, said here so
+  // the pre-tool matcher can be built from them. Claude Code applies every file write through
+  // one of these; `Bash` is deliberately absent, because the gate needs the paths a tool
+  // declares and a shell command does not declare any.
+  writeTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'],
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id) ?? hostString(raw.thread_id),

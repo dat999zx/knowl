@@ -52,6 +52,13 @@ const wantsHelp = process.argv.includes('--help') || process.argv.includes('-h')
 if (command === 'agent-hook' && !wantsHelp) {
   const { runAgentHook } = await import('./cli/agent-hook.js');
   await runAgentHook(process.argv[3], process.argv[4]);
+} else if (command === 'agent-reminder' && !wantsHelp) {
+  // Same fast path, and for the same reason: this is a per-prompt process, and since it
+  // started reading `capture_outcomes` to decide whether to speak it opens the store too.
+  // Routing it through commander loaded the MCP server, the viewer and the code indexer
+  // first, on every single prompt.
+  const { runAgentReminder } = await import('./cli/agents/reminder.js');
+  await runAgentReminder(process.argv[3]);
 } else {
   // Called rather than relying on an import-time side effect: parsing on import meant any test
   // that imported the command tree consumed the test runner's argv and exited.

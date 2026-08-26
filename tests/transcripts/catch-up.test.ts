@@ -78,6 +78,27 @@ describe('catchUpTranscripts', () => {
     expect(result?.indexed).toBe(1);
   });
 
+  // What the two tests below could not catch, because they inject a stub embedder that costs
+  // nothing to construct. Production resolves a local ONNX model in a process that is fresh
+  // every turn, the load ran inside the budget, and `embedPendingMessages` enforces the deadline
+  // before doing any work -- so the real hook path embedded nothing at all. Measured on this
+  // repo's own store: 12,598 indexed messages, 4 vectors.
+  it('indexes without embedding when the caller says not to, and still indexes', async () => {
+    await writeConfig(true, { vector: true });
+    await seed();
+
+    const embedder = stubEmbedder();
+    const result = await catchUpTranscripts(dir, { projectsDir, embedder, embed: false, closeWhenDone: false });
+
+    const client = await openTranscriptDb(path.join(dir, '.knowl', 'transcripts.db'));
+    const indexed = Number((await client.execute('SELECT COUNT(*) AS n FROM transcript_messages')).rows[0].n);
+    const embedded = Number((await client.execute('SELECT COUNT(*) AS n FROM transcript_vectors')).rows[0].n);
+
+    expect(indexed).toBe(1);
+    expect(embedded).toBe(0);
+    expect(result?.embedded).toBe(0);
+  });
+
   // The regression test for the blocker: catching up lexically but never embedding meant
   // coverage decayed from 100% with every new turn, with no signal that it had.
   it('embeds what it indexes, so coverage stays complete', async () => {

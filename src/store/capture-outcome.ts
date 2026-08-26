@@ -1,3 +1,4 @@
+import { canonicalProjectRoot } from '../core/project-path.js';
 import { getClient } from './database.js';
 
 /**
@@ -87,13 +88,24 @@ const KEY_SEPARATOR = '\u001f';
  *
  * Joined on a separator that cannot appear inside a project path, a host name or a session id,
  * so two different conversations cannot collide on one row.
+ *
+ * The root is canonicalised, for the same reason `normalizedKey` in `host-session-bindings.ts`
+ * canonicalises its own: hosts do not agree on the case of a Windows drive letter, and the raw
+ * value split one conversation across two rows. Measured on a real store, three conversations
+ * were live under both `D:\coding\knowl` and `d:\coding\knowl` at once, one of them holding
+ * 33 turns on one row and 1 on the other. Every counter keyed this way -- capture health, the
+ * `turns >= 3` silence threshold, the prompt reminder's drift gate -- read the fragment rather
+ * than the conversation.
+ *
+ * No migration: this key is recomputed from hook input on every call, so rows written under an
+ * uncanonicalised root are simply never reached again and fall out of the health window.
  */
 export function conversationKey(input: {
   host: string;
   projectRoot: string;
   externalSessionId?: string;
 }): string {
-  return [input.host, input.projectRoot, input.externalSessionId ?? ''].join(KEY_SEPARATOR);
+  return [input.host, canonicalProjectRoot(input.projectRoot), input.externalSessionId ?? ''].join(KEY_SEPARATOR);
 }
 
 /** Every counter starts its row, so neither caller has to know which of them ran first. */
@@ -269,7 +281,7 @@ export function turnCaptureKey(parts: {
   externalSessionId?: string;
   externalTurnId?: string;
 }): string {
-  return [parts.host, parts.projectRoot, parts.externalSessionId ?? '', parts.externalTurnId ?? ''].join(KEY_SEPARATOR);
+  return [parts.host, canonicalProjectRoot(parts.projectRoot), parts.externalSessionId ?? '', parts.externalTurnId ?? ''].join(KEY_SEPARATOR);
 }
 
 /** Count one tool event into the turn, and read the turn's counters back in the same write. */

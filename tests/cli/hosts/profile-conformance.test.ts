@@ -8,6 +8,34 @@ const ALL_HOSTS: HookHost[] = [
 ];
 
 describe('host profile registry', () => {
+  // The matcher on the pre-tool hook entry is built from `writeTools`, and the write gate reads
+  // the same list through `toolWritesFile`. If a host declared both, the two could disagree and
+  // the host would stop starting the process for a tool the gate still wanted to refuse -- a
+  // gate that silently stops firing, which is the failure mode with no symptom.
+  it('never declares both a writesFiles predicate and a writeTools list', () => {
+    for (const host of ALL_HOSTS) {
+      const profile = hostProfile(host);
+      expect(
+        Boolean(profile.writesFiles) && Boolean(profile.writeTools),
+        `${host} declares both writesFiles and writeTools`,
+      ).toBe(false);
+    }
+  });
+
+  it('accepts every one of its writeTools as a write, and nothing outside the list', () => {
+    for (const host of ALL_HOSTS) {
+      const profile = hostProfile(host);
+      if (!profile.writeTools) continue;
+      expect(profile.writeTools.length, `${host} declares an empty writeTools`).toBeGreaterThan(0);
+      // The matcher is anchored, so a name must match itself and nothing must match a name the
+      // list does not carry.
+      const matcher = new RegExp(`^(${profile.writeTools.join('|')})$`);
+      for (const tool of profile.writeTools) expect(matcher.test(tool), `${host}: ${tool}`).toBe(true);
+      expect(matcher.test('Read')).toBe(false);
+      expect(matcher.test('Bash')).toBe(false);
+    }
+  });
+
   it('has exactly one profile per HookHost', () => {
     expect(Object.keys(HOST_PROFILES).sort()).toEqual([...ALL_HOSTS].sort());
     for (const host of ALL_HOSTS) expect(hostProfile(host).host).toBe(host);

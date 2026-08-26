@@ -91,6 +91,27 @@ function nestedStatusMessage(event: string): string {
   return '';
 }
 
+/**
+ * Which tool names this event's handler needs to see.
+ *
+ * Everything but the pre-tool event needs all of them. The pre-tool handler runs the write gate,
+ * and `runWriteGate` returns on its first line for a tool that does not write a file -- so under
+ * a `.*` matcher every Read, Grep, Glob, Bash and Task in a session paid a process spawn and a
+ * database open (~170ms each) to reach an immediate no-op. A host that declares `writeTools`
+ * gets a matcher naming exactly those, and never starts the process for the rest.
+ *
+ * Anchored, because these are regexes to the host and an unanchored `Edit` also matches
+ * `NotebookEdit` -- harmless here, but not something to leave to the tool names staying
+ * disjoint. A host that declares no `writeTools`, or a wildcard-only schema, keeps the wildcard.
+ */
+function nestedMatcher(host: HookHost, event: string, wildcard: string): string {
+  const profile = hostProfile(host);
+  if (profile.normalizedEvent(event) !== 'tool-precheck') return wildcard;
+  const tools = profile.writeTools;
+  if (!tools || tools.length === 0) return wildcard;
+  return `^(${tools.join('|')})$`;
+}
+
 function nestedEntry(platform: NodeJS.Platform, host: HookHost, event: string): NestedEntry {
   // OpenHands' schema has no `statusMessage`, and its matcher wildcard is `*` rather than the
   // regex `.*` the Anthropic-shaped hosts take. Emitting a field a host does not define is
@@ -98,7 +119,7 @@ function nestedEntry(platform: NodeJS.Platform, host: HookHost, event: string): 
   // other handler in it down too.
   const openHands = hostProfile(host).hookConfigStyle === 'openhands-toplevel';
   return {
-    matcher: openHands ? '*' : '.*',
+    matcher: nestedMatcher(host, event, openHands ? '*' : '.*'),
     hooks: [{
       type: 'command',
       command: knowlHookCommand(platform, host, event),
