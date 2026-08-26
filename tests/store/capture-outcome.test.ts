@@ -183,17 +183,24 @@ describe('capture outcomes on disk', () => {
     expect(await readCaptureOutcome(stored)).toMatchObject({ turns: 1 });
   });
 
-  it('counts one conversation on one row however the host cased the project root', async () => {
-    // Claude Code sends `cwd` with the drive letter in either case, and the raw root split one
-    // conversation across two rows -- 33 turns on one, 1 on the other, on a real store. Every
-    // counter keyed this way then reads a fragment: capture health, the `turns >= 3` silence
-    // threshold, and the prompt reminder's drift gate.
-    const upper = conversationKey({ host: 'claude', projectRoot: 'D:/coding/knowl', externalSessionId: 's1' });
-    const lower = conversationKey({ host: 'claude', projectRoot: 'd:/coding/knowl', externalSessionId: 's1' });
-    expect(lower).toBe(upper);
+  it('counts one conversation on one row however the host spelled the project root', async () => {
+    // The raw root split one conversation across two rows -- 33 turns on one, 1 on the other, on
+    // a real store -- and every counter keyed this way then read a fragment: capture health, the
+    // `turns >= 3` silence threshold, and the prompt reminder's drift gate.
+    //
+    // Asserted through `canonicalProjectRoot` rather than against a literal, because what counts
+    // as the same root is per-platform and the first version of this test hardcoded Windows: it
+    // compared `D:/...` with `d:/...`, which POSIX resolves to two different directories under
+    // the CWD and case-sensitively, so it failed on ubuntu and macos while passing on windows.
+    const key = (root: string) => conversationKey({ host: 'claude', projectRoot: root, externalSessionId: 's1' });
+    const root = process.cwd();
+    // Unnormalised but equivalent, on every platform: `path.resolve` collapses the round trip.
+    expect(key(path.join(root, 'child', '..'))).toBe(key(root));
+    // Drive-letter case, only where drive letters exist. This is the split that was observed.
+    if (process.platform === 'win32') expect(key(root.toLowerCase())).toBe(key(root.toUpperCase()));
 
-    await recordSessionTurn(upper);
-    await recordSessionTurn(lower);
-    expect(await readCaptureOutcome(upper)).toMatchObject({ turns: 2 });
+    await recordSessionTurn(key(root));
+    await recordSessionTurn(key(path.join(root, 'child', '..')));
+    expect(await readCaptureOutcome(key(root))).toMatchObject({ turns: 2 });
   });
 });
