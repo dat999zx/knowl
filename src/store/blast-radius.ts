@@ -25,9 +25,15 @@ export const MAX_BLAST_RADIUS = 12;
 const CANDIDATE_SCAN_LIMIT = 500;
 
 export type BlastRadiusResult = {
+  /** The siblings, never the corrected item itself — see `correctedItemFlagged` for that. */
   flaggedIds: string[];
   /** True when more siblings matched than the cap allowed; the rest were left untouched. */
   capped: boolean;
+  /**
+   * Whether the corrected item itself was flagged. False when it was already inactive, stale
+   * or flagged — so a caller can report what happened without counting it as a sibling.
+   */
+  correctedItemFlagged: boolean;
 };
 
 /**
@@ -136,7 +142,7 @@ async function siblingsFromSharedEvidence(itemId: string): Promise<string[]> {
  * of atoms made a single correction pay hundreds of sequential round trips inside one
  * MCP call. One row over the cap is fetched so the caller can still report the overflow.
  */
-async function eligibleSiblings(candidateIds: string[]): Promise<string[]> {
+async function eligibleForReview(candidateIds: string[]): Promise<string[]> {
   const scanned = candidateIds.slice(0, CANDIDATE_SCAN_LIMIT);
   const placeholders = scanned.map(() => '?').join(', ');
   const rows = (await getClient().execute({
@@ -153,22 +159,39 @@ export async function flagCorrectionSiblings(
   correctedItemId: string,
   reason: string,
 ): Promise<BlastRadiusResult> {
+  // The corrected item is resolved on its own, before the siblings and outside their cap.
+  //
+  // It used to be the one item in the neighbourhood NOT flagged: `siblingsFromInsertCommits`
+  // excludes it by id, so a correction demoted its tier, flipped up to twelve batch-mates to
+  // needs_review on the strength of shared provenance, and left the item the agent actually
+  // named sitting at `fresh`. Measured on this repo's store: of 14 items that ever caused a
+  // correction, 6 were still active and still fresh. Weaker evidence earned the flag and
+  // direct evidence did not.
+  //
+  // Kept out of the candidate pool rather than added to it, for two reasons. The cap below
+  // could drop it in a wide batch — the one item that must never be the one dropped — and the
+  // empty-candidate early-out would skip it entirely for a correction with no siblings at
+  // all, which is the common shape.
+  //
+  // Same eligibility as a sibling, which is what makes this safe on the deprecate/reject path
+  // in `knowledge-actions.ts`: that caller flips status first, so an inactive item filters
+  // itself out here and neither caller needs special-casing.
+  const self = await eligibleForReview([correctedItemId]);
+
   const groups = await Promise.all([
     siblingsFromInsertCommits(correctedItemId),
     siblingsFromSource(correctedItemId),
     siblingsFromSharedEvidence(correctedItemId),
   ]);
   const candidateIds = [...new Set(groups.flat())];
-  if (candidateIds.length === 0) return { flaggedIds: [], capped: false };
-
-  const eligible = await eligibleSiblings(candidateIds);
-  if (eligible.length === 0) return { flaggedIds: [], capped: false };
+  const eligible = candidateIds.length > 0 ? await eligibleForReview(candidateIds) : [];
 
   const capped = eligible.length > MAX_BLAST_RADIUS;
-  const toFlag = eligible.slice(0, MAX_BLAST_RADIUS);
+  const toFlag = [...self, ...eligible.slice(0, MAX_BLAST_RADIUS)];
+  if (toFlag.length === 0) return { flaggedIds: [], capped: false, correctedItemFlagged: false };
 
-  // Full rows are loaded only for what is actually flagged — at most the cap — because the
-  // commit records each item's before state.
+  // Full rows are loaded only for what is actually flagged — at most the cap, plus the
+  // corrected item — because the commit records each item's before state.
   const changes: CommitChange[] = [];
   for (const id of toFlag) {
     const item = await repo.getKnowledgeItem(id);
@@ -176,13 +199,22 @@ export async function flagCorrectionSiblings(
     const updated = await repo.updateKnowledgeItem(id, { freshness: 'needs_review' });
     changes.push({ itemId: id, action: 'update', before: item, after: updated });
   }
+  // `flaggedIds` stays exactly what it has always meant: the siblings. The corrected item is
+  // reported through its own field instead, so no caller has to know to filter an id out of a
+  // list named for something else. Both rows are in the commit either way — the audit trail
+  // records every write, whatever the return shape calls them.
+  const siblingIds = changes.map(change => change.itemId).filter(id => id !== correctedItemId);
   await repo.createKnowledgeCommit(
     projectId,
-    `Correction blast radius: ${changes.length} sibling(s) of ${reason}`,
+    `Correction blast radius: ${siblingIds.length} sibling(s) of ${reason}`,
     changes,
   );
 
-  return { flaggedIds: changes.map(change => change.itemId), capped };
+  return {
+    flaggedIds: siblingIds,
+    capped,
+    correctedItemFlagged: changes.some(change => change.itemId === correctedItemId),
+  };
 }
 
 /**

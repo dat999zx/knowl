@@ -9,6 +9,7 @@ import { storeKnowledgeAtomsDeduped, storeKnowledgeItemDeduped } from '../../src
 import * as repo from '../../src/store/repository.js';
 
 const ROOT = path.resolve('.knowl-blast-radius-test');
+const SELF_ROOT = path.resolve('.knowl-blast-radius-self-test');
 
 const freshnessOf = async (id: string): Promise<string> => {
   const row = (await getClient().execute({
@@ -303,5 +304,98 @@ describe('K-48: finding the insert commit without scanning the table', () => {
     const left = (await getClient().execute('SELECT COUNT(*) c FROM knowledge_commit_items')).rows[0].c;
     expect(Number(left)).toBe(0);
     void batch;
+  });
+});
+
+/**
+ * The corrected item is the one with direct evidence against it. It used to be the only item
+ * in the neighbourhood left at `fresh` while its batch-mates were flagged on the far weaker
+ * evidence of shared provenance.
+ */
+describe('the corrected item itself', () => {
+  let projectId = '';
+
+  beforeAll(async () => {
+    await fs.rm(SELF_ROOT, { recursive: true, force: true });
+    await fs.mkdir(path.join(SELF_ROOT, '.knowl'), { recursive: true });
+    await initDb(SELF_ROOT);
+    projectId = (await repo.createProject(SELF_ROOT, 'Blast radius self test')).id;
+  });
+
+  beforeEach(async () => {
+    const db = getDb() as any;
+    await db.run(sql`DELETE FROM knowledge_evidence`);
+    await db.run(sql`DELETE FROM evidence`);
+    await db.run(sql`DELETE FROM knowledge_commits`);
+    await db.run(sql`DELETE FROM knowledge_items`);
+  });
+
+  afterAll(async () => {
+    await closeDb();
+    await fs.rm(SELF_ROOT, { recursive: true, force: true }).catch(() => {});
+  });
+
+  it('is flagged alongside its siblings, and reported apart from them', async () => {
+    const batch = await storeKnowledgeAtomsDeduped(projectId, [
+      { category: 'fact', title: 'Self alpha', content: 'The atom that misled the agent.' },
+      { category: 'fact', title: 'Self beta', content: 'A batch-mate of the wrong one.' },
+    ]);
+
+    const result = await flagCorrectionSiblings(projectId, batch.itemIds[0], 'a correction');
+
+    expect(await freshnessOf(batch.itemIds[0])).toBe('needs_review');
+    expect(result.correctedItemFlagged).toBe(true);
+    // `flaggedIds` still means the siblings, so no caller has to filter an id out of a list
+    // named for something else.
+    expect(result.flaggedIds).toEqual([batch.itemIds[1]]);
+  });
+
+  it('is flagged even when the correction has no siblings at all', async () => {
+    // The common shape, and the one an empty-candidate early-out used to skip entirely.
+    const lone = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Lone wrong atom', content: 'Written by itself, corrected by itself.',
+    });
+
+    const result = await flagCorrectionSiblings(projectId, lone.item.id, 'a correction');
+
+    expect(await freshnessOf(lone.item.id)).toBe('needs_review');
+    expect(result.correctedItemFlagged).toBe(true);
+    expect(result.flaggedIds).toEqual([]);
+  });
+
+  it('survives a batch wide enough to fill the cap, which it does not compete for', async () => {
+    // Written through `createKnowledgeItem` and a shared source rather than a real batch
+    // write, because titles this close collapse under dedup: `Wide batch member 3` and
+    // `Wide batch member 4` are the same subject once tokenized, so a genuine batch write
+    // supersedes its way down to a single active item and there is no cap left to test.
+    const corrected = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'The wrong member', content: 'The one that misled the agent.', source: 'wide-self-batch',
+    });
+    for (let index = 0; index < MAX_BLAST_RADIUS + 5; index++) {
+      await repo.createKnowledgeItem(projectId, {
+        category: 'fact', title: `Wide self member ${index}`, content: `Member number ${index}.`,
+        source: 'wide-self-batch',
+      });
+    }
+
+    const result = await flagCorrectionSiblings(projectId, corrected.id, 'a correction');
+
+    expect(result.capped).toBe(true);
+    expect(result.flaggedIds).toHaveLength(MAX_BLAST_RADIUS);
+    // The one item that must never be the one dropped, however wide the batch it came from.
+    expect(result.correctedItemFlagged).toBe(true);
+    expect(await freshnessOf(corrected.id)).toBe('needs_review');
+  });
+
+  it('does not flag an item already retired, so the deprecate path stays a no-op on itself', async () => {
+    const item = await storeKnowledgeItemDeduped(projectId, {
+      category: 'fact', title: 'Retired already', content: 'Deprecated before the blast radius ran.',
+    });
+    await updateKnowledgeItemWithCommit(projectId, item.item.id, { status: 'deprecated' }, { projectRoot: SELF_ROOT });
+
+    const result = await flagCorrectionSiblings(projectId, item.item.id, 'a correction');
+
+    expect(result.correctedItemFlagged).toBe(false);
+    expect(await freshnessOf(item.item.id)).not.toBe('needs_review');
   });
 });

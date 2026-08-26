@@ -1445,9 +1445,15 @@ export function registerTools(
         const tierNote = tierChange
           ? `\n\nStanding: item ${tierChange.reason} to ${tierChange.tier}.`
           : '';
-        const blastNote = blast && blast.flaggedIds.length > 0
-          ? `\n\nBlast radius: ${blast.flaggedIds.length} sibling item(s) marked needs_review${blast.capped ? ' (capped)' : ''}.`
-          : '';
+        // Two separate facts. Reporting them as one number is how the missing self-flag hid:
+        // "3 sibling item(s)" read as though the corrected item were among them.
+        const blastParts = [
+          blast?.correctedItemFlagged ? 'this item marked needs_review' : '',
+          blast && blast.flaggedIds.length > 0
+            ? `${blast.flaggedIds.length} sibling item(s) marked needs_review${blast.capped ? ' (capped)' : ''}`
+            : '',
+        ].filter(Boolean);
+        const blastNote = blastParts.length > 0 ? `\n\nReview: ${blastParts.join('; ')}.` : '';
         return { content: [{ type: 'text', text: `Recorded feedback for ${itemId}:\n\n${JSON.stringify(feedback, null, 2)}${tierNote}${blastNote}` }] };
       }
 
