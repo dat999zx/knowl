@@ -37,6 +37,23 @@ function generateId(): string {
   return crypto.randomUUID().replace(/-/g, '').slice(0, 16);
 }
 
+/**
+ * Surfaces that record something other than the ranker choosing to show an item.
+ *
+ * `feedback` is an agent reporting on an item it already had. `rederived` is a write the store
+ * recognised as something it already holds -- the agent concluded it again from scratch. Neither
+ * is a read, and counting either as one would inflate `retrievalCount`, which is the number
+ * behind the never-read lens and behind GC's `isHot`. That number has been measured and argued
+ * about; quietly widening what it counts would invalidate every one of those measurements.
+ */
+const REDERIVED_SURFACE = 'rederived';
+
+/**
+ * SQL fragment rather than a bound parameter: both queries below are aggregates run with no
+ * args, and these values are compile-time constants, never anything a caller supplies.
+ */
+const IS_RETRIEVAL = `surface NOT IN ('feedback', '${REDERIVED_SURFACE}')`;
+
 function fingerprint(query?: string): string | null {
   return query ? crypto.createHash('sha256').update(query).digest('hex') : null;
 }
@@ -93,6 +110,28 @@ export async function recordKnowledgeFeedback(input: Omit<KnowledgeAccessInput, 
   return recordKnowledgeAccess({ ...input, surface: 'feedback', rank: 0 });
 }
 
+/**
+ * Record that a write turned out to be something the store already holds.
+ *
+ * This is the only POSITIVE capture signal in the system: every other rule says what not to
+ * store. An agent that reaches the same conclusion again, in a later session, without the store
+ * having handed it the answer, is evidence the fact is load-bearing -- and unlike a read it is
+ * not the ranker's opinion, it is the agent's own reasoning over the code arriving in the same
+ * place twice.
+ *
+ * It is NOT the retrieval feedback loop the store refuses elsewhere: a no-op write stores
+ * nothing, so no amount of re-derivation can multiply copies of a bad atom. Dedup is what
+ * stands in the way of that loop, and this counts the times dedup fired.
+ *
+ * ponytail: an agent that retrieved the atom this session and then re-stored it verbatim also
+ * lands here, and `knowledge_access` has no session column to tell the two apart. That inflates
+ * the count without creating atoms or ranking pressure, which is why this protects from GC and
+ * is deliberately not wired into ranking. Wire it there only behind a measurement.
+ */
+export async function recordRederivationBestEffort(itemId: string): Promise<void> {
+  await recordKnowledgeAccessBestEffort({ itemId, surface: REDERIVED_SURFACE, rank: 0 });
+}
+
 export async function listKnowledgeAccess(itemId: string): Promise<KnowledgeAccess[]> {
   const result = await getClient().execute({
     // Ties break on rowid, not id. `retrieved_at` is millisecond text, so an access and the
@@ -120,7 +159,7 @@ export async function getKnowledgeAccessReport(): Promise<{
 }> {
   const result = await getClient().execute(`
     SELECT ki.id AS item_id, ki.title, ki.freshness,
-      SUM(CASE WHEN ka.surface != 'feedback' THEN 1 ELSE 0 END) AS retrieval_count,
+      SUM(CASE WHEN ka.${IS_RETRIEVAL} THEN 1 ELSE 0 END) AS retrieval_count,
       SUM(CASE WHEN ka.useful = 1 THEN 1 ELSE 0 END) AS useful_count,
       SUM(CASE WHEN ka.caused_correction = 1 THEN 1 ELSE 0 END) AS caused_correction_count
     FROM knowledge_items ki
@@ -135,20 +174,35 @@ export async function getKnowledgeAccessReport(): Promise<{
   };
 }
 
-export type KnowledgeAccessSummary = { retrievalCount: number; lastRetrievedAt: string };
+export type KnowledgeAccessSummary = {
+  retrievalCount: number;
+  /**
+   * Null when an item has only ever been re-derived and never retrieved. A caller that reads
+   * this as a date must handle that: treating the absence as "read just now" is how a
+   * never-read atom would silently become protected.
+   */
+  lastRetrievedAt: string | null;
+  /** Times a write was recognised as something the store already held. */
+  rederivedCount: number;
+};
 
 // Per-item retrieval frequency and recency — used by GC to protect hot memory
 // from decay and to collect only genuinely cold items.
 export async function getAccessSummary(): Promise<Map<string, KnowledgeAccessSummary>> {
   const rows = (await getClient().execute(`
-    SELECT knowledge_item_id, COUNT(*) AS retrieval_count, MAX(retrieved_at) AS last_retrieved_at
-    FROM knowledge_access WHERE surface != 'feedback' GROUP BY knowledge_item_id
+    SELECT knowledge_item_id,
+      SUM(CASE WHEN ${IS_RETRIEVAL} THEN 1 ELSE 0 END) AS retrieval_count,
+      MAX(CASE WHEN ${IS_RETRIEVAL} THEN retrieved_at END) AS last_retrieved_at,
+      SUM(CASE WHEN surface = '${REDERIVED_SURFACE}' THEN 1 ELSE 0 END) AS rederived_count
+    FROM knowledge_access GROUP BY knowledge_item_id
   `)).rows;
   const summary = new Map<string, KnowledgeAccessSummary>();
   for (const row of rows) {
     summary.set(String(row.knowledge_item_id), {
       retrievalCount: Number(row.retrieval_count),
-      lastRetrievedAt: String(row.last_retrieved_at),
+      // Null survives as null: an item with only re-derivations has no read to date.
+      lastRetrievedAt: row.last_retrieved_at == null ? null : String(row.last_retrieved_at),
+      rederivedCount: Number(row.rederived_count),
     });
   }
   return summary;

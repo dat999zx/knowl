@@ -10,6 +10,7 @@ import type { ActiveWorkspace } from '../workspace/resolve.js';
 import { attachEvidenceToKnowledge, listEvidenceForItem, normalizeEvidenceLocator } from './evidence-repository.js';
 import { normalizeAffectedPaths } from './freshness.js';
 import { indexKnowledgeItemsBestEffort } from './write-embedding.js';
+import { recordRederivationBestEffort } from './access-feedback.js';
 import { governingDecisionForWrite, type GoverningDecision } from './governing-decision.js';
 
 /**
@@ -766,6 +767,9 @@ export async function storeKnowledgeItemDeduped(
     ? resolveDuplicate(input, duplicate, await heldPayloadFor(input, duplicate))
     : null;
   if (duplicate && resolution === 'no-op' && !input.supersedes) {
+    // The agent reached this conclusion again and the store already had it. That is the one
+    // positive capture signal in the system, and until now it was computed and discarded.
+    await recordRederivationBestEffort(duplicate.id);
     return { action: 'duplicate', item: duplicate };
   }
 
@@ -887,6 +891,7 @@ export async function storeKnowledgeAtomsDeduped(
         ? resolveDuplicate(atom, duplicate, await heldPayloadFor(atom, duplicate))
         : null;
       if (duplicate && resolution === 'no-op' && !atom.supersedes) {
+        await recordRederivationBestEffort(duplicate.id);
         itemIds.push(duplicate.id);
         duplicateCount++;
         outcomes.push({ action: 'duplicate', itemId: duplicate.id, title: atom.title });

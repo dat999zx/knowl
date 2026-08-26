@@ -48,12 +48,21 @@ const DEFAULT_MIN_COMPRESS_BYTES = 180;
 // even once it passes the staleness age, so useful memory is not archived away.
 const HOT_RETRIEVAL_COUNT = 3;
 const HOT_RECENT_DAYS = 21;
+// One re-derivation can be a coincidence of phrasing; two is the fact earning its place --
+// the same bar and the same reasoning as VERIFY_THRESHOLD in tier.ts.
+const HOT_REDERIVED_COUNT = 2;
 
 export function isHot(itemId: string, access: Map<string, KnowledgeAccessSummary>, now: Date): boolean {
   const a = access.get(itemId);
   if (!a) return false;
   if (a.retrievalCount >= HOT_RETRIEVAL_COUNT) return true;
-  return daysSince(a.lastRetrievedAt, now) <= HOT_RECENT_DAYS;
+  // An item the agent keeps concluding for itself is load-bearing whether or not anything ever
+  // retrieved it -- which is the case the read-side signals cannot see at all, because a fact
+  // nobody queries for is exactly the one that looks cold right up until it matters.
+  if (a.rederivedCount >= HOT_REDERIVED_COUNT) return true;
+  // Null means never retrieved. Reading that as a recent read would protect the whole
+  // never-read population, which is the opposite of what this function is for.
+  return a.lastRetrievedAt !== null && daysSince(a.lastRetrievedAt, now) <= HOT_RECENT_DAYS;
 }
 const PROTECTED_CATEGORIES = new Set<KnowledgeCategory>([
   'decision',
