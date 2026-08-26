@@ -1,6 +1,7 @@
 import { KNOWLEDGE_CATEGORIES, KnowledgeCommit, KnowledgeItem, Project, ProjectConfig } from '../core/types.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
 import type { CaptureHealth } from '../store/capture-outcome.js';
+import type { RecallGapReport } from '../store/recall-gap.js';
 import type { CloudStatus } from '../cloud/status.js';
 import { formatWorkspaceBlock } from './workspace-report.js';
 
@@ -38,6 +39,8 @@ export function formatStatusReport(input: {
   /** Absent on a store with no recorded sessions, which renders no section at all. */
   capture?: CaptureHealth;
   captureNudgeMode?: string;
+  /** Absent, or a store that has observed no tool touches, renders no section at all. */
+  recall?: RecallGapReport;
   /** Absent or disconnected renders nothing, so an offline repo gains no noise. */
   cloud?: CloudStatus | null;
   /**
@@ -83,6 +86,7 @@ export function formatStatusReport(input: {
     }
   }
   lines.push(...formatCaptureHealthBlock(input.capture, input.captureNudgeMode));
+  lines.push(...formatRecallGapBlock(input.recall));
   lines.push(...formatWorkspaceBlock(input.workspace ?? null));
   lines.push(...formatCloudBlock(input.cloud ?? null));
   lines.push(STATUS_LINE);
@@ -102,6 +106,36 @@ export function formatStatusReport(input: {
  * hooks have never run has not measured 0%, it has measured nothing, and a confident zero is the
  * wrong thing to tell someone whose capture is simply not wired up.
  */
+/**
+ * The read side's twin of capture health: how often the agent acted on a file this store already
+ * knew something about, without having retrieved it.
+ *
+ * The share is taken over `held`, not over `touches`, and the difference is the whole point. A
+ * miss is only possible where there was something to miss, so dividing by every tool call would
+ * report a number that falls as the agent works in files the store says nothing about -- which is
+ * activity, not improvement.
+ *
+ * The undercount is printed rather than left in a doc comment. Only knowledge carrying
+ * `affectedPaths` can be matched to a file, so this is a floor on the real gap, and a floor read
+ * as a total is the way a measurement like this gets quietly dismissed.
+ */
+function formatRecallGapBlock(recall?: RecallGapReport): string[] {
+  if (!recall || recall.touches === 0) return [];
+
+  const lines = [
+    STATUS_LINE,
+    '📌 RECALL GAP',
+    `  Tool touches observed: ${recall.touches}`,
+    `  Store held something:  ${recall.held}`,
+  ];
+  if (recall.held > 0) {
+    lines.push(`  ...already retrieved:  ${recall.retrieved}`);
+    lines.push(`  ...missed:             ${recall.missed} (${Math.round((recall.missed / recall.held) * 100)}%)`);
+    lines.push('  Lower bound — only knowledge citing a file path can be counted here.');
+  }
+  return lines;
+}
+
 function formatCaptureHealthBlock(capture?: CaptureHealth, mode?: string): string[] {
   if (!capture || capture.sessions === 0) return [];
 

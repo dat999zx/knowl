@@ -81,6 +81,10 @@ const SCHEMA_PINS: Record<number, string> = {
   // signal at turn granularity and the ceiling its prompts spend. Additive, so
   // `KNOWL_SCHEMA_VERSION` again does not move.
   14: 'efef31ca11c9bddd7973ad0a9129eb86',
+  // 15 adds `recall_observations`: whether the store held knowledge about the file a tool just
+  // touched, and whether the agent had already retrieved it. Additive, so `KNOWL_SCHEMA_VERSION`
+  // again does not move.
+  15: '5284f58395fafcb6f5649fc5e9d55d99',
 };
 
 let root: string;

@@ -184,8 +184,18 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * signal at turn granularity, and the per-conversation ceiling its prompts spend. Additive
  * tables, no backfill possible -- turn counters exist only while their turn does.
  * `KNOWL_SCHEMA_VERSION` again does not move.
+ *
+ * Level 15 adds `recall_observations`: the read-side twin of `capture_outcomes`, recording
+ * whether the store held knowledge about the file a tool just touched and whether the agent had
+ * already retrieved it. One additive table, no backfill possible for the same reason as level 9
+ * -- the rows ride the tool events that cause them, and a touch that already happened left no
+ * trace anywhere else to reconstruct from. The bump is load-bearing rather than ceremonial:
+ * `CREATE TABLE IF NOT EXISTS` is a no-op only for a store that reaches the migration body, so
+ * an existing database stamped at 14 would otherwise never gain the table while `knowl status`
+ * queries it. `KNOWL_SCHEMA_VERSION` again does not move -- an older build ignores the table
+ * entirely and behaves exactly as it does today.
  */
-export const KNOWL_MIGRATION_LEVEL = 14;
+export const KNOWL_MIGRATION_LEVEL = 15;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {
