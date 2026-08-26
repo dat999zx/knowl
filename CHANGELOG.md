@@ -3,6 +3,67 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.13.0 — 2026-08-26
+
+Knowl starts counting what it never asked for, and stops discarding the evidence that something
+mattered.
+
+The theme is signals that existed and went nowhere. A no-op duplicate write — an agent reaching a
+conclusion the store already held, unaided — was computed and thrown away, though it is the only
+positive capture signal in the system. An agent reporting that an item misled it flagged that
+item's batch-mates and left the named item untouched. And on the read side there was no signal at
+all: nothing measured how often an agent acted on a file the store already knew something about
+without ever retrieving it, which is the one failure a session cannot observe about itself.
+
+**New: the recall gap.** On every tool call that reads or writes a file, the touched paths are
+matched against active atoms citing them, and one row records whether the store held anything and
+whether it had already been retrieved. Read it in `knowl status` under `RECALL GAP`. Nothing is
+shown to the agent and there is no configuration key — a count gated behind the feature it exists
+to justify can never justify it. It counts *touches* rather than atoms, takes its share over
+"held" rather than over every tool call, and prints that it is a lower bound: only knowledge
+carrying `affectedPaths` can be matched to a file. Migration level 15, additive;
+`KNOWL_SCHEMA_VERSION` does not move and an older build ignores the table entirely.
+
+**Re-derivation now protects memory from garbage collection.** A no-op duplicate write is recorded
+as a `knowledge_access` row under a new `rederived` surface, and two of them protect an item from
+GC decay the way three retrievals already do. The surface is deliberately separate from retrieval:
+`retrievalCount` backs the never-read lens and `isHot`, and quietly widening what it counts would
+invalidate every measurement taken against it. The read-side signals cannot see this case at all —
+a fact nobody queries for looks cold right up until it matters.
+
+**`knowl_update` can correct a misfiled category.** An item captured as `state` that turns out to
+be a standing decision previously had to be stored again and the original retired, discarding its
+assertion history, access telemetry and re-derivation count to change one enum. Category is not
+cosmetic: it is the only field GC reads to decide whether an item is archivable at all, so the
+misfiled copy was precisely the one on the collection path, and the only fix for it erased the
+evidence against collecting it.
+
+**A correction now flags the item that caused it.** Reporting that an item misled you demoted its
+tier, flipped up to twelve batch-mates to `needs_review` on shared provenance, and left the named
+item at `fresh`. Measured on this repo's store: of 14 items that have ever caused a correction, 6
+were still active and still fresh. Weaker evidence earned the flag and direct evidence did not.
+
+**An answered question becomes a decision memory.** `session-candidates.ts` has promoted `decision`
+session events into decision atoms since the beginning, and a measurement of the live store found
+zero had ever been written — the extractor was built and starving. Only the question header and the
+label of the chosen option are captured.
+
+**The local embedding model is optional.** `@huggingface/transformers` pulls `onnxruntime-node`,
+which downloads a native binary from a postinstall script; an unreachable CDN aborted the whole
+install for reasons unrelated to the package. Retrieval already reported `lexical-only` when no
+vector half was available, which is the same degraded mode a user who never downloaded the model
+was in, so nothing new had to tolerate anything. CI now checks for the rollback explicitly and
+retries once, rather than failing three minutes later with `Cannot find package` — which reads like
+a bug in the change under test rather than a missing dependency.
+
+**Issue #169 is closed, not fixed.** The relevance floor cannot be tuned to separate on-topic from
+technical off-topic queries, and `docs/evals/relative-floor-probe.md` closes the last open
+direction: every page-relative signal scores *worse* than the absolute cosine it was meant to
+replace, and the store-self-similarity family fails for an arithmetic reason rather than an
+empirical one — within one corpus its statistics are constants, so all three variants are monotonic
+transforms of the raw cosine and cannot reorder anything. Nothing about the floor's behaviour
+changes. The measurement is recorded so nobody spends a week retrying it.
+
 ## 5.12.0 — 2026-08-25
 
 Knowl stops claiming more than it can show, and stops silently losing what it can.

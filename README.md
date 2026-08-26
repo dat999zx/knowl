@@ -574,6 +574,10 @@ knowl doctor                           # setup, retrieval, and registration
 - **Optional transcript search** — off by default, and off means nothing exists on disk. Turn it on
   and past session prose becomes searchable, so a memory miss degrades to a slower lookup instead
   of amnesia.
+- **The recall gap** — how often an agent edited a file this store already knew something about
+  without ever retrieving it. Invisible from inside a session, because an agent that never
+  retrieved an atom cannot notice the atom exists. Counted on every tool call, shown to nobody but
+  you, in `knowl status`.
 
 → [Tasks, sessions, and lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle)
 

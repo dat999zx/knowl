@@ -676,6 +676,50 @@ knowl config set search.pathsChanged false
 Worth turning off in a repository whose atoms cite generated or build-time files, where the
 marker would be present on every row forever and stop meaning anything.
 
+### The recall gap — what the store held and nobody asked for
+
+Every gate on the write path decides what gets *in*. `capture.nudge` measures the opposite: what
+a session was given the chance to store and did not. The read path now has the same twin, and it
+answers a question no session can answer about itself — **how often did the agent act on a file
+this store already knew something about, without having retrieved it?**
+
+An agent that never retrieved an atom has no way to notice the atom exists. So the failure is
+invisible from the inside, and worst when the mistake does not fail loudly: wrong approach, tests
+green, shipped, and nobody ever learns the store held the answer the whole time.
+
+On every tool call that reads or writes a file, the touched paths are matched against active
+atoms citing them, and one row records whether the store held anything and whether it had already
+been retrieved. Read it with `knowl status`:
+
+```
+📌 RECALL GAP
+  Tool touches observed: 340
+  Store held something:  91
+  ...already retrieved:  62
+  ...missed:             29 (32%)
+  Lower bound — only knowledge citing a file path can be counted here.
+```
+
+**Nothing is shown to the agent, and there is no configuration key.** It is a measurement, and it
+has no switch for the same reason `capture_outcomes` has none: a count gated behind the feature it
+exists to justify can never justify it. Only what is *done* with a count is ever configurable, and
+today nothing is done with this one.
+
+Three properties worth knowing before quoting the number:
+
+- **It counts touches, not atoms.** Three atoms naming one file is one moment where the agent
+  could have been told something and was not, not three misses.
+- **The share is taken over `held`, never over touches.** Dividing by every tool call reports a
+  figure that falls as the agent works in files the store says nothing about — which is activity,
+  not improvement.
+- **It is a lower bound, printed as one.** Only knowledge carrying `affectedPaths` can be matched
+  to a file, so a decision atom naming no file never counts as a miss. "Already retrieved" is
+  judged on a time window rather than a session join, which errs toward *retrieved* — so the proxy
+  understates the gap and cannot invent one.
+
+The rows are `preserved` across snapshot restore, never refilled: a ratio assembled from two
+different histories is not a floor on anything.
+
 ### What Knowl says mid-turn — `reminders.*`
 
 Separate from what Knowl *stores*: these are the messages it sends the agent between tool
