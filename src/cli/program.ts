@@ -19,6 +19,7 @@ import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.j
 import { formatHierarchyToMarkdown } from '../core/format.js';
 import { formatStatusReport } from './status-report.js';
 import { captureHealth } from '../store/capture-outcome.js';
+import { recallGapReport } from '../store/recall-gap.js';
 import { captureNudgeMode } from '../store/capture-config.js';
 import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory } from '../core/types.js';
 import { createManifest, isValidRepoName, readManifest, writeManifest } from '../workspace/manifest.js';
@@ -465,6 +466,7 @@ program
         commits,
         capture: await captureHealth(),
         captureNudgeMode: captureNudgeMode(config),
+        recall: await recallGapReport(project.id),
         cloud,
         // Reads config.json a second time rather than threading `config` through: the catalog
         // resolves preset-owned values through `resolveVectorProfile`, and duplicating that

@@ -49,6 +49,7 @@ import {
   type ReadObservation,
 } from '../store/read-set.js';
 import { shouldRefuseWrite } from './write-gate.js';
+import { observeRecallGapBestEffort } from '../store/recall-gap.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';
 import { isKnowlProjectGuidanceCurrent } from '../core/agents-guidance.js';
 import {
@@ -644,6 +645,27 @@ async function runToolEventImpact(input: NormalizedHostHook, sessionId: string):
 }
 
 /**
+ * Count whether the store already held knowledge about the file this tool just touched.
+ *
+ * **Deliberately not gated on `impactEnabled`**, unlike `runToolEventImpact` directly above.
+ * `capture_outcomes` established the rule this follows: a measurement gated behind the feature it
+ * exists to justify can never justify it, so counting is unconditional and only what is DONE with
+ * the count is ever configurable. Nothing is shown to the agent here and no output is produced --
+ * the whole function is a row.
+ *
+ * Reads and writes both count, and for the same reason: the question is whether the agent was
+ * about to act on a file the store knew something about, and reading it to decide what to do is
+ * exactly that moment. A failed call is excluded because a tool that failed touched nothing.
+ */
+async function observeToolTouch(input: NormalizedHostHook, projectId: string): Promise<void> {
+  if (input.status === 'failed') return;
+  if (!toolReadsFile(input) && !toolWritesFile(input)) return;
+  const paths = impactChangedPaths(input.payload);
+  if (paths.length === 0) return;
+  await observeRecallGapBestEffort(projectId, { conversation: conversationKey(input), paths });
+}
+
+/**
  * The pre-write branch: refuse this one call when the session is about to write over something it
  * read and has not seen since.
  *
@@ -1085,6 +1107,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
           .catch(() => null)
         : null;
       const impact = input.status === 'failed' ? [] : await runToolEventImpact(input, started.session.id);
+      await observeToolTouch(input, projectId);
       // Adaptive continuation reminder: only nudge Claude after a run of tool calls
       // that ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
       // that is querying/storing memory never sees a reminder.

@@ -123,6 +123,31 @@ const SCHEMA_STATEMENTS = [
     PRIMARY KEY (knowledge_item_id, evidence_id)
   );`,
 
+  /*
+   * One row per tool touch: did the store hold knowledge about what the agent just touched, and
+   * had the agent already retrieved it.
+   *
+   * The read side's twin of `capture_outcomes`. That one measures what a session should have
+   * WRITTEN and did not; this measures what it should have READ and did not. Both are counted
+   * unconditionally, and a separate flag decides whether anything acts on the answer -- so the
+   * number exists before there is any feature to justify with it.
+   *
+   * No foreign key to `knowledge_items`, deliberately. A row records that knowledge WAS held at
+   * touch time, and that fact stays true after the atom is superseded or collected. A cascade
+   * would delete exactly the observations that make a trend readable across a GC run.
+   *
+   * Not swept, for the same reason `capture_outcomes` is not: the sessions expire, the question
+   * does not. A handful of integers per tool call.
+   */
+  `CREATE TABLE IF NOT EXISTS recall_observations (
+    id TEXT PRIMARY KEY,
+    conversation TEXT NOT NULL,
+    paths TEXT NOT NULL,
+    held INTEGER NOT NULL,
+    retrieved INTEGER NOT NULL,
+    observed_at TEXT NOT NULL
+  );`,
+
   `CREATE TABLE IF NOT EXISTS knowledge_access (
     id TEXT PRIMARY KEY,
     knowledge_item_id TEXT NOT NULL REFERENCES knowledge_items(id) ON DELETE CASCADE,

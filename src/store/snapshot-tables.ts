@@ -89,6 +89,12 @@ export const SNAPSHOT_TABLE_POLICY: Readonly<Record<string, SnapshotTablePolicy>
   // from a week-old snapshot would clear the flag on conversations that were already nudged --
   // re-arming a stop-blocking interrupt against sessions that had answered it.
   capture_outcomes: 'preserved',
+  // The read side's twin, preserved for the first of `capture_outcomes`' reasons and not the
+  // second: there is no one-shot to re-arm here, because nothing acts on these rows at all. What
+  // would break is the measurement itself -- a restore would refill observations of touches this
+  // checkout never made, and the gap they describe is the number a decision to build injection
+  // rests on. A ratio assembled from two different histories is not a floor on anything.
+  recall_observations: 'preserved',
   // Pending lessons and their block budget, preserved on exactly `capture_outcomes`' two
   // reasons: the resolved rows are the measurement any decision to enforce reads, and the
   // claims table is a spent one-shot -- refilling it from a snapshot would re-arm a
