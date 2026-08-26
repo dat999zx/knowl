@@ -79,6 +79,32 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # `@huggingface/transformers` is an optionalDependency so that a CDN blip on
+      # `onnxruntime-node`'s postinstall cannot fail a user's install. The cost of that is
+      # paid here: when the blip happens, npm rolls the whole optional subtree back and `npm
+      # ci` still exits 0, so CI would go on to run the suite with no embedding model at all.
+      # Three suites load a real one -- that is what the cache above exists for -- and they
+      # fail three minutes later with `Cannot find package`, which reads like a code bug.
+      #
+      # Observed on `44f5a8a`: green on three legs, this failure on ubuntu/22 alone.
+      #
+      # So say it here instead. One retry, because the blip is transient by definition; if it
+      # is still missing after that, fail loudly rather than silently lose the semantic path.
+      - name: Verify the optional embedding stack installed
+        shell: bash
+        run: |
+          have() { test -d node_modules/@huggingface/transformers && test -d node_modules/onnxruntime-node; }
+          if ! have; then
+            echo "::warning::optional embedding stack was rolled back by npm ci -- retrying once"
+            npm ci
+          fi
+          if ! have; then
+            echo "::error::@huggingface/transformers or onnxruntime-node is missing after npm ci."
+            echo "The optional install failed twice. Every suite on the semantic path would now"
+            echo "fail with 'Cannot find package' for a reason that has nothing to do with the change."
+            exit 1
+          fi
+
       - name: Check version sync
         run: npm run check:versions
 
