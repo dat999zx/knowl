@@ -711,7 +711,25 @@ been retrieved. Read it with `knowl status`:
   ...already retrieved:  62
   ...missed:             29 (32%)
   Lower bound — only knowledge citing a file path can be counted here.
+  Retrieved when held — main thread: 62% (128 held)
+                        subagents:   31% (44 held)
 ```
+
+**The last two lines split the same ratio by who was working**, and subagents are the half worth
+watching. A subagent receives no prompt reminder and no MCP server instructions — the
+`SubagentStart` card is the only guidance channel that reaches it — so its share is the closest
+thing to a controlled read on whether that card alone carries the habit.
+
+They print **only when both sides have observations**. Against one population it is not a
+comparison, and rows written before the attribution existed are unattributed, so a freshly
+upgraded store would otherwise report "100% main thread" as though that had been measured. A host
+that does not identify its subagents therefore shows nothing here rather than something wrong.
+
+The identity is recorded at the hook, which is the only place it exists: **hooks know the agent,
+MCP calls do not.** A subagent shares its parent's session id, so the conversation key cannot
+separate them — the attribution is a column beside it rather than a change to it, because a dozen
+other counters read that same key and splitting it would fragment all of them to answer a question
+none of them asked.
 
 **Nothing is shown to the agent, and there is no configuration key.** It is a measurement, and it
 has no switch for the same reason `capture_outcomes` has none: a count gated behind the feature it
@@ -732,6 +750,63 @@ Three properties worth knowing before quoting the number:
 
 The rows are `preserved` across snapshot restore, never refilled: a ratio assembled from two
 different histories is not a floor on anything.
+
+### The claims no drift check can reach
+
+Drift watches files. An atom that cites a file can be told when that file changes; roughly half
+the store cites none, and nothing can watch those. `knowl status` dates them instead — not by
+whether they went stale, which nothing observed, but by **how long since anyone last restated the
+claim**:
+
+```
+🕰️  UN-RESTATED CLAIMS
+  Prose (cites no code): 573 of 1072
+  Days since anyone restated the claim, by category:
+    goal          n=   7  p50   45.5d
+    skill         n=  12  p50   32.2d
+    state         n= 137  p50     31d
+    constraint    n=  22  p50   24.4d
+    decision      n=  54  p50     24d
+    fact          n= 267  p50   20.2d
+    architecture  n=  74  p50     18d
+  Furthest past its own category's cadence:
+      2.7x p50    54.5d  fact          Use knowl.cmd on Windows PowerShell
+      2.5x p50    45.4d  architecture  Competitor normalized adapter capability matrix
+  Not a staleness signal: nothing here observed a claim becoming false.
+  Store history is 54.5d, so ages beyond that cannot be distinguished from absence.
+  17 counted as prose despite citing paths, because every path is a prose file.
+```
+
+**Report only. Nothing here flips `freshness`, and there is no threshold.** For prose there is no
+evidence a claim became false, only the absence of anyone reaffirming it — flagging would assert a
+defect nothing observed, and losing knowledge nobody can recover is strictly worse than carrying a
+stale atom that ranks slightly lower.
+
+That is also why the list ranks rather than flags. A cutoff ("past N days is stale") cannot pick N
+on a store younger than the cadence it is measuring. An **ordering** needs no cutoff, so it is
+correct at any store age and sharpens on its own as the corpus ages.
+
+Four things worth knowing before quoting it:
+
+- **The clock is `valid_from`, not `updated_at`.** A new assertion generation is written only when
+  title, content, reasoning or confidence change, so it moves on restatement and nothing else.
+  Visibility promotion, supersession and status changes leave it alone — on a measured store 72%
+  of items have an `updated_at` newer than their `valid_from`.
+- **The named list ranks on the ratio to a category median, not on age.** Ranking on age is
+  degenerate: a store is seeded in one batch, and that batch is permanently its oldest cohort, so
+  an age-ranked list is the seed with every row tied at the store's own age. The ratio asks
+  whether a claim is unusual *for its kind* — an architecture note at 54.5d against an 18d cadence
+  is three cadences past due; a goal at 54.5d against a 45.5d cadence is ordinary.
+- **Store history prints beside the ages because it bounds them.** Nothing can be older than the
+  store it lives in, so an empty tail cannot distinguish "nothing rots past 60 days" from "no
+  store is old enough to say".
+- **Citing a path is not citing code.** An atom whose only path is `docs/research/x.md` is exactly
+  the prose this exists for, so it counts as prose and the last line reports how many items that
+  distinction moves.
+
+Retrieval counts are deliberately not an input. A read-count prior is a feedback loop in which an
+atom that ranks high is read more and therefore ranks higher, with nothing in the loop asking
+whether it is true.
 
 ### What Knowl says mid-turn — `reminders.*`
 
