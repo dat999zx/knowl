@@ -50,7 +50,18 @@ async function workspaceContext(): Promise<{ workspace?: WorkspaceContext; peerS
   }
 }
 
-export async function bootstrapAgentSession(input: AgentBootstrapInput, options: { includeContext?: boolean } = {}) {
+/**
+ * `agentCap` composes the card FOR a subagent's budget instead of tail-cutting the parent's.
+ *
+ * The blind slice was measured dropping everything that matters: on a four-repo workspace the
+ * rendered card reaches the skills heading only at character 1,163 and recent knowledge at 1,888,
+ * while a subagent is cut at 853 -- so it received a half-finished repo list and nothing else. No
+ * skills, no knowledge. Skills are the half that cannot be recovered, since `getRecentContext`
+ * returns three items of any category and a peer repo's shared skill is findable only by an agent
+ * who already knows it exists. Unlinked projects never hit this: `workspaceSection` is absent and
+ * the header alone leaves the skills section room.
+ */
+export async function bootstrapAgentSession(input: AgentBootstrapInput, options: { includeContext?: boolean; agentCap?: number } = {}) {
   let session;
   if (input.sessionId) {
     try {
@@ -71,6 +82,17 @@ export async function bootstrapAgentSession(input: AgentBootstrapInput, options:
   // skill could be found only by an agent who already knew to ask for it, which is exactly the
   // agent who does not know the tooling exists. Peers ride the same card, as pointers.
   const { workspace, peerSkills } = await workspaceContext();
+  if (options.agentCap !== undefined) {
+    // Rendered straight to the cap: the formatter's own budgeting keeps the skills section whole
+    // and the pointer is a fixed two lines, so there is nothing left for a post-hoc slice to cut.
+    const context = formatRecentContextToMarkdown({ ...recent, skills, peerSkills }, {
+      maxChars: options.agentCap,
+      workspace,
+      compactWorkspace: true,
+      knowledgeAsPointer: true,
+    });
+    return { session, context, truncated: context.endsWith('[Context truncated]') };
+  }
   const fallback = formatRecentContextToMarkdown({ ...recent, skills, peerSkills }, {
     maxChars: Number.MAX_SAFE_INTEGER,
     workspace,

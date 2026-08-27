@@ -124,7 +124,7 @@ export type WorkspaceContext = {
  * not share a nature. A notes repo whose entire content is cross-cutting looks exactly like a
  * code repo with private internals when all you have is a name.
  */
-function workspaceSection(workspace: WorkspaceContext): string {
+function workspaceSection(workspace: WorkspaceContext, compact = false): string {
   // Manifest fields, and manifest fields reach this card unreviewed. `normalizeRepoEntry` is not
   // the defence: it is documented never to reject, because `discoverRepos` reads every manifest
   // on the machine and one bad entry must not take down a machine-wide command. So `name` is
@@ -135,7 +135,9 @@ function workspaceSection(workspace: WorkspaceContext): string {
     const name = inlineUntrusted(repo.name);
     const kin = repo.kin ? inlineUntrusted(repo.kin) : '';
     const parts = [`- ${name}${isSelf ? ' (this repo)' : ''}${kin ? ` [kin: ${kin}]` : ''}`];
-    if (repo.role) parts.push(inlineUntrusted(repo.role));
+    // Dropped first under `compact`, because it is the only unbounded field here: `name` and
+    // `kin` are short identifiers, `role` is free prose from the manifest.
+    if (repo.role && !compact) parts.push(inlineUntrusted(repo.role));
     parts.push(repo.defaultVisibility === 'workspace' ? 'new writes are workspace-visible' : 'new writes stay private');
     return parts.join(' — ');
   };
@@ -162,7 +164,34 @@ export function formatRecentContextToMarkdown(context: {
    * the dependency graph -- `workspace/peer-skills.ts` produces this shape and imports downward.
    */
   peerSkills?: Array<{ repo: string; item: KnowledgeItem }>;
-}, options: { maxChars?: number; maxItemChars?: number; includeTags?: boolean; includeCommitDetails?: boolean; workspace?: WorkspaceContext } = {}): string {
+}, options: {
+  maxChars?: number;
+  maxItemChars?: number;
+  includeTags?: boolean;
+  includeCommitDetails?: boolean;
+  workspace?: WorkspaceContext;
+  /**
+   * Names and write-visibility only, dropping each repo's `role` prose.
+   *
+   * The role lines are the bulk of this section and they scale with the number of linked repos:
+   * on a four-repo workspace the full list measured 1,034 characters, which alone exceeds a
+   * subagent's whole 853-character budget. Nothing clamps this section the way `skillBudget`
+   * clamps skills, so an unclamped workspace pushed BOTH skills and recent knowledge out of a
+   * subagent's card entirely -- and skills are the half that cannot be recovered by querying.
+   */
+  compactWorkspace?: boolean;
+  /**
+   * Replace recent knowledge and commits with a count and an instruction to query.
+   *
+   * Measured, three arms of six subagents each on one task, differing only in this block:
+   * five item titles -> 6/6 called `knowl_query`; thirteen titles -> 1/6; a bare pointer with no
+   * answerable content -> 6/6, at a seventh of the size (Fisher exact p = 0.008 for the middle
+   * arm against either other). Titles long enough to look sufficient are answered FROM rather
+   * than queried against, and the agents that skipped retrieval cited only their own injected
+   * titles back. A pointer cannot be answered from, so it costs bytes and buys the lookup.
+   */
+  knowledgeAsPointer?: boolean;
+} = {}): string {
   const maxChars = options.maxChars ?? DEFAULT_CONTEXT_MAX_CHARS;
   const maxItemChars = options.maxItemChars ?? MAX_SUMMARY_ITEM_CHARS;
   // The notice leads, and must: this card is injected at session bootstrap with no human in
@@ -172,7 +201,7 @@ export function formatRecentContextToMarkdown(context: {
 
   // Absent produces byte-identical output, the same rule formatWorkspaceBlock already holds
   // for an unlinked project.
-  if (options.workspace) md += workspaceSection(options.workspace);
+  if (options.workspace) md += workspaceSection(options.workspace, options.compactWorkspace === true);
 
   // A quarter of the budget at most, and only what fits. An agent that already knows a
   // skill exists needs no mid-turn interrupt, which is why this section earns its space.
@@ -193,6 +222,17 @@ export function formatRecentContextToMarkdown(context: {
     skillBudget,
     toPeerSurfacedSkills(context.peerSkills ?? []),
   ));
+
+  // Pointer mode ends the card here: both remaining sections are recent-activity summaries, and
+  // both are recoverable by querying, which is the whole argument for replacing them. No count is
+  // given because the only one in scope would be a lie -- `getRecentContext` returns at most three
+  // items regardless of how much the store holds, so "3 items" would understate a store of
+  // thousands and read as a reason not to bother.
+  if (options.knowledgeAsPointer) {
+    md += '## Project knowledge\n\nNot reproduced here. Call knowl_query with the words that name '
+      + 'your subject to open what is relevant to your task.\n';
+    return md.length <= maxChars ? md : truncateText(md, maxChars, '[Context truncated]');
+  }
 
   md += '## Recent Active Knowledge\n\n';
   if (context.items.length === 0) {

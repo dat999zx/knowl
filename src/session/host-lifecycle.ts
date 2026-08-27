@@ -293,24 +293,25 @@ async function bootstrapWithHandoff(projectId: string, input: NormalizedHostHook
   };
 }
 
-// Subagent bootstrap deliberately halves the recent-context cap: fan-out multiplies
-// whatever a subagent costs. The guidance card is prepended rather than left to the
-// prompt reminder, because a subagent receives no prompt event and a live probe confirmed
-// MCP server instructions do not reach it either — without the card it gets memory data
-// and nothing telling it to use memory. The card is charged against the cap first so a
-// large recent-context block can never truncate the guidance away.
+// Subagent bootstrap deliberately halves the cap: fan-out multiplies whatever a subagent costs.
+// The guidance card is prepended rather than left to the prompt reminder, because a subagent
+// receives no prompt event and a live probe confirmed MCP server instructions do not reach it
+// either — without the card it gets memory data and nothing telling it to use memory. The card is
+// charged against the cap first so the body can never truncate the guidance away.
+//
+// The remaining budget is COMPOSED for that size rather than sliced down from the parent's card
+// (`agentCap`). Slicing was measured delivering a workspace subagent a half-finished repo list and
+// nothing else, and the replacement pointer is measured buying the lookup the titles it replaced
+// were being answered from instead — both derivations live at the option definitions.
 async function bootstrapAgentContext(projectId: string, input: NormalizedHostHook, sessionId: string) {
   const bootstrap = await bootstrapAgentSession({
     projectId,
     title: input.title ?? 'Agent session (subagent)',
     agent: String(input.host),
     sessionId,
-  }, { includeContext: true });
-  const cap = Math.floor(DEFAULT_CONTEXT_MAX_CHARS / 2);
-  const recentBudget = Math.max(0, cap - KNOWL_SUBAGENT_BOOTSTRAP_CARD.length - 2);
-  const recent = bootstrap.context ? truncateText(bootstrap.context, recentBudget) : undefined;
-  const context = recent ? `${KNOWL_SUBAGENT_BOOTSTRAP_CARD}\n\n${recent}` : KNOWL_SUBAGENT_BOOTSTRAP_CARD;
-  return { context, truncated: Boolean(bootstrap.context && bootstrap.context.length > recentBudget) };
+  }, { includeContext: true, agentCap: Math.max(0, Math.floor(DEFAULT_CONTEXT_MAX_CHARS / 2) - KNOWL_SUBAGENT_BOOTSTRAP_CARD.length - 2) });
+  const context = bootstrap.context ? `${KNOWL_SUBAGENT_BOOTSTRAP_CARD}\n\n${bootstrap.context}` : KNOWL_SUBAGENT_BOOTSTRAP_CARD;
+  return { context, truncated: bootstrap.truncated };
 }
 
 /**
