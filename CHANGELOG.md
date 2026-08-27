@@ -55,7 +55,8 @@ median asks the useful question instead: is this claim unusual *for its kind*.
 
 ### Documentation
 
-- `docs/reference.md` covers both new `knowl status` blocks.
+- `docs/reference.md` covers both new `knowl status` blocks, and the README feature list gains
+  the un-restated claims report and the recall gap's main-thread/subagent split.
 - Parallel agents in git worktrees share the main checkout's store.
 
 
