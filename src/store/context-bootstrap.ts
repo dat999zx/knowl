@@ -51,7 +51,13 @@ async function workspaceContext(): Promise<{ workspace?: WorkspaceContext; peerS
 }
 
 /**
- * `agentCap` composes the card FOR a subagent's budget instead of tail-cutting the parent's.
+ * The card is COMPOSED to `contextCap` -- never rendered wide for a caller to slice afterwards.
+ *
+ * `contextCap` defaults to the full budget rather than being optional, because an omitted cap was
+ * the defect: it fell through to a `MAX_SAFE_INTEGER` render that the caller then tail-cut, and a
+ * tail cut lands wherever the arithmetic puts it rather than on a section boundary. Composing is
+ * not the same operation -- only the formatter knows that skills are clamped to a quarter and that
+ * the workspace section renders first.
  *
  * The blind slice was measured dropping everything that matters: on a four-repo workspace the
  * rendered card reaches the skills heading only at character 1,163 and recent knowledge at 1,888,
@@ -62,6 +68,7 @@ async function workspaceContext(): Promise<{ workspace?: WorkspaceContext; peerS
  * the header alone leaves the skills section room.
  */
 export async function bootstrapAgentSession(input: AgentBootstrapInput, options: { includeContext?: boolean; contextCap?: number; agentCard?: boolean } = {}) {
+  const contextCap = options.contextCap ?? DEFAULT_CONTEXT_MAX_CHARS;
   let session;
   if (input.sessionId) {
     try {
@@ -82,31 +89,18 @@ export async function bootstrapAgentSession(input: AgentBootstrapInput, options:
   // skill could be found only by an agent who already knew to ask for it, which is exactly the
   // agent who does not know the tooling exists. Peers ride the same card, as pointers.
   const { workspace, peerSkills } = await workspaceContext();
-  if (options.contextCap !== undefined) {
-    // Rendered straight to the cap so the formatter's own budgeting applies -- the skills clamp
-    // and the section ordering only mean anything when it knows the real ceiling. Rendering wide
-    // and slicing afterwards is the defect this replaces, and it is not the same operation.
-    //
-    // `agentCard` is the CONTENT policy and is deliberately separate from the cap. A subagent
-    // gets the compact workspace and the knowledge pointer because both were measured on
-    // subagents; a parent gets neither, because nothing measured says that result transfers and
-    // the parent card is charged to every session of every user.
-    const context = formatRecentContextToMarkdown({ ...recent, skills, peerSkills }, {
-      maxChars: options.contextCap,
-      workspace,
-      compactWorkspace: options.agentCard === true,
-      knowledgeAsPointer: options.agentCard === true,
-    });
-    return { session, context, truncated: context.endsWith('[Context truncated]') };
-  }
-  const fallback = formatRecentContextToMarkdown({ ...recent, skills, peerSkills }, {
-    maxChars: Number.MAX_SAFE_INTEGER,
+  // Rendered straight to the cap so the formatter's own budgeting applies -- the skills clamp
+  // and the section ordering only mean anything when it knows the real ceiling.
+  //
+  // `agentCard` is the CONTENT policy and is deliberately separate from the cap. A subagent gets
+  // the compact workspace and the knowledge pointer because both were measured on subagents; a
+  // parent gets neither, because nothing measured says that result transfers and the parent card
+  // is charged to every session of every user.
+  const context = formatRecentContextToMarkdown({ ...recent, skills, peerSkills }, {
+    maxChars: contextCap,
     workspace,
+    compactWorkspace: options.agentCard === true,
+    knowledgeAsPointer: options.agentCard === true,
   });
-  const truncated = fallback.length > DEFAULT_CONTEXT_MAX_CHARS;
-  return {
-    session,
-    context: truncated ? `${fallback.slice(0, DEFAULT_CONTEXT_MAX_CHARS - 24)}\n\n[Context truncated]` : fallback,
-    truncated,
-  };
+  return { session, context, truncated: context.endsWith('[Context truncated]') };
 }
