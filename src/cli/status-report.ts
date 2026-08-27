@@ -133,6 +133,16 @@ function formatRecallGapBlock(recall?: RecallGapReport): string[] {
     lines.push(`  ...missed:             ${recall.missed} (${Math.round((recall.missed / recall.held) * 100)}%)`);
     lines.push('  Lower bound — only knowledge citing a file path can be counted here.');
   }
+  // Printed only when both populations exist, so the comparison is never against one side.
+  // Subagents are the interesting half: they receive no prompt reminder and no MCP server
+  // instructions, so their share is the closest thing to a controlled read on whether the
+  // bootstrap card alone carries the habit.
+  if (recall.byActor) {
+    const share = (side: { held: number; retrieved: number }) =>
+      side.held === 0 ? 'n/a' : `${Math.round((side.retrieved / side.held) * 100)}%`;
+    lines.push(`  Retrieved when held — main thread: ${share(recall.byActor.main)} (${recall.byActor.main.held} held)`);
+    lines.push(`                        subagents:   ${share(recall.byActor.subagent)} (${recall.byActor.subagent.held} held)`);
+  }
   return lines;
 }
 

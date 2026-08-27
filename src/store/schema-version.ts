@@ -194,8 +194,22 @@ export const KNOWL_SCHEMA_VERSION = 1;
  * an existing database stamped at 14 would otherwise never gain the table while `knowl status`
  * queries it. `KNOWL_SCHEMA_VERSION` again does not move -- an older build ignores the table
  * entirely and behaves exactly as it does today.
+ *
+ * Level 16 adds `recall_observations.agent_id`: which agent the touch belonged to, null for the
+ * main thread. Additive column, no backfill -- an observation already written cannot be
+ * re-attributed, because the identity was never recorded.
+ *
+ * It exists because `conversation` cannot answer the question. A Claude subagent shares its
+ * parent's `externalSessionId`, and `conversationKey` is host + root + session, so every child's
+ * recall was pooled into the parent's row and the two could not be told apart. Changing
+ * `conversationKey` was the alternative and is the wrong fix: a dozen other counters key on it --
+ * capture health, the `turns >= 3` silence threshold, the prompt reminder's drift gate -- and
+ * splitting it would fragment all of them to answer a question none of them asked.
+ *
+ * `KNOWL_SCHEMA_VERSION` again does not move: an older build selects the columns it knows and is
+ * unaffected by one it never names.
  */
-export const KNOWL_MIGRATION_LEVEL = 15;
+export const KNOWL_MIGRATION_LEVEL = 16;
 
 export class SchemaTooNewError extends Error {
   constructor(dbPath: string, found: number, supported: number) {

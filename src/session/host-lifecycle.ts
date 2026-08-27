@@ -664,7 +664,10 @@ async function observeToolTouch(input: NormalizedHostHook, projectId: string): P
   if (!toolReadsFile(input) && !toolWritesFile(input)) return;
   const paths = impactChangedPaths(input.payload);
   if (paths.length === 0) return;
-  await observeRecallGapBestEffort(projectId, { conversation: conversationKey(input), paths });
+  // `agentId` rides alongside the conversation key rather than inside it: a subagent shares its
+  // parent's external session id, so the key cannot separate them, and a dozen other counters
+  // read that same key.
+  await observeRecallGapBestEffort(projectId, { conversation: conversationKey(input), agentId: input.agentId, paths });
 }
 
 /**

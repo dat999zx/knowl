@@ -139,9 +139,14 @@ const SCHEMA_STATEMENTS = [
    * Not swept, for the same reason `capture_outcomes` is not: the sessions expire, the question
    * does not. A handful of integers per tool call.
    */
+  // `agent_id` is null for the main thread. It is a column rather than a change to
+  // `conversation` because a Claude subagent shares its parent's external session id, so the
+  // conversation key cannot separate them -- and a dozen other counters key on that same
+  // function, which splitting it would fragment to answer a question none of them asked.
   `CREATE TABLE IF NOT EXISTS recall_observations (
     id TEXT PRIMARY KEY,
     conversation TEXT NOT NULL,
+    agent_id TEXT,
     paths TEXT NOT NULL,
     held INTEGER NOT NULL,
     retrieved INTEGER NOT NULL,
@@ -972,6 +977,22 @@ async function ensureMemorySessionColumns(client: Client): Promise<void> {
   if (!columns.includes('promotion_error_code')) await client.execute('ALTER TABLE memory_sessions ADD COLUMN promotion_error_code TEXT;');
 }
 
+/**
+ * Which agent a recall observation belonged to. Null is the main thread, and stays null.
+ *
+ * No backfill and none possible: an observation already written cannot be re-attributed,
+ * because the identity was never recorded on it. Rows predating this column read as main-thread
+ * work, which is what the counters assumed before it existed, so nothing silently changes
+ * meaning -- the split simply reports nothing until new observations arrive.
+ */
+async function ensureRecallObservationColumns(client: Client): Promise<void> {
+  if (!(await tableExists(client, 'recall_observations'))) return;
+  const columns = await tableColumns(client, 'recall_observations');
+  if (!columns.includes('agent_id')) {
+    await client.execute('ALTER TABLE recall_observations ADD COLUMN agent_id TEXT;');
+  }
+}
+
 async function ensureHostSessionBindingColumns(client: Client): Promise<void> {
   if (!(await tableExists(client, 'host_session_bindings'))) return;
   const columns = await tableColumns(client, 'host_session_bindings');
@@ -1269,6 +1290,7 @@ export async function bootstrapSchema(
     await ensureOwnershipColumns(client);
     await ensureMemorySessionColumns(client);
     await ensureHostSessionBindingColumns(client);
+    await ensureRecallObservationColumns(client);
     await ensureCodeIndexColumns(client);
     await ensureEmbeddingProfileColumns(client, options.profileFingerprint ?? null);
     await backfillKnowledgeAssertions(client);
