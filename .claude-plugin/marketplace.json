@@ -1,0 +1,33 @@
+{
+  "$schema": "https://code.claude.com/schemas/marketplace.json",
+  "name": "knowl",
+  "description": "Persistent memory for coding agents that retires a fact when a later one replaces it.",
+  "owner": {
+    "name": "Knowl",
+    "url": "https://knowl.cloud"
+  },
+  "plugins": [
+    {
+      "name": "knowl",
+      "source": "./",
+      "displayName": "Knowl",
+      "description": "Persistent memory for Claude Code. Facts are typed, sourced, and retired when they change, so a query returns the current answer rather than every answer it has ever held. Local SQLite in your repository — no API key, no vector database, nothing uploaded.",
+      "category": "productivity",
+      "keywords": [
+        "memory",
+        "context",
+        "knowledge",
+        "mcp",
+        "persistence",
+        "supersession"
+      ],
+      "author": {
+        "name": "Knowl",
+        "url": "https://knowl.cloud"
+      },
+      "homepage": "https://knowl.cloud",
+      "repository": "https://github.com/dat999zx/knowl",
+      "license": "Apache-2.0"
+    }
+  ]
+}

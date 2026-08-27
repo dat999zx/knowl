@@ -1,6 +1,6 @@
 {
   "name": "knowl",
-  "description": "Governed project memory for AI coding agents. Local-first, typed knowledge atoms over MCP, with stale decisions retired instead of accumulated.",
+  "description": "Persistent memory for Claude Code. Facts are typed, sourced, and retired when they change, so a query returns the current answer rather than every answer it has ever held. Local SQLite in your repository — no API key, nothing uploaded.",
   "version": "5.14.0",
   "author": {
     "name": "Knowl"
@@ -15,15 +15,5 @@
     "decisions",
     "mcp",
     "persistence"
-  ],
-  "mcpServers": {
-    "knowl": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@dat999zx/knowl",
-        "serve"
-      ]
-    }
-  }
+  ]
 }

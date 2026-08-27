@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "knowl": {
+      "command": "npx",
+      "args": ["-y", "@dat999zx/knowl", "serve", "--host", "claude"]
+    }
+  }
+}
