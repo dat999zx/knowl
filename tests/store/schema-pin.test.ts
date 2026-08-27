@@ -85,6 +85,11 @@ const SCHEMA_PINS: Record<number, string> = {
   // touched, and whether the agent had already retrieved it. Additive, so `KNOWL_SCHEMA_VERSION`
   // again does not move.
   15: '5284f58395fafcb6f5649fc5e9d55d99',
+  // 16 adds `recall_observations.agent_id` -- which agent a touch belonged to, null for the main
+  // thread. A column rather than a change to `conversation`, because a subagent shares its
+  // parent's external session id and a dozen other counters key on that same function. Additive,
+  // so `KNOWL_SCHEMA_VERSION` again does not move.
+  16: '232a05446e8fcd4ed32861db0c97b8be',
 };
 
 let root: string;

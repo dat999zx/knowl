@@ -66,6 +66,16 @@ export type RecallGapReport = {
   retrieved: number;
   /** `held - retrieved`. The gap this whole thing exists to size. */
   missed: number;
+  /**
+   * The same four numbers, split by who was working: the main thread against subagents.
+   *
+   * Absent until a store has observations on both sides, so a comparison is never printed
+   * against a population of one.
+   */
+  byActor?: {
+    main: Omit<RecallGapReport, 'byActor'>;
+    subagent: Omit<RecallGapReport, 'byActor'>;
+  };
 };
 
 type PathCitingItem = { id: string; source: string | null; affectedPaths: string[] };
@@ -115,6 +125,8 @@ async function retrievedWithin(itemIds: string[], since: string): Promise<Set<st
  */
 export async function observeRecallGap(_projectId: string, input: {
   conversation: string;
+  /** Null or absent is the main thread. A subagent shares its parent's conversation key. */
+  agentId?: string | null;
   paths: string[];
   windowMinutes?: number;
   at?: string;
@@ -130,10 +142,10 @@ export async function observeRecallGap(_projectId: string, input: {
 
   const observation: RecallObservation = { held: matched.length, retrieved: retrieved.size };
   await getClient().execute({
-    sql: `INSERT INTO recall_observations (id, conversation, paths, held, retrieved, observed_at)
-          VALUES (?, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO recall_observations (id, conversation, agent_id, paths, held, retrieved, observed_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?)`,
     args: [
-      crypto.randomUUID(), input.conversation, JSON.stringify(input.paths),
+      crypto.randomUUID(), input.conversation, input.agentId ?? null, JSON.stringify(input.paths),
       observation.held, observation.retrieved, now,
     ],
   });
@@ -143,6 +155,7 @@ export async function observeRecallGap(_projectId: string, input: {
 /** Never throws, never blocks the tool call it rides on. */
 export async function observeRecallGapBestEffort(projectId: string, input: {
   conversation: string;
+  agentId?: string | null;
   paths: string[];
 }): Promise<void> {
   try {
@@ -167,5 +180,38 @@ export async function recallGapReport(_projectId: string): Promise<RecallGapRepo
   const touches = Number(row.touches ?? 0);
   const held = Number(row.held ?? 0);
   const retrieved = Number(row.retrieved ?? 0);
-  return { touches, held, retrieved, missed: held - retrieved };
+  return { touches, held, retrieved, missed: held - retrieved, byActor: await recallByActor() };
+}
+
+/**
+ * The same ratio, split into main-thread work and subagent work.
+ *
+ * This is the question `conversation` could never answer: a Claude subagent shares its parent's
+ * external session id, so both sides of the split lived on one row and the child's recall was
+ * indistinguishable from the parent's. `agent_id` is recorded at the hook, which is the only
+ * place the identity exists at all -- the MCP server never learns who called it.
+ *
+ * Returns undefined until a store has observations on BOTH sides. One side alone invites reading
+ * a single population as a comparison, and rows written before the column existed are null, so a
+ * freshly-migrated store would otherwise report "100% main thread" as though it had measured it.
+ */
+async function recallByActor(): Promise<RecallGapReport['byActor']> {
+  const result = await getClient().execute({
+    sql: `SELECT CASE WHEN agent_id IS NULL THEN 'main' ELSE 'subagent' END AS actor,
+                 COUNT(*) AS touches,
+                 SUM(CASE WHEN held > 0 THEN 1 ELSE 0 END) AS held,
+                 SUM(CASE WHEN held > 0 AND retrieved > 0 THEN 1 ELSE 0 END) AS retrieved
+          FROM recall_observations GROUP BY actor`,
+    args: [],
+  });
+  const of = (actor: string) => {
+    const row: any = result.rows.find((candidate: any) => candidate.actor === actor);
+    if (!row) return undefined;
+    const held = Number(row.held ?? 0);
+    const retrieved = Number(row.retrieved ?? 0);
+    return { touches: Number(row.touches ?? 0), held, retrieved, missed: held - retrieved };
+  };
+  const main = of('main');
+  const subagent = of('subagent');
+  return main && subagent ? { main, subagent } : undefined;
 }
