@@ -3,7 +3,61 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.15.0 — 2026-08-27
+
+Knowl can see who it is failing, and stops cutting the card that tells them.
+
+**A subagent in a linked workspace received no skills and no knowledge at all.** Both paths that
+build the session card rendered it at full width and let the caller slice the finished string, so
+anything charged against the budget first pushed the cut backwards through a section boundary. On a
+four-repo workspace the repo list alone is 1,034 characters against a subagent's 853-character
+budget: the child got a header, a repo list severed mid-entry, and nothing else. Skills are the half
+that cannot be recovered — recent knowledge can be found by querying, but a peer repo's shared skill
+is findable only by an agent who already knows it exists, which is exactly the agent who does not.
+The card is now **composed** to the budget rather than sliced down to it, so the formatter's own
+clamps apply instead of a blind cut. The parent path had the milder form of the same bug: with all
+three warning producers at their ceiling, 1,310 characters of warning cut the knowledge section off
+entirely.
+
+The cap is no longer optional. An omitted cap used to select the slicing path, which meant three
+further callers — the `knowl agent lifecycle session-start` CLI, session-start on a host that
+shares its binding, and turn-start before a session binding exists — were still cutting cards
+delivered to live agents. There is now no way to ask for a sliced card.
+
+**A subagent's recall is no longer pooled into its parent's.** A subagent shares its parent's
+session id, so every child's recall landed on the parent's row and the one population most worth
+looking at was the one the measurement could not isolate. `knowl status` now splits the ratio:
+
+```
+  Retrieved when held — main thread: 62% (128 held)
+                        subagents:   31% (44 held)
+```
+
+Printed only when both sides have observations, so a comparison is never made against a population
+of one. Additive column, no backfill and none possible — an observation already written cannot be
+re-attributed, because the identity was never on it.
+
+**The knowledge no drift check can reach is now dated.** Drift watches files; roughly half the store
+cites none. A new `knowl status` block reports how long since anyone last restated those claims, by
+category, and names the ones furthest past their own category's cadence. Report only — nothing flips
+`freshness`, because for prose there is no evidence a claim became false, only the absence of anyone
+reaffirming it.
+
+It ranks rather than flags, and that is what makes it shippable today: a cutoff cannot be calibrated
+on a store younger than the cadence it is measuring, but an ordering needs no cutoff and sharpens on
+its own. Ranking on plain age was tried and measured degenerate — a store is seeded in one batch, so
+an age-ranked list is that seed with every row tied at the store's own age. The ratio to a category
+median asks the useful question instead: is this claim unusual *for its kind*.
+
+### Fixed
+
+- The Claude Code plugin registered no MCP server at all.
+
+### Documentation
+
+- `docs/reference.md` covers both new `knowl status` blocks.
+- Parallel agents in git worktrees share the main checkout's store.
+
 
 ## 5.14.0 — 2026-08-26
 
