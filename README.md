@@ -529,6 +529,10 @@ knowl doctor                           # setup, retrieval, and registration
   symbol evidence go stale *by themselves* when the code moves.
 - **Drift detection** — `knowl pr --since origin/main` flags knowledge your diff may have
   invalidated, before you merge it.
+- **The claims drift cannot reach** — drift watches files, and about half the store cites none.
+  `knowl status` dates those instead, by how long since anyone last *restated* them, and names the
+  ones furthest past their own category's cadence. It ranks rather than flags: for prose there is
+  no evidence a claim became false, only the absence of anyone reaffirming it.
 - **Code intelligence** — incremental Tree-sitter index over `.ts` / `.tsx` / `.js` / `.jsx`, so
   evidence can point at `symbol://` locators, not just line numbers. `knowl index-code`
 - **Secret-safe writes** — every write is screened for detected secrets, sensitive paths, and
@@ -583,7 +587,9 @@ knowl doctor                           # setup, retrieval, and registration
 - **The recall gap** — how often an agent edited a file this store already knew something about
   without ever retrieving it. Invisible from inside a session, because an agent that never
   retrieved an atom cannot notice the atom exists. Counted on every tool call, shown to nobody but
-  you, in `knowl status`.
+  you, in `knowl status` — and split between the main thread and subagents, because a subagent
+  receives no prompt reminder and no server instructions, so its share is the only read you get on
+  whether the bootstrap card alone carries the habit.
 
 → [Tasks, sessions, and lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle)
 
