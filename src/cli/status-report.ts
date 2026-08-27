@@ -4,7 +4,11 @@ import type { CaptureHealth } from '../store/capture-outcome.js';
 import type { RecallGapReport } from '../store/recall-gap.js';
 import type { UnrestatedReport } from '../store/unrestated.js';
 import type { CloudStatus } from '../cloud/status.js';
+import { truncateText } from '../core/token-budget.js';
 import { formatWorkspaceBlock } from './workspace-report.js';
+
+/** Titles run to MAX_TITLE_CHARS (200); a status block is read at a glance, not studied. */
+const TITLE_CHARS = 64;
 
 const STATUS_LINE = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
 
@@ -147,6 +151,11 @@ function formatRecallGapBlock(recall?: RecallGapReport): string[] {
  * only the absence of anyone reaffirming it -- flagging would assert a defect nothing observed,
  * and the failure mode of over-eager staleness here is losing knowledge nobody can recover.
  *
+ * The named list is what makes this worth printing before the corpus is old enough to flag
+ * anything: ranking needs no threshold, so it is correct at any store age and sharpens on its own.
+ * It ranks on the ratio to a category median, not on age -- see `UnrestatedItem`, where the
+ * measurement that ruled out plain age is recorded.
+ *
  * Categories are printed in measured order rather than a fixed one. On a real 962-item store the
  * longest un-restated were goal, skill, constraint and decision, and `state` was among the
  * best-maintained -- the opposite of the intuition that state rots fastest, because a state atom
@@ -164,12 +173,24 @@ function formatUnrestatedBlock(unrestated?: UnrestatedReport): string[] {
     '  Days since anyone restated the claim, by category:',
   ];
   for (const row of unrestated.rows) {
-    lines.push(`    ${row.category.padEnd(width)}  n=${String(row.count).padStart(4)}  p50 ${String(row.medianDays).padStart(6)}d  oldest ${String(row.oldestDays).padStart(6)}d`);
+    lines.push(`    ${row.category.padEnd(width)}  n=${String(row.count).padStart(4)}  p50 ${String(row.medianDays).padStart(6)}d`);
+  }
+  // No per-category `oldest` column, and the list below is not ranked on age either. Both were
+  // measured printing the same non-finding: the store's own age, seven times in the column's
+  // case, five times in an age-ranked list's, because a store is seeded in one batch and that
+  // batch stays its oldest cohort forever. Ranking each claim against its own category's median
+  // asks the question the column was reaching for -- is this one unusual for its kind.
+  if (unrestated.outliers.length > 0) {
+    lines.push("  Furthest past its own category's cadence:");
+    const categoryWidth = Math.max(...unrestated.outliers.map(entry => entry.category.length));
+    for (const entry of unrestated.outliers) {
+      lines.push(`    ${String(entry.ratio).padStart(5)}x p50  ${String(entry.days).padStart(6)}d  ${entry.category.padEnd(categoryWidth)}  ${truncateText(entry.title, TITLE_CHARS, '...')}`);
+    }
   }
   // Both caveats are printed, not filed. The first is why the table is not a staleness verdict;
   // the second is why its tail cannot be read as one either.
   lines.push('  Not a staleness signal: nothing here observed a claim becoming false.');
-  lines.push(`  Store history is ${unrestated.storyDays}d, so ages beyond that cannot be distinguished from absence.`);
+  lines.push(`  Store history is ${unrestated.storeHistoryDays}d, so ages beyond that cannot be distinguished from absence.`);
   if (unrestated.prosePathOnly > 0) {
     lines.push(`  ${unrestated.prosePathOnly} counted as prose despite citing paths, because every path is a prose file.`);
   }

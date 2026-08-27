@@ -52,13 +52,41 @@ export type UnrestatedCategoryRow = {
   count: number;
   /** Days since restatement at the 50th percentile, one decimal. */
   medianDays: number;
-  /** Days since restatement for the single oldest item in this category. */
-  oldestDays: number;
-  oldestTitle: string;
 };
+
+/**
+ * One claim, named rather than merely counted, and ranked against its OWN category's cadence.
+ *
+ * **A ranked list is why this reports something today and a threshold would not.** Flagging needs
+ * a cutoff -- "past N days is stale" -- and N cannot be chosen on a store younger than the cadence
+ * it is trying to measure, which is what deferred the flagging half of #98 to roughly 2027-02.
+ * Ordering needs no cutoff, so it is correct at any store age and sharpens on its own.
+ *
+ * **But ranking on raw age is degenerate, and measurement caught it.** Rendered against this
+ * repo's own 1,072-item store, the five oldest claims all came back at 54.5d -- the store's exact
+ * age -- because a store is seeded in one batch and that batch is permanently its oldest cohort.
+ * The list said "the day you created the store is the oldest day in it", which is the same
+ * non-finding as the per-category `oldest` column it replaced, and every future store repeats it.
+ *
+ * `ratio` is days divided by the median for that category, so a claim is measured against how
+ * often claims of its KIND actually get restated. An architecture note at 54.5d against an 18d
+ * median is three cadences past due and worth opening; a goal at 54.5d against a 45.5d median is
+ * ordinary. Both are the same age, and only one is interesting. This also breaks the seed-cohort
+ * tie on a real signal rather than on row order.
+ */
+export type UnrestatedItem = { title: string; category: KnowledgeCategory; days: number; ratio: number };
+
+/** How many claims to name. Enough to act on, short enough to live in a status block. */
+const OLDEST_NAMED = 5;
 
 export type UnrestatedReport = {
   rows: UnrestatedCategoryRow[];
+  /**
+   * The claims furthest past their own category's cadence, named. The per-category medians say
+   * the corpus is maintained unevenly; only these say what to go and look at, and a title can be
+   * opened where a distribution can only be nodded at.
+   */
+  outliers: UnrestatedItem[];
   proseCount: number;
   codeCount: number;
   /**
@@ -74,8 +102,11 @@ export type UnrestatedReport = {
    * found an empty `>60d` bucket while the oldest store was itself under 60 days old, which cannot
    * distinguish "nothing rots past 60 days" from "no store is old enough to say". A reader who
    * cannot see this number will read the first when the data only supports the second.
+   *
+   * It also bounds every age here: nothing can be older than the store it lives in, which is why
+   * `outliers` ranks on the ratio to a category median rather than on age directly.
    */
-  storyDays: number;
+  storeHistoryDays: number;
 };
 
 const daysBetween = (fromIso: string, now: number): number => {
@@ -120,43 +151,61 @@ export async function unrestatedClaimsReport(now: number = Date.now()): Promise<
 
   let codeCount = 0;
   let prosePathOnly = 0;
-  let storyDays = 0;
-  const byCategory = new Map<string, { ages: number[]; oldest: { days: number; title: string } }>();
+  let storeHistoryDays = 0;
+  const prose: UnrestatedItem[] = [];
+  const byCategory = new Map<KnowledgeCategory, number[]>();
 
   for (const row of rows) {
     const age = daysBetween(String(row.validFrom), now);
-    storyDays = Math.max(storyDays, age);
+    // Every row, prose or not: this bounds what the whole report can mean, and a code-coupled
+    // item is still part of the store's history.
+    storeHistoryDays = Math.max(storeHistoryDays, age);
     if (citesCode(row as never)) { codeCount += 1; continue; }
 
     const paths = [...(normalizeAffectedPaths(row.affectedPaths as string[] | null) ?? []), ...sourcePaths(row.source)];
     if (paths.length > 0) prosePathOnly += 1;
 
-    const bucket = byCategory.get(String(row.category)) ?? { ages: [], oldest: { days: -1, title: '' } };
-    bucket.ages.push(age);
-    if (age > bucket.oldest.days) bucket.oldest = { days: age, title: String(row.title) };
-    byCategory.set(String(row.category), bucket);
+    const category = String(row.category) as KnowledgeCategory;
+    prose.push({ title: String(row.title), category, days: round1(age), ratio: 0 });
+    const ages = byCategory.get(category) ?? [];
+    ages.push(age);
+    byCategory.set(category, ages);
   }
 
-  const report: UnrestatedReport = {
-    rows: [...byCategory.entries()].map(([category, bucket]) => {
-      const sorted = [...bucket.ages].sort((a, b) => a - b);
-      return {
-        category: category as KnowledgeCategory,
-        count: bucket.ages.length,
-        medianDays: round1(percentile(sorted, 0.5)),
-        oldestDays: round1(bucket.oldest.days),
-        oldestTitle: bucket.oldest.title,
-      };
+  const rowsByAge = [...byCategory.entries()].map(([category, ages]) => {
+    const sorted = [...ages].sort((a, b) => a - b);
+    return { category, count: ages.length, medianDays: round1(percentile(sorted, 0.5)) };
     // Longest-un-restated first. Measured ordering on a real store put constraint, skill and
     // decision at the top and `state` among the best maintained, which inverts the intuition that
     // state rots fastest -- a state atom gets rewritten as the state changes, which is the one
     // case where the write path already forces a restatement. Sorting rather than hard-coding a
     // category order means the report keeps telling the truth if that ordering changes.
-    }).sort((a, b) => b.medianDays - a.medianDays),
+  }).sort((a, b) => b.medianDays - a.medianDays);
+
+  // A median can legitimately be 0 -- a category whose every claim was restated today -- and that
+  // is a real state, not a guard to skip. Flooring at a tenth of a day keeps the division finite,
+  // and such a category cannot crowd the list anyway: its items have a `days` near zero, so their
+  // ratio is near zero too.
+  const medians = new Map(rowsByAge.map(row => [row.category, Math.max(row.medianDays, 0.1)]));
+
+  const report: UnrestatedReport = {
+    rows: rowsByAge,
+    // Ties on the ratio fall back to age, so the seed cohort still orders deterministically
+    // rather than by whatever order the rows came back in.
+    //
+    // ponytail: no per-category cap, so one category can take most of the five. Rendered against
+    // this repo it does -- four of five are `fact`, which holds the seed cohort AND has the
+    // lowest median, so its items score highest on both terms. That is the correct answer rather
+    // than a bug (those claims really are furthest past their kind's cadence) and it spreads out
+    // as the store ages. Cap at two per category if the list is still repeating itself by then.
+    outliers: prose
+      .map(item => ({ ...item, ratio: round1(item.days / (medians.get(item.category) ?? 0.1)) }))
+      .sort((a, b) => b.ratio - a.ratio || b.days - a.days)
+      .slice(0, OLDEST_NAMED),
     proseCount: rows.length - codeCount,
     codeCount,
     prosePathOnly,
-    storyDays: round1(storyDays),
+    storeHistoryDays: round1(storeHistoryDays),
   };
   return report.rows.length === 0 ? undefined : report;
 }
