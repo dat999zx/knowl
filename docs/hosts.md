@@ -73,6 +73,17 @@ command = "knowl"
 args = ["serve", "--host", "openhands"]
 ```
 
+## Parallel agents and git worktrees
+
+Orchestrators that fan agents out — [Conductor](https://conductor.build), Claude Code's `isolation: "worktree"`, or a plain `git worktree add` script — give each agent its own checkout. Since **5.4.1**, every one of those checkouts resolves to the **main checkout's store**: `.knowl/` is gitignored, so a linked worktree carries no marker of its own, and project discovery falls back to `git rev-parse --git-common-dir`, whose parent is the main checkout. The fallback applies the same project check as the ordinary walk, so a repository that was never initialized still reports no project rather than borrowing a store.
+
+The consequence is the thing parallel agents actually need: **N workspaces share one memory.** What an agent verifies in workspace 1, its siblings can query from workspaces 2 through N — no configuration beyond `knowl init`, run once, in the main checkout. Worktree placement does not matter; inside the repository, a sibling directory, or a temp directory all resolve identically. (Before 5.4.1 a worktree placed outside the repository failed every command with `No Knowl project found` — if that is what you are seeing, upgrade.)
+
+What that does and does not promise:
+
+- **Concurrent writes are safe, not smart.** The store runs WAL with a busy timeout and a retry, so simultaneous writers get bounded waits rather than errors, and same-subject supersession applies no matter which workspace wrote first. Nothing merges two agents' *findings* for you — that is what the conflict surface is for.
+- **A worktree is not a clone.** A hosted sandbox that clones fresh per VM — Conductor Cloud, OpenHands hosted, and their kin — shares no git directory with your checkout, so there is nothing for discovery to resolve to and the local store starts empty every time. That lane needs the [synced store](../README.md#sharing-memory-across-a-team-knowlcloud), not a worktree.
+
 ## Why some hosts get less
 
 **Cursor's mid-turn card.** Emitted, accepted, logged, and never shown to the model — vendor ticket T-C20310, still open. Knowl emits it anyway so it starts working the day that ships, and meanwhile Cursor is notified over MCP.

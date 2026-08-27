@@ -166,6 +166,11 @@ the agent picks up its guidance, and it will query and write memory on its own.
 Neovim and Kiro work the same way as Zed and JetBrains, through `knowl acp`. Cline needs one
 line pointing it at the shipped plugin. Any other MCP client works with no integration at all.
 
+Running agents in parallel? Every **git worktree** resolves to the main checkout's store —
+[Conductor](https://conductor.build) workspaces, Claude Code's `isolation: "worktree"`, or your
+own scripts all share one memory, with nothing to configure.
+[How that works, and its one limit →](docs/hosts.md#parallel-agents-and-git-worktrees)
+
 → [Every host, and what each one can do](docs/hosts.md) · [How agents use it](#how-agents-use-it) · [MCP tools and resources](docs/reference.md#mcp-tools-and-resources)
 
 ## The idea: memory that retires itself
