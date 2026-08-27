@@ -20,6 +20,7 @@ import { formatHierarchyToMarkdown } from '../core/format.js';
 import { formatStatusReport } from './status-report.js';
 import { captureHealth } from '../store/capture-outcome.js';
 import { recallGapReport } from '../store/recall-gap.js';
+import { unrestatedClaimsReport } from '../store/unrestated.js';
 import { captureNudgeMode } from '../store/capture-config.js';
 import { KNOWLEDGE_CATEGORIES, type KnowledgeCategory } from '../core/types.js';
 import { createManifest, isValidRepoName, readManifest, writeManifest } from '../workspace/manifest.js';
@@ -466,6 +467,7 @@ program
         capture: await captureHealth(),
         captureNudgeMode: captureNudgeMode(config),
         recall: await recallGapReport(project.id),
+        unrestated: await unrestatedClaimsReport(),
         cloud,
         // Reads config.json a second time rather than threading `config` through: the catalog
         // resolves preset-owned values through `resolveVectorProfile`, and duplicating that
