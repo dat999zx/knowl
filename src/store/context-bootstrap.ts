@@ -61,7 +61,7 @@ async function workspaceContext(): Promise<{ workspace?: WorkspaceContext; peerS
  * who already knows it exists. Unlinked projects never hit this: `workspaceSection` is absent and
  * the header alone leaves the skills section room.
  */
-export async function bootstrapAgentSession(input: AgentBootstrapInput, options: { includeContext?: boolean; agentCap?: number } = {}) {
+export async function bootstrapAgentSession(input: AgentBootstrapInput, options: { includeContext?: boolean; contextCap?: number; agentCard?: boolean } = {}) {
   let session;
   if (input.sessionId) {
     try {
@@ -82,14 +82,20 @@ export async function bootstrapAgentSession(input: AgentBootstrapInput, options:
   // skill could be found only by an agent who already knew to ask for it, which is exactly the
   // agent who does not know the tooling exists. Peers ride the same card, as pointers.
   const { workspace, peerSkills } = await workspaceContext();
-  if (options.agentCap !== undefined) {
-    // Rendered straight to the cap: the formatter's own budgeting keeps the skills section whole
-    // and the pointer is a fixed two lines, so there is nothing left for a post-hoc slice to cut.
+  if (options.contextCap !== undefined) {
+    // Rendered straight to the cap so the formatter's own budgeting applies -- the skills clamp
+    // and the section ordering only mean anything when it knows the real ceiling. Rendering wide
+    // and slicing afterwards is the defect this replaces, and it is not the same operation.
+    //
+    // `agentCard` is the CONTENT policy and is deliberately separate from the cap. A subagent
+    // gets the compact workspace and the knowledge pointer because both were measured on
+    // subagents; a parent gets neither, because nothing measured says that result transfers and
+    // the parent card is charged to every session of every user.
     const context = formatRecentContextToMarkdown({ ...recent, skills, peerSkills }, {
-      maxChars: options.agentCap,
+      maxChars: options.contextCap,
       workspace,
-      compactWorkspace: true,
-      knowledgeAsPointer: true,
+      compactWorkspace: options.agentCard === true,
+      knowledgeAsPointer: options.agentCard === true,
     });
     return { session, context, truncated: context.endsWith('[Context truncated]') };
   }

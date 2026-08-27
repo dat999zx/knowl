@@ -19,6 +19,8 @@ export type HostSessionInput = HostSessionKey & {
   title: string;
   query?: string;
   includeContext?: boolean;
+  /** Render the card to this ceiling rather than leaving a caller to slice the finished string. */
+  contextCap?: number;
 };
 
 const normalizedKey = (input: HostSessionKey) => ({
@@ -56,7 +58,7 @@ export async function getOrCreateHostSession(input: HostSessionInput) {
       query: input.query,
       agent: String(input.host),
       sessionId: existing.id,
-    }, { includeContext: input.includeContext });
+    }, { includeContext: input.includeContext, contextCap: input.contextCap });
     return { ...bootstrap, created: false };
   }
 
@@ -65,7 +67,7 @@ export async function getOrCreateHostSession(input: HostSessionInput) {
     title: input.title,
     query: input.query,
     agent: String(input.host),
-  }, { includeContext: input.includeContext });
+  }, { includeContext: input.includeContext, contextCap: input.contextCap });
   await bindHostSession(input, bootstrap.session.id);
   return { ...bootstrap, created: true };
 }

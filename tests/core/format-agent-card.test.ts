@@ -98,6 +98,23 @@ describe('the card composed for a subagent', () => {
     expect(md).not.toMatch(/\b3\b/);
   });
 
+  it('keeps recent knowledge for a parent squeezed by a worst-case warning block', () => {
+    // The parent path prices its warnings first and composes the card into what is left. Its
+    // three producers cap at 283 + 777 + 246 = 1,310 joined; under the old render-wide-then-slice
+    // that cut the knowledge section off entirely on a four-repo workspace. Composing at the same
+    // budget keeps it, because the formatter can drop item BODIES to fit rather than losing a
+    // whole trailing section to a blind cut.
+    const parentBudget = 3000 - 1310 - 2;
+    const md = formatRecentContextToMarkdown(
+      { items: [item('a knowledge item the parent must still see')], commits: [], skills: [skill('a skill')] },
+      { maxChars: parentBudget, workspace: WIDE_WORKSPACE },
+    );
+    expect(md).toContain('## Recent Active Knowledge');
+    expect(md).toContain('a knowledge item the parent must still see');
+    expect(md).toContain('a skill');
+    expect(md.length).toBeLessThanOrEqual(parentBudget);
+  });
+
   it('leaves the parent card unchanged when neither option is set', () => {
     const md = formatRecentContextToMarkdown({ items: [item('kept')], commits: [] }, { workspace: WIDE_WORKSPACE });
     expect(md).toContain('kept');
