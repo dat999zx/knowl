@@ -243,48 +243,49 @@ function hostContextOutput(input: NormalizedHostHook, context: string | undefine
   return hostProfile(input.host).startContext(input.event, context);
 }
 
-function mergeBootstrapContext(handoffContext: string | undefined, recentContext: string | undefined): { context?: string; truncated: boolean } {
+function mergeBootstrapContext(handoffContext: string | undefined, recentContext: string | undefined, cap: number = DEFAULT_CONTEXT_MAX_CHARS): { context?: string; truncated: boolean } {
   if (!handoffContext && !recentContext) return { context: undefined, truncated: false };
   if (!handoffContext) {
     return {
       context: recentContext,
-      truncated: Boolean(recentContext && recentContext.length > DEFAULT_CONTEXT_MAX_CHARS),
+      truncated: Boolean(recentContext && recentContext.length > cap),
     };
   }
 
-  const handoff = truncateText(handoffContext, DEFAULT_CONTEXT_MAX_CHARS);
+  const handoff = truncateText(handoffContext, cap);
   if (!recentContext) {
     return {
       context: handoff,
-      truncated: handoffContext.length > DEFAULT_CONTEXT_MAX_CHARS,
+      truncated: handoffContext.length > cap,
     };
   }
 
   const separator = '\n\n';
-  const remaining = Math.max(0, DEFAULT_CONTEXT_MAX_CHARS - handoff.length - separator.length);
+  const remaining = Math.max(0, cap - handoff.length - separator.length);
   if (remaining <= 0) return { context: handoff, truncated: true };
   const recent = truncateText(recentContext, remaining, '\n\n[Context truncated]');
   return {
     context: `${handoff}${separator}${recent}`,
-    truncated: handoffContext.length > DEFAULT_CONTEXT_MAX_CHARS || recentContext.length > remaining,
+    truncated: handoffContext.length > cap || recentContext.length > remaining,
   };
 }
 
-async function startBoundSession(projectId: string, input: NormalizedHostHook, scope: 'session' | 'turn', includeContext = false) {
+async function startBoundSession(projectId: string, input: NormalizedHostHook, scope: 'session' | 'turn', includeContext = false, contextCap?: number) {
   return getOrCreateHostSession({
     projectId,
     ...bindingKey(input, scope),
     title: input.title ?? (scope === 'session' ? 'Agent session' : 'Agent turn'),
     includeContext,
+    contextCap,
   });
 }
 
-async function bootstrapWithHandoff(projectId: string, input: NormalizedHostHook, scope: 'session' | 'turn', includeContext: boolean) {
-  const started = await startBoundSession(projectId, input, scope, includeContext);
+async function bootstrapWithHandoff(projectId: string, input: NormalizedHostHook, scope: 'session' | 'turn', includeContext: boolean, contextCap?: number) {
+  const started = await startBoundSession(projectId, input, scope, includeContext, contextCap);
   if (!includeContext) return { ...started, handoff: null as Awaited<ReturnType<typeof consumePendingSessionHandoff>> };
 
   const handoff = await consumePendingSessionHandoff(projectId, String(input.host));
-  const merged = mergeBootstrapContext(handoff?.context, started.context);
+  const merged = mergeBootstrapContext(handoff?.context, started.context, contextCap ?? DEFAULT_CONTEXT_MAX_CHARS);
   return {
     ...started,
     context: merged.context,
@@ -293,24 +294,29 @@ async function bootstrapWithHandoff(projectId: string, input: NormalizedHostHook
   };
 }
 
-// Subagent bootstrap deliberately halves the recent-context cap: fan-out multiplies
-// whatever a subagent costs. The guidance card is prepended rather than left to the
-// prompt reminder, because a subagent receives no prompt event and a live probe confirmed
-// MCP server instructions do not reach it either — without the card it gets memory data
-// and nothing telling it to use memory. The card is charged against the cap first so a
-// large recent-context block can never truncate the guidance away.
+// Subagent bootstrap deliberately halves the cap: fan-out multiplies whatever a subagent costs.
+// The guidance card is prepended rather than left to the prompt reminder, because a subagent
+// receives no prompt event and a live probe confirmed MCP server instructions do not reach it
+// either — without the card it gets memory data and nothing telling it to use memory. The card is
+// charged against the cap first so the body can never truncate the guidance away.
+//
+// The remaining budget is COMPOSED for that size rather than sliced down from the parent's card
+// (`agentCap`). Slicing was measured delivering a workspace subagent a half-finished repo list and
+// nothing else, and the replacement pointer is measured buying the lookup the titles it replaced
+// were being answered from instead — both derivations live at the option definitions.
 async function bootstrapAgentContext(projectId: string, input: NormalizedHostHook, sessionId: string) {
   const bootstrap = await bootstrapAgentSession({
     projectId,
     title: input.title ?? 'Agent session (subagent)',
     agent: String(input.host),
     sessionId,
-  }, { includeContext: true });
-  const cap = Math.floor(DEFAULT_CONTEXT_MAX_CHARS / 2);
-  const recentBudget = Math.max(0, cap - KNOWL_SUBAGENT_BOOTSTRAP_CARD.length - 2);
-  const recent = bootstrap.context ? truncateText(bootstrap.context, recentBudget) : undefined;
-  const context = recent ? `${KNOWL_SUBAGENT_BOOTSTRAP_CARD}\n\n${recent}` : KNOWL_SUBAGENT_BOOTSTRAP_CARD;
-  return { context, truncated: Boolean(bootstrap.context && bootstrap.context.length > recentBudget) };
+  }, {
+    includeContext: true,
+    contextCap: Math.max(0, Math.floor(DEFAULT_CONTEXT_MAX_CHARS / 2) - KNOWL_SUBAGENT_BOOTSTRAP_CARD.length - 2),
+    agentCard: true,
+  });
+  const context = bootstrap.context ? `${KNOWL_SUBAGENT_BOOTSTRAP_CARD}\n\n${bootstrap.context}` : KNOWL_SUBAGENT_BOOTSTRAP_CARD;
+  return { context, truncated: bootstrap.truncated };
 }
 
 /**
@@ -927,11 +933,22 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // A project with no git history therefore never promotes on observed use, which is the
     // same falsifiability rule as `affected_paths`, applied to the repository instead.
     const standing = drift?.checked ? await promoteByObservedUseBestEffort(projectId) : null;
-    const started = await bootstrapWithHandoff(projectId, input, 'session', true);
-    // The warning is charged against the cap first — the same rule the subagent card
-    // follows. Prepending it to an already-budgeted block pushed the session past the size
-    // the host was promised, and the warning is the part that must survive: the watermark
-    // has already advanced, so this line is the only record of the window.
+
+    // Warnings are priced BEFORE the card is rendered, so the card is composed to what is left
+    // rather than rendered wide and sliced. `drift` and `standing` are resolved above and the
+    // stale-guidance check reads only the filesystem, so nothing here needs the session first.
+    //
+    // Measured worst case on a four-repo workspace: the three producers cap at 283 + 777 + 246 =
+    // 1,310 characters joined, against a recent-knowledge heading that begins at 1,777 — so a full
+    // warning block left 1,688 and cut the knowledge section off entirely. Skills were never at
+    // risk here (they would need a 1,888-character warning, above the producers' ceiling), which
+    // is what separates this from the subagent case. scripts/measure-parent-card-squeeze.ts
+    // recomputes every number in this paragraph.
+    //
+    // The warning is charged against the cap first — the same rule the subagent card follows.
+    // Prepending it to an already-budgeted block pushed the session past the size the host was
+    // promised, and the warning is the part that must survive: the watermark has already
+    // advanced, so this line is the only record of the window.
     // Guidance first, then drift. Both are charged against the cap before recent context, and if
     // only one survives truncation it should be the one saying the instructions on disk cannot be
     // trusted -- an agent acting on stale guidance gets the subsequent work wrong, where a missed
@@ -947,14 +964,18 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     const recentBudget = warning
       ? Math.max(0, DEFAULT_CONTEXT_MAX_CHARS - warning.length - 2)
       : DEFAULT_CONTEXT_MAX_CHARS;
-    const recent = started.context ? truncateText(started.context, recentBudget) : undefined;
-    const context = warning ? (recent ? `${warning}\n\n${recent}` : warning) : recent;
+    const started = await bootstrapWithHandoff(projectId, input, 'session', true, recentBudget);
+    // No second truncation here: `started.context` was already composed to `recentBudget`.
+    const context = warning
+      ? (started.context ? `${warning}\n\n${started.context}` : warning)
+      : started.context;
     return {
       accepted: true,
       sessionId: started.session.id,
       context,
-      contextTruncated: started.truncated
-        || Boolean(started.context && started.context.length > recentBudget),
+      // `started.truncated` alone now: the second clause compared the card against the very
+      // budget it was composed to, so it could only ever be false once the slice went away.
+      contextTruncated: started.truncated,
       recoveredCount: recovered.length,
       purgedEventCount,
       hostOutput: hostContextOutput(input, context),
