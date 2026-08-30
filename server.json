@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.dat999zx/knowl",
+  "title": "Knowl",
+  "description": "Persistent memory for Claude Code, Cursor and Codex. Facts retire when they change.",
+  "version": "5.15.0",
+  "websiteUrl": "https://knowl.cloud",
+  "repository": {
+    "url": "https://github.com/dat999zx/knowl",
+    "source": "github",
+    "id": "1279171235"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@dat999zx/knowl",
+      "version": "5.15.0",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "serve"
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.knowl.cloud/mcp/"
+    }
+  ]
+}

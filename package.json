@@ -1,7 +1,8 @@
 {
   "name": "@dat999zx/knowl",
+  "mcpName": "io.github.dat999zx/knowl",
   "version": "5.15.0",
-  "description": "Governed project memory for AI coding agents. Local-first, typed knowledge atoms over MCP, with stale decisions retired instead of accumulated.",
+  "description": "Persistent memory for Claude Code, Cursor and Codex. Facts are typed, sourced, and retired when they change. Local SQLite, no API keys.",
   "main": "dist/index.js",
   "type": "module",
   "repository": {
