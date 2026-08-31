@@ -100,11 +100,11 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^22.10.7",
     "drizzle-kit": "^0.31.10",
-    "eslint": "^10.8.0",
+    "eslint": "^10.9.1",
     "tsup": "^8.3.5",
     "tsx": "^4.23.8",
     "typescript": "^5.7.3",
-    "typescript-eslint": "^8.66.0",
+    "typescript-eslint": "^8.68.0",
     "vitest": "^4.1.11"
   },
   "overrides": {
