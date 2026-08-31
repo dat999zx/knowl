@@ -98,7 +98,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/node": "^22.10.7",
+    "@types/node": "^26.4.0",
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.8.0",
     "tsup": "^8.3.5",
