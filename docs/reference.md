@@ -670,7 +670,38 @@ knowl posture frugal     # reset the same keys -- knowl exactly as it ships
   memory-active session is precisely the one every other reminder goes silent for.
 - **`impact.enabled` + `impact.gate: shadow`** — change-impact detection on, with the write
   gate in shadow: even the maximal stance does not arm a blocking gate ahead of its measured
-  precision bar.
+  precision bar. What that bar currently reads is printed by `knowl status`, below.
+
+#### Whether the write gate is good enough to enforce
+
+Shadow mode runs the real verdict and withholds the refusal, so every refusal an enforcing gate
+*would* have issued is recorded. The bar in front of enforcing it is **≥95% precision over ≥40
+adjudicated findings**, and `knowl status` prints where the store stands against it:
+
+```
+🛡️  WRITE GATE (shadow)
+  Refusals withheld:     60
+  Adjudicated:           48 of 60
+  Precision:             87.5% (6 false positive(s))
+  Bar to enforce:        ≥95% over ≥40 adjudicated — not cleared
+```
+
+The bar is printed beside the number on purpose. A precision figure alone invites "87% sounds
+fine"; against the bar it reads as what it is.
+
+**Unresolved findings count in neither half.** Nothing forces adjudication, so early on the
+unresolved set is the larger one, and treating those withheld refusals as justified is how a
+precision number talks its way past the bar it was meant to clear. Adjudicate with
+`knowl_impact({resolve})`; until something has been, the line reads *not yet measured* rather
+than a percentage, because no evidence is not a perfect score.
+
+Both halves of the bar fail differently and are reported separately: 100% over three findings is
+not evidence, so it shows as **not cleared** with the number of further adjudications that would
+decide it. That prompt is withheld when precision itself is what is failing — telling someone
+below the bar to gather more evidence is advice for a verdict already reached.
+
+The block is absent entirely on a store whose gate has never withheld anything. Such a repo has
+not measured 0%, it has measured nothing.
 
 Query results also annotate staleness whatever the posture says: a row whose `affectedPaths`
 were modified after the row was stored carries `pathsChanged` ("n of m affectedPaths modified

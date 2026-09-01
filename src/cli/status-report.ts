@@ -1,6 +1,7 @@
 import { KNOWLEDGE_CATEGORIES, KnowledgeCommit, KnowledgeItem, Project, ProjectConfig } from '../core/types.js';
 import type { ActiveWorkspace } from '../workspace/resolve.js';
 import type { CaptureHealth } from '../store/capture-outcome.js';
+import { SHADOW_GATE_PRECISION_BAR, SHADOW_GATE_SAMPLE_BAR, type ShadowGateReport } from '../store/gate-shadow.js';
 import type { RecallGapReport } from '../store/recall-gap.js';
 import type { UnrestatedReport } from '../store/unrestated.js';
 import type { CloudStatus } from '../cloud/status.js';
@@ -46,6 +47,8 @@ export function formatStatusReport(input: {
   captureNudgeMode?: string;
   /** Absent, or a store that has observed no tool touches, renders no section at all. */
   recall?: RecallGapReport;
+  /** Absent, or a store whose shadow gate has withheld nothing, renders no section at all. */
+  shadowGate?: ShadowGateReport;
   /** Absent, or a store where no active item carries an open assertion, renders no section. */
   unrestated?: UnrestatedReport;
   /** Absent or disconnected renders nothing, so an offline repo gains no noise. */
@@ -93,6 +96,7 @@ export function formatStatusReport(input: {
     }
   }
   lines.push(...formatCaptureHealthBlock(input.capture, input.captureNudgeMode));
+  lines.push(...formatShadowGateBlock(input.shadowGate));
   lines.push(...formatRecallGapBlock(input.recall));
   lines.push(...formatUnrestatedBlock(input.unrestated));
   lines.push(...formatWorkspaceBlock(input.workspace ?? null));
@@ -203,6 +207,53 @@ function formatUnrestatedBlock(unrestated?: UnrestatedReport): string[] {
   lines.push(`  Store history is ${unrestated.storeHistoryDays}d, so ages beyond that cannot be distinguished from absence.`);
   if (unrestated.prosePathOnly > 0) {
     lines.push(`  ${unrestated.prosePathOnly} counted as prose despite citing paths, because every path is a prose file.`);
+  }
+  return lines;
+}
+
+/**
+ * What an enforcing write gate would have refused, and whether that is yet good enough to enforce.
+ *
+ * `shadowGatePrecision` has existed since the gate did, computing exactly the number plan §9's
+ * bar is written against -- and nothing imported it. So shadow mode was recording withheld
+ * refusals into a table whose verdict no command could print, which is the same defect as not
+ * measuring at all: a measurement nobody can read cannot promote or retire the thing it measures.
+ *
+ * THE BAR IS PRINTED BESIDE THE NUMBER, always. A precision figure alone invites the reading
+ * "91% sounds fine"; against ">=95% over >=40 adjudicated" it reads as what it is. Both halves
+ * of the bar are shown because they fail differently -- a store can sit at 100% over three
+ * findings, which is not evidence, and this block has to say so rather than look like a pass.
+ *
+ * Absent until shadow mode has actually withheld something, following every other block here: a
+ * repo whose gate has never run has not measured 0%, it has measured nothing.
+ */
+function formatShadowGateBlock(gate?: ShadowGateReport): string[] {
+  if (!gate || gate.withheld === 0) return [];
+
+  const lines = [
+    STATUS_LINE,
+    '🛡️  WRITE GATE (shadow)',
+    `  Refusals withheld:     ${gate.withheld}`,
+    `  Adjudicated:           ${gate.adjudicated} of ${gate.withheld}`,
+  ];
+
+  if (gate.precision === null) {
+    // Null is not zero and must never render as a percentage. Nothing forces adjudication, so
+    // this is the ordinary early state, and it names the command that moves it.
+    lines.push('  Precision:             not yet measured — resolve findings with `knowl_impact({resolve})`.');
+    return lines;
+  }
+
+  const percent = (gate.precision * 100).toFixed(1);
+  const clears = gate.precision >= SHADOW_GATE_PRECISION_BAR && gate.adjudicated >= SHADOW_GATE_SAMPLE_BAR;
+  lines.push(
+    `  Precision:             ${percent}% (${gate.falsePositives} false positive(s))`,
+    `  Bar to enforce:        ≥${(SHADOW_GATE_PRECISION_BAR * 100).toFixed(0)}% over ≥${SHADOW_GATE_SAMPLE_BAR} adjudicated — ${clears ? 'cleared' : 'not cleared'}`,
+  );
+  // Said only when the sample is the thing standing in the way, so a repo below the precision
+  // bar is not told to go and adjudicate more of something already known to be wrong.
+  if (!clears && gate.adjudicated < SHADOW_GATE_SAMPLE_BAR && gate.precision >= SHADOW_GATE_PRECISION_BAR) {
+    lines.push(`  ${SHADOW_GATE_SAMPLE_BAR - gate.adjudicated} more adjudicated finding(s) would decide it.`);
   }
   return lines;
 }
