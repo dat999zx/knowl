@@ -15,7 +15,7 @@ import { hasAiConfigured } from '../core/config.js';
 import { initAI } from '../ai/provider.js';
 import { runPipeline } from '../pipeline/pipeline.js';
 import { getHierarchicalKnowledge, queryKnowledgeBase } from '../store/queries.js';
-import { formatHierarchyToMarkdown, formatRecentContextToMarkdown } from '../core/format.js';
+import { formatHierarchyToMarkdown, formatRecentContextToMarkdown, pathsChangedNote } from '../core/format.js';
 import { inlineUntrusted } from '../core/untrusted.js';
 import { compactMcpJson, compactItemResponse, compactAssertionResponse, boundedEvidence } from './response-format.js';
 import { DEFAULT_RESULT_LIMIT, MAX_ITEM_CONTENT_CHARS, MAX_PREVIEW_CHARS, truncateMiddle, truncateText, uncalibratedScore, type UncalibratedScore } from '../core/token-budget.js';
@@ -1010,7 +1010,18 @@ export function registerTools(
             if (!Number.isFinite(storedAt)) return;
             let changed = 0;
             let checked = 0;
-            await Promise.all(item.affectedPaths.map(async raw => {
+            // Which paths moved, not only how many. The count alone leaves the reader to diff
+            // `affectedPaths` against the working tree to find out where to look, and that is
+            // the step measurements say does not happen: served a claim whose source had moved,
+            // with the link present and reachable, agents opened it in about one turn in five
+            // and acted on the superseded value in three quarters of the rest. A content-free
+            // freshness cue did not move that; naming the target on the critical path did.
+            //
+            // Collected positionally rather than pushed: these stats run concurrently, so a
+            // push would order the names by whichever `fs.stat` resolved first and the same
+            // query would name the same paths in a different order on the next run.
+            const moved: Array<string | null> = new Array(item.affectedPaths.length).fill(null);
+            await Promise.all(item.affectedPaths.map(async (raw, index) => {
               // A path that will not resolve against THIS checkout -- absolute, drive-lettered,
               // `./`-prefixed, escaping the root -- is skipped, not counted. A missing FILE is
               // evidence the atom's ground moved; an unreadable PATH is only absence of
@@ -1020,14 +1031,18 @@ export function registerTools(
               checked += 1;
               try {
                 const stat = await fs.stat(path.resolve(projectRoot, contained));
-                if (stat.mtimeMs > storedAt + PATHS_CHANGED_GRACE_MS) changed += 1;
+                if (stat.mtimeMs > storedAt + PATHS_CHANGED_GRACE_MS) {
+                  changed += 1;
+                  moved[index] = contained;
+                }
               } catch {
                 changed += 1;
+                moved[index] = contained;
               }
             }));
             if (changed > 0) {
               pathsChangedNotes.set(item.id,
-                `${changed} of ${checked} affectedPaths modified since this was stored -- verify against the files before trusting.`);
+                pathsChangedNote(changed, checked, moved.filter((p): p is string => p !== null)));
             }
           })).catch(() => {});
         }

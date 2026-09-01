@@ -4,6 +4,42 @@ import { renderSkillsSection, selectSurfacedSkills, toPeerSurfacedSkills } from 
 import { fenceUntrusted, inlineUntrusted, UNTRUSTED_NOTICE_BRIEF } from './untrusted.js';
 
 /**
+ * How many moved paths the staleness marker names before it stops counting them out.
+ *
+ * Three, because the marker has to stay one line a reader takes in at a glance -- an atom
+ * citing thirty paths would otherwise turn a marker into a wall, and the reader who skims past
+ * a wall is exactly the reader this marker exists for. The rest are reported as a number,
+ * which is enough to say "there is more here than the three I named".
+ */
+const MAX_NAMED_MOVED_PATHS = 3;
+
+/**
+ * The staleness marker on a query row whose cited files moved after the row was stored.
+ *
+ * WHY IT LEADS WITH AN INSTRUCTION. This used to read `N of M affectedPaths modified since
+ * this was stored -- verify against the files before trusting`, which states a condition and
+ * leaves the reader to work out the action. Measurement on served-but-superseded claims says
+ * that is the shape that does not land: with the source present and reachable, agents opened
+ * it in roughly one turn in five and acted on the stale value in about three quarters of the
+ * rest, and a content-free freshness cue did not move those numbers. What moved them was an
+ * instruction naming what to open, on the path the reader was already on.
+ *
+ * So the sentence opens with the verb and the filenames, and the count -- which is a
+ * description, not an action -- follows it. The count stays because it is the one thing that
+ * separates "one of nine cited files was touched" from "every file this rests on is gone".
+ */
+export function pathsChangedNote(changed: number, checked: number, movedPaths: string[]): string {
+  const named = movedPaths.slice(0, MAX_NAMED_MOVED_PATHS);
+  const rest = movedPaths.length - named.length;
+  // Falls back to the bare count rather than inventing a target. `movedPaths` is empty only if
+  // a caller counted a change it could not name, and "open nothing" is worse than no verb.
+  const targets = named.length === 0
+    ? ''
+    : `Open ${named.join(', ')}${rest > 0 ? ` and ${rest} more` : ''}, then verify this still holds: `;
+  return `${targets}${changed} of ${checked} affectedPaths modified since this was stored${targets ? '.' : ' -- verify against the files before trusting.'}`;
+}
+
+/**
  * Formats a hierarchical knowledge object into clean readable markdown.
  * Shared between MCP server responses and CLI output.
  */
