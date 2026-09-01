@@ -1,4 +1,4 @@
-import { and, desc, eq, notLike } from 'drizzle-orm';
+import { and, desc, eq, isNull, notLike, sql } from 'drizzle-orm';
 import { KnowledgeCommit, KnowledgeItem } from '../core/types.js';
 import { DatabaseError } from '../core/errors.js';
 import { getDb } from './database.js';
@@ -28,14 +28,41 @@ export async function getRecentContext(
       conditions.push(notLike(schema.knowledgeItems.title, 'Verified command:%'));
       conditions.push(notLike(schema.knowledgeItems.title, 'Work Loop checkpoint%'));
     }
+    // Ordered by when the claim was last RESTATED, not by when its row was last written.
+    //
+    // `updated_at` moves on supersession, archival, visibility promotion and a freshness flip,
+    // none of which mean anyone revisited the claim -- `unrestated.ts` measured 72% of items on
+    // a 950-item store carrying an `updated_at` newer than their `valid_from`. Ordering three
+    // card slots by it had one consequence worth naming: `blastRadius` flags a sibling
+    // `needs_review` through `updateKnowledgeItem`, which stamps `updated_at` unconditionally,
+    // so correcting one atom PROMOTED unrelated atoms onto the session card for having just
+    // been marked doubtful -- evicting whatever the session had actually learned.
+    //
+    // A new assertion generation is written only when title, content, reasoning or confidence
+    // change, so `valid_from` moves on restatement and on nothing else. Same clock and same
+    // join `unrestated.ts` already established.
+    //
+    // LEFT joined, where that module inner-joins. It is reporting on a population and may
+    // exclude a row it cannot date; this is a card with three slots, and an item with no open
+    // assertion -- an import, a store predating the table -- must still be reachable. Such a
+    // row falls back to `updated_at`, which is exactly the old behaviour for exactly the rows
+    // that have nothing better.
+    const restatedAt = sql<string>`coalesce(${schema.knowledgeAssertions.validFrom}, ${schema.knowledgeItems.updatedAt})`;
     const rows = await db
-      .select()
+      .select({ item: schema.knowledgeItems })
       .from(schema.knowledgeItems)
+      .leftJoin(
+        schema.knowledgeAssertions,
+        and(
+          eq(schema.knowledgeAssertions.knowledgeItemId, schema.knowledgeItems.id),
+          isNull(schema.knowledgeAssertions.validTo),
+        ),
+      )
       .where(and(...conditions))
-      .orderBy(desc(schema.knowledgeItems.updatedAt))
+      .orderBy(desc(restatedAt))
       .limit(itemLimit);
 
-    const items = rows.map(mapRowToKnowledgeItem);
+    const items = rows.map(row => mapRowToKnowledgeItem(row.item));
 
     const commits = await getKnowledgeCommits(projectId, commitLimit);
     return { items, commits };

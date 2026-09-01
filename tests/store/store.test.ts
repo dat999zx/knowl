@@ -797,6 +797,66 @@ describe('Storage Layer', () => {
     expect(context.commits[0].message).toBe('Newest session commit');
   });
 
+  it('does not promote an item onto the card for having just been flagged needs_review', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT) ?? await repo.createProject(TEST_ROOT, 'Test Project');
+    const projectId = project!.id;
+
+    const stale = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Card ordering: the doubtful one',
+      content: 'Written first, and never restated since.',
+    });
+    const middle = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Card ordering: the middle one',
+      content: 'Written second.',
+    });
+    const newest = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Card ordering: the newest one',
+      content: 'Written third, and what the session actually learned.',
+    });
+
+    // Exactly what `blastRadius` does to a sibling when a correction lands elsewhere. It sets
+    // no title, content, reasoning or confidence, so no new assertion generation is written --
+    // but `updateKnowledgeItem` stamps `updated_at` unconditionally.
+    await repo.updateKnowledgeItem(stale.id, { freshness: 'needs_review' });
+
+    const context = await getRecentContext(projectId, { itemLimit: 2, commitLimit: 1 });
+
+    // Ordering by `updated_at` put the doubtful atom first, evicting what the session had just
+    // learned -- so correcting one claim silently rewrote the next session's card with atoms
+    // promoted for being suspect.
+    expect(context.items.map(item => item.id)).toEqual([newest.id, middle.id]);
+    expect(context.items.some(item => item.id === stale.id)).toBe(false);
+  });
+
+  it('does promote an item that was genuinely restated', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT) ?? await repo.createProject(TEST_ROOT, 'Test Project');
+    const projectId = project!.id;
+
+    const first = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Restatement ordering: written first',
+      content: 'Original wording.',
+    });
+    const second = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Restatement ordering: written second',
+      content: 'Written after the first.',
+    });
+
+    // A content change opens a new assertion generation, which is the one event that moves
+    // `valid_from`. The card must still react to this, or the fix above would have traded a
+    // wrong signal for no signal.
+    await repo.updateKnowledgeItem(first.id, { content: 'Restated wording, checked today.' });
+
+    const context = await getRecentContext(projectId, { itemLimit: 2, commitLimit: 1 });
+
+    expect(context.items[0].id).toBe(first.id);
+    expect(context.items[1].id).toBe(second.id);
+  });
+
   it('should store commit changes without project ids or double-encoded JSON', async () => {
     const project = await repo.getProjectByRootPath(TEST_ROOT);
     const projectId = project!.id;
