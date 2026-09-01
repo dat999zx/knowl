@@ -51,6 +51,7 @@ import {
 import { shouldRefuseWrite } from './write-gate.js';
 import { observeRecallGapBestEffort } from '../store/recall-gap.js';
 import { KNOWL_CLAUDE_CONTINUATION_REMINDER, KNOWL_SUBAGENT_BOOTSTRAP_CARD } from '../core/knowl-guidance.js';
+import { shellReadPaths } from './shell-reads.js';
 import { isKnowlProjectGuidanceCurrent } from '../core/agents-guidance.js';
 import {
   ChangeSummary,
@@ -146,6 +147,19 @@ function toolReadsFile(input: NormalizedHostHook): boolean {
   return readsFiles
     ? readsFiles(input.hostEvent ?? '', toolName)
     : IMPACT_READ_TOOLS.has(toolName);
+}
+
+/**
+ * Whether this event is a shell command whose text we can read.
+ *
+ * Tested on the NORMALIZED shape rather than by re-asking the profile `isShellEvent`. Only the
+ * shell branch of `commandEvent` puts a `command` string in the payload, so this is the same
+ * judgement already made once per event, read back instead of recomputed -- and it cannot drift
+ * away from the branch that produced it, which is how the read set and the write gate would
+ * quietly stop agreeing about what a shell event is.
+ */
+function toolIsShell(input: NormalizedHostHook): boolean {
+  return input.type === 'command' && typeof input.payload.command === 'string';
 }
 
 function toolWritesFile(input: NormalizedHostHook): boolean {
@@ -526,7 +540,17 @@ function impactChangedPaths(payload: Record<string, unknown>): string[] {
  * ordinary traffic on a path that observes rather than acts, and its `continue` still leaves every
  * other path's observations in the batch.
  */
-async function recordToolReads(input: NormalizedHostHook, sessionId: string, paths: string[]): Promise<void> {
+async function recordToolReads(
+  input: NormalizedHostHook,
+  sessionId: string,
+  paths: string[],
+  // Set for shell reads. The shell says WHICH file was opened, never how much of it: `head -5`
+  // and `sed -n 40,60p` are slices, and expanding a slice into one row per symbol would assert
+  // beliefs about signatures that never reached the agent -- manufactured false positives on
+  // the one tier allowed to interrupt. The `file://` row is the granularity the evidence
+  // supports, and it is the same degradation a file with no parseable symbols already takes.
+  options: { fileGranularity?: boolean } = {},
+): Promise<void> {
   const observations: ReadObservation[] = [];
 
   for (const changed of paths) {
@@ -539,7 +563,7 @@ async function recordToolReads(input: NormalizedHostHook, sessionId: string, pat
       await indexFile(input.projectRoot, relativePath);
 
       const observed: { locator: string; observedHash: string }[] = [];
-      const symbols = await listCodeSymbols(relativePath);
+      const symbols = options.fileGranularity ? [] : await listCodeSymbols(relativePath);
       if (symbols.length > 0 && symbols.length <= IMPACT_MAX_SYMBOLS_PER_READ) {
         // A symbol the extractor gave no signature has no hash to compare against later, so a row
         // for it would be a belief nothing could ever falsify; `recordReads` drops it regardless.
@@ -645,6 +669,13 @@ async function runToolEventImpact(input: NormalizedHostHook, sessionId: string):
       await recordToolReads(input, sessionId, paths);
     } else if (paths.length > 0 && toolWritesFile(input)) {
       await detectCertainImpactBestEffort(input.projectRoot, paths, sessionId);
+    } else if (paths.length === 0 && toolIsShell(input)) {
+      // A shell event carries a command string and no paths at all, so it reaches neither
+      // branch above and the whole subsystem was blind to a session that reads with `cat`.
+      // Last rather than first: a host that somehow delivers both paths and a command is
+      // telling us the paths, and the parser is only ever the weaker source.
+      const read = shellReadPaths(String(input.payload.command ?? ''));
+      if (read.length > 0) await recordToolReads(input, sessionId, read, { fileGranularity: true });
     }
     return await openImpactCardEntries(sessionId);
   } catch {
