@@ -82,6 +82,16 @@ describe('knowledge conflict keys', () => {
         sql: 'UPDATE knowledge_items SET conflict_key = ? WHERE id = ?',
         args: ['  Search ENGINE  Choice  ', second.id],
       });
+      // Pinned so that "newest" is a fact rather than a coin flip. Both rows are created by
+      // back-to-back calls, ISO timestamps are millisecond-granular, and on a fast machine the
+      // two land in the same millisecond -- at which point the repair falls through to its
+      // documented `a.id.localeCompare(b.id)` tiebreak and the survivor is whichever random
+      // id sorts first. Measured on this fixture with the timestamps forced equal: the
+      // assertion below held 3 times in 12. It is what failed on CI's node 24 runner.
+      await getClient().execute({
+        sql: "UPDATE knowledge_items SET updated_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
+        args: [first.id],
+      });
 
       const report = await auditKnowledgeStore(undefined, { repair: true });
 
