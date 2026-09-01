@@ -59,7 +59,15 @@ export async function getRecentContext(
         ),
       )
       .where(and(...conditions))
-      .orderBy(desc(restatedAt))
+      // Tie-broken to a total order, because the primary key is not one. ISO timestamps are
+      // millisecond-granular, and three atoms written by one turn routinely share a
+      // millisecond on a fast machine -- CI's macOS runner produced a different second slot
+      // than Windows did from the same fixture. `updated_at` had the same property; ordering
+      // three card slots by a partial order means the card can differ between two identical
+      // calls, which is the kind of instability that reads as a bug in whatever consumed it.
+      // `id` last because it is arbitrary but stable, which is exactly what a final tiebreak
+      // should be; `created_at` first because when it does differ it is meaningful.
+      .orderBy(desc(restatedAt), desc(schema.knowledgeItems.createdAt), desc(schema.knowledgeItems.id))
       .limit(itemLimit);
 
     const items = rows.map(row => mapRowToKnowledgeItem(row.item));
