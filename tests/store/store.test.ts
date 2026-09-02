@@ -781,7 +781,13 @@ describe('Storage Layer', () => {
       content: 'Older active work should appear after newer work.',
       tags: ['session'],
     });
-    await setKnowledgeItemUpdatedAt(older.id, '2099-01-01T00:00:00.000Z');
+    // The card orders by the open assertion's `valid_from`, not by `updated_at` -- so separating
+    // these two on the wrong clock left them tied on the right one, and the order fell through to
+    // the arbitrary-but-stable `id` tiebreak. Deterministic, and a coin flip per fixture: this
+    // passed on Windows and ubuntu and failed on CI's macOS runner, where `f889…` sorted above
+    // `d21b…`. The production ordering is a total order and was never in doubt; the fixture was
+    // asserting a semantic order it had stopped establishing.
+    await setAssertionValidFrom(older.id, '2099-01-01T00:00:00.000Z');
 
     const newer = await repo.createKnowledgeItem(projectId, {
       category: 'state',
@@ -789,7 +795,7 @@ describe('Storage Layer', () => {
       content: 'Newest active work should appear first.',
       tags: ['session'],
     });
-    await setKnowledgeItemUpdatedAt(newer.id, '2099-01-02T00:00:00.000Z');
+    await setAssertionValidFrom(newer.id, '2099-01-02T00:00:00.000Z');
 
     const archived = await repo.createKnowledgeItem(projectId, {
       category: 'state',
