@@ -141,8 +141,10 @@ describe('two-sided membership', () => {
       ...DEFAULT_CONFIG,
       search: { vector: { enabled: true, provider: 'local', model: 'other/model', dtype: 'q8' } },
     });
+    // Still refused, but for the reason that survives #191: mixed profiles are searchable, so
+    // what the refusal protects is the single shared semantic range, not visibility (#216).
     await expect(joinWorkspace({ projectRoot: REPO_B, workspaceName: 'ws', repoName: 'b' }))
-      .rejects.toThrow(/invisible to each other/i);
+      .rejects.toThrow(/one embedding profile/i);
   });
 
   it('leaving an unlinked repo is a no-op rather than an error', async () => {

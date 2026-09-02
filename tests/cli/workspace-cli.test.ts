@@ -123,15 +123,17 @@ describe('knowl workspace CLI', { timeout: 120_000 }, () => {
 
     // join is the second way into a workspace and used to skip every check add applies, so
     // a second machine could adopt the same workspace under a different embedding model.
-    // Vector search filters on provider and model, so the two sides would simply not see
-    // each other's items, with nothing anywhere reporting why.
+    // The refusal outlives its original reason: #191 made mixed profiles searchable, so what
+    // it now protects is the shared semantic range, and the message says so rather than
+    // claiming the two sides cannot see each other (#216).
     await saveConfig(other, {
       ...DEFAULT_CONFIG,
       search: { vector: { enabled: true, provider: 'local', model: 'other/model', dtype: 'q8' } },
     });
     const mismatched = knowl(other, 'workspace', 'join', manifest, '--name', 'server');
     expect(mismatched.status).toBe(1);
-    expect(mismatched.stderr).toMatch(/invisible to each other/i);
+    expect(mismatched.stderr).toMatch(/one embedding profile/i);
+    expect(mismatched.stderr).not.toMatch(/invisible/i);
 
     await saveConfig(other, { ...DEFAULT_CONFIG });
     const joined = knowl(other, 'workspace', 'join', manifest, '--name', 'server');

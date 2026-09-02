@@ -142,14 +142,20 @@ describe('workspace doctor checks', () => {
     expect(checks.some(check => check.status === 'WARN' && /protocol/.test(check.message))).toBe(true);
   });
 
-  it('warns when this repo embeds differently from the workspace', () => {
+  it('reports a differing embedding profile without warning about it or prescribing a fix', () => {
     const drifted = {
       ...DEFAULT_CONFIG,
       search: { vector: { enabled: true, provider: 'local', model: 'other', dtype: 'q8' } },
     } as ProjectConfig;
-    // A mismatched embedding makes items mutually invisible, and a filtered-out embedding
-    // looks exactly like no embedding -- nothing else would report this.
-    expect(workspaceDoctorChecks(active(), drifted).some(check => check.status === 'WARN' && /embed/i.test(check.message))).toBe(true);
+    // This was a WARN claiming the two sets were invisible to each other, prescribing
+    // `align search.vector, then reindex`. #191 made the claim false, and the prescription
+    // breaks any cloud-connected repo, whose profile the server fixes (#216). Still reported,
+    // because a second profile costs the shared semantic range -- reported is not silent.
+    const embedding = workspaceDoctorChecks(active(), drifted).filter(check => /embed/i.test(check.message));
+    expect(embedding).toHaveLength(1);
+    expect(embedding[0].status).toBe('OK');
+    expect(embedding[0].fix).toBeUndefined();
+    expect(embedding[0].message).not.toMatch(/invisible/i);
   });
 
   it('reports OK when every peer is present and the identity matches', () => {

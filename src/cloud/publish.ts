@@ -179,6 +179,16 @@ export type PushResult =
    * message that names the command that fixes it.
    */
   | { status: 'needs-embedding'; count: number; remedy: string }
+  /**
+   * A staged atom carries a field longer than the cloud contract accepts. Nothing was sent.
+   *
+   * The server enforces these caps too, but its zod rejection arrives as a bare
+   * `Too big: expected string to have <=500 characters` with no path and no id, once per
+   * offending atom -- so a 100-atom push failed with two anonymous lines and no way to find
+   * the two atoms responsible short of SQL over `cloud_published` (#217). Checked here to
+   * name them instead, one round trip earlier.
+   */
+  | { status: 'oversized-field'; offenders: { id: string; field: string; length: number; cap: number }[] }
   | {
     /**
      * The queue is not what the human confirmed. Nothing was sent.
@@ -252,6 +262,37 @@ const MIN_BATCH = 1;
  */
 function isTooMuchAtOnce(error: unknown): error is CloudApiError {
   return error instanceof CloudApiError && (error.code === 'timeout' || error.status === 413);
+}
+
+/**
+ * The cloud contract's `z.string().max(500)` on `title`, `source` and `conflictKey`
+ * (knowl-cloud `packages/contract/src/knowledge.ts`).
+ *
+ * Duplicated rather than imported because the contract package is a different repository, and a
+ * client that cannot be built without the server's source is not a client. The cost of the copy
+ * is that a cap change there is silent here -- which is the failure this check already handles:
+ * an atom that slips past reaches the server and is refused, exactly as it is today, only
+ * without the id. Checking the three fields the contract caps and not, say, `content` (which it
+ * does not cap) keeps that gap the same shape.
+ *
+ * Deliberately NOT enforced at write time. `knowl store` is local-first and works with no cloud
+ * account at all, so rejecting a 600-character title on a machine that will never push would
+ * import the server's limits into a store that does not answer to them.
+ */
+const CONTRACT_MAX_FIELD = 500;
+
+function findOversizedFields(items: PublishItem[]): { id: string; field: string; length: number; cap: number }[] {
+  const offenders: { id: string; field: string; length: number; cap: number }[] = [];
+  for (const item of items) {
+    for (const [field, value] of [
+      ['title', item.title], ['source', item.source], ['conflictKey', item.conflictKey],
+    ] as const) {
+      if (typeof value === 'string' && value.length > CONTRACT_MAX_FIELD) {
+        offenders.push({ id: item.id, field, length: value.length, cap: CONTRACT_MAX_FIELD });
+      }
+    }
+  }
+  return offenders;
 }
 
 const parseJson = <T>(value: unknown): T | null => {
@@ -471,6 +512,11 @@ export async function pushStaged(input: {
       return {
         status: 'pushed', created: 0, updated: 0, conflicts: [], rejected: [], skippedUnchanged,
       };
+    }
+
+    const oversized = findOversizedFields(items);
+    if (oversized.length > 0) {
+      return { status: 'oversized-field', offenders: oversized };
     }
 
     // Keyed off the payloads being sent, never a fresh read. `recordPushed` stores these, and a

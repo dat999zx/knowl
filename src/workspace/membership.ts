@@ -65,9 +65,19 @@ export function isLinked(_projectRoot: string, manifest: WorkspaceManifest, conf
 /**
  * Refuse a repo whose vectors are not comparable with the workspace's.
  *
- * Vector search filters on provider and model, and quantization changes the vector, so two
- * identities are two disjoint search spaces: each repo's items would be simply absent from
- * the other's results, with no error anywhere to explain it.
+ * THIS IS A POLICY CHOICE, NOT AN INVISIBILITY CLAIM -- and it used to say otherwise. The
+ * refusal was written when a mismatched peer really did return nothing: one fingerprint was
+ * applied to every store, so the two sides were disjoint search spaces with no error to
+ * explain it. #191 ended that. Each peer is embedded and scored under its own profile now, so
+ * a mixed workspace searches correctly.
+ *
+ * What a second profile still costs is the shared semantic range. Same-profile repos produce
+ * comparable cosines and share one min-max; a second model earns its own range and its own
+ * relevance floor, which is more machinery and one more model resident per query. One profile
+ * per workspace keeps the simple path, and that -- not invisibility -- is why this still
+ * refuses. Absolute on purpose: `--force` covers the git-tracked-config check only, so there is
+ * no escape hatch here to keep in sync. Deleting the refusal is a live option (#216) and would
+ * be a policy change, not a bug fix.
  *
  * Shared by both routes in. `workspace add` enforced this from the start; `workspace join`
  * -- adopting a manifest copied off another machine -- did not, so a second machine could
@@ -77,8 +87,10 @@ export function assertEmbeddingCompatible(manifest: WorkspaceManifest, identity:
   if (sameEmbeddingIdentity(manifest.embedding, identity)) return;
   throw new Error(
     `This repo embeds with ${formatEmbeddingIdentity(identity)} but workspace "${manifest.name}" uses ` +
-    `${formatEmbeddingIdentity(manifest.embedding)}. Vector search filters on provider and model, so the two ` +
-    'sets of items would be invisible to each other. Align this repo\'s search.vector config first.',
+    `${formatEmbeddingIdentity(manifest.embedding)}. A workspace holds one embedding profile so that ` +
+    'every repo shares one semantic range; a second profile is searchable but costs that. Align this ' +
+    'repo\'s search.vector config first, unless it publishes to a cloud workspace -- that profile is ' +
+    'fixed by the server and must not be changed to satisfy this.',
   );
 }
 
