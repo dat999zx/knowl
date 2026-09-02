@@ -23,6 +23,27 @@ async function setKnowledgeItemUpdatedAt(itemId: string, updatedAt: string): Pro
   await getDb().run(sql`UPDATE knowledge_items SET updated_at = ${updatedAt} WHERE id = ${itemId}`);
 }
 
+/**
+ * Pin an item's open assertion to a known instant.
+ *
+ * The card orders by `valid_from`, and ISO timestamps are millisecond-granular -- three items
+ * created in one test routinely share a millisecond on a fast machine, which made the order
+ * among them a coin flip. CI's macOS runner and Windows disagreed about the same fixture. Same
+ * reason `setKnowledgeItemUpdatedAt` exists directly above, applied to the other clock.
+ */
+async function openAssertionValidFrom(itemId: string): Promise<string | null> {
+  const rows = await getClient().execute({
+    sql: 'SELECT valid_from FROM knowledge_assertions WHERE knowledge_item_id = ? AND valid_to IS NULL',
+    args: [itemId],
+  });
+  return rows.rows[0] ? String(rows.rows[0].valid_from) : null;
+}
+
+async function setAssertionValidFrom(itemId: string, validFrom: string): Promise<void> {
+  await getDb().run(sql`UPDATE knowledge_assertions SET valid_from = ${validFrom}
+    WHERE knowledge_item_id = ${itemId} AND valid_to IS NULL`);
+}
+
 describe('Storage Layer', () => {
   beforeAll(async () => {
     // Ensure fresh test directory on startup
@@ -795,6 +816,82 @@ describe('Storage Layer', () => {
     expect(context.items.some(item => item.id === archived.id)).toBe(false);
     expect(context.commits).toHaveLength(2);
     expect(context.commits[0].message).toBe('Newest session commit');
+  });
+
+  it('does not promote an item onto the card for having just been flagged needs_review', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT) ?? await repo.createProject(TEST_ROOT, 'Test Project');
+    const projectId = project!.id;
+
+    const stale = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Card ordering: the doubtful one',
+      content: 'Written first, and never restated since.',
+    });
+    const middle = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Card ordering: the middle one',
+      content: 'Written second.',
+    });
+    const newest = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Card ordering: the newest one',
+      content: 'Written third, and what the session actually learned.',
+    });
+
+    await setAssertionValidFrom(stale.id, '2099-01-01T00:00:00.000Z');
+    await setAssertionValidFrom(middle.id, '2099-01-02T00:00:00.000Z');
+    await setAssertionValidFrom(newest.id, '2099-01-03T00:00:00.000Z');
+
+    // Exactly what `blastRadius` does to a sibling when a correction lands elsewhere. It sets
+    // no title, content, reasoning or confidence, so no new assertion generation is written --
+    // but `updateKnowledgeItem` stamps `updated_at` unconditionally.
+    await repo.updateKnowledgeItem(stale.id, { freshness: 'needs_review' });
+
+    const context = await getRecentContext(projectId, { itemLimit: 2, commitLimit: 1 });
+
+    // Ordering by `updated_at` put the doubtful atom first, evicting what the session had just
+    // learned -- so correcting one claim silently rewrote the next session's card with atoms
+    // promoted for being suspect.
+    expect(context.items.map(item => item.id)).toEqual([newest.id, middle.id]);
+    expect(context.items.some(item => item.id === stale.id)).toBe(false);
+  });
+
+  it('opens a new assertion generation on a genuine restatement, which is what the card orders by', async () => {
+    const project = await repo.getProjectByRootPath(TEST_ROOT) ?? await repo.createProject(TEST_ROOT, 'Test Project');
+    const projectId = project!.id;
+
+    const first = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Restatement ordering: written first',
+      content: 'Original wording.',
+    });
+    const second = await repo.createKnowledgeItem(projectId, {
+      category: 'fact',
+      title: 'Restatement ordering: written second',
+      content: 'Written after the first.',
+    });
+    // Pinned above every other item this shared store holds, so the two slots are these two.
+    await setAssertionValidFrom(first.id, '2099-02-01T00:00:00.000Z');
+    await setAssertionValidFrom(second.id, '2099-02-02T00:00:00.000Z');
+
+    const before = await getRecentContext(projectId, { itemLimit: 2, commitLimit: 1 });
+    expect(before.items.map(item => item.id)).toEqual([second.id, first.id]);
+
+    // A content change opens a new assertion generation, which is the one event that moves
+    // `valid_from`. Asserted on the clock itself rather than on the resulting card position:
+    // the new generation is stamped `now`, and `now` cannot be ordered against a pinned 2099
+    // without the fixture pinning the very value under test.
+    const validFromBefore = await openAssertionValidFrom(first.id);
+    await repo.updateKnowledgeItem(first.id, { content: 'Restated wording, checked today.' });
+    const validFromAfter = await openAssertionValidFrom(first.id);
+
+    expect(validFromAfter).not.toBe(validFromBefore);
+
+    // And the housekeeping case does not, which is the pair that makes the ordering meaningful:
+    // one event moves this clock and the other does not.
+    const unchanged = await openAssertionValidFrom(second.id);
+    await repo.updateKnowledgeItem(second.id, { freshness: 'needs_review' });
+    expect(await openAssertionValidFrom(second.id)).toBe(unchanged);
   });
 
   it('should store commit changes without project ids or double-encoded JSON', async () => {
