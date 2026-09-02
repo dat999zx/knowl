@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: HOL Guard plugin scanner
-        uses: hashgraph-online/ai-plugin-scanner-action@b11c05ef7ee17c7d84299de8a245e364c1cb070c # v1.2.533
+        uses: hashgraph-online/ai-plugin-scanner-action@7e420247177d5beebbd3747ed16e4b29a1e41f57 # v1.2.551
         with:
           plugin_dir: '.'
           # The same bar their listing gate applies, so a pass here is a pass there.
