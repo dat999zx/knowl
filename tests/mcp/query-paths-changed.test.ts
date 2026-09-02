@@ -114,6 +114,26 @@ describe('knowl_query pathsChanged marker', () => {
     // strongest form of "moved".
     expect(row.pathsChanged).toContain('2 of 2');
     expect(row.pathsChanged).toContain('verify');
+    // And it says which two. A count leaves the reader to diff `affectedPaths` against the
+    // working tree to find the target; naming it is the whole point of the marker.
+    expect(row.pathsChanged).toContain('src/auth.ts');
+    expect(row.pathsChanged).toContain('src/missing.ts');
+    // The instruction comes before the count, not after it.
+    expect(row.pathsChanged.indexOf('Open')).toBeLessThan(row.pathsChanged.indexOf('2 of 2'));
+  });
+
+  it('names the moved paths in the order the atom cites them, not in stat-resolution order', async () => {
+    const projectId = await seedRepo(A);
+    await fs.mkdir(path.join(A, 'src'), { recursive: true });
+    // Three missing files: every one counts as moved, and none of them touches the disk in a
+    // way that could order the result. Concurrent `fs.stat` settles in an arbitrary order, so
+    // a marker built by pushing as each resolves names the same paths differently run to run.
+    await storeCiting(projectId, 'Ordering probe rotation ttl', ['src/zeta.ts', 'src/alpha.ts', 'src/mid.ts']);
+
+    const result = await callQuery(A, await loadConfig(A), { query: 'ordering probe rotation ttl' });
+    const row = rowsOf(result).find(r => String(r.title).includes('Ordering probe'));
+    expect(row).toBeDefined();
+    expect(row.pathsChanged).toContain('Open src/zeta.ts, src/alpha.ts, src/mid.ts,');
   });
 
   it('says nothing on a row whose files have not moved since it was stored', async () => {
