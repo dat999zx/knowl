@@ -109,6 +109,20 @@ const toolEvent = (externalSessionId: string, toolName: string, changedPaths: st
     captureKey: `${toolName}:${changedPaths.join(',')}:${eventIndex++}`,
   }));
 
+/**
+ * One shell call, in the shape the normalizer produces for one: `type: 'command'` with the
+ * command text in the payload and no paths at all. That absence is the whole reason the shell
+ * branch exists, so the fixture must not supply paths it would never have.
+ */
+const shellEvent = (externalSessionId: string, command: string) =>
+  handleHostLifecycleEvent(projectId, hook({
+    externalSessionId,
+    type: 'command',
+    toolName: 'Bash',
+    payload: { command, exitCode: 0 },
+    captureKey: `bash:${command}:${eventIndex++}`,
+  }));
+
 /** A tool event that touches no file: what the session is doing when the card reaches it. */
 const idleEvent = (externalSessionId: string) =>
   handleHostLifecycleEvent(projectId, hook({
@@ -240,6 +254,52 @@ describe('change impact on the hook path', () => {
     await toolEvent('session-a', 'Grep', ['src']);
     await toolEvent('session-a', 'Grep', [SOURCE]);
     await toolEvent('session-a', 'Glob', [SOURCE]);
+
+    expect(await readSetRows()).toHaveLength(0);
+  });
+
+  /**
+   * A file opened through the shell reaches this subsystem as a command string with no paths at
+   * all, so it hit neither the read branch nor the write branch and the whole read set was blind
+   * to it. That is not exotic: a host granted shell access instructs its agent to prefer `cat`
+   * and `sed -n` over the file tools, and such a session recorded no reads whatsoever.
+   */
+  it('records a shell read, at file granularity rather than per symbol', async () => {
+    const result = await shellEvent('session-a', `cat ${SOURCE}`);
+
+    // The contrast with `Read` above is the design, not an accident. The shell says WHICH file
+    // was opened and never how much of it -- `head -5` and `sed -n 40,60p` are slices -- so a
+    // symbol row would assert a belief about a signature that never reached the agent.
+    expect((await readSetRows()).map(row => String(row.locator))).toEqual([`file://${SOURCE}`]);
+    expect((await listCodeSymbols(SOURCE)).length).toBeGreaterThan(1);
+    const [row] = await readSetRows();
+    expect(String(row.session_id)).toBe(result.sessionId);
+    expect(row.released_at).toBeNull();
+  });
+
+  it('lets a shell read invalidate against another session write, like any other read', async () => {
+    await shellEvent('session-a', `sed -n 1,20p ${SOURCE}`);
+    await write(SOURCE, V2_SIGNATURE_CHANGED);
+    await toolEvent('session-b', 'Edit', [SOURCE]);
+
+    // The row is only worth writing if it participates. A finding against the file locator is
+    // what makes the shell reader visible to the same machinery `Read` feeds.
+    const findings = await findingRows();
+    expect(findings.length).toBeGreaterThan(0);
+    expect(findings.some(finding => String(finding.cause_locator) === `file://${SOURCE}`)).toBe(true);
+  });
+
+  it('records nothing for a shell command that read no file it can name', async () => {
+    // Every one of these is a refusal with its own reason: `git show` served a ref's text and
+    // not the working tree's, `grep` returned matching lines -- through a pipe just as much as
+    // directly -- the glob was never expanded, and the redirect is a write. See
+    // `shell-reads.ts` for each.
+    await shellEvent('session-a', `git show HEAD:${SOURCE}`);
+    await shellEvent('session-a', `grep -n createSession ${SOURCE}`);
+    await shellEvent('session-a', `cat ${SOURCE} | grep createSession`);
+    await shellEvent('session-a', 'cat src/*.ts');
+    await shellEvent('session-a', `cat ${SOURCE} > /tmp/copy.ts`);
+    await shellEvent('session-a', 'npm test');
 
     expect(await readSetRows()).toHaveLength(0);
   });
