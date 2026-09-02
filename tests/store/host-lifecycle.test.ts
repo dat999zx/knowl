@@ -822,6 +822,85 @@ describe('host lifecycle orchestration', () => {
     expect(bare.context).toContain('knowl_query');
   });
 
+  it('sends a fork no card and no context, because it already inherited both', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'fork-parent',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+
+    const forked = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'agent-start',
+      externalSessionId: 'fork-parent',
+      externalTurnId: undefined,
+      agentId: 'agent-fork',
+      agentType: 'fork',
+    }));
+
+    // A fork inherits the parent's whole conversation, so the parent's own card and the
+    // KNOWL.md the parent's system prompt carries are already in front of it. Anything sent
+    // here is a second copy delivered to the one subagent that did not need a first.
+    expect(forked.context).toBeUndefined();
+    // No context means no additionalContext envelope at all, rather than an empty one.
+    expect(forked.hostOutput).toBeUndefined();
+  });
+
+  it('binds a fork exactly as it binds any other subagent', async () => {
+    const parent = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'fork-binding',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+
+    const forked = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'agent-start',
+      externalSessionId: 'fork-binding',
+      externalTurnId: undefined,
+      agentId: 'agent-fork-bound',
+      agentType: 'fork',
+    }));
+
+    // Skipping the card must not skip attribution: a fork's reads, writes and tool events
+    // still have to land on the parent's memory session under the fork's own turn key.
+    expect(forked.accepted).toBe(true);
+    expect(forked.sessionId).toBe(parent.sessionId);
+    expect(await findHostSession({
+      host: 'claude',
+      projectRoot: ROOT,
+      externalSessionId: 'fork-binding',
+      externalTurnId: '__agent__:agent-fork-bound',
+    })).not.toBeNull();
+  });
+
+  it('still cards a subagent whose type merely contains the word fork', async () => {
+    await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'session-start',
+      externalSessionId: 'fork-lookalike',
+      externalTurnId: undefined,
+      title: 'Agent session',
+    }));
+
+    // The match is the whole type, not a substring: a custom subagent named `fork-reviewer`
+    // is an ordinary context-poor subagent and must keep its card.
+    const lookalike = await handleHostLifecycleEvent(projectId, hook({
+      host: 'claude',
+      event: 'agent-start',
+      externalSessionId: 'fork-lookalike',
+      externalTurnId: undefined,
+      agentId: 'agent-fork-lookalike',
+      agentType: 'fork-reviewer',
+    }));
+
+    expect(lookalike.context).toContain('knowl_query');
+  });
+
   it('routes subagent tool events to an agent-scoped binding, isolated from the parent', async () => {
     await handleHostLifecycleEvent(projectId, hook({
       host: 'claude',
