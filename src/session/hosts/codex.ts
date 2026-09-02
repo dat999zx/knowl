@@ -78,5 +78,9 @@ export const codexProfile: HostProfile = {
     return hookSpecificOutput('PostToolUse', text);
   },
   denyToolCall: anthropicDenyToolCall,
+  // The advisory half of the same event: `additionalContext` on `PreToolUse`, which this host
+  // reads as context for the call that is about to run. Declared here and not on the hosts
+  // whose pre-tool envelope has not been read, so nobody is handed JSON they will print.
+  preToolContext: text => hookSpecificOutput('PreToolUse', text),
   stopContext: anthropicStopContext,
 };

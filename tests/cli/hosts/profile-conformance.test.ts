@@ -53,6 +53,18 @@ describe('host profile registry', () => {
     }
   });
 
+  it('a profile that carries pre-tool advice has a pre-tool event to carry it on', () => {
+    // `preToolContext` is only ever reached from the pre-tool hook, so a host declaring the
+    // envelope without registering the event has an envelope nothing can deliver -- the
+    // capability-by-return-value rule failing in the one direction it cannot catch itself.
+    for (const profile of Object.values(HOST_PROFILES)) {
+      if (!profile.preToolContext) continue;
+      const preTool = profile.hookEvents.filter(event => profile.normalizedEvent(event) === 'tool-precheck');
+      expect(preTool.length, `${profile.host} declares preToolContext with no pre-tool event`).toBeGreaterThan(0);
+      expect(profile.preToolContext('advice'), profile.host).toBeTruthy();
+    }
+  });
+
   it('a host that registers hook handlers declares the shape of the file they go in', () => {
     for (const profile of Object.values(HOST_PROFILES)) {
       // `generic` declares events so third-party callers can send them, but `knowl init`

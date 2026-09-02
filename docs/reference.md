@@ -29,7 +29,7 @@ which parts of a restore are deliberately not restored.
 | [Overview](#overview) · [Quick start](#quick-start) | What Knowl is and how to install it |
 | [Core knowledge model](#core-knowledge-model) | [Atom categories](#atom-categories) · [Metadata, history, ownership](#metadata-history-and-ownership) · [Governed writes](#governed-writes-and-current-truth) |
 | [Retrieval and context](#retrieval-and-context) | [Current retrieval](#current-retrieval) · [What a result carries](#what-a-result-carries) · [Embedding models](#choosing-an-embedding-model) · [Historical queries](#historical-retrieval-and-assertions) · [Context packs](#bounded-context-packs) |
-| [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-optional-off-by-default) · [What exists and what is on](#seeing-what-exists-and-what-is-on--knowl-config-list) · [Host behavior](#host-and-subagent-behavior) |
+| [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-optional-off-by-default) · [What exists and what is on](#seeing-what-exists-and-what-is-on--knowl-config-list) · [Host behavior](#host-and-subagent-behavior) · [The fleet](#who-else-is-running--the-fleet) |
 | [Evidence, code, drift](#evidence-code-intelligence-and-drift) | [Evidence and symbols](#evidence-and-symbols) · [PR drift and feedback](#pull-request-drift-and-retrieval-feedback) |
 | [Workspaces](#workspaces) | [Federation and ownership](#federation-and-ownership) · [Reading a peer's atom by id](#reading-a-linked-repos-atom-by-id) · [Doing a peer's work](#doing-a-linked-repos-work-from-here) · [Ownership stamping](#ownership) |
 | [Knowl Cloud](#knowl-cloud) | [Identity and connection](#identity-and-connection) · [Publishing and drift](#publishing-works-from-any-branch-reporting-drift-does-not) · [Staying current](#staying-current) |
@@ -671,6 +671,11 @@ knowl posture frugal     # reset the same keys -- knowl exactly as it ships
 - **`impact.enabled` + `impact.gate: shadow`** — change-impact detection on, with the write
   gate in shadow: even the maximal stance does not arm a blocking gate ahead of its measured
   precision bar. What that bar currently reads is printed by `knowl status`, below.
+- **`fleet.digest: on` + `fleet.nudge: enforce`** — the fleet's two quiet-by-default surfaces
+  (see [the fleet](#who-else-is-running--the-fleet)): the per-turn delta of what the other
+  sessions on this machine moved on to, and the stop-time nudge when this turn's writes changed
+  code another live session had read. The nudge withholds a stop rather than refusing a tool
+  call, which is the line maximal draws — the same one that keeps `impact.gate` in shadow.
 
 #### Whether the write gate is good enough to enforce
 
@@ -956,6 +961,73 @@ consecutive events, a mid-turn card reminds the agent to re-query. A Knowl call 
 change card resets the counter. Change cards report new knowledge commits since that agent's
 watermark; matched writes made through that agent's own MCP call are suppressed so the caller is
 not notified about its own change.
+
+### Who else is running — the fleet
+
+Several agent sessions on one machine do not know about each other. Claude Code keeps a registry
+of its live sessions and lets one message another, but records nothing about what each is doing —
+and every other host records nothing at all — so two sessions hit the same `SQLITE_BUSY`, both
+start fixing it, and a third upgrades the hook every one of them is standing on. Knowl keeps the
+half no host has: what each session was asked, what it wrote this turn, the last error it saw,
+and which problem it has claimed by editing files after seeing that error. One machine-level
+file, `~/.knowl/fleet.db`, beside the resume keys — not a project table, because the collision
+that matters most crosses repositories.
+
+**Every host with Knowl hooks is in the fleet**, and they see each other: a Codex session appears
+on a Claude session's roster and the reverse. Liveness is answered exactly where a host publishes
+a session registry (Claude Code does; a row its registry does not list is a dead process and is
+dropped) and by recency where none does — a session with no registry drops off the roster two
+hours after its last event, and a clean exit closes its row immediately. Only sessions the
+host's own messaging can actually reach are offered as something to `SendMessage`; the rest are
+listed, marked, and raised with the user instead.
+
+**On by default**, and the only feature in this document that is: the roster costs a directory
+listing and prints nothing when a session is alone, and nobody opts into "tell me other sessions
+exist" until after the collision.
+
+```bash
+knowl fleet                 # every live session: host, repo, state, what it is on, what it is editing
+knowl fleet --repo web      # one repo's sessions
+knowl fleet --json          # the report as JSON
+```
+
+`knowl fleet` needs no Knowl project: the fleet is machine-level, and the terminal you ask from is
+often outside every repo. Run from inside a Claude Code session, the listing marks that session
+`(you)`; other hosts publish no session id to read, so there the label is simply absent.
+
+- **`knowl_fleet`** — the same listing as an MCP tool, registered unless `fleet.enabled` is
+  `false`. Use it before fixing an error that may be shared, before changing hooks, config,
+  migrations or the knowl install, or when the user asks who else is running. `inRepo` narrows
+  to one repo (not `repo`, which on every Knowl tool means *act as that linked repo*). Messaging
+  a session is the host's own `SendMessage(to:name)`, and `notify_when_idle:true` waits for it to
+  finish — offered only for the sessions it can reach. It is absent from the canonical tool table
+  below for the reason the transcript tools are: a gated tool is not a promise every session can
+  rely on.
+
+```jsonc
+// .knowl/config.json
+"fleet": {
+  "enabled": true,      // absent means on; false silences every fleet surface at once
+  "digest": "off",      // "on": a per-turn delta of what the other sessions moved on to
+  "cards": "enforce",   // same-problem and shared-surface cards; "shadow" records, "off" never
+  "nudge": "shadow"     // stop-time stale-read nudge; "enforce" withholds one stop
+}
+```
+
+- **`fleet.enabled`** (default on) — the roster at session start, the tool, the command, and the
+  three switches below. `false` turns all of it off.
+- **`fleet.digest`** (default `off`) — at each turn start, a few lines on what the other sessions
+  moved on to since this one last looked. Off because it costs lines on every turn of a busy
+  fleet; `knowl posture maximal` turns it on.
+- **`fleet.cards`** (default `enforce`) — a *same-problem* card when another live session has
+  claimed the failure this one just hit, and a *shared-surface* card before a change to
+  something every session stands on: hooks, config, migrations, the knowl install. Advice on the
+  mid-turn channel the agent already gets, never a refusal, which is why it ships armed;
+  `shadow` records what would have been said and says nothing.
+- **`fleet.nudge`** (default `shadow`) — at stop, when this turn's writes changed code another
+  live session had read: `enforce` withholds the stop once and asks the agent to tell that
+  session, which costs a turn. Shadow by default on the same ladder as `capture.nudge`, for the
+  same reason: how often it would fire is measured before it is allowed to.
 
 ## Evidence, code intelligence, and drift
 
@@ -2283,6 +2355,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl doctor` | Check project, vector coverage, agent, and workspace readiness |
 | `knowl state` | Print the active hierarchical project memory |
 | `knowl audit` | Run a read-only, limited integrity audit |
+| `knowl fleet [--repo <name>] [--json]` | List the agent sessions live on this machine and what each is doing. Needs no Knowl project |
 
 ### Workspaces
 
@@ -2399,7 +2472,8 @@ The recommended agent flow is:
 ### Tools
 
 Knowl exposes the core tools below. Two transcript search tools and a session listing tool are
-registered in addition when transcript indexing is enabled for the repository.
+registered in addition when transcript indexing is enabled for the repository, and `knowl_fleet`
+unless fleet awareness is switched off.
 
 | Tool | Purpose |
 | --- | --- |

@@ -33,12 +33,16 @@ export type ConfigKey =
   | 'capture.events'
   | 'capture.scope'
   | 'capture.checkpoint'
+  | 'fleet.enabled'
+  | 'fleet.digest'
+  | 'fleet.cards'
+  | 'fleet.nudge'
   | 'cloud.autoStage'
   | 'updateCheck.enabled';
 
 export type ConfigCategory =
   | 'Search' | 'Security' | 'AI provider' | 'Memory namespaces' | 'Change impact' | 'Capture'
-  | 'Reminders' | 'Cloud' | 'Updates';
+  | 'Fleet' | 'Reminders' | 'Cloud' | 'Updates';
 
 /**
  * How a value should be asked for. Without this the UI had only `parse`, so every field
@@ -111,6 +115,11 @@ const IMPACT_GATE_MODES = ['off', 'shadow', 'enforce'] as const;
 const CAPTURE_NUDGE_MODES = ['off', 'shadow', 'enforce'] as const;
 const CHECKPOINT_MODES = ['off', 'ask'] as const;
 const CAPTURE_SCOPES = ['conversation', 'turn'] as const;
+// The capture ladder again, and its own constant for the reason CAPTURE_NUDGE_MODES is: a card
+// is advice on a channel the agent already reads, a nudge withholds a stop, and a mode added
+// to either must not become settable on the other.
+const FLEET_CARD_MODES = ['off', 'shadow', 'enforce'] as const;
+const FLEET_DIGEST_MODES = ['off', 'on'] as const;
 
 export const CONFIG_FIELDS: ConfigField[] = [
   // The preset leads the Search list: it is the one setting most people should touch,
@@ -299,6 +308,40 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: enumValue(CAPTURE_SCOPES), defaultValue: 'conversation',
     label: 'Capture scope',
     description: 'Granularity of the stored-nothing question. conversation is the one-shot end-of-session verdict; turn additionally prompts once, through the free mid-turn channel, when a turn does substantial work and stores nothing -- and a query does not quiet it, only a write does.',
+  },
+  {
+    // ON when unset, as `search.pathsChanged` is: the reader is `!== false` and the key stays
+    // out of DEFAULT_CONFIG so an upgrade does not stamp it into every config on the machine.
+    // The default is on because the collision this prevents is one nobody opts into avoiding
+    // until after it has happened, and a lone session pays a directory listing for nothing.
+    key: 'fleet.enabled', category: 'Fleet', type: 'boolean',
+    parse: booleanValue, defaultValue: true,
+    label: 'Fleet awareness',
+    description: 'Know about the other agent sessions on this machine, whatever host each runs under: who is running, what each is on, what it is editing, which failure it has claimed. Powers the session-start roster, knowl_fleet and `knowl fleet`, and the three switches below. Costs a directory listing per event and says nothing when this session is alone. Off silences every fleet surface at once.',
+  },
+  {
+    key: 'fleet.digest', category: 'Fleet', type: 'enum', values: FLEET_DIGEST_MODES,
+    parse: enumValue(FLEET_DIGEST_MODES), defaultValue: 'off',
+    label: 'Per-turn fleet digest',
+    description: 'At each turn start, a few lines on what the other sessions moved on to since this one last looked. Off because it costs lines on every turn of a busy fleet; on when seeing the delta is worth more than pulling it with knowl_fleet.',
+  },
+  {
+    // `enforce` by default, the one ladder here that ships armed: a card is advice on the
+    // mid-turn channel the agent already receives, never a refusal, so the measured bar the
+    // write gate waits behind does not apply to it. Absent from DEFAULT_CONFIG all the same.
+    key: 'fleet.cards', category: 'Fleet', type: 'enum', values: FLEET_CARD_MODES,
+    parse: enumValue(FLEET_CARD_MODES), defaultValue: 'enforce',
+    label: 'Same-problem and shared-surface cards',
+    description: 'When another live session has claimed the failure this one just hit, or this one is about to change hooks, config, migrations or the knowl install every session stands on: enforce says so mid-turn, shadow records what it would have said and says nothing. Advice only, never a refusal; every card lands in the ledger `knowl fleet --cards` prints.',
+  },
+  {
+    // `defaultValue: 'shadow'` here and nowhere else, for the reason `capture.nudge` gives:
+    // written into DEFAULT_CONFIG it would start withholding stops in every repository on the
+    // machine, and this key withholds one -- the turn it costs is the reason it is measured first.
+    key: 'fleet.nudge', category: 'Fleet', type: 'enum', values: FLEET_CARD_MODES,
+    parse: enumValue(FLEET_CARD_MODES), defaultValue: 'shadow',
+    label: 'Stale-read nudge at stop',
+    description: 'When this turn\'s writes changed code another live session had read: enforce withholds the stop once and asks the agent to tell that session, which costs a turn; shadow records what it would have asked. Off skips the check. Same ladder as capture.nudge, for the same reason: how often it would fire is measured before it is allowed to.',
   },
   // Both default ON and both stay out of DEFAULT_CONFIG, for the reason the Capture keys
   // above give: merged in, they are written into every config on the machine at the next

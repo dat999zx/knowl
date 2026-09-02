@@ -192,6 +192,20 @@ export interface HostProfile {
    */
   denyToolCall?: (reason: string) => HostOutput | undefined;
   /**
+   * The host's envelope for advice attached to the tool call about to run, if it has one.
+   *
+   * Distinct from `denyToolCall` on the same event, and the distinction is the whole contract:
+   * this one lets the call proceed. A host reaches it only where the gate has already decided
+   * it has nothing to refuse, so the two can never both answer.
+   *
+   * Absent by default, and that is the honest state for most hosts: a pre-tool event that
+   * carries no context channel would take the JSON as noise printed in front of every write,
+   * and an envelope invented for a host whose reference has not been read is a guess repeated
+   * on every tool call. Claude Code and the hosts that reuse its schema have `additionalContext`
+   * documented on `PreToolUse`; the rest say nothing until theirs is read.
+   */
+  preToolContext?: (text: string) => HostOutput | undefined;
+  /**
    * The host's envelope for speaking to the agent as it stops, if it has one.
    *
    * Capability by return value again, and absent for every host whose stop channel is not

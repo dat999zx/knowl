@@ -48,7 +48,9 @@ import { isTranscriptFallbackEnabled, isTranscriptSearchEnabled } from '../trans
 import { hasIndexableArchive } from '../transcripts/paths.js';
 import { handleSessionList, handleTranscriptRead, handleTranscriptSearch, NO_TRANSCRIPT_MATCHES_PREFIX } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
-import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, IMPACT_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
+import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, FLEET_TOOL_DEFINITIONS, IMPACT_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
+import { isFleetEnabled } from '../fleet/config.js';
+import { describeFleet, renderFleetReport } from '../fleet/report.js';
 import { teamUpdateNotice } from '../cloud/team-update.js';
 import { maybeAutoSync } from '../cloud/auto-sync.js';
 import { cloudStatusInRequest } from '../cloud/status.js';
@@ -167,6 +169,7 @@ const MAX_IMPACT_SIGNATURE_CHARS = 200;
 
 const IMPACT_DISABLED_MESSAGE =
   'Change-impact detection is not enabled for this repository. Enable impact.enabled with `knowl config`.';
+const FLEET_DISABLED_MESSAGE = 'Fleet awareness is off in this repository (fleet.enabled=false).';
 
 
 /**
@@ -224,6 +227,13 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
     tools.push(...IMPACT_TOOL_DEFINITIONS);
   }
 
+  // On unless the repo said otherwise -- the reverse of every gate here, for the reasons in
+  // `isFleetEnabled`. Still conditional on a config existing, so an unconfigured server offers
+  // the core set alone.
+  if (config && isFleetEnabled(config)) {
+    tools.push(...FLEET_TOOL_DEFINITIONS);
+  }
+
   if (config?.cloud) {
     tools.push(...CLOUD_TOOL_DEFINITIONS);
   }
@@ -247,7 +257,7 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
 const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
   [
     ...knowlToolDefinitions(null), ...TRANSCRIPT_TOOL_DEFINITIONS, ...IMPACT_TOOL_DEFINITIONS,
-    ...CLOUD_TOOL_DEFINITIONS, ...WORKSPACE_TOOL_DEFINITIONS,
+    ...CLOUD_TOOL_DEFINITIONS, ...WORKSPACE_TOOL_DEFINITIONS, ...FLEET_TOOL_DEFINITIONS,
   ]
     .map(tool => [tool.name, tool.inputSchema]),
 );
@@ -1765,6 +1775,26 @@ export function registerTools(
           locator: String(locator ?? ''),
           context: typeof context === 'number' ? context : undefined,
         });
+        return { content: [{ type: 'text', text }] };
+      }
+
+      // Re-checks its own gate for the reason the transcript handlers do: a cached tool list
+      // keeps this callable after `fleet.enabled` goes false.
+      else if (name === 'knowl_fleet') {
+        if (!isFleetEnabled(config)) {
+          return { isError: true, content: [{ type: 'text', text: FLEET_DISABLED_MESSAGE }] };
+        }
+        const { inRepo } = args as any;
+        // The protocol names no caller (see `openImpactFindings`), so "(you)" comes from the
+        // environment instead: Claude Code sets CLAUDE_CODE_SESSION_ID on what it spawns, and
+        // the value matches that session's registry record. A server started without it marks
+        // nobody, which is a listing with one label missing rather than a wrong one -- and that
+        // is the state on every host that publishes no such variable of its own.
+        const report = await describeFleet({
+          selfSessionId: process.env.CLAUDE_CODE_SESSION_ID || undefined,
+          selfRepo: config?.workspace?.repo ?? (projectRoot ? path.basename(projectRoot) : undefined),
+        });
+        const text = renderFleetReport(report, { repo: inRepo ? String(inRepo) : undefined });
         return { content: [{ type: 'text', text }] };
       }
 

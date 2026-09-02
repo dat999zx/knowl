@@ -99,4 +99,21 @@ export interface NormalizedHostHook {
    * never persisted, so no attribution column is needed.
    */
   knowlChangeKeys?: { ids: string[]; titles: string[] };
+  /**
+   * The tail of what a failed tool printed, for the fleet's same-problem match.
+   *
+   * Beside `payload` rather than inside it, deliberately: `payload` is what
+   * `memory_session_events` persists, and raw command output is what that table strips
+   * (`stdout`/`stderr` never reach a row). This is reduced to a signature and a one-line
+   * head before anything stores it, and the reduction happens where the text still exists.
+   */
+  errorText?: string;
+  /**
+   * The head of the assistant's final message for the turn, on `turn-stop` only.
+   *
+   * Same rule as `errorText`: in memory for the fleet's one-line focus, never in `payload`.
+   * Knowl does not store conversations, and a 240-character summary of what a turn did is the
+   * most of one that ever reaches disk.
+   */
+  assistantMessage?: string;
 }

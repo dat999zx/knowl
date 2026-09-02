@@ -234,6 +234,39 @@ export const WORKSPACE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
 ];
 
+/**
+ * The other agent sessions on this machine, whatever host each runs under, read-only.
+ *
+ * Registered unless the repo turned fleet awareness OFF -- the opposite default from every set
+ * above, for the reason `isFleetEnabled` gives: a session that is alone gets a short answer
+ * from a tool it never needed, and a session that is not alone is the one about to fix an
+ * error a neighbour already claimed. One tool on the budget rule `knowl_impact` cites.
+ *
+ * It lists and never messages. Messaging is the host's own `SendMessage`, which the description
+ * names by its real arguments rather than wrapping, so the agent reaches the session through
+ * the channel that can actually deliver -- and the listing marks the sessions that channel
+ * cannot reach, because a peer on another host is visible here and addressable nowhere.
+ */
+export const FLEET_TOOL_DEFINITIONS: ToolDefinition[] = [
+        {
+          name: 'knowl_fleet',
+          description: 'The other live agent sessions on this machine (Claude Code, Codex, Cursor and any other host with Knowl hooks): what each is working on, the files it is editing this turn, the problem it has claimed, and whether it can be messaged. Use before fixing an error that may be shared, before changing hooks, config, migrations or the knowl install, or when the user asks who else is running. A session marked messageable is reachable with SendMessage(to:name); SendMessage(to:name, notify_when_idle:true) waits for it to finish. Raise the rest with the user instead.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              // Not `repo`: on this surface a property of that name is the act-as rebind
+              // (`callToolAsRepo` reads it off the raw arguments and runs the call as that linked
+              // repo), and a filter spelled the same way was intercepted before the handler saw
+              // it -- refused with "not in a workspace" on every call that named a repo.
+              inRepo: {
+                type: 'string', maxLength: 200,
+                description: 'Only sessions in this repo (workspace repo name or folder name). Omit for every session.',
+              },
+            },
+          },
+        },
+];
+
 /** Every tool the server always offers, in listing order. */
 export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {

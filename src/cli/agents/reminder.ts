@@ -7,6 +7,7 @@ import {
 import { closeDb, initDb } from '../../store/database.js';
 import { conversationKey, readCaptureOutcome } from '../../store/capture-outcome.js';
 import { assertKnowledgeDatabasePresent } from '../database-presence.js';
+import { fleetTurnStartBestEffort } from '../../session/fleet-lifecycle.js';
 import { readLifecyclePayload } from './lifecycle.js';
 
 /**
@@ -32,12 +33,12 @@ const hostLabel = (host: string): string =>
  * tells the agent not to open a manual task loop, and a Codex session told that *Claude's*
  * hooks own the lifecycle can reasonably read the sentence as being about a different session.
  */
-export function createAgentReminderOutput(host: string): HostOutput {
+export function createAgentReminderOutput(host: string, text: string = promptReminderFor(hostLabel(host))): HostOutput {
   const unsupported = new Error(`Unsupported reminder host: ${host}`);
   if (!isHookHost(host)) throw unsupported;
   const profile = hostProfile(host);
   if (!profile.promptEvent) throw unsupported;
-  const output = profile.startContext('turn-start', promptReminderFor(hostLabel(host)));
+  const output = profile.startContext('turn-start', text);
   if (!output) throw unsupported;
   return output;
 }
@@ -71,6 +72,11 @@ export function createAgentReminderOutput(host: string): HostOutput {
  */
 export async function runAgentReminder(host: string): Promise<void> {
   let send = true;
+  // The fleet's half of the prompt event: this turn's ask goes into the fleet store, and in
+  // maximal posture the digest of what other sessions moved on to comes back. It shares the
+  // one envelope with the card rather than printing a second, since a host reads one JSON
+  // object from a hook.
+  let digest: string | undefined;
   try {
     const payload = await readLifecyclePayload();
     const identity = hostProfile(host as HookHost).identity(payload);
@@ -87,6 +93,14 @@ export async function runAgentReminder(host: string): Promise<void> {
       const config = await loadConfig(root).catch(() => null);
       send = turns === 0
         || shouldSendDriftReminder(turns, driftReminderEvery(config), isDriftBackoffEnabled(config));
+      if (identity.externalSessionId) {
+        digest = await fleetTurnStartBestEffort({
+          host,
+          externalSessionId: identity.externalSessionId,
+          projectRoot: root,
+          prompt: typeof payload.prompt === 'string' ? payload.prompt : undefined,
+        }, config);
+      }
     } finally {
       await closeDb().catch(() => {});
     }
@@ -96,5 +110,6 @@ export async function runAgentReminder(host: string): Promise<void> {
   }
   // Silence is an empty stdout, not an empty envelope: a host that reads `hookSpecificOutput`
   // with a blank `additionalContext` may still spend a line on it.
-  if (send) console.log(JSON.stringify(createAgentReminderOutput(host)));
+  const parts = [send ? promptReminderFor(hostLabel(host)) : undefined, digest].filter((part): part is string => Boolean(part));
+  if (parts.length > 0) console.log(JSON.stringify(createAgentReminderOutput(host, parts.join('\n\n'))));
 }

@@ -36,6 +36,8 @@ import { runCliQuery } from './query-command.js';
 import { runCliResume } from './resume-command.js';
 import { closeResumeDb } from '../session/resume-store.js';
 import { createResumePoint } from '../session/resume-points.js';
+import { describeFleet, renderFleetReport } from '../fleet/report.js';
+import { closeFleetDb } from '../fleet/store.js';
 import { formatPendingHandoffContext, recordDeliberateHandoff } from '../session/session-handoff.js';
 import { formatCrossRepoNotice } from './cross-repo-notice.js';
 import { formatWorkspaceBlock } from './workspace-report.js';
@@ -2889,13 +2891,15 @@ configCommand.on('command:*', () => {
  * the user whose answer to "how much should memory do" is a stance rather than a matrix.
  * `maximal` is the all-knowing posture: the recall chain runs the transcript fallback inside a
  * missed query, capture asks per turn and per event and may withhold a stop, impact detection
- * runs with the gate in shadow. `frugal` resets the same keys to their defaults -- which is
- * knowl exactly as it ships.
+ * runs with the gate in shadow, and the fleet reports every turn's delta and may withhold a
+ * stop over a stale read. `frugal` resets the same keys to their defaults -- which is knowl
+ * exactly as it ships.
  */
 const POSTURE_KEYS = [
   'search.transcripts.enabled', 'search.transcripts.fallback',
   'capture.nudge', 'capture.events', 'capture.scope', 'capture.checkpoint',
   'impact.enabled', 'impact.gate',
+  'fleet.digest', 'fleet.nudge',
 ] as const;
 const MAXIMAL_POSTURE: Array<{ key: (typeof POSTURE_KEYS)[number]; raw: string }> = [
   { key: 'search.transcripts.enabled', raw: 'true' },
@@ -2910,6 +2914,11 @@ const MAXIMAL_POSTURE: Array<{ key: (typeof POSTURE_KEYS)[number]; raw: string }
   // Shadow, not enforce, even here: the write gate refuses tool calls, and its own contract
   // requires the measured precision bar before anything is permitted to block.
   { key: 'impact.gate', raw: 'shadow' },
+  // The fleet's two quiet-by-default surfaces. The digest costs lines per turn, which is what
+  // maximal is for. The nudge is armed on the same footing as `capture.nudge` above: it withholds
+  // a stop, which is a turn, and never refuses a tool call -- the line the write gate sits behind.
+  { key: 'fleet.digest', raw: 'on' },
+  { key: 'fleet.nudge', raw: 'enforce' },
 ];
 
 program
@@ -2941,6 +2950,49 @@ program
       if (teardown) console.log(teardown);
     } catch (error: any) {
       console.error(`❌ Posture error: ${error.message}`);
+      process.exitCode = 1;
+    }
+  });
+
+/**
+ * Machine-level, so it asks for no Knowl project: the fleet is every agent session on the box,
+ * whatever host each runs under, and the terminal a user asks from is often outside all of
+ * their repos. The project is looked up only to name this repo as its workspace does; not
+ * finding one costs nothing.
+ *
+ * `CLAUDE_CODE_SESSION_ID` is what Claude Code sets in the environment of the shell it runs
+ * commands in, and it matches the `sessionId` in that session's own registry record (checked
+ * against `<config dir>/sessions/<pid>.json`, from inside a subagent too), so a session asking
+ * about the fleet sees itself marked `(you)`. A terminal outside any session -- or inside a
+ * host that publishes no such variable -- marks nobody, which costs one label and no rows.
+ */
+program
+  .command('fleet')
+  .description('List the agent sessions live on this machine and what each is doing')
+  .option('--repo <name>', 'Only sessions in this repo (workspace repo name or folder name)')
+  .option('--json', 'Print machine-readable JSON')
+  .action(async (options: { repo?: string; json?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd()).catch(() => null);
+      const config = root ? await loadConfig(root).catch(() => null) : null;
+      const report = await describeFleet({
+        selfSessionId: process.env.CLAUDE_CODE_SESSION_ID || undefined,
+        selfRepo: config?.workspace?.repo ?? (root ? path.basename(root) : undefined),
+      });
+      await closeFleetDb();
+      if (options.json) {
+        const sessions = options.repo ? report.sessions.filter(session => session.repo === options.repo) : report.sessions;
+        const listed = new Set(sessions.map(session => session.sessionId));
+        console.log(JSON.stringify({
+          ...report,
+          sessions,
+          claims: report.claims.filter(claim => listed.has(claim.sessionId)),
+        }, null, 2));
+        return;
+      }
+      console.log(renderFleetReport(report, { repo: options.repo }));
+    } catch (error: any) {
+      console.error(`❌ Fleet error: ${error.message}`);
       process.exitCode = 1;
     }
   });
