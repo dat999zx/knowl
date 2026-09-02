@@ -294,6 +294,22 @@ async function bootstrapWithHandoff(projectId: string, input: NormalizedHostHook
   };
 }
 
+/**
+ * The one subagent type that is not context-poor, and so the one that must not be given a card.
+ *
+ * A fork inherits the parent's entire conversation, its system prompt and its tool definitions.
+ * Everything `bootstrapAgentContext` composes is therefore already in front of it: the parent's
+ * own session card sits in the inherited history, and the workflow rules arrive through the
+ * parent's `CLAUDE.md` -> `@KNOWL.md` import, which a fork shares verbatim. Sending the card
+ * anyway restates both, and it restates them to the agent least in need of them.
+ *
+ * Recognising the case is free rather than heuristic: Claude Code spawns a fork by requesting
+ * the `fork` subagent type through the Agent tool, and `SubagentStart` reports the requested
+ * type in `agent_type` — the same string its matchers filter on. No other subagent type shares
+ * the name, and a session with fork mode off never produces one.
+ */
+const FORK_AGENT_TYPE = 'fork';
+
 // Subagent bootstrap deliberately halves the cap: fan-out multiplies whatever a subagent costs.
 // The guidance card is prepended rather than left to the prompt reminder, because a subagent
 // receives no prompt event and a live probe confirmed MCP server instructions do not reach it
@@ -304,7 +320,12 @@ async function bootstrapWithHandoff(projectId: string, input: NormalizedHostHook
 // (`agentCap`). Slicing was measured delivering a workspace subagent a half-finished repo list and
 // nothing else, and the replacement pointer is measured buying the lookup the titles it replaced
 // were being answered from instead — both derivations live at the option definitions.
+//
+// A fork returns before any of that (see `FORK_AGENT_TYPE`). Only the CONTEXT is skipped: the
+// caller has already bound the fork's turn key by the time it reaches here, so a fork's reads,
+// writes and tool events are attributed exactly as any other subagent's.
 async function bootstrapAgentContext(projectId: string, input: NormalizedHostHook, sessionId: string) {
+  if (input.agentType === FORK_AGENT_TYPE) return { context: undefined, truncated: false };
   const bootstrap = await bootstrapAgentSession({
     projectId,
     title: input.title ?? 'Agent session (subagent)',
