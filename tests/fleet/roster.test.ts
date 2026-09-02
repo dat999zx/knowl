@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { claudeConfigDirs, isPidAlive, readHostSessionRegistry, sameDir, withinDir } from '../../src/fleet/roster.js';
+import { claudeConfigDirs, derivedSessionName, isPidAlive, readHostSessionRegistry, sameDir } from '../../src/fleet/roster.js';
 
 const root = path.resolve('./.knowl-peers-roster-test');
 const home = path.join(root, 'home');
@@ -104,15 +104,18 @@ describe('isPidAlive', () => {
 });
 
 describe('directory comparisons', () => {
-  it('treats a path and its child correctly and refuses siblings', () => {
-    expect(withinDir(root, path.join(root, 'home', 'x'))).toBe(true);
-    expect(withinDir(root, root)).toBe(true);
-    expect(withinDir(root, path.join(root, '..', 'elsewhere'))).toBe(false);
+  it('treats a trailing separator as the same directory', () => {
     expect(sameDir(root, root + path.sep)).toBe(true);
+    expect(sameDir(root, path.join(root, 'home'))).toBe(false);
   });
 
   it.runIf(process.platform === 'win32')('ignores drive-letter and path casing on Windows', () => {
     expect(sameDir('C:\\Code\\X', 'c:\\code\\x')).toBe(true);
-    expect(withinDir('C:\\Code', 'c:\\code\\x\\y')).toBe(true);
+  });
+});
+
+describe('derivedSessionName', () => {
+  it('is the folder and two characters of the id, so a host with no registry names alike', () => {
+    expect(derivedSessionName(CWD, 'session-300')).toBe('duckprep-server-se');
   });
 });

@@ -9,12 +9,14 @@ import { sameErrorHead } from './signature.js';
 /**
  * Where the fleet lives: one database under the Knowl home, not inside any repo.
  *
- * The thing being recorded is "the Claude Code sessions running on this machine", and that is
- * a machine-level fact in the same way a resume key is. Filed per repo it would be invisible
- * across the boundary that matters most: a session in `~/work/api` upgrading the engine every
- * session in `~/work/web` is standing on. Claude Code keeps its own registry at the same level
- * (`<config dir>/sessions/`), and this file is the half of the picture that registry does not
- * carry -- what each session is doing, which problem it has claimed, what it wrote this turn.
+ * The thing being recorded is "the agent sessions running on this machine", whatever host each
+ * one runs under, and that is a machine-level fact in the same way a resume key is. Filed per
+ * repo it would be invisible across the boundary that matters most: a session in `~/work/api`
+ * upgrading the engine every session in `~/work/web` is standing on. Claude Code keeps its own
+ * registry at the same level (`<config dir>/sessions/`) and no other host does, so this file is
+ * both the half of the picture that registry does not carry -- what each session is doing,
+ * which problem it has claimed, what it wrote this turn -- and the only record at all that a
+ * Codex or Windsurf session exists.
  *
  * Deliberately not a set of project-store tables. That would have meant a migration level, a
  * schema pin, a snapshot policy and a federated read across every linked repo on every hook
@@ -78,19 +80,15 @@ function schemaStatements(): string[] {
     );`,
     'CREATE INDEX IF NOT EXISTS idx_fleet_claims_open ON fleet_claims(released_at, sig);',
     'CREATE INDEX IF NOT EXISTS idx_fleet_claims_session ON fleet_claims(host, session_id, released_at);',
-    // The precision ledger. Every card shown or shadowed is a row, and `resolution` is the
-    // column the table exists for: without a denominator no false-positive rate exists, and
-    // without that rate nothing here may ever graduate from advising to refusing.
+    // What has already been said, so it is not said twice. One row per (session, kind,
+    // subject); `recordFleetCard` reads it as a claim-once latch and nothing else does.
     `CREATE TABLE IF NOT EXISTS fleet_cards (
       id TEXT PRIMARY KEY,
       kind TEXT NOT NULL,
       host TEXT NOT NULL,
       session_id TEXT NOT NULL,
       subject TEXT NOT NULL,
-      mode TEXT NOT NULL,
-      shown_at TEXT NOT NULL,
-      resolution TEXT,
-      resolved_at TEXT
+      shown_at TEXT NOT NULL
     );`,
     'CREATE INDEX IF NOT EXISTS idx_fleet_cards_subject ON fleet_cards(host, session_id, kind, subject);',
     `CREATE TABLE IF NOT EXISTS fleet_seen (
@@ -447,76 +445,36 @@ export type FleetCardKind = 'same-problem' | 'shared-surface' | 'stale-read' | '
  *
  * "First" is the claim-once rule every card here follows: the same problem, the same surface
  * or the same stale read is announced once per session, because a card that repeats is the
- * fatigue that teaches an agent to skip the channel. A shadowed card is recorded exactly like a
- * shown one, so the ledger measures what enforce would have said.
+ * fatigue that teaches an agent to skip the channel. A shadowed card claims its subject exactly
+ * like a shown one, so switching a repo from shadow to enforce does not replay what shadow
+ * already decided.
  */
 export async function recordFleetCard(input: {
   kind: FleetCardKind;
   host: string;
   sessionId: string;
   subject: string;
-  mode: 'shadow' | 'enforce';
-}): Promise<{ id: string; first: boolean }> {
+}): Promise<boolean> {
   const db = await openFleetDb();
   const existing = await db.execute({
     sql: 'SELECT id FROM fleet_cards WHERE host = ? AND session_id = ? AND kind = ? AND subject = ? LIMIT 1',
     args: [input.host, input.sessionId, input.kind, input.subject],
   });
-  if (existing.rows.length > 0) return { id: String(existing.rows[0].id), first: false };
-  const id = newId();
+  if (existing.rows.length > 0) return false;
   await db.execute({
-    sql: 'INSERT INTO fleet_cards (id, kind, host, session_id, subject, mode, shown_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    args: [id, input.kind, input.host, input.sessionId, input.subject, input.mode, now()],
+    sql: 'INSERT INTO fleet_cards (id, kind, host, session_id, subject, shown_at) VALUES (?, ?, ?, ?, ?, ?)',
+    args: [newId(), input.kind, input.host, input.sessionId, input.subject, now()],
   });
-  return { id, first: true };
+  return true;
 }
 
-export type FleetCardResolution = 'acted' | 'dismissed' | 'false_positive';
-
-/** The first verdict is final, as `resolveFinding` in the project store. */
-export async function resolveFleetCard(id: string, resolution: FleetCardResolution): Promise<boolean> {
-  const result = await (await openFleetDb()).execute({
-    sql: 'UPDATE fleet_cards SET resolution = ?, resolved_at = ? WHERE id = ? AND resolution IS NULL',
-    args: [resolution, now(), id],
-  });
-  return Number(result.rowsAffected ?? 0) > 0;
-}
-
-export interface FleetCardReport {
-  shown: number;
-  shadowed: number;
-  adjudicated: number;
-  falsePositives: number;
-  /** null until anything has been adjudicated. */
-  precision: number | null;
-}
-
-export async function fleetCardReport(kind?: FleetCardKind): Promise<FleetCardReport> {
+export async function listFleetCards(input: FleetSessionKey & { limit?: number }): Promise<Array<{ kind: FleetCardKind; subject: string; shownAt: string }>> {
   const rows = await (await openFleetDb()).execute({
-    sql: `SELECT mode, resolution, COUNT(*) AS n FROM fleet_cards ${kind ? 'WHERE kind = ?' : ''} GROUP BY mode, resolution`,
-    args: kind ? [kind] : [],
-  });
-  const report: FleetCardReport = { shown: 0, shadowed: 0, adjudicated: 0, falsePositives: 0, precision: null };
-  for (const row of rows.rows) {
-    const n = Number(row.n ?? 0);
-    if (String(row.mode) === 'shadow') report.shadowed += n; else report.shown += n;
-    if (row.resolution) {
-      report.adjudicated += n;
-      if (String(row.resolution) === 'false_positive') report.falsePositives += n;
-    }
-  }
-  if (report.adjudicated > 0) report.precision = 1 - report.falsePositives / report.adjudicated;
-  return report;
-}
-
-export async function listFleetCards(input: FleetSessionKey & { limit?: number }): Promise<Array<{ id: string; kind: FleetCardKind; subject: string; mode: string; shownAt: string; resolution: string | null }>> {
-  const rows = await (await openFleetDb()).execute({
-    sql: 'SELECT id, kind, subject, mode, shown_at, resolution FROM fleet_cards WHERE host = ? AND session_id = ? ORDER BY shown_at DESC LIMIT ?',
+    sql: 'SELECT kind, subject, shown_at FROM fleet_cards WHERE host = ? AND session_id = ? ORDER BY shown_at DESC LIMIT ?',
     args: [input.host, input.sessionId, input.limit ?? 20],
   });
   return rows.rows.map(row => ({
-    id: String(row.id), kind: String(row.kind) as FleetCardKind, subject: String(row.subject), mode: String(row.mode),
-    shownAt: String(row.shown_at), resolution: row.resolution ? String(row.resolution) : null,
+    kind: String(row.kind) as FleetCardKind, subject: String(row.subject), shownAt: String(row.shown_at),
   }));
 }
 

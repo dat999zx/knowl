@@ -27,6 +27,9 @@ function knowl(...args: string[]) {
       ...process.env,
       KNOWL_HOME: HOME,
       CLAUDE_CONFIG_DIR: CONFIG_DIR,
+      // Pins the roster to this fixture. Without it the real home's config dirs are read too,
+      // so a suite run from inside a live session sees the developer's own fleet.
+      KNOWL_CLAUDE_CONFIG_DIRS: CONFIG_DIR,
       // What Claude Code sets in the shell it runs commands in; the CLI marks that session `(you)`.
       CLAUDE_CODE_SESSION_ID: PEER_SESSION,
       NO_COLOR: '1',
@@ -66,12 +69,10 @@ describe('knowl fleet', { timeout: 120_000 }, () => {
     expect(peer).toMatchObject({ name: 'fleet-cli-peer-cd', repo: PEER_REPO, known: false, messageable: true });
   });
 
-  it('narrows to one repo and appends the card ledger', () => {
-    const result = knowl('fleet', '--repo', PEER_REPO, '--cards');
+  it('narrows to one repo', () => {
+    const result = knowl('fleet', '--repo', PEER_REPO);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain(`1 live Claude Code session in ${PEER_REPO}`);
+    expect(result.stdout).toContain(`1 live agent session in ${PEER_REPO}`);
     expect(result.stdout).toContain('fleet-cli-peer-cd (you)');
-    expect(result.stdout).toContain('Fleet cards:');
-    expect(result.stdout).toMatch(/precision:\s+not yet measured/);
   });
 });

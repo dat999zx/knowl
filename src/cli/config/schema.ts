@@ -317,7 +317,7 @@ export const CONFIG_FIELDS: ConfigField[] = [
     key: 'fleet.enabled', category: 'Fleet', type: 'boolean',
     parse: booleanValue, defaultValue: true,
     label: 'Fleet awareness',
-    description: 'Know about the other Claude Code sessions on this machine: who is running, what each is on, what it is editing, which failure it has claimed. Powers the session-start roster, knowl_fleet and `knowl fleet`, and the three switches below. Costs a directory listing per event and says nothing when this session is alone. Off silences every fleet surface at once.',
+    description: 'Know about the other agent sessions on this machine, whatever host each runs under: who is running, what each is on, what it is editing, which failure it has claimed. Powers the session-start roster, knowl_fleet and `knowl fleet`, and the three switches below. Costs a directory listing per event and says nothing when this session is alone. Off silences every fleet surface at once.',
   },
   {
     key: 'fleet.digest', category: 'Fleet', type: 'enum', values: FLEET_DIGEST_MODES,

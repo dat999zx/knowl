@@ -50,8 +50,7 @@ import { handleSessionList, handleTranscriptRead, handleTranscriptSearch, NO_TRA
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
 import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, FLEET_TOOL_DEFINITIONS, IMPACT_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
 import { isFleetEnabled } from '../fleet/config.js';
-import { describeFleet, renderFleetCardLedger, renderFleetReport } from '../fleet/report.js';
-import { fleetCardReport } from '../fleet/store.js';
+import { describeFleet, renderFleetReport } from '../fleet/report.js';
 import { teamUpdateNotice } from '../cloud/team-update.js';
 import { maybeAutoSync } from '../cloud/auto-sync.js';
 import { cloudStatusInRequest } from '../cloud/status.js';
@@ -1785,17 +1784,17 @@ export function registerTools(
         if (!isFleetEnabled(config)) {
           return { isError: true, content: [{ type: 'text', text: FLEET_DISABLED_MESSAGE }] };
         }
-        const { inRepo, cards } = args as any;
+        const { inRepo } = args as any;
         // The protocol names no caller (see `openImpactFindings`), so "(you)" comes from the
         // environment instead: Claude Code sets CLAUDE_CODE_SESSION_ID on what it spawns, and
         // the value matches that session's registry record. A server started without it marks
-        // nobody, which is a listing with one label missing rather than a wrong one.
+        // nobody, which is a listing with one label missing rather than a wrong one -- and that
+        // is the state on every host that publishes no such variable of its own.
         const report = await describeFleet({
           selfSessionId: process.env.CLAUDE_CODE_SESSION_ID || undefined,
           selfRepo: config?.workspace?.repo ?? (projectRoot ? path.basename(projectRoot) : undefined),
         });
-        let text = renderFleetReport(report, { repo: inRepo ? String(inRepo) : undefined });
-        if (cards) text += `\n\n${renderFleetCardLedger(await fleetCardReport())}`;
+        const text = renderFleetReport(report, { repo: inRepo ? String(inRepo) : undefined });
         return { content: [{ type: 'text', text }] };
       }
 

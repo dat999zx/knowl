@@ -964,37 +964,45 @@ not notified about its own change.
 
 ### Who else is running — the fleet
 
-Several Claude Code sessions on one machine do not know about each other. The host keeps a
-registry of its live sessions and lets one message another, but records nothing about what each
-is doing — so two sessions hit the same `SQLITE_BUSY`, both start fixing it, and a third upgrades
-the hook every one of them is standing on. Knowl keeps the half the registry does not: what each
-session was asked, what it wrote this turn, the last error it saw, and which problem it has
-claimed by editing files after seeing that error. One machine-level file, `~/.knowl/fleet.db`,
-beside the resume keys — not a project table, because the collision that matters most crosses
-repositories. A session whose process is gone is never listed, whatever the file still says.
+Several agent sessions on one machine do not know about each other. Claude Code keeps a registry
+of its live sessions and lets one message another, but records nothing about what each is doing —
+and every other host records nothing at all — so two sessions hit the same `SQLITE_BUSY`, both
+start fixing it, and a third upgrades the hook every one of them is standing on. Knowl keeps the
+half no host has: what each session was asked, what it wrote this turn, the last error it saw,
+and which problem it has claimed by editing files after seeing that error. One machine-level
+file, `~/.knowl/fleet.db`, beside the resume keys — not a project table, because the collision
+that matters most crosses repositories.
+
+**Every host with Knowl hooks is in the fleet**, and they see each other: a Codex session appears
+on a Claude session's roster and the reverse. Liveness is answered exactly where a host publishes
+a session registry (Claude Code does; a row its registry does not list is a dead process and is
+dropped) and by recency where none does — a session with no registry drops off the roster two
+hours after its last event, and a clean exit closes its row immediately. Only sessions the
+host's own messaging can actually reach are offered as something to `SendMessage`; the rest are
+listed, marked, and raised with the user instead.
 
 **On by default**, and the only feature in this document that is: the roster costs a directory
 listing and prints nothing when a session is alone, and nobody opts into "tell me other sessions
 exist" until after the collision.
 
 ```bash
-knowl fleet                 # every live session: repo, state, what it is on, what it is editing
+knowl fleet                 # every live session: host, repo, state, what it is on, what it is editing
 knowl fleet --repo web      # one repo's sessions
-knowl fleet --json --cards  # the report as JSON, plus the card ledger
+knowl fleet --json          # the report as JSON
 ```
 
 `knowl fleet` needs no Knowl project: the fleet is machine-level, and the terminal you ask from is
 often outside every repo. Run from inside a Claude Code session, the listing marks that session
-`(you)`.
+`(you)`; other hosts publish no session id to read, so there the label is simply absent.
 
 - **`knowl_fleet`** — the same listing as an MCP tool, registered unless `fleet.enabled` is
   `false`. Use it before fixing an error that may be shared, before changing hooks, config,
   migrations or the knowl install, or when the user asks who else is running. `inRepo` narrows
-  to one repo (not `repo`, which on every Knowl tool means *act as that linked repo*); `cards`
-  appends the ledger. Messaging a session is the host's own
-  `SendMessage(to:name)`, and `notify_when_idle:true` waits for it to finish. It is absent from
-  the canonical tool table below for the reason the transcript tools are: a gated tool is not a
-  promise every session can rely on.
+  to one repo (not `repo`, which on every Knowl tool means *act as that linked repo*). Messaging
+  a session is the host's own `SendMessage(to:name)`, and `notify_when_idle:true` waits for it to
+  finish — offered only for the sessions it can reach. It is absent from the canonical tool table
+  below for the reason the transcript tools are: a gated tool is not a promise every session can
+  rely on.
 
 ```jsonc
 // .knowl/config.json
@@ -1020,11 +1028,6 @@ often outside every repo. Run from inside a Claude Code session, the listing mar
   live session had read: `enforce` withholds the stop once and asks the agent to tell that
   session, which costs a turn. Shadow by default on the same ladder as `capture.nudge`, for the
   same reason: how often it would fire is measured before it is allowed to.
-
-Every card shown or shadowed is a row in a ledger with a resolution column, and `--cards` prints
-it: shown, shadowed, adjudicated, false positives, precision. Nothing adjudicated reads as *not
-yet measured* rather than as a percentage. Nothing here graduates from advising to refusing
-without that number — the contract the write gate set.
 
 ## Evidence, code intelligence, and drift
 
@@ -2352,7 +2355,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl doctor` | Check project, vector coverage, agent, and workspace readiness |
 | `knowl state` | Print the active hierarchical project memory |
 | `knowl audit` | Run a read-only, limited integrity audit |
-| `knowl fleet [--repo <name>] [--json] [--cards]` | List the other Claude Code sessions live on this machine and what each is doing. Needs no Knowl project; `--cards` adds the fleet card ledger |
+| `knowl fleet [--repo <name>] [--json]` | List the agent sessions live on this machine and what each is doing. Needs no Knowl project |
 
 ### Workspaces
 

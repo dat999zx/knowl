@@ -41,6 +41,22 @@ const MANIFEST_NAMES = new Set([
 const MIGRATION_DIRS = new Set(['migrations', 'migrate', 'migration']);
 
 /**
+ * The directories each agent host keeps its hooks, MCP list and settings in.
+ *
+ * Every path `hookHostSpecs` and the project adapters write, plus the two user-level ones.
+ * Listing only `.claude` was the same mistake the rest of this feature made: the file a Codex
+ * or Windsurf session's hooks are loaded from is exactly as shared as Claude Code's, and one
+ * agent rewriting it while four others run is the change this card exists to announce.
+ *
+ * `.github` earns its place through Copilot (`.github/hooks/knowl.json`, `.github/mcp.json`)
+ * and costs nothing else: the check below still requires a hooks path or a settings-shaped
+ * file name, so a workflow or an issue template does not match.
+ */
+const HOST_CONFIG_DIRS = new Set([
+  '.claude', '.codex', '.cursor', '.windsurf', '.openhands', '.agents', '.github', '.gemini', '.codeium',
+]);
+
+/**
  * Commands that replace the Knowl engine under every running hook and serve process.
  *
  * The specific incident this guards is recorded in the store: an `npm install -g` while
@@ -59,14 +75,14 @@ export function classifySharedSurfacePath(filePath: string, projectRoot?: string
   if (segments.includes('.knowl') && base === 'config.json') {
     return { kind: 'knowl-config', target: display, reason: 'every hook and serve in this repo reads it on the next event', machineWide: false };
   }
-  const claudeIndex = segments.findIndex(segment => segment === '.claude' || /^\.claude-[\w-]+$/.test(segment));
-  if (claudeIndex >= 0) {
-    const rest = segments.slice(claudeIndex + 1);
-    if (rest[0] === 'hooks') {
-      return { kind: 'host-hooks', target: display, reason: 'hook scripts run inside every live session on the next matching event', machineWide: isHomeLevel(segments, claudeIndex) };
+  const hostIndex = segments.findIndex(segment => HOST_CONFIG_DIRS.has(segment) || /^\.claude-[\w-]+$/.test(segment));
+  if (hostIndex >= 0) {
+    const rest = segments.slice(hostIndex + 1);
+    if (rest[0] === 'hooks' || /^hooks(\.[\w-]+)?\.json$/.test(base)) {
+      return { kind: 'host-hooks', target: display, reason: 'hook scripts run inside every live session on the next matching event', machineWide: isHomeLevel(segments, hostIndex) };
     }
-    if (/^settings(\.[\w-]+)?\.json$/.test(base)) {
-      return { kind: 'host-settings', target: display, reason: 'Claude Code re-reads settings live; hook and permission changes reach every session using this file', machineWide: isHomeLevel(segments, claudeIndex) };
+    if (/^(settings|config|mcp|mcp_config)(\.[\w-]+)?\.(json|toml)$/.test(base)) {
+      return { kind: 'host-settings', target: display, reason: 'the host re-reads its settings live; hook, MCP and permission changes reach every session using this file', machineWide: isHomeLevel(segments, hostIndex) };
     }
   }
   if (segments.some(segment => MIGRATION_DIRS.has(segment)) && /\.(sql|ts|js|mjs|cjs|py|rb)$/.test(base)) {
@@ -96,9 +112,9 @@ export function classifySharedSurfaceCommand(command: string): SurfaceHit | unde
   return undefined;
 }
 
-/** A `.claude` directory directly under a home directory is the user-level one every session reads. */
-function isHomeLevel(segments: string[], claudeIndex: number): boolean {
-  const before = segments.slice(0, claudeIndex);
+/** A host config directory directly under a home directory is the user-level one every session reads. */
+function isHomeLevel(segments: string[], hostIndex: number): boolean {
+  const before = segments.slice(0, hostIndex);
   return before.length <= 3 && (before.includes('users') || before.includes('home') || before.length <= 1);
 }
 

@@ -12,11 +12,12 @@ import type { ProjectConfig } from '../../src/core/types.js';
 /**
  * The MCP half of fleet awareness: one tool, gated on a switch that ships ON.
  *
- * The roster is Claude Code's own session registry, so the fixture is a registry: one record
- * under a private CLAUDE_CONFIG_DIR carrying this very process's pid, the only pid a test can
- * promise is alive. Whatever real sessions the machine is running appear beside it -- the
- * roster reads every config dir under the home on purpose -- so the assertions narrow by a
- * folder name nothing else on the box is called rather than by count.
+ * The roster joins Claude Code's own session registry to the fleet store, so the fixture is a
+ * registry: one record under a private config dir carrying this very process's pid, the only
+ * pid a test can promise is alive. `KNOWL_CLAUDE_CONFIG_DIRS` pins the roster to that one
+ * directory -- without it the roster reads every config dir under the real home, so a suite run
+ * from inside a live session sees the developer's own fleet and its verdicts (which peer is
+ * reachable, above all) depend on where it was run.
  */
 const ROOT = path.resolve('./.knowl-fleet-tool-test');
 const HOME = path.join(ROOT, 'home');
@@ -24,7 +25,11 @@ const CONFIG_DIR = path.join(ROOT, 'claude');
 const PEER_REPO = 'fleet-tool-peer';
 const PEER_CWD = path.join(ROOT, PEER_REPO);
 const PEER = { host: 'claude', sessionId: 'fleet-tool-peer-session' };
-const previous = { home: process.env.KNOWL_HOME, configDir: process.env.CLAUDE_CONFIG_DIR };
+const previous = {
+  home: process.env.KNOWL_HOME,
+  configDir: process.env.CLAUDE_CONFIG_DIR,
+  configDirs: process.env.KNOWL_CLAUDE_CONFIG_DIRS,
+};
 
 const baseConfig = (): ProjectConfig => ({ version: 1, security: { rejectSecrets: true, secretPatterns: [] } });
 // Three configs, because the default is the interesting one: `enabled` absent must read as on.
@@ -79,11 +84,12 @@ beforeAll(async () => {
   }));
   process.env.KNOWL_HOME = HOME;
   process.env.CLAUDE_CONFIG_DIR = CONFIG_DIR;
+  process.env.KNOWL_CLAUDE_CONFIG_DIRS = CONFIG_DIR;
   await initDb(ROOT);
   projectId = (await repo.createProject(ROOT, 'fleet tool')).id;
   await touchFleetSession({ ...PEER, projectRoot: PEER_CWD, repo: PEER_REPO });
   await recordFleetTurnStart({ ...PEER, ask: 'fix the flaky roster test' });
-  await recordFleetCard({ ...PEER, kind: 'same-problem', subject: 'sig-1', mode: 'shadow' });
+  await recordFleetCard({ ...PEER, kind: 'same-problem', subject: 'sig-1' });
 });
 
 afterAll(async () => {
@@ -91,6 +97,7 @@ afterAll(async () => {
   await closeFleetDb();
   if (previous.home === undefined) delete process.env.KNOWL_HOME; else process.env.KNOWL_HOME = previous.home;
   if (previous.configDir === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previous.configDir;
+  if (previous.configDirs === undefined) delete process.env.KNOWL_CLAUDE_CONFIG_DIRS; else process.env.KNOWL_CLAUDE_CONFIG_DIRS = previous.configDirs;
   await fs.rm(ROOT, { recursive: true, force: true }).catch(() => {});
 });
 
@@ -139,7 +146,7 @@ describe('knowl_fleet registration', () => {
 describe('knowl_fleet listing', () => {
   it('lists a live session from the host registry with what the store knows about it', async () => {
     const text = textOf(await callTool(FLEET_UNSET, 'knowl_fleet', { inRepo: PEER_REPO }));
-    expect(text).toContain(`1 live Claude Code session in ${PEER_REPO}`);
+    expect(text).toContain(`1 live agent session in ${PEER_REPO}`);
     expect(text).toContain('fleet-tool-peer-ab');
     expect(text).toContain('on: fix the flaky roster test');
     // The way to reach a session is the host's, and the listing has to say so or the agent
@@ -149,21 +156,11 @@ describe('knowl_fleet listing', () => {
 
   it('says so when the repo filter matches nothing', async () => {
     const text = textOf(await callTool(FLEET_ON, 'knowl_fleet', { inRepo: 'no-such-repo-anywhere' }));
-    expect(text).toMatch(/^No live Claude Code sessions in repo "no-such-repo-anywhere"\./);
+    expect(text).toMatch(/^No live agent sessions in repo "no-such-repo-anywhere"\./);
   });
 
-  it('appends the card ledger on request, with an unadjudicated ledger reading as unmeasured', async () => {
-    const text = textOf(await callTool(FLEET_ON, 'knowl_fleet', { inRepo: PEER_REPO, cards: true }));
-    expect(text).toContain('Fleet cards:');
-    expect(text).toMatch(/shadowed:\s+1/);
-    expect(text).toMatch(/adjudicated:\s+0 of 1/);
-    // No evidence is not a perfect score; the same rule `knowl status` applies to the write gate.
-    expect(text).toMatch(/precision:\s+not yet measured/);
-    expect(text).not.toMatch(/100\.0%/);
-  });
-
-  it('leaves the ledger out unless asked', async () => {
+  it('names the host each session runs under', async () => {
     const text = textOf(await callTool(FLEET_ON, 'knowl_fleet', { inRepo: PEER_REPO }));
-    expect(text).not.toContain('Fleet cards:');
+    expect(text).toContain('claude');
   });
 });

@@ -3,8 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { NormalizedHostHook } from '../core/host-hook-types.js';
 import { renderChangeCard, type ImpactCardEntry } from './change-card.js';
-import { hostProfile } from './hosts/index.js';
-import { hookSpecificOutput } from './hosts/claude.js';
+import { hostProfile, toolReadsFile, toolWritesFile } from './hosts/index.js';
 import {
   fleetObserveToolEventBestEffort, fleetPrecheckBestEffort, fleetSessionStartBestEffort, fleetSessionStopBestEffort,
   fleetToolCardBestEffort, fleetTurnStopBestEffort,
@@ -102,59 +101,6 @@ import { describeObservedUsePromotions, promoteByObservedUseBestEffort } from '.
 // off), so the number lives beside its predicate in core/config.ts rather than twice.
 
 /**
- * The tools whose paths become a read-set entry -- and the two that look like they belong here
- * and deliberately do not.
- *
- * A read-set row asserts "this session saw this text and holds a belief about it", and the
- * certain tier spends that assertion by interrupting the agent and, once the gate is enforcing,
- * refusing its write. So the
- * set is the tools that return *contents*: `Read`, and `NotebookRead`, whose target the host names
- * `notebook_path` rather than `file_path` -- which is why that key had to be added to `changedPaths`
- * and to the stdin allowlist in the same change, or this entry would have named a tool whose paths
- * never arrive.
- *
- * `Grep` and `Glob` are read-ish and are excluded. Their `path` argument is usually a directory,
- * which `normalizeLocator` already refuses -- but the case that decides this is the one where it
- * is a file. `Grep` returns matching lines and `Glob` returns names; recording either as a read
- * of that file would write one row per symbol in it, claiming the agent saw signatures it never
- * received. The next edit to any of those symbols then fires against a belief the session does
- * not hold: a fabricated false positive, pushed into tool-side context, which AgentNoiseBench
- * measures at ~20.8% mean accuracy cost to the agent receiving it. The trade is the one
- * `normalizeLocator`'s own directory heuristic already makes in this subsystem -- recall on a
- * tier allowed to be incomplete, never precision on the one tier allowed to interrupt.
- *
- * Matched verbatim and case-sensitively against the host's own name (`host-hook.ts:42` keeps it
- * raw for exactly this judgement). A host whose tool vocabulary has not been read is silent here
- * rather than guessed at, for the same asymmetry.
- */
-const IMPACT_READ_TOOLS = new Set(['Read', 'NotebookRead']);
-
-/** The write tools whose paths trigger a re-index and certain-tier detection. */
-const IMPACT_WRITE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
-
-/**
- * Whether this event read or wrote a file, in the vocabulary of the host that sent it.
- *
- * The two sets above are Claude Code's names, and they were consulted for every host. On any
- * other one they matched nothing: reads were never recorded, so the detector had no beliefs to
- * invalidate, and writes were never recognised, so `runWriteGate` returned "no opinion" before
- * it ever asked the profile whether it could refuse. A host could therefore declare a working
- * deny channel and be structurally unable to reach it.
- *
- * A declared predicate **replaces** the fallback rather than layering over it, so a host that
- * declares one is saying "these and nothing else". The fallback remains Claude Code's names,
- * which is what `claude`, `generic` and `claude-desktop` still use; every other host now
- * declares its own, including `codex`, whose tool is `apply_patch`.
- */
-function toolReadsFile(input: NormalizedHostHook): boolean {
-  const { readsFiles } = hostProfile(input.host);
-  const toolName = input.toolName ?? '';
-  return readsFiles
-    ? readsFiles(input.hostEvent ?? '', toolName)
-    : IMPACT_READ_TOOLS.has(toolName);
-}
-
-/**
  * Whether this event is a shell command whose text we can read.
  *
  * Tested on the NORMALIZED shape rather than by re-asking the profile `isShellEvent`. Only the
@@ -167,15 +113,6 @@ function toolIsShell(input: NormalizedHostHook): boolean {
   return input.type === 'command' && typeof input.payload.command === 'string';
 }
 
-function toolWritesFile(input: NormalizedHostHook): boolean {
-  const { writesFiles, writeTools } = hostProfile(input.host);
-  const toolName = input.toolName ?? '';
-  if (writesFiles) return writesFiles(input.hostEvent ?? '', toolName);
-  // Preferred over the fallback set when a host declares it, so the gate and the pre-tool
-  // matcher built from the same list can never disagree about what a write is.
-  if (writeTools) return writeTools.includes(toolName);
-  return IMPACT_WRITE_TOOLS.has(toolName);
-}
 
 
 /**
@@ -752,15 +689,17 @@ async function observeToolTouch(input: NormalizedHostHook, projectId: string): P
 /**
  * The fleet's pre-flight, on the same pre-tool event the write gate answers.
  *
- * Advice, never a verdict: it rides the pre-tool `additionalContext` envelope, which the
- * Anthropic-shaped hosts read as context for the call about to run. Only those hosts get it
- * -- the envelope is theirs, and a host whose pre-tool event carries no context channel would
- * take the JSON as noise in front of every write.
+ * Advice, never a verdict, and the host decides whether it can carry any: `preToolContext` is
+ * absent for every host whose pre-tool envelope has not been read, so asking the profile is
+ * what keeps this from printing JSON in front of somebody's write. It used to test the host
+ * event name against Claude Code's spelling, which silently excluded every host that names the
+ * same event something else.
  */
 async function fleetPreflightOutput(input: NormalizedHostHook): Promise<Record<string, unknown> | undefined> {
-  if (input.hostEvent !== 'PreToolUse') return undefined;
+  const { preToolContext } = hostProfile(input.host);
+  if (!preToolContext) return undefined;
   const card = await fleetPrecheckBestEffort(input, await loadConfig(input.projectRoot).catch(() => null));
-  return card ? hookSpecificOutput('PreToolUse', card) : undefined;
+  return card ? preToolContext(card) : undefined;
 }
 
 /** The fleet's stop verdict, wrapped in the host's stop envelope when the host has one. */

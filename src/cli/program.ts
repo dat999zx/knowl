@@ -36,8 +36,8 @@ import { runCliQuery } from './query-command.js';
 import { runCliResume } from './resume-command.js';
 import { closeResumeDb } from '../session/resume-store.js';
 import { createResumePoint } from '../session/resume-points.js';
-import { describeFleet, renderFleetCardLedger, renderFleetReport } from '../fleet/report.js';
-import { closeFleetDb, fleetCardReport } from '../fleet/store.js';
+import { describeFleet, renderFleetReport } from '../fleet/report.js';
+import { closeFleetDb } from '../fleet/store.js';
 import { formatPendingHandoffContext, recordDeliberateHandoff } from '../session/session-handoff.js';
 import { formatCrossRepoNotice } from './cross-repo-notice.js';
 import { formatWorkspaceBlock } from './workspace-report.js';
@@ -2955,23 +2955,23 @@ program
   });
 
 /**
- * Machine-level, so it asks for no Knowl project: the fleet is every Claude Code session on the
- * box, and the terminal a user asks from is often outside all of their repos. The project is
- * looked up only to name this repo as its workspace does; not finding one costs nothing.
+ * Machine-level, so it asks for no Knowl project: the fleet is every agent session on the box,
+ * whatever host each runs under, and the terminal a user asks from is often outside all of
+ * their repos. The project is looked up only to name this repo as its workspace does; not
+ * finding one costs nothing.
  *
  * `CLAUDE_CODE_SESSION_ID` is what Claude Code sets in the environment of the shell it runs
  * commands in, and it matches the `sessionId` in that session's own registry record (checked
  * against `<config dir>/sessions/<pid>.json`, from inside a subagent too), so a session asking
- * about the fleet sees itself marked `(you)`. A terminal outside any session has no such
- * variable and marks nobody.
+ * about the fleet sees itself marked `(you)`. A terminal outside any session -- or inside a
+ * host that publishes no such variable -- marks nobody, which costs one label and no rows.
  */
 program
   .command('fleet')
-  .description('List the other Claude Code sessions live on this machine and what each is doing')
+  .description('List the agent sessions live on this machine and what each is doing')
   .option('--repo <name>', 'Only sessions in this repo (workspace repo name or folder name)')
   .option('--json', 'Print machine-readable JSON')
-  .option('--cards', 'Also print the fleet card ledger: shown, shadowed, adjudicated, precision')
-  .action(async (options: { repo?: string; json?: boolean; cards?: boolean }) => {
+  .action(async (options: { repo?: string; json?: boolean }) => {
     try {
       const root = await findProjectRoot(process.cwd()).catch(() => null);
       const config = root ? await loadConfig(root).catch(() => null) : null;
@@ -2979,7 +2979,6 @@ program
         selfSessionId: process.env.CLAUDE_CODE_SESSION_ID || undefined,
         selfRepo: config?.workspace?.repo ?? (root ? path.basename(root) : undefined),
       });
-      const cards = options.cards ? await fleetCardReport() : undefined;
       await closeFleetDb();
       if (options.json) {
         const sessions = options.repo ? report.sessions.filter(session => session.repo === options.repo) : report.sessions;
@@ -2988,12 +2987,10 @@ program
           ...report,
           sessions,
           claims: report.claims.filter(claim => listed.has(claim.sessionId)),
-          ...(cards ? { cards } : {}),
         }, null, 2));
         return;
       }
       console.log(renderFleetReport(report, { repo: options.repo }));
-      if (cards) console.log(`\n${renderFleetCardLedger(cards)}`);
     } catch (error: any) {
       console.error(`❌ Fleet error: ${error.message}`);
       process.exitCode = 1;

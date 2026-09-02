@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  closeFleetDb, endFleetSession, fleetCardReport, fleetDbPath, getFleetSession, listFleetSessions, markFleetSeen,
+  closeFleetDb, endFleetSession, fleetDbPath, getFleetSession, listFleetSessions, markFleetSeen,
   matchingFleetClaims, openFleetClaim, openFleetClaimsForSession, readFleetSeen, recordFleetCard, recordFleetError,
-  recordFleetTurnStart, recordFleetTurnStop, recordFleetWrite, releaseFleetClaims, resolveFleetCard, sweepFleet,
+  listFleetCards, recordFleetTurnStart, recordFleetTurnStop, recordFleetWrite, releaseFleetClaims, sweepFleet,
   touchFleetSession,
 } from '../../src/fleet/store.js';
 
@@ -126,20 +126,14 @@ describe('fleet claims', () => {
 });
 
 describe('fleet cards and watermarks', () => {
-  it('records a card once per subject and measures precision from adjudications', async () => {
-    const first = await recordFleetCard({ kind: 'same-problem', ...a, subject: 'sig-1', mode: 'enforce' });
-    const repeat = await recordFleetCard({ kind: 'same-problem', ...a, subject: 'sig-1', mode: 'enforce' });
-    const shadow = await recordFleetCard({ kind: 'shared-surface', ...a, subject: '.knowl/config.json', mode: 'shadow' });
-    expect(first.first).toBe(true);
-    expect(repeat).toEqual({ id: first.id, first: false });
-    expect(shadow.first).toBe(true);
-
-    expect(await resolveFleetCard(first.id, 'acted')).toBe(true);
-    expect(await resolveFleetCard(first.id, 'false_positive')).toBe(false);
-    expect(await resolveFleetCard(shadow.id, 'false_positive')).toBe(true);
-
-    expect(await fleetCardReport()).toEqual({ shown: 1, shadowed: 1, adjudicated: 2, falsePositives: 1, precision: 0.5 });
-    expect(await fleetCardReport('same-problem')).toMatchObject({ shown: 1, shadowed: 0, precision: 1 });
+  it('claims a subject once per session, and a different session or subject separately', async () => {
+    expect(await recordFleetCard({ kind: 'same-problem', ...a, subject: 'sig-1' })).toBe(true);
+    expect(await recordFleetCard({ kind: 'same-problem', ...a, subject: 'sig-1' })).toBe(false);
+    // Same subject, different kind and different session: neither is the one already claimed.
+    expect(await recordFleetCard({ kind: 'shared-surface', ...a, subject: 'sig-1' })).toBe(true);
+    expect(await recordFleetCard({ kind: 'same-problem', ...b, subject: 'sig-1' })).toBe(true);
+    expect((await listFleetCards(a)).map(card => `${card.kind}:${card.subject}`).sort())
+      .toEqual(['same-problem:sig-1', 'shared-surface:sig-1']);
   });
 
   it('remembers what a session has seen of the others', async () => {

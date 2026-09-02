@@ -9,7 +9,7 @@ import { fleetTurnStartBestEffort } from '../../src/session/fleet-lifecycle.js';
 import { closeFleetDb, getFleetSession, listFleetCards, openFleetClaimsForSession } from '../../src/fleet/store.js';
 
 /**
- * Two Claude Code sessions in one repo, seen through the hooks. The host's registry is faked
+ * Two sessions in one repo, seen through the hooks. The host's registry is faked
  * with two records that both name this process's pid, so both count as alive; everything else
  * is the real lifecycle against a real store.
  */
@@ -26,6 +26,8 @@ let projectId = '';
 
 const A = 'session-a';
 const B = 'session-b';
+/** A Codex session: no registry record anywhere, so the store rows are the whole of it. */
+const C = 'session-c';
 
 const hook = (input: Partial<NormalizedHostHook> & { externalSessionId: string }): NormalizedHostHook => ({
   host: 'claude',
@@ -80,7 +82,7 @@ describe('fleet through the lifecycle', () => {
     // folder name, because Knowl has heard nothing from it yet.
     const first = await handleHostLifecycleEvent(projectId, hook({ event: 'session-start', externalSessionId: B, title: 'Agent session' }));
     expect(first.accepted).toBe(true);
-    expect(first.context).toContain('LIVE SESSIONS (1 other Claude Code session on this machine)');
+    expect(first.context).toContain('LIVE SESSIONS (1 other agent session on this machine)');
     expect(first.context).toContain(path.basename(ROOT));
     expect(first.context).toContain('test-a');
     expect(first.context).not.toContain('same repo as you');
@@ -89,7 +91,7 @@ describe('fleet through the lifecycle', () => {
     // A starts second and is told about B, under the repo name B's own row recorded.
     const start = await handleHostLifecycleEvent(projectId, hook({ event: 'session-start', externalSessionId: A, title: 'Agent session' }));
     expect(start.accepted).toBe(true);
-    expect(start.context).toContain('LIVE SESSIONS (1 other Claude Code session on this machine)');
+    expect(start.context).toContain('LIVE SESSIONS (1 other agent session on this machine)');
     expect(start.context).toContain('test-repo');
     expect(start.context).toContain('test-b');
     expect(start.context).toContain('same repo as you');
@@ -224,6 +226,48 @@ describe('fleet through the lifecycle', () => {
     await fleetTurnStartBestEffort({ host: 'claude', externalSessionId: B, projectRoot: ROOT, prompt: 'write the changelog entry' }, config);
     const moved = await fleetTurnStartBestEffort({ host: 'claude', externalSessionId: A, projectRoot: ROOT }, config);
     expect(moved).toContain('write the changelog entry');
+  });
+
+  it('sees a session on a host that keeps no registry, and does not offer to message it', async () => {
+    // A Codex session in the same repo. Nothing lists its process anywhere -- Codex publishes no
+    // session registry -- so the only record it exists is the rows its own hooks write here.
+    const codex = (input: Partial<NormalizedHostHook>): NormalizedHostHook =>
+      hook({ host: 'codex', externalSessionId: C, ...input });
+
+    await handleHostLifecycleEvent(projectId, codex({
+      type: 'command', toolName: 'shell',
+      payload: { command: 'npm run typecheck', exitCode: 2 },
+      errorText: 'src/store/reader.ts(12,3): error TS2345: Argument of type string is not assignable',
+    }));
+    // `apply_patch` is Codex's only write tool, and the tool-name regex this replaced never
+    // matched it as an edit for any host but by luck. Without the write there is no claim.
+    await handleHostLifecycleEvent(projectId, codex({
+      type: 'checkpoint', toolName: 'apply_patch', captureKey: 'patch-c-1',
+      payload: { changedPaths: ['src/x.ts'] },
+    }));
+    const claims = await openFleetClaimsForSession({ host: 'codex', sessionId: C });
+    expect(claims).toHaveLength(1);
+    expect(claims[0].head).toContain('error ts2345: argument of type string is not assignable');
+
+    // A hits the same failure and is told about the Codex session by name -- and told to raise
+    // it with the user, because SendMessage cannot reach another host.
+    await handleHostLifecycleEvent(projectId, hook({
+      externalSessionId: A, type: 'error', status: 'failed', toolName: 'Bash',
+      payload: { message: 'Tool failed' },
+      errorText: 'src/store/writer.ts(88,7): error TS2345: Argument of type string is not assignable',
+    }));
+    const card = additionalContext(await handleHostLifecycleEvent(projectId, hook({
+      externalSessionId: A, type: 'checkpoint', toolName: 'Grep', captureKey: 'grep-a-3', payload: { summary: 'Grep completed' },
+    })));
+    expect(card).toContain('ANOTHER SESSION IS ALREADY ON THIS PROBLEM');
+    expect(card).toContain('editing: src/x.ts');
+    expect(card).toContain('(codex) cannot be messaged from here');
+    expect(card).not.toContain('SendMessage');
+
+    // And it is on the roster a new session starts with, under the same repo.
+    const start = await handleHostLifecycleEvent(projectId, hook({ event: 'session-start', externalSessionId: B, title: 'Agent session' }));
+    expect(start.context).toContain('LIVE SESSIONS (2 other agent sessions on this machine)');
+    expect(start.context).toContain('† visible here, not reachable with SendMessage (codex');
   });
 
   it('marks the session ended on SessionEnd', async () => {

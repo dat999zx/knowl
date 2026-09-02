@@ -19,6 +19,7 @@ import {
   touchFleetSession, FLEET_SESSION_RETENTION_HOURS,
 } from '../fleet/store.js';
 import { classifySharedSurfaceCommand, classifySharedSurfacePath, type SurfaceHit } from '../fleet/surfaces.js';
+import { toolWritesFile } from './hosts/index.js';
 
 /**
  * The fleet's hooks into the lifecycle, each best-effort.
@@ -33,8 +34,15 @@ import { classifySharedSurfaceCommand, classifySharedSurfacePath, type SurfaceHi
 /** A failure this session saw is still "the problem it is on" for this long after it was seen. */
 const PENDING_ERROR_WINDOW_MS = 15 * 60 * 1000;
 
-/** Errors from the engine, its hooks or its store hit every session on the machine, not one repo. */
-const MACHINE_WIDE_ERROR = /\bknowl\b|agent-hook|agent-reminder|\.knowl[\\/]|hooks?[\\/]|\.claude[\\/]/i;
+/**
+ * Errors from the engine, its hooks or its store hit every session on the machine, not one repo.
+ *
+ * The host directories are listed rather than just Claude's: a hook that crashes under
+ * `.codex/` or `.windsurf/` is the same machine-wide failure as one under `.claude/`, and a
+ * pattern that names only one host reports the others as a local problem in one repo.
+ */
+const MACHINE_WIDE_ERROR =
+  /\bknowl\b|agent-hook|agent-reminder|\.knowl[\\/]|hooks?[\\/]|\.(claude|codex|cursor|windsurf|openhands|agents)[\\/]/i;
 
 const fleetKey = (input: { host: string; externalSessionId: string }) =>
   ({ host: String(input.host), sessionId: input.externalSessionId });
@@ -87,19 +95,27 @@ async function fileHash(root: string, relativePath: string): Promise<string | nu
 }
 
 /**
- * Which live host sessions are still standing on these repo-relative paths, from the project
- * store's read set. Rows are keyed by memory session id; the host session id is what the fleet
- * knows, so the two are joined through the active bindings. A `file://` row whose hash still
- * matches the file is a copy that is current now and stale after the write; a `symbol://` row
- * says the session read the file at symbol granularity and is counted as a reader outright.
+ * Which live host sessions read these repo-relative paths, from the project store's read set.
+ *
+ * Rows are keyed by memory session id; the host session id is what the fleet knows, so the two
+ * are joined through the active bindings. `holding` selects which half is wanted: `current`
+ * before a write, for the sessions whose copy the write is about to invalidate, and `stale`
+ * after one, for the sessions whose copy it did. A `symbol://` row satisfies both, because a
+ * session that read at symbol granularity is a reader either way and there is no file hash to
+ * compare it against.
  */
-async function readersOf(root: string, relative: string[], excludeSessionId: string): Promise<Map<string, string[]>> {
+async function readersOf(
+  root: string,
+  relative: string[],
+  excludeSessionId: string,
+  holding: 'current' | 'stale',
+): Promise<Map<string, string[]>> {
   const readers = new Map<string, string[]>();
   if (relative.length === 0) return readers;
   const client = getClient();
   for (const file of relative) {
     const rows = await client.execute({
-      sql: `SELECT r.session_id, r.locator, r.observed_hash, b.external_session_id
+      sql: `SELECT r.locator, r.observed_hash, b.external_session_id
             FROM work_read_sets r
             JOIN host_session_bindings b ON b.memory_session_id = r.session_id AND b.active = 1
             WHERE r.released_at IS NULL AND (r.locator = ? OR r.locator LIKE ?)`,
@@ -110,9 +126,11 @@ async function readersOf(root: string, relative: string[], excludeSessionId: str
     for (const row of rows.rows) {
       const external = String(row.external_session_id);
       if (external === excludeSessionId) continue;
-      const locator = String(row.locator);
-      const holdsCurrent = locator.startsWith('symbol://') || (current !== null && String(row.observed_hash) === current);
-      if (!holdsCurrent) continue;
+      const matches = String(row.locator).startsWith('symbol://')
+        || (holding === 'current'
+          ? current !== null && String(row.observed_hash) === current
+          : current === null || String(row.observed_hash) !== current);
+      if (!matches) continue;
       const list = readers.get(external) ?? [];
       if (!list.includes(file)) list.push(file);
       readers.set(external, list);
@@ -121,8 +139,8 @@ async function readersOf(root: string, relative: string[], excludeSessionId: str
   return readers;
 }
 
-async function liveFleet(input: Pick<NormalizedHostHook, 'externalSessionId'>, repo: string): Promise<FleetReport> {
-  return describeFleet({ selfSessionId: input.externalSessionId, selfRepo: repo });
+async function liveFleet(input: { externalSessionId: string; host: string }, repo: string): Promise<FleetReport> {
+  return describeFleet({ selfSessionId: input.externalSessionId, selfRepo: repo, selfHost: input.host });
 }
 
 const sessionsById = (report: FleetReport): Map<string, SessionView> =>
@@ -170,7 +188,7 @@ export async function fleetTurnStartBestEffort(
     });
     await markFleetSeen({ ...key, seen: others.map(session => ({ otherSessionId: session.sessionId, updatedAt: session.updatedAt! })) });
     const digest = renderFleetDigest(changed);
-    if (digest) await recordFleetCard({ kind: 'digest', ...key, subject: new Date().toISOString().slice(0, 16), mode: 'enforce' });
+    if (digest) await recordFleetCard({ kind: 'digest', ...key, subject: new Date().toISOString().slice(0, 16) });
     return digest || undefined;
   } catch {
     return undefined;
@@ -197,8 +215,13 @@ export async function fleetObserveToolEventBestEffort(input: NormalizedHostHook,
       if (signature && storable(signature.head)) await recordFleetError({ ...key, head: signature.head, sig: signature.sig });
     }
 
+    // The same predicate the write gate and the impact detector use, rather than a second
+    // guess at it. The regex this replaces read the tool NAME, so it recognised Claude Code's
+    // `Edit`/`Write` and Codex's `apply_patch` by luck and nothing else: Cursor and Windsurf
+    // name the event and carry no tool name at all, so no write of theirs was ever recorded and
+    // no claim of theirs could ever open.
     const writes = relativePaths(input.projectRoot, changedPathsOf(input));
-    const wroteFiles = writes.length > 0 && !failed && /edit|write|patch/i.test(input.toolName ?? '');
+    const wroteFiles = writes.length > 0 && !failed && toolWritesFile(input);
     if (!wroteFiles) return;
     await recordFleetWrite({ ...key, paths: writes });
     const row = await getFleetSession(key);
@@ -239,8 +262,8 @@ export async function fleetToolCardBestEffort(input: NormalizedHostHook, config:
         const live = sessionsById(report);
         const match = matches.find(claim => live.has(claim.sessionId));
         if (match) {
-          const card = await recordFleetCard({ kind: 'same-problem', ...key, subject: match.sig, mode });
-          if (card.first && mode === 'enforce') {
+          const first = await recordFleetCard({ kind: 'same-problem', ...key, subject: match.sig });
+          if (first && mode === 'enforce') {
             return renderSameProblemCard({
               session: live.get(match.sessionId)!,
               head: match.head,
@@ -259,8 +282,8 @@ export async function fleetToolCardBestEffort(input: NormalizedHostHook, config:
       const report = await liveFleet(input, repo);
       const affected = report.sessions.filter(session => session.sessionId !== input.externalSessionId && (hit.machineWide || session.repo === repo));
       if (affected.length > 0) {
-        const card = await recordFleetCard({ kind: 'shared-surface', ...key, subject: hit.target, mode });
-        if (card.first && mode === 'enforce') {
+        const first = await recordFleetCard({ kind: 'shared-surface', ...key, subject: hit.target });
+        if (first && mode === 'enforce') {
           return renderSharedSurfaceCard({ hit, affected, readers: [], after: true, incident: engineIncident(hit) });
         }
       }
@@ -299,7 +322,7 @@ export async function fleetPrecheckBestEffort(input: NormalizedHostHook, config:
       hit = classifySharedSurfacePath(path.resolve(input.projectRoot, file), input.projectRoot);
       if (hit) break;
     }
-    const readers = await readersOf(input.projectRoot, relative, input.externalSessionId);
+    const readers = await readersOf(input.projectRoot, relative, input.externalSessionId, 'current');
     if (!hit && readers.size === 0) return undefined;
 
     const report = await liveFleet(input, repo);
@@ -318,8 +341,8 @@ export async function fleetPrecheckBestEffort(input: NormalizedHostHook, config:
       : readerViews;
     if (affected.length === 0 && readerViews.length === 0) return undefined;
 
-    const card = await recordFleetCard({ kind: 'shared-surface', ...key, subject: surface.target, mode });
-    if (!card.first || mode !== 'enforce') return undefined;
+    const first = await recordFleetCard({ kind: 'shared-surface', ...key, subject: surface.target });
+    if (!first || mode !== 'enforce') return undefined;
     return renderSharedSurfaceCard({ hit: surface, affected, readers: readerViews, incident: engineIncident(surface) });
   } catch {
     return undefined;
@@ -350,7 +373,7 @@ export async function fleetTurnStopBestEffort(
 
     // After the write, "holds a current copy" means the reader re-read since; those are fine.
     // A reader whose copy no longer matches is the one to tell.
-    const stale = await staleReadersOf(input.projectRoot, writes, input.externalSessionId);
+    const stale = await readersOf(input.projectRoot, writes, input.externalSessionId, 'stale');
     if (stale.size === 0) return undefined;
     const report = await liveFleet(input, repo);
     const live = sessionsById(report);
@@ -360,8 +383,8 @@ export async function fleetTurnStopBestEffort(
       if (!session) continue;
       const fresh: string[] = [];
       for (const file of paths) {
-        const card = await recordFleetCard({ kind: 'stale-read', ...key, subject: `${sessionId}:${file}`, mode });
-        if (card.first) fresh.push(file);
+        const first = await recordFleetCard({ kind: 'stale-read', ...key, subject: `${sessionId}:${file}` });
+        if (first) fresh.push(file);
       }
       if (fresh.length > 0) views.push({ session, paths: fresh });
     }
@@ -370,34 +393,6 @@ export async function fleetTurnStopBestEffort(
   } catch {
     return undefined;
   }
-}
-
-/** Readers whose recorded copy of a path no longer matches the file on disk. */
-async function staleReadersOf(root: string, relative: string[], excludeSessionId: string): Promise<Map<string, string[]>> {
-  const stale = new Map<string, string[]>();
-  const client = getClient();
-  for (const file of relative) {
-    const rows = await client.execute({
-      sql: `SELECT r.locator, r.observed_hash, b.external_session_id
-            FROM work_read_sets r
-            JOIN host_session_bindings b ON b.memory_session_id = r.session_id AND b.active = 1
-            WHERE r.released_at IS NULL AND (r.locator = ? OR r.locator LIKE ?)`,
-      args: [`file://${file}`, `symbol://${file}#%`],
-    });
-    if (rows.rows.length === 0) continue;
-    const current = await fileHash(root, file);
-    for (const row of rows.rows) {
-      const external = String(row.external_session_id);
-      if (external === excludeSessionId) continue;
-      const locator = String(row.locator);
-      const isStale = locator.startsWith('symbol://') || current === null || String(row.observed_hash) !== current;
-      if (!isStale) continue;
-      const list = stale.get(external) ?? [];
-      if (!list.includes(file)) list.push(file);
-      stale.set(external, list);
-    }
-  }
-  return stale;
 }
 
 export async function fleetSessionStopBestEffort(input: NormalizedHostHook, config: ProjectConfig | null): Promise<void> {

@@ -5,14 +5,17 @@ import type { SurfaceHit } from './surfaces.js';
  * Everything the cards know about one live session, flattened.
  *
  * `name` is what the host answers to -- the `to:` of a `SendMessage` -- and it is the only field
- * an agent can act on, which is why every card leads with it. `messageable` is false for a
- * session under another config directory: the roster can see it because the fleet store is
- * shared, but the host's own messaging cannot reach it, and a card that told the agent to
- * message it would send the agent chasing a refusal.
+ * an agent can act on, which is why every card leads with it. `messageable` is false whenever
+ * that call cannot reach the session: it runs on another host, under another config directory,
+ * or the reader's own host has no messaging at all. The roster still sees it, because the fleet
+ * store is shared by every host; a card that offered the call anyway would send the agent
+ * chasing a refusal.
  */
 export interface SessionView {
   name: string;
   sessionId: string;
+  /** The agent host this session runs under: `claude`, `codex`, `cursor`, and so on. */
+  host: string;
   repo: string;
   cwd: string;
   messageable: boolean;
@@ -73,7 +76,7 @@ export function renderFleetRoster(self: { sessionId: string; repo: string }, ses
     if (b[0] === self.repo) return 1;
     return b[1].length - a[1].length;
   });
-  const lines = [`LIVE SESSIONS (${others.length} other Claude Code session${others.length === 1 ? '' : 's'} on this machine)`];
+  const lines = [`LIVE SESSIONS (${others.length} other agent session${others.length === 1 ? '' : 's'} on this machine)`];
   for (const [repo, list] of repos.slice(0, MAX_ROSTER_REPOS)) {
     const names = list.slice(0, MAX_NAMES_PER_REPO).map(session => {
       const short = inlineUntrusted(shortName(session.name, repo));
@@ -83,8 +86,13 @@ export function renderFleetRoster(self: { sessionId: string; repo: string }, ses
     const tag = repo === self.repo ? '  ← same repo as you' : '';
     lines.push(`${inlineUntrusted(repo).padEnd(14)} ${names.join(' · ')}${more}${tag}`);
   }
-  if (others.some(session => !session.messageable)) lines.push('† runs under another Claude config dir: visible here, not reachable with SendMessage.');
-  lines.push('knowl_fleet tells you what each is doing. Message one with SendMessage(to:"<full name>").');
+  // The hosts of the unreachable ones, named: "another host" is a fact the agent can act on
+  // only if it knows which, and it is what tells a person their Codex tab is in the fleet too.
+  const unreachable = [...new Set(others.filter(session => !session.messageable).map(session => session.host))].sort();
+  if (unreachable.length > 0) lines.push(`† visible here, not reachable with SendMessage (${unreachable.join(', ')} — another host or config directory).`);
+  lines.push(others.some(session => session.messageable)
+    ? 'knowl_fleet tells you what each is doing. Message one with SendMessage(to:"<full name>").'
+    : 'knowl_fleet tells you what each is doing. None can be messaged from here — raise anything that matters with the user.');
   return lines.join('\n');
 }
 
@@ -136,7 +144,7 @@ export function renderSameProblemCard(claim: ClaimView): string {
     lines.push(`  · SendMessage(to:"${inlineUntrusted(session.name)}", message:"…") to split the work, or`);
     lines.push(`  · SendMessage(to:"${inlineUntrusted(session.name)}", notify_when_idle:true) and pick it up after, or`);
   } else {
-    lines.push('  · that session runs under another Claude config dir and cannot be messaged, so');
+    lines.push(`  · that session (${inlineUntrusted(session.host)}) cannot be messaged from here, so`);
   }
   lines.push('  · tell the user both sessions hit it and let them decide.');
   return lines.join('\n');
@@ -180,9 +188,13 @@ export function renderSharedSurfaceCard(view: SurfaceView): string {
   if (view.readers.length > 0) {
     lines.push(`Read this exact file and not since: ${view.readers.slice(0, 4).map(session => inlineUntrusted(session.name)).join(', ')}.`);
   }
+  // Only the sessions this one can actually reach may be offered as something to message; the
+  // rest fall back to the user, who can reach every terminal on the machine.
   const busy = editing.filter(session => session.messageable);
   if (view.after) {
-    lines.push('This already ran. Verify the sessions above still work, and message the working ones so they know.');
+    lines.push(busy.length > 0
+      ? 'This already ran. Verify the sessions above still work, and message the working ones so they know.'
+      : 'This already ran. Verify the sessions above still work, and tell the user which ones may need a restart.');
     return lines.join('\n');
   }
   lines.push('Options:');
@@ -190,7 +202,8 @@ export function renderSharedSurfaceCard(view: SurfaceView): string {
     lines.push(`  (a) wait — SendMessage(to:"${inlineUntrusted(busy[0].name)}", notify_when_idle:true)${busy.length > 1 ? ` (and the other ${busy.length - 1})` : ''}, then proceed;`);
     lines.push('  (b) proceed now, and message the working sessions first so they re-read;');
   } else {
-    lines.push('  (a) proceed, and message any session that would need to re-read;');
+    lines.push('  (a) proceed, and tell the user which sessions will need to re-read;');
+    lines.push('  (b) hold until they are idle;');
   }
   lines.push('  (c) ask the user which.');
   return lines.join('\n');
@@ -222,7 +235,7 @@ export function renderStaleReadNudge(views: StaleReadView[]): string {
   if (first.messageable) {
     lines.push(`Send one SendMessage(to:"${inlineUntrusted(first.name)}") naming the file, the symbol, and what changed — or say in one line why it does not affect them. Then stop.`);
   } else {
-    lines.push('That session cannot be messaged from here (another Claude config dir). Tell the user in one line, then stop.');
+    lines.push(`That session cannot be messaged from here (${inlineUntrusted(first.host)}). Tell the user in one line, then stop.`);
   }
   return lines.join('\n');
 }

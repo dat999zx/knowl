@@ -3,6 +3,18 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
+ * Hosts that publish a live-session registry of their own, so an absent record is proof of
+ * death rather than of silence.
+ *
+ * Claude Code is the only one today, and this exists so the rest of the fleet does not assume
+ * it is the only host that ever runs: a `codex` or `windsurf` row has no registry to be missing
+ * from, so it is judged by recency instead (see `describeFleet`). Adding a host here without a
+ * reader for its registry would delete its sessions from every roster, so the two change
+ * together.
+ */
+export const REGISTRY_HOSTS: ReadonlySet<string> = new Set(['claude']);
+
+/**
  * One live host session on this machine, as Claude Code itself records it.
  *
  * Claude Code writes one JSON file per running session under `<config dir>/sessions/<pid>.json`
@@ -12,9 +24,13 @@ import path from 'node:path';
  * through `CLAUDE_CONFIG_DIR`. Reading it costs a directory listing, not a tool call.
  *
  * What the file does NOT carry is as important as what it does: there is no status and no
- * "current task". Those come from Knowl's own `session_focus` rows, joined on `sessionId`.
+ * "current task". Those come from Knowl's own `fleet_sessions` rows, joined on `sessionId` --
+ * and those rows are written by every host's hooks, which is how a session with no registry at
+ * all still appears on the roster.
  */
 export interface HostSessionRecord {
+  /** The host that published this record. Only `claude` does, which is why it is stamped here. */
+  host: string;
   pid: number;
   sessionId: string;
   cwd: string;
@@ -125,17 +141,29 @@ function parseRecord(raw: unknown, configDir: string): HostSessionRecord | undef
   if (!Number.isInteger(pid) || pid <= 0 || !sessionId || !cwd) return undefined;
   const startedAt = typeof value.startedAt === 'number' ? value.startedAt : Number(value.startedAt);
   return {
+    host: 'claude',
     pid,
     sessionId,
     cwd,
     // A record without a name is still a session; the derived form is what the host would show.
-    name: typeof value.name === 'string' && value.name.length > 0 ? value.name : `${path.basename(cwd).toLowerCase()}-${sessionId.slice(0, 2)}`,
+    name: typeof value.name === 'string' && value.name.length > 0 ? value.name : derivedSessionName(cwd, sessionId),
     startedAt: Number.isFinite(startedAt) ? startedAt : 0,
     kind: typeof value.kind === 'string' ? value.kind : 'interactive',
     configDir,
     messagingSocketPath: typeof value.messagingSocketPath === 'string' ? value.messagingSocketPath : undefined,
     version: typeof value.version === 'string' ? value.version : undefined,
   };
+}
+
+/**
+ * The name a session gets when nothing named it: its folder and two characters of its id.
+ *
+ * Claude Code's own fallback, reused for hosts that keep no registry -- so a Codex session and
+ * a nameless Claude one read the same way in a roster, and `shortName` can strip the repo
+ * prefix from either.
+ */
+export function derivedSessionName(cwd: string, sessionId: string): string {
+  return `${path.basename(cwd).toLowerCase()}-${sessionId.slice(0, 2)}`;
 }
 
 function readJson(file: string): unknown {
@@ -162,15 +190,4 @@ export function sameDir(a: string, b: string): boolean {
   const left = path.resolve(a);
   const right = path.resolve(b);
   return process.platform === 'win32' ? left.toLowerCase() === right.toLowerCase() : left === right;
-}
-
-/**
- * Whether `child` is `parent` or lies inside it. `path.relative` already compares
- * case-insensitively on win32, so the casing rule of `sameDir` holds here without a second
- * check.
- */
-export function withinDir(parent: string, child: string): boolean {
-  const relative = path.relative(path.resolve(parent), path.resolve(child));
-  if (relative === '') return true;
-  return !relative.startsWith('..') && !path.isAbsolute(relative);
 }

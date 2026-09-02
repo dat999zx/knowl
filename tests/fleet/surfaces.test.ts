@@ -21,6 +21,19 @@ describe('classifySharedSurfacePath', () => {
     expect(classifySharedSurfacePath(inRepo('.claude', 'hooks', 'lesson-gate.mjs'), root)).toMatchObject({ kind: 'host-hooks', target: '.claude/hooks/lesson-gate.mjs', machineWide: false });
   });
 
+  it('names every host\'s hooks and settings, not only Claude Code\'s', () => {
+    // A Codex or Windsurf hooks file is as shared as Claude Code's; listing one host meant the
+    // card fired for one and stayed silent while another rewrote the same kind of file.
+    expect(classifySharedSurfacePath(inRepo('.codex', 'hooks.json'), root)).toMatchObject({ kind: 'host-hooks', target: '.codex/hooks.json' });
+    expect(classifySharedSurfacePath(inRepo('.windsurf', 'hooks.json'), root)).toMatchObject({ kind: 'host-hooks' });
+    expect(classifySharedSurfacePath(inRepo('.github', 'hooks', 'knowl.json'), root)).toMatchObject({ kind: 'host-hooks' });
+    expect(classifySharedSurfacePath(inRepo('.cursor', 'mcp.json'), root)).toMatchObject({ kind: 'host-settings' });
+    expect(classifySharedSurfacePath('/home/admin/.codex/config.toml')).toMatchObject({ kind: 'host-settings', machineWide: true });
+    expect(classifySharedSurfacePath('/home/admin/.gemini/antigravity/mcp_config.json')).toMatchObject({ kind: 'host-settings', machineWide: true });
+    // A host directory is not a licence for everything under it.
+    expect(classifySharedSurfacePath(inRepo('.github', 'workflows', 'ci.yml'), root)).toBeUndefined();
+  });
+
   it('marks the user-level Claude directory as machine-wide, for either account layout and either platform', () => {
     expect(classifySharedSurfacePath('C:\\Users\\Admin\\.claude\\settings.json')).toMatchObject({ kind: 'host-settings', machineWide: true });
     expect(classifySharedSurfacePath('C:\\Users\\Admin\\.claude-account-b\\settings.json')).toMatchObject({ kind: 'host-settings', machineWide: true });
