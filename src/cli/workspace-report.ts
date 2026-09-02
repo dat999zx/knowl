@@ -55,12 +55,20 @@ export function workspaceDoctorChecks(active: ActiveWorkspace | null, config: Pr
       });
   }
 
+  // Reported, not warned about. This was a WARN saying the two sets of items were "invisible to
+  // each other", with the fix "align `search.vector`, then reindex". #191 made the mechanism
+  // false: each peer is searched under its own profile now and scored against its own range and
+  // floor, so a mismatched peer returns vector rows like any other. The prescription had a
+  // second problem the wording hid -- a cloud-connected repo cannot take it, because its atoms
+  // must stay on the cloud's serving profile and `assertProfileMatches` refuses any other, so
+  // aligning to the workspace would break every push (#187, #216). Kept as an OK line because
+  // the mismatch is still worth seeing: same-profile repos share one semantic range, and a
+  // second profile costs that.
   const local = embeddingIdentityFromConfig(config);
   if (!sameEmbeddingIdentity(local, active.manifest.embedding)) {
     checks.push({
-      status: 'WARN',
-      message: `This repo embeds with ${formatEmbeddingIdentity(local)} but the workspace uses ${formatEmbeddingIdentity(active.manifest.embedding)}; vector search filters on provider and model, so the two sets of items are invisible to each other`,
-      fix: 'align `search.vector` with the workspace, then run `knowl reindex --vectors`',
+      status: 'OK',
+      message: `This repo embeds with ${formatEmbeddingIdentity(local)} and the workspace uses ${formatEmbeddingIdentity(active.manifest.embedding)}; each is searched under its own profile, so both sets are reachable`,
     });
   }
 

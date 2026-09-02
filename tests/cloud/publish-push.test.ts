@@ -551,6 +551,31 @@ describe('pushStaged', () => {
     expect((result as any).count).toBe(1);
   });
 
+  it('names the atom and the field when one exceeds the contract cap, and sends nothing', async () => {
+    // The server enforces this too, but its rejection is a bare "Too big: expected string to have
+    // <=500 characters" with no path and no id -- one line per offender and no way to tell which
+    // atom of a hundred it means (#217). The whole value of this check is the two identifiers.
+    await initDb(CLONE);
+    try {
+      await getClient().execute({
+        sql: 'UPDATE knowledge_items SET source = ? WHERE id = ?',
+        args: ['x'.repeat(705), ids.decision],
+      });
+    } finally { await closeDb(); }
+
+    let called = false;
+    const result = await pushStaged({
+      projectRoot: CLONE, config: connected, api: fakeApi([], () => { called = true; }),
+    });
+
+    expect(result.status).toBe('oversized-field');
+    expect((result as any).offenders).toEqual([
+      { id: ids.decision, field: 'source', length: 705, cap: 500 },
+    ]);
+    // Nothing on the wire: the point is to fail one round trip earlier, not to fail louder.
+    expect(called).toBe(false);
+  });
+
   it('sends evidence, and the citation survives a round trip into a replica', async () => {
     // The v1 design requires evidence to cross with a published item, and `sync-apply.ts` already
     // writes it on the way DOWN -- so omitting it here is a one-directional pipe that leaves every

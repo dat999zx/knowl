@@ -1402,6 +1402,20 @@ cloudCommand
         process.exitCode = 1;
         return;
       }
+      if (result.status === 'oversized-field') {
+        // The whole point is the id and the field: the server's own rejection carries neither,
+        // and finding them by hand meant SQL over `cloud_published` (#217).
+        console.error(
+          `${result.offenders.length} staged item(s) carry a field longer than the workspace accepts, `
+          + 'so nothing was sent.',
+        );
+        for (const offender of result.offenders) {
+          console.error(`  ${offender.id}  ${offender.field} is ${offender.length} chars, cap is ${offender.cap}`);
+        }
+        console.error('Shorten the named field with `knowl_update`, then push again.');
+        process.exitCode = 1;
+        return;
+      }
       if (result.status === 'needs-embedding') {
         // Nothing is lost: they stay staged and go out on the next push. Said out loud because a
         // push that quietly sent nothing would look like success.

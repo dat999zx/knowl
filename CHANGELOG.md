@@ -3,6 +3,28 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+**A push no longer fails anonymously on an over-long field.** The cloud contract caps `title`,
+`source` and `conflictKey` at 500 characters; the local store caps nothing, so a research atom
+with a long citation list sat staged until push, where the server's zod rejection came back as
+`Too big: expected string to have <=500 characters` with no path and no id — one line per
+offender, and no way to tell which two atoms of a hundred were meant short of SQL over
+`cloud_published`. The caps are now checked before the request, and the failure names the atom,
+the field and both lengths. Not enforced at write time on purpose: `knowl store` is local-first
+and works with no cloud account, so a machine that will never push does not answer to the
+server's limits (#217).
+
+**`knowl doctor` stops prescribing a fix that breaks publishing.** A repo embedding differently
+from its workspace drew a WARN saying the two sets of items were "invisible to each other", with
+the remedy "align `search.vector`, then reindex". #191 made the mechanism false — each peer is
+searched under its own profile and scored against its own range and floor — and the remedy was
+worse than the warning: a cloud-connected repo's atoms must stay on the server's serving
+profile, so aligning to the workspace would break every `knowl cloud push`. It is now an OK line
+that names the per-profile mode. `workspace add` and `workspace join` still refuse a mismatch,
+but say why they actually refuse: a workspace holds one profile so every repo shares one
+semantic range, which is a policy choice rather than an invisibility claim (#216).
+
 ## 5.16.0 — 2026-09-02
 
 Knowl can be installed from the official MCP registry, and change impact stops being blind to
