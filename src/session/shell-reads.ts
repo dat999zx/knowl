@@ -26,6 +26,12 @@
  *   comparison -- a fabricated staleness on the tier held to >=95% precision. A worktree-aware
  *   version of this could be right, and it is not this one.
  * - **Any segment carrying a redirect.** `cat > file` and `cat >> file` write.
+ * - **A read whose output is piped into anything that does not pass contents on.**
+ *   `cat f | grep x` shows the agent matching lines and `cat f | wc -l` shows it a number --
+ *   precisely what `grep x f` and `wc -l f` show, and both of those are refused above. Left
+ *   alone, the pipe launders a read this module would have declined written the other way
+ *   round. A downstream stage that is itself a content reader (`cat f | head -20`) does pass
+ *   the text through and keeps the read.
  *
  * SEGMENTS, NOT THE FIRST TOKEN. The command is split on `&&`, `||`, `;` and `|` and every
  * segment is classified on its own. Testing only the leading verb is a defect with a receipt:
@@ -76,7 +82,11 @@ const UNRESOLVED = /[*?[\]{}$`~!\\]|\)/;
 /** A redirect anywhere in a segment makes it a write, whatever its verb reads. */
 const REDIRECT = /[<>]/;
 
-const SEGMENT_SPLIT = /\|\||&&|[;|&\n]/;
+/**
+ * What starts an INDEPENDENT command. `|` is deliberately absent: it builds a pipeline, and a
+ * pipeline's stages share one output rather than each reaching the agent on its own.
+ */
+const COMMAND_SPLIT = /&&|\|\||[;&\n]/;
 
 /**
  * Whether a token is an option rather than a path.
@@ -122,6 +132,22 @@ function tokenize(segment: string): string[] {
 }
 
 /**
+ * Whether a pipeline stage hands on the text it was given, rather than a report about it.
+ *
+ * Only the LAST stage of a pipeline reaches the agent, so an earlier stage's file counts as read
+ * only if everything after it passes the contents through. `cat f | head -20` does; `cat f |
+ * grep x` shows matching lines and `cat f | wc -l` shows a number -- which is exactly what
+ * `grep x f` and `wc -l f` show, and both of those are refused above. Without this rule the pipe
+ * launders a read the module would have declined written the other way round: a fabricated
+ * observation on the one tier allowed to interrupt and refuse a write.
+ */
+function stageEmitsContents(stage: string): boolean {
+  const tokens = tokenize(stage.trim());
+  const verb = tokens[0]?.split('/').pop() ?? '';
+  return CONTENT_READERS.has(verb) || (verb === 'sed' && sedIsPrinting(tokens));
+}
+
+/**
  * The literal paths a shell command read, in the order the command names them.
  *
  * Order is the command's own so a caller rendering these produces the same list twice for the
@@ -132,33 +158,39 @@ export function shellReadPaths(command: string): string[] {
   const found: string[] = [];
   const seen = new Set<string>();
 
-  for (const segment of command.split(SEGMENT_SPLIT)) {
-    const trimmed = segment.trim();
-    if (!trimmed || REDIRECT.test(trimmed)) continue;
+  for (const single of command.split(COMMAND_SPLIT)) {
+    const stages = single.split('|');
+    for (const [index, segment] of stages.entries()) {
+      // A stage whose output is consumed by something that does not pass contents on was never
+      // read by the agent at all. See `stageEmitsContents`.
+      if (stages.slice(index + 1).some(later => !stageEmitsContents(later))) continue;
+      const trimmed = segment.trim();
+      if (!trimmed || REDIRECT.test(trimmed)) continue;
 
-    const tokens = tokenize(trimmed);
-    if (tokens.length < 2) continue;
+      const tokens = tokenize(trimmed);
+      if (tokens.length < 2) continue;
 
-    // The verb is the last path component, so `/usr/bin/cat` and `cat` classify alike.
-    const verb = tokens[0].split('/').pop() ?? '';
-    const isSed = verb === 'sed';
-    if (!CONTENT_READERS.has(verb) && !(isSed && sedIsPrinting(tokens))) continue;
+      // The verb is the last path component, so `/usr/bin/cat` and `cat` classify alike.
+      const verb = tokens[0].split('/').pop() ?? '';
+      const isSed = verb === 'sed';
+      if (!CONTENT_READERS.has(verb) && !(isSed && sedIsPrinting(tokens))) continue;
 
-    // `sed`'s first non-option argument is its SCRIPT (`40,60p`), not a path. Dropping only
-    // the leading one is deliberate: `sed -n 1p a.ts b.ts` really does read both files, and a
-    // rule that dropped every non-option after the script would lose the second.
-    let sedScriptPending = isSed;
-    for (const token of tokens.slice(1)) {
-      // The script is consumed BEFORE the option test, because a script like `1,50p` matches
-      // the numeric-option shape exactly. Testing options first let the script pass as a flag
-      // and the real path be eaten in its place, which read as "sed reads nothing, ever".
-      if (sedScriptPending && !token.startsWith('-')) { sedScriptPending = false; continue; }
-      if (isOption(token) || UNRESOLVED.test(token)) continue;
-      // A bare `--` ends options; it is not a path either.
-      if (token === '--' || token === '') continue;
-      if (seen.has(token)) continue;
-      seen.add(token);
-      found.push(token);
+      // `sed`'s first non-option argument is its SCRIPT (`40,60p`), not a path. Dropping only
+      // the leading one is deliberate: `sed -n 1p a.ts b.ts` really does read both files, and a
+      // rule that dropped every non-option after the script would lose the second.
+      let sedScriptPending = isSed;
+      for (const token of tokens.slice(1)) {
+        // The script is consumed BEFORE the option test, because a script like `1,50p` matches
+        // the numeric-option shape exactly. Testing options first let the script pass as a flag
+        // and the real path be eaten in its place, which read as "sed reads nothing, ever".
+        if (sedScriptPending && !token.startsWith('-')) { sedScriptPending = false; continue; }
+        if (isOption(token) || UNRESOLVED.test(token)) continue;
+        // A bare `--` ends options; it is not a path either.
+        if (token === '--' || token === '') continue;
+        if (seen.has(token)) continue;
+        seen.add(token);
+        found.push(token);
+      }
     }
   }
   return found;

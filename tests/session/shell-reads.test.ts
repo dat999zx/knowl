@@ -87,6 +87,26 @@ describe('shellReadPaths', () => {
       expect(shellReadPaths('wc -l src/auth.ts')).toEqual([]);
     });
 
+    it('refuses a read the pipe would otherwise launder past a refused verb', () => {
+      // `grep x f` is refused two tests up because the agent receives matching lines and not
+      // the file. `cat f | grep x` puts the agent in the identical state, so recording it
+      // would let the pipe smuggle in an observation written the other way round -- a
+      // fabricated read on the one tier allowed to interrupt and refuse a write.
+      expect(shellReadPaths('cat src/auth.ts | grep createSession')).toEqual([]);
+      expect(shellReadPaths('cat src/auth.ts | wc -l')).toEqual([]);
+      expect(shellReadPaths('cat package.json | jq .name')).toEqual([]);
+      // Every stage, not only the one next to the pipe.
+      expect(shellReadPaths('cat src/a.ts | tail -20 | grep x')).toEqual([]);
+    });
+
+    it('keeps a read whose downstream stages do pass the contents through', () => {
+      // `cat f | head -20` shows the agent the file's first 20 lines, which is what
+      // `head -20 f` shows -- and that is recorded. The rule is about what reaches the agent,
+      // not about the presence of a pipe.
+      expect(shellReadPaths('cat src/auth.ts | head -20')).toEqual(['src/auth.ts']);
+      expect(shellReadPaths('cat src/auth.ts | sed -n 1,5p')).toEqual(['src/auth.ts']);
+    });
+
     it('refuses any segment carrying a redirect, whatever its verb reads', () => {
       expect(shellReadPaths('cat > src/auth.ts')).toEqual([]);
       expect(shellReadPaths('cat >> src/auth.ts')).toEqual([]);

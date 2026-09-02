@@ -291,10 +291,12 @@ describe('change impact on the hook path', () => {
 
   it('records nothing for a shell command that read no file it can name', async () => {
     // Every one of these is a refusal with its own reason: `git show` served a ref's text and
-    // not the working tree's, `grep` returned matching lines, the glob was never expanded, and
-    // the redirect is a write. See `shell-reads.ts` for each.
+    // not the working tree's, `grep` returned matching lines -- through a pipe just as much as
+    // directly -- the glob was never expanded, and the redirect is a write. See
+    // `shell-reads.ts` for each.
     await shellEvent('session-a', `git show HEAD:${SOURCE}`);
     await shellEvent('session-a', `grep -n createSession ${SOURCE}`);
+    await shellEvent('session-a', `cat ${SOURCE} | grep createSession`);
     await shellEvent('session-a', 'cat src/*.ts');
     await shellEvent('session-a', `cat ${SOURCE} > /tmp/copy.ts`);
     await shellEvent('session-a', 'npm test');
