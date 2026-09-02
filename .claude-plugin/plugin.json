@@ -1,7 +1,7 @@
 {
   "name": "knowl",
   "description": "Persistent memory for Claude Code. Facts are typed, sourced, and retired when they change, so a query returns the current answer rather than every answer it has ever held. Local SQLite in your repository — no API key, nothing uploaded.",
-  "version": "5.15.0",
+  "version": "5.16.0",
   "author": {
     "name": "Knowl"
   },

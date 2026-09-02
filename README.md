@@ -590,6 +590,12 @@ knowl doctor                           # setup, retrieval, and registration
   you, in `knowl status` — and split between the main thread and subagents, because a subagent
   receives no prompt reminder and no server instructions, so its share is the only read you get on
   whether the bootstrap card alone carries the habit.
+- **The write gate's own score** — with change impact on, the gate that would refuse an edit to
+  code another session changed runs in shadow first, recording every refusal it withheld.
+  `knowl status` prints the precision that produced, next to the bar it has to clear before it is
+  allowed to block anything (≥95% over ≥40 adjudicated findings) — so the decision to arm it is
+  made against a number instead of a hunch. Absent entirely until the gate has withheld something:
+  a repo that never ran it has not scored 0%, it has measured nothing.
 
 → [Tasks, sessions, and lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle)
 

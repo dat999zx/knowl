@@ -3,6 +3,103 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## 5.16.0 — 2026-09-02
+
+Knowl can be installed from the official MCP registry, and change impact stops being blind to
+half of how agents actually read code.
+
+**Knowl is publishable to registry.modelcontextprotocol.io.** `server.json` is the manifest, and
+the part worth reading twice is that the registry does not take a publisher's word for ownership:
+it fetches the npm metadata for exactly the version the manifest names and rejects the publish
+unless that tarball carries an `mcpName` matching the server name. 5.15.0 is on npm without that
+field, so the registry would have refused it — this release is the first that carries it, which is
+what makes the publish possible at all. `mcpName` and the server name now have to stay equal
+across two files forever, so `npm run check:versions` gained `server.json` as a fourth file rather
+than the promise getting a gate of its own.
+
+**The read set sees a file opened with `cat`, not only with `Read`.** The read tools were `Read`
+and `NotebookRead`; a file opened through the shell arrived as a command string with no paths at
+all and hit neither the read branch nor the write branch. That is not an edge case — a host
+granted shell access instructs its agent to prefer `cat`, `head` and `sed -n` over the file tools,
+and a session working that way recorded **no reads whatsoever**, silently, in exactly the sessions
+doing the most reading.
+
+What the parser refuses is most of the design, because a read-set row asserts that a session saw
+some text and the `certain` tier spends that assertion by interrupting the agent and refusing its
+write. So `grep`, `rg`, `find`, `ls` and `wc` are declined — they return matches or names, not
+contents — along with `git show <ref>:<path>` (the agent saw a ref's text; the hash recorded would
+be the working tree's), an in-place `sed -i`, any segment carrying a redirect, and any token the
+shell would still have expanded. A read piped into anything that reports on the text rather than
+passing it on (`cat f | grep x`, `cat f | wc -l`) is declined for the same reason its direct form
+is. Shell reads are recorded at file granularity rather than per symbol: the shell says *which*
+file was opened and never how much of it, and expanding a slice into one row per symbol would
+assert beliefs about signatures that never reached the agent.
+
+**The write gate's own precision is printed somewhere.** The measurement had existed since the
+shadow gate did, computing exactly the number the bar in front of enforcing it is written against
+— and nothing imported it. Shadow mode was faithfully recording every refusal an enforcing gate
+*would* have issued into a table whose verdict no command could read, which is the same defect as
+not measuring at all: a score nobody can see cannot promote the thing it measures, and cannot
+retire it either.
+
+```
+🛡️  WRITE GATE (shadow)
+  Refusals withheld:     60
+  Adjudicated:           48 of 60
+  Precision:             87.5% (6 false positive(s))
+  Bar to enforce:        ≥95% over ≥40 adjudicated — not cleared
+```
+
+The bar is printed beside the number on purpose: a precision figure alone invites "87% sounds
+fine". Both halves fail differently and are reported separately, because 100% over three findings
+is not evidence and this block has to say so rather than look like a pass. Nothing has been
+adjudicated yet reads as *not yet measured*, never `0.0%` or `100%` — no evidence is not a perfect
+score.
+
+**The staleness marker names what to open.** A row whose cited files moved used to report a
+condition and leave the reader to diff `affectedPaths` against the working tree to find the
+target. Measurement on exactly that situation — a served claim whose source had moved, with the
+link present and reachable — found agents opened the source in roughly one turn in five and acted
+on the superseded value in about three quarters of the rest, and a content-free freshness cue did
+not move those numbers. What moved them was an instruction naming the target, on the path the
+reader was already on. So the sentence leads with the verb and the filenames and the count follows
+it, capped at three names plus `and N more` so an atom citing thirty paths still reads as one line.
+
+### Fixed
+
+- **A correction elsewhere was promoting the atom it made doubtful.** The session card's three
+  knowledge slots were ordered by `updated_at`, which moves on supersession, archival, visibility
+  promotion and a freshness flip — 72% of items on a 950-item store carry one newer than their
+  `valid_from`. Marking a sibling `needs_review` stamps that column, so correcting one atom
+  promoted unrelated atoms onto the next session's card *for having just been flagged as
+  doubtful*, evicting whatever that session had actually learned. Housekeeping could take all
+  three slots. The card now orders by the open assertion's `valid_from`, which moves on
+  restatement and on nothing else; an item with no open assertion still falls back to `updated_at`.
+- **A fork was handed a second copy of what it already inherited.** A fork is the one subagent
+  that is not context-poor — it inherits the parent's whole conversation, system prompt and tool
+  definitions, so the parent's own session card and the workflow rules were already in front of it
+  when the subagent bootstrap fired. It now gets neither. Only the context is skipped: a fork's
+  reads, writes and tool events stay attributed exactly as any other subagent's.
+- A conflict-repair test asserted an order it had never established. Both rows were created by
+  back-to-back calls, ISO timestamps are millisecond-granular, and on a fast machine the repair
+  fell through to its own id tiebreak — so "newest wins" was decided by which random hex sorted
+  first. Failed 9 times in 12 under a forced tie. The production sort is unchanged; it is
+  deterministic by construction, which is what its comment always claimed.
+
+### Documentation
+
+- `docs/reference.md` carries the staleness marker's new wording, which its previous text quoted
+  verbatim and would otherwise have contradicted, and documents what the shell-read parser
+  recognises and — at greater length — what it declines.
+- The README feature list gains the shadow write gate's precision surface, alongside the recall
+  gap and the un-restated claims report.
+
+### Chores
+
+- GitHub Actions group bumped (`codeql-action` 4.37.8 → 4.37.9, `ai-plugin-scanner-action`
+  1.2.533 → 1.2.551) and dev dependencies (`eslint` 10.8.0 → 10.9.1, `typescript-eslint`
+  8.66 → 8.68).
+
 ## 5.15.0 — 2026-08-27
 
 Knowl can see who it is failing, and stops cutting the card that tells them.

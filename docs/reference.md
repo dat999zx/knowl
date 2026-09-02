@@ -704,10 +704,20 @@ The block is absent entirely on a store whose gate has never withheld anything. 
 not measured 0%, it has measured nothing.
 
 Query results also annotate staleness whatever the posture says: a row whose `affectedPaths`
-were modified after the row was stored carries `pathsChanged` ("n of m affectedPaths modified
-since this was stored — verify"), absent when clean. The field says *verify*, never *wrong*.
-Paths that cannot be resolved against this checkout — absolute, escaping the root — are skipped
-rather than counted, because an unreadable path is absence of evidence, not evidence.
+were modified after the row was stored carries `pathsChanged`, absent when clean. The marker
+names the files rather than only counting them, because a count leaves the reader to diff
+`affectedPaths` against the working tree to find out where to look:
+
+```
+Open src/auth.ts, src/session.ts, then verify this still holds: 2 of 6 affectedPaths modified
+since this was stored.
+```
+
+Three names at most, then `and N more`, so an atom citing thirty paths still reads as one line.
+The count stays behind them: it is what separates "one of nine cited files was touched" from
+"every file this rests on is gone". The field says *verify*, never *wrong*. Paths that cannot be
+resolved against this checkout — absolute, escaping the root — are skipped rather than counted,
+because an unreadable path is absence of evidence, not evidence.
 
 This one is **on by default**, alone among the keys on this page: it adds a field rather than a
 message, so it spends no mid-turn slot and withholds no stop. It is not free either — every
@@ -981,6 +991,17 @@ true`; the MCP tool below is registered only when it is on.
 While it is on, Knowl records which files a session actually read, and tells a session when
 another one has since changed code underneath it — the case where you are working from something
 that was true when you read it and is not any more.
+
+A read counts whether it came through the agent's file tools or through the shell, so a session
+whose agent prefers `cat`, `head` and `sed -n` is seen. Shell reads are recorded at file
+granularity rather than per symbol: the shell says *which* file was opened and never how much of
+it, and expanding a slice into one row per symbol would assert beliefs about signatures that
+never reached the agent. What the parser declines is the more important half — `grep`, `rg`,
+`find`, `ls` and `wc` return matches or names rather than contents, `git show <ref>:<path>`
+serves a ref's text and not the working tree's, an in-place `sed -i` is a write, a redirect makes
+a segment a write whatever its verb reads, and a glob or a `$variable` is not a filename until
+the shell has run. A read piped into anything that reports on the text instead of passing it on
+(`cat f | grep x`, `cat f | wc -l`) is declined for the same reason the direct form is.
 
 Findings come in three tiers. `certain` and `likely` are returned by default; `possible` is
 unmeasured path matching and is returned only when asked for by name. A `certain` finding also
