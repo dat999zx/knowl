@@ -93,6 +93,32 @@ export async function countShadowBlocks(): Promise<number> {
 }
 
 /**
+ * The bar plan §9 puts in front of enforcing the write gate: >=95% precision over >=40 findings.
+ *
+ * Stated here as constants rather than left in prose, because the report that prints the
+ * measurement has to print what the measurement is being judged against. A precision figure with
+ * no bar beside it is a number nobody can act on -- which is how this measurement came to be
+ * computed by a function nothing imported.
+ */
+export const SHADOW_GATE_PRECISION_BAR = 0.95;
+export const SHADOW_GATE_SAMPLE_BAR = 40;
+
+/** The precision measurement plus the sample it was taken over, which the bar also names. */
+export type ShadowGateReport = ShadowGatePrecision & { withheld: number };
+
+/** Everything `knowl status` needs to say about the shadow gate, in one round trip each. */
+export async function shadowGateReport(): Promise<ShadowGateReport> {
+  try {
+    const [withheld, precision] = await Promise.all([countShadowBlocks(), shadowGatePrecision()]);
+    return { withheld, ...precision };
+  } catch {
+    // A store on a schema older than `impact_gate_shadow` reports nothing rather than failing
+    // the whole status command over a block that is absent by design on such a store.
+    return { withheld: 0, adjudicated: 0, falsePositives: 0, precision: null };
+  }
+}
+
+/**
  * `1 − false_positive / adjudicated`, over the findings the shadow rows point at.
  *
  * **Unresolved findings are excluded from both halves rather than counted as correct.** Nothing
