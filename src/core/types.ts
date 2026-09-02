@@ -513,6 +513,30 @@ export interface ProjectConfig {
     checkpoint?: 'off' | 'ask';
   };
   /**
+   * Awareness of the other agent sessions running on this machine.
+   *
+   * The host already keeps a registry of its live sessions and already lets one message
+   * another; what it does not record is what each session is working on, which problem it has
+   * claimed, or what it wrote this turn. These switches govern what Knowl does with that: a
+   * roster at session start, a same-problem card when two sessions hit one failure, a
+   * pre-flight card before a change to something every session stands on, and a stop-time
+   * nudge when a turn's writes invalidated what another session read.
+   *
+   * `enabled` defaults ON and is the only key here that does: the roster prints nothing when a
+   * session is alone, and the collision it prevents is one nobody opts into avoiding until
+   * after it has happened. Everything else follows the `capture` ladder and is absent from
+   * DEFAULT_CONFIG for the reason `impact` and `capture` are.
+   */
+  fleet?: {
+    enabled?: boolean;
+    /** The per-turn delta of what other sessions moved on to. Costs lines every turn of a busy fleet. */
+    digest?: 'off' | 'on';
+    /** The same-problem and shared-surface cards: advice on a channel the agent already gets. */
+    cards?: 'off' | 'shadow' | 'enforce';
+    /** The stop-time "a session read what you just changed" nudge, which withholds a stop and costs a turn. */
+    nudge?: 'off' | 'shadow' | 'enforce';
+  };
+  /**
    * This repo's half of workspace membership. The other half is the workspace manifest
    * listing this repo; either alone is not membership, which is what makes linkage
    * un-forgeable by a cloned repository.

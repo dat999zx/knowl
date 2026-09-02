@@ -20,7 +20,11 @@ const LAYERS: string[][] = [
   // Persistence and the knowledge lifecycle.
   ['store'],
   // Direct consumers of the store that no other feature layer sits beneath.
-  ['ai', 'workspace', 'skills', 'code'],
+  //
+  // `fleet` reads the host's on-disk session registry and Knowl's own session tables, and is
+  // consumed by `session` (the hook path), `mcp` and `cli`. It has no reason to reach any
+  // feature layer, so it sits with the other direct store consumers.
+  ['ai', 'workspace', 'skills', 'code', 'fleet'],
   // Feature layers built on the above.
   //
   // `cloud` sits here rather than one layer down even though today it imports only `core`.

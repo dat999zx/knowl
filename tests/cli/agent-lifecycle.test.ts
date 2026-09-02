@@ -42,13 +42,19 @@ describe('agent lifecycle CLI', () => {
       tool_response: { stdout: `sk-test-123456789012345678901234567890${'x'.repeat(1_100_000)}`, exit_code: 0 },
     })]) as NodeJS.ReadStream);
 
-    expect(payload).toEqual({
+    // `stdout` is allowlisted for the fleet's error signature, tail-bounded: the 1.1 MB body
+    // is never held, and the head -- where this payload's secret-shaped token sits -- is the
+    // part that goes. Everything unnamed is still discarded.
+    const { stdout, ...response } = payload.tool_response as Record<string, unknown>;
+    expect({ ...payload, tool_response: response }).toEqual({
       session_id: 'stream-session',
       cwd: TEST_DIR,
       tool_name: 'Bash',
       tool_input: { command: 'npm test' },
       tool_response: { exit_code: 0 },
     });
+    expect(String(stdout)).toHaveLength(2_000);
+    expect(String(stdout)).not.toContain('sk-test');
   });
 
   it('retains subagent identity and Knowl write arguments while still discarding noise', async () => {

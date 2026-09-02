@@ -25,6 +25,21 @@ that names the per-profile mode. `workspace add` and `workspace join` still refu
 but say why they actually refuse: a workspace holds one profile so every repo shares one
 semantic range, which is a policy choice rather than an invisibility claim (#216).
 
+**The sessions on one machine can see each other.** Claude Code keeps a registry of
+its live sessions and lets one message another, but records nothing about what each is doing —
+so two sessions hit the same failure and both start fixing it, and a third changes the hook every
+one of them is standing on. Knowl now keeps the other half in one machine-level file,
+`~/.knowl/fleet.db`: what each session was asked, what it wrote this turn, its last error, and
+which problem it has claimed by editing files after seeing it. `knowl fleet` lists it from any
+terminal, inside a project or not, and the `knowl_fleet` MCP tool lists it to an agent — registered
+unless `fleet.enabled` is `false`, the one switch here that ships on, because the roster prints
+nothing when a session is alone and nobody opts into it until after the collision. The rest
+follows the capture ladder and ships quiet: `fleet.digest` (`off`), `fleet.cards` (`enforce`, since
+a card is advice and never a refusal) and `fleet.nudge` (`shadow`, since it withholds a stop).
+`knowl posture maximal` now also turns the digest on and arms the nudge, and every card shown or
+shadowed lands in a ledger whose precision `knowl fleet --cards` prints — nothing here may graduate
+from advising to refusing without that number.
+
 ## 5.16.0 — 2026-09-02
 
 Knowl can be installed from the official MCP registry, and change impact stops being blind to

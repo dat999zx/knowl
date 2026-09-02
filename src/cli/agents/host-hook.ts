@@ -207,7 +207,17 @@ function questionDecision(input: Record<string, unknown>, raw: Record<string, un
   return decided.length > 0 ? decided.join('; ').slice(0, MAX_STRING) : undefined;
 }
 
-function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'toolName' | 'knowlTool' | 'knowlToolName' | 'knowlChangeKeys' | 'captureKey'> {
+/**
+ * The tail of what a failed command printed, joined stderr-then-stdout, for the fleet's error
+ * signature. Both halves arrive tail-bounded from the stdin filter; this bounds the join.
+ */
+function failedCommandOutput(raw: Record<string, unknown>): string | undefined {
+  const response = recordValue(raw.tool_response) ?? recordValue(raw.toolResponse);
+  const text = [stringValue(response?.stderr), stringValue(response?.stdout)].filter(Boolean).join('\n');
+  return text ? text.slice(-MAX_STRING) : undefined;
+}
+
+function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: Record<string, unknown>): Pick<NormalizedHostHook, 'type' | 'payload' | 'status' | 'toolName' | 'knowlTool' | 'knowlToolName' | 'knowlChangeKeys' | 'captureKey' | 'errorText'> {
   const input = toolInput(raw);
   const toolName = stringValue(raw.tool_name) ?? stringValue(raw.toolName) ?? '';
   const knowlTool = /knowl/i.test(toolName);
@@ -220,7 +230,16 @@ function toolEvent(host: HookHost, eventName: string, projectRoot: string, raw: 
   const named = toolName ? { toolName } : {};
   const isShell = hostProfile(host).isShellEvent(eventName, toolName);
   // Shell events already fingerprint on the command itself, so they were never affected.
-  if (isShell) return { ...commandEvent(projectRoot, raw), status: typeof raw.exit_code === 'number' && raw.exit_code !== 0 ? 'failed' : undefined, ...named, knowlTool, ...changeKeys };
+  if (isShell) {
+    const command = commandEvent(projectRoot, raw);
+    const failed = typeof raw.exit_code === 'number' && raw.exit_code !== 0;
+    // A non-zero exit is a problem this session hit, and the text is the only way to tell
+    // whether another session hit the same one. Attached only on failure, so a passing
+    // command's output never leaves the hook process at all.
+    const exitedNonZero = failed || (typeof command.payload.exitCode === 'number' && command.payload.exitCode !== 0);
+    const errorText = exitedNonZero ? failedCommandOutput(raw) : undefined;
+    return { ...command, status: failed ? 'failed' : undefined, ...named, knowlTool, ...changeKeys, ...(errorText ? { errorText } : {}) };
+  }
 
   const captureKey = toolCaptureKey(toolName, input);
   const decision = questionDecision(input, raw);
@@ -394,6 +413,10 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
   }
   if (event === 'turn-stop' || event === 'session-stop') {
     const failed = eventName === 'StopFailure' || stringValue(raw.status) === 'failed' || Boolean(stringValue(raw.error) || recordValue(raw.error));
+    // Claude's `Stop` carries the turn's final assistant text. Kept beside the payload, never
+    // in it -- see `assistantMessage` on the type -- and only on a clean stop, since a failed
+    // one has no answer to summarise.
+    const assistantMessage = event === 'turn-stop' && !failed ? stringValue(raw.last_assistant_message) : undefined;
     return {
       host: normalizedHost,
       event,
@@ -401,10 +424,17 @@ function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record
       projectRoot,
       status: failed ? 'failed' : 'finished',
       payload: failurePayload(raw, failed),
+      ...(assistantMessage ? { assistantMessage } : {}),
     };
   }
   if (eventName === 'PostToolUseFailure' || eventName === 'postToolUseFailure') {
-    return { host: normalizedHost, event, ...ids, projectRoot, type: 'error', status: 'failed', payload: { message: stringValue(raw.error) ?? 'Tool failed' } };
+    const nestedError = recordValue(raw.error);
+    const errorText = stringValue(raw.error) ?? stringValue(nestedError?.message) ?? stringValue(nestedError?.error);
+    return {
+      host: normalizedHost, event, ...ids, ...agent, projectRoot, type: 'error', status: 'failed',
+      payload: { message: stringValue(raw.error) ?? 'Tool failed' },
+      ...(errorText ? { errorText } : {}),
+    };
   }
   return { host: normalizedHost, event, ...ids, ...agent, projectRoot, ...toolEvent(normalizedHost, eventName, projectRoot, raw) };
 }

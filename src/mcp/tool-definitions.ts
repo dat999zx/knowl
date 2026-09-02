@@ -234,6 +234,42 @@ export const WORKSPACE_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
 ];
 
+/**
+ * The other Claude Code sessions on this machine, read-only.
+ *
+ * Registered unless the repo turned fleet awareness OFF -- the opposite default from every set
+ * above, for the reason `isFleetEnabled` gives: a session that is alone gets a short answer
+ * from a tool it never needed, and a session that is not alone is the one about to fix an
+ * error a neighbour already claimed. One tool on the budget rule `knowl_impact` cites.
+ *
+ * It lists and never messages. Messaging is the host's own `SendMessage`, which the description
+ * names by its real arguments rather than wrapping, so the agent reaches the session through
+ * the channel that can actually deliver.
+ */
+export const FLEET_TOOL_DEFINITIONS: ToolDefinition[] = [
+        {
+          name: 'knowl_fleet',
+          description: 'The other live Claude Code sessions on this machine: what each is working on, the files it is editing this turn, the problem it has claimed, and whether it can be messaged. Use before fixing an error that may be shared, before changing hooks, config, migrations or the knowl install, or when the user asks who else is running. Message a session with SendMessage(to:name); SendMessage(to:name, notify_when_idle:true) waits for it to finish.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              // Not `repo`: on this surface a property of that name is the act-as rebind
+              // (`callToolAsRepo` reads it off the raw arguments and runs the call as that linked
+              // repo), and a filter spelled the same way was intercepted before the handler saw
+              // it -- refused with "not in a workspace" on every call that named a repo.
+              inRepo: {
+                type: 'string', maxLength: 200,
+                description: 'Only sessions in this repo (workspace repo name or folder name). Omit for every session.',
+              },
+              cards: {
+                type: 'boolean',
+                description: 'Also report the fleet card ledger: how many cards were shown or shadowed on this machine, how many were adjudicated, and the precision that decides whether a card may ever become more than advice.',
+              },
+            },
+          },
+        },
+];
+
 /** Every tool the server always offers, in listing order. */
 export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {

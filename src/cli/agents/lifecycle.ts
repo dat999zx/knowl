@@ -19,7 +19,22 @@ const ROOT_FIELDS = new Set([
   // Claude subagent identity: without these the agent-scoped binding degrades to the
   // shared main-thread row and SubagentStart/Stop cannot resolve an agent at all.
   'agent_id', 'agentId', 'agent_type', 'agentType',
+  // The turn's ask and the turn's answer, for the fleet's one-line "what is this session on".
+  // `prompt` was already read by the correction-signal classifier in `host-hook.ts`, which
+  // could never fire in production because this list dropped the field before it arrived --
+  // a hook that computes from a field it never receives passes every test that bypasses stdin.
+  // Neither reaches `payload`; see `errorText` / `assistantMessage` on NormalizedHostHook.
+  'prompt', 'last_assistant_message',
 ]);
+/**
+ * Keys whose LAST characters matter more than their first.
+ *
+ * Every retained string keeps its head, which is right for a prompt or a path and wrong for
+ * command output: a failing test run prints its banner first and its failure last, so the
+ * head of `stdout` is the list of files that passed. These keep the tail instead, at the same
+ * bound, so the line that names the failure survives.
+ */
+const TAIL_FIELDS = new Set(['error', 'stdout', 'stderr']);
 // Knowl write-tool arguments are retained so a new commit can be recognised as the
 // caller's own work. They are compared in memory and never persisted: only summary,
 // command, and changedPaths reach the stored event payload.
@@ -33,8 +48,11 @@ const TOOL_DISCRIMINATORS = ['pattern', 'glob', 'query', 'url'];
 const NESTED_FIELDS: Record<string, Set<string>> = {
   tool_input: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', 'notebook_path', ...TOOL_DISCRIMINATORS, ...KNOWL_WRITE_ARGS]),
   toolInput: new Set(['command', 'changedPaths', 'changed_paths', 'file_path', 'filePath', 'path', 'notebook_path', ...TOOL_DISCRIMINATORS, ...KNOWL_WRITE_ARGS]),
-  tool_response: new Set(['exit_code', 'exitCode']),
-  toolResponse: new Set(['exit_code', 'exitCode']),
+  // `stdout`/`stderr` are kept here, tail-bounded, for the fleet's error signature and never
+  // persisted: `appendMemorySessionEvent` strips both keys, and the fleet reduces them to one
+  // line before it writes anything.
+  tool_response: new Set(['exit_code', 'exitCode', 'stdout', 'stderr']),
+  toolResponse: new Set(['exit_code', 'exitCode', 'stdout', 'stderr']),
   error: new Set(['code', 'type', 'message', 'error']),
 };
 // Fields kept inside an allowlisted array of objects, e.g. tool_input.atoms[i].
@@ -65,23 +83,37 @@ function shouldDiscardPath(stack: Array<string | number | null>): boolean {
 
 function retainOnlyBoundedStrings() {
   let chunks: string[] | undefined;
+  // The key the next string value belongs to. Keys arrive packed (`packKeys: true`) as one
+  // `keyValue` token ahead of their value, so this is exact rather than inferred.
+  let currentKey: string | undefined;
+  let keepTail = false;
   return new Transform({
     objectMode: true,
     transform(token, _encoding, callback) {
+      if (token.name === 'keyValue') currentKey = String(token.value);
       if (token.name === 'startString') {
         chunks = [];
+        keepTail = currentKey !== undefined && TAIL_FIELDS.has(currentKey);
         callback();
         return;
       }
       if (chunks) {
         if (token.name === 'stringChunk') {
-          const retained = chunks.join('').length;
-          if (retained < MAX_RETAINED_STRING) chunks.push(String(token.value).slice(0, MAX_RETAINED_STRING - retained));
+          if (keepTail) {
+            // Rolling window: never hold more than twice the bound, never lose the end.
+            chunks.push(String(token.value));
+            const joined = chunks.join('');
+            if (joined.length > 2 * MAX_RETAINED_STRING) chunks = [joined.slice(-MAX_RETAINED_STRING)];
+          } else {
+            const retained = chunks.join('').length;
+            if (retained < MAX_RETAINED_STRING) chunks.push(String(token.value).slice(0, MAX_RETAINED_STRING - retained));
+          }
           callback();
           return;
         }
         if (token.name === 'endString') {
-          const value = chunks.join('').slice(0, MAX_RETAINED_STRING);
+          const joined = chunks.join('');
+          const value = keepTail ? joined.slice(-MAX_RETAINED_STRING) : joined.slice(0, MAX_RETAINED_STRING);
           chunks = undefined;
           callback(null, { name: 'stringValue', value });
           return;

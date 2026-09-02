@@ -4,6 +4,11 @@ import path from 'node:path';
 import { NormalizedHostHook } from '../core/host-hook-types.js';
 import { renderChangeCard, type ImpactCardEntry } from './change-card.js';
 import { hostProfile } from './hosts/index.js';
+import { hookSpecificOutput } from './hosts/claude.js';
+import {
+  fleetObserveToolEventBestEffort, fleetPrecheckBestEffort, fleetSessionStartBestEffort, fleetSessionStopBestEffort,
+  fleetToolCardBestEffort, fleetTurnStopBestEffort,
+} from './fleet-lifecycle.js';
 import { indexFile, listCodeSymbols } from '../code/symbol-index.js';
 import {
   areSkillNudgesEnabled, driftReminderEvery, isDriftBackoffEnabled, loadConfig, shouldSendDriftReminder,
@@ -744,6 +749,28 @@ async function observeToolTouch(input: NormalizedHostHook, projectId: string): P
  * write: the worst outcome this subsystem can produce is not a missed detection, it is a person
  * whose agent cannot edit a file because a memory server had an opinion about it.
  */
+/**
+ * The fleet's pre-flight, on the same pre-tool event the write gate answers.
+ *
+ * Advice, never a verdict: it rides the pre-tool `additionalContext` envelope, which the
+ * Anthropic-shaped hosts read as context for the call about to run. Only those hosts get it
+ * -- the envelope is theirs, and a host whose pre-tool event carries no context channel would
+ * take the JSON as noise in front of every write.
+ */
+async function fleetPreflightOutput(input: NormalizedHostHook): Promise<Record<string, unknown> | undefined> {
+  if (input.hostEvent !== 'PreToolUse') return undefined;
+  const card = await fleetPrecheckBestEffort(input, await loadConfig(input.projectRoot).catch(() => null));
+  return card ? hookSpecificOutput('PreToolUse', card) : undefined;
+}
+
+/** The fleet's stop verdict, wrapped in the host's stop envelope when the host has one. */
+async function evaluateFleetStop(input: NormalizedHostHook, deliverable: boolean): Promise<Record<string, unknown> | undefined> {
+  const profile = hostProfile(input.host);
+  const config = await loadConfig(input.projectRoot).catch(() => null);
+  const reason = await fleetTurnStopBestEffort(input, config, deliverable && typeof profile.stopContext === 'function');
+  return reason && profile.stopContext ? profile.stopContext(reason) : undefined;
+}
+
 async function runWriteGate(input: NormalizedHostHook): Promise<HostLifecycleResult> {
   try {
     if (!toolWritesFile(input)) return { accepted: true };
@@ -758,10 +785,17 @@ async function runWriteGate(input: NormalizedHostHook): Promise<HostLifecycleRes
 
     const session = await findHostSession(bindingKey(input, 'turn'))
       ?? await findHostSession(bindingKey(input, 'session'));
-    if (!session) return { accepted: true };
+    if (!session) {
+      const preflight = await fleetPreflightOutput(input);
+      return preflight ? { accepted: true, hostOutput: preflight } : { accepted: true };
+    }
 
     const decision = await shouldRefuseWrite(input.projectRoot, session.id, paths);
-    if (!decision.deny || !decision.reason) return { accepted: true, sessionId: session.id };
+    if (!decision.deny || !decision.reason) {
+      // Nothing to refuse, so the slot is free for advice: who else is standing on this file.
+      const preflight = await fleetPreflightOutput(input);
+      return preflight ? { accepted: true, sessionId: session.id, hostOutput: preflight } : { accepted: true, sessionId: session.id };
+    }
     // A host that declines to produce an envelope costs this one refusal: the gate has already
     // spent its one-shot, so the write proceeds and the finding stays open for the card to carry.
     // Silence is the right degradation -- the alternative is holding the block armed for a host
@@ -1016,13 +1050,18 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       describeAutoDrift(drift),
       describeObservedUsePromotions(standing),
     ].filter(Boolean).join('\n\n'), DEFAULT_CONTEXT_MAX_CHARS);
-    const recentBudget = warning
-      ? Math.max(0, DEFAULT_CONTEXT_MAX_CHARS - warning.length - 2)
+    // The roster of other live sessions rides below the warnings and above the knowledge, and
+    // is charged against the cap the same way: it is empty for a session that is alone, and
+    // for a fleet of twenty it is the few lines that tell the agent the others exist at all.
+    const roster = await fleetSessionStartBestEffort(input, await loadConfig(input.projectRoot).catch(() => null));
+    const preface = truncateText([warning, roster].filter(Boolean).join('\n\n'), DEFAULT_CONTEXT_MAX_CHARS);
+    const recentBudget = preface
+      ? Math.max(0, DEFAULT_CONTEXT_MAX_CHARS - preface.length - 2)
       : DEFAULT_CONTEXT_MAX_CHARS;
     const started = await bootstrapWithHandoff(projectId, input, 'session', true, recentBudget);
     // No second truncation here: `started.context` was already composed to `recentBudget`.
-    const context = warning
-      ? (started.context ? `${warning}\n\n${started.context}` : warning)
+    const context = preface
+      ? (started.context ? `${preface}\n\n${started.context}` : preface)
       : started.context;
     return {
       accepted: true,
@@ -1186,11 +1225,15 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
         : null;
       const impact = input.status === 'failed' ? [] : await runToolEventImpact(input, started.session.id);
       await observeToolTouch(input, projectId);
+      // The fleet sees every event, failed ones included: a failure is the signal that
+      // matters most to it. What it SAYS is decided in the slot below, like everything else.
+      await fleetObserveToolEventBestEffort(input, captureConfig);
       // Adaptive continuation reminder: only nudge Claude after a run of tool calls
       // that ignored Knowl. Using a Knowl tool resets the drift counter, so an agent
       // that is querying/storing memory never sees a reminder.
       let hostOutput: Record<string, unknown> | undefined;
       let changes: ChangeSummary | undefined;
+      let fleetCard: string | undefined;
       if (input.event === 'session-event' && input.status !== 'failed') {
         const key = bindingKey(input, 'turn');
         const profile = hostProfile(input.host);
@@ -1240,6 +1283,14 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
           // counter on the same reasoning as the skill nudges below.
           await resetHostSuccessfulToolCount(key);
           hostOutput = profile.midTurnContext(lessonCard);
+        } else if (profile.midTurnContext('') !== undefined && (fleetCard = await fleetToolCardBestEffort(input, captureConfig))) {
+          // Below the change card and the lesson, above the capture nudges: another session
+          // already fixing this error, or a shared surface this command just moved. Computed
+          // lazily here rather than beside the other cards, because its ledger records a card
+          // as shown when it is rendered, and a card displaced by the change card would
+          // otherwise spend its one appearance on nothing. It is not a "go use memory"
+          // signal, so it leaves the drift counter alone.
+          hostOutput = profile.midTurnContext(fleetCard);
         } else if (profile.midTurnContext('') !== undefined) {
           // A change card always wins the single mid-turn slot; below it, a specific
           // capture suggestion beats the generic continuation reminder.
@@ -1360,7 +1411,8 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       // is only spent on delivery, so it keeps its chance at a later stop.
       const lessonStop = await evaluatePendingLessonStop(input);
       const silence = lessonStop ? undefined : await evaluateSilenceNudge(input);
-      const stopOutput = lessonStop ?? silence;
+      const fleetStop = await evaluateFleetStop(input, !lessonStop && !silence);
+      const stopOutput = lessonStop ?? silence ?? fleetStop;
       await closeHostSessionBinding(key);
       return { accepted: true, sessionId: session.id, ...(stopOutput ? { hostOutput: stopOutput } : {}) };
     }
@@ -1388,12 +1440,19 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // generic "stored nothing" verdict, and at most one of them may withhold this stop.
     const lessonStop = await evaluatePendingLessonStop(input);
     const silence = lessonStop ? undefined : await evaluateSilenceNudge(input);
-    const stopOutput = lessonStop ?? silence;
+    // Third and last of the stop verdicts, on the same rule: at most one may withhold a stop,
+    // and the fleet's is the most general of the three. The turn is closed in the fleet store
+    // either way; only the nudge waits its turn.
+    const fleetStop = await evaluateFleetStop(input, !lessonStop && !silence);
+    const stopOutput = lessonStop ?? silence ?? fleetStop;
     await closeHostSessionBinding(key);
     return { accepted: true, sessionId: session.id, promotion, ...(stopOutput ? { hostOutput: stopOutput } : {}) };
   }
 
   const key = bindingKey(input, 'session');
+  // The fleet learns the session is over before the bindings are consulted: a session whose
+  // binding was already lost is still a session the roster must stop listing.
+  await fleetSessionStopBestEffort(input, await loadConfig(input.projectRoot).catch(() => null));
   const session = await findHostSession(key);
   if (!session) {
     await closeHostSessionBindings(bindingKey(input, 'turn'));

@@ -199,8 +199,11 @@ describe('MCP Server Layer', () => {
   it('keeps tools/list exactly aligned with the canonical inventory', async () => {
     const res = await runRpcRequest('tools/list');
     const names = res.result.tools.map((tool: any) => tool.name);
-    expect([...names].sort()).toEqual([...KNOWL_MCP_TOOL_NAMES].sort());
-    expect(new Set(names).size).toBe(27);
+    // Plus the one gated tool whose gate ships open. `knowl_fleet` is listed unless a repo turns
+    // it off and stays out of the guidance inventory all the same, because a gated tool is not a
+    // promise every session can rely on -- so a plain config sees the canonical set and it.
+    expect([...names].sort()).toEqual([...KNOWL_MCP_TOOL_NAMES, 'knowl_fleet'].sort());
+    expect(new Set(names).size).toBe(28);
   });
 
   it('lists both resume tools', async () => {
