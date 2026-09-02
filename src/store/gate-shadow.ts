@@ -93,17 +93,6 @@ export async function countShadowBlocks(): Promise<number> {
 }
 
 /**
- * `1 − false_positive / adjudicated`, over the findings the shadow rows point at.
- *
- * **Unresolved findings are excluded from both halves rather than counted as correct.** Nothing
- * forces adjudication, so early on the unresolved set is the larger one; treating those blocks as
- * justified is how a precision number talks its way past the bar it was meant to clear. The
- * denominator is deliberately the adjudicated count and not `countShadowBlocks()`.
- *
- * The join is on `impact_findings`, which `sweepReadSets` does not touch -- so this survives the
- * GC that hard-deletes released read-set rows underneath it.
- */
-/**
  * The bar plan §9 puts in front of enforcing the write gate: >=95% precision over >=40 findings.
  *
  * Stated here as constants rather than left in prose, because the report that prints the
@@ -129,6 +118,17 @@ export async function shadowGateReport(): Promise<ShadowGateReport> {
   }
 }
 
+/**
+ * `1 − false_positive / adjudicated`, over the findings the shadow rows point at.
+ *
+ * **Unresolved findings are excluded from both halves rather than counted as correct.** Nothing
+ * forces adjudication, so early on the unresolved set is the larger one; treating those blocks as
+ * justified is how a precision number talks its way past the bar it was meant to clear. The
+ * denominator is deliberately the adjudicated count and not `countShadowBlocks()`.
+ *
+ * The join is on `impact_findings`, which `sweepReadSets` does not touch -- so this survives the
+ * GC that hard-deletes released read-set rows underneath it.
+ */
 export async function shadowGatePrecision(): Promise<ShadowGatePrecision> {
   const rows = await getClient().execute(
     `SELECT COUNT(*) AS adjudicated,
