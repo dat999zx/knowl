@@ -1155,6 +1155,14 @@ knowl_feedback({
 collection also uses this heat: an item is hot when it has at least three retrievals or was
 retrieved within the last 21 days.
 
+Feedback also moves standing. An item reported useful on two separate days is promoted from
+`asserted` to `verified` — days rather than events, so a burst of confirmations inside one
+session counts once — and a correction demotes it immediately. Promotion is checked when the
+feedback lands and again at every session start, so an item whose confirmations accumulated
+while nothing was evaluating them is promoted on the next session rather than never. Items are
+also promoted on observed use alone when they answer distinct questions across distinct days and
+cite files the drift check has had the chance to contradict.
+
 ## Workspaces
 
 Knowl workspaces provide linked federation across related repositories without merging their

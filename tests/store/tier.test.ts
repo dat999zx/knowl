@@ -10,6 +10,7 @@ import {
   OBSERVED_USE_MAX_PER_RUN,
   OBSERVED_USE_MIN_DAYS,
   OBSERVED_USE_MIN_QUESTIONS,
+  promoteByConfirmedFeedback,
   promoteByObservedUse,
   VERIFY_THRESHOLD,
 } from '../../src/store/tier.js';
@@ -53,16 +54,49 @@ describe('evidence tier and provenance', () => {
     expect(legacy.provenance).toBeNull();
   });
 
+  /**
+   * One confirmed-useful feedback event, `day` calendar days after the item's CURRENT
+   * `tier_since`. Anchored to the boundary rather than the wall clock for the reason the
+   * observed-use suite gives: an edit or a correction moves the boundary, and wall-clock offsets
+   * would leave pre-reset rows sitting after the new boundary. A minute past the boundary so the
+   * `>=` test below is the only one that exercises the boundary instant itself.
+   */
+  async function confirmOnDay(itemId: string, day: number) {
+    const since = Date.parse((await repo.getKnowledgeItem(itemId))!.tierSince!);
+    await recordKnowledgeFeedback({
+      itemId, used: true, useful: true,
+      retrievedAt: new Date(since + day * 86_400_000 + 60_000).toISOString(),
+    });
+  }
+
+  /** VERIFY_THRESHOLD confirmations on VERIFY_THRESHOLD distinct days. */
+  async function confirmAcrossDays(itemId: string) {
+    for (let day = 0; day < VERIFY_THRESHOLD; day++) await confirmOnDay(itemId, day);
+  }
+
+  /**
+   * Put the item's boundary a month back. The reset tests need the climb to sit in the PAST:
+   * a reset moves `tier_since` forward by milliseconds, so confirmations seeded on days after
+   * a just-created boundary would still clear the new one and the test would pass an item it
+   * is supposed to refuse -- the same trap the observed-use suite records below.
+   */
+  async function backdateBoundary(itemId: string) {
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET tier_since = ? WHERE id = ?',
+      args: [new Date(Date.now() - 30 * 86_400_000).toISOString(), itemId],
+    });
+  }
+
   it('promotes only at the confirmation threshold, then demotes on correction', async () => {
     const item = await repo.createKnowledgeItem(projectId, {
       category: 'fact', title: 'Useful fact', content: 'Confirmed by use twice.',
     });
 
-    await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+    await confirmOnDay(item.id, 0);
     expect(await applyFeedbackToTier(projectId, item.id, { useful: true })).toBeNull();
     expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
 
-    await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+    await confirmOnDay(item.id, 1);
     const promoted = await applyFeedbackToTier(projectId, item.id, { useful: true });
     expect(promoted).toEqual({ itemId: item.id, tier: 'verified', reason: 'promoted' });
     expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('verified');
@@ -70,6 +104,31 @@ describe('evidence tier and provenance', () => {
     const demoted = await applyFeedbackToTier(projectId, item.id, { causedCorrection: true });
     expect(demoted).toEqual({ itemId: item.id, tier: 'asserted', reason: 'demoted' });
     expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+  });
+
+  // The comment above VERIFY_THRESHOLD promised "two independent confirmations" and the query
+  // counted rows, so two knowl_feedback calls in one turn — one agent, one item, one source —
+  // promoted. Measured on the project's own store: every item the row count would have promoted
+  // was a burst inside a single session. Days are the unit the sibling path already uses.
+  it('refuses a burst of confirmations inside one day — independent means separate days', async () => {
+    const item = await repo.createKnowledgeItem(projectId, {
+      category: 'fact', title: 'Bursty fact', content: 'Confirmed twice in seven minutes.',
+    });
+    const since = Date.parse((await repo.getKnowledgeItem(item.id))!.tierSince!);
+    for (let minute = 1; minute <= VERIFY_THRESHOLD * 2; minute++) {
+      await recordKnowledgeFeedback({
+        itemId: item.id, used: true, useful: true,
+        retrievedAt: new Date(since + minute * 60_000).toISOString(),
+      });
+    }
+
+    expect(await applyFeedbackToTier(projectId, item.id, { useful: true })).toBeNull();
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+
+    // The same item, confirmed once more on another day, has now been confirmed independently.
+    await confirmOnDay(item.id, 1);
+    expect(await applyFeedbackToTier(projectId, item.id, { useful: true }))
+      .toEqual({ itemId: item.id, tier: 'verified', reason: 'promoted' });
   });
 
   it('a content edit resets verified to asserted — verified means verified-verbatim', async () => {
@@ -91,23 +150,23 @@ describe('evidence tier and provenance', () => {
     const item = await repo.createKnowledgeItem(projectId, {
       category: 'fact', title: 'Reworded fact', content: 'Original wording.',
     });
-    for (let i = 0; i < VERIFY_THRESHOLD; i++) {
-      await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
-      await applyFeedbackToTier(projectId, item.id, { useful: true });
-    }
+    await backdateBoundary(item.id);
+    await confirmAcrossDays(item.id);
+    await applyFeedbackToTier(projectId, item.id, { useful: true });
     expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('verified');
 
     await repo.updateKnowledgeItem(item.id, { content: 'A materially different claim.' });
     expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
 
     // One confirmation of the NEW wording is below the threshold. The pre-edit events
-    // confirmed words that no longer exist and must not count toward this promotion.
-    await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+    // confirmed words that no longer exist and must not count toward this promotion — and they
+    // sit on days after the new boundary only if the boundary were ignored, which is the point.
+    await confirmOnDay(item.id, 0);
     expect(await applyFeedbackToTier(projectId, item.id, { useful: true })).toBeNull();
     expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
 
     // A full threshold of post-edit confirmations does promote again.
-    await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+    await confirmOnDay(item.id, 1);
     expect(await applyFeedbackToTier(projectId, item.id, { useful: true }))
       .toEqual({ itemId: item.id, tier: 'verified', reason: 'promoted' });
   });
@@ -126,13 +185,14 @@ describe('evidence tier and provenance', () => {
     const boundary = (await repo.getKnowledgeItem(item.id))!.tierSince!;
     expect(boundary).toBeTruthy();
 
-    for (let i = 0; i < VERIFY_THRESHOLD; i++) {
-      await getClient().execute({
-        sql: `INSERT INTO knowledge_access (id, knowledge_item_id, surface, rank, useful, retrieved_at)
-              VALUES (?, ?, 'feedback', 1, 1, ?)`,
-        args: [`boundary-${i}`, item.id, boundary],
-      });
-    }
+    // One row AT the boundary instant, and the rest on later days: the boundary row is the
+    // one this test is about, and it must count as a day of its own.
+    await getClient().execute({
+      sql: `INSERT INTO knowledge_access (id, knowledge_item_id, surface, rank, useful, retrieved_at)
+            VALUES (?, ?, 'feedback', 1, 1, ?)`,
+      args: ['boundary-0', item.id, boundary],
+    });
+    for (let day = 1; day < VERIFY_THRESHOLD; day++) await confirmOnDay(item.id, day);
 
     expect(await applyFeedbackToTier(projectId, item.id, { useful: true }))
       .toEqual({ itemId: item.id, tier: 'verified', reason: 'promoted' });
@@ -142,10 +202,9 @@ describe('evidence tier and provenance', () => {
     const item = await repo.createKnowledgeItem(projectId, {
       category: 'fact', title: 'Corrected fact', content: 'A claim proven wrong.',
     });
-    for (let i = 0; i < VERIFY_THRESHOLD; i++) {
-      await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
-      await applyFeedbackToTier(projectId, item.id, { useful: true });
-    }
+    await backdateBoundary(item.id);
+    await confirmAcrossDays(item.id);
+    await applyFeedbackToTier(projectId, item.id, { useful: true });
     expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('verified');
 
     await recordKnowledgeFeedback({ itemId: item.id, used: true, causedCorrection: true });
@@ -153,7 +212,7 @@ describe('evidence tier and provenance', () => {
     expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
 
     // Proof of wrongness must cost more than a single subsequent confirmation.
-    await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+    await confirmOnDay(item.id, 0);
     expect(await applyFeedbackToTier(projectId, item.id, { useful: true })).toBeNull();
     expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
   });
@@ -170,8 +229,13 @@ describe('evidence tier and provenance', () => {
     });
     expect((await repo.getKnowledgeItem(item.id))?.tierSince).toBeNull();
 
-    for (let i = 0; i < VERIFY_THRESHOLD; i++) {
-      await recordKnowledgeFeedback({ itemId: item.id, used: true, useful: true });
+    // No boundary to anchor to, so the days are absolute — and in the past, which is where a
+    // pre-column row's confirmations actually are.
+    for (let day = 0; day < VERIFY_THRESHOLD; day++) {
+      await recordKnowledgeFeedback({
+        itemId: item.id, used: true, useful: true,
+        retrievedAt: new Date(Date.UTC(2026, 6, 20 + day, 12)).toISOString(),
+      });
     }
     expect(await applyFeedbackToTier(projectId, item.id, { useful: true }))
       .toEqual({ itemId: item.id, tier: 'verified', reason: 'promoted' });
@@ -421,5 +485,132 @@ describe('standing earned by observed use', () => {
     // Use of the new wording earns it back.
     await seedRetrievals(item.id, OBSERVED_USE_MIN_DAYS);
     expect((await promoteByObservedUse(projectId)).promoted).toHaveLength(1);
+  });
+});
+
+// Its own root again, for the same EBUSY reason as the suite above.
+const CONFIRMED_ROOT = path.resolve('.knowl-confirmed-feedback-test');
+
+/**
+ * The feedback path's re-evaluation. `applyFeedbackToTier` runs at the instant a feedback row
+ * is written and never again, so an item whose confirmations crossed the bar before that path
+ * existed satisfies the predicate and is never asked. This sweep is the asking.
+ */
+describe('standing earned by confirmed feedback the edge never saw', () => {
+  let projectId = '';
+
+  beforeAll(async () => {
+    await fs.rm(CONFIRMED_ROOT, { recursive: true, force: true });
+    await fs.mkdir(path.join(CONFIRMED_ROOT, '.knowl'), { recursive: true });
+    await initDb(CONFIRMED_ROOT);
+    projectId = (await repo.createProject(CONFIRMED_ROOT, 'Confirmed feedback test')).id;
+  });
+
+  beforeEach(async () => {
+    const db = getDb() as any;
+    await db.run(sql`DELETE FROM knowledge_access`);
+    await db.run(sql`DELETE FROM knowledge_items`);
+    await db.run(sql`DELETE FROM knowledge_commits`);
+  });
+
+  afterAll(async () => {
+    await closeDb();
+    await fs.rm(CONFIRMED_ROOT, { recursive: true, force: true }).catch(() => {});
+  });
+
+  const seedItem = (title: string) => repo.createKnowledgeItem(projectId, {
+    category: 'fact', title, content: `${title} — content.`,
+  });
+
+  /** A confirmation `day` days after the item's current boundary, written with no promotion pass. */
+  async function confirmOnDay(itemId: string, day: number) {
+    const since = Date.parse((await repo.getKnowledgeItem(itemId))!.tierSince!);
+    await recordKnowledgeFeedback({
+      itemId, used: true, useful: true,
+      retrievedAt: new Date(since + day * 86_400_000 + 60_000).toISOString(),
+    });
+  }
+
+  it('promotes an item whose confirmations already clear the bar', async () => {
+    // The shape on the project's own store: rows written before the promotion path was wired,
+    // so nothing ever evaluated them.
+    const item = await seedItem('Confirmed before the path existed');
+    for (let day = 0; day < VERIFY_THRESHOLD; day++) await confirmOnDay(item.id, day);
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+
+    const result = await promoteByConfirmedFeedback(projectId);
+    expect(result.promoted).toEqual([{ itemId: item.id, tier: 'verified', reason: 'promoted' }]);
+    expect(result.deferred).toBe(0);
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('verified');
+
+    const row = (await getClient().execute({
+      sql: `SELECT COUNT(*) AS n FROM knowledge_commits WHERE message LIKE 'Promote to verified by confirmed feedback%'`,
+    })).rows[0];
+    expect(Number(row.n)).toBe(1);
+
+    // Idempotent: a second pass finds nothing left to do.
+    expect((await promoteByConfirmedFeedback(projectId)).promoted).toEqual([]);
+  });
+
+  it('applies the same day rule as the edge — a single-day burst is not confirmed', async () => {
+    const item = await seedItem('Burst before the path existed');
+    const since = Date.parse((await repo.getKnowledgeItem(item.id))!.tierSince!);
+    for (let minute = 1; minute <= 4; minute++) {
+      await recordKnowledgeFeedback({
+        itemId: item.id, used: true, useful: true,
+        retrievedAt: new Date(since + minute * 60_000).toISOString(),
+      });
+    }
+
+    expect((await promoteByConfirmedFeedback(projectId)).promoted).toEqual([]);
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+  });
+
+  it('refuses a pre-column row that was ever corrected, however many confirmations it carries', async () => {
+    // `tier_since` NULL means the demotion-and-reset that a correction performs today never
+    // ran for this row, so its history is the only record that it was once proven wrong.
+    const item = await seedItem('Legacy row with a correction in its past');
+    await getClient().execute({ sql: 'UPDATE knowledge_items SET tier_since = NULL WHERE id = ?', args: [item.id] });
+    for (let day = 0; day < VERIFY_THRESHOLD + 1; day++) {
+      await recordKnowledgeFeedback({
+        itemId: item.id, used: true, useful: true,
+        retrievedAt: new Date(Date.UTC(2026, 6, 20 + day, 12)).toISOString(),
+      });
+    }
+    await recordKnowledgeFeedback({
+      itemId: item.id, used: true, causedCorrection: true,
+      retrievedAt: new Date(Date.UTC(2026, 6, 25, 12)).toISOString(),
+    });
+
+    expect((await promoteByConfirmedFeedback(projectId)).promoted).toEqual([]);
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+  });
+
+  it('counts only from tier_since, so confirmations of replaced wording do not carry over', async () => {
+    const item = await seedItem('Reworded and confirmed');
+    await getClient().execute({
+      sql: 'UPDATE knowledge_items SET tier_since = ? WHERE id = ?',
+      args: [new Date(Date.now() - 30 * 86_400_000).toISOString(), item.id],
+    });
+    for (let day = 0; day < VERIFY_THRESHOLD; day++) await confirmOnDay(item.id, day);
+    await repo.updateKnowledgeItem(item.id, { content: 'A materially different claim.' });
+
+    expect((await promoteByConfirmedFeedback(projectId)).promoted).toEqual([]);
+    expect((await repo.getKnowledgeItem(item.id))?.tier).toBe('asserted');
+  });
+
+  it('caps a run and reports what it left, like the observed-use pass', async () => {
+    const overflow = 2;
+    for (let n = 0; n < OBSERVED_USE_MAX_PER_RUN + overflow; n++) {
+      const item = await seedItem(`Confirmed fact ${n}`);
+      for (let day = 0; day < VERIFY_THRESHOLD; day++) await confirmOnDay(item.id, day);
+    }
+
+    const first = await promoteByConfirmedFeedback(projectId);
+    expect(first.promoted).toHaveLength(OBSERVED_USE_MAX_PER_RUN);
+    expect(first.deferred).toBe(overflow);
+    const second = await promoteByConfirmedFeedback(projectId);
+    expect(second.promoted).toHaveLength(overflow);
+    expect(second.deferred).toBe(0);
   });
 });

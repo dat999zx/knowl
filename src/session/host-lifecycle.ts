@@ -95,7 +95,10 @@ import { bootstrapAgentSession } from '../store/context-bootstrap.js';
 import { consumePendingSessionHandoff, recordPendingSessionHandoff } from './session-handoff.js';
 import { DEFAULT_CONTEXT_MAX_CHARS, truncateText } from '../core/token-budget.js';
 import { describeAutoDrift, runAutoDriftCheckBestEffort, type AutoDriftResult } from '../store/drift-auto.js';
-import { describeObservedUsePromotions, promoteByObservedUseBestEffort } from '../store/tier.js';
+import {
+  describeConfirmedFeedbackPromotions, describeObservedUsePromotions,
+  promoteByConfirmedFeedbackBestEffort, promoteByObservedUseBestEffort,
+} from '../store/tier.js';
 
 // The cadence moved to `reminders.driftEvery` (default DEFAULT_DRIFT_REMINDER_EVERY = 12, `0`
 // off), so the number lives beside its predicate in core/config.ts rather than twice.
@@ -961,6 +964,11 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     // A project with no git history therefore never promotes on observed use, which is the
     // same falsifiability rule as `affected_paths`, applied to the repository instead.
     const standing = drift?.checked ? await promoteByObservedUseBestEffort(projectId) : null;
+    // The feedback path's re-evaluation, and not gated on drift: a confirmation is an agent
+    // saying the item was right, which needs no witness in a position to contradict it. Without
+    // this pass an item whose confirmations crossed the bar before `knowl_feedback` was wired to
+    // standing stays asserted forever, because that path only ever looks at the instant it fires.
+    const confirmed = await promoteByConfirmedFeedbackBestEffort(projectId);
 
     // Warnings are priced BEFORE the card is rendered, so the card is composed to what is left
     // rather than rendered wide and sliced. `drift` and `standing` are resolved above and the
@@ -988,6 +996,7 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
       await staleGuidanceWarningBestEffort(input.projectRoot),
       describeAutoDrift(drift),
       describeObservedUsePromotions(standing),
+      describeConfirmedFeedbackPromotions(confirmed),
     ].filter(Boolean).join('\n\n'), DEFAULT_CONTEXT_MAX_CHARS);
     // The roster of other live sessions rides below the warnings and above the knowledge, and
     // is charged against the cap the same way: it is empty for a session that is alone, and
