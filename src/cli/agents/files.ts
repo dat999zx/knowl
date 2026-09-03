@@ -87,6 +87,11 @@ export async function mergeCodexTomlConfig(configPath: string, entry: McpEntry):
  * dsh keeps `cwd: !!js process.cwd()` in its patch rows and Hermes users annotate their
  * `config.yaml`; parse-to-object-and-stringify would erase both. A parse error is thrown, not
  * swallowed: the adapter reports it and leaves the file exactly as it found it.
+ *
+ * What does NOT survive, measured against Hermes' 2,147-line commented template on 2026-09-03:
+ * comment blocks are re-indented to their neighbouring node and the two-space gap before an
+ * inline comment collapses to one. Every comment line is still there (1,883 of 1,883), which is
+ * more than the host's own `hermes config set` keeps -- that one drops them all.
  */
 export async function readYamlDocument(configPath: string): Promise<Document | undefined> {
   const existing = await readTextIfExists(configPath);
@@ -106,7 +111,13 @@ export async function mergeYamlDocument(
     : parseDocument(existing, { logLevel: 'silent' });
   if (doc.errors.length > 0) throw new Error(`${configPath}: ${doc.errors[0].message}`);
   if (!mutate(doc)) return 'unchanged';
-  await writeWithBackup(configPath, doc.toString(), existing);
+  // The Document keeps every comment but re-indents comment blocks and emits LF. On a CRLF file
+  // that produced MIXED endings (CRLF inside retained comments, LF between nodes), which is the
+  // one outcome worse than either: keep the file's own convention throughout.
+  // ponytail: comment re-indentation is accepted; a byte-preserving splice on node ranges is the
+  // upgrade if a user's tracked config.yaml diff ever matters more than shipping.
+  const output = doc.toString().replace(/\r?\n/g, existing?.includes('\r\n') ? '\r\n' : '\n');
+  await writeWithBackup(configPath, output, existing);
   return existing === undefined ? 'configured' : 'updated';
 }
 

@@ -5,8 +5,8 @@ in ``register(ctx)``. Every callback here forwards one normalized event to
 ``knowl agent-hook hermes <event> --json`` -- the same entry point every other host's hooks use --
 and maps the result into the return value Hermes documents for that hook.
 
-Install: ``knowl init hermes`` copies this directory into place, adds the ``mcp_servers.knowl`` entry
-to ``~/.hermes/config.yaml``, and runs ``hermes plugins enable knowl``.
+Install: ``knowl init hermes`` copies this directory into place and adds the ``mcp_servers.knowl``
+entry plus ``plugins.enabled: [knowl]`` to Hermes' ``config.yaml``.
 
 What reaches the model, and where:
 

@@ -34,9 +34,8 @@ describe('hermes adapter', () => {
     expect(parseAgentNames(['hermes'])).toEqual(['hermes']);
   });
 
-  it('copies the plugin, writes mcp_servers.knowl and enables the plugin', async () => {
-    const calls: string[][] = [];
-    const adapter = createHermesAdapter(env(true), { exec: async (f, a) => { calls.push([f, ...a]); } });
+  it('copies the plugin, writes mcp_servers.knowl and enables the plugin in config.yaml', async () => {
+    const adapter = createHermesAdapter(env(true));
     const result = await adapter.configure('/repo');
     expect(result.status).toBe('configured');
     expect(result.scope).toBe('global');
@@ -45,14 +44,32 @@ describe('hermes adapter', () => {
     const init = await readFile(path.join(home, 'plugins', 'knowl', '__init__.py'), 'utf8');
     expect(init).toContain('agent-hook');
     expect(await readFile(path.join(home, 'plugins', 'knowl', 'plugin.yaml'), 'utf8')).toContain('name: knowl');
-    expect(calls).toEqual([['hermes', 'plugins', 'enable', 'knowl']]);
+    expect(config).toContain('plugins:\n  enabled:\n    - knowl');
     expect(await adapter.verify('/repo')).toBe(true);
     expect(result.message).toContain('/reload-mcp');
   });
 
+  it('adds knowl to an existing enabled list and drops it from disabled, once', async () => {
+    await writeFile(path.join(home, 'config.yaml'), '# hermes\nplugins:\n  enabled:\n    - other\n  disabled:\n    - knowl\n', 'utf8');
+    const adapter = createHermesAdapter(env(true));
+    expect((await adapter.configure('/repo')).status).toBe('updated');
+    expect((await adapter.configure('/repo')).status).toBe('unchanged');
+    const config = await readFile(path.join(home, 'config.yaml'), 'utf8');
+    expect(config).toContain('# hermes');
+    expect(config).toContain('enabled:\n    - other\n    - knowl');
+    expect(config).toContain('disabled: []');
+    expect((await adapter.detect('/repo')).configured).toBe(true);
+  });
+
+  it('is not configured while the plugin is listed as disabled', async () => {
+    await writeFile(path.join(home, 'config.yaml'), 'mcp_servers:\n  knowl:\n    command: knowl\n    args: [serve, --host, hermes]\nplugins:\n  enabled: [knowl]\n  disabled: [knowl]\n', 'utf8');
+    const adapter = createHermesAdapter(env(true));
+    expect((await adapter.detect('/repo')).configured).toBe(false);
+  });
+
   it('keeps the rest of config.yaml and is idempotent', async () => {
     await writeFile(path.join(home, 'config.yaml'), '# hermes\nmodel: x\nmcp_servers:\n  other:\n    command: other\n', 'utf8');
-    const adapter = createHermesAdapter(env(true), { exec: async () => {} });
+    const adapter = createHermesAdapter(env(true));
     expect((await adapter.configure('/repo')).status).toBe('updated');
     expect((await adapter.configure('/repo')).status).toBe('unchanged');
     const config = await readFile(path.join(home, 'config.yaml'), 'utf8');
@@ -61,16 +78,17 @@ describe('hermes adapter', () => {
     expect(config).toContain('other:\n    command: other');
   });
 
-  it('prints the enable command when hermes is not on PATH', async () => {
-    const adapter = createHermesAdapter(env(false), { exec: async () => { throw new Error('must not run'); } });
+  it('configures without hermes on PATH, since it never runs it', async () => {
+    const adapter = createHermesAdapter(env(false));
     const result = await adapter.configure('/repo');
     expect(result.status).toBe('configured');
-    expect(result.message).toContain('hermes plugins enable knowl');
+    expect((await adapter.detect('/repo')).installed).toBe(false);
+    expect(await adapter.verify('/repo')).toBe(true);
   });
 
   it('reports an unparseable config.yaml and leaves it alone', async () => {
     await writeFile(path.join(home, 'config.yaml'), 'a: [\n', 'utf8');
-    const adapter = createHermesAdapter(env(true), { exec: async () => {} });
+    const adapter = createHermesAdapter(env(true));
     const result = await adapter.configure('/repo');
     expect(result.status).toBe('failed');
     expect(await readFile(path.join(home, 'config.yaml'), 'utf8')).toBe('a: [\n');

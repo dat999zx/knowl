@@ -33,6 +33,15 @@ describe('mergeYamlDocument', () => {
     expect(text).toContain('knowl:\n    command: knowl');
   });
 
+  it('keeps CRLF throughout when the file used CRLF', async () => {
+    const file = path.join(await workspace(), 'config.yaml');
+    await writeFile(file, '# top\r\nmodel: gpt\r\nmcp_servers:\r\n  other:\r\n    command: other\r\n', 'utf8');
+    await mergeYamlDocument(file, doc => { doc.setIn(['mcp_servers', 'knowl', 'command'], 'knowl'); return true; });
+    const text = await readFile(file, 'utf8');
+    expect(text.split('\r\n').length - 1).toBe(text.split('\n').length - 1);
+    expect(text).toContain('knowl:\r\n    command: knowl');
+  });
+
   it('does not touch the file when mutate reports no change', async () => {
     const file = path.join(await workspace(), 'config.yaml');
     await writeFile(file, 'a: 1\n', 'utf8');
