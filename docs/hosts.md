@@ -62,6 +62,7 @@ knowl doctor               # what is configured, what is stale
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | `.windsurf/hooks.json` |
 | Cursor | `.cursor/mcp.json` | `.cursor/hooks.json` |
 | Claude Desktop | platform config directory | — |
+| Hermes Agent | `~/.hermes/config.yaml` | `~/.hermes/plugins/knowl/` (plugin, copied by init) |
 
 † The MCP path is confirmed against a real Antigravity install, and is **not** `~/.gemini/config/mcp_config.json` — that one is a migration leftover left at 0 bytes, and it is what the IDE's "View raw config" does *not* open. The hooks path and event names are still quoted from Google's reference rather than observed; the installed build here predates the 2.0 hooks feature, so it could not settle them.
 

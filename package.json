@@ -19,6 +19,7 @@
   "files": [
     "dist",
     "integrations",
+    "!**/__pycache__",
     "README.md",
     "CHANGELOG.md",
     "LICENSE"

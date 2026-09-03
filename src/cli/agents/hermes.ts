@@ -9,9 +9,19 @@ import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
 
 const execFileAsync = promisify(execFile);
 
-/** `HERMES_HOME`, else `~/.hermes` -- Hermes' own constant. */
+/**
+ * Where Hermes keeps its home, mirroring `get_hermes_home()` in `hermes_constants.py`:
+ * `HERMES_HOME`, else the platform default -- `%LOCALAPPDATA%\hermes` on Windows (verified against
+ * Hermes v0.21.0 installed here 2026-09-03, where `~/.hermes` does not exist at all) and
+ * `~/.hermes` everywhere else.
+ */
 export function hermesHomeDir(environment: AgentEnvironment): string {
-  return process.env.HERMES_HOME || path.join(environment.homeDir, '.hermes');
+  if (process.env.HERMES_HOME) return process.env.HERMES_HOME;
+  if (environment.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    return path.join(localAppData || path.join(environment.homeDir, 'AppData', 'Local'), 'hermes');
+  }
+  return path.join(environment.homeDir, '.hermes');
 }
 
 export function hermesPluginSourceDir(): string {

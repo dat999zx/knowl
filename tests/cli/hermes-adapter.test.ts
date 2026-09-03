@@ -2,7 +2,7 @@ import path from 'node:path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createHermesAdapter } from '../../src/cli/agents/hermes.js';
+import { createHermesAdapter, hermesHomeDir } from '../../src/cli/agents/hermes.js';
 import { parseAgentNames } from '../../src/cli/agents/registry.js';
 
 const dirs: string[] = [];
@@ -16,6 +16,19 @@ describe('hermes adapter', () => {
   afterEach(() => { if (saved === undefined) delete process.env.HERMES_HOME; else process.env.HERMES_HOME = saved; });
 
   const env = (installed: boolean) => ({ platform: 'linux' as const, homeDir: '/nowhere', appDataDir: '/nowhere', commandExists: async () => installed });
+
+  it('resolves the home the way Hermes does: HERMES_HOME, else LOCALAPPDATA on Windows, else ~/.hermes', () => {
+    const base = { appDataDir: '/nowhere', commandExists: async () => false };
+    expect(hermesHomeDir({ ...base, platform: 'linux', homeDir: '/home/u' })).toBe(home);
+    delete process.env.HERMES_HOME;
+    expect(hermesHomeDir({ ...base, platform: 'linux', homeDir: '/home/u' })).toBe(path.join('/home/u', '.hermes'));
+    const savedLocal = process.env.LOCALAPPDATA;
+    process.env.LOCALAPPDATA = path.join('C:', 'Users', 'u', 'AppData', 'Local');
+    expect(hermesHomeDir({ ...base, platform: 'win32', homeDir: 'C:/Users/u' })).toBe(path.join('C:', 'Users', 'u', 'AppData', 'Local', 'hermes'));
+    delete process.env.LOCALAPPDATA;
+    expect(hermesHomeDir({ ...base, platform: 'win32', homeDir: 'C:/Users/u' })).toBe(path.join('C:/Users/u', 'AppData', 'Local', 'hermes'));
+    if (savedLocal === undefined) delete process.env.LOCALAPPDATA; else process.env.LOCALAPPDATA = savedLocal;
+  });
 
   it('is a supported agent name', () => {
     expect(parseAgentNames(['hermes'])).toEqual(['hermes']);
