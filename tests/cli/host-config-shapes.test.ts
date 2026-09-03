@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { afterAll, describe, expect, it } from 'vitest';
 import { mergeHookConfig, verifyHookConfig } from '../../src/cli/agents/hook-config.js';
@@ -405,5 +405,32 @@ describe('what a refusal actually does to the hook process', () => {
   it('reads a flat host’s timeout off its profile, not off its name', () => {
     expect(hostProfile('cursor').hookEntryTimeout).toBe(30);
     expect(hostProfile('windsurf').hookEntryTimeout).toBeUndefined();
+  });
+});
+
+describe('Antigravity MCP entry reaches both the IDE and the CLI', () => {
+  // The IDE reads `~/.gemini/antigravity/mcp_config.json`; the `agy` CLI reads
+  // `~/.gemini/config/mcp_config.json` -- the file Gemini CLI's migration leaves at 0 bytes.
+  it('writes both files, parsing an empty one as no config', async () => {
+    const { createHookHostAdapter, hookHostSpecs } = await import('../../src/cli/agents/hook-host-adapter.js');
+    const home = await workspace();
+    const ide = path.join(home, '.gemini', 'antigravity', 'mcp_config.json');
+    const cli = path.join(home, '.gemini', 'config', 'mcp_config.json');
+    await mkdir(path.dirname(cli), { recursive: true });
+    await writeFile(cli, '', 'utf8');
+    const environment = { platform: 'linux' as const, homeDir: home, appDataDir: home, commandExists: async () => true };
+    const adapter = createHookHostAdapter(hookHostSpecs(environment).find(spec => spec.name === 'antigravity')!, environment);
+
+    expect((await adapter.detect(home)).configured).toBe(false);
+    expect((await adapter.configure(home)).status).toBe('configured');
+    for (const file of [ide, cli]) {
+      expect((await readJson(file)).mcpServers.knowl.args, file).toEqual(['serve', '--host', 'antigravity']);
+    }
+    expect((await adapter.detect(home)).configured).toBe(true);
+
+    // One file missing the entry is not configured: the host that reads it sees nothing.
+    await writeFile(cli, '{}', 'utf8');
+    expect((await adapter.detect(home)).configured).toBe(false);
+    expect((await adapter.configure(home)).status).toBe('configured');
   });
 });

@@ -57,7 +57,9 @@ export async function writeWithBackup(configPath: string, content: string, exist
 
 export async function mergeJsonMcpConfig(configPath: string, entry: McpEntry): Promise<MergeStatus> {
   const existing = await readTextIfExists(configPath);
-  const config = existing === undefined ? {} as Record<string, unknown> : JSON.parse(existing) as Record<string, unknown>;
+  // A 0-byte file is what Gemini CLI's migration leaves at `~/.gemini/config/mcp_config.json`,
+  // which the Antigravity CLI then reads; an empty file holds no servers, it is not a parse error.
+  const config = existing === undefined || existing.trim() === '' ? {} as Record<string, unknown> : JSON.parse(existing) as Record<string, unknown>;
   const servers = config.mcpServers && typeof config.mcpServers === 'object' && !Array.isArray(config.mcpServers)
     ? config.mcpServers as Record<string, unknown>
     : {};
