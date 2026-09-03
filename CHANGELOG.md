@@ -3,10 +3,10 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## 5.17.0 — 2026-09-03
+## 5.18.0 — 2026-09-03
 
-The agent sessions running on one machine stop being invisible to each other, and an agent can
-ask what its own branch broke.
+Hooks can run on the MCP server the host already holds open, and file evidence can finally
+go stale.
 
 **File evidence can go stale, which the README has promised since it was written.**
 `isEvidenceStale` compares a file's current hash against the one the evidence recorded, and no
@@ -49,7 +49,15 @@ asked for it. The payload travels as `${field}` templates the host fills in, is 
 server whichever way the host rendered each one, and then goes through the same allowlist the
 stdin path applies, so nothing reaches the handler by this route that the other would have dropped.
 Calling the tool while the transport is `command` is refused rather than run, so a client holding
-a stale tool list cannot capture every event twice (#224).
+a stale tool list cannot capture every event twice. A write the gate refuses still says why on the
+server's stderr, which is where the host writes its MCP log — the same second copy the process
+path prints, and worth more here, because a block whose verdict this new transport got subtly
+wrong would otherwise be completely silent (#224).
+
+## 5.17.0 — 2026-09-03
+
+The agent sessions running on one machine stop being invisible to each other, and an agent can
+ask what its own branch broke.
 
 **A push no longer fails anonymously on an over-long field.** The cloud contract caps `title`,
 `source` and `conflictKey` at 500 characters; the local store caps nothing, so a research atom

@@ -1087,6 +1087,12 @@ test, command, user, and agent records do not become stale automatically. File e
 its stored hash with the current file. Symbol evidence uses a `symbol://` locator against the
 local index.
 
+File evidence built from `affectedPaths` is hashed only where a session actually opened the file
+— the read set holds a `file://` or `symbol://` row for it, captured from the tool stream rather
+than from the agent's own report. A path that was merely cited is stored without a hash and never
+reports stale, so an unverified assertion about a file does not become a staleness claim about
+it. Evidence you pass explicitly carries whatever `contentHash` you supply.
+
 The incremental Tree-sitter index supports `.ts`, `.tsx`, `.js`, and `.jsx`. It records relevant
 symbols and import/export relationships for local inspection; code indexing and symbol
 resolution never fan out to workspace peers.
