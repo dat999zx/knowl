@@ -142,6 +142,15 @@ export async function runHookOverMcp(
       await catchUpTranscripts(context.projectRoot, { embed: false }).catch(() => undefined);
     }
 
+    // The refusal reason, on stderr, exactly as the process path emits it -- the server's
+    // stderr is what the host writes to its MCP log, which is where that path's went. It is a
+    // second copy of what the verdict below already carries, and worth the same as there: this
+    // transport is new, and a block whose verdict we got subtly wrong would otherwise be
+    // completely silent, which is how a gate becomes impossible to diagnose from a bug report.
+    // `denied` is set only when the refusal was deliverable, so this never invents a reason for
+    // a host that declined to build an envelope.
+    if (result.denied !== undefined) console.error(result.denied);
+
     const output = result.hostOutput ?? (hostProfile(host).nativeOutput ? undefined : result);
     return output ? { content: [{ type: 'text', text: JSON.stringify(output) }] } : SILENT;
   } catch (error) {
