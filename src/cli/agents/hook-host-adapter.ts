@@ -17,7 +17,8 @@ import type { HookHost } from '../../core/host-hook-types.js';
  * letting a person paste it is the honest degradation.
  */
 type McpTarget =
-  | { kind: 'json'; scope: IntegrationScope; configPath: (root: string) => string }
+  /** Every file a host reads its list from; the first is the one reported. Antigravity has two. */
+  | { kind: 'json'; scope: IntegrationScope; configPaths: (root: string) => string[] }
   | { kind: 'manual'; configPath: (root: string) => string; message: string };
 
 export interface HookHostAdapterSpec {
@@ -65,7 +66,8 @@ export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: Ag
     name: spec.name,
     label: spec.label,
     async detect(root): Promise<AgentDetection> {
-      const configPath = spec.mcp.configPath(root);
+      const configPaths = spec.mcp.kind === 'json' ? spec.mcp.configPaths(root) : [spec.mcp.configPath(root)];
+      const configPath = configPaths[0];
       const installed = await environment.commandExists(spec.command);
       return {
         installed,
@@ -83,18 +85,24 @@ export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: Ag
         // ran unattended -- writing `.openhands/hooks.json` into projects that had never heard of
         // OpenHands. That is the same defect the Copilot `.mcp.json` collision caused, arriving
         // through a different door.
-        configured: spec.mcp.kind === 'json' ? await jsonMcpConfigured(configPath, entry) : installed,
+        // Every file, not the first: a host reading the one without the entry sees no server.
+        configured: spec.mcp.kind === 'json'
+          ? (await Promise.all(configPaths.map(file => jsonMcpConfigured(file, entry)))).every(Boolean)
+          : installed,
         scope: mcpScope,
         configPath,
       };
     },
     async configure(root): Promise<AgentIntegrationResult> {
-      const configPath = spec.mcp.configPath(root);
       if (spec.mcp.kind === 'manual') {
-        return { agent: spec.name, status: 'skipped', scope: mcpScope, configPath, message: spec.mcp.message };
+        return { agent: spec.name, status: 'skipped', scope: mcpScope, configPath: spec.mcp.configPath(root), message: spec.mcp.message };
       }
-      const status = await mergeJsonMcpConfig(configPath, entry);
-      return { agent: spec.name, status, scope: mcpScope, configPath };
+      const configPaths = spec.mcp.configPaths(root);
+      const statuses: string[] = [];
+      for (const file of configPaths) statuses.push(await mergeJsonMcpConfig(file, entry));
+      // The most significant change across the files: a fresh entry anywhere is 'configured'.
+      const status = (['configured', 'updated', 'unchanged'] as const).find(s => statuses.includes(s)) ?? 'unchanged';
+      return { agent: spec.name, status, scope: mcpScope, configPath: configPaths[0] };
     },
     async verify(root) {
       // **Not `detect().configured` for a manual target.** The two answer different questions
@@ -141,7 +149,7 @@ export function hookHostSpecs(environment: AgentEnvironment): HookHostAdapterSpe
       // `knowl init claude` -- which put Copilot into doctor's WARN list and let `doctor --fix`
       // run `knowl init copilot` unattended, opting repositories into a host nobody chose.
       // `.github/mcp.json` is Copilot's own documented project path and collides with nothing.
-      mcp: { kind: 'json', scope: 'project', configPath: root => path.join(root, '.github', 'mcp.json') },
+      mcp: { kind: 'json', scope: 'project', configPaths: root => [path.join(root, '.github', 'mcp.json')] },
       hooksPath: root => path.join(root, '.github', 'hooks', 'knowl.json'),
     },
     {
@@ -164,13 +172,16 @@ export function hookHostSpecs(environment: AgentEnvironment): HookHostAdapterSpe
       mcp: {
         kind: 'json',
         scope: 'global',
-        // `.gemini/antigravity/`, not `.gemini/config/`. Verified against a real install on
-        // 2026-08-22: the antigravity one held a live server list and a recent mtime, while
-        // `config/mcp_config.json` was **0 bytes** from a migration months earlier -- and that
-        // dead file is the exact one whose parse error used to take `knowl init` down for every
-        // host. Google's own docs name the antigravity path as what the IDE's "View raw config"
-        // opens, which is the one a person can check against what they see.
-        configPath: () => path.join(environment.homeDir, '.gemini', 'antigravity', 'mcp_config.json'),
+        // Two products, two files. The IDE reads `.gemini/antigravity/mcp_config.json` (what its
+        // "View raw config" opens; verified against a real install 2026-08-22). The `agy` CLI
+        // reads `.gemini/config/mcp_config.json` -- its embedded docs name it as the global
+        // config, and `/mcp` in the CLI showed nothing while only the IDE file was written
+        // (verified 2026-09-03). That second file is the one Gemini CLI's migration leaves at
+        // 0 bytes, which `mergeJsonMcpConfig` now reads as empty rather than malformed.
+        configPaths: () => [
+          path.join(environment.homeDir, '.gemini', 'antigravity', 'mcp_config.json'),
+          path.join(environment.homeDir, '.gemini', 'config', 'mcp_config.json'),
+        ],
       },
       hooksPath: root => path.join(root, '.agents', 'hooks.json'),
     },
@@ -181,7 +192,7 @@ export function hookHostSpecs(environment: AgentEnvironment): HookHostAdapterSpe
       mcp: {
         kind: 'json',
         scope: 'global',
-        configPath: () => path.join(environment.homeDir, '.codeium', 'windsurf', 'mcp_config.json'),
+        configPaths: () => [path.join(environment.homeDir, '.codeium', 'windsurf', 'mcp_config.json')],
       },
       hooksPath: root => path.join(root, '.windsurf', 'hooks.json'),
     },

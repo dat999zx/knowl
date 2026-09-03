@@ -57,12 +57,12 @@ knowl doctor               # what is configured, what is stale
 | Codex CLI | `.codex/config.toml` | `.codex/hooks.json` |
 | GitHub Copilot | `.github/mcp.json` | `.github/hooks/knowl.json` |
 | OpenHands | `config.toml` — **manual, see below** | `.openhands/hooks.json` |
-| Antigravity | `~/.gemini/antigravity/mcp_config.json` † | `.agents/hooks.json` |
+| Antigravity | `~/.gemini/antigravity/mcp_config.json` (IDE) and `~/.gemini/config/mcp_config.json` (CLI) † | `.agents/hooks.json` |
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | `.windsurf/hooks.json` |
 | Cursor | `.cursor/mcp.json` | `.cursor/hooks.json` |
 | Claude Desktop | platform config directory | — |
 
-† The MCP path is confirmed against a real Antigravity install, and is **not** `~/.gemini/config/mcp_config.json` — that one is a migration leftover left at 0 bytes, and it is what the IDE's "View raw config" does *not* open. The hooks path and event names are still quoted from Google's reference rather than observed; the installed build here predates the 2.0 hooks feature, so it could not settle them.
+† Antigravity is two products reading two files. The IDE's "View raw config" opens `~/.gemini/antigravity/mcp_config.json`; the `agy` CLI reads `~/.gemini/config/mcp_config.json`, which Gemini CLI's migration often leaves at 0 bytes — an empty file, not a broken one. Both are confirmed against real installs, and `knowl init antigravity` writes both. The hooks path and event names are still quoted from Google's reference rather than observed.
 
 **Codex** hooks are behind `[features].codex_hooks = true` in `~/.codex/config.toml`, are experimental, and **do not run on Windows at all**. Everything else works there; only the hook-driven capabilities are unavailable. Because of that, Codex — like Antigravity and Windsurf, whose MCP entry is global while their hooks are per project — keeps the conditional lifecycle card rather than being told outright that its hooks own the session.
 
