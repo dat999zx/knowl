@@ -3,6 +3,14 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+Hermes Agent at Claude Code parity: `knowl init hermes`.
+
+**Hermes Agent** gets a Python plugin, shipped under `integrations/hermes/knowl/` and copied into `~/.hermes/plugins/` by init, plus an `mcp_servers.knowl` entry in `config.yaml`. `pre_llm_call` carries the turn card, `pre_tool_call` blocks a refused write. Hermes has no turn-stop hook, so the capture nudge rides MCP tool results.
+
+User-owned YAML config files (`config.yaml`) are merged as documents: comments and ordering survive, and a file that fails to parse is reported and left untouched. `yaml` is now a direct dependency.
+
 ## 5.18.0 — 2026-09-03
 
 Hooks can run on the MCP server the host already holds open, and file evidence can finally

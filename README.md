@@ -357,6 +357,7 @@ which the code cannot tell it, because rejected alternatives leave no trace in a
 | Windsurf | Yes | Yes | Yes | Yes | Nudge rides MCP; no stop hook |
 | Cursor | Yes | Yes | Yes | Yes | Finalizes per turn |
 | Cline | Yes | Yes | No | Yes | Lifecycle via the shipped plugin |
+| Hermes Agent | Yes | Yes | Yes | via MCP | Python plugin; Hermes has no stop hook |
 | Zed, JetBrains, Neovim, Kiro | Yes | Yes | No | Yes | Via `knowl acp --` |
 | Claude Desktop, OpenCode, Roo, … | Yes | No | No | Yes | MCP plus the manual work loop |
 

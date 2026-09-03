@@ -30,6 +30,7 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 | **Cursor** | ✅ | ❌ | ⚠️ MCP | ✅ | ✅ |
 | **Claude Desktop** | via MCP | ❌ | via MCP | ❌ | via MCP |
 | **Cline** (with the plugin) | ✅ | ✅ | ✅ | — | via MCP |
+| **Hermes Agent** (with the plugin) | ✅ | ✅ | ⚠️ | ✅ | via MCP |
 | **Zed, JetBrains, Neovim, Kiro** (via `knowl acp`) | ✅ | ❌ | ✅ | ❌ | via MCP |
 | **OpenCode, Roo, Continue, Amp, Goose, Aider, …** | via MCP | ❌ | via MCP | ❌ | via MCP |
 
@@ -107,6 +108,8 @@ ClineCore.start({ pluginPaths: ['./node_modules/@dat999zx/knowl/integrations/cli
 ```
 
 That file is [`integrations/cline/knowl-plugin.mjs`](../integrations/cline/knowl-plugin.mjs). It maps Cline's method names and shells out to the same `knowl agent-hook` entry point every other host's hooks use — no npm package to install, nothing to keep in version step. Its write gate is deliberately not wired: `beforeTool` can refuse, but the plugin runs *inside* Cline's process, where a hung child stalls the agent instead of timing out a hook runner. Capture first.
+
+**Hermes Agent** loads Python plugins from `~/.hermes/plugins/`. `knowl init hermes` copies `integrations/hermes/knowl/` there, adds `mcp_servers.knowl` to `~/.hermes/config.yaml` and runs `hermes plugins enable knowl`; type `/reload-mcp` in a running chat to pick the server up. The plugin's `pre_llm_call` returns the turn card as context (Hermes appends it to the user message), and `pre_tool_call` returns `{"action": "block"}` for a refused write. Hermes has no hook at turn stop, so the capture nudge rides MCP tool results there. A `MemoryProvider` implementation, which would add a system-prompt slot and compaction hooks, is a follow-up contribution to NousResearch/hermes-agent.
 
 **Gemini CLI is gone.** Discontinued upstream; its adapter was instructions-only and was removed. Antigravity replaces it. An existing `GEMINI.md` is left on disk.
 
