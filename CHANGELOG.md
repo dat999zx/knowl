@@ -5,6 +5,19 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+**File evidence can go stale, which the README has promised since it was written.**
+`isEvidenceStale` compares a file's current hash against the one the evidence recorded, and no
+shipped writer ever recorded one: `affectedPaths` became file evidence with `contentHash` NULL, the
+one module that hashed files has no importer, and the MCP schema has no field for a caller to
+supply one. Symbol evidence went stale; file evidence could not. The obvious fix — hash every cited
+path — would have turned an agent's unverified assertion about a file into a staleness claim about
+it, and that gate was real. The read-set is now the gate: a cited path some session provably
+opened (`work_read_sets` holds a `file://` or `symbol://` row for it, captured from the tool
+stream and never from the agent's own report) is hashed from disk at write time; a path merely
+declared stays unhashed and never reports stale. One disk read per observed path per write, on the
+write path only. `session-evidence.ts` is untouched and still unwired; whether to delete it is a
+separate call (#225).
+
 **A push no longer fails anonymously on an over-long field.** The cloud contract caps `title`,
 `source` and `conflictKey` at 500 characters; the local store caps nothing, so a research atom
 with a long citation list sat staged until push, where the server's zod rejection came back as

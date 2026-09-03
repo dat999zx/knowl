@@ -185,15 +185,71 @@ export async function unlinkKnowledgeEvidence(itemId: string, evidenceId: string
   });
 }
 
+/** Literal `%` and `_` in a path must not become LIKE wildcards. */
+const escapeLike = (value: string) => value.replace(/[\\%_]/g, char => `\\${char}`);
+
+/**
+ * The hash to stamp on file evidence built from `affectedPaths`, or null when nothing observed
+ * the file.
+ *
+ * **The read-set is the gate, not the hash source.** `work_read_sets` holds a row for every file
+ * a session actually opened -- `file://path` where the file yielded no symbols or was read from
+ * the shell, `symbol://path#Name` per symbol otherwise -- filled from the captured tool stream
+ * and never from an agent's own report. A cited path with a row is a file some session provably
+ * looked at; one without is a declaration. Only the first is hashed, so an agent's unverified
+ * assertion about a file never becomes a staleness claim about it, and nothing here reads a
+ * declared path from disk. That distinction was load-bearing before this existed (#225): every
+ * `affectedPaths` entry became file evidence with `contentHash` NULL, which is why
+ * `isEvidenceStale` could never return true for file evidence this repo originated -- the one
+ * writer that set a hash, `session-evidence.ts`, has no importer.
+ *
+ * Hashed from disk at write time rather than copied out of the read-set, for two reasons. The
+ * symbol rows carry signature hashes, not a file hash, so for most code files the read-set has
+ * nothing at file granularity to copy. And the file the atom is written against is the one on
+ * disk now: an agent that read a file, edited it and then stored a claim about it holds a belief
+ * about the edited version, and evidence stamped with the pre-edit hash would report that
+ * belief stale the moment it was recorded. Same digest as `isEvidenceStale` and the read-set
+ * capture -- raw bytes, sha256 -- so the comparison side agrees with the write side.
+ *
+ * Any session's row counts, released or not. The MCP write path does not know which host
+ * session is calling it, and a row is evidence that the store saw the file's contents, which is
+ * the fact the gate turns on. One disk read per observed path per write, on the write path only;
+ * the recall path is unchanged.
+ */
+async function observedFileHash(locator: string): Promise<string | null> {
+  const relative = containedRepoPath(locator);
+  if (relative === null) return null;
+  const observed = await getClient().execute({
+    sql: `SELECT 1 FROM work_read_sets WHERE locator = ? OR locator LIKE ? ESCAPE '\\' LIMIT 1`,
+    args: [`file://${relative}`, `${escapeLike(`symbol://${relative}#`)}%`],
+  });
+  if (observed.rows.length === 0) return null;
+  try {
+    const content = await fs.readFile(path.resolve(getProjectRoot(), relative));
+    return crypto.createHash('sha256').update(content).digest('hex');
+  } catch {
+    // Observed once, gone or unreadable now. No hash is the pre-existing behaviour for this
+    // row, and a missing verdict costs nothing where a wrong one would.
+    return null;
+  }
+}
+
 export async function attachEvidenceToKnowledge(
   itemId: string,
   explicit: EvidenceInput[] | undefined,
   compatibility?: { sourceCommit?: string | null; affectedPaths?: string[] | null },
 ): Promise<void> {
-  const inputs = explicit?.length ? explicit : [
+  const inputs: EvidenceInput[] = explicit?.length ? explicit : [
     ...(compatibility?.sourceCommit ? [{ type: 'commit' as const, locator: compatibility.sourceCommit, observedAt: new Date().toISOString(), relationship: 'derived_from' as const }] : []),
-    ...((compatibility?.affectedPaths || []).map(locator => ({ type: 'file' as const, locator, observedAt: new Date().toISOString(), relationship: 'supports' as const }))),
   ];
+  if (!explicit?.length) {
+    for (const locator of compatibility?.affectedPaths || []) {
+      inputs.push({
+        type: 'file', locator, observedAt: new Date().toISOString(), relationship: 'supports',
+        contentHash: await observedFileHash(normalizeEvidenceLocator('file', locator)),
+      });
+    }
+  }
   for (const input of inputs) {
     const { relationship = 'supports', ...evidenceInput } = input;
     const evidence = await createEvidence(evidenceInput);
