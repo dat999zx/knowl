@@ -301,11 +301,22 @@ describe('canonical Knowl agent guidance', () => {
     const reference = await fs.readFile(path.resolve('docs/reference.md'), 'utf8');
     // The README links deep into the reference; a renamed section there must not
     // silently leave the front door pointing at an anchor that no longer exists.
+    //
+    // Each space becomes its own hyphen -- `\s` and not `\s+`. GitHub strips the punctuation
+    // between two words and leaves both surrounding spaces, so `A — B` anchors as `a--b` with
+    // two hyphens, which is what `#seeing-what-exists-and-what-is-on--knowl-config-list` in this
+    // file's own table of contents has always relied on. Collapsing the run instead produced a
+    // slug GitHub never generates, so a correct README link to any em-dashed heading read as
+    // broken. Latent until one existed: every README anchor pointed at a punctuation-free
+    // heading, so the two models agreed everywhere it was tested.
     const slugs = new Set(
       [...reference.matchAll(/^#{1,6}\s+(.+)$/gm)].map(match =>
-        match[1].toLowerCase().trim().replace(/`/g, '').replace(/[^\w\s-]/g, '').replace(/\s+/g, '-'),
+        match[1].toLowerCase().trim().replace(/`/g, '').replace(/[^\w\s-]/g, '').replace(/\s/g, '-'),
       ),
     );
+    // Pinned directly rather than only through whatever the README happens to link today, so the
+    // double-hyphen rule stays checked even in a release where no front-door link uses one.
+    expect(slugs.has('seeing-what-exists-and-what-is-on--knowl-config-list')).toBe(true);
     const anchors = [...readme.matchAll(/docs\/reference\.md#([a-z0-9-]+)/g)].map(match => match[1]);
     expect(anchors.length).toBeGreaterThan(10);
     expect(anchors.filter(anchor => !slugs.has(anchor))).toEqual([]);
