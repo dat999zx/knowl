@@ -3,10 +3,21 @@ import * as repo from './repository.js';
 import type { CommitChange } from '../core/types.js';
 
 /**
- * Confirmed-useful feedback events required before an asserted item is promoted. One use
- * can be a coincidence of phrasing; two independent confirmations are the item earning
- * its place. Kept deliberately low because feedback is rare — agents report it after
- * actually using a result, not on every retrieval.
+ * Distinct DAYS carrying a confirmed-useful feedback event before an asserted item is
+ * promoted. One use can be a coincidence of phrasing; two independent confirmations are the
+ * item earning its place. Kept deliberately low because feedback is rare — agents report it
+ * after actually using a result, not on every retrieval.
+ *
+ * Days, not rows. The comment above has always said "independent" and the query counted
+ * `COUNT(*)`, so two `knowl_feedback` calls in one turn, on one item, by one agent, promoted it
+ * — one source counted twice, the correlated-confirmation bias the observed-use path below
+ * already refuses at a different scale ("twenty retrievals inside one session are one agent
+ * circling one problem"). Measured on this project's own store before the change (#223): every
+ * item the row count would have promoted was a burst inside a single session — four events in
+ * seven minutes on one, two four minutes apart on another — and under distinct days not one of
+ * them clears the bar. Not `query_fingerprint`, which the observed-use path uses as its second
+ * axis: `recordKnowledgeFeedback` carries no query, so every feedback row's fingerprint is NULL
+ * and a distinct count over it is zero forever.
  */
 export const VERIFY_THRESHOLD = 2;
 
@@ -22,10 +33,14 @@ export type TierChange = {
  * deliberate consequence applied here, so the boundary between "we log what happened"
  * and "what happened has weight" is a function call you can find.
  *
- * Promotion needs VERIFY_THRESHOLD confirmed-useful events. A correction demotes
- * immediately and unconditionally: one proof of wrongness outweighs any history of
+ * Promotion needs confirmed-useful events on VERIFY_THRESHOLD distinct days. A correction
+ * demotes immediately and unconditionally: one proof of wrongness outweighs any history of
  * usefulness — the poisoning literature's core finding is confidence accumulating
  * without ground truth, and this is the ground-truth valve.
+ *
+ * This runs at the instant a feedback row is written and nowhere else, which is why
+ * `promoteByConfirmedFeedback` exists: an item whose confirmations crossed the bar before this
+ * path was wired, or while the path was disabled, satisfies the predicate and is never asked.
  */
 export async function applyFeedbackToTier(
   projectId: string,
@@ -45,36 +60,152 @@ export async function applyFeedbackToTier(
   }
 
   if (feedback.useful !== true || item.tier === 'verified') return null;
-
-  // Counted from when the current tier began, not from the item's whole history. An
-  // unbounded count made both resets cosmetic: a correction or a rewording dropped the
-  // item to asserted, and the very next confirmation re-promoted it on the strength of
-  // events that had confirmed a claim the item no longer makes.
-  // NULL tier_since means a row written before the column existed: it has never been
-  // reset, so its full history still belongs to its current standing.
-  // `>=`, not `>`. `tier_since` is stamped at creation and at every reset, and ISO timestamps
-  // are millisecond-granular — so a confirmation recorded in the same millisecond as the
-  // boundary was dropped, and the item silently needed VERIFY_THRESHOLD + 1 events. It only
-  // looked correct because most machines take a millisecond to get from one call to the next;
-  // on CI's ubuntu runner three tests in this area failed at random depending on which side of
-  // a tick they landed. An event AT the boundary belongs to the standing that began there.
-  //
-  // This does not weaken what the boundary is for. The event that causes a reset is a
-  // correction or an edit, never `useful = 1`, so it is already excluded by the predicate
-  // above it — the guard against re-promotion on stale confirmations is untouched.
-  const row = (await getClient().execute({
-    sql: `SELECT COUNT(*) AS confirmations FROM knowledge_access
-          WHERE knowledge_item_id = ? AND surface = 'feedback' AND useful = 1
-            AND retrieved_at >= COALESCE(?, '')`,
-    args: [itemId, item.tierSince ?? null],
-  })).rows[0];
-  if (Number(row?.confirmations ?? 0) < VERIFY_THRESHOLD) return null;
+  if (await confirmedDaysSinceTierBegan(itemId, item.tierSince ?? null) < VERIFY_THRESHOLD) return null;
 
   const updated = await repo.updateKnowledgeItem(itemId, { tier: 'verified' });
   await repo.createKnowledgeCommit(projectId, `Promote to verified: ${item.title}`, [
     { itemId, action: 'update', before: item, after: updated },
   ]);
   return { itemId, tier: 'verified', reason: 'promoted' };
+}
+
+/**
+ * The feedback path's one predicate, shared by the edge-triggered promotion above and the
+ * sweep below so the two cannot disagree about what "confirmed" means.
+ *
+ * Counted from when the current tier began, not from the item's whole history. An
+ * unbounded count made both resets cosmetic: a correction or a rewording dropped the
+ * item to asserted, and the very next confirmation re-promoted it on the strength of
+ * events that had confirmed a claim the item no longer makes.
+ * NULL tier_since means a row written before the column existed: it has never been
+ * reset, so its full history still belongs to its current standing.
+ * `>=`, not `>`. `tier_since` is stamped at creation and at every reset, and ISO timestamps
+ * are millisecond-granular — so a confirmation recorded in the same millisecond as the
+ * boundary was dropped, and the item silently needed VERIFY_THRESHOLD + 1 events. It only
+ * looked correct because most machines take a millisecond to get from one call to the next;
+ * on CI's ubuntu runner three tests in this area failed at random depending on which side of
+ * a tick they landed. An event AT the boundary belongs to the standing that began there.
+ *
+ * This does not weaken what the boundary is for. The event that causes a reset is a
+ * correction or an edit, never `useful = 1`, so it is already excluded by the predicate
+ * above it — the guard against re-promotion on stale confirmations is untouched.
+ *
+ * `substr(retrieved_at, 1, 10)` is the calendar day of an ISO timestamp, the same expression
+ * `promoteByObservedUse` groups on. Two confirmations minutes apart are one day and count once.
+ *
+ * Always on the base client: a SQLite transaction belongs to the connection, so inside
+ * `withClientTransaction` this statement is already part of it (see `database.ts`).
+ */
+async function confirmedDaysSinceTierBegan(itemId: string, tierSince: string | null): Promise<number> {
+  const row = (await getClient().execute({
+    sql: `SELECT COUNT(DISTINCT substr(retrieved_at, 1, 10)) AS days FROM knowledge_access
+          WHERE knowledge_item_id = ? AND surface = 'feedback' AND useful = 1
+            AND retrieved_at >= COALESCE(?, '')`,
+    args: [itemId, tierSince],
+  })).rows[0];
+  return Number(row?.days ?? 0);
+}
+
+export type ConfirmedFeedbackResult = {
+  promoted: TierChange[];
+  /** Eligible items the per-run cap left behind. Reported, never silently dropped. */
+  deferred: number;
+};
+
+/**
+ * Promote every asserted item whose confirmations already clear the bar, because the
+ * edge-triggered path never looks back.
+ *
+ * `applyFeedbackToTier` is reachable from `knowl_feedback` alone and runs solely at the
+ * instant a feedback row is written; nothing re-evaluates. So any item that crossed the
+ * threshold before that path existed — this project's own store holds one with three useful
+ * events against a threshold of two, `tier_since` NULL, still `asserted` — stays unpromoted
+ * forever, and a tightened predicate does not help an item the predicate is never run against
+ * (#223). This is the re-evaluation, run once per session start beside `promoteByObservedUse`.
+ *
+ * The same predicate as the edge, deliberately, re-checked per item inside the transaction:
+ * the candidate query is a cheap filter, and the per-item check is the one the feedback tool
+ * would have applied had it fired. A correction since the tier began is excluded here where the
+ * edge does not need to exclude it — a correction demotes and resets `tier_since` on the way
+ * through, so the edge never sees one, but a pre-column row (`tier_since` NULL) with a
+ * historic correction never had that reset applied, and "one proof of wrongness outweighs any
+ * history of usefulness" is the rule this path exists to honour.
+ *
+ * Not gated on the drift check the way observed use is. Observed use promotes on recurrence,
+ * which is only meaningful if something was in a position to contradict the item; a
+ * confirmation is an agent saying the item was right, and needs no such witness. Capped the
+ * same way, for the same blast-radius reason.
+ */
+export async function promoteByConfirmedFeedback(projectId: string): Promise<ConfirmedFeedbackResult> {
+  const rows = (await getClient().execute({
+    sql: `SELECT ki.id AS id, COUNT(DISTINCT substr(ka.retrieved_at, 1, 10)) AS days
+          FROM knowledge_items ki
+          JOIN knowledge_access ka
+            ON ka.knowledge_item_id = ki.id
+           AND ka.surface = 'feedback'
+           AND ka.useful = 1
+           AND ka.retrieved_at >= COALESCE(ki.tier_since, '')
+          WHERE ki.status = 'active'
+            AND ki.tier = 'asserted'
+            AND NOT EXISTS (
+              SELECT 1 FROM knowledge_access bad
+              WHERE bad.knowledge_item_id = ki.id
+                AND bad.caused_correction = 1
+                AND bad.retrieved_at >= COALESCE(ki.tier_since, '')
+            )
+          GROUP BY ki.id
+          HAVING COUNT(DISTINCT substr(ka.retrieved_at, 1, 10)) >= ?`,
+    args: [VERIFY_THRESHOLD],
+  })).rows;
+
+  if (rows.length === 0) return { promoted: [], deferred: 0 };
+
+  const ranked = rows
+    .map(row => ({ id: String(row.id), days: Number(row.days) }))
+    .sort((a, b) => b.days - a.days || a.id.localeCompare(b.id));
+  const selected = ranked.slice(0, OBSERVED_USE_MAX_PER_RUN);
+
+  const promoted: TierChange[] = [];
+  const changes: CommitChange[] = [];
+
+  await withClientTransaction(async tx => {
+    for (const candidate of selected) {
+      const item = await repo.getKnowledgeItem(candidate.id, tx);
+      if (!item || item.status !== 'active' || item.tier !== 'asserted') continue;
+      if (await confirmedDaysSinceTierBegan(candidate.id, item.tierSince ?? null) < VERIFY_THRESHOLD) continue;
+
+      const updated = await repo.updateKnowledgeItem(candidate.id, { tier: 'verified' }, undefined, tx);
+      changes.push({ itemId: candidate.id, action: 'update', before: item, after: updated });
+      promoted.push({ itemId: candidate.id, tier: 'verified', reason: 'promoted' });
+    }
+
+    if (changes.length > 0) {
+      await repo.createKnowledgeCommit(
+        projectId,
+        `Promote to verified by confirmed feedback: ${changes.length} item(s)`,
+        changes,
+        tx,
+      );
+    }
+  });
+
+  return { promoted, deferred: ranked.length - selected.length };
+}
+
+/** Hooks must never fail the host: a failed sweep reads as "nothing promoted". */
+export async function promoteByConfirmedFeedbackBestEffort(projectId: string): Promise<ConfirmedFeedbackResult | null> {
+  try {
+    return await promoteByConfirmedFeedback(projectId);
+  } catch {
+    return null;
+  }
+}
+
+/** The session-start line for the sweep. Silent when nothing moved, like its sibling below. */
+export function describeConfirmedFeedbackPromotions(result: ConfirmedFeedbackResult | null): string | undefined {
+  if (!result || result.promoted.length === 0) return undefined;
+  const more = result.deferred > 0 ? ` ${result.deferred} more are eligible and will follow on later sessions.` : '';
+  return `STANDING: ${result.promoted.length} knowledge item(s) promoted to verified on confirmed feedback — reported useful on ${VERIFY_THRESHOLD}+ separate days.${more} A correction demotes immediately.`;
 }
 
 /** Feedback recording must never fail because standing could not be updated. */

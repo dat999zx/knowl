@@ -21,6 +21,19 @@ declared stays unhashed and never reports stale. One disk read per observed path
 write path only. `session-evidence.ts` is untouched and still unwired; whether to delete it is a
 separate call (#225).
 
+**"Two independent confirmations" now means two days, and the items that had already earned it
+are promoted.** The comment above `VERIFY_THRESHOLD` promised independent confirmations; the query
+counted rows, so two `knowl_feedback` calls in one turn — one agent, one item, one source — promoted
+an item to `verified`. Measured on the project's own store, every item the row count would have
+promoted was a burst inside a single session: four useful events in seven minutes on one, two four
+minutes apart on another. The feedback path now counts distinct days, the unit the observed-use path
+already uses, and neither clears the bar. The second half is the one that matters more: promotion
+was edge-triggered only, run at the instant a feedback row was written and never again, so an item
+whose confirmations crossed the bar before `knowl_feedback` was wired to standing stayed `asserted`
+forever — the store holds one with three useful events against a threshold of two. Session start
+now re-evaluates the feedback predicate over every asserted item, capped and audited the way the
+observed-use pass is, so the backlog drains instead of stranding (#223).
+
 **A push no longer fails anonymously on an over-long field.** The cloud contract caps `title`,
 `source` and `conflictKey` at 500 characters; the local store caps nothing, so a research atom
 with a long citation list sat staged until push, where the server's zod rejection came back as
