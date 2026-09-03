@@ -5,6 +5,8 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+**Hermes Agent: a Python plugin for Hermes Desktop.** Hermes Desktop's `serve` backend never registers the `config.yaml` shell hooks `knowl init hermes` writes (upstream hermes-agent#69825), so the Hermes host was terminal-only. `integrations/hermes/` is a Hermes plugin that feeds the same `knowl agent-hook hermes` entry point from inside the Hermes process: it works on Desktop, resolves the project from Hermes' per-session working directory instead of the gateway's, puts the memory rules in the system prompt, and appends a same-turn impact card to file-write results. Install by copying the directory into the Hermes plugins folder (`install.py`) or with `pip`/`uv` via the `hermes_agent.plugins` entry point. Verified against Hermes v0.21.0.
+
 **`knowl cloud push` can drain a queue again.** Two independent faults could each leave staged
 knowledge unsendable indefinitely.
 
