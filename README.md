@@ -94,68 +94,74 @@ works.
 
 <table>
 <tr>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://claude.com/product/claude-code"><img src="docs/assets/logos/anthropic.svg" alt="Claude Code" width="40" height="40" /></a><br/>
 <strong>Claude Code</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://github.com/openai/codex"><img src="docs/assets/logos/openai.svg" alt="Codex" width="40" height="40" /></a><br/>
 <strong>Codex</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="16%">
+<td align="center" width="14%">
+<a href="https://hermes-agent.nousresearch.com"><img src="docs/assets/logos/hermes.png" alt="Hermes Agent" width="40" height="40" /></a><br/>
+<strong>Hermes</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
+</td>
+<td align="center" width="14%">
 <a href="https://github.com/features/copilot"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/logos/githubcopilot-dark.svg" /><img src="docs/assets/logos/githubcopilot.svg" alt="Copilot" width="40" height="40" /></picture></a><br/>
 <strong>Copilot</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://cursor.com"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/logos/cursor-dark.svg" /><img src="docs/assets/logos/cursor.svg" alt="Cursor" width="40" height="40" /></picture></a><br/>
 <strong>Cursor</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://openhands.dev"><img src="docs/assets/logos/openhands.svg" alt="OpenHands" width="40" height="40" /></a><br/>
 <strong>OpenHands</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://antigravity.google"><img src="docs/assets/logos/antigravity.svg" alt="Antigravity" width="40" height="40" /></a><br/>
 <strong>Antigravity</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
 </tr>
 <tr>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://windsurf.com"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/logos/windsurf-dark.svg" /><img src="docs/assets/logos/windsurf.svg" alt="Windsurf" width="40" height="40" /></picture></a><br/>
 <strong>Windsurf</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://github.com/cline/cline"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/logos/cline-dark.svg" /><img src="docs/assets/logos/cline.svg" alt="Cline" width="40" height="40" /></picture></a><br/>
 <strong>Cline</strong><br/>
 <sub>MCP · lifecycle · plugin</sub>
 </td>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://zed.dev"><img src="docs/assets/logos/zed.svg" alt="Zed" width="40" height="40" /></a><br/>
 <strong>Zed</strong><br/>
 <sub>MCP · capture · ACP</sub>
 </td>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://www.jetbrains.com"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/logos/jetbrains-dark.svg" /><img src="docs/assets/logos/jetbrains.svg" alt="JetBrains" width="40" height="40" /></picture></a><br/>
 <strong>JetBrains</strong><br/>
 <sub>MCP · capture · ACP</sub>
 </td>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://github.com/anomalyco/opencode"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/logos/opencode-dark.svg" /><img src="docs/assets/logos/opencode.svg" alt="OpenCode" width="40" height="40" /></picture></a><br/>
 <strong>OpenCode</strong><br/>
 <sub>MCP · manual loop</sub>
 </td>
-<td align="center" width="16%">
+<td align="center" width="14%">
 <a href="https://claude.ai/download"><img src="docs/assets/logos/anthropic.svg" alt="Claude Desktop" width="40" height="40" /></a><br/>
 <strong>Claude Desktop</strong><br/>
 <sub>MCP · manual loop</sub>
 </td>
+<td align="center" width="14%"></td>
 </tr>
 </table>
 
