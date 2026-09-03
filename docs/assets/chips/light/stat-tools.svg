@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="118" height="38" viewBox="0 0 118 38"
-     role="img" aria-label="27 MCP tools">
+     role="img" aria-label="28 MCP tools">
   <rect x="0.5" y="0.5" width="117" height="37" rx="8" fill="#f6f8fa" stroke="#d0d7de"/>
   <text x="14" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
-        font-size="14" font-weight="700" fill="#0969da">27</text>
+        font-size="14" font-weight="700" fill="#0969da">28</text>
   <text x="42" y="24" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif"
         font-size="12" fill="#57606a">MCP tools</text>
 </svg>

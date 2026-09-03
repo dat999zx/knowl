@@ -49,6 +49,7 @@ import { hasIndexableArchive } from '../transcripts/paths.js';
 import { handleSessionList, handleTranscriptRead, handleTranscriptSearch, NO_TRANSCRIPT_MATCHES_PREFIX } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
 import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, FLEET_TOOL_DEFINITIONS, IMPACT_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
+import { checkKnowledgeDrift, getCurrentGitCommit, listChangedFilesSince, listRenamedPathsSince } from '../store/drift.js';
 import { isFleetEnabled } from '../fleet/config.js';
 import { describeFleet, renderFleetReport } from '../fleet/report.js';
 import { teamUpdateNotice } from '../cloud/team-update.js';
@@ -165,6 +166,13 @@ const DEFAULT_IMPACT_TIERS: ImpactTier[] = ['certain', 'likely'];
  * every other bounded reply on this surface is held to, with room for the wrapper.
  */
 const MAX_IMPACT_FINDINGS = 15;
+
+/**
+ * Drift candidates listed by `knowl_drift`. A branch that renames a directory can match dozens
+ * of atoms, and an agent handed all of them reads none; the count of the rest is reported so the
+ * bound is visible rather than silently applied.
+ */
+const MAX_DRIFT_CANDIDATES = 20;
 const MAX_IMPACT_SIGNATURE_CHARS = 200;
 
 const IMPACT_DISABLED_MESSAGE =
@@ -1796,6 +1804,71 @@ export function registerTools(
         });
         const text = renderFleetReport(report, { repo: inRepo ? String(inRepo) : undefined });
         return { content: [{ type: 'text', text }] };
+      }
+
+      /**
+       * The agent's end of `knowl pr`: what the work it just did may have made false.
+       *
+       * Deliberately does NOT call `reportDrift`, which the CLI does on the same path. That
+       * publishes a retirement for every member of the workspace, and the line the cloud tools
+       * already draw is that sending is the user's to run -- `knowl_cloud` exposes status and
+       * stage and stops there. An agent flagging its own repo's atoms for review is local and
+       * reversible; the same flag pushed to a team is neither.
+       */
+      else if (name === 'knowl_drift') {
+        if (!projectId || !projectRoot) {
+          return { isError: true, content: [{ type: 'text', text: 'Change drift needs a Knowl project with a git repository.' }] };
+        }
+        const { since, apply } = args as any;
+        let result;
+        try {
+          const currentCommit = getCurrentGitCommit(projectRoot);
+          result = await checkKnowledgeDrift(projectId, {
+            sinceCommit: String(since),
+            currentCommit,
+            changedFiles: listChangedFilesSince(projectRoot, String(since), currentCommit),
+            apply: apply === true,
+            projectRoot,
+            // A rename leaves the old path absent from the tree, so without this a refactor reads
+            // as a mass deletion of everything it touched.
+            renamedFrom: listRenamedPathsSince(projectRoot, String(since), currentCommit),
+            // The deliberate on-demand pass, as `knowl pr` is: it also examines affected paths git
+            // cannot diff. The automatic session-start check still does not ask for this.
+            includeUntracked: true,
+          });
+        } catch (error: any) {
+          // A bad ref and a missing repository both arrive from git as a failed spawn, and the
+          // agent can fix either -- but only if the message says which, so it passes through.
+          return {
+            isError: true,
+            content: [{ type: 'text', text: `Could not compare against "${String(since)}": ${sanitizeToolErrorMessage(error?.message ?? String(error))}` }],
+          };
+        }
+        return {
+          content: [{
+            type: 'text',
+            text: JSON.stringify({
+              sinceCommit: result.sinceCommit,
+              currentCommit: result.currentCommit,
+              changedFiles: result.changedFiles.length,
+              applied: apply === true,
+              markedForReview: result.updatedCount,
+              candidates: result.candidates.slice(0, MAX_DRIFT_CANDIDATES).map(candidate => ({
+                id: candidate.itemId,
+                title: candidate.title,
+                kind: candidate.kind,
+                freshness: candidate.freshness,
+                // The paths are the whole evidence: `removed` names what the atom cited and is
+                // gone, `matched` what it cited and merely moved under the diff.
+                removedPaths: candidate.removedPaths,
+                matchedPaths: candidate.matchedPaths,
+              })),
+              ...(result.candidates.length > MAX_DRIFT_CANDIDATES
+                ? { note: `${result.candidates.length} candidates in total; ${MAX_DRIFT_CANDIDATES} listed.` }
+                : {}),
+            }, null, 2),
+          }],
+        };
       }
 
       // Re-checks its own gate rather than trusting the listing, for the reason above: a
