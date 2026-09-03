@@ -60,7 +60,7 @@ export function createHermesAdapter(
     name: 'hermes',
     label: 'Hermes Agent',
     async detect(): Promise<AgentDetection> {
-      let configured = false;
+      let configured: boolean;
       try {
         const doc = await readYamlDocument(configPath());
         configured = doc !== undefined && serverMatches(doc, entry) && await pluginInstalled(hermesHomeDir(environment));
