@@ -105,6 +105,11 @@ works.
 <sub>MCP · lifecycle · gate</sub>
 </td>
 <td align="center" width="14%">
+<a href="https://hermes-agent.nousresearch.com"><img src="docs/assets/logos/hermes.png" alt="Hermes Agent" width="40" height="40" /></a><br/>
+<strong>Hermes</strong><br/>
+<sub>MCP · lifecycle · gate</sub>
+</td>
+<td align="center" width="14%">
 <a href="https://github.com/features/copilot"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/logos/githubcopilot-dark.svg" /><img src="docs/assets/logos/githubcopilot.svg" alt="Copilot" width="40" height="40" /></picture></a><br/>
 <strong>Copilot</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
@@ -122,11 +127,6 @@ works.
 <td align="center" width="14%">
 <a href="https://antigravity.google"><img src="docs/assets/logos/antigravity.svg" alt="Antigravity" width="40" height="40" /></a><br/>
 <strong>Antigravity</strong><br/>
-<sub>MCP · lifecycle · gate</sub>
-</td>
-<td align="center" width="14%">
-<a href="https://hermes-agent.nousresearch.com"><img src="docs/assets/logos/hermes.png" alt="Hermes Agent" width="40" height="40" /></a><br/>
-<strong>Hermes</strong><br/>
 <sub>MCP · lifecycle · gate</sub>
 </td>
 </tr>
