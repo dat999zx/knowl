@@ -3,7 +3,10 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.17.0 — 2026-09-03
+
+The agent sessions running on one machine stop being invisible to each other, and an agent can
+ask what its own branch broke.
 
 **A push no longer fails anonymously on an over-long field.** The cloud contract caps `title`,
 `source` and `conflictKey` at 500 characters; the local store caps nothing, so a research atom
@@ -37,11 +40,12 @@ where it publishes one and from recency where it does not. Only the sessions the
 can actually reach are offered as something to `SendMessage`; the rest are listed, marked, and
 raised with the user instead. `knowl fleet` lists it from any terminal, inside a project or not,
 and the `knowl_fleet` MCP tool lists it to an agent — registered unless `fleet.enabled` is
-`false`, the one switch here that ships on, because the roster prints nothing when a session is
-alone and nobody opts into it until after the collision. The rest follows the capture ladder and
-ships quiet: `fleet.digest` (`off`), `fleet.cards` (`enforce`, since a card is advice and never a
-refusal) and `fleet.nudge` (`shadow`, since it withholds a stop). `knowl posture maximal` now also
-turns the digest on and arms the nudge.
+`false`. Two of the four switches ship active, and the line between them is what a surface can
+cost you: `fleet.enabled` because the roster prints nothing at all when a session is alone, and
+`fleet.cards` (`enforce`) because a card is advice on a channel the agent is already reading and
+never a refusal. The two that would cost you something ship quiet — `fleet.digest` (`off`) spends
+lines on every turn, and `fleet.nudge` (`shadow`) withholds a stop, so it records what it would
+have said until you arm it. `knowl posture maximal` turns the digest on and arms the nudge.
 
 **An agent can ask what its own branch broke.** `knowl pr --since` has always answered "which
 stored knowledge does this diff invalidate", and it was CLI-only — so the actor most able to act
