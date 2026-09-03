@@ -51,6 +51,11 @@ export const codexProfile: HostProfile = {
   lifecycleClaimable: false,
   midTurnDeliveryVerified: true,
   hookConfigStyle: 'claude-nested',
+  // Codex's hooks reference lists the events that accept `mcp_tool` by name -- PreToolUse,
+  // PostToolUse, SessionStart, PreCompact, PostCompact, SubagentStart, UserPromptSubmit,
+  // SubagentStop, Stop -- and says SessionEnd does not. Of the registered events that leaves
+  // these six; SessionStart is eligible there and still kept a process, see the profile field.
+  mcpToolHookEvents: ['SubagentStart', 'PreToolUse', 'PostToolUse', 'PreCompact', 'Stop', 'SubagentStop'],
   // **Codex does not use Claude's tool names**, so the shared fallback matched nothing here and
   // the write gate answered "no opinion" before consulting the deny envelope below. Verified by
   // the same string inspection of codex.exe 0.147.0 that established the event list: `Edit`,

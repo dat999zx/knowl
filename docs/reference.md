@@ -501,11 +501,44 @@ atom candidate after three runs, but that promoted atom is still descriptive kno
 executable `.knowl/skills` package. Failed terminal events create a handoff for the next matching
 host session.
 
-Hooks run as separate, short-lived `knowl agent-hook` processes. They normalize host events and
-never start, stop, or supervise the long-lived stdio `knowl serve` process. Lifecycle capture
-itself stores no raw prompts, transcripts, stdout, stderr, or environment variables. When
+Hooks run as separate, short-lived `knowl agent-hook` processes by default. They normalize host
+events and never start, stop, or supervise the long-lived stdio `knowl serve` process. Lifecycle
+capture itself stores no raw prompts, transcripts, stdout, stderr, or environment variables. When
 transcript indexing is explicitly enabled, the separate transcript index reads supported host
 transcript files already present on the machine; it does not create them.
+
+### Hook transport — `hooks.transport`
+
+A hook process costs ~230ms of Node startup, paid twice per tool call (`PreToolUse` and
+`PostToolUse`) and serialized against the agent's own work, because the host waits on the
+pre-tool hook. Measured over 102 real Claude Code sessions that is 31s at the median session
+and 190s at the 90th percentile. Claude Code (2.1.257+) and Codex (0.148+) can instead run a
+hook as a call to a tool on an MCP server they already hold open — which is the `knowl serve`
+process, with its database open and its embedding model loaded.
+
+```jsonc
+// .knowl/config.json
+"hooks": {
+  "transport": "mcp"   // "command" (default) spawns a process per event
+}
+```
+
+With `mcp`, `knowl init claude` and `knowl init codex` (and `knowl doctor --fix`) write the
+mid-session events — `PreToolUse`, `PostToolUse`, `Stop`, `PreCompact`, the subagent events —
+as `mcp_tool` hooks calling `knowl_hook`, and the server registers that tool. Two things stay
+processes on purpose: `SessionStart`, because both hosts document that it fires before their MCP
+servers finish connecting, and `SessionEnd`, because nothing documents whether the server is
+still up when it fires. The prompt-time reminder is unchanged. Every other host keeps its process
+hooks whatever the setting says; only hosts with the hook type declare the events that may move.
+
+The cost is one entry in the server's tool list. MCP has no hidden-tool concept, so `knowl_hook`
+is visible to the model in repositories that turned this on; its description says not to call
+it, and calling it while the transport is `command` is refused rather than run, so a client
+holding a stale tool list cannot capture every event twice. A hook that fires from a directory
+that is not the server's project is answered with silence, where a process hook would have
+opened that project's store — the one case the two transports differ in, and the reason this is
+a choice rather than a default. The setting takes effect at the next `knowl init <host>` and the
+next server start.
 
 ### Leaving work for later
 

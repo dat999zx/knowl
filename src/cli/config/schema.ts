@@ -1,5 +1,6 @@
 import { DEFAULT_CONFIG, DEFAULT_DRIFT_REMINDER_EVERY } from '../../core/config.js';
 import { DEFAULT_PRESET_ID, PRESET_IDS } from '../../core/vector-profile.js';
+import { HOOK_TRANSPORTS } from '../../core/hooks-transport.js';
 
 export type ConfigKey =
   | 'security.rejectSecrets'
@@ -37,12 +38,13 @@ export type ConfigKey =
   | 'fleet.digest'
   | 'fleet.cards'
   | 'fleet.nudge'
+  | 'hooks.transport'
   | 'cloud.autoStage'
   | 'updateCheck.enabled';
 
 export type ConfigCategory =
   | 'Search' | 'Security' | 'AI provider' | 'Memory namespaces' | 'Change impact' | 'Capture'
-  | 'Fleet' | 'Reminders' | 'Cloud' | 'Updates';
+  | 'Fleet' | 'Hooks' | 'Reminders' | 'Cloud' | 'Updates';
 
 /**
  * How a value should be asked for. Without this the UI had only `parse`, so every field
@@ -342,6 +344,15 @@ export const CONFIG_FIELDS: ConfigField[] = [
     parse: enumValue(FLEET_CARD_MODES), defaultValue: 'shadow',
     label: 'Stale-read nudge at stop',
     description: 'When this turn\'s writes changed code another live session had read: enforce withholds the stop once and asks the agent to tell that session, which costs a turn; shadow records what it would have asked. Off skips the check. Same ladder as capture.nudge, for the same reason: how often it would fire is measured before it is allowed to.',
+  },
+  {
+    // `command` first: it is the transport every install already runs on, and the one a typo
+    // falls back to. Not a ladder -- neither value costs the person anything a hook did not
+    // already cost; what `mcp` spends is one entry in the server's tool list.
+    key: 'hooks.transport', category: 'Hooks', type: 'enum', values: HOOK_TRANSPORTS,
+    parse: enumValue(HOOK_TRANSPORTS), defaultValue: 'command',
+    label: 'Hook transport',
+    description: 'How Claude Code and Codex reach Knowl\'s lifecycle handler. command spawns a fresh `knowl agent-hook` process per event, ~230ms each, serialized against the agent\'s own tool calls. mcp routes the mid-session events through the `knowl_hook` tool on the MCP server the host already holds open, and registers that tool; session start stays a command hook because it fires before servers connect. Takes effect at the next `knowl init <host>` or `knowl doctor --fix`, which rewrite the hooks file, and the next server start.',
   },
   // Both default ON and both stay out of DEFAULT_CONFIG, for the reason the Capture keys
   // above give: merged in, they are written into every config on the machine at the next

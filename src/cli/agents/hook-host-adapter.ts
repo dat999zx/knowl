@@ -4,6 +4,7 @@ import { mcpEntryMatches, mergeJsonMcpConfig, McpEntry } from './files.js';
 import { mergeHookConfig, verifyHookConfig } from './hook-config.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentIntegrationResult, AgentName, IntegrationScope } from './types.js';
 import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
+import { resolveHookTransport } from '../../core/hooks-transport.js';
 import type { HookHost } from '../../core/host-hook-types.js';
 
 /**
@@ -113,11 +114,11 @@ export function createHookHostAdapter(spec: HookHostAdapterSpec, environment: Ag
     async lifecycleCapability() { return 'supported'; },
     async configureLifecycle(root) {
       const pathname = spec.hooksPath(root);
-      const status = await mergeHookConfig(pathname, environment.platform, spec.name);
+      const status = await mergeHookConfig(pathname, environment.platform, spec.name, { transport: await resolveHookTransport(root) });
       return { agent: spec.name, status, scope: 'project', configPath: pathname };
     },
     async verifyLifecycle(root) {
-      return verifyHookConfig(spec.hooksPath(root), environment.platform, spec.name);
+      return verifyHookConfig(spec.hooksPath(root), environment.platform, spec.name, { transport: await resolveHookTransport(root) });
     },
   };
 }

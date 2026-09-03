@@ -1,10 +1,24 @@
 import { readTextIfExists, MergeStatus, writeWithBackup } from './files.js';
 import { HookHost } from './host-hook.js';
 import { hostProfile } from '../../session/hosts/index.js';
+import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
+import { HOOK_TOOL_NAME, type HookTransport } from '../../core/hooks-transport.js';
 
 // `statusMessage` is in the Anthropic-shaped hosts' schema and not in OpenHands'.
-type NestedHook = { type: 'command'; command: string; timeout: number; statusMessage?: string };
+type NestedCommandHook = { type: 'command'; command: string; timeout: number; statusMessage?: string };
+/**
+ * A hook that calls a tool on an already-connected MCP server instead of spawning a process.
+ * The same fields on Claude Code (2.1.257) and Codex (0.148): `server`, `tool`, `input` with
+ * `${path}` templates read off the hook's JSON input, `timeout` in seconds, `statusMessage`.
+ */
+type NestedMcpHook = {
+  type: 'mcp_tool'; server: string; tool: string; input: Record<string, string>; timeout: number; statusMessage?: string;
+};
+type NestedHook = NestedCommandHook | NestedMcpHook;
 type NestedEntry = { matcher: string; hooks: NestedHook[] };
+
+/** What a nested merge or verify may be told beyond the host: today, only the transport. */
+export type HookConfigOptions = { transport?: HookTransport };
 // One entry in a flat command list. `timeout` is Cursor's; Windsurf documents no such field.
 type FlatEntry = { command: string; timeout?: number };
 
@@ -40,6 +54,22 @@ export function knowlHookCommand(platform: NodeJS.Platform, host: HookHost, even
 const ownsCommand = (value: unknown, host: HookHost) =>
   typeof value === 'string' && value.includes(` agent-hook ${host} `);
 
+/**
+ * Whether a nested hook entry is Knowl's own lifecycle handler for this host, in either shape.
+ *
+ * The `mcp_tool` half is keyed on the tool and on the `host` template constant, not on the
+ * server name alone: a person's own `mcp_tool` hook against the knowl server is theirs, and
+ * the same server serves several hosts' files, so the host in the input is what says whose
+ * entry this is. Recognising both shapes is what lets a transport change replace the other
+ * shape's entries rather than stack beside them.
+ */
+const ownsHook = (hook: Record<string, unknown>, host: HookHost): boolean => {
+  if (ownsCommand(hook.command, host)) return true;
+  if (hook.type !== 'mcp_tool' || hook.tool !== HOOK_TOOL_NAME) return false;
+  const input = hook.input;
+  return typeof input === 'object' && input !== null && (input as Record<string, unknown>).host === host;
+};
+
 export function knowlReminderCommand(platform: NodeJS.Platform, host: HookHost): string {
   const executable = platform === 'win32' ? 'knowl.cmd' : 'knowl';
   return `${executable} agent-reminder ${host} --json`;
@@ -69,13 +99,13 @@ function reminderEntry(platform: NodeJS.Platform, host: HookHost): { hooks: Nest
 
 function removeOwnedNestedHandlers(
   entries: Record<string, any>[],
-  owns: (command: unknown) => boolean,
+  owns: (hook: Record<string, unknown>) => boolean,
 ): { entries: Record<string, any>[]; removed: boolean } {
   let removed = false;
   const retained = entries.flatMap(entry => {
     if (!Array.isArray(entry.hooks)) return [entry];
     const hooks = entry.hooks.filter((hook: Record<string, unknown>) => {
-      const owned = owns(hook.command);
+      const owned = owns(hook);
       removed ||= owned;
       return !owned;
     });
@@ -112,14 +142,79 @@ function nestedMatcher(host: HookHost, event: string, wildcard: string): string 
   return `^(${tools.join('|')})$`;
 }
 
-function nestedEntry(platform: NodeJS.Platform, host: HookHost, event: string): NestedEntry {
+/**
+ * The hook input fields the `mcp_tool` entry forwards, as `${field}` templates.
+ *
+ * A command hook receives the host's whole JSON payload on stdin and `readLifecyclePayload`
+ * keeps the allowlisted parts of it. An `mcp_tool` hook receives only what its `input` names,
+ * so this is that allowlist restated as templates: the identity fields both hosts' profiles
+ * read, the tool name, the two tool objects, the subagent identity, and the prompt and
+ * final-message heads the fleet reduces to one line. Nothing here reaches the server that the
+ * stdin path would have dropped, and the server runs the same filter over it again.
+ */
+const MCP_HOOK_INPUT_FIELDS = [
+  'session_id', 'conversation_id', 'thread_id', 'turn_id', 'cwd', 'hook_event_name',
+  'tool_name', 'tool_input', 'tool_response', 'agent_id', 'agent_type',
+  'prompt', 'last_assistant_message', 'error',
+] as const;
+
+/**
+ * The leaves of the two tool objects, forwarded a second time by dotted path.
+ *
+ * Codex documents that a placeholder filling a whole value keeps its JSON type, so
+ * `${tool_input}` arrives as the object. Claude Code documents substitution for string values
+ * and says nothing about an object-valued path, so the same template may arrive as text or
+ * not at all. The leaves the lifecycle actually reads are therefore named individually as
+ * well -- `${tool_input.file_path}` is the documented form on both hosts -- and the server
+ * rebuilds the object from them when the whole-object template did not resolve. The set is
+ * `lifecycle.ts`'s nested allowlist for the two objects, spelled out.
+ */
+const MCP_HOOK_INPUT_LEAVES = [
+  'tool_input.command', 'tool_input.file_path', 'tool_input.notebook_path', 'tool_input.path',
+  'tool_input.pattern', 'tool_input.glob', 'tool_input.query', 'tool_input.url',
+  'tool_input.title', 'tool_input.id', 'tool_input.supersedeId', 'tool_input.supersedes',
+  'tool_response.exit_code', 'tool_response.stdout', 'tool_response.stderr',
+] as const;
+
+/** `tool_input.file_path` -> `tool_input__file_path`: one flat key per leaf, no dots to misread. */
+export const mcpHookLeafKey = (leaf: string): string => leaf.replace('.', '__');
+
+export function mcpHookInput(host: HookHost, event: string): Record<string, string> {
+  const input: Record<string, string> = { host, event };
+  for (const field of MCP_HOOK_INPUT_FIELDS) input[field] = `\${${field}}`;
+  for (const leaf of MCP_HOOK_INPUT_LEAVES) input[mcpHookLeafKey(leaf)] = `\${${leaf}}`;
+  return input;
+}
+
+/** Whether this event goes over MCP for this host under the given transport. */
+function overMcp(host: HookHost, event: string, transport: HookTransport | undefined): boolean {
+  return transport === 'mcp' && (hostProfile(host).mcpToolHookEvents ?? []).includes(event);
+}
+
+function nestedEntry(platform: NodeJS.Platform, host: HookHost, event: string, options: HookConfigOptions = {}): NestedEntry {
   // OpenHands' schema has no `statusMessage`, and its matcher wildcard is `*` rather than the
   // regex `.*` the Anthropic-shaped hosts take. Emitting a field a host does not define is
   // usually ignored and occasionally fatal to parsing the whole file, which would take every
   // other handler in it down too.
   const openHands = hostProfile(host).hookConfigStyle === 'openhands-toplevel';
+  const matcher = nestedMatcher(host, event, openHands ? '*' : '.*');
+  if (overMcp(host, event, options.transport)) {
+    // Same 30s as the command entry. The host's default for this type is 600s, which would let
+    // a wedged server hold a PreToolUse -- and the user behind it -- for ten minutes.
+    return {
+      matcher,
+      hooks: [{
+        type: 'mcp_tool',
+        server: KNOWL_MCP_SERVER_KEY,
+        tool: HOOK_TOOL_NAME,
+        input: mcpHookInput(host, event),
+        timeout: 30,
+        statusMessage: nestedStatusMessage(event),
+      }],
+    };
+  }
   return {
-    matcher: nestedMatcher(host, event, openHands ? '*' : '.*'),
+    matcher,
     hooks: [{
       type: 'command',
       command: knowlHookCommand(platform, host, event),
@@ -156,6 +251,7 @@ export async function mergeNestedHookConfig(
   host: HookHost,
   /** Top-level keys this host's file must carry beside its events; see `hookFileExtraKeys`. */
   extraKeys: Record<string, unknown> = {},
+  options: HookConfigOptions = {},
 ): Promise<MergeStatus> {
   const existing = await readTextIfExists(configPath);
   const config = existing === undefined ? {} as Record<string, unknown> : JSON.parse(existing) as Record<string, unknown>;
@@ -181,16 +277,18 @@ export async function mergeNestedHookConfig(
   // after it was rewritten. None is today; ordering it this way means none ever can be.
   for (const event of retiredEventsFor(host)) {
     const current = Array.isArray(hooks[event]) ? hooks[event] as Record<string, any>[] : [];
-    const retained = removeOwnedNestedHandlers(current, command => ownsCommand(command, host));
+    const retained = removeOwnedNestedHandlers(current, hook => ownsHook(hook, host));
     hadOwnEntry ||= retained.removed;
     if (retained.entries.length > 0) nextHooks[event] = retained.entries;
     else delete nextHooks[event];
   }
   for (const event of events) {
     const current = Array.isArray(hooks[event]) ? hooks[event] as Record<string, any>[] : [];
-    const filtered = removeOwnedNestedHandlers(current, command => ownsCommand(command, host));
+    // Both shapes are Knowl's own, so switching the transport replaces the other shape's
+    // entry instead of leaving a process hook and a tool hook to fire side by side.
+    const filtered = removeOwnedNestedHandlers(current, hook => ownsHook(hook, host));
     hadOwnEntry ||= filtered.removed;
-    nextHooks[event] = [...filtered.entries, nestedEntry(platform, host, event)];
+    nextHooks[event] = [...filtered.entries, nestedEntry(platform, host, event, options)];
   }
   // A host without a declared prompt event never gets a prompt-time reminder handler -- and
   // never has Claude's event name substituted for its own, which is what the old fallback did.
@@ -204,9 +302,9 @@ export async function mergeNestedHookConfig(
     // Two removals, one key. The first strips a *lifecycle* handler Knowl once wrote under the
     // prompt event and no longer does; the second strips the previous reminder so re-running
     // init replaces it instead of stacking a second copy.
-    const withoutLegacy = removeOwnedNestedHandlers(promptCurrent, command => ownsCommand(command, host));
+    const withoutLegacy = removeOwnedNestedHandlers(promptCurrent, hook => ownsHook(hook, host));
     hadOwnEntry ||= withoutLegacy.removed;
-    const withoutReminder = removeOwnedNestedHandlers(withoutLegacy.entries, command => ownsReminderCommand(command, host));
+    const withoutReminder = removeOwnedNestedHandlers(withoutLegacy.entries, hook => ownsReminderCommand(hook.command, host));
     hadOwnEntry ||= withoutReminder.removed;
     nextHooks[promptEvent] = [...withoutReminder.entries, reminderEntry(platform, host)];
   }
@@ -227,6 +325,7 @@ export async function verifyNestedHookConfig(
   platform: NodeJS.Platform,
   host: HookHost,
   extraKeys: Record<string, unknown> = {},
+  options: HookConfigOptions = {},
 ): Promise<boolean> {
   try {
     const parsed = JSON.parse(await readTextIfExists(configPath) ?? '{}') as Record<string, any>;
@@ -243,7 +342,7 @@ export async function verifyNestedHookConfig(
       ? config.hooks[promptEvent]
       : [];
     const promptHandlers = promptEntries.flatMap((entry: any) => Array.isArray(entry.hooks) ? entry.hooks : []);
-    const noRetiredPromptHandler = !promptHandlers.some((hook: any) => ownsCommand(hook.command, host));
+    const noRetiredPromptHandler = !promptHandlers.some((hook: any) => ownsHook(hook, host));
     const reminderHandlers = promptHandlers.filter((hook: any) => ownsReminderCommand(hook.command, host));
     const promptValid = promptEvent
       ? reminderHandlers.length === 1 && promptEntries.some((entry: unknown) => equal(entry, reminderEntry(platform, host)))
@@ -253,11 +352,14 @@ export async function verifyNestedHookConfig(
     // this the dead handler survives every re-init and every `doctor --fix`.
     const noRetiredEvents = retiredEventsFor(host).every(event =>
       !(config.hooks?.[event] as any[] | undefined)?.some((entry: any) =>
-        (Array.isArray(entry.hooks) ? entry.hooks : []).some((hook: any) => ownsCommand(hook.command, host))));
+        (Array.isArray(entry.hooks) ? entry.hooks : []).some((hook: any) => ownsHook(hook, host))));
     const extrasPresent = Object.entries(extraKeys).every(([key, value]) => equal(config[key], value));
     return noRetiredPromptHandler && promptValid && noRetiredEvents && extrasPresent
       && events.every(event => Array.isArray(config.hooks?.[event])
-      && config.hooks[event].some((entry: unknown) => equal(entry, nestedEntry(platform, host, event))));
+      // Exactly the entry the current transport would write. A file written under the other
+      // transport therefore verifies false, which is what puts "lifecycle hooks missing or
+      // stale" in front of the person and `doctor --fix` behind the rewrite.
+      && config.hooks[event].some((entry: unknown) => equal(entry, nestedEntry(platform, host, event, options))));
   } catch {
     return false;
   }
@@ -371,12 +473,16 @@ export async function mergeHookConfig(
   configPath: string,
   platform: NodeJS.Platform,
   host: HookHost,
+  // The transport reaches only the nested writer. The flat and Antigravity shapes belong to
+  // hosts that declare no `mcpToolHookEvents`, and `nestedEntry` asks the profile before it
+  // asks the option, so a host without the field keeps its process hooks whatever is set.
+  options: HookConfigOptions = {},
 ): Promise<MergeStatus> {
   switch (hostProfile(host).hookConfigStyle) {
     case 'none': return 'unchanged';
     case 'flat-commands': return mergeFlatHookConfig(configPath, platform, host, extraKeys(host));
     case 'antigravity-nested': return mergeAntigravityHookConfig(configPath, platform, host);
-    default: return mergeNestedHookConfig(configPath, platform, host, extraKeys(host));
+    default: return mergeNestedHookConfig(configPath, platform, host, extraKeys(host), options);
   }
 }
 
@@ -384,11 +490,12 @@ export async function verifyHookConfig(
   configPath: string,
   platform: NodeJS.Platform,
   host: HookHost,
+  options: HookConfigOptions = {},
 ): Promise<boolean> {
   switch (hostProfile(host).hookConfigStyle) {
     case 'none': return true;
     case 'flat-commands': return verifyFlatHookConfig(configPath, platform, host, extraKeys(host));
     case 'antigravity-nested': return verifyAntigravityHookConfig(configPath, platform, host);
-    default: return verifyNestedHookConfig(configPath, platform, host, extraKeys(host));
+    default: return verifyNestedHookConfig(configPath, platform, host, extraKeys(host), options);
   }
 }

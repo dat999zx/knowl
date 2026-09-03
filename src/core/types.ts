@@ -537,6 +537,16 @@ export interface ProjectConfig {
     nudge?: 'off' | 'shadow' | 'enforce';
   };
   /**
+   * How the host reaches the lifecycle handler. `command` (the default, and what every install
+   * has always used) spawns `knowl agent-hook` per event; `mcp` writes the mid-session events
+   * as calls to `knowl_hook` on the server the host already holds open, and registers that
+   * tool. Read at `knowl init` and `knowl doctor --fix`, which write the hooks file, and at
+   * server start, which decides the tool list. See `core/hooks-transport.ts`.
+   */
+  hooks?: {
+    transport?: 'command' | 'mcp';
+  };
+  /**
    * This repo's half of workspace membership. The other half is the workspace manifest
    * listing this repo; either alone is not membership, which is what makes linkage
    * un-forgeable by a cloned repository.

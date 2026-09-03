@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS,
+  CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, HOOK_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS,
 } from '../../src/mcp/tool-definitions.js';
 import { knowlToolDefinitions } from '../../src/mcp/tools.js';
 import type { ProjectConfig } from '../../src/core/types.js';
@@ -30,6 +30,18 @@ describe('the gated tool surface', () => {
   it('offers knowl_cloud only to a connected repo', () => {
     expect(knowlToolDefinitions(cloudConfig).map(t => t.name)).toContain('knowl_cloud');
     expect(knowlToolDefinitions(workspaceConfig).map(t => t.name)).not.toContain('knowl_cloud');
+  });
+
+  it('offers knowl_hook only to a repo that routes its hooks over MCP', () => {
+    // The one tool no agent should call, so it is paid for only by repos that asked for it:
+    // MCP has no hidden-tool concept, and the lifecycle target is a catalog entry like any other.
+    const mcpHooks = { version: 1, hooks: { transport: 'mcp' } } as ProjectConfig;
+    const commandHooks = { version: 1, hooks: { transport: 'command' } } as ProjectConfig;
+    expect(knowlToolDefinitions(mcpHooks).map(t => t.name)).toContain('knowl_hook');
+    expect(knowlToolDefinitions(commandHooks).map(t => t.name)).not.toContain('knowl_hook');
+    expect(knowlToolDefinitions({ version: 1 } as ProjectConfig).map(t => t.name)).not.toContain('knowl_hook');
+    expect(knowlToolDefinitions(null).map(t => t.name)).not.toContain('knowl_hook');
+    expect(HOOK_TOOL_DEFINITIONS[0].description).toMatch(/an agent never should/i);
   });
 
   it('offers knowl_workspace only to a repo in a workspace', () => {

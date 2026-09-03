@@ -37,6 +37,12 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 
 ⚠️ means Knowl emits the envelope and the host accepts it, but nobody has watched it reach the model. Anything deciding "has this agent already been told" reads `midTurnDeliveryVerified`, never the presence of an envelope — so a ⚠️ host keeps getting the MCP copy and is never left silent on a guess. Flipping one to ✅ is a one-line change once someone observes a real session.
 
+## One process per event, or one server
+
+Every hook above is installed as a `command` hook: a fresh `knowl agent-hook` process per event, ~230ms of Node startup each, serialized against the agent's own tool calls because the host waits on the pre-tool hook. Over 102 real Claude Code sessions that is 31s at the median session and 190s at the 90th percentile.
+
+Claude Code (2.1.257+) and Codex (0.148+) can run a hook as a call to a tool on an already-connected MCP server instead. Set `hooks.transport` to `mcp` in `.knowl/config.json` and re-run `knowl init <host>`: the mid-session events become `mcp_tool` hooks calling `knowl_hook` on the `knowl serve` process the host already holds open, and the server registers that tool. `SessionStart` stays a process (both hosts say it fires before servers finish connecting), as does `SessionEnd`. No other host has the hook type yet; on those the setting changes nothing. The trade and the details are in the [reference](reference.md#hook-transport--hookstransport).
+
 ## Setup
 
 ```bash

@@ -104,6 +104,13 @@ export const claudeProfile: HostProfile = {
   // one of these; `Bash` is deliberately absent, because the gate needs the paths a tool
   // declares and a shell command does not declare any.
   writeTools: ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'],
+  // Every registered event but the two boundaries. Claude Code 2.1.257's hooks reference
+  // offers `mcp_tool` on every event and warns that `SessionStart` "typically fires before
+  // servers finish connecting"; `SessionEnd` is kept a process for the mirror-image reason.
+  mcpToolHookEvents: [
+    'SubagentStart', 'PreToolUse', 'PostToolUse', 'PostToolUseFailure',
+    'PreCompact', 'Stop', 'StopFailure', 'SubagentStop',
+  ],
   identity(raw): HostIdentity {
     return {
       externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id) ?? hostString(raw.thread_id),
