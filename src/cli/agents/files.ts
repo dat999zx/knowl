@@ -1,6 +1,9 @@
+import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parse, stringify } from 'smol-toml';
+import { Document, parseDocument } from 'yaml';
 import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
 
 export interface McpEntry {
@@ -76,4 +79,50 @@ export async function mergeCodexTomlConfig(configPath: string, entry: McpEntry):
   config.mcp_servers = { ...servers, [KNOWL_MCP_SERVER_KEY]: entry };
   await writeWithBackup(configPath, stringify(config), existing);
   return status;
+}
+
+/**
+ * A user-owned YAML file as a `yaml` Document, so comments, ordering and tags survive a merge.
+ *
+ * dsh keeps `cwd: !!js process.cwd()` in its patch rows and Hermes users annotate their
+ * `config.yaml`; parse-to-object-and-stringify would erase both. A parse error is thrown, not
+ * swallowed: the adapter reports it and leaves the file exactly as it found it.
+ */
+export async function readYamlDocument(configPath: string): Promise<Document | undefined> {
+  const existing = await readTextIfExists(configPath);
+  if (existing === undefined) return undefined;
+  const doc = parseDocument(existing, { logLevel: 'silent' });
+  if (doc.errors.length > 0) throw new Error(`${configPath}: ${doc.errors[0].message}`);
+  return doc;
+}
+
+export async function mergeYamlDocument(
+  configPath: string,
+  mutate: (doc: Document) => boolean,
+): Promise<MergeStatus> {
+  const existing = await readTextIfExists(configPath);
+  const doc = existing === undefined
+    ? new Document({})
+    : parseDocument(existing, { logLevel: 'silent' });
+  if (doc.errors.length > 0) throw new Error(`${configPath}: ${doc.errors[0].message}`);
+  if (!mutate(doc)) return 'unchanged';
+  await writeWithBackup(configPath, doc.toString(), existing);
+  return existing === undefined ? 'configured' : 'updated';
+}
+
+/**
+ * The installed package root, found by walking up from this module.
+ *
+ * The bundle puts every module in `dist/`, and vitest runs this from `src/cli/agents/`, so a
+ * fixed `..` count is wrong in one of the two. The shipped plugins under `integrations/` are
+ * addressed from here.
+ */
+export function packageRootDir(): string {
+  let dir = path.dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    if (fsSync.existsSync(path.join(dir, 'package.json'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) throw new Error('Knowl package root not found.');
+    dir = parent;
+  }
 }
