@@ -1,13 +1,14 @@
-import fs from 'node:fs/promises';
 import path from 'node:path';
-import { Document, YAMLSeq, isSeq } from 'yaml';
-import { McpEntry, MergeStatus, mcpEntryMatches, mergeYamlDocument, packageRootDir, readYamlDocument } from './files.js';
+import { Document, YAMLMap, YAMLSeq, isMap, isSeq } from 'yaml';
+import { McpEntry, MergeStatus, mcpEntryMatches, mergeYamlDocument, readYamlDocument } from './files.js';
+import { knowlHookCommand } from './hook-config.js';
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentIntegrationResult } from './types.js';
 import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
+import { hostProfile } from '../../session/hosts/index.js';
 
 /**
  * Where Hermes keeps its home, mirroring `get_hermes_home()` in `hermes_constants.py`:
- * `HERMES_HOME`, else the platform default -- `%LOCALAPPDATA%\hermes` on Windows (verified against
+ * `HERMES_HOME`, else the platform default -- `%LOCALAPPDATA%\\hermes` on Windows (verified against
  * Hermes v0.21.0 installed here 2026-09-03, where `~/.hermes` does not exist at all) and
  * `~/.hermes` everywhere else.
  */
@@ -20,114 +21,141 @@ export function hermesHomeDir(environment: AgentEnvironment): string {
   return path.join(environment.homeDir, '.hermes');
 }
 
-export function hermesPluginSourceDir(): string {
-  return path.join(packageRootDir(), 'integrations', 'hermes', 'knowl');
-}
+/** Seconds Hermes allows one of our hooks; its default is 60, its ceiling 300. */
+const HOOK_TIMEOUT_SECONDS = 30;
 
-const PLUGIN_FILES = ['plugin.yaml', '__init__.py'];
-
-function serverMatches(doc: Document, entry: McpEntry): boolean {
-  const server = doc.getIn(['mcp_servers', KNOWL_MCP_SERVER_KEY]);
-  const json = server && typeof (server as any).toJSON === 'function' ? (server as any).toJSON() : server;
-  return mcpEntryMatches(json, entry);
-}
-
-const PLUGIN_NAME = 'knowl';
-
-function stringItems(doc: Document, keys: string[]): string[] {
-  const node = doc.getIn(keys, true);
-  return isSeq(node) ? (node as YAMLSeq).items.map(item => String((item as any)?.value ?? item)) : [];
-}
-
-/** `plugins.enabled` lists us and `plugins.disabled` does not -- the two lists Hermes' loader reads. */
-function pluginEnabled(doc: Document): boolean {
-  return stringItems(doc, ['plugins', 'enabled']).includes(PLUGIN_NAME)
-    && !stringItems(doc, ['plugins', 'disabled']).includes(PLUGIN_NAME);
+/** Every event the hooks block must carry: the lifecycle events plus the prompt event. */
+function hermesHookEvents(): string[] {
+  const profile = hostProfile('hermes');
+  return [...profile.hookEvents, ...(profile.promptEvent ? [profile.promptEvent] : [])];
 }
 
 /**
- * Writes what `hermes plugins enable knowl` would write, without running it.
+ * The one entry Knowl writes under `hooks.<event>`.
  *
- * Running it was tried first, against Hermes v0.21.0 on 2026-09-03, and it did two things this
- * adapter must not do to a person's config: it re-serialised the whole of `config.yaml` through
- * Hermes' own dumper, which dropped all 1,883 comment lines of the shipped template, and for a
- * non-bundled plugin it stopped on an interactive "grant built-in tool override?" prompt that a
- * non-TTY `knowl init` can never answer. The loader (`hermes_cli/plugins.py`) reads nothing but
- * `plugins.enabled` and `plugins.disabled`, and this plugin declares no capabilities, so the two
- * list edits are the entire effect -- and made here they ride the same comment-preserving merge
- * as the MCP entry.
+ * `matcher` is a Python regex Hermes `fullmatch`es against the tool name, honoured only on the
+ * two tool events. On `pre_tool_call` it is the profile's `writeTools`, so Hermes never starts a
+ * process for a `read_file` the gate would answer "no opinion" to -- the same ~170ms-per-call
+ * saving the Claude matcher exists for. `post_tool_call` stays unmatched: reads feed the read-set.
  */
-function mutateHermesConfig(doc: Document, entry: McpEntry): boolean {
+function knowlHookEntry(platform: NodeJS.Platform, event: string): Record<string, unknown> {
+  const { writeTools } = hostProfile('hermes');
+  return {
+    command: knowlHookCommand(platform, 'hermes', event),
+    ...(event === 'pre_tool_call' && writeTools ? { matcher: writeTools.join('|') } : {}),
+    timeout: HOOK_TIMEOUT_SECONDS,
+  };
+}
+
+const ownsEntry = (value: unknown): boolean =>
+  isMap(value) && typeof value.get('command') === 'string' && (value.get('command') as string).includes(' agent-hook hermes ');
+
+function sameEntry(node: unknown, wanted: Record<string, unknown>): boolean {
+  return isMap(node) && JSON.stringify(node.toJSON()) === JSON.stringify(wanted);
+}
+
+function serverMatches(doc: Document, entry: McpEntry): boolean {
+  const server = doc.getIn(['mcp_servers', KNOWL_MCP_SERVER_KEY]);
+  const json = isMap(server) ? server.toJSON() : server;
+  return mcpEntryMatches(json, entry);
+}
+
+/** Whether every event carries exactly our current entry. */
+function hooksConfigured(doc: Document, platform: NodeJS.Platform): boolean {
+  return hermesHookEvents().every(event => {
+    const list = doc.getIn(['hooks', event], true);
+    return isSeq(list) && list.items.some(item => sameEntry(item, knowlHookEntry(platform, event)));
+  });
+}
+
+/**
+ * One Document edit for both halves: the MCP server and the hook entries.
+ *
+ * Nothing here runs `hermes`. Its own mutators (`hermes plugins enable`, `hermes config set`)
+ * re-serialise the whole file through a plain YAML dump, which drops every comment of the
+ * 2,147-line shipped template, and some of them stop on an interactive prompt a non-TTY
+ * `knowl init` can never answer -- both seen against v0.21.0 on 2026-09-03. Editing the two
+ * keys the loader reads, through the comment-preserving merge, is the whole effect.
+ *
+ * Per event: an existing Knowl entry (recognised by ` agent-hook hermes ` in its command, so a
+ * platform change or a new matcher replaces rather than duplicates) is rewritten in place; a
+ * foreign entry is left alone; a missing one is appended.
+ */
+export function mutateHermesConfig(doc: Document, entry: McpEntry, platform: NodeJS.Platform): boolean {
   let changed = false;
   if (!serverMatches(doc, entry)) {
     doc.setIn(['mcp_servers', KNOWL_MCP_SERVER_KEY], doc.createNode({ command: entry.command, args: entry.args }));
     changed = true;
   }
-  if (!pluginEnabled(doc)) {
-    const enabled = stringItems(doc, ['plugins', 'enabled']);
-    if (!enabled.includes(PLUGIN_NAME)) doc.setIn(['plugins', 'enabled'], doc.createNode([...enabled, PLUGIN_NAME]));
-    const disabled = stringItems(doc, ['plugins', 'disabled']);
-    if (disabled.includes(PLUGIN_NAME)) doc.setIn(['plugins', 'disabled'], doc.createNode(disabled.filter(name => name !== PLUGIN_NAME)));
+  for (const event of hermesHookEvents()) {
+    const wanted = knowlHookEntry(platform, event);
+    const existing = doc.getIn(['hooks', event], true);
+    const list: YAMLSeq = isSeq(existing) ? existing : (doc.createNode([]) as YAMLSeq);
+    if (!isSeq(existing)) doc.setIn(['hooks', event], list);
+    const index = list.items.findIndex(ownsEntry);
+    if (index >= 0 && sameEntry(list.items[index], wanted)) continue;
+    const node = doc.createNode(wanted) as YAMLMap;
+    if (index >= 0) list.items[index] = node; else list.add(node);
     changed = true;
   }
   return changed;
 }
 
-async function pluginInstalled(home: string): Promise<boolean> {
-  try {
-    await Promise.all(PLUGIN_FILES.map(file => fs.access(path.join(home, 'plugins', 'knowl', file))));
-    return true;
-  } catch {
-    return false;
-  }
-}
+const CONSENT_NOTE = 'Hermes asks once per hook at the terminal on first use, then remembers it in shell-hooks-allowlist.json; '
+  + 'a gateway or Hermes Desktop run needs that approval first, or hooks_auto_accept: true in config.yaml. '
+  + 'In a running chat, /reload-mcp connects the knowl server.';
 
 /**
- * Hermes: a global `config.yaml` (there is no project-local one) plus a plugin directory.
+ * Hermes: one global `config.yaml` holding both the MCP server and the shell hooks.
  *
- * The plugin files are copied, not linked: Hermes runs from a managed venv and `hermes update`
- * re-runs install hooks, and a symlink into a `node_modules` that npm may replace is a plugin
- * that vanishes on the next `npm update`. Only the files Knowl ships are overwritten.
- *
- * Nothing here runs `hermes` itself; see `mutateHermesConfig` for why.
+ * There is no project-local config, so both halves are global and `detect().configured` asks
+ * the file, never the presence of a project directory.
  */
 export function createHermesAdapter(environment: AgentEnvironment): AgentAdapter {
   const entry: McpEntry = { command: environment.platform === 'win32' ? 'knowl.cmd' : 'knowl', args: ['serve', '--host', 'hermes'] };
   const configPath = () => path.join(hermesHomeDir(environment), 'config.yaml');
-  const reload = 'Plugin enabled in config.yaml; it loads on the next Hermes session. In a running chat, /reload-mcp connects the knowl server.';
+  const readDoc = async () => {
+    try {
+      return await readYamlDocument(configPath());
+    } catch {
+      return undefined;
+    }
+  };
   return {
     name: 'hermes',
     label: 'Hermes Agent',
     async detect(): Promise<AgentDetection> {
-      let configured: boolean;
-      try {
-        const doc = await readYamlDocument(configPath());
-        configured = doc !== undefined && serverMatches(doc, entry) && pluginEnabled(doc) && await pluginInstalled(hermesHomeDir(environment));
-      } catch {
-        configured = false;
-      }
-      return { installed: await environment.commandExists('hermes'), configured, scope: 'global', configPath: configPath() };
+      const doc = await readDoc();
+      return {
+        installed: await environment.commandExists('hermes'),
+        configured: doc !== undefined && serverMatches(doc, entry) && hooksConfigured(doc, environment.platform),
+        scope: 'global',
+        configPath: configPath(),
+      };
     },
     async configure(): Promise<AgentIntegrationResult> {
-      const home = hermesHomeDir(environment);
       let status: MergeStatus;
       try {
-        status = await mergeYamlDocument(configPath(), doc => mutateHermesConfig(doc, entry));
+        status = await mergeYamlDocument(configPath(), doc => mutateHermesConfig(doc, entry, environment.platform));
       } catch (error: any) {
         return { agent: 'hermes', status: 'failed', scope: 'global', configPath: configPath(), message: `Could not merge ${configPath()}: ${error.message}` };
       }
-      const target = path.join(home, 'plugins', 'knowl');
-      await fs.mkdir(target, { recursive: true });
-      for (const file of PLUGIN_FILES) await fs.copyFile(path.join(hermesPluginSourceDir(), file), path.join(target, file));
-      return { agent: 'hermes', status, scope: 'global', configPath: configPath(), message: reload };
+      return { agent: 'hermes', status, scope: 'global', configPath: configPath(), message: CONSENT_NOTE };
     },
     async verify() {
       return (await this.detect('')).configured;
     },
     async lifecycleCapability() { return 'supported'; },
+    // The hooks were written by `configure`, in the same file as the MCP entry; this reports on
+    // them rather than writing a second time.
     async configureLifecycle() {
-      return { agent: 'hermes', status: 'unchanged', scope: 'global', configPath: path.join(hermesHomeDir(environment), 'plugins', 'knowl'), message: 'Lifecycle runs through the installed plugin.' };
+      const doc = await readDoc();
+      const configured = doc !== undefined && hooksConfigured(doc, environment.platform);
+      return { agent: 'hermes', status: configured ? 'unchanged' : 'failed', scope: 'global', configPath: configPath(), message: configured ? 'Shell hooks are in config.yaml.' : 'Shell hooks missing from config.yaml.' };
     },
-    async verifyLifecycle() { return pluginInstalled(hermesHomeDir(environment)); },
+    async verifyLifecycle() {
+      const doc = await readDoc();
+      return doc !== undefined && hooksConfigured(doc, environment.platform);
+    },
   };
 }

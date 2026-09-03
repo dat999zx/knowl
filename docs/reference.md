@@ -2085,7 +2085,7 @@ flowchart TB
         H1["Codex"]
         H2["Claude Code"]
         H3["Cursor"]
-        H4["Copilot / OpenHands / Antigravity / Windsurf"]
+        H4["Copilot / OpenHands / Antigravity / Windsurf / Hermes"]
         H5["Zed · JetBrains · Neovim (ACP)"]
         H6["Claude Desktop / OpenCode (MCP only)"]
     end
@@ -2182,25 +2182,30 @@ one `knowl_store` or one hook capture is a single write — and better under con
 ## Agent setup
 
 `knowl init` detects Claude Code, Codex, GitHub Copilot, Cursor, OpenHands, Antigravity,
-Windsurf, Cline, OpenCode and Claude Desktop. Run it interactively or name the integrations
+Windsurf, Cline, Hermes Agent, OpenCode and Claude Desktop. Run it interactively or name the integrations
 explicitly:
 
 ```bash
 knowl init
-knowl init claude codex copilot cursor openhands antigravity windsurf cline opencode claude-desktop
+knowl init claude codex copilot cursor openhands antigravity windsurf cline hermes opencode claude-desktop
 knowl doctor
 ```
 
 `KNOWL.md` contains the canonical workflow. `AGENTS.md` receives a synchronized managed section
 and `CLAUDE.md` imports `@KNOWL.md`. On every host that declares a prompt event — Claude Code,
-Codex, Copilot and OpenHands — the installed prompt hook invokes `knowl agent-reminder <host>
+Codex, Copilot, OpenHands and Hermes — the installed prompt hook invokes `knowl agent-reminder <host>
 --json`. Existing unrelated MCP servers and host rules are preserved, and changed configuration
 files are backed up.
 
-Two hosts need one extra step, because neither keeps a hooks file `knowl init` could write:
+Three hosts need one extra step:
 
 - **Cline** loads lifecycle as a plugin. Point it at the shipped file:
   `ClineCore.start({ pluginPaths: ['./node_modules/@dat999zx/knowl/integrations/cline/knowl-plugin.mjs'] })`
+- **Hermes Agent** runs shell hooks only after you approve each one, once, at the terminal on
+  first use (Hermes records it in `shell-hooks-allowlist.json`). A gateway or Hermes Desktop
+  process has no terminal to ask on, so approve from the `hermes` CLI first or set
+  `hooks_auto_accept: true` in `config.yaml`. Its hooks and MCP entry live in that one global
+  file — `~/.hermes/config.yaml`, or `%LOCALAPPDATA%\hermes\config.yaml` on Windows.
 - **Zed, JetBrains, Neovim and Kiro** speak the Agent Client Protocol, whose traffic runs
   agent-to-client with no hook to register. Point the editor at `knowl acp -- <agent-command>`
   instead of at the agent.

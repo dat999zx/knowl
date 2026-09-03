@@ -480,6 +480,8 @@ export async function mergeHookConfig(
 ): Promise<MergeStatus> {
   switch (hostProfile(host).hookConfigStyle) {
     case 'none': return 'unchanged';
+    // Owned by `createHermesAdapter`, which writes the block into the host's YAML config.
+    case 'hermes-yaml': return 'unchanged';
     case 'flat-commands': return mergeFlatHookConfig(configPath, platform, host, extraKeys(host));
     case 'antigravity-nested': return mergeAntigravityHookConfig(configPath, platform, host);
     default: return mergeNestedHookConfig(configPath, platform, host, extraKeys(host), options);
@@ -494,6 +496,7 @@ export async function verifyHookConfig(
 ): Promise<boolean> {
   switch (hostProfile(host).hookConfigStyle) {
     case 'none': return true;
+    case 'hermes-yaml': return true;
     case 'flat-commands': return verifyFlatHookConfig(configPath, platform, host, extraKeys(host));
     case 'antigravity-nested': return verifyAntigravityHookConfig(configPath, platform, host);
     default: return verifyNestedHookConfig(configPath, platform, host, extraKeys(host), options);
