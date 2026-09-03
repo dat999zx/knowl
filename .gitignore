@@ -22,6 +22,8 @@ eslint-debug.log*
 # OS Metadata
 .DS_Store
 Thumbs.db
+__pycache__/
+*.pyc
 
 # Temp
 .tmp/
@@ -40,6 +42,7 @@ benchmarks/accuracy/results/
 
 .codex/
 .claude/
+.agents/
 .mcp.json
 # ...except this repository's own, which IS the Claude Code plugin's MCP declaration.
 # `.mcp.json` at the plugin root is the ONLY form the runtime reads: an inline `mcpServers`

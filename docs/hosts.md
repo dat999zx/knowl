@@ -30,10 +30,13 @@ Every host gets **memory**: `knowl_query`, `knowl_store` and the rest, over MCP.
 | **Cursor** | ✅ | ❌ | ⚠️ MCP | ✅ | ✅ |
 | **Claude Desktop** | via MCP | ❌ | via MCP | ❌ | via MCP |
 | **Cline** (with the plugin) | ✅ | ✅ | ✅ | — | via MCP |
+| **Hermes Agent** | ✅ | ✅ | ⚠️ MCP | ✅ | ✅ edit turns |
 | **Zed, JetBrains, Neovim, Kiro** (via `knowl acp`) | ✅ | ❌ | ✅ | ❌ | via MCP |
 | **OpenCode, Roo, Continue, Amp, Goose, Aider, …** | via MCP | ❌ | via MCP | ❌ | via MCP |
 
 "via MCP" is not a degradation, but it is a weaker guarantee, and the two cases differ. A **change card** delivered this way is complete — the host just learns on its next Knowl call rather than its next tool call. A **capture nudge** delivered this way rides a tool result the agent may read and ignore, where a stop hook could withhold the stop. Both beat the alternative, which for a hookless client was nothing at all.
+
+"✅ edit turns" is Hermes' capture nudge: its `pre_verify` hook fires only on a turn that edited code, which is the turn the nudge is about; a turn with no edits gets no stop hook and no nudge.
 
 ⚠️ means Knowl emits the envelope and the host accepts it, but nobody has watched it reach the model. Anything deciding "has this agent already been told" reads `midTurnDeliveryVerified`, never the presence of an envelope — so a ⚠️ host keeps getting the MCP copy and is never left silent on a guess. Flipping one to ✅ is a one-line change once someone observes a real session.
 
@@ -61,6 +64,7 @@ knowl doctor               # what is configured, what is stale
 | Windsurf | `~/.codeium/windsurf/mcp_config.json` | `.windsurf/hooks.json` |
 | Cursor | `.cursor/mcp.json` | `.cursor/hooks.json` |
 | Claude Desktop | platform config directory | — |
+| Hermes Agent | `config.yaml` in the Hermes home (global) | same file, `hooks:` block |
 
 † Antigravity is two products reading two files. The IDE's "View raw config" opens `~/.gemini/antigravity/mcp_config.json`; the `agy` CLI reads `~/.gemini/config/mcp_config.json`, which Gemini CLI's migration often leaves at 0 bytes — an empty file, not a broken one. Both are confirmed against real installs, and `knowl init antigravity` writes both. The hooks path and event names are still quoted from Google's reference rather than observed.
 
@@ -107,6 +111,8 @@ ClineCore.start({ pluginPaths: ['./node_modules/@dat999zx/knowl/integrations/cli
 ```
 
 That file is [`integrations/cline/knowl-plugin.mjs`](../integrations/cline/knowl-plugin.mjs). It maps Cline's method names and shells out to the same `knowl agent-hook` entry point every other host's hooks use — no npm package to install, nothing to keep in version step. Its write gate is deliberately not wired: `beforeTool` can refuse, but the plugin runs *inside* Cline's process, where a hung child stalls the agent instead of timing out a hook runner. Capture first.
+
+**Hermes Agent** has shell hooks in its own `config.yaml` that take Claude Code's wire format — JSON on stdin with `tool_name`, `tool_input`, `session_id` and `cwd`; `{"decision": "block", "reason"}` or exit 2 to refuse; `{"context"}` to inject. `knowl init hermes` writes `mcp_servers.knowl` and one `hooks.<event>` entry per lifecycle event into that file (`~/.hermes/config.yaml` on macOS and Linux, `%LOCALAPPDATA%\hermes\config.yaml` on Windows, or `$HERMES_HOME`), editing it as a YAML document so every comment survives, though comment blocks may be re-indented to sit with their key. It deliberately never runs `hermes` itself: Hermes' own mutators re-serialise the whole config without its comments and can stop on an interactive prompt. `pre_llm_call` carries the turn card (appended to the user message), `pre_tool_call` is matched to `write_file|patch` and carries the write gate, and `pre_verify` — fired before a turn that edited code finishes — accepts the Claude Stop shape and carries the capture nudge, so the nudge is real on exactly the turns it is about. Two things to know: Hermes asks once per hook at the terminal on first use and remembers it in `shell-hooks-allowlist.json`, so a gateway or Hermes Desktop run needs that one approval first (or `hooks_auto_accept: true`); and the payload's `cwd` is the Hermes process's working directory, so launch `hermes` from the project, or expect hooks from a Desktop session to find no Knowl project and stay silent. Type `/reload-mcp` in a running chat to pick the MCP server up.
 
 **Gemini CLI is gone.** Discontinued upstream; its adapter was instructions-only and was removed. Antigravity replaces it. An existing `GEMINI.md` is left on disk.
 

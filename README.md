@@ -164,7 +164,9 @@ the agent picks up its guidance, and it will query and write memory on its own.
 
 **gate** means Knowl can refuse an edit that invalidates code another session is holding.
 Neovim and Kiro work the same way as Zed and JetBrains, through `knowl acp`. Cline needs one
-line pointing it at the shipped plugin. Any other MCP client works with no integration at all.
+line pointing it at the shipped plugin. Hermes Agent gets shell hooks in its own `config.yaml`,
+with the full gate and nudge, and asks you once to approve them. Any other MCP client works with
+no integration at all.
 
 Running agents in parallel? Every **git worktree** resolves to the main checkout's store —
 [Conductor](https://conductor.build) workspaces, Claude Code's `isolation: "worktree"`, or your
@@ -357,6 +359,7 @@ which the code cannot tell it, because rejected alternatives leave no trace in a
 | Windsurf | Yes | Yes | Yes | Yes | Nudge rides MCP; no stop hook |
 | Cursor | Yes | Yes | Yes | Yes | Finalizes per turn |
 | Cline | Yes | Yes | No | Yes | Lifecycle via the shipped plugin |
+| Hermes Agent | Yes | Yes | Yes | Yes | Shell hooks in `config.yaml`; nudge via `pre_verify` on edit turns |
 | Zed, JetBrains, Neovim, Kiro | Yes | Yes | No | Yes | Via `knowl acp --` |
 | Claude Desktop, OpenCode, Roo, … | Yes | No | No | Yes | MCP plus the manual work loop |
 

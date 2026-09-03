@@ -14,7 +14,7 @@ export default tseslint.config(
   // `.verify-dist/**` is the same case as `.bridge-dist/**` above and was missed for the same
   // reason: it is gitignored, so CI's fresh checkout never has it and only a developer who had
   // run the verification bundle saw the extra findings.
-  { ignores: ['dist/**', 'node_modules/**', '.benchmark-dist/**', '.bridge-dist/**', '.verify-dist/**', 'benchmarks/**/dist/**', '.tmp/**', '.claude/**'] },
+  { ignores: ['dist/**', 'node_modules/**', '.benchmark-dist/**', '.bridge-dist/**', '.verify-dist/**', 'benchmarks/**/dist/**', '.tmp/**', '.claude/**', 'ledger-tmp.cjs', 'zz-*.*'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

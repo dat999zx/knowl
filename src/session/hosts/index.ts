@@ -13,6 +13,7 @@ import { openhandsProfile } from './openhands.js';
 import { antigravityProfile } from './antigravity.js';
 import { windsurfProfile } from './windsurf.js';
 import { clineProfile } from './cline.js';
+import { hermesProfile } from './hermes.js';
 
 export type { HostIdentity, HostOutput, HostProfile } from './profile.js';
 
@@ -27,6 +28,7 @@ export const HOST_PROFILES: Record<HookHost, HostProfile> = {
   antigravity: antigravityProfile,
   windsurf: windsurfProfile,
   cline: clineProfile,
+  hermes: hermesProfile,
 };
 
 export function hostProfile(host: HookHost): HostProfile {
@@ -86,6 +88,7 @@ const HOST_DISPLAY_NAMES: Record<string, string> = {
   'claude-desktop': 'Claude Desktop',
   generic: 'Your host’s',
   cline: 'Cline',
+  hermes: 'Hermes',
 };
 
 /**

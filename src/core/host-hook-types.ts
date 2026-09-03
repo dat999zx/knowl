@@ -12,7 +12,8 @@ import { SessionEventType } from './types.js';
 
 export type HookHost =
   | 'codex' | 'claude' | 'cursor' | 'claude-desktop' | 'generic'
-  | 'copilot' | 'openhands' | 'antigravity' | 'windsurf' | 'cline';
+  | 'copilot' | 'openhands' | 'antigravity' | 'windsurf' | 'cline'
+  | 'hermes';
 
 export type NormalizedHookEventName =
   | 'session-start'

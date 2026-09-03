@@ -3,6 +3,14 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+Hermes Agent at Claude Code parity: `knowl init hermes`.
+
+**Hermes Agent** is configured through the shell hooks in its own `config.yaml`, which take Claude Code's wire format: `knowl init hermes` writes `mcp_servers.knowl` and one `hooks.<event>` entry each for `on_session_start`, `pre_llm_call`, `pre_tool_call` (matched to `write_file|patch`), `post_tool_call`, `pre_verify`, `on_session_end` and `on_session_finalize`. `pre_llm_call` carries the turn card, `pre_tool_call` blocks a refused write on exit 2, and `pre_verify` — which fires before an edit turn finishes and accepts Claude's `{"decision": "block"}` — carries the capture nudge, so Hermes reaches every capability. Init edits `config.yaml` as a YAML document (comments survive) and never runs `hermes` itself, whose own mutators rewrite the file without comments and can stop on an interactive prompt. Hermes asks for consent once per hook at the terminal on first use; gateway and Hermes Desktop runs need that approval or `hooks_auto_accept: true`. Home is `HERMES_HOME`, else `%LOCALAPPDATA%\hermes` on Windows, else `~/.hermes`.
+
+User-owned YAML config files (`config.yaml`) are merged as documents: every comment survives (comment blocks may be re-indented to sit with their key), the file's line-ending convention is kept, and a file that fails to parse is reported and left untouched. `yaml` is now a direct dependency.
+
 ## 5.18.0 — 2026-09-03
 
 Hooks can run on the MCP server the host already holds open, and file evidence can finally
