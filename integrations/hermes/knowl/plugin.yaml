@@ -1,0 +1,9 @@
+name: knowl
+version: 1.0.0
+description: Knowl project memory — bootstrap context, per-turn recall, change impact and a write gate, backed by the knowl CLI.
+provides_hooks:
+  - on_session_start
+  - pre_llm_call
+  - pre_tool_call
+  - post_tool_call
+  - on_session_end
