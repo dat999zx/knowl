@@ -203,7 +203,7 @@ describe('MCP Server Layer', () => {
     // it off and stays out of the guidance inventory all the same, because a gated tool is not a
     // promise every session can rely on -- so a plain config sees the canonical set and it.
     expect([...names].sort()).toEqual([...KNOWL_MCP_TOOL_NAMES, 'knowl_fleet'].sort());
-    expect(new Set(names).size).toBe(28);
+    expect(new Set(names).size).toBe(29);
   });
 
   it('lists both resume tools', async () => {

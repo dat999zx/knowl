@@ -24,7 +24,7 @@ const EXPECTED_TOOLS = [
   'knowl_recent', 'knowl_state', 'knowl_context',
   'knowl_task_start', 'knowl_task_checkpoint', 'knowl_task_finish',
   'knowl_store', 'knowl_ingest_atoms', 'knowl_decide', 'knowl_update',
-  'knowl_timeline', 'knowl_evidence_list', 'knowl_conflicts', 'knowl_feedback',
+  'knowl_timeline', 'knowl_evidence_list', 'knowl_conflicts', 'knowl_drift', 'knowl_feedback',
   'knowl_skill_list', 'knowl_skill_read', 'knowl_skill_run', 'knowl_skill_create',
   'knowl_ingest', 'knowl_synthesize', 'knowl_session_finish', 'knowl_gc_preview', 'knowl_gc_apply',
   'knowl_handoff',
@@ -74,10 +74,10 @@ const CARD_MUST_ROUTE: Array<[string, RegExp]> = [
 ];
 
 describe('canonical Knowl agent guidance', () => {
-  it('defines nine groups and the exact 27-tool inventory', () => {
+  it('defines nine groups and the exact 28-tool inventory', () => {
     expect(KNOWL_MCP_TOOL_GROUPS).toHaveLength(9);
     expect(KNOWL_MCP_TOOL_NAMES).toEqual(EXPECTED_TOOLS);
-    expect(new Set(KNOWL_MCP_TOOL_NAMES).size).toBe(27);
+    expect(new Set(KNOWL_MCP_TOOL_NAMES).size).toBe(28);
     expect(KNOWL_MCP_TOOL_NAMES).not.toContain('knowl_ask');
   });
 
@@ -282,7 +282,7 @@ describe('canonical Knowl agent guidance', () => {
     const documentedTools = [...reference.matchAll(/^\| `(knowl_[a-z_]+)` \|/gm)]
       .map(match => match[1]);
     expect(documentedTools).toEqual([...KNOWL_MCP_TOOL_NAMES]);
-    expect(new Set(documentedTools).size).toBe(27);
+    expect(new Set(documentedTools).size).toBe(28);
     expect(reference).toContain('KNOWL.md');
     // The instruction files Knowl actually writes. `GEMINI.md` was here until the Gemini CLI
     // adapter was retired; a doc-coverage assertion that outlives the thing it covers keeps

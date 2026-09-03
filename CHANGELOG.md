@@ -43,6 +43,16 @@ ships quiet: `fleet.digest` (`off`), `fleet.cards` (`enforce`, since a card is a
 refusal) and `fleet.nudge` (`shadow`, since it withholds a stop). `knowl posture maximal` now also
 turns the digest on and arms the nudge.
 
+**An agent can ask what its own branch broke.** `knowl pr --since` has always answered "which
+stored knowledge does this diff invalidate", and it was CLI-only — so the actor most able to act
+on the answer, the one that just wrote the branch, had no way to ask. `knowl_drift` is the same
+check as an MCP tool: it takes a base ref, previews by default, and `apply` marks the matches as
+needing review. It deliberately does not tell the team, which the CLI does — publishing a
+retirement is visible to every member of a workspace, and sending stays the user's to run, the
+same line `knowl_cloud` already draws. The automatic session-start check is a different question
+and is unchanged: that one asks what drifted while you were away, this one asks what the work you
+just did made false, and the diff that answers it does not exist until the branch does.
+
 ## 5.16.0 — 2026-09-02
 
 Knowl can be installed from the official MCP registry, and change impact stops being blind to

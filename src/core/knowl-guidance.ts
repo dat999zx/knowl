@@ -51,8 +51,8 @@ export const KNOWL_MCP_TOOL_GROUPS = [
   },
   {
     label: 'History and quality',
-    tools: ['knowl_timeline', 'knowl_evidence_list', 'knowl_conflicts', 'knowl_feedback'],
-    routing: 'Inspect history, evidence, or conflicts when needed; record feedback only after actual use, rejection, or correction.',
+    tools: ['knowl_timeline', 'knowl_evidence_list', 'knowl_conflicts', 'knowl_drift', 'knowl_feedback'],
+    routing: 'Inspect history, evidence, or conflicts when needed; check drift before opening a pull request; record feedback only after actual use, rejection, or correction.',
   },
   {
     label: 'Learned skills',

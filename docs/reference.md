@@ -1103,6 +1103,24 @@ The check considers `affectedPaths`, source strings, path-like tags, and stale s
 Without `--dry-run`, matching candidates are changed to `needs_review`. It does not rewrite their
 content or decide a replacement.
 
+What survives the check is narrower than "a file this atom cites appeared in the diff". An atom
+whose cited file was merely **edited** is dropped: that was 226 of 339 observations on the measured
+store, and reporting it is what made the signal unreadable. What is reported is a cited path that
+is **gone** — deleted, or moved somewhere a rename cannot account for — a symbol locator that no
+longer resolves, or an untracked directory that moved since the atom was written. So an empty
+result means nothing an atom cites went away, not that nothing changed.
+
+- **`knowl_drift`** — the same check as an MCP tool, for the agent that just wrote the branch. Use
+  it before opening a pull request and before `knowl_task_finish` on work that touched code. It
+  takes `since` and previews by default; `apply: true` is the equivalent of dropping `--dry-run`.
+  It deliberately does **not** tell the team, which the CLI does: publishing a retirement is
+  visible to every member of the workspace, and sending stays the user's to run — the same line
+  `knowl_cloud` draws by exposing status and stage and stopping there.
+
+The automatic session-start check is a different question and does not replace either. It asks
+what drifted while you were away; these ask what the work you just did made false, and the diff
+that answers it does not exist until the branch does.
+
 When a repo is connected to a workspace, `knowl pr` also tells the team, so a flag it raises is
 visible to everyone. The other end of that is:
 
@@ -2491,6 +2509,7 @@ unless fleet awareness is switched off.
 | `knowl_timeline` | Inspect one item's immutable assertion history |
 | `knowl_evidence_list` | Inspect evidence linked to one item |
 | `knowl_conflicts` | Inspect declared exclusive keys and detected polarity pairs among active items |
+| `knowl_drift` | List the atoms a branch's diff may have invalidated; optionally mark them for review |
 | `knowl_feedback` | Record usefulness or correction feedback after an item is used |
 | `knowl_skill_list` | List learned file-backed skills |
 | `knowl_skill_read` | Inspect one learned skill before running it |

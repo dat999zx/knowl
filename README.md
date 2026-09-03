@@ -15,7 +15,7 @@
 <p align="center">
   <a href="#the-idea-memory-that-retires-itself"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-supersession.svg"><img src="docs/assets/chips/stat-supersession.svg" alt="Scores 90 on MemoryAgentBench FactConsolidation single-hop at 262K" height="38" /></picture></a>
   <a href="#quick-start"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-nokeys.svg"><img src="docs/assets/chips/stat-nokeys.svg" alt="0 API keys needed" height="38" /></picture></a>
-  <a href="#everything-else"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-tools.svg"><img src="docs/assets/chips/stat-tools.svg" alt="27 MCP tools" height="38" /></picture></a>
+  <a href="#everything-else"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-tools.svg"><img src="docs/assets/chips/stat-tools.svg" alt="28 MCP tools" height="38" /></picture></a>
   <a href="#what-knowl-is-for"><picture><source media="(prefers-color-scheme: light)" srcset="docs/assets/chips/light/stat-local.svg"><img src="docs/assets/chips/stat-local.svg" alt="100% local, no egress" height="38" /></picture></a>
 </p>
 
@@ -716,7 +716,7 @@ privacy boundary: do not put it behind a public proxy or tunnel.
 ### Everything else
 
 <!-- generated:tool-count -->
-**27 MCP tools** (plus 3 when transcript search is on, 1 when connected to a cloud workspace, 1 when linked into a local workspace, 1 when change impact is on, and 1 for fleet awareness unless it is switched off)
+**28 MCP tools** (plus 3 when transcript search is on, 1 when connected to a cloud workspace, 1 when linked into a local workspace, 1 when change impact is on, and 1 for fleet awareness unless it is switched off)
 <!-- /generated:tool-count -->
 and two resource URIs · the
 **complete CLI**, from `knowl status` to `knowl audit` · a **read-only integrity audit** ·

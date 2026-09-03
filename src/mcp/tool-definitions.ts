@@ -966,4 +966,25 @@ export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
             },
           },
         },
+        // The agent's end of `knowl pr`. The automatic session-start check answers "did anything
+        // drift while I was away"; this answers "did the work I just did make something false",
+        // which nothing else asks -- the diff it needs does not exist until the branch does.
+        {
+          name: 'knowl_drift',
+          description: 'Which stored knowledge this branch may have invalidated: atoms whose cited files the diff since `since` deleted or moved away, plus symbol evidence that no longer resolves. Use before opening a pull request, before knowl_task_finish on work that touched code, and when the user asks what a change breaks. An atom whose file was merely edited is deliberately NOT reported — that was two thirds of all matches and made the signal unreadable — so an empty result means nothing it cites went away, not that nothing changed. Previews by default; `apply` marks the matches as needing review so the next session sees them flagged rather than trusting them. Reads git, so it needs a repository and a base ref that exists locally.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              since: {
+                type: 'string', minLength: 1, maxLength: 200,
+                description: 'The base ref to compare against: a branch like "origin/main", a tag, or a commit sha. Whatever the pull request will merge into.',
+              },
+              apply: {
+                type: 'boolean',
+                description: 'Mark every matched atom as needing review. Omit to preview, which changes nothing.',
+              },
+            },
+            required: ['since'],
+          },
+        },
 ];
