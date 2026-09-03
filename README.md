@@ -494,6 +494,21 @@ changed in two places. Restore verifies schema, size, SHA-256, and SQLite integr
 
 </td>
 </tr>
+<tr>
+<td colspan="2" valign="top">
+
+**🛰️ The sessions on this machine can see each other**
+
+Twenty agents across four repos, and none of them knew the others existed — so two hit the same
+failure and both start fixing it, and a third upgrades the engine the rest are standing on. Knowl
+records what each session is on, what it wrote this turn, and which failure it has claimed, then
+says so *before* the second session starts the same fix. Every host with Knowl hooks is in it and
+they see each other, Codex beside Claude Code. Prints nothing when you are the only one running.
+
+`fleet` · `knowl_fleet`
+
+</td>
+</tr>
 </table>
 
 The commands worth knowing on day one:
@@ -507,6 +522,7 @@ knowl conflicts                        # items that contradict each other
 knowl timeline <item-id>               # every version an atom ever had
 knowl context --token-budget 1500      # a fixed-size briefing for an agent
 knowl pr --since origin/main           # knowledge your diff may invalidate
+knowl fleet                            # every agent session live on this machine, and what it is on
 knowl config list                      # every setting, its value, and how to change it
 knowl doctor                           # setup, retrieval, and registration
 ```
@@ -528,7 +544,9 @@ knowl doctor                           # setup, retrieval, and registration
 - **Evidence** — attach files, symbols, commits, tests, commands, or URLs to an atom. File and
   symbol evidence go stale *by themselves* when the code moves.
 - **Drift detection** — `knowl pr --since origin/main` flags knowledge your diff may have
-  invalidated, before you merge it.
+  invalidated, before you merge it, and `knowl_drift` asks the same question from inside the agent
+  that wrote the branch. What it reports is a cited path that is *gone*, not one merely edited —
+  that distinction is what keeps the signal readable.
 - **The claims drift cannot reach** — drift watches files, and about half the store cites none.
   `knowl status` dates those instead, by how long since anyone last *restated* them, and names the
   ones furthest past their own category's cadence. It ranks rather than flags: for prose there is
@@ -598,6 +616,44 @@ knowl doctor                           # setup, retrieval, and registration
   a repo that never ran it has not scored 0%, it has measured nothing.
 
 → [Tasks, sessions, and lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle)
+
+</details>
+
+<details>
+<summary><b>The sessions on this machine can see each other</b> — one roster, on every host</summary>
+<br>
+
+The other half of the same problem: not one session across time, but several at once. Claude Code
+keeps a registry of its live sessions and lets one message another; it records nothing about what
+any of them is *doing*, and no other host records anything at all.
+
+- **A roster at session start** — who else is running, grouped by repo, own repo first. Empty when
+  you are alone, so a single-session user never sees a line about any of this.
+- **Every host with Knowl hooks is in it, and they see each other.** A Codex session appears on a
+  Claude session's roster and the reverse. Liveness comes from the host's own session registry
+  where it publishes one, and from recency where it does not.
+- **"Another session is already on this problem"** — two sessions never see byte-identical output,
+  so failures are matched on a normalised signature rather than raw text, and a claim is keyed to
+  the *problem* rather than the file. The card names the peer, its files, and the exact call to
+  make; a bare announcement of a conflicting edit is measurably no better than saying nothing.
+- **A pre-flight before a shared surface moves** — hooks, host settings, migrations, lock files,
+  and the `knowl` install every other session's hooks are running on. Advice on a channel the
+  agent already receives, never a refusal.
+- **A stop-time nudge** when this turn's writes invalidated a file another live session had read,
+  joined through the read set rather than guessed. Shadow by default — it records what it would
+  have said, because delivering it withholds a stop and that costs a turn.
+- **Only reachable peers are offered as something to message.** A session on another host or under
+  another config directory is listed and marked, and the card asks you instead — a card that told
+  the agent to message a session it cannot address teaches it to skip the next one.
+- **Machine-level, not per-repo.** `~/.knowl/fleet.db`, beside the resume keys: a session in
+  `~/work/api` upgrading the engine is a fact `~/work/web` needs. `knowl fleet` reads it from any
+  terminal, inside a project or not.
+- **`fleet.enabled` ships on**, and so do the cards — the roster costs a directory listing and says
+  nothing when you are alone, and a card is advice on a channel the agent already reads. What
+  ships quiet is what would cost you something: the per-turn digest, and the stop-time nudge that
+  withholds a stop.
+
+→ [Who else is running](docs/reference.md#who-else-is-running--the-fleet)
 
 </details>
 
@@ -738,8 +794,11 @@ adds to `.gitignore`:
 | `.knowl/knowl.db` | Atoms, assertions, knowledge commits, full-text index, feedback, embeddings |
 | `.knowl/skills/` | File-backed skill packages |
 
-Workspace manifests live outside member repositories, because their checkout paths are
-machine-local. Exports and snapshots are written only when you ask for them.
+A little lives beside your home directory instead, under `~/.knowl/`, because it is true of the
+machine rather than of any one repository: resume keys, the fleet's record of the sessions running
+right now, your cloud credential, and the local mirror of a cloud workspace. Workspace manifests
+live outside member repositories for the same reason — their checkout paths are machine-local.
+Exports and snapshots are written only when you ask for them.
 
 ## Documentation
 
@@ -752,6 +811,7 @@ usually what you actually need to know.
 | What an atom is, and what each field means | [Knowledge model](docs/reference.md#core-knowledge-model) |
 | How a query is ranked, and what wins ties | [Retrieval and context](docs/reference.md#retrieval-and-context) |
 | What a hook records, and when | [Tasks, sessions, lifecycle](docs/reference.md#tasks-sessions-and-agent-lifecycle) |
+| What the other sessions on this machine are doing | [The fleet](docs/reference.md#who-else-is-running--the-fleet) |
 | How an atom notices the code moved | [Evidence and drift](docs/reference.md#evidence-code-intelligence-and-drift) |
 | How several repos share memory safely | [Workspaces](docs/reference.md#workspaces) |
 | How a procedure becomes reusable | [Skills and synthesis](docs/reference.md#learned-skills-and-synthesis) |

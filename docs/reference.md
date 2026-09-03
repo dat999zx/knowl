@@ -981,9 +981,13 @@ hours after its last event, and a clean exit closes its row immediately. Only se
 host's own messaging can actually reach are offered as something to `SendMessage`; the rest are
 listed, marked, and raised with the user instead.
 
-**On by default**, and the only feature in this document that is: the roster costs a directory
-listing and prints nothing when a session is alone, and nobody opts into "tell me other sessions
-exist" until after the collision.
+**On by default**, along with `fleet.cards` below — and what separates those two from everything
+else here is what a surface can *cost*. Anything that refuses a tool call or withholds a stop
+ships silent: `impact.gate` and `capture.nudge` are `off` when unset, and the fleet's own
+`fleet.nudge` is `shadow`, recording what it would have said. A roster costs a directory listing
+and prints nothing at all when a session is alone, and a card is advice on a channel the agent is
+already reading — neither is on that ladder, and nobody opts into "tell me other sessions exist"
+until after the collision has happened to them.
 
 ```bash
 knowl fleet                 # every live session: host, repo, state, what it is on, what it is editing
@@ -2595,7 +2599,20 @@ Knowl keeps project data under `.knowl/`, which `knowl init` adds to `.gitignore
   optional embeddings.
 - `.knowl/skills/` — file-backed learned-skill packages.
 
-Workspace manifests live outside member repositories because their checkout paths are
+Some state is about the machine rather than any repository, and lives under `~/.knowl/` instead
+(`KNOWL_HOME` moves it):
+
+- `~/.knowl/resume.db` — parked workstreams, so a key handed over in one repo resolves from any
+  directory.
+- `~/.knowl/fleet.db` — the agent sessions running right now: what each is on, what it wrote this
+  turn, its last error, and the problems it has claimed. Every field is bounded at write, and rows
+  are swept on a retention window; see [the fleet](#who-else-is-running--the-fleet). A repository
+  with `fleet.enabled: false` records nothing in it — the switch is per repository, while the file
+  is one per machine.
+- `~/.knowl/cloud/<workspace>/` — the local mirror of a cloud workspace, and the credential from
+  `knowl cloud login`, which never enters `.knowl/config.json`.
+
+Workspace manifests live outside member repositories for the same reason: their checkout paths are
 machine-local. Portable JSONL exports and snapshots are created only when requested.
 
 ## Contributing
