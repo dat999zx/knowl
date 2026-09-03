@@ -5,6 +5,23 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+**Hooks can run on the server the host already holds open, instead of as a process per event.**
+Every Knowl hook has been a `command` hook: a fresh `knowl agent-hook` process per event, measured
+at ~230ms of Node startup each and paid twice per tool call, serialized against the agent's own
+work because the host waits on the pre-tool hook. Over 102 real Claude Code sessions that is 31s
+of startup at the median session and 190s at the 90th percentile — while the MCP server sat there
+with the database open and the embedding model loaded. Claude Code 2.1.257 and Codex 0.148 can run
+a hook as a call to a tool on a connected MCP server, so `hooks.transport: mcp` now writes the
+mid-session events as `mcp_tool` hooks calling `knowl_hook` and registers that tool; `SessionStart`
+stays a process because both hosts say it fires before servers finish connecting. Opt-in and
+`command` by default, because moving costs a catalog entry — MCP has no hidden-tool concept, and a
+34th tool against a surface already measured at ~10.5K tokens is paid only by the repositories that
+asked for it. The payload travels as `${field}` templates the host fills in, is rebuilt on the
+server whichever way the host rendered each one, and then goes through the same allowlist the
+stdin path applies, so nothing reaches the handler by this route that the other would have dropped.
+Calling the tool while the transport is `command` is refused rather than run, so a client holding
+a stale tool list cannot capture every event twice (#224).
+
 **A push no longer fails anonymously on an over-long field.** The cloud contract caps `title`,
 `source` and `conflictKey` at 500 characters; the local store caps nothing, so a research atom
 with a long citation list sat staged until push, where the server's zod rejection came back as

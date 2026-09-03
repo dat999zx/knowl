@@ -5,6 +5,7 @@ import { mcpEntryMatches, mergeCodexTomlConfig, mergeJsonMcpConfig, McpEntry } f
 import { AgentAdapter, AgentDetection, AgentEnvironment, AgentIntegrationResult } from './types.js';
 import { unsupportedLifecycleResult } from './lifecycle-config.js';
 import { mergeHookConfig, verifyHookConfig } from './hook-config.js';
+import { resolveHookTransport } from '../../core/hooks-transport.js';
 import {
   installKnowlHostInstructions,
   NativeInstructionHost,
@@ -62,10 +63,10 @@ export function createCodexAdapter(environment: AgentEnvironment): AgentAdapter 
     async lifecycleCapability() { return 'supported'; },
     async configureLifecycle(root) {
       const pathname = lifecyclePath(root);
-      const status = await mergeHookConfig(pathname, environment.platform, 'codex');
+      const status = await mergeHookConfig(pathname, environment.platform, 'codex', { transport: await resolveHookTransport(root) });
       return { agent: 'codex', status, scope: 'project', configPath: pathname };
     },
-    async verifyLifecycle(root) { return verifyHookConfig(lifecyclePath(root), environment.platform, 'codex'); },
+    async verifyLifecycle(root) { return verifyHookConfig(lifecyclePath(root), environment.platform, 'codex', { transport: await resolveHookTransport(root) }); },
   };
 }
 
@@ -99,11 +100,11 @@ function createJsonProjectAdapter(
     async configureLifecycle(root) {
       if (name !== 'claude') return unsupportedLifecycleResult(name, 'project', configPath(root));
       const pathname = lifecyclePath(root);
-      const status = await mergeHookConfig(pathname, environment.platform, 'claude');
+      const status = await mergeHookConfig(pathname, environment.platform, 'claude', { transport: await resolveHookTransport(root) });
       return { agent: name, status, scope: 'project', configPath: pathname };
     },
     async verifyLifecycle(root) {
-      return name === 'claude' && verifyHookConfig(lifecyclePath(root), environment.platform, 'claude');
+      return name === 'claude' && verifyHookConfig(lifecyclePath(root), environment.platform, 'claude', { transport: await resolveHookTransport(root) });
     },
     ...(instructionHost ? {
       async configureInstructions(root: string) {

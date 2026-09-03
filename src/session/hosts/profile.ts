@@ -144,6 +144,23 @@ export interface HostProfile {
    */
   readonly hookEntryTimeout?: number;
   /**
+   * The events this host can run as a call to a tool on a connected MCP server, when the repo
+   * sets `hooks.transport: mcp`. Absent means the host has no such hook type and every event
+   * stays a `command` hook whatever the setting says.
+   *
+   * A subset of `hookEvents`, and never the session-start event: both hosts that have the
+   * type document that it fires before their MCP servers finish connecting, so a hook there
+   * meets "not connected" on the first run — and session start is the one event whose output
+   * the user actually notices, since it is what returns their bootstrap context. Session end
+   * is left out for the mirror-image reason: nothing documents whether the server is still
+   * up when it fires, and Codex says outright that it is not eligible.
+   *
+   * Declared per host rather than derived as `hookEvents` minus the two, because the vendors
+   * disagree: Codex lists the events that accept the type, and a Claude-only event that never
+   * appears in that list has to stay a process there.
+   */
+  readonly mcpToolHookEvents?: readonly string[];
+  /**
    * Whether the MCP card may state, unconditionally, that this host's hooks own the lifecycle.
    *
    * Registering hook events is not the same as those hooks running, and the card is the one

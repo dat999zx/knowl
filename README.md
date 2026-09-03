@@ -716,7 +716,7 @@ privacy boundary: do not put it behind a public proxy or tunnel.
 ### Everything else
 
 <!-- generated:tool-count -->
-**28 MCP tools** (plus 3 when transcript search is on, 1 when connected to a cloud workspace, 1 when linked into a local workspace, 1 when change impact is on, and 1 for fleet awareness unless it is switched off)
+**28 MCP tools** (plus 3 when transcript search is on, 1 when connected to a cloud workspace, 1 when linked into a local workspace, 1 when change impact is on, 1 for fleet awareness unless it is switched off, and 1 when hooks run over MCP)
 <!-- /generated:tool-count -->
 and two resource URIs · the
 **complete CLI**, from `knowl status` to `knowl audit` · a **read-only integrity audit** ·

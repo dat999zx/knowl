@@ -267,6 +267,34 @@ export const FLEET_TOOL_DEFINITIONS: ToolDefinition[] = [
         },
 ];
 
+/**
+ * Registered only when the repo set `hooks.transport: mcp`.
+ *
+ * The lifecycle handler, reachable as a tool so a host's `mcp_tool` hooks can call it on the
+ * connection they already hold instead of spawning `knowl agent-hook` per event (#224). MCP has
+ * no hidden-tool concept, so it appears in `tools/list` for those repos -- which is why it is
+ * gated on the setting rather than always on: a repo that never turned it on never pays the
+ * entry. The description exists to tell a model that reads the catalog to leave it alone, and
+ * says so in the words a model acts on.
+ */
+export const HOOK_TOOL_DEFINITIONS: ToolDefinition[] = [
+        {
+          name: 'knowl_hook',
+          description: "Internal: the target of the host's lifecycle hooks when hooks.transport is mcp. The host calls it on every tool event; an agent never should -- calling it records a session event that did not happen.",
+          inputSchema: {
+            type: 'object',
+            properties: {
+              host: { type: 'string', minLength: 1, maxLength: 40, description: 'The hook host whose file this entry was written into.' },
+              event: { type: 'string', minLength: 1, maxLength: 80, description: "The host's own name for the event." },
+            },
+            required: ['host', 'event'],
+            // The rest of the payload arrives as whatever the host filled in for the templates
+            // in its hooks file; the handler runs the stdin allowlist over it.
+            additionalProperties: true,
+          },
+        },
+];
+
 /** Every tool the server always offers, in listing order. */
 export const CORE_TOOL_DEFINITIONS: ToolDefinition[] = [
         {

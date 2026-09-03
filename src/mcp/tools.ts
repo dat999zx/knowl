@@ -48,7 +48,8 @@ import { isTranscriptFallbackEnabled, isTranscriptSearchEnabled } from '../trans
 import { hasIndexableArchive } from '../transcripts/paths.js';
 import { handleSessionList, handleTranscriptRead, handleTranscriptSearch, NO_TRANSCRIPT_MATCHES_PREFIX } from '../transcripts/mcp-handlers.js';
 import { sanitizeToolErrorMessage, ToolInputError, validateToolArguments } from './tool-schema.js';
-import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, FLEET_TOOL_DEFINITIONS, IMPACT_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
+import { CLOUD_TOOL_DEFINITIONS, CORE_TOOL_DEFINITIONS, FLEET_TOOL_DEFINITIONS, HOOK_TOOL_DEFINITIONS, IMPACT_TOOL_DEFINITIONS, TRANSCRIPT_TOOL_DEFINITIONS, WORKSPACE_TOOL_DEFINITIONS, type ToolDefinition } from './tool-definitions.js';
+import { HOOK_TOOL_NAME, hooksTransport } from '../core/hooks-transport.js';
 import { checkKnowledgeDrift, getCurrentGitCommit, listChangedFilesSince, listRenamedPathsSince } from '../store/drift.js';
 import { isFleetEnabled } from '../fleet/config.js';
 import { describeFleet, renderFleetReport } from '../fleet/report.js';
@@ -242,6 +243,12 @@ export function knowlToolDefinitions(config: ProjectConfig | null): ToolDefiniti
     tools.push(...FLEET_TOOL_DEFINITIONS);
   }
 
+  // Off unless asked for, because it is the one tool here that costs a catalog entry for
+  // something no agent should ever call. See `core/hooks-transport.ts`.
+  if (config && hooksTransport(config) === 'mcp') {
+    tools.push(...HOOK_TOOL_DEFINITIONS);
+  }
+
   if (config?.cloud) {
     tools.push(...CLOUD_TOOL_DEFINITIONS);
   }
@@ -266,6 +273,7 @@ const SCHEMA_BY_TOOL = new Map<string, Record<string, unknown>>(
   [
     ...knowlToolDefinitions(null), ...TRANSCRIPT_TOOL_DEFINITIONS, ...IMPACT_TOOL_DEFINITIONS,
     ...CLOUD_TOOL_DEFINITIONS, ...WORKSPACE_TOOL_DEFINITIONS, ...FLEET_TOOL_DEFINITIONS,
+    ...HOOK_TOOL_DEFINITIONS,
   ]
     .map(tool => [tool.name, tool.inputSchema]),
 );
@@ -1788,6 +1796,20 @@ export function registerTools(
 
       // Re-checks its own gate for the reason the transcript handlers do: a cached tool list
       // keeps this callable after `fleet.enabled` goes false.
+      else if (name === HOOK_TOOL_NAME) {
+        // Refused, not run, when the transport is `command`: a client holding a stale tool list
+        // can still call it, and running the lifecycle here while the process hook also fires
+        // would capture every event twice.
+        if (hooksTransport(config) !== 'mcp') {
+          return { isError: true, content: [{ type: 'text', text: 'hooks.transport is `command` in this repository, so the lifecycle runs in `knowl agent-hook` processes and this tool does nothing. Set `hooks.transport` to `mcp` and re-run `knowl init <host>` to route hooks here.' }] };
+        }
+        // Deferred on purpose, and into a sibling layer: the handler is `agent-hook.ts`'s twin
+        // and lives beside it, and a server whose repo never turned the transport on never
+        // loads it. See the module's own header for the layering.
+        const { runHookOverMcp } = await import('../cli/hook-over-mcp.js');
+        return runHookOverMcp(args as Record<string, unknown>, { projectId, projectRoot });
+      }
+
       else if (name === 'knowl_fleet') {
         if (!isFleetEnabled(config)) {
           return { isError: true, content: [{ type: 'text', text: FLEET_DISABLED_MESSAGE }] };
@@ -2167,6 +2189,11 @@ export function registerTools(
     // Before `getProjectRoot()`, not just before dispatch: startup fills that variable in
     // behind the handshake, and reading it early would take a watermark against `null`.
     await whenReady();
+    // The hook target answers the host, not the agent. Its text is parsed as the hook's JSON
+    // verdict, so a change notice or a capture nudge appended to it would break the parse and
+    // discard a PreToolUse refusal -- and the notice it would carry is the one the hook path
+    // itself delivers on the next tool event.
+    if (request.params.name === HOOK_TOOL_NAME) return callToolAsRepo(request);
     // The caller's root deliberately, even for a call acting as another repo: the change notice
     // reports what moved in THIS session's store, and a write into a sibling moved nothing here.
     const projectRoot = getProjectRoot();
