@@ -3,6 +3,24 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+**`knowl cloud push` can drain a queue again.** Two independent faults could each leave staged
+knowledge unsendable indefinitely.
+
+`--yes` passed the strict snapshot check, which refuses when the queue merely GREW since the
+snapshot was taken. That check exists to protect what a human read at the prompt, and `--yes`
+shows no prompt — so with auto-staging on, any agent writing beside the push (including the
+session running it) restaged continuously and every `push --yes` died with "the queue changed
+while you were deciding". Strictness now follows the prompt: an addition refuses only when the
+list was actually shown. An atom that CHANGED still refuses either way.
+
+A staged id whose atom has since been deleted is now named. The ledger keeps such a row on
+purpose so the push can report it, but nothing ever did: `status` counted the row, `push` skipped
+it and reported "Published 0 new", and the queue never reached zero with no id to act on. The
+push now lists the ids and points at `knowl cloud unstage <id>`, and sends the rest of the queue
+as normal rather than refusing over it.
+
 ## 5.19.0 — 2026-09-03
 
 Hermes Agent at Claude Code parity: `knowl init hermes`.

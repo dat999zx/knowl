@@ -339,6 +339,15 @@ export type PushSnapshot = {
    * exactly the window this type exists to close.
    */
   unembedded: string[];
+  /**
+   * Staged ids whose atom is gone from the store entirely.
+   *
+   * Kept as its own list rather than folded into `unembedded`: the remedy is different (unstage,
+   * not reindex) and so is the cause. Nothing can ever send these -- every consumer loads the
+   * atom and drops what it cannot find -- so a queue holding only these is one `status` counts
+   * and `push` settles as "Published 0", every time, until someone is told which ids they are.
+   */
+  missing: string[];
 };
 
 /** The hashes of the atoms currently staged, for comparison against a snapshot. */
@@ -366,7 +375,7 @@ export async function computePushSnapshot(input: {
   config: ProjectConfig;
 }): Promise<PushSnapshot> {
   const pointer = cloudPointer(input.config);
-  if (!pointer) return { items: [], unembedded: [] };
+  if (!pointer) return { items: [], unembedded: [], missing: [] };
 
   await initDb(input.projectRoot);
   try {
@@ -376,15 +385,19 @@ export async function computePushSnapshot(input: {
     const hashes = await stagedHashes(staged.map(row => row.itemId));
     const items: PushSnapshot['items'] = [];
     const unembedded: string[] = [];
+    const missing: string[] = [];
     for (const row of staged) {
       const loaded = await loadPublishItem(row.itemId, pointer.workspaceId, profile, fingerprint);
       // A staged id whose row is gone cannot be shown or sent. Skipped here for the same reason
-      // the push skips it: the ledger records intent, and this command does not edit it.
+      // the push skips it: the ledger records intent, and this command does not edit it. Carried
+      // out all the same -- the ledger keeps the row so the push can REPORT it, and for a long
+      // time nothing did, which left the row invisible on one surface and uncountable on the other.
       if (!('item' in loaded)) {
         // An atom with no current vector is a different case: it exists, it is staged, and the
         // push will refuse because of it. Carried out so the prompt can say so rather than
         // quietly showing a shorter list than the user staged.
         if (loaded.skipped === 'no-vector') unembedded.push(row.itemId);
+        else missing.push(row.itemId);
         continue;
       }
       items.push({
@@ -394,7 +407,7 @@ export async function computePushSnapshot(input: {
         payload: loaded.item,
       });
     }
-    return { items, unembedded };
+    return { items, unembedded, missing };
   } finally {
     await closeDb();
   }

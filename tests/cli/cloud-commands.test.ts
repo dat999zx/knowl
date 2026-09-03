@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { Command } from 'commander';
 import { describe, expect, it } from 'vitest';
 import { buildProgram } from '../../src/cli/program.js';
@@ -64,6 +65,19 @@ describe('the 5.0 cloud namespace', () => {
   it('gives a human the three writes that were MCP-only', () => {
     const top = buildProgram().commands.map(command => command.name());
     for (const added of ['store', 'park', 'handoff']) expect(top).toContain(added);
+  });
+
+  /**
+   * Source assertion, same reason as `cloud-exit-codes.test.ts`: reaching this line through the
+   * CLI action needs a connected repo and a live workspace. `pushStaged` covers both verdicts
+   * already (tests/cloud/publish-snapshot.test.ts); what is only checkable here is the wiring.
+   */
+  it('is strict about additions only when the list was shown, so --yes cannot be blocked forever', () => {
+    const source = readFileSync(new URL('../../src/cli/program.ts', import.meta.url), 'utf8');
+    // Unconditional strictness plus auto-staging means any agent writing beside the push refuses
+    // it, every time, with a queue that is never still.
+    expect(source).not.toMatch(/pushStaged\(\{[^}]*strict: true/);
+    expect(source).toMatch(/pushStaged\(\{[^}]*strict: !options\.yes/);
   });
 
   it('keeps the local workspace group untouched', () => {

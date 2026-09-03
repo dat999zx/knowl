@@ -124,6 +124,27 @@ describe('a push bound to a snapshot', () => {
     } finally { await closeDb(); }
   };
 
+  it('names a staged id whose atom is gone, instead of skipping it into silence', async () => {
+    // The ledger keeps such a row deliberately (tests/cloud/ledger.test.ts) so the push can
+    // report it. Nothing did: `status` counted the row, `push` sent nothing and said
+    // "Published 0", and the queue never reached zero with no id to act on.
+    const alive = await seed('alive');
+    const doomed = await seed('doomed');
+    await stagePublish({ projectRoot: CLONE, config: connected, ids: [alive, doomed], apply: true });
+
+    await initDb(CLONE);
+    try {
+      await getClient().execute({ sql: 'DELETE FROM knowledge_items WHERE id = ?', args: [doomed] });
+    } finally { await closeDb(); }
+
+    const snapshot = await computePushSnapshot({ projectRoot: CLONE, config: connected });
+
+    expect(snapshot.missing).toEqual([doomed]);
+    expect(snapshot.unembedded).toEqual([]);
+    // The rest still goes: a dead row is a note, not a refusal.
+    expect(snapshot.items.map(entry => entry.itemId)).toEqual([alive]);
+  });
+
   it('sends only what the snapshot listed, ignoring an atom staged afterwards', async () => {
     const first = await seed('first');
     await stagePublish({ projectRoot: CLONE, config: connected, ids: [first], apply: true });

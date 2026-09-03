@@ -1359,6 +1359,19 @@ cloudCommand
         return;
       }
 
+      // Named, not silently skipped. The ledger keeps a row whose atom is gone so that this
+      // command can report it -- without that, `status` counts a queue the push then settles as
+      // "Published 0 new", forever, and neither surface says which ids or why. A note rather than
+      // a refusal: everything else in the queue is sendable and should still go.
+      if (snapshot.missing.length > 0) {
+        console.error(
+          `${snapshot.missing.length} staged id(s) no longer have an atom in this store, `
+          + 'so nothing can send them:',
+        );
+        for (const id of snapshot.missing) console.error(`  ${id}`);
+        console.error('Take them out of the queue with `knowl cloud unstage <id>`.');
+      }
+
       if (snapshot.items.length > 0 && !options.yes) {
         if (!isTTY) {
           // A prompt that cannot be answered must not block CI, and silence must not be read
@@ -1379,7 +1392,10 @@ cloudCommand
         }
       }
 
-      const result = await pushStaged({ projectRoot: root, config, snapshot, strict: true });
+      // Strict only when the list was actually shown: an addition invalidates what a human read,
+      // but with --yes nobody read anything, and refusing there lets any agent staging beside this
+      // push block it forever -- the queue is never still on a machine with auto-staging on.
+      const result = await pushStaged({ projectRoot: root, config, snapshot, strict: !options.yes });
 
       if (result.status === 'not-connected') {
         console.error('This repository is not connected to a cloud workspace. Run knowl cloud connect.');
