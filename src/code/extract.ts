@@ -1,8 +1,11 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import Parser from 'tree-sitter';
+import Go from 'tree-sitter-go';
+import JavaScript from 'tree-sitter-javascript';
+import Python from 'tree-sitter-python';
+import TypeScript from 'tree-sitter-typescript';
 import { CodeSymbol, CodeSymbolEdge, CodeSymbolKind } from '../core/types.js';
-import { CodeLanguage, grammarForExtension } from './languages.js';
 
 type SyntaxNode = Parser.SyntaxNode;
 export type IndexedSymbol = CodeSymbol & { signatureHash: string | null };
@@ -16,10 +19,21 @@ const lineRange = (node: SyntaxNode) => ({
 });
 const summarize = (text: string) => text.replace(/\s+/g, ' ').trim().slice(0, 240) || null;
 const signature = (node: SyntaxNode) => summarize(node.text.split('{', 1)[0]);
-/** Everything before the body: a brace inside a parameter type does not end a signature. */
+/**
+ * Everything before the body: a brace inside a parameter type does not end a signature.
+ *
+ * Ends at the last token before the body rather than at the body itself, because a comment is an
+ * extra and sits between the two. Python puts a block's start at its first *statement*, so
+ * `def f():` followed by a `#` line has that comment outside the body and inside the header --
+ * and a signature that moves when a body comment is edited is the exact false positive this
+ * index exists to avoid. Go reaches the same `)` either way, the whitespace being trimmed.
+ */
 const headerSignature = (node: SyntaxNode, definition = node) => {
   const body = definition.childForFieldName('body');
-  return summarize(body ? node.text.slice(0, body.startIndex - node.startIndex) : node.text);
+  if (!body) return summarize(node.text);
+  let last = body.previousSibling;
+  while (last?.type === 'comment') last = last.previousSibling;
+  return summarize(node.text.slice(0, (last?.endIndex ?? body.startIndex) - node.startIndex));
 };
 
 /**
@@ -209,21 +223,27 @@ function extractGo(root: SyntaxNode, filePath: string, symbols: IndexedSymbol[],
   }
 }
 
-const EXTRACTORS: Record<CodeLanguage, (root: SyntaxNode, filePath: string, symbols: IndexedSymbol[], edges: CodeSymbolEdge[]) => void> = {
-  javascript: extractJavaScript,
-  python: extractPython,
-  go: extractGo,
+/** One row per extension: the grammar that parses it, and the walk that reads the tree. */
+const GRAMMARS: Record<string, { grammar: unknown; extract: (root: SyntaxNode, filePath: string, symbols: IndexedSymbol[], edges: CodeSymbolEdge[]) => void }> = {
+  '.ts': { grammar: TypeScript.typescript, extract: extractJavaScript },
+  '.tsx': { grammar: TypeScript.tsx, extract: extractJavaScript },
+  '.js': { grammar: JavaScript, extract: extractJavaScript },
+  '.jsx': { grammar: JavaScript, extract: extractJavaScript },
+  '.py': { grammar: Python, extract: extractPython },
+  '.go': { grammar: Go, extract: extractGo },
 };
 
+export const CODE_EXTENSIONS = new Set(Object.keys(GRAMMARS));
+
 export function extractSymbols(filePath: string, text: string): Extracted {
-  const grammar = grammarForExtension(path.extname(filePath));
-  if (!grammar) return { symbols: [], edges: [] };
+  const language = GRAMMARS[path.extname(filePath)];
+  if (!language) return { symbols: [], edges: [] };
   const parser = new Parser();
-  parser.setLanguage(grammar.grammar);
+  parser.setLanguage(language.grammar);
   const symbols: IndexedSymbol[] = [];
   const edges: CodeSymbolEdge[] = [];
   const root = parser.parse(offset => text.slice(offset, offset + PARSE_CHUNK_BYTES)).rootNode;
-  EXTRACTORS[grammar.language](root, filePath, symbols, edges);
+  language.extract(root, filePath, symbols, edges);
   return { symbols: firstPerLocator(symbols), edges };
 }
 

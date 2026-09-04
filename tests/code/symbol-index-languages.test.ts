@@ -36,6 +36,10 @@ const PYTHON = [
   '',
   'if True:',
   '    def conditional(): pass',
+  '',
+  'def commented(z):  # trailing',
+  '    # a note before the first statement',
+  '    return z',
 ].join('\n') + '\n';
 
 const GO = [
@@ -109,6 +113,7 @@ describe('symbol index languages', () => {
       expect.objectContaining({ kind: 'method', locator: 'symbol://src/service.py#Service.prop', signature: '@property def prop(self):' }),
       expect.objectContaining({ kind: 'class', locator: 'symbol://src/service.py#Service.Nested' }),
       expect.objectContaining({ kind: 'function', locator: 'symbol://src/service.py#deco_fn', signature: '@decorated async def deco_fn():' }),
+      expect.objectContaining({ kind: 'function', locator: 'symbol://src/service.py#commented', signature: 'def commented(z):' }),
     ]));
     const locators = symbols.map(symbol => symbol.locator);
     expect(locators).not.toContain('symbol://src/service.py#inner');
@@ -179,6 +184,14 @@ describe('symbol index languages', () => {
     await fs.writeFile(path.join(ROOT, 'src', 'server.go'), GO.replace('    Addr string', '    // Addr is where the server listens.\n    Addr string'));
     await indexCode(ROOT);
     const after = (await listCodeSymbols('src/server.go')).find(symbol => symbol.locator === 'symbol://src/server.go#Server');
+    expect(after?.signatureHash).toBe(before?.signatureHash);
+  });
+
+  it('leaves a Python signature hash alone when a comment inside the body changes', async () => {
+    const before = (await listCodeSymbols('src/service.py')).find(symbol => symbol.locator === 'symbol://src/service.py#commented');
+    await fs.writeFile(path.join(ROOT, 'src', 'service.py'), PYTHON.replace('# a note before the first statement', '# rewritten note'));
+    await indexCode(ROOT);
+    const after = (await listCodeSymbols('src/service.py')).find(symbol => symbol.locator === 'symbol://src/service.py#commented');
     expect(after?.signatureHash).toBe(before?.signatureHash);
   });
 

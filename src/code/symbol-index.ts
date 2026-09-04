@@ -3,8 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { CodeSymbol, CodeSymbolEdge, CodeSymbolKind } from '../core/types.js';
-import { CODE_EXTENSIONS } from './languages.js';
-import { Extracted, extractSymbols, hash } from './extract.js';
+import { CODE_EXTENSIONS, Extracted, extractSymbols, hash } from './extract.js';
 import { getClient, withClientTransaction } from '../store/database.js';
 
 /**

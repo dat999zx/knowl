@@ -146,8 +146,9 @@ single `file://` row and a comment-only edit reported it as moved. Both language
 Python `def`/`class` definitions (decorated or not), class members as `Class.member`, module-level
 assignments and both import forms; Go functions, methods qualified by receiver type as
 `Type.Method`, `type` specs and aliases under a new `type` kind, `const`/`var` specs and every
-`import` path. A Python or Go function's signature stops where its body starts, so a body edit
-leaves the hash alone and a parameter or decorator change moves it; a struct or interface is cut
+`import` path. A Python or Go function's signature stops at the end of its header — a Python
+block begins at its first statement, so the comment lines above it are cut too — and a body edit
+leaves the hash alone while a parameter or decorator change moves it; a struct or interface is cut
 at its keyword like a class at its brace, so a field comment does not move it either. `__pycache__`,
 `.venv`, `venv` and `vendor` join the directories the walk never enters — a first-party directory
 by one of those names loses its rows on the next pass, and symbol evidence citing them reads stale
