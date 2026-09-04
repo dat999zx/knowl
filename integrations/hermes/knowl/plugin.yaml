@@ -7,6 +7,9 @@ description: >
   the repo you are working in.
 author: Knowl (knowl.cloud)
 kind: standalone
+provides_tools:
+  - knowl_query
+  - knowl_store
 provides_hooks:
   - pre_llm_call
   - pre_tool_call

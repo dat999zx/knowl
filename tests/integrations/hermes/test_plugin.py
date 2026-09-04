@@ -28,6 +28,7 @@ class FakeCtx:
     def __init__(self, settings=None):
         self.hooks = {}
         self.sections = {}
+        self.tools = {}
         self._settings = settings or {}
 
     def get_config(self, key, default=None):
@@ -35,6 +36,9 @@ class FakeCtx:
 
     def register_hook(self, name, fn):
         self.hooks[name] = fn
+
+    def register_tool(self, name, toolset, schema, handler, description="", emoji="", **_):
+        self.tools[name] = (schema, handler)
 
     def register_system_prompt_section(self, id, content, *, position="after_memory", max_chars=4000):
         self.sections[id] = (content, position, max_chars)
@@ -55,8 +59,14 @@ class PluginTest(unittest.TestCase):
         def fake_query(text, cwd, limit=8, timeout=20.0):
             return self.results.get("__query__", [])
 
+        def fake_cli(args, cwd, timeout=30.0):
+            self.cli_calls.append((args, cwd))
+            return self.results.get("__cli__", (0, "[]", ""))
+
+        self.cli_calls = []
         self.plugin._Runner.run = lambda _self, event, payload, cwd, timeout=None: fake_run(event, payload, cwd, timeout)
         self.plugin._Runner.query = lambda _self, text, cwd, limit=8, timeout=20.0: fake_query(text, cwd, limit, timeout)
+        self.plugin._Runner.cli = lambda _self, args, cwd, timeout=30.0: fake_cli(args, cwd, timeout)
         # A real project directory, so the cheap `.knowl` pre-check passes.
         self.plugin._has_knowl_project = lambda cwd: True
         self.plugin._is_hermes_source_clone = lambda cwd: False
@@ -86,6 +96,64 @@ class PluginTest(unittest.TestCase):
 
     def test_registers_the_rules_section(self):
         self.assertIn("knowl.project-memory", self.ctx.sections)
+
+    # -- the memory tools -----------------------------------------------------
+
+    def test_registers_the_memory_tools(self):
+        self.assertEqual(sorted(self.ctx.tools), ["knowl_query", "knowl_store"])
+
+    def test_query_tool_returns_items_from_either_output_shape(self):
+        keyed = json.dumps({"knowl": [{"id": "1"}], "other": [{"id": "2"}]})
+        for label, out, expected in (("bare", json.dumps([{"id": "1"}]), 1), ("keyed", keyed, 2)):
+            with self.subTest(label):
+                self.results["__cli__"] = (0, out, "")
+                _schema, handler = self.ctx.tools["knowl_query"]
+                self.assertEqual(len(json.loads(handler({"query": "x"}))["items"]), expected)
+
+    def test_query_tool_runs_in_the_session_directory_with_bounded_limit(self):
+        self.results["__cli__"] = (0, "[]", "")
+        _schema, handler = self.ctx.tools["knowl_query"]
+        handler({"query": "hermes hooks", "limit": 999, "category": "decision"})
+        args, cwd = self.cli_calls[-1]
+        self.assertEqual(args[:2], ["query", "hermes hooks"])
+        self.assertEqual(args[args.index("--limit") + 1], "25")  # clamped, not passed through
+        self.assertEqual(args[args.index("--category") + 1], "decision")
+        self.assertEqual(cwd, os.getcwd())
+
+    def test_store_tool_passes_every_field_through(self):
+        self.results["__cli__"] = (0, "Stored fact abc123: A title", "")
+        _schema, handler = self.ctx.tools["knowl_store"]
+        out = json.loads(handler({
+            "content": "body", "title": "A title", "category": "fact",
+            "paths": ["src/a.ts", "src/b.ts"], "tags": ["hermes"], "provenance": "observed",
+        }))
+        self.assertTrue(out["ok"])
+        args, _cwd = self.cli_calls[-1]
+        self.assertEqual(args[:2], ["store", "body"])
+        self.assertEqual(args[args.index("--title") + 1], "A title")
+        self.assertEqual([args[i + 1] for i, a in enumerate(args) if a == "--path"], ["src/a.ts", "src/b.ts"])
+        self.assertEqual(args[args.index("--provenance") + 1], "observed")
+
+    def test_store_tool_hands_back_a_refusal_verbatim(self):
+        # Secret detection refuses the write; the caller has to see why.
+        self.results["__cli__"] = (1, "", "Knowledge write rejected: secret material was detected.")
+        _schema, handler = self.ctx.tools["knowl_store"]
+        self.assertIn("secret material", json.loads(handler({"content": "c", "title": "t", "category": "fact"}))["error"])
+
+    def test_tools_require_their_arguments(self):
+        _q_schema, query = self.ctx.tools["knowl_query"]
+        self.assertIn("error", json.loads(query({"query": "  "})))
+        _s_schema, store = self.ctx.tools["knowl_store"]
+        self.assertIn("error", json.loads(store({"content": "c", "title": "t"})))
+
+    def test_tools_say_so_outside_a_knowl_project(self):
+        self.plugin._has_knowl_project = lambda cwd: False
+        ctx = FakeCtx()
+        self.plugin.register(ctx)
+        for name in ("knowl_query", "knowl_store"):
+            _schema, handler = ctx.tools[name]
+            error = json.loads(handler({"query": "x", "content": "c", "title": "t", "category": "fact"}))["error"]
+            self.assertIn("No Knowl project", error)
 
     # -- payload shape --------------------------------------------------------
 
