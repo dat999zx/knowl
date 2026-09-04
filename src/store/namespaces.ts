@@ -1,7 +1,7 @@
 import fsSync from 'node:fs';
 import path from 'node:path';
 import type { KnowledgeCategory, KnowledgeItem, KnowledgeStatus, ProjectConfig } from '../core/types.js';
-import { globalStorePath } from '../core/paths.js';
+import { globalStorePath, knowlHome } from '../core/paths.js';
 import { withDbPath } from './database.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
 import { resolveStorage } from './storage-roles.js';
@@ -84,6 +84,48 @@ export type LayeredFilters = {
   tags?: string[];
 };
 
+/**
+ * The config root a namespace's embeddings were written under.
+ *
+ * `session` and `project` live inside a checkout and read that project's config. `global` and
+ * `organization` are standalone files, so their profile comes from the Knowl home -- which is what
+ * makes a global store internally consistent: every read and every write resolves the same
+ * profile, whatever the project that happened to open it uses.
+ */
+function namespaceConfigRoot(descriptor: NamespaceDescriptor, projectRoot: string): string {
+  if (descriptor.namespace === 'session' || descriptor.namespace === 'project') {
+    if (projectRoot && path.resolve(projectRoot) !== path.resolve(knowlHome())) {
+      return projectRoot;
+    }
+    return path.dirname(path.dirname(descriptor.databasePath));
+  }
+  return knowlHome();
+}
+
+/**
+ * The embedding identity to search a namespace with.
+ *
+ * Required rather than convenient: `searchKnowledgeEmbeddings` filters on it, and that predicate
+ * is load-bearing because cosine similarity between vectors of different dimensions is
+ * meaningless. A namespace whose profile cannot be resolved returns null, and the caller skips it
+ * and says so rather than scoring it with someone else's identity.
+ */
+export async function namespaceFingerprint(
+  descriptor: NamespaceDescriptor,
+  projectRoot: string = knowlHome(),
+): Promise<string | null> {
+  try {
+    const [{ loadConfig }, { fingerprintProfile, resolveVectorProfile }] = await Promise.all([
+      import('../core/config.js'),
+      import('../core/vector-profile.js'),
+    ]);
+    const root = namespaceConfigRoot(descriptor, projectRoot);
+    return fingerprintProfile(resolveVectorProfile(await loadConfig(root)));
+  } catch {
+    return null;
+  }
+}
+
 export async function queryLayeredKnowledge(
   root: string,
   query: string,
@@ -91,11 +133,21 @@ export async function queryLayeredKnowledge(
   limit = 3,
   surface = 'namespace_query',
   filters: LayeredFilters = {},
-): Promise<NamespacedKnowledgeItem[]> {
+  // Absent keeps the old lexical behaviour, so every existing caller is unchanged.
+  vector?: { enabled: boolean; embedding?: number[]; relevanceFloor?: number | null },
+): Promise<{ items: NamespacedKnowledgeItem[]; skipped: MemoryNamespace[] }> {
   const ranked: NamespacedKnowledgeItem[][] = [];
+  const skipped: MemoryNamespace[] = [];
   const seen = new Set<string>();
   for (const descriptor of namespacePrecedence(descriptors)) {
     try {
+      // Each namespace is searched with ITS identity. A namespace whose profile cannot be
+      // resolved is skipped and named -- never scored against the caller's vectors.
+      const fingerprint = vector?.enabled ? await namespaceFingerprint(descriptor, root) : null;
+      if (vector?.enabled && !fingerprint) {
+        skipped.push(descriptor.namespace);
+        continue;
+      }
       const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgent('local', {
         query,
         limit,
@@ -103,6 +155,7 @@ export async function queryLayeredKnowledge(
         category: filters.category,
         status: filters.status,
         tags: filters.tags,
+        ...(fingerprint ? { vector: { ...vector, enabled: true, profileFingerprint: fingerprint } } : {}),
       }));
       const kept: NamespacedKnowledgeItem[] = [];
       for (const item of items) {
@@ -115,9 +168,10 @@ export async function queryLayeredKnowledge(
       ranked.push(kept);
     } catch (error) {
       if (!descriptor.optional) throw error;
+      skipped.push(descriptor.namespace);
     }
   }
-  return interleaveByPrecedence(ranked, limit);
+  return { items: interleaveByPrecedence(ranked, limit), skipped };
 }
 
 /**

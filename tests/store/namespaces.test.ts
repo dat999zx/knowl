@@ -25,7 +25,7 @@ describe('namespaces', () => {
 
     await expect(fs.access(project.databasePath)).resolves.toBeUndefined();
     await expect(fs.access(session.databasePath)).resolves.toBeUndefined();
-    expect((await namespaces.queryLayeredKnowledge(ROOT, 'auth', descriptors)).map(item => [item.namespace, item.title])).toEqual([
+    expect((await namespaces.queryLayeredKnowledge(ROOT, 'auth', descriptors)).items.map(item => [item.namespace, item.title])).toEqual([
       ['session', 'Session auth'], ['project', 'Project auth'],
     ]);
   });
@@ -50,14 +50,14 @@ describe('namespaces', () => {
       content: 'The ranking benchmark fixture holds forty two labelled queries.', tags: ['retired'],
     }));
 
-    const unfiltered = await namespaces.queryLayeredKnowledge(root, 'ranking', descriptors, 5, 'test');
+    const unfiltered = (await namespaces.queryLayeredKnowledge(root, 'ranking', descriptors, 5, 'test')).items;
     expect(unfiltered.length).toBe(2);
 
-    const tagged = await namespaces.queryLayeredKnowledge(root, 'ranking', descriptors, 5, 'test', { tags: ['ranking'] });
+    const tagged = (await namespaces.queryLayeredKnowledge(root, 'ranking', descriptors, 5, 'test', { tags: ['ranking'] })).items;
     expect(tagged.length).toBe(1);
     expect(tagged[0].title).toBe('Ranking uses reciprocal rank fusion');
 
-    const archived = await namespaces.queryLayeredKnowledge(root, 'ranking', descriptors, 5, 'test', { status: 'archived' });
+    const archived = (await namespaces.queryLayeredKnowledge(root, 'ranking', descriptors, 5, 'test', { status: 'archived' })).items;
     expect(archived.length).toBe(0);
 
     await closeDb();
@@ -80,10 +80,10 @@ describe('namespaces', () => {
 
     // A wrong category guess must not empty the result set -- that is the documented
     // contract for agent retrieval, and the layered path has to honour it too.
-    const guessed = await namespaces.queryLayeredKnowledge(root, 'caching', descriptors, 5, 'test', { category: 'skill' });
+    const guessed = (await namespaces.queryLayeredKnowledge(root, 'caching', descriptors, 5, 'test', { category: 'skill' })).items;
     expect(guessed.length).toBe(2);
 
-    const boosted = await namespaces.queryLayeredKnowledge(root, 'caching', descriptors, 5, 'test', { category: 'decision' });
+    const boosted = (await namespaces.queryLayeredKnowledge(root, 'caching', descriptors, 5, 'test', { category: 'decision' })).items;
     expect(boosted[0].category).toBe('decision');
 
     await closeDb();
@@ -113,7 +113,7 @@ describe('namespaces', () => {
       content: 'Deploy pushes to the staging cluster.', tags: ['deploy'],
     }));
 
-    const items = await namespaces.queryLayeredKnowledge(root, 'deploy', descriptors, 3, 'test');
+    const items = (await namespaces.queryLayeredKnowledge(root, 'deploy', descriptors, 3, 'test')).items;
     expect(items.length).toBe(3);
     // The durable answer is present at all...
     expect(items.map(item => item.namespace)).toContain('project');
@@ -134,7 +134,7 @@ describe('namespaces', () => {
         category: 'fact', title: `Release fact ${step}`, content: `Release detail ${step} about the release process.`, tags: ['release'],
       }));
     }
-    expect((await namespaces.queryLayeredKnowledge(lopsided, 'release', other, 3, 'test')).length).toBe(3);
+    expect((await namespaces.queryLayeredKnowledge(lopsided, 'release', other, 3, 'test')).items.length).toBe(3);
 
     await closeDb();
     await fs.rm(root, { recursive: true, force: true }).catch(() => {});
