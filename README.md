@@ -171,7 +171,8 @@ the agent picks up its guidance, and it will query and write memory on its own.
 **gate** means Knowl can refuse an edit that invalidates code another session is holding.
 Neovim and Kiro work the same way as Zed and JetBrains, through `knowl acp`. Cline needs one
 line pointing it at the shipped plugin. Hermes Agent gets a Python plugin, installed for you,
-that works in the terminal and in Hermes Desktop alike. Any other MCP client works with
+that works in the terminal and in Hermes Desktop alike, and can additionally be picked as
+Hermes' memory provider. Any other MCP client works with
 no integration at all.
 
 Running agents in parallel? Every **git worktree** resolves to the main checkout's store —

@@ -119,7 +119,7 @@ async function pluginInstalled(home: string): Promise<boolean> {
   }
 }
 
-const RESTART_NOTE = 'Restart Hermes (or start a new session) to load the plugin; /reload-mcp connects the knowl server in a running chat.';
+const RESTART_NOTE = 'Restart Hermes (or start a new session) to load the plugin; /reload-mcp connects the knowl server in a running chat. Optional: pick knowl under Settings > Memory & Context > Memory Provider to add system-prompt recall and a checkpoint before Hermes compacts a long conversation.';
 
 /**
  * Hermes: one global `config.yaml` plus a plugin directory.

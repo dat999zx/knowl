@@ -46,6 +46,7 @@
     "test:mutation:probe": "node scripts/mutation/probe.mjs",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "test:plugin": "python3 tests/integrations/hermes/test_plugin.py",
     "test:bench": "vitest run --config benchmarks/vitest.config.ts",
     "typecheck:bench": "tsc -p benchmarks/tsconfig.json",
     "bench:cr:build": "tsup benchmarks/memoryagentbench/cli.ts --format esm --outDir .benchmark-dist --no-dts",
@@ -55,7 +56,7 @@
     "docs:check": "tsx scripts/generate-docs.ts --check",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "audit:prod": "npm audit --omit=dev --audit-level=critical",
+    "audit:prod": "node scripts/audit-prod.mjs",
     "audit:report": "npm audit --omit=dev --audit-level=high"
   },
   "keywords": [

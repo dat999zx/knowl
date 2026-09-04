@@ -22,6 +22,49 @@ def load_plugin():
     return module
 
 
+def load_plugin_as_memory_provider():
+    """Import it the way Hermes' memory loader does, under its own namespace.
+
+    `plugins/memory/__init__.py::_load_provider_from_dir` names a user-installed provider
+    `_hermes_user_memory.<dir>`, and that name is the only thing telling this module which of
+    its two importers ran.
+    """
+    spec = importlib.util.spec_from_file_location("_hermes_user_memory.knowl", PLUGIN)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class FakeCollector:
+    """Hermes' `_ProviderCollector`, including the part that makes double-registration possible.
+
+    The real one is not a stub: its `__getattr__` forwards every `register_*` call to a live
+    PluginContext. So `register_hook` here records into the same place the hook pass would,
+    which is exactly the failure the module-name check exists to prevent.
+    """
+
+    def __init__(self):
+        self.provider = None
+        self.hooks = {}
+        self.sections = {}
+        self.tools = {}
+
+    def get_config(self, key, default=None):
+        return default
+
+    def register_memory_provider(self, provider):
+        self.provider = provider
+
+    def register_hook(self, name, fn):
+        self.hooks[name] = fn
+
+    def register_tool(self, name, toolset, schema, handler, description="", emoji="", **_):
+        self.tools[name] = (schema, handler)
+
+    def register_system_prompt_section(self, id, content, *, position="after_memory", max_chars=4000):
+        self.sections[id] = (content, position, max_chars)
+
+
 class FakeCtx:
     """Enough of Hermes' PluginContext for register() to run."""
 
@@ -409,6 +452,185 @@ class PluginTest(unittest.TestCase):
         card = ctx.hooks["pre_llm_call"](session_id="s", user_message="which package manager?")
         self.assertIn("I prefer pnpm", card["context"])
         self.assertIn("no project open", card["context"].lower())
+
+
+class MemoryProviderTest(unittest.TestCase):
+    """The second surface: `memory.provider: knowl` in Settings > Memory & Context.
+
+    Every case here is a contract with Hermes' memory-provider loader
+    (`plugins/memory/__init__.py`) or its `MemoryProvider` ABC (`agent/memory_provider.py`).
+    """
+
+    def setUp(self):
+        self.plugin = load_plugin_as_memory_provider()
+        self.queries = []
+
+        def fake_query(_self, text, cwd, limit=8, timeout=20.0):
+            self.queries.append((text, cwd, limit))
+            return self.items
+
+        self.items = []
+        self.runs = []
+        self.plugin._Runner.query = fake_query
+        self.plugin._Runner.run = lambda _self, event, payload, cwd, timeout=None: (
+            self.runs.append((event, payload, cwd)) or (None, 0, "")
+        )
+        self.plugin._has_knowl_project = lambda cwd: True
+        self.plugin._is_hermes_source_clone = lambda cwd: False
+        self.plugin._resolve_cwd = lambda: os.getcwd()
+
+        self.ctx = FakeCollector()
+        self.plugin.register(self.ctx)
+
+    # -- the discriminator ----------------------------------------------------
+
+    def test_the_memory_load_registers_a_provider_and_not_one_hook(self):
+        """The whole point of the module-name check.
+
+        The collector forwards `register_hook` to a real PluginContext, so registering hooks
+        on this path would put a second copy of all seven behind the ones the PluginManager
+        pass already registered -- every event firing twice, with nothing to see it.
+        """
+        self.assertIsNotNone(self.ctx.provider)
+        self.assertEqual(self.ctx.provider.name, "knowl")
+        self.assertEqual(self.ctx.hooks, {})
+        self.assertEqual(self.ctx.tools, {})
+
+    def test_the_plugin_load_registers_hooks_and_no_provider(self):
+        """The mirror: the ordinary import must not hand over a provider.
+
+        `PluginContext.register_memory_provider` is deliberately inert, so a provider
+        registered there is silently dropped -- and if this path ALSO skipped the hooks, the
+        integration would have no channel at all.
+        """
+        plugin = load_plugin()
+        plugin._has_knowl_project = lambda cwd: True
+        plugin._is_hermes_source_clone = lambda cwd: False
+        plugin._resolve_cwd = lambda: os.getcwd()
+        ctx = FakeCollector()
+        plugin.register(ctx)
+        self.assertIsNone(ctx.provider)
+        self.assertIn("pre_llm_call", ctx.hooks)
+        self.assertIn("pre_tool_call", ctx.hooks)
+
+    # -- invariants the packaging depends on ----------------------------------
+
+    def test_the_provider_is_discoverable_within_the_first_8kb(self):
+        """`_is_memory_provider_dir` reads only `__init__.py[:8192]`.
+
+        The class itself sits far past that, so the mention in the module docstring is what
+        puts Knowl in the memory-provider dropdown at all. Deleting it delists us silently.
+        """
+        with open(os.path.join(HERE, "..", "..", "..", "integrations", "hermes", "knowl", "__init__.py"),
+                  encoding="utf-8") as handle:
+            head = handle.read(8192)
+        self.assertIn("MemoryProvider", head)
+
+    def test_plugin_yaml_still_declares_kind_standalone(self):
+        """Without an explicit `kind`, `_detect_kind_from_source` sniffs "MemoryProvider" out
+        of the source, auto-coerces the plugin to `kind: exclusive`, and the PluginManager
+        then skips it -- taking every hook with it and leaving no error behind."""
+        with open(os.path.join(HERE, "..", "..", "..", "integrations", "hermes", "knowl", "plugin.yaml"),
+                  encoding="utf-8") as handle:
+            manifest = handle.read()
+        self.assertIn("kind: standalone", manifest)
+
+    # -- recall ---------------------------------------------------------------
+
+    def test_prefetch_builds_a_card_from_the_store(self):
+        self.items = [{"title": "WAL mode is required", "category": "constraint", "content": "sqlite"}]
+        card = self.ctx.provider.prefetch("which journal mode?")
+        self.assertIn("WAL mode is required", card)
+        self.assertIn("project memory", card)
+        self.assertEqual(self.queries[0][0], "which journal mode?")
+
+    def test_prefetch_says_so_when_there_is_no_project(self):
+        self.plugin._has_knowl_project = lambda cwd: False
+        self.plugin._has_global_store = lambda: True
+        self.items = [{"title": "I prefer pnpm", "category": "constraint", "content": "everywhere"}]
+        card = self.ctx.provider.prefetch("package manager?")
+        self.assertIn("I prefer pnpm", card)
+        self.assertIn("no project open", card.lower())
+
+    def test_prefetch_is_empty_on_a_miss_and_reports_no_recall(self):
+        self.items = []
+        self.assertEqual(self.ctx.provider.prefetch("nothing about this"), "")
+        self.assertIsNone(self.ctx.provider.recall_status())
+
+    def test_recall_status_counts_only_the_last_prefetch(self):
+        """The ABC is explicit that a stale count must never be reported."""
+        self.plugin._RecallStatus = lambda provider_label, count, glyph: (provider_label, count, glyph)
+        self.items = [{"title": "a", "category": "fact", "content": "x"},
+                      {"title": "b", "category": "fact", "content": "y"}]
+        self.ctx.provider.prefetch("something")
+        self.assertEqual(self.ctx.provider.recall_status()[1], 2)
+        self.items = []
+        self.ctx.provider.prefetch("something else")
+        self.assertIsNone(self.ctx.provider.recall_status())
+
+    def test_the_rules_ride_in_the_system_prompt(self):
+        self.assertIn("knowl_query", self.ctx.provider.system_prompt_block())
+
+    def test_no_tool_schemas_because_the_hook_pass_already_registers_them(self):
+        """Both halves load on a session where Knowl is the selected provider, so returning
+        the tools here too would put two `knowl_query` in front of the model."""
+        self.assertEqual(self.ctx.provider.get_tool_schemas(), [])
+
+    # -- compaction -----------------------------------------------------------
+
+    def test_pre_compress_checkpoints_the_session(self):
+        """Hermes fires no hook before compressing, so this is the only channel there is."""
+        self.ctx.provider.initialize("s1")
+        self.ctx.provider.on_pre_compress([{"role": "user", "content": "hi"}])
+        self.assertEqual([event for event, _payload, _cwd in self.runs], ["on_pre_compress"])
+
+    def test_pre_compress_writes_nothing_for_a_subagent(self):
+        """The ABC asks providers to skip writes outside the primary context, or a cron run's
+        system prompt is recorded as the user's own work."""
+        self.ctx.provider.initialize("s1", agent_context="subagent")
+        self.ctx.provider.on_pre_compress([])
+        self.assertEqual(self.runs, [])
+
+
+class ProviderHandoffTest(unittest.TestCase):
+    """`pre_llm_call` when the provider owns recall. Both halves are loaded together, so the
+    card has to come from exactly one of them."""
+
+    def setUp(self):
+        self.plugin = load_plugin()
+        self.calls = []
+        self.plugin._Runner.run = lambda _self, event, payload, cwd, timeout=None: (
+            self.calls.append(event) or (None, 0, "")
+        )
+        self.plugin._Runner.query = lambda _self, text, cwd, limit=8, timeout=20.0: []
+        self.plugin._has_knowl_project = lambda cwd: True
+        self.plugin._is_hermes_source_clone = lambda cwd: False
+        self.plugin._resolve_cwd = lambda: os.getcwd()
+
+    def _hook(self, active_provider):
+        self.plugin._active_memory_provider = lambda: active_provider
+        ctx = FakeCtx()
+        self.plugin.register(ctx)
+        return ctx.hooks["pre_llm_call"]
+
+    def test_the_hook_stops_injecting_when_the_provider_is_selected(self):
+        self.plugin._Runner.run = lambda _self, event, payload, cwd, timeout=None: (
+            self.calls.append(event) or ({"context": "a card"}, 0, "")
+        )
+        self.assertIsNone(self._hook("knowl")(session_id="s", user_message="hello"))
+
+    def test_but_the_event_still_fires_so_the_session_still_binds(self):
+        """Suppressing the whole hook would take session binding and capture with it -- the
+        card is the only part the provider duplicates."""
+        self._hook("knowl")(session_id="s", user_message="hello")
+        self.assertEqual(self.calls, ["pre_llm_call"])
+
+    def test_the_hook_keeps_the_card_when_another_provider_is_selected(self):
+        self.plugin._Runner.run = lambda _self, event, payload, cwd, timeout=None: (
+            self.calls.append(event) or ({"context": "a card"}, 0, "")
+        )
+        self.assertEqual(self._hook("mem0")(session_id="s", user_message="hello"),
+                         {"context": "a card"})
 
 
 if __name__ == "__main__":
