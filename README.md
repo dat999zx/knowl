@@ -804,10 +804,11 @@ adds to `.gitignore`:
 | `.knowl/skills/` | File-backed skill packages |
 
 A little lives beside your home directory instead, under `~/.knowl/`, because it is true of the
-machine rather than of any one repository: resume keys, the fleet's record of the sessions running
-right now, your cloud credential, and the local mirror of a cloud workspace. Workspace manifests
-live outside member repositories for the same reason — their checkout paths are machine-local.
-Exports and snapshots are written only when you ask for them.
+machine rather than of any one repository: the machine-wide personal-defaults store
+(`~/.knowl/global.db`), resume keys, the fleet's record of the sessions running right now, your cloud
+credential, and the local mirror of a cloud workspace. Workspace manifests live outside member
+repositories for the same reason — their checkout paths are machine-local. Exports and snapshots are
+written only when you ask for them.
 
 ## Documentation
 

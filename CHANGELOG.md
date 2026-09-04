@@ -5,6 +5,15 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+**The global memory layer (`~/.knowl/global.db`): personal defaults, project-less sessions, and layered vector retrieval.**
+
+The machine-wide personal-defaults store is now reachable and active:
+
+- **Layered retrieval under vector search.** Previously, the layered reader ran only when vector search was disabled (`!vector?.enabled`). Because vector search is enabled by default, linked external namespaces (such as `global` and `organization`) were written to but never read in normal sessions. Vector search now spans all configured namespaces, with each namespace embedded using its own embedding profile and fingerprint (`namespaceFingerprint`) resolved from its own config root (`~/.knowl` for global/organization, project root for project/session). If an optional namespace cannot be served or embedded, it is skipped and named in `skippedNamespaces`, never silently omitted.
+- **`knowl link global [--off]`.** Link a project to the machine-wide store (`~/.knowl/global.db`) to query and store personal defaults alongside project memory. Project answers always outrank global answers on a tie (`RANK: session 1, project 2, org 3, global 4`), interleaved round-robin. Unlinking with `--off` is reversible and preserves the store.
+- **`knowl store --namespace global`.** Write directly to the global database from any directory or linked project. Every path passed to `--path` must be absolute (relative paths name nothing in a cross-repository store). Paths on global atoms are provenance notes for readers and are not indexed: impact detection, PR drift, and evidence staleness remain strictly project-store only.
+- **Setup outside a repository.** `knowl init` is now runnable anywhere. Outside a repository, it prompts to set up **Project** (a local store, plus the global store if missing) or **Global** (the machine-wide store only). `--global` creates the global store directly without prompting, and `--host-only` configures named agent host integrations without creating any database. Sessions with no project folder (such as Hermes Desktop) resolve to `global` alone (`globalOnlyNamespaces()`).
+
 **`knowl cloud push` can drain a queue again.** Two independent faults could each leave staged
 knowledge unsendable indefinitely.
 
