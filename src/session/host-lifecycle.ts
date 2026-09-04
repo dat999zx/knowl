@@ -1053,25 +1053,42 @@ export async function handleHostLifecycleEvent(projectId: string, input: Normali
     await resetTurnCapture(turnCaptureKey(bindingKey(input, 'turn')));
 
     const sessionBinding = await findHostSession(bindingKey(input, 'session'));
+    // The roster rides the first turn of a session that has not bootstrapped yet, because a
+    // host may have no session-start event at all: Antigravity's `PreInvocation` is the first
+    // thing that fires there, and `fleetSessionStartBestEffort` hangs off session-start alone --
+    // so that host wrote to the fleet, appeared in everyone else's roster, and was itself told
+    // nothing about the sessions it was sharing a repo with. A missing binding is exactly "this
+    // session has not started yet", so this fires once on those hosts and never on the rest.
+    const roster = sessionBinding
+      ? ''
+      : await fleetSessionStartBestEffort(input, await loadConfig(input.projectRoot).catch(() => null));
+    // Charged against the same cap as the session-start card rather than added on top of it:
+    // the host was promised a size, and the roster is the cheaper half to keep whole.
+    const turnBudget = roster ? Math.max(0, DEFAULT_CONTEXT_MAX_CHARS - roster.length - 2) : undefined;
+    const withRoster = (context: string | undefined): string | undefined =>
+      roster ? (context ? `${roster}\n\n${context}` : roster) : context;
+
     if (!sessionBinding && hostProfile(input.host).sharesSessionBinding) {
-      const started = await bootstrapWithHandoff(projectId, input, 'session', true);
+      const started = await bootstrapWithHandoff(projectId, input, 'session', true, turnBudget);
       await bindHostSession(bindingKey(input, 'turn'), started.session.id);
+      const context = withRoster(started.context);
       return {
         accepted: true,
         sessionId: started.session.id,
-        context: started.context,
+        context,
         contextTruncated: started.truncated,
-        hostOutput: hostContextOutput(input, withCorrection(started.context)),
+        hostOutput: hostContextOutput(input, withCorrection(context)),
       };
     }
-    const started = await bootstrapWithHandoff(projectId, input, 'turn', !sessionBinding);
+    const started = await bootstrapWithHandoff(projectId, input, 'turn', !sessionBinding, turnBudget);
     if (!sessionBinding) await bindHostSession(bindingKey(input, 'session'), started.session.id);
+    const context = withRoster(started.context);
     return {
       accepted: true,
       sessionId: started.session.id,
-      context: started.context,
+      context,
       contextTruncated: started.truncated,
-      hostOutput: hostContextOutput(input, withCorrection(started.context)),
+      hostOutput: hostContextOutput(input, withCorrection(context)),
     };
   }
 

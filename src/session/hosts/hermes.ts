@@ -3,8 +3,17 @@ import type { HostIdentity, HostOutput, HostProfile } from './profile.js';
 import { hostString, toolNameIsShell } from './profile.js';
 
 /**
- * Hermes' shell-hook events, mapped onto the engine's. Read from `agent/shell_hooks.py` and
- * `hermes_cli/hooks.py` in Hermes Agent v0.21.0 (2026.8.31) on 2026-09-03.
+ * Hermes' hook events, mapped onto the engine's. Read from `agent/shell_hooks.py`,
+ * `hermes_cli/plugins.py` and `hermes_cli/hooks.py` in Hermes Agent v0.21.0 (2026.8.31).
+ *
+ * **`on_session_start` is deliberately absent, and its absence is what delivers the bootstrap
+ * card.** Binding the session there spends the card on an event whose return value Hermes
+ * discards -- neither the plugin dispatcher nor the shell-hook bridge reads it -- and the first
+ * real `pre_llm_call` then arrives on a session the engine has already seen, so it emits
+ * nothing. Measured on 2026-09-04: a fresh session whose first event is `pre_llm_call` gets a
+ * 3,030-character card; the same session preceded by `on_session_start` gets an empty answer on
+ * both. Letting the first turn bind the session puts the card where Hermes actually reads it.
+ * Everything session start did is still done -- one event later, by the turn that can carry it.
  *
  * Two events map to `turn-stop`, on purpose. `pre_verify` fires only on a turn that edited
  * code, just before the agent finishes, and it is the one Hermes event whose answer can keep
@@ -15,7 +24,6 @@ import { hostString, toolNameIsShell } from './profile.js';
  * behaviour for a repeated stop. `on_session_finalize` is the real end of the session.
  */
 const HERMES_EVENT_MAP: Record<string, NormalizedHookEventName> = {
-  on_session_start: 'session-start',
   pre_llm_call: 'turn-start',
   pre_tool_call: 'tool-precheck',
   post_tool_call: 'session-event',
@@ -24,9 +32,14 @@ const HERMES_EVENT_MAP: Record<string, NormalizedHookEventName> = {
   on_session_finalize: 'session-stop',
 };
 
-/** Registered by `knowl init hermes`; `pre_llm_call` is the prompt event and is written beside them. */
-export const HERMES_HOOK_EVENTS = [
-  'on_session_start', 'pre_tool_call', 'post_tool_call', 'pre_verify', 'on_session_end', 'on_session_finalize',
+/**
+ * The lifecycle events the plugin forwards, beside the prompt event `pre_llm_call`.
+ *
+ * Documentation, not `hookEvents`: that field means "events `knowl init` writes into a file",
+ * and this host has no such file -- the same position Cline is in, for the same reason.
+ */
+export const HERMES_PLUGIN_EVENTS = [
+  'pre_llm_call', 'pre_tool_call', 'post_tool_call', 'pre_verify', 'on_session_end', 'on_session_finalize',
 ] as const;
 
 /**
@@ -42,52 +55,65 @@ export const HERMES_HOOK_EVENTS = [
 const hermesBlock = (reason: string): HostOutput => ({ decision: 'block', reason });
 
 /**
- * Hermes Agent, through the shell hooks in its own `config.yaml`.
+ * Hermes Agent, through the Python plugin at `integrations/hermes/`.
  *
- * Hermes runs each `hooks.<event>[].command` as a subprocess (`shlex.split`, no shell) with a
- * Claude-Code-shaped JSON payload on stdin: `hook_event_name`, `tool_name`, `tool_input`,
- * `session_id`, `cwd`, and everything else under `extra`. Those top-level keys are the ones the
- * normaliser already reads, so this profile is Claude's dialect on the way in. `extra` never
- * reaches the engine -- the stdin allowlist keeps root fields only -- so `turn_id`, the prompt
- * text and `interrupted` are not available here.
+ * **Why a plugin and not the shell hooks this profile used to describe.** Hermes' `config.yaml`
+ * takes `hooks.<event>[].command` entries in Claude Code's wire format, and 5.19.0 shipped them.
+ * They are terminal-only: Hermes Desktop's `serve` backend takes a fast-launch path that reaches
+ * `cmd_dashboard` without ever calling `register_from_config`, so not one of those hooks is
+ * registered there (`hermes_cli/web_server.py` touches `shell_hooks` only to draw the dashboard's
+ * approve/revoke list, and `tui_gateway/` never mentions it; upstream hermes-agent#69825).
+ * `discover_plugins()` runs from `agent/agent_init.py`, which every path builds an agent through
+ * -- terminal, Desktop, cron, gateway. So the plugin is the channel that reaches everyone, and
+ * `hermes hooks doctor` reporting healthy on Desktop is the trap: it reads config, not the live
+ * registry.
  *
- * **Refusal**: `{"decision": "block", "reason"}` on stdout **and** exit 2, because Hermes reads
- * both (exit 2 blocks `pre_tool_call` "even when stdout carries no block JSON"). Same pair as
- * OpenHands.
+ * The plugin sends exactly what the shell-hook bridge would have sent (`_serialize_payload` in
+ * `agent/shell_hooks.py`): `hook_event_name`, `tool_name`, `tool_input`, `session_id`, `cwd`, and
+ * the rest under `extra`. Those top-level keys are the ones the normaliser reads, so this profile
+ * stays Claude's dialect on the way in, and `extra` still never reaches the engine -- the stdin
+ * allowlist keeps root fields only.
  *
- * **Stop channel**: `pre_verify` accepts the same envelope and turns it into a follow-up message
- * that continues the turn, bounded by Hermes' own `max_verify_nudges`. So `stopContext` is real
- * here -- a first for a host whose plugin API had no stop hook. It fires only on turns that
- * edited code, which is exactly the turn the capture nudge is about.
+ * **Refusal**: `{"decision": "block", "reason"}` **and** exit 2, because the plugin reads both.
+ * Same pair as OpenHands.
  *
- * **Context**: `{"context": "..."}` on `pre_llm_call` is appended to the user message (Hermes caps
- * it at 10,000 characters). Whether `on_session_start` honours it is unverified, so the
- * session-start card is not emitted and the bootstrap rides the first `pre_llm_call`, which the
- * engine already serves for a session it has not seen. `post_tool_call` output is ignored by
- * Hermes, so there is no mid-turn envelope and the change card keeps its MCP channel.
+ * **Stop channel**: `pre_verify` fires before a turn that edited code finishes and its answer
+ * keeps the turn going, bounded by Hermes' `max_verify_nudges`. So `stopContext` is real here,
+ * on exactly the turns the capture nudge is about.
  *
- * **`cwd` is the Hermes process's working directory**, not a per-session one (`Path.cwd()` in
- * `_serialize_payload`). From the `hermes` CLI launched in a project that is the project; from
- * the gateway or Hermes Desktop it is wherever that process started, and a hook that cannot
- * resolve a Knowl project is silently dropped -- the ordinary case for a global hook.
+ * **Context**: `{"context": "..."}` on `pre_llm_call` is appended to the user message. Hermes does
+ * not truncate an oversized card, it *spills* it (`tools/hook_output_spill.py`): past 10,000
+ * characters the model receives a head/tail excerpt and a file path instead of the card, so the
+ * plugin bounds what it returns rather than letting that happen. `post_tool_call` output is
+ * ignored by Hermes, so there is no mid-turn envelope and the change card keeps its MCP channel --
+ * though the plugin does carry a same-turn impact card through `transform_tool_result`, which
+ * takes a plain string a subprocess could never have returned.
  *
- * **`lifecycleClaimable: false`.** Hermes asks for consent per (event, command) on first use at a
- * TTY, and a non-TTY process (gateway, Desktop) runs nothing until the allowlist or
- * `hooks_auto_accept` says so. Registered is not running; the card keeps the conditional line.
+ * **`cwd`.** The shell-hook payload carried `Path.cwd()`, the Hermes *process* directory, which on
+ * Desktop is wherever the backend started. The plugin reads Hermes' own per-session context
+ * instead (`agent/runtime_cwd.resolve_context_cwd`), so a Desktop session resolves the repository
+ * the user actually opened.
+ *
+ * **`lifecycleClaimable: false`**, because the plugin is an opt-in install: a repository
+ * configured for Hermes may have the MCP entry and no plugin, and the card must not tell an agent
+ * its hooks own the lifecycle when nothing is loaded.
  *
  * Tool names from `tools/file_tools.py` and `tools/terminal_tool.py`: `read_file`, `write_file`,
- * `patch`, `search_files`, `terminal`; the path argument is `path`. `writeTools` rather than a
- * predicate so the `pre_tool_call` matcher -- a Python regex Hermes `fullmatch`es against the
- * tool name -- is built from the same list the gate reads.
+ * `patch`, `search_files`, `terminal`; the path argument is `path`.
  */
 export const hermesProfile: HostProfile = {
   host: 'hermes',
-  hookEvents: HERMES_HOOK_EVENTS,
+  // Empty because `knowl init` registers no file: installation is a plugin directory and two
+  // list entries in the person's config. Not empty because the host has no lifecycle -- the
+  // events it sends are in HERMES_PLUGIN_EVENTS, and the map above is what accepts them.
+  hookEvents: [],
   promptEvent: 'pre_llm_call',
   sharesSessionBinding: true,
   nativeOutput: true,
   midTurnDeliveryVerified: false,
-  hookConfigStyle: 'hermes-yaml',
+  // No hooks file: the lifecycle arrives through the plugin, and `knowl init hermes` installs
+  // that rather than writing handlers into the person's config.
+  hookConfigStyle: 'none',
   denyExitCode: 2,
   lifecycleClaimable: false,
   writeTools: ['write_file', 'patch'],

@@ -2170,7 +2170,67 @@ export function registerTools(
    * whose `repos` FILTER over shared rows sits one letter away from a `repo` REBIND that would
    * have read the target's private knowledge as its own.
    */
+  /**
+   * A per-call project root, for the one host that runs a single server across many projects.
+   *
+   * Every other host launches one server per project, so the server's own directory is the
+   * answer and this never runs. Hermes Desktop launches ONE server for every session, from a
+   * directory that is not any project -- so its tools reported "No Knowl project found" on
+   * machines whose stores were perfectly healthy. Pinning the server's `cwd` repairs one
+   * repository and then silently answers from THAT repository in every other session, which is
+   * worse than the error.
+   *
+   * So the caller supplies the root instead. `integrations/hermes/knowl` injects it into every
+   * `mcp__knowl__*` call from Hermes' own per-session working directory, through the
+   * `pre_tool_call` "modify" directive -- the model never sees this argument and cannot set it,
+   * because it is absent from every tool schema.
+   *
+   * **Gated to `--host hermes`.** Elsewhere the server reaches its own project, or a peer its
+   * workspace manifest names, and that boundary stays exactly where it was. An override that
+   * arrives without the gate, or names a directory holding no project, is refused rather than
+   * ignored: silently falling back to the server's own project is how a call meant for one
+   * repository answers from another.
+   */
+  const OVERRIDE_KEY = '__projectRoot';
+  const overrideHost = 'hermes';
+
+  const callToolForRoot = async (request: CallToolRequest): Promise<CallToolResult | null> => {
+    const args = request.params.arguments as Record<string, unknown> | undefined;
+    const root = args?.[OVERRIDE_KEY];
+    if (typeof root !== 'string' || root.length === 0) return null;
+    // Never let the key reach a handler or a stored payload, whatever happens next.
+    delete (request.params.arguments as Record<string, unknown>)[OVERRIDE_KEY];
+    if (getHost() !== overrideHost) {
+      return {
+        isError: true,
+        content: [{ type: 'text', text: `A per-call project root is accepted only by a server started with \`serve --host ${overrideHost}\`, and the call was not run.` }],
+      };
+    }
+    await whenReady();
+    const { findProjectRoot, loadConfig } = await import('../core/config.js');
+    const { getProjectByRootPath } = await import('../store/repository.js');
+    const { withRepoRoot } = await import('../store/database.js');
+    const resolved = await findProjectRoot(root).catch(() => null);
+    if (!resolved) {
+      return { isError: true, content: [{ type: 'text', text: `No Knowl project at "${root}". Run \`knowl init\` there once, then retry.` }] };
+    }
+    // Inside the swap, all of it: `withRepoRoot` is what points the database at that repo's own
+    // `.knowl/knowl.db`, so the project lookup, the config read and the handler all have to run
+    // under it. Passing `actingAs` alone would hand a handler the target's project id while it
+    // queried whichever database the server opened at startup -- the one failure this whole
+    // mechanism exists to prevent, arriving through the back door.
+    return withRepoRoot(resolved, async () => {
+      const project = await getProjectByRootPath(resolved);
+      if (!project) {
+        return { isError: true, content: [{ type: 'text', text: `No Knowl project at "${root}". Run \`knowl init\` there once, then retry.` }] };
+      }
+      return callTool(request, { projectId: project.id, projectRoot: resolved, config: await loadConfig(resolved) });
+    });
+  };
+
   const callToolAsRepo = async (request: CallToolRequest): Promise<CallToolResult> => {
+    const forRoot = await callToolForRoot(request);
+    if (forRoot) return forRoot;
     const asRepo = (request.params.arguments as Record<string, unknown> | undefined)?.repo;
     if (typeof asRepo !== 'string' || asRepo.length === 0) return callTool(request);
     const declared = (SCHEMA_BY_TOOL.get(request.params.name)?.properties as Record<string, unknown> | undefined)?.repo;

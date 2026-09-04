@@ -5,14 +5,61 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
-**The global memory layer (`~/.knowl/global.db`): personal defaults, project-less sessions, and layered vector retrieval.**
+**A global memory layer, and the layered read that makes it reachable.** Knowl has had four
+namespaces since long before this release -- session, project, organization, global -- with
+precedence, round-robin interleaving and per-row embedding identity all implemented. None of it
+could be read: the layered reader ran only when vector search was off, and vector search is the
+default, so a configured `global` or `organization` namespace was written to and never queried.
 
-The machine-wide personal-defaults store is now reachable and active:
+The reader now spans namespaces under vector search. Each one is searched with **its own**
+embedding identity, resolved from its own config root -- the project's for `session` and
+`project`, the Knowl home for the standalone stores -- because `searchKnowledgeEmbeddings` filters
+on that fingerprint and scoring a 768-dimension query against 384-dimension rows is meaningless.
+A namespace whose profile cannot be served is skipped and **named**, never silently dropped.
 
-- **Layered retrieval under vector search.** Previously, the layered reader ran only when vector search was disabled (`!vector?.enabled`). Because vector search is enabled by default, linked external namespaces (such as `global` and `organization`) were written to but never read in normal sessions. Vector search now spans all configured namespaces, with each namespace embedded using its own embedding profile and fingerprint (`namespaceFingerprint`) resolved from its own config root (`~/.knowl` for global/organization, project root for project/session). If an optional namespace cannot be served or embedded, it is skipped and named in `skippedNamespaces`, never silently omitted.
-- **`knowl link global [--off]`.** Link a project to the machine-wide store (`~/.knowl/global.db`) to query and store personal defaults alongside project memory. Project answers always outrank global answers on a tie (`RANK: session 1, project 2, org 3, global 4`), interleaved round-robin. Unlinking with `--off` is reversible and preserves the store.
-- **`knowl store --namespace global`.** Write directly to the global database from any directory or linked project. Every path passed to `--path` must be absolute (relative paths name nothing in a cross-repository store). Paths on global atoms are provenance notes for readers and are not indexed: impact detection, PR drift, and evidence staleness remain strictly project-store only.
-- **Setup outside a repository.** `knowl init` is now runnable anywhere. Outside a repository, it prompts to set up **Project** (a local store, plus the global store if missing) or **Global** (the machine-wide store only). `--global` creates the global store directly without prompting, and `--host-only` configures named agent host integrations without creating any database. Sessions with no project folder (such as Hermes Desktop) resolve to `global` alone (`globalOnlyNamespaces()`).
+What that unlocks:
+
+- **`~/.knowl/global.db`**, a machine-wide store for what is true of you rather than of a
+  repository: preferences, machine quirks, conventions that hold everywhere. A file beside the
+  machine home rather than a project at it, because `knowl init` at `~` would put a store on top
+  of `models/`, `cache/`, `repos.json` and `credentials.json`.
+- **`knowl link global [--off]`**, per project and reversible. Project answers still outrank
+  global ones, so linking never changes what a repository says about itself.
+- **`knowl store --namespace global`**, where every `--path` must be absolute: a relative path
+  names nothing in a store that spans repositories. Those paths are provenance for a reader and
+  are **not** indexed -- impact detection, drift and evidence staleness stay project-only, and the
+  write says so rather than looking wired up.
+- **Sessions with no project at all** -- `knowl` outside a repository, or a Hermes Desktop window
+  with no folder open -- resolve to global alone, which is the difference between having memory
+  there and having none. Only when there is genuinely no project: a repository whose config is
+  malformed is an error, never quietly answered from someone's personal defaults.
+- **`knowl init` runs anywhere**, offering the project store or the global one, with `--global`
+  and `--host-only` for the unattended cases.
+
+**Hermes Agent is driven by a plugin now, and it reaches Hermes Desktop.** 5.19.0 wired Hermes up through the `hooks.<event>` shell commands its `config.yaml` accepts. Those are terminal-only: the `serve` backend Hermes Desktop launches takes a fast path that never calls `register_from_config`, so not one of them is registered there (upstream hermes-agent#69825), and `hermes hooks doctor` reports them healthy regardless because it reads the config file rather than the live registry. Python plugins load from `agent/agent_init.py`, which every path builds an agent through. So `knowl init hermes` now installs [`integrations/hermes/knowl/`](integrations/hermes/README.md) into the Hermes plugins directory, enables it in `config.yaml` beside the MCP entry, and removes the shell hooks the previous version wrote — registering both would send every event twice. The plugin sends exactly what a shell hook would have sent, and adds three things a subprocess cannot: the project resolves from Hermes' per-session working directory instead of the backend's, the memory rules ride in the system prompt, and a file write gets a same-turn impact card appended to its result. Restart Hermes after `knowl init hermes` to load it.
+
+The plugin also registers `knowl_query` and `knowl_store` as Hermes tools of its own, and that is not duplication of the MCP server — it is the only correct channel on Desktop. `knowl serve` resolves the project from its own process directory, and Hermes Desktop runs one server for every project from a directory that is not any of them, so its `mcp__knowl__*` tools report *No Knowl project found* while the store is healthy. Pinning `mcp_servers.knowl.cwd` would fix one repository and silently answer from it in all the others, so init does not set it. The plugin's two tools run in the session's own directory instead, which is right however many projects are open; everything they do not cover is a `knowl <command>` away in the agent's terminal.
+
+**The Hermes bootstrap card was being thrown away, on every host path.** The profile registered `on_session_start`, so the engine bound the session and spent the bootstrap card on an event whose return value Hermes discards — and the first real turn then arrived on a session the engine had already seen, with nothing to say. Measured: a fresh session whose first event is `pre_llm_call` gets a 3,030-character card; the same session preceded by `on_session_start` gets an empty answer on both. That event is no longer registered, so the first turn binds the session and carries the card.
+
+**Antigravity recorded nothing, four independent times over, and `knowl fleet` had never listed
+one of its sessions.** The payload is protojson: every key camelCase, the session
+`conversationId`, the root `workspacePaths`, the tool one `toolCall: {name, args}` object. The
+stdin allowlist carried none of those names, so every event reached the normalizer empty and threw
+`IncompleteHostHookPayloadError` -- which the hook entry swallows in silence. No row, no log, no
+symptom, identical to a host nobody had configured. Three of the five registered events were also
+written in a shape Antigravity parses and ignores: only `PreToolUse` and `PostToolUse` take the
+`{matcher, hooks}` wrapper, and `PreInvocation` -- the one event that starts a session there -- is
+a bare handler list. The tool names were wrong too: the real writes are `replace_file_content`,
+`multi_replace_file_content` and `write_to_file`, the read is `view_file`, and the shell is
+`run_command`. All of it is now read off the installed bundle and five real transcripts rather
+than quoted from documentation, and `docs/hosts.md` says so. Payload remapping is one new profile
+member, `normalizePayload`, applied once before anything reads a field.
+
+**Codex lost two thirds of its shell commands**, found while verifying the above. `isShellEvent`
+delegated to the shared helper, which knows `bash` and `shell` -- but across this machine's codex
+sessions the tool is called `shell_command` 14,329 times against `shell` 2,059.
+
 
 **`knowl cloud push` can drain a queue again.** Two independent faults could each leave staged
 knowledge unsendable indefinitely.
