@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.21.0 — 2026-09-04
 
 **A Hermes session whose folder is not a Knowl project now says so, once.** Every lifecycle
 event returned early and silently in that case, so the plugin loaded, `hermes plugins doctor
