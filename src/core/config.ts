@@ -6,6 +6,7 @@ import { ProjectConfig } from './types.js';
 import { ConfigError, ProjectNotFoundError } from './errors.js';
 import { DEFAULT_PRESET_ID } from './vector-profile.js';
 import { writeFileAtomic } from './atomic-write.js';
+import { knowlHome } from './paths.js';
 
 export const DEFAULT_CONFIG: ProjectConfig = {
   version: 1,
@@ -272,7 +273,10 @@ function envReferenceName(value: unknown): string | null {
  * is the other half of that bargain.
  */
 export async function loadConfig(projectRoot: string): Promise<ProjectConfig> {
-  const configPath = path.join(projectRoot, '.knowl', 'config.json');
+  const isHome = path.resolve(projectRoot) === path.resolve(knowlHome());
+  const configPath = isHome
+    ? path.join(projectRoot, 'config.json')
+    : path.join(projectRoot, '.knowl', 'config.json');
   try {
     const content = await fs.readFile(configPath, 'utf8');
     const parsed = JSON.parse(content) as ProjectConfig;
@@ -282,6 +286,9 @@ export async function loadConfig(projectRoot: string): Promise<ProjectConfig> {
 
     return stripDeprecatedConfigFields(parsed);
   } catch (error: any) {
+    if (isHome && error.code === 'ENOENT') {
+      return { ...DEFAULT_CONFIG };
+    }
     throw new ConfigError(`Failed to load config from "${configPath}": ${error.message}`);
   }
 }
@@ -323,8 +330,9 @@ async function preserveEnvReferences(configPath: string, next: ProjectConfig): P
  * Saves the configuration to the specified project root.
  */
 export async function saveConfig(projectRoot: string, config: ProjectConfig): Promise<void> {
-  const configDir = path.join(projectRoot, '.knowl');
-  const configPath = path.join(configDir, 'config.json');
+  const isHome = path.resolve(projectRoot) === path.resolve(knowlHome());
+  const configDir = isHome ? projectRoot : path.join(projectRoot, '.knowl');
+  const configPath = isHome ? path.join(projectRoot, 'config.json') : path.join(configDir, 'config.json');
   const normalized = stripDeprecatedConfigFields(await preserveEnvReferences(configPath, config));
 
   try {
@@ -447,4 +455,27 @@ export function shouldSendDriftReminder(drift: number, every: number, backoff: b
   if (!backoff) return true;
   const step = drift / every + 1;
   return (step & (step - 1)) === 0;
+}
+
+/**
+ * Link this project to the machine's global store, or unlink it.
+ *
+ * Per project on purpose. A machine-wide "every project sees global" default would make one
+ * careless write visible everywhere, which is the contamination the governing decision rejected
+ * when it turned down a single merged cross-project pool.
+ *
+ * Unlinking sets `enabled: false` rather than deleting the key, and never touches the store: the
+ * decision is meant to be reversible, and a store deleted by a config change would not be.
+ */
+export async function setGlobalNamespace(root: string, enabled: boolean): Promise<void> {
+  const { globalStorePath } = await import('./paths.js');
+  if (enabled) {
+    const { ensureGlobalStore } = await import('../store/global-store.js');
+    await ensureGlobalStore();
+  }
+  const config = await loadConfig(root);
+  await saveConfig(root, {
+    ...config,
+    memory: { ...config.memory, global: { enabled, path: globalStorePath() } },
+  });
 }

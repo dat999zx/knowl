@@ -778,6 +778,25 @@ privacy boundary: do not put it behind a public proxy or tunnel.
 
 → [Local viewer](docs/reference.md#local-viewer)
 
+### Memory that is true of you, not of a repository
+
+Some things belong to no repository: that you prefer pnpm, that this machine's driver breaks on
+CUDA 12, that every project here uses conventional commits. Knowl keeps those in a machine-wide
+store at `~/.knowl/global.db`, separate from any project's memory.
+
+```bash
+knowl link global        # this project may read and write it; reversible with --off
+knowl store "I prefer pnpm over npm" --title "Package manager" --category constraint --namespace global
+```
+
+**Your project always answers first.** Linking never changes what a repository says about itself —
+global entries sit behind the project's own, and can never crowd them out. And a session with no
+repository at all, such as a Hermes Desktop window with no folder open, reads the global store
+alone rather than having no memory. A project that exists but fails to open stays an error: global
+is personal defaults, never a fallback for a broken store.
+
+→ [Memory namespaces and the global layer](docs/reference.md#memory-namespaces-and-the-global-layer)
+
 ### Everything else
 
 <!-- generated:tool-count -->
@@ -804,10 +823,11 @@ adds to `.gitignore`:
 | `.knowl/skills/` | File-backed skill packages |
 
 A little lives beside your home directory instead, under `~/.knowl/`, because it is true of the
-machine rather than of any one repository: resume keys, the fleet's record of the sessions running
-right now, your cloud credential, and the local mirror of a cloud workspace. Workspace manifests
-live outside member repositories for the same reason — their checkout paths are machine-local.
-Exports and snapshots are written only when you ask for them.
+machine rather than of any one repository: the machine-wide personal-defaults store
+(`~/.knowl/global.db`), resume keys, the fleet's record of the sessions running right now, your cloud
+credential, and the local mirror of a cloud workspace. Workspace manifests live outside member
+repositories for the same reason — their checkout paths are machine-local. Exports and snapshots are
+written only when you ask for them.
 
 ## Documentation
 

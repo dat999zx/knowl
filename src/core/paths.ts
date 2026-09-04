@@ -19,6 +19,19 @@ export function knowlHome(): string {
 }
 
 /**
+ * The machine-wide personal-defaults store.
+ *
+ * A file under the home rather than a project at it: `knowlHome()` IS `~/.knowl`, so a project
+ * rooted at `~` would put its store at `~/.knowl/knowl.db`, in the directory that already holds
+ * `models/`, `cache/`, `repos.json`, `fleet.db` and `credentials.json`. `scaffoldTarget` refuses
+ * that case by name, and this is the shape `externalNamespace` already expects: an explicit path,
+ * outside any project.
+ */
+export function globalStorePath(): string {
+  return path.join(knowlHome(), 'global.db');
+}
+
+/**
  * One cloud replica per workspace, under `cloud/` rather than `workspaces/`.
  *
  * `workspaces/` holds OSS workspace manifests keyed by a name matching `^[a-z0-9][a-z0-9-]*$`,

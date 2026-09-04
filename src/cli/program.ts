@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -6,7 +7,7 @@ import dotenv from 'dotenv';
 import { spawnWorkLoopCommand } from './windows-spawn.js';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from '../core/version-check.js';
-import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, hasAiConfigured } from '../core/config.js';
+import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, setGlobalNamespace, hasAiConfigured } from '../core/config.js';
 import {
   installKnowlProjectGuidance,
   KnowlProjectGuidanceInstallResult,
@@ -289,6 +290,24 @@ function printUpgradeStatus(result: UpgradeResult) {
   }
 }
 
+function isInsideGitRepo(dir: string): boolean {
+  try {
+    const env = { ...process.env };
+    delete env.GIT_DIR;
+    delete env.GIT_COMMON_DIR;
+    delete env.GIT_WORK_TREE;
+    const result = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], {
+      cwd: dir,
+      encoding: 'utf8',
+      env,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    return result.status === 0 && result.stdout.trim() === 'true';
+  } catch {
+    return false;
+  }
+}
+
 program
   .name('knowl')
   .description('KNOWL — A Knowledge Operating System for AI Agents')
@@ -300,13 +319,105 @@ program
   .description('Initialize (or re-run on an existing repo to upgrade) and register agent integrations. On an existing project this performs `knowl upgrade` first, then agent setup.')
   .argument('[agents...]', 'Agent integrations to configure')
   .option('-y, --yes', 'Accept global configuration confirmations')
-  .action(async (agents: string[], options) => {
+  // One axis: which scope this run belongs to. `--global` is the machine — the personal-defaults
+  // store and any hosts named beside it — and it never touches the directory you are standing in.
+  // There was a second flag here (`--host-only`, hosts but no store) and it earned nothing: an
+  // empty `global.db` costs a few kilobytes, `knowl init` in a repository creates one anyway, and
+  // the pair forced a reader to hold two axes in their head to answer "how do I set up Hermes".
+  .option('--global', 'Machine scope: the personal-defaults store, and any hosts named beside it')
+  .action(async (agents: string[], options: { yes?: boolean; global?: boolean }) => {
     const cwd = process.cwd();
     const knowlDir = path.join(cwd, '.knowl');
     const name = path.basename(cwd) || 'My Project';
 
     try {
       parseAgentNames(agents);
+
+      if (options.global) {
+        const { runGlobalInit } = await import('./global-init.js');
+        const result = await runGlobalInit();
+        console.log(result.created
+          ? `Created global store at ${result.path}`
+          : `Global store already exists at ${result.path}`);
+        if (agents.length > 0 || (process.stdin.isTTY && process.stdout.isTTY && !options.yes)) {
+          const flow = await runAgentInitFlow(cwd, {
+            agentNames: agents,
+            yes: Boolean(options.yes),
+            interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+          });
+          console.log(formatAgentInitSummary(flow.results));
+          process.exitCode = flow.exitCode;
+        }
+        return;
+      }
+
+      const isExisting = await isProjectRoot(cwd);
+
+      if (isExisting) {
+        const result = await upgradeExistingRepository(cwd, name);
+        console.log(`↻ Existing KNOWL project detected — upgrading, then checking agent setup: ${knowlDir}`);
+        printUpgradeStatus(result);
+        const flow = await runAgentInitFlow(cwd, {
+          agentNames: agents,
+          yes: Boolean(options.yes),
+          interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+        });
+        console.log(formatAgentInitSummary(flow.results));
+        process.exitCode = flow.exitCode;
+        return;
+      }
+
+      const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+      const isInsideRepo = isInsideGitRepo(cwd);
+      // `knowl init` means "initialize here", inside a git repository or not -- a plain directory
+      // is a legitimate project and initializing one is the whole job of this command. The
+      // interactive picker below offers the machine instead; `--global` names it outright. What
+      // this must NOT do is quietly choose the machine on the non-interactive path, which would
+      // turn `knowl init` in a fresh directory into a command that created nothing there.
+      let setupTarget = 'project';
+
+      // When cwd is not a project and neither flag is given, prompt with the two options
+      // (reuse the existing @clack/prompts picker), preselecting Project inside a repository.
+      if (interactive && !options.yes) {
+        const clack = await import('@clack/prompts');
+        const chosen = await clack.select({
+          message: 'This directory is not a Knowl project. What should this set up?',
+          options: [
+            {
+              value: 'project',
+              label: 'Project — a store for this folder, and the global store if it is missing',
+            },
+            {
+              value: 'global',
+              label: 'Global — the machine-wide personal-defaults store only',
+            },
+          ],
+          initialValue: isInsideRepo ? 'project' : undefined,
+        });
+
+        if (clack.isCancel(chosen)) {
+          process.exit(0);
+        }
+        setupTarget = String(chosen);
+      }
+
+      if (setupTarget === 'global') {
+        const { runGlobalInit } = await import('./global-init.js');
+        const result = await runGlobalInit();
+        console.log(result.created
+          ? `Created global store at ${result.path}`
+          : `Global store already exists at ${result.path}`);
+        if (agents.length > 0 || (interactive && !options.yes)) {
+          const flow = await runAgentInitFlow(cwd, {
+            agentNames: agents,
+            yes: Boolean(options.yes),
+            interactive,
+          });
+          console.log(formatAgentInitSummary(flow.results));
+          process.exitCode = flow.exitCode;
+        }
+        return;
+      }
 
       // The marker is `.knowl/config.json`, not the `.knowl` directory -- the rule
       // `isProjectRoot` already enforces everywhere else (K-51). Init was the last command
@@ -362,22 +473,6 @@ program
         );
       }
 
-      const isExisting = await isProjectRoot(cwd);
-
-      if (isExisting) {
-        const result = await upgradeExistingRepository(cwd, name);
-        console.log(`↻ Existing KNOWL project detected — upgrading, then checking agent setup: ${knowlDir}`);
-        printUpgradeStatus(result);
-        const flow = await runAgentInitFlow(cwd, {
-          agentNames: agents,
-          yes: options.yes,
-          interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
-        });
-        console.log(formatAgentInitSummary(flow.results));
-        process.exitCode = flow.exitCode;
-        return;
-      }
-
       await fs.mkdir(knowlDir, { recursive: true });
       await fs.mkdir(path.join(knowlDir, 'skills'), { recursive: true });
 
@@ -396,6 +491,23 @@ program
       await initDb(cwd);
       await repo.createProject(cwd, name);
       await closeDb();
+
+      // Ensure global store if missing
+      const { ensureGlobalStore } = await import('../store/global-store.js');
+      await ensureGlobalStore();
+
+      // Prompt to link this project to the global store if interactive
+      if (interactive && !options.yes) {
+        const clack = await import('@clack/prompts');
+        const linkChoice = await clack.confirm({
+          message: 'Link this project to the global store? (reversible with `knowl link global --off`)',
+          initialValue: true,
+        });
+        if (!clack.isCancel(linkChoice) && linkChoice) {
+          await setGlobalNamespace(cwd, true);
+        }
+      }
+
       // Recorded here as well as in `upgrade`, so a repository is reachable by a machine-wide
       // sweep from the moment it exists rather than only after its first upgrade.
       await recordKnownRepo(cwd);
@@ -421,7 +533,7 @@ program
       console.log(`👉 Run "knowl status" to see repository status.`);
       const flow = await runAgentInitFlow(cwd, {
         agentNames: agents,
-        yes: options.yes,
+        yes: Boolean(options.yes),
         interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
       });
       console.log(formatAgentInitSummary(flow.results));
@@ -686,10 +798,23 @@ function timestampOption(raw: unknown, flag: string): string | undefined {
 
 program.command('query').argument('[query]').description('Search project memory by keywords').option('--as-of <timestamp>').option('--limit <count>').action(async (query, options) => {
   try {
-    const root = await findProjectRoot(process.cwd());
-    await initDb(root);
-    const project = await repo.getProjectByRootPath(root);
-    if (!project) throw new Error('Project not found in database.');
+    let root: string | undefined;
+    let projectId: string = 'local';
+    try {
+      root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+      projectId = project.id;
+    } catch (err: any) {
+      const { globalOnlyNamespaces } = await import('../store/namespaces.js');
+      if (globalOnlyNamespaces().length > 0) {
+        root = undefined;
+        projectId = 'local';
+      } else {
+        throw err;
+      }
+    }
     const limit = numericOption(options.limit, '--limit');
     const asOf = timestampOption(options.asOf, '--as-of');
 
@@ -698,7 +823,7 @@ program.command('query').argument('[query]').description('Search project memory 
     // while knowl_query used the shared ranker, and the workspace branch used the ranker while
     // the solo branch did not -- the same command disagreeing with itself.
     const { items, groups, unshown, shape, skipped } = await runCliQuery({
-      projectRoot: root, projectId: project.id, query, limit, asOf,
+      projectRoot: root, projectId, query, limit, asOf,
     });
 
     // Keyed by repo the moment a linked repo contributes a row, and a bare array otherwise --
@@ -2488,6 +2613,28 @@ program
     }
   });
 
+const linkCommand = program
+  .command('link')
+  .description('Link this project to a shared memory layer');
+
+linkCommand
+  .command('global')
+  .description('Read and write the machine-wide personal-defaults store from this project')
+  .option('--off', 'Unlink; the store itself is left alone')
+  .action(async (options: { off?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await setGlobalNamespace(root, !options.off);
+      const { globalStorePath } = await import('../core/paths.js');
+      console.log(options.off
+        ? `Unlinked from ${globalStorePath()}. The store was not changed.`
+        : `Linked to ${globalStorePath()}. Project knowledge still answers first.`);
+    } catch (error: any) {
+      console.error(`Error: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
 program
   .command('store')
   .argument('<content>', 'The knowledge itself')
@@ -2504,11 +2651,56 @@ program
   .option('--source-commit <sha>', 'Commit where this was last reviewed')
   .option('--supersedes <id>', 'Id of an active item this replaces')
   .option('--local', 'Never publish this atom to a cloud workspace')
+  .option('--namespace <namespace>', 'project (default) or global', 'project')
   .action(async (content: string, options) => {
     try {
       if (!KNOWLEDGE_CATEGORIES.includes(options.category)) {
         console.error(`Invalid category "${options.category}". Expected one of: ${KNOWLEDGE_CATEGORIES.join(', ')}.`);
         process.exit(1);
+      }
+
+      if (options.namespace === 'global') {
+        const { assertGlobalWrite, ensureGlobalStore } = await import('../store/global-store.js');
+        const note = assertGlobalWrite(options.path ?? []);
+        const { path: storePath } = await ensureGlobalStore();
+        const { withDbPath } = await import('../store/database.js');
+        const { loadConfig } = await import('../core/config.js');
+        const { knowlHome } = await import('../core/paths.js');
+        const config = await loadConfig(knowlHome());
+        // The namespace named is the namespace written. No fallback: naming global and getting
+        // the project store is the contamination this layer exists to avoid.
+        await withDbPath(storePath, async () => {
+          const result = await storeKnowledgeItemDeduped(
+            'local',
+            {
+              category: options.category,
+              title: options.title,
+              content,
+              reasoning: options.reasoning,
+              alternatives: options.alternative,
+              tags: options.tag,
+              source: options.source,
+              sourceCommit: options.sourceCommit,
+              affectedPaths: options.path,
+              confidence: options.confidence,
+              provenance: options.provenance,
+              supersedes: options.supersedes,
+            },
+            `Store ${options.category}: ${options.title}`,
+            config.security,
+          );
+
+          if (result.action === 'duplicate') {
+            console.log(`NOT STORED — already held verbatim as ${result.item.id}. Nothing was written and nothing was lost.`);
+            return;
+          }
+
+          console.log(`Stored ${options.category} ${result.item.id}: ${result.item.title}`);
+          if (result.superseded) console.log(`  Retired ${result.superseded.id}.`);
+          if (options.local) console.log('  Marked local. It will not be published.');
+        });
+        console.log(note);
+        return;
       }
 
       const root = await findProjectRoot(process.cwd());

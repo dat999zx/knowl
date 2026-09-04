@@ -1,17 +1,52 @@
+import fsSync from 'node:fs';
 import path from 'node:path';
 import type { KnowledgeCategory, KnowledgeItem, KnowledgeStatus, ProjectConfig } from '../core/types.js';
+import { globalStorePath, knowlHome } from '../core/paths.js';
 import { withDbPath } from './database.js';
-import { queryKnowledgeForAgent } from './agent-query.js';
+import { queryKnowledgeForAgentExplained } from './agent-query.js';
 import { resolveStorage } from './storage-roles.js';
 
 export type MemoryNamespace = 'session' | 'project' | 'organization' | 'global';
 export type NamespaceDescriptor = { namespace: MemoryNamespace; databasePath: string; precedence: number; optional?: boolean };
-export type NamespacedKnowledgeItem = KnowledgeItem & { namespace: MemoryNamespace };
+/**
+ * `explanation` carries the ranker's verdict, in the shape its readers destructure.
+ *
+ * Typed rather than `unknown`: the layered read now uses the explained query so a namespaced
+ * result can report a score at all, and every consumer of that field -- the CLI's ranker verdict,
+ * the MCP score and cosine -- reaches into it. `unknown` pushed each of them to a cast.
+ */
+export type NamespacedKnowledgeItem = KnowledgeItem & {
+  namespace: MemoryNamespace;
+  explanation?: { finalScore?: number; abstained?: boolean; cosine?: number; uncalibrated?: unknown };
+};
 
 const RANK: Record<MemoryNamespace, number> = { session: 1, project: 2, organization: 3, global: 4 };
 
 export function projectNamespace(root: string): NamespaceDescriptor { return { namespace: 'project', databasePath: resolveStorage(root).knowledge, precedence: RANK.project }; }
 export function sessionNamespace(root: string): NamespaceDescriptor { return { namespace: 'session', databasePath: resolveStorage(root).session, precedence: RANK.session }; }
+
+/** The global store as a namespace, addressed by its known path rather than a project's config. */
+export function globalNamespaceDescriptor(): NamespaceDescriptor {
+  return { namespace: 'global', databasePath: globalStorePath(), precedence: RANK.global };
+}
+
+/**
+ * The namespaces available when there is no project at all -- `knowl` outside a repository, or a
+ * host session with no folder open.
+ *
+ * Global alone, and only when it exists: a machine that never created one has no memory here, and
+ * saying so is better than an empty answer from a store that was never made.
+ *
+ * Deliberately NOT a fallback. Nothing calls this when a project was found and failed to open --
+ * a broken project is an error, and answering it from the personal-defaults layer would be the
+ * cross-project contamination this layer exists to avoid.
+ */
+export function globalOnlyNamespaces(): NamespaceDescriptor[] {
+  const descriptor = globalNamespaceDescriptor();
+  // `optional` is what lets the layered reader swallow a namespace's failure. Here it is the only
+  // store, so a failure has to surface.
+  return fsSync.existsSync(descriptor.databasePath) ? [{ ...descriptor, optional: false }] : [];
+}
 export function namespacePrecedence<T extends { namespace: MemoryNamespace }>(items: T[]): T[] { return [...items].sort((a, b) => RANK[a.namespace] - RANK[b.namespace]); }
 
 export function defaultNamespaces(root: string): NamespaceDescriptor[] {
@@ -59,6 +94,48 @@ export type LayeredFilters = {
   tags?: string[];
 };
 
+/**
+ * The config root a namespace's embeddings were written under.
+ *
+ * `session` and `project` live inside a checkout and read that project's config. `global` and
+ * `organization` are standalone files, so their profile comes from the Knowl home -- which is what
+ * makes a global store internally consistent: every read and every write resolves the same
+ * profile, whatever the project that happened to open it uses.
+ */
+function namespaceConfigRoot(descriptor: NamespaceDescriptor, projectRoot: string): string {
+  if (descriptor.namespace === 'session' || descriptor.namespace === 'project') {
+    if (projectRoot && path.resolve(projectRoot) !== path.resolve(knowlHome())) {
+      return projectRoot;
+    }
+    return path.dirname(path.dirname(descriptor.databasePath));
+  }
+  return knowlHome();
+}
+
+/**
+ * The embedding identity to search a namespace with.
+ *
+ * Required rather than convenient: `searchKnowledgeEmbeddings` filters on it, and that predicate
+ * is load-bearing because cosine similarity between vectors of different dimensions is
+ * meaningless. A namespace whose profile cannot be resolved returns null, and the caller skips it
+ * and says so rather than scoring it with someone else's identity.
+ */
+export async function namespaceFingerprint(
+  descriptor: NamespaceDescriptor,
+  projectRoot: string = knowlHome(),
+): Promise<string | null> {
+  try {
+    const [{ loadConfig }, { fingerprintProfile, resolveVectorProfile }] = await Promise.all([
+      import('../core/config.js'),
+      import('../core/vector-profile.js'),
+    ]);
+    const root = namespaceConfigRoot(descriptor, projectRoot);
+    return fingerprintProfile(resolveVectorProfile(await loadConfig(root)));
+  } catch {
+    return null;
+  }
+}
+
 export async function queryLayeredKnowledge(
   root: string,
   query: string,
@@ -66,18 +143,43 @@ export async function queryLayeredKnowledge(
   limit = 3,
   surface = 'namespace_query',
   filters: LayeredFilters = {},
-): Promise<NamespacedKnowledgeItem[]> {
+  // Absent keeps the old lexical behaviour, so every existing caller is unchanged.
+  // `profileFingerprint` is the caller's own identity: it is reused for the namespaces that share
+  // the caller's config root (session and project) and ignored for the standalone ones, which
+  // resolve their own. Declared rather than cast, so a shape change here is a type error instead
+  // of a namespace silently searched with someone else's vectors.
+  // `enabled` is optional to match `RankOptions['vector']`, which every caller already holds;
+  // requiring it here only forced a cast at the call site.
+  vector?: { enabled?: boolean; embedding?: number[]; relevanceFloor?: number | null; profileFingerprint?: string },
+): Promise<{ items: NamespacedKnowledgeItem[]; skipped: MemoryNamespace[] }> {
   const ranked: NamespacedKnowledgeItem[][] = [];
+  const skipped: MemoryNamespace[] = [];
   const seen = new Set<string>();
   for (const descriptor of namespacePrecedence(descriptors)) {
     try {
-      const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgent('local', {
+      if (descriptor.optional && !fsSync.existsSync(descriptor.databasePath)) {
+        throw new Error(`Optional database at "${descriptor.databasePath}" does not exist.`);
+      }
+      // Each namespace is searched with ITS identity. A namespace whose profile cannot be
+      // resolved is skipped and named -- never scored against the caller's vectors.
+      const sharesCallerConfigRoot = descriptor.namespace === 'project' || descriptor.namespace === 'session';
+      const fingerprint = vector?.enabled
+        ? (sharesCallerConfigRoot && vector.profileFingerprint
+          ? vector.profileFingerprint
+          : await namespaceFingerprint(descriptor, root))
+        : null;
+      if (vector?.enabled && !fingerprint) {
+        skipped.push(descriptor.namespace);
+        continue;
+      }
+      const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgentExplained('local', {
         query,
         limit,
         surface,
         category: filters.category,
         status: filters.status,
         tags: filters.tags,
+        ...(fingerprint ? { vector: { ...vector, enabled: true, profileFingerprint: fingerprint } } : {}),
       }));
       const kept: NamespacedKnowledgeItem[] = [];
       for (const item of items) {
@@ -90,9 +192,10 @@ export async function queryLayeredKnowledge(
       ranked.push(kept);
     } catch (error) {
       if (!descriptor.optional) throw error;
+      skipped.push(descriptor.namespace);
     }
   }
-  return interleaveByPrecedence(ranked, limit);
+  return { items: interleaveByPrecedence(ranked, limit), skipped };
 }
 
 /**

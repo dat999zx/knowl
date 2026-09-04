@@ -15,6 +15,8 @@ import {
   mcpServerInstructions,
 } from '../core/knowl-guidance.js';
 import { beginStartupTrace, finishStartupTrace, serveBanner, tracePhase } from '../core/startup-trace.js';
+import { knowlHome } from '../core/paths.js';
+import { globalOnlyNamespaces } from '../store/namespaces.js';
 
 export { KNOWL_MCP_TOOL_NAMES };
 
@@ -136,6 +138,22 @@ export function createMcpServer(
  * The startup trace deliberately stays armed until initialization settles, so a database that
  * is still stuck at 25s says so on stderr even though the handshake itself already succeeded.
  */
+/**
+ * Whether a failed project resolution may be answered from the global store instead.
+ *
+ * Only when there was no project to find. The block this guards resolves the root *and* loads the
+ * config, so "there is no project here" and "this project's config is broken" arrive at the same
+ * `catch` — and treating them alike makes a repository with a malformed config serve someone's
+ * machine-wide preferences while looking healthy, with its own memory reading as empty. A project
+ * that exists and cannot be opened stays an error.
+ *
+ * Its own function so the rule can be asserted without booting a server, which is the only reason
+ * it was ever easy to get wrong.
+ */
+export function shouldServeGlobalOnly(error: unknown, hasGlobalStore: boolean): boolean {
+  return error instanceof ProjectNotFoundError && hasGlobalStore;
+}
+
 export async function startMcpServer(options: { host?: string } = {}): Promise<void> {
   beginStartupTrace({ version: PACKAGE_VERSION });
 
@@ -177,6 +195,20 @@ export async function startMcpServer(options: { host?: string } = {}): Promise<v
         // reading it must not be told to run the thing that just failed.
         initError = `Automatic initialization failed: ${scaffoldError.message}`;
       }
+    } else if (shouldServeGlobalOnly(error, globalOnlyNamespaces().length > 0)) {
+      // No project anywhere above this directory, and a global store exists: serve the
+      // personal-defaults layer alone. That is the Hermes Desktop session with no folder open,
+      // and `knowl` run outside a repository.
+      //
+      // **Only for `ProjectNotFoundError`.** The `try` above also runs `loadConfig`, so without
+      // this guard a project whose config is malformed -- present, findable, and broken -- fell
+      // through to the same branch and served personal defaults instead of reporting the error.
+      // The repository's own memory would read as empty while the server looked healthy, which
+      // is the silent wrong scope this layer exists to prevent. A project that exists and cannot
+      // be opened stays an error.
+      projectRoot = null;
+      config = await tracePhase('globalLoadConfig', () => loadConfig(knowlHome()));
+      initError = null;
     } else {
       initError = error.message;
     }
@@ -187,22 +219,26 @@ export async function startMcpServer(options: { host?: string } = {}): Promise<v
   const ready = (async () => {
     if (initError) return;
     try {
-      // Init DB. AI is optional and initialized lazily only for AI-backed tools.
-      await tracePhase('initDb', () => initDb(projectRoot!));
+      if (projectRoot) {
+        // Init DB. AI is optional and initialized lazily only for AI-backed tools.
+        await tracePhase('initDb', () => initDb(projectRoot!));
 
-      // Get project details
-      project = await tracePhase('getProject', () => getProjectByRootPath(projectRoot!));
-      if (autoInitialized) {
-        // The scaffold above made the directory a root; this finishes what init would have:
-        // the machine registry entry and the `.gitignore` line. Not gated on `!project`,
-        // because `getProjectByRootPath` synthesizes the local project for any root — a
-        // truthy project says nothing about whether those two side effects ever happened.
-        // Behind the handshake because it opens the database, which is the work the connect
-        // deadline must not wait on.
-        project = await tracePhase('adoptProject', () => adoptProject(projectRoot!));
-      }
-      if (!project) {
-        throw new Error('Knowl project is not initialized. Run "knowl init" first.');
+        // Get project details
+        project = await tracePhase('getProject', () => getProjectByRootPath(projectRoot!));
+        if (autoInitialized) {
+          // The scaffold above made the directory a root; this finishes what init would have:
+          // the machine registry entry and the `.gitignore` line. Not gated on `!project`,
+          // because `getProjectByRootPath` synthesizes the local project for any root — a
+          // truthy project says nothing about whether those two side effects ever happened.
+          // Behind the handshake because it opens the database, which is the work the connect
+          // deadline must not wait on.
+          project = await tracePhase('adoptProject', () => adoptProject(projectRoot!));
+        }
+        if (!project) {
+          throw new Error('Knowl project is not initialized. Run "knowl init" first.');
+        }
+      } else {
+        project = { id: 'local', name: 'global', rootPath: knowlHome() };
       }
     } catch (error: any) {
       initError = error.message;

@@ -6,6 +6,7 @@ import * as schema from './schema.js';
 import { DatabaseError } from '../core/errors.js';
 import { resolveStorage } from './storage-roles.js';
 import { acquireClient, releaseAll, releaseClient } from './connection-pool.js';
+import { knowlHome } from '../core/paths.js';
 
 /** Shared type for database connection or transaction context. */
 export type DbConnection = LibSQLDatabase<typeof schema> | Parameters<Parameters<LibSQLDatabase<typeof schema>['transaction']>[0]>[0];
@@ -108,11 +109,16 @@ export async function initDbPath(dbPath: string, options: InitDbOptions = {}): P
  * during a session-namespace hop was executed against the session database. Both databases stay
  * pooled afterwards: the next hop is then free.
  */
-export async function withDbPath<T>(dbPath: string, run: () => Promise<T>): Promise<T> {
+export async function withDbPath<T>(
+  dbPath: string,
+  run: () => Promise<T>,
+  options?: { configRoot?: string },
+): Promise<T> {
   const previous = activeContext();
   // The swapped-in database keeps the caller's config root. A namespace store lives outside
   // the `<root>/.knowl/` layout, so deriving one from its path would point at nothing.
-  const configRoot = previous ? previous.configRoot : path.dirname(path.dirname(dbPath));
+  const isHomeDb = path.resolve(path.dirname(dbPath)) === path.resolve(knowlHome());
+  const configRoot = options?.configRoot ?? (isHomeDb ? knowlHome() : (previous ? previous.configRoot : path.dirname(path.dirname(dbPath))));
   const client = await acquireClient(dbPath, {
     profileFingerprint: await currentProfileFingerprint(configRoot),
   });

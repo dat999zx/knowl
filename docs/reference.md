@@ -27,7 +27,7 @@ which parts of a restore are deliberately not restored.
 | Section | Covers |
 | --- | --- |
 | [Overview](#overview) · [Quick start](#quick-start) | What Knowl is and how to install it |
-| [Core knowledge model](#core-knowledge-model) | [Atom categories](#atom-categories) · [Metadata, history, ownership](#metadata-history-and-ownership) · [Governed writes](#governed-writes-and-current-truth) |
+| [Core knowledge model](#core-knowledge-model) | [Atom categories](#atom-categories) · [Metadata, history, ownership](#metadata-history-and-ownership) · [Governed writes](#governed-writes-and-current-truth) · [Namespaces & global memory](#memory-namespaces-and-the-global-layer) |
 | [Retrieval and context](#retrieval-and-context) | [Current retrieval](#current-retrieval) · [What a result carries](#what-a-result-carries) · [Embedding models](#choosing-an-embedding-model) · [Historical queries](#historical-retrieval-and-assertions) · [Context packs](#bounded-context-packs) |
 | [Tasks, sessions, lifecycle](#tasks-sessions-and-agent-lifecycle) | [Work loops](#manual-work-loops) · [Retention and promotion](#session-retention-recovery-and-promotion) · [Handoffs and resume keys](#leaving-work-for-later) · [Transcript search](#searchable-session-transcripts-optional-off-by-default) · [What exists and what is on](#seeing-what-exists-and-what-is-on--knowl-config-list) · [Host behavior](#host-and-subagent-behavior) · [The fleet](#who-else-is-running--the-fleet) |
 | [Evidence, code, drift](#evidence-code-intelligence-and-drift) | [Evidence and symbols](#evidence-and-symbols) · [PR drift and feedback](#pull-request-drift-and-retrieval-feedback) |
@@ -190,6 +190,84 @@ These rules apply across atom categories rather than assigning special fuzzy beh
 decisions or state. Batch ingestion and update-plus-supersede sequences should not be treated as
 an atomic multi-record transaction: current operations may commit individual records
 separately. Use explicit IDs and inspect the returned result when a correction spans records.
+
+### Memory namespaces and the global layer
+
+Reads layer across up to four physical databases, ordered by precedence:
+
+| Rank | Namespace | Source | Purpose |
+| ---: | --- | --- | --- |
+| 1 | `session` | `.knowl/session.db` | Bounded, expiring scratchpad for the active task or turn |
+| 2 | `project` | `.knowl/knowl.db` | Repository-local durable truth — the default and authoritative source |
+| 3 | `organization` | external path | Shared organizational knowledge configured per project |
+| 4 | `global` | `~/.knowl/global.db` | Machine-wide personal defaults and cross-project conventions |
+
+**Precedence interleave.** Project answers always outrank global answers on a tie (`RANK: session 1, project 2, org 3, global 4`). Rather than merging uncalibrated scores across physical databases, `queryLayeredKnowledge` interleaves each namespace round-robin: the highest-precedence namespace leads, and lower-precedence hits cannot crowd out project truth.
+
+**Spanning namespaces under vector search.** Each namespace is queried using its own embedding profile and fingerprint (`namespaceFingerprint`). For `project` and `session`, that is the project's config; for `global` and `organization`, it resolves against the Knowl home (`~/.knowl`), ensuring consistency across queries regardless of which repository executes the lookup. If an optional namespace cannot be served or lacks an embedding profile, it is skipped and named in `skippedNamespaces`, never silently dropped.
+
+**The global store (`~/.knowl/global.db`).** Stored in the machine's Knowl home (`KNOWL_HOME`), `global.db` is an independent database with the standard schema. It is machine-local (never published or synced to cloud workspaces), keeping machine quirks and personal preferences isolated to this machine.
+
+**Setting it up.** The store is created by either form of `knowl init` and by `knowl link global`, so most people never create it deliberately:
+
+```bash
+knowl init                 # this directory: its store, and the global one if missing
+knowl init --global        # the machine store only, nothing written here
+knowl init --global hermes # the machine store, and the hosts named beside it
+```
+
+`knowl init` initializes the directory you run it in. `--global` switches to machine scope and
+leaves that directory alone, which is how a machine-wide host such as Hermes is wired from
+anywhere.
+
+Creating the store does not make any project read it. Linking does, and it is per project so that
+one careless write cannot become visible everywhere at once.
+
+**What belongs in it.** Global is a personal-defaults layer, not a second place to put project
+truth. Knowledge that is true of *you* or of *this machine*:
+
+- "I prefer pnpm over npm"
+- "this machine's driver breaks on CUDA 12"
+- "every repository here uses conventional commits"
+
+Knowledge that is true of one repository stays in it. "The auth rewrite chose JWT over sessions
+because of X" belongs to that repo: stored globally it is wrong everywhere else, and it dilutes
+retrieval for every project linked to the store. The tell is `affectedPaths` — if an atom names
+files, it almost certainly belongs to the repository that contains them.
+
+**Checking it works.**
+
+```bash
+knowl store "I prefer pnpm over npm" \
+  --category constraint --title "Package manager" --namespace global
+
+cd my-project && knowl link global
+knowl query "package manager"
+```
+
+From a linked project the repository's own answer comes first and the global one follows it. From
+a directory with no project at all, the global answer is the only one — which is the difference
+between a folderless session having memory and having none.
+
+**Linking a project:**
+```bash
+knowl link global        # Read and write global.db from this project
+knowl link global --off  # Unlink; the global store is left untouched
+```
+Linking adds `"memory": { "global": { "enabled": true, "path": "~/.knowl/global.db" } }` to `.knowl/config.json`. Unlinking is reversible and never destroys stored knowledge.
+
+**Writing to global:**
+```bash
+knowl store "I prefer pnpm everywhere" \
+  --category constraint \
+  --title "Preferred package manager" \
+  --namespace global
+```
+- **Absolute paths required:** Every path passed via `--path` must be absolute. In a store that spans repositories, a relative path like `src/auth.ts` names nothing.
+- **Reference only:** Any paths attached to a global atom are recorded for reader reference and provenance only; they are not indexed. Impact detection, PR drift, and evidence staleness remain strictly project-only.
+
+**Project-less sessions:**
+When run outside any repository (or in a host like Hermes Desktop without a project folder), Knowl resolves to `global` alone (`globalOnlyNamespaces()`). It behaves like a project whose store is `global.db`. If a project directory *is* present but fails resolution, Knowl raises an error rather than falling back to global: global is personal defaults, never a fallback for a broken project store.
 
 ## Retrieval and context
 
@@ -2423,13 +2501,19 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 
 | Command | Description |
 | --- | --- |
-| `knowl init [agents...]` | Initialize or upgrade the project and configure selected agents |
+| `knowl init [agents...] [--global] [-y\|--yes]` | Initialize or upgrade the project in this directory and configure selected agents. `--global` switches to machine scope: the personal-defaults store plus any hosts named, with nothing written into the current directory |
 | `knowl upgrade` | Refresh project files, schema, guidance, and `.gitignore` without agent setup |
 | `knowl status` | Show repository, memory, AI, commit, and workspace status |
 | `knowl doctor` | Check project, vector coverage, agent, and workspace readiness |
 | `knowl state` | Print the active hierarchical project memory |
 | `knowl audit` | Run a read-only, limited integrity audit |
 | `knowl fleet [--repo <name>] [--json]` | List the agent sessions live on this machine and what each is doing. Needs no Knowl project |
+
+### Shared memory layers
+
+| Command | Description |
+| --- | --- |
+| `knowl link global [--off]` | Read and write the machine-wide personal-defaults store (`~/.knowl/global.db`) from this project |
 
 ### Workspaces
 
@@ -2450,7 +2534,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 
 | Command | Description |
 | --- | --- |
-| `knowl store <content> --category <c> --title <t> [--tag <t...>] [--path <p...>] [--confidence <n>] [--provenance <p>] [--reasoning <text>] [--alternative <text...>] [--source <label>] [--source-commit <sha>] [--supersedes <id>] [--local]` | Record one verified fact, decision or constraint. `--local` marks it never-publish |
+| `knowl store <content> --category <c> --title <t> [--tag <t...>] [--path <p...>] [--confidence <n>] [--provenance <p>] [--reasoning <text>] [--alternative <text...>] [--source <label>] [--source-commit <sha>] [--supersedes <id>] [--local] [--namespace project\|global]` | Record one verified fact, decision or constraint. `--namespace global` writes to the machine-wide store with required absolute paths; `--local` marks it never-publish |
 | `knowl decide [title] [content]` | Record a decision, reasoning, alternatives, and tags |
 | `knowl query [query] [--as-of <timestamp>] [--limit <count>]` | Query current or historically valid project memory |
 | `knowl list [--unread] [--stale] [--category <c>] [--limit <n>]` | Browse stored memories rather than searching them. `--unread` shows what has never been retrieved, oldest first |
@@ -2654,6 +2738,7 @@ Knowl keeps project data under `.knowl/`, which `knowl init` adds to `.gitignore
 Some state is about the machine rather than any repository, and lives under `~/.knowl/` instead
 (`KNOWL_HOME` moves it):
 
+- `~/.knowl/global.db` — the machine-wide personal-defaults store for cross-project conventions and project-less sessions.
 - `~/.knowl/resume.db` — parked workstreams, so a key handed over in one repo resolves from any
   directory.
 - `~/.knowl/fleet.db` — the agent sessions running right now: what each is on, what it wrote this

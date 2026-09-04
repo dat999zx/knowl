@@ -49,9 +49,31 @@ Claude Code (2.1.257+) and Codex (0.148+) can run a hook as a call to a tool on 
 ## Setup
 
 ```bash
-knowl init                 # detects installed hosts and configures each one
-knowl init copilot         # or name one
-knowl doctor               # what is configured, what is stale
+knowl init                      # detects installed hosts and configures each one
+knowl init copilot              # or name one
+knowl init --global hermes      # wire a machine-wide host, from anywhere
+knowl doctor                    # what is configured, what is stale
+```
+
+**Two scopes, and which one applies is the host's business, not yours to remember.** Most hosts
+read a file inside the repository — `.mcp.json`, `.codex/hooks.json`, `.cursor/mcp.json` — so
+`knowl init` in each repository is the whole story. Hermes is machine-wide: one plugin and one
+`config.yaml` serve every project, so it is wired once, from anywhere, and later repositories need
+only `knowl init` to create their own store. Re-running `knowl init` inside a repository never
+disturbs a machine-wide host.
+
+`knowl init` initializes the directory you run it in — that is its whole job, git repository or
+not. `--global` asks for machine scope instead: the personal-defaults store plus any hosts you
+name, and nothing written into the current directory. That is how a machine-wide host is wired
+from wherever you happen to be standing.
+
+A first-time setup for a machine-wide host therefore reads:
+
+```bash
+npm i -g @dat999zx/knowl
+knowl init --global hermes      # install the plugin, enable it, add the MCP server
+# restart the host, then, in each repository you want remembered:
+cd my-repo && knowl init
 ```
 
 | Host | MCP config | Hooks |
@@ -122,7 +144,7 @@ That file is [`integrations/cline/knowl-plugin.mjs`](../integrations/cline/knowl
 
 `knowl init hermes` therefore copies [`integrations/hermes/knowl/`](../integrations/hermes/README.md) into the Hermes plugins directory, adds `plugins.enabled: [knowl]` and `mcp_servers.knowl` to `config.yaml`, and removes any shell hooks an earlier version left there — leaving both channels registered would send every event twice. The file is edited as a YAML document, so comments survive (comment blocks may be re-indented to sit with their key), and `hermes` itself is never run: its own mutators re-serialise the whole config without comments and can stop on an interactive prompt. Hermes' home is `~/.hermes` on macOS and Linux, `%LOCALAPPDATA%\hermes` on Windows, or `$HERMES_HOME`.
 
-The plugin sends exactly what a shell hook would have sent, so the engine does all the memory work: `pre_llm_call` carries the turn card (Hermes appends it to the user message), `pre_tool_call` carries the write gate on `write_file` and `patch`, and `pre_verify` — fired before a turn that edited code finishes — carries the capture nudge, on exactly the turns it is about. Three things the plugin adds that a subprocess cannot: the project comes from Hermes' per-session working directory rather than the backend process's, the memory rules ride in the system prompt, and a file write gets a same-turn impact card appended to its result. Restart Hermes to load it; `/reload-mcp` connects the MCP server in a running chat.
+The plugin sends exactly what a shell hook would have sent, so the engine does all the memory work: `pre_llm_call` carries the turn card (Hermes appends it to the user message), `pre_tool_call` carries the write gate on `write_file` and `patch`, and `pre_verify` — fired before a turn that edited code finishes — carries the capture nudge, on exactly the turns it is about. Three things the plugin adds that a subprocess cannot: the project comes from Hermes' per-session working directory rather than the backend process's, the memory rules ride in the system prompt, and a file write gets a same-turn impact card appended to its result. Restart Hermes to load it; `/reload-mcp` connects the MCP server in a running chat. A Desktop session with no folder open has no project to resolve, and now reads the machine-wide personal-defaults store alone rather than having no memory at all — see [memory namespaces](reference.md#memory-namespaces-and-the-global-layer).
 
 **One thing to know about the MCP tools on Desktop.** `knowl serve` resolves the project by walking up from its own process directory, and every other host launches one server per project, so it inherits the right one. Hermes Desktop runs a single server for every project, started from the Hermes process directory — so its `mcp__knowl__*` tools report *No Knowl project found* on a machine whose store is perfectly healthy. Setting `mcp_servers.knowl.cwd` fixes one project and then silently answers from **that** project in every other session, which is worse than the error, so `knowl init hermes` does not set it; pin it yourself only if you use Hermes for a single repository. Because of this the plugin registers `knowl_query` and `knowl_store` as its own tools, run in the session's own directory, so the query-then-store loop is correct in every session no matter how many projects are open. The rest of the tool surface stays reachable the way any command is — `knowl timeline`, `knowl conflicts`, `knowl drift` and the others, run from the repository in the agent's terminal. A per-session MCP server needs something Hermes does not have yet: project-local config, or MCP roots.
 
