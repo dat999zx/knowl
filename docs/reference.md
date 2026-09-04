@@ -1794,36 +1794,110 @@ not pulled yet.
 Knowl represents reusable procedure knowledge in two forms: a durable `skill` atom for retrieval,
 and an optional file-backed package for inspected execution.
 
-### File-backed skills
+### File-backed skills and global playbooks
 
-A package lives below the project database directory:
+Knowl supports file-backed skills at two distinct layers:
+- **Project skills** live under `.knowl/skills/<name>/` and contain repository-specific procedures.
+- **Global skills** live under `~/.knowl/skills/<name>/` (`<knowlHome()>/skills/`) and serve as machine-wide reusable playbooks.
+
+A project skill shadows a global skill of the same name, ensuring that repo-specific workflows always take precedence. `knowl skill list` displays the layer (`project` or `global`) beside each package.
 
 ```text
+# Project skill:
 .knowl/skills/<name>/
 ├── SKILL.md
-├── skill.json
+├── skill.yaml (or skill.json)
+└── optional scripts and support files
+
+# Global playbook:
+~/.knowl/skills/<name>/
+├── SKILL.md
+├── skill.yaml (or skill.json)
 └── optional scripts and support files
 ```
 
-Create and inspect a package before running it:
+#### The manifest and `requires` block
 
-```bash
-knowl skill create run_app \
-  --purpose "Start the app locally" \
-  --markdown "# Run App" \
-  --file "run.mjs=console.log('run-app')" \
-  --script run.mjs
+A skill package manifest (`skill.yaml` or `skill.json`) declares its purpose, entrypoints, and an optional `requires` block specifying capabilities, inputs, and preconditions:
 
-knowl skill list
-knowl skill read run_app
-knowl skill run run_app
+```yaml
+name: release
+purpose: Cut a release: verify, tag, push.
+version: 1
+requires:
+  capabilities: [process, network, publish]
+  inputs:
+    test_command: { description: "Command that must pass before tagging" }
+    release_branch: { description: "Branch releases are cut from", default: "main" }
+  preconditions:
+    - clean_worktree
+    - on_branch:${inputs.release_branch}
+    - command_exists:git
+entrypoints:
+  default:
+    type: script
+    path: release.sh
+    args: ["${inputs.test_command}", "${inputs.release_branch}"]
+    autoRun: true
 ```
 
-Package names, file paths, and entrypoint paths are validated to stay within the package.
-Entrypoints can invoke a trusted local script or shell command and run without a sandbox.
-`autoRun: false` blocks execution. When a declared primary entrypoint fails, a declared fallback
-entrypoint may run. Knowl records usage and result statistics so operators can inspect how the
-package behaved; path validation is not a security boundary for untrusted script content.
+#### Capabilities and preconditions
+
+Capabilities declare what external interactions a skill intends to perform (`process`, `network`, `write`, `publish`, `delete`). **Capabilities are declarations and not a sandbox.** They inform operators and gates of intent rather than isolating processes.
+
+Preconditions are evaluated before any entrypoint runs and fail closed:
+- `clean_worktree`: fails if git reports uncommitted changes.
+- `on_branch:<name>`: verifies the current git branch matches `<name>` (evaluated after input interpolation).
+- `command_exists:<bin>`: checks that the specified binary is on PATH without invoking it.
+- Any unrecognized, failing, or un-evaluable precondition immediately refuses execution.
+
+#### Project bindings and interpolation
+
+A global playbook and a project binding are two keys: neither runs anything alone. A project binds a global playbook by declaring inputs in `.knowl/config.json`:
+
+```json
+{
+  "skills": {
+    "release": {
+      "version": 1,
+      "inputs": {
+        "test_command": "npm test"
+      }
+    }
+  }
+}
+```
+
+An unbound global skill lists and reads, but refuses to run until bound in project config, reporting missing inputs.
+
+**Interpolation is `${inputs.*}` and nothing else.** No environment variables, no shell expansions, and no arbitrary expressions. Any unresolved reference or command substitution syntax causes an immediate refusal before command execution.
+
+Project bindings can also pin a version (e.g. `"version": 1`). If the playbook version increments, execution is refused until the pin is updated. Manifests also record `provenance` (`authored locally`, or imported source) which is shown in `knowl skill read`.
+
+#### Approval and trust
+
+Execution is refused unless approved:
+- `knowl skill approve <name>` approves a project skill, recording its hash in `.knowl/skill-trust.json`.
+- `knowl skill approve <name> --global` approves a global playbook, recording its hash in `~/.knowl/skill-trust.json`.
+- Any byte modification to the package invalidates approval and requires re-approval.
+- Capabilities with external effects (`write`, `network`, `publish`, `delete`) require explicit confirmation during approval (`-y` / `--yes` for non-interactive environments).
+- **Planted package protection**: A checkout cannot approve itself. A repository shipping both `.knowl/skills/<name>` and a `skills.<name>` binding is refused.
+
+#### Visible resolved run banner
+
+Before execution, `knowl skill run` displays a banner showing the fully resolved command with all inputs substituted, working directory, declared capabilities, and verified preconditions:
+
+```
+knowl skill run release
+  skill:        release (global, v1, approved 2026-09-04)
+  command:      sh release.sh "npm test" "main"
+  cwd:          /path/to/project
+  capabilities: process, network, publish
+  preconditions: clean_worktree ✓, on_branch:main ✓, command_exists:git ✓
+```
+
+**Capabilities are declarations and not a sandbox.**
+
 
 ### Deterministic synthesis
 

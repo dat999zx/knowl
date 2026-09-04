@@ -5,6 +5,15 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## 5.20.0 — 2026-09-04
 
+**Global skills: reusable playbooks with project bindings.** A skill can now live once on the machine (`~/.knowl/skills/<name>/`) as a reusable playbook, while each repository provides its own commands and paths via project bindings in `.knowl/config.json`. A playbook and a binding are two keys: neither runs anything alone.
+- **Layering and Shadowing**: Project skills shadow global skills of the same name. `knowl skill list` identifies whether each skill is `project` or `global`.
+- **`requires` block**: Manifests (`skill.yaml` or `skill.json`) declare `inputs`, `capabilities` (`process`, `network`, `write`, `publish`, `delete`), and fail-closed `preconditions` (`clean_worktree`, `on_branch:<name>`, `command_exists:<bin>`).
+- **Strict interpolation**: Only `${inputs.*}` is substituted; shell expansions, environment variables, or missing inputs fail closed before running.
+- **Approval and planted-package protection**: `knowl skill approve <name> --global` records trust in `~/.knowl/skill-trust.json`. Capabilities with external effects require explicit confirmation. A repository shipping both a local skill and a binding cannot self-approve.
+- **Visible run banner**: Every run displays a banner with the fully resolved command, working directory, declared capabilities, and verified preconditions. Capabilities are declarations, not a sandbox.
+- **Pinning and provenance**: Bindings can pin a version; manifests track origin provenance.
+
+
 **A global memory layer, and the layered read that makes it reachable.** Knowl has had four
 namespaces since long before this release -- session, project, organization, global -- with
 precedence, round-robin interleaving and per-row embedding identity all implemented. None of it
