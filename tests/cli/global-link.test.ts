@@ -99,3 +99,25 @@ describe('writing to the global namespace', () => {
   });
 });
 
+describe('setup outside a repository', () => {
+  it('creates only the global store under --global', async () => {
+    const home = path.join(os.tmpdir(), `knowl-link-global-init-${testCount++}`);
+    const saved = process.env.KNOWL_HOME;
+    try {
+      process.env.KNOWL_HOME = home;
+      const { runGlobalInit } = await import('../../src/cli/global-init.js');
+      const result = await runGlobalInit();
+      expect(result.created).toBe(true);
+      await expect(fs.access(globalStorePath())).resolves.toBeUndefined();
+      // No project was made anywhere.
+      await expect(fs.access(path.join(home, '.knowl'))).rejects.toThrow();
+      expect((await runGlobalInit()).created).toBe(false);
+    } finally {
+      await closeDb().catch(() => {});
+      await releaseAll().catch(() => {});
+      await fs.rm(home, { recursive: true, force: true }).catch(() => {});
+      if (saved === undefined) delete process.env.KNOWL_HOME; else process.env.KNOWL_HOME = saved;
+    }
+  });
+});
+
