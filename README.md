@@ -705,6 +705,15 @@ is refused as before. Either way a repo's private knowledge stays private until 
 
 - **File-backed skills** — package a procedure with its scripts under `.knowl/skills/`, then
   inspect it before it ever runs. `knowl skill list` · `read` · `run`
+- **Global playbooks** — a procedure that is the same everywhere lives once at `~/.knowl/skills/`,
+  and each repository supplies its own commands and paths through a binding in `.knowl/config.json`.
+  A playbook and a binding are two keys: neither runs anything alone, an unbound playbook lists and
+  reads but refuses to run, and a project skill of the same name shadows the global one.
+- **What runs is shown before it runs** — a manifest declares its `inputs`, its `capabilities` and
+  fail-closed `preconditions` (`clean_worktree`, `on_branch:`, `command_exists:`), an unrecognised
+  precondition refuses rather than passing, and the run banner prints the fully resolved command.
+  Approval is per set of bytes and re-checked every run; a repository cannot ship a skill and its
+  own approval. Capabilities are declarations, not a sandbox, and say so.
 - **Deterministic synthesis** — roll several atoms into one architecture summary with no AI
   provider involved: `knowl synthesize --scope storage`
 

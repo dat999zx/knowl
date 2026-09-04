@@ -39,6 +39,7 @@ const NOT_EDITABLE: Record<string, string> = {
   'cloud.remote': 'records which remote the identity came from, for inspection',
   'workspace.workspace': 'membership, written by `knowl workspace add` / `join`',
   'workspace.repo': 'this repo\'s name within that workspace, written by the same commands',
+  'skills': 'project-level skill bindings map, maintained per-skill in .knowl/config.json',
 };
 
 /** Leaf paths of `ProjectConfig`, as the interface declares them. */
