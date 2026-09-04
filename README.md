@@ -796,6 +796,18 @@ repository at all, such as a Hermes Desktop window with no folder open, reads th
 alone rather than having no memory. A project that exists but fails to open stays an error: global
 is personal defaults, never a fallback for a broken store.
 
+**It follows you to another machine.** The machine store syncs to a cloud workspace the same way a
+project does — it is not a project, but it is addressed like one:
+
+```bash
+knowl cloud connect --global   # then push and pull with --global
+```
+
+Run any `knowl cloud` command outside a repository and it uses the machine store on its own,
+saying so. That inference is narrow on purpose: only when there is no project above the directory
+at all. A project whose config will not parse is an error about that project, never quietly
+answered from your personal defaults.
+
 → [Memory namespaces and the global layer](docs/reference.md#memory-namespaces-and-the-global-layer)
 
 ### Everything else
