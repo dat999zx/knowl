@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.20.0 — 2026-09-04
 
 **A global memory layer, and the layered read that makes it reachable.** Knowl has had four
 namespaces since long before this release -- session, project, organization, global -- with
