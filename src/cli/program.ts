@@ -332,7 +332,7 @@ program
       if (options.hostOnly) {
         const flow = await runAgentInitFlow(cwd, {
           agentNames: agents,
-          yes: options.yes,
+          yes: Boolean(options.yes),
           interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
         });
         console.log(formatAgentInitSummary(flow.results));
@@ -349,7 +349,7 @@ program
         if (agents.length > 0 || (process.stdin.isTTY && process.stdout.isTTY && !options.yes)) {
           const flow = await runAgentInitFlow(cwd, {
             agentNames: agents,
-            yes: options.yes,
+            yes: Boolean(options.yes),
             interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
           });
           console.log(formatAgentInitSummary(flow.results));
@@ -366,7 +366,7 @@ program
         printUpgradeStatus(result);
         const flow = await runAgentInitFlow(cwd, {
           agentNames: agents,
-          yes: options.yes,
+          yes: Boolean(options.yes),
           interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
         });
         console.log(formatAgentInitSummary(flow.results));
@@ -412,7 +412,7 @@ program
         if (agents.length > 0 || (interactive && !options.yes)) {
           const flow = await runAgentInitFlow(cwd, {
             agentNames: agents,
-            yes: options.yes,
+            yes: Boolean(options.yes),
             interactive,
           });
           console.log(formatAgentInitSummary(flow.results));
@@ -535,7 +535,7 @@ program
       console.log(`👉 Run "knowl status" to see repository status.`);
       const flow = await runAgentInitFlow(cwd, {
         agentNames: agents,
-        yes: options.yes,
+        yes: Boolean(options.yes),
         interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
       });
       console.log(formatAgentInitSummary(flow.results));

@@ -8,7 +8,17 @@ import { resolveStorage } from './storage-roles.js';
 
 export type MemoryNamespace = 'session' | 'project' | 'organization' | 'global';
 export type NamespaceDescriptor = { namespace: MemoryNamespace; databasePath: string; precedence: number; optional?: boolean };
-export type NamespacedKnowledgeItem = KnowledgeItem & { namespace: MemoryNamespace; explanation?: unknown };
+/**
+ * `explanation` carries the ranker's verdict, in the shape its readers destructure.
+ *
+ * Typed rather than `unknown`: the layered read now uses the explained query so a namespaced
+ * result can report a score at all, and every consumer of that field -- the CLI's ranker verdict,
+ * the MCP score and cosine -- reaches into it. `unknown` pushed each of them to a cast.
+ */
+export type NamespacedKnowledgeItem = KnowledgeItem & {
+  namespace: MemoryNamespace;
+  explanation?: { finalScore?: number; abstained?: boolean; cosine?: number; uncalibrated?: unknown };
+};
 
 const RANK: Record<MemoryNamespace, number> = { session: 1, project: 2, organization: 3, global: 4 };
 
@@ -134,7 +144,13 @@ export async function queryLayeredKnowledge(
   surface = 'namespace_query',
   filters: LayeredFilters = {},
   // Absent keeps the old lexical behaviour, so every existing caller is unchanged.
-  vector?: { enabled: boolean; embedding?: number[]; relevanceFloor?: number | null },
+  // `profileFingerprint` is the caller's own identity: it is reused for the namespaces that share
+  // the caller's config root (session and project) and ignored for the standalone ones, which
+  // resolve their own. Declared rather than cast, so a shape change here is a type error instead
+  // of a namespace silently searched with someone else's vectors.
+  // `enabled` is optional to match `RankOptions['vector']`, which every caller already holds;
+  // requiring it here only forced a cast at the call site.
+  vector?: { enabled?: boolean; embedding?: number[]; relevanceFloor?: number | null; profileFingerprint?: string },
 ): Promise<{ items: NamespacedKnowledgeItem[]; skipped: MemoryNamespace[] }> {
   const ranked: NamespacedKnowledgeItem[][] = [];
   const skipped: MemoryNamespace[] = [];
@@ -146,10 +162,11 @@ export async function queryLayeredKnowledge(
       }
       // Each namespace is searched with ITS identity. A namespace whose profile cannot be
       // resolved is skipped and named -- never scored against the caller's vectors.
+      const sharesCallerConfigRoot = descriptor.namespace === 'project' || descriptor.namespace === 'session';
       const fingerprint = vector?.enabled
-        ? ((descriptor.namespace === 'project' || descriptor.namespace === 'session') && (vector as any).profileFingerprint
-            ? (vector as any).profileFingerprint
-            : await namespaceFingerprint(descriptor, root))
+        ? (sharesCallerConfigRoot && vector.profileFingerprint
+          ? vector.profileFingerprint
+          : await namespaceFingerprint(descriptor, root))
         : null;
       if (vector?.enabled && !fingerprint) {
         skipped.push(descriptor.namespace);
