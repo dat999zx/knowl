@@ -3,42 +3,6 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
-
-**Knowl can be Hermes' memory provider, not only its plugin.** Hermes has a first-class slot for
-a memory backend -- Settings > Memory & Context > Memory Provider, beside Mem0, Honcho and the
-rest -- and it scans `$HERMES_HOME/plugins/` for candidates, which is exactly where
-`knowl init hermes` already installs. Knowl now appears in that dropdown with no extra step and no
-second install path; selecting it is optional and additive.
-
-The two surfaces are complementary rather than alternatives, because neither reaches what the
-other does. A `MemoryProvider` gets no tool-level event at all, so the write gate and the
-same-turn impact card can only be hooks. The hooks have no compaction event and can only append
-to the *user* message, so three things can only be the provider:
-
-- **Recall in the system prompt**, where instructions belong, instead of appended to the message.
-- **Hermes' recall indicator**, which reports what was injected without depending on the model to
-  mention it.
-- **A checkpoint before compaction.** Hermes fires no hook before it compresses a conversation,
-  so without this a session's knowledge is summarised away before capture ever sees it. The
-  engine normalizes it to the same `checkpoint` event `PreCompact` maps to elsewhere.
-
-One directory serves both, which needs two things to stay true. Hermes imports it twice -- the
-plugin manager for the hooks, `plugins/memory` for the provider -- and the collector it passes
-the second time forwards `register_hook` to a *real* plugin context, so the module name is what
-decides which half registers; registering both would fire every event twice. And `plugin.yaml`
-must keep its explicit `kind: standalone`: without it Hermes sniffs `MemoryProvider` out of the
-source, reclassifies the plugin as `exclusive`, and skips it entirely -- silently taking every
-hook with it. Both are covered by tests.
-
-When Knowl is the selected provider the `pre_llm_call` hook stops injecting its card, so recall is
-never delivered twice. It still fires, because that is what binds the session and carries capture.
-
-**The Hermes plugin's tests now run in CI.** They are Python, so `npm test` never reached them and
-neither did anything else -- 31 tests sat in the repo running nowhere, including the ones
-asserting the hook payload shapes Desktop depends on. They run on the ubuntu lint job's
-preinstalled python via `npm run test:plugin`, stdlib `unittest` only, no pip install.
-
 ## 5.20.0 — 2026-09-04
 
 **A global memory layer, and the layered read that makes it reachable.** Knowl has had four
@@ -79,6 +43,40 @@ What that unlocks:
 The plugin also registers `knowl_query` and `knowl_store` as Hermes tools of its own, and that is not duplication of the MCP server — it is the only correct channel on Desktop. `knowl serve` resolves the project from its own process directory, and Hermes Desktop runs one server for every project from a directory that is not any of them, so its `mcp__knowl__*` tools report *No Knowl project found* while the store is healthy. Pinning `mcp_servers.knowl.cwd` would fix one repository and silently answer from it in all the others, so init does not set it. The plugin's two tools run in the session's own directory instead, which is right however many projects are open; everything they do not cover is a `knowl <command>` away in the agent's terminal.
 
 **The Hermes bootstrap card was being thrown away, on every host path.** The profile registered `on_session_start`, so the engine bound the session and spent the bootstrap card on an event whose return value Hermes discards — and the first real turn then arrived on a session the engine had already seen, with nothing to say. Measured: a fresh session whose first event is `pre_llm_call` gets a 3,030-character card; the same session preceded by `on_session_start` gets an empty answer on both. That event is no longer registered, so the first turn binds the session and carries the card.
+
+**Knowl can be Hermes' memory provider, not only its plugin.** Hermes has a first-class slot for
+a memory backend -- Settings > Memory & Context > Memory Provider, beside Mem0, Honcho and the
+rest -- and it scans `$HERMES_HOME/plugins/` for candidates, which is exactly where
+`knowl init hermes` already installs. Knowl now appears in that dropdown with no extra step and no
+second install path; selecting it is optional and additive.
+
+The two surfaces are complementary rather than alternatives, because neither reaches what the
+other does. A `MemoryProvider` gets no tool-level event at all, so the write gate and the
+same-turn impact card can only be hooks. The hooks have no compaction event and can only append
+to the *user* message, so three things can only be the provider:
+
+- **Recall in the system prompt**, where instructions belong, instead of appended to the message.
+- **Hermes' recall indicator**, which reports what was injected without depending on the model to
+  mention it.
+- **A checkpoint before compaction.** Hermes fires no hook before it compresses a conversation,
+  so without this a session's knowledge is summarised away before capture ever sees it. The
+  engine normalizes it to the same `checkpoint` event `PreCompact` maps to elsewhere.
+
+One directory serves both, which needs two things to stay true. Hermes imports it twice -- the
+plugin manager for the hooks, `plugins/memory` for the provider -- and the collector it passes
+the second time forwards `register_hook` to a *real* plugin context, so the module name is what
+decides which half registers; registering both would fire every event twice. And `plugin.yaml`
+must keep its explicit `kind: standalone`: without it Hermes sniffs `MemoryProvider` out of the
+source, reclassifies the plugin as `exclusive`, and skips it entirely -- silently taking every
+hook with it. Both are covered by tests.
+
+When Knowl is the selected provider the `pre_llm_call` hook stops injecting its card, so recall is
+never delivered twice. It still fires, because that is what binds the session and carries capture.
+
+**The Hermes plugin's tests now run in CI.** They are Python, so `npm test` never reached them and
+neither did anything else -- 31 tests sat in the repo running nowhere, including the ones
+asserting the hook payload shapes Desktop depends on. They run on the ubuntu lint job's
+preinstalled python via `npm run test:plugin`, stdlib `unittest` only, no pip install.
 
 **Antigravity recorded nothing, four independent times over, and `knowl fleet` had never listed
 one of its sessions.** The payload is protojson: every key camelCase, the session
