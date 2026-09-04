@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { parse as parseYaml } from 'yaml';
+import { globalSkillsRoot } from './paths.js';
 import { assertSkillApproved } from './trust.js';
 import {
   SAFE_SKILL_NAME, normalizeSkillFilePath, validateSkillName,
@@ -49,12 +51,14 @@ export interface SkillSummary {
   triggers: string[];
   entrypoints: string[];
   path: string;
+  layer: 'project' | 'global';
 }
 
 export interface SkillPackage {
   manifest: SkillManifest;
   markdown: string;
   path: string;
+  layer?: 'project' | 'global';
 }
 
 export interface SkillRunAttempt {
@@ -116,8 +120,7 @@ function getSkillPackageDir(projectRoot: string, name: string): string {
   return path.join(getSkillsDir(projectRoot), name);
 }
 
-function resolveSkillFile(projectRoot: string, name: string, filePath: string): string {
-  const skillDir = getSkillPackageDir(projectRoot, name);
+function resolveSkillFile(skillDir: string, filePath: string): string {
   const normalized = normalizeSkillFilePath(filePath);
   const resolved = path.resolve(skillDir, ...normalized.split('/'));
   const relative = path.relative(skillDir, resolved);
@@ -156,6 +159,19 @@ function normalizeEntrypoints(entrypoints?: Record<string, SkillEntrypoint>): Re
   return normalized;
 }
 
+async function findManifestFile(skillDir: string): Promise<string | null> {
+  for (const file of ['skill.yaml', 'skill.yml', 'skill.json']) {
+    try {
+      const filePath = path.join(skillDir, file);
+      await fs.access(filePath);
+      return filePath;
+    } catch {
+      // ignore
+    }
+  }
+  return null;
+}
+
 export async function createSkillPackage(projectRoot: string, input: CreateSkillPackageInput): Promise<SkillPackage> {
   validateSkillName(input.name);
   const skillDir = getSkillPackageDir(projectRoot, input.name);
@@ -163,7 +179,7 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
   // a second create of the same name replaced its SKILL.md and entrypoints, reported
   // "Successfully created", and did not bump the version, so a working skill could vanish
   // with no trace. Refuse instead; editing an existing skill is its own operation.
-  if (await fs.access(path.join(skillDir, 'skill.json')).then(() => true, () => false)) {
+  if (await findManifestFile(skillDir)) {
     throw new Error(
       `A skill named "${input.name}" already exists. Creating would overwrite it. ` +
       `Delete it first, or choose another name.`,
@@ -187,7 +203,7 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
   for (const entrypoint of Object.values(manifest.entrypoints)) {
     if (entrypoint.type === 'script') {
       assertRunnableScriptPath(entrypoint.path);
-      resolveSkillFile(projectRoot, input.name, entrypoint.path);
+      resolveSkillFile(skillDir, entrypoint.path);
     }
   }
 
@@ -196,13 +212,13 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
   await fs.writeFile(path.join(skillDir, 'skill.json'), JSON.stringify(manifest, null, 2), 'utf-8');
 
   for (const file of input.files || []) {
-    const target = resolveSkillFile(projectRoot, input.name, file.path);
+    const target = resolveSkillFile(skillDir, file.path);
     await fs.mkdir(path.dirname(target), { recursive: true });
     await fs.writeFile(target, file.content, 'utf-8');
     await fs.chmod(target, 0o755).catch(() => {});
   }
 
-  return { manifest, markdown, path: skillDir };
+  return { manifest, markdown, path: skillDir, layer: 'project' };
 }
 
 /**
@@ -212,7 +228,12 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
  * disagree about what the agent had just approved.
  */
 async function readManifest(skillDir: string, expectedName: string): Promise<SkillManifest> {
-  const manifest = JSON.parse(await fs.readFile(path.join(skillDir, 'skill.json'), 'utf-8')) as SkillManifest;
+  const manifestPath = await findManifestFile(skillDir);
+  if (!manifestPath) {
+    throw new Error(`Skill package in "${expectedName}" is missing a manifest (skill.yaml or skill.json)`);
+  }
+  const raw = await fs.readFile(manifestPath, 'utf-8');
+  const manifest = (manifestPath.endsWith('.json') ? JSON.parse(raw) : parseYaml(raw)) as SkillManifest;
   validateSkillName(manifest.name);
   if (manifest.name !== expectedName) {
     throw new Error(
@@ -225,8 +246,7 @@ async function readManifest(skillDir: string, expectedName: string): Promise<Ski
   return manifest;
 }
 
-export async function listSkillPackages(projectRoot: string): Promise<SkillSummary[]> {
-  const skillsDir = getSkillsDir(projectRoot);
+async function listSkillsInDir(skillsDir: string, layer: 'project' | 'global'): Promise<SkillSummary[]> {
   let entries: string[];
   try {
     entries = await fs.readdir(skillsDir);
@@ -249,20 +269,47 @@ export async function listSkillPackages(projectRoot: string): Promise<SkillSumma
         triggers: manifest.triggers || [],
         entrypoints: Object.keys(manifest.entrypoints || {}),
         path: skillDir,
+        layer,
       });
     } catch {
       // Ignore incomplete skill directories; explicit reads report detailed errors.
     }
   }
+  return summaries;
+}
 
-  return summaries.sort((a, b) => a.name.localeCompare(b.name));
+export async function listSkillPackages(projectRoot: string): Promise<SkillSummary[]> {
+  const projectSummaries = await listSkillsInDir(getSkillsDir(projectRoot), 'project');
+  const globalSummaries = await listSkillsInDir(globalSkillsRoot(), 'global');
+
+  const projectNames = new Set(projectSummaries.map(s => s.name));
+  const effectiveGlobals = globalSummaries.filter(s => !projectNames.has(s.name));
+
+  const all = [...projectSummaries, ...effectiveGlobals];
+  return all.sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function readSkillPackage(projectRoot: string, name: string): Promise<SkillPackage> {
-  const skillDir = getSkillPackageDir(projectRoot, name);
-  const manifest = await readManifest(skillDir, name);
-  const markdown = await fs.readFile(path.join(skillDir, 'SKILL.md'), 'utf-8');
-  return { manifest, markdown, path: skillDir };
+  validateSkillName(name);
+  const projectSkillDir = getSkillPackageDir(projectRoot, name);
+  const hasProject = await findManifestFile(projectSkillDir);
+  if (hasProject) {
+    const manifest = await readManifest(projectSkillDir, name);
+    const markdown = await fs.readFile(path.join(projectSkillDir, 'SKILL.md'), 'utf-8').catch(() => '');
+    return { manifest, markdown, path: projectSkillDir, layer: 'project' };
+  }
+
+  const globalSkillDir = path.join(globalSkillsRoot(), name);
+  const hasGlobal = await findManifestFile(globalSkillDir);
+  if (hasGlobal) {
+    const manifest = await readManifest(globalSkillDir, name);
+    const markdown = await fs.readFile(path.join(globalSkillDir, 'SKILL.md'), 'utf-8').catch(() => '');
+    return { manifest, markdown, path: globalSkillDir, layer: 'global' };
+  }
+
+  const manifest = await readManifest(projectSkillDir, name);
+  const markdown = await fs.readFile(path.join(projectSkillDir, 'SKILL.md'), 'utf-8').catch(() => '');
+  return { manifest, markdown, path: projectSkillDir, layer: 'project' };
 }
 
 /**
@@ -379,7 +426,7 @@ export async function runSkillPackage(
       ? { child: runShell(projectRoot, entrypoint.command, env), commandText: entrypoint.command }
       : runScript(
           projectRoot,
-          resolveSkillFile(projectRoot, name, entrypoint.path),
+          resolveSkillFile(skill.path, entrypoint.path),
           [...(entrypoint.args || []), ...args],
           env
         );
