@@ -181,7 +181,7 @@ export interface KnowledgeEvidence {
   relationship: EvidenceRelationship;
 }
 
-export type CodeSymbolKind = 'class' | 'function' | 'method' | 'import' | 'export' | 'variable';
+export type CodeSymbolKind = 'class' | 'function' | 'method' | 'type' | 'import' | 'export' | 'variable';
 
 export interface CodeFile {
   path: string;

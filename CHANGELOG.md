@@ -139,6 +139,21 @@ it and reported "Published 0 new", and the queue never reached zero with no id t
 push now lists the ids and points at `knowl cloud unstage <id>`, and sends the rest of the queue
 as normal rather than refusing over it.
 
+**The code index reads Python and Go.** The Tree-sitter index behind `symbol://` locators, the
+per-symbol read set and certain-tier impact detection covered `.ts`, `.tsx`, `.js` and `.jsx`
+only; a `.py` or `.go` file was skipped without a word, so a session that read one recorded a
+single `file://` row and a comment-only edit reported it as moved. Both languages now index:
+Python `def`/`class` definitions (decorated or not), class members as `Class.member`, module-level
+assignments and both import forms; Go functions, methods qualified by receiver type as
+`Type.Method`, `type` specs and aliases under a new `type` kind, `const`/`var` specs and every
+`import` path. A Python or Go function's signature stops where its body starts, so a body edit
+leaves the hash alone and a parameter or decorator change moves it; a struct or interface is cut
+at its keyword like a class at its brace, so a field comment does not move it either. `__pycache__`,
+`.venv`, `venv` and `vendor` join the directories the walk never enters — a first-party directory
+by one of those names loses its rows on the next pass, and symbol evidence citing them reads stale
+from then on — and `go.sum`, `poetry.lock`, `uv.lock` and `Pipfile.lock` join the churn paths
+drift ignores. Two more prebuilt grammars, no install-time compilation on any platform CI runs.
+
 ## 5.19.0 — 2026-09-03
 
 Hermes Agent at Claude Code parity: `knowl init hermes`.

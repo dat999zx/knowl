@@ -43,7 +43,7 @@ export interface DriftCandidate {
  * generated drift on a schedule rather than on an event.
  */
 const CHURN_PATH =
-  /(^|\/)(package(-lock)?\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|CHANGELOG\.md|README\.md)$|^(\.github|dist|build|coverage)\//;
+  /(^|\/)(package(-lock)?\.json|npm-shrinkwrap\.json|yarn\.lock|pnpm-lock\.yaml|go\.sum|poetry\.lock|uv\.lock|Pipfile\.lock|CHANGELOG\.md|README\.md)$|^(\.github|dist|build|coverage)\//;
 
 export function isChurnPath(candidate: string): boolean {
   return CHURN_PATH.test(normalizePathForKnowledge(candidate));

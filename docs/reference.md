@@ -1171,8 +1171,8 @@ than from the agent's own report. A path that was merely cited is stored without
 reports stale, so an unverified assertion about a file does not become a staleness claim about
 it. Evidence you pass explicitly carries whatever `contentHash` you supply.
 
-The incremental Tree-sitter index supports `.ts`, `.tsx`, `.js`, and `.jsx`. It records relevant
-symbols and import/export relationships for local inspection; code indexing and symbol
+The incremental Tree-sitter index supports `.ts`, `.tsx`, `.js`, `.jsx`, `.py` and `.go`. It records
+relevant symbols and import/export relationships for local inspection; code indexing and symbol
 resolution never fan out to workspace peers.
 
 ### Change impact, when two sessions touch the same code
@@ -2574,7 +2574,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 | `knowl skill approve <name>` | Approve a package for execution, pinned to its current contents |
 | `knowl skill revoke <name>` | Withdraw approval, so the entrypoint stops being runnable |
 | `knowl skill trust` | List the packages currently approved to run |
-| `knowl index-code` | Incrementally index TS/JS symbols and import/export edges |
+| `knowl index-code` | Incrementally index code symbols and import/export edges |
 | `knowl symbols <path>` | Print indexed symbols for one repository-relative file |
 | `knowl synthesize --scope <tag>` | Create or refresh one deterministic tag-scoped understanding |
 | `knowl ask <question>` | Ask a natural-language question using configured AI |
