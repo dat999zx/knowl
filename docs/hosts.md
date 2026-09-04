@@ -147,16 +147,27 @@ That file is [`integrations/cline/knowl-plugin.mjs`](../integrations/cline/knowl
 The plugin sends exactly what a shell hook would have sent, so the engine does all the memory work: `pre_llm_call` carries the turn card (Hermes appends it to the user message), `pre_tool_call` carries the write gate on `write_file` and `patch`, and `pre_verify` — fired before a turn that edited code finishes — carries the capture nudge, on exactly the turns it is about. Three things the plugin adds that a subprocess cannot: the project comes from Hermes' per-session working directory rather than the backend process's, the memory rules ride in the system prompt, and a file write gets a same-turn impact card appended to its result. Restart Hermes to load it; `/reload-mcp` connects the MCP server in a running chat. A Desktop session with no folder open has no project to resolve, and now reads the machine-wide personal-defaults store alone rather than having no memory at all — see [memory namespaces](reference.md#memory-namespaces-and-the-global-layer).
 
 **Hermes can also make Knowl its memory provider.** Hermes has a dedicated slot for a memory
-backend -- Settings > Memory & Context > Memory Provider -- and scans `$HERMES_HOME/plugins/` for
-candidates, which is where `knowl init hermes` already installs. So Knowl appears in that dropdown
-with no extra step; selecting it (or setting `memory.provider: knowl`) is optional and additive.
-The hooks keep everything tool-shaped, which a provider never sees; the provider adds what a hook
-cannot reach -- recall in the system prompt rather than appended to the user message, Hermes'
-deterministic "recalled N memories" indicator, and a checkpoint before context compression, which
-is otherwise invisible because Hermes fires no hook before it compacts. Hermes runs one external
-provider at a time, so choosing Knowl deselects Mem0 or Honcho; and the turn card then comes from
-the provider alone, since the `pre_llm_call` hook stops injecting once it sees `memory.provider:
-knowl` (it still fires, because that is what binds the session and carries capture).
+backend, and `knowl init hermes` installs into `$HERMES_HOME/plugins/` — one of the four
+directories Hermes scans for candidates — so Knowl appears in that list with no extra step:
+
+1. Run `knowl init hermes` and restart Hermes.
+2. Open **Settings > Memory & Context**.
+3. Set **Memory Provider** to **knowl** (or put `memory.provider: knowl` in `config.yaml`).
+4. Restart Hermes again.
+
+This is optional and additive: the hooks run either way, and they keep everything tool-shaped,
+which a provider never sees. What the provider adds is what a hook cannot reach — recall in the
+system prompt rather than appended to the user message, Hermes' deterministic "recalled N
+memories" indicator, and **a checkpoint before context compression**, which is otherwise
+invisible because Hermes fires no hook before it compacts, so a long session's knowledge is
+summarised away before capture sees it. That last one is the reason to bother.
+
+Two things follow from selecting it. Hermes runs one *external* provider at a time, so choosing
+Knowl deselects Mem0 or Honcho — but its own built-in memory is always first in the list and
+stays on, so consider turning Persistent Memory off if you would rather not have both injecting
+into the same turn. And the turn card then comes from the provider alone: the `pre_llm_call` hook
+stops injecting once it sees `memory.provider: knowl`, though it still fires, because that is
+what binds the session and carries capture.
 
 **One thing to know about the MCP tools on Desktop.** `knowl serve` resolves the project by walking up from its own process directory, and every other host launches one server per project, so it inherits the right one. Hermes Desktop runs a single server for every project, started from the Hermes process directory — so its `mcp__knowl__*` tools report *No Knowl project found* on a machine whose store is perfectly healthy. Setting `mcp_servers.knowl.cwd` fixes one project and then silently answers from **that** project in every other session, which is worse than the error, so `knowl init hermes` does not set it; pin it yourself only if you use Hermes for a single repository. Because of this the plugin registers `knowl_query` and `knowl_store` as its own tools, run in the session's own directory, so the query-then-store loop is correct in every session no matter how many projects are open. The rest of the tool surface stays reachable the way any command is — `knowl timeline`, `knowl conflicts`, `knowl drift` and the others, run from the repository in the agent's terminal. A per-session MCP server needs something Hermes does not have yet: project-local config, or MCP roots.
 

@@ -2283,7 +2283,10 @@ Three hosts need one extra step:
   registers the shell hooks its `config.yaml` accepts (upstream hermes-agent#69825). `knowl init
   hermes` copies the plugin into `<Hermes home>/plugins/knowl/`, enables it in `config.yaml`
   beside the MCP entry, and removes any shell hooks an earlier version wrote. Restart Hermes
-  afterwards so it loads the plugin.
+  afterwards so it loads the plugin. That same directory is one of the four Hermes scans for
+  memory providers, so Knowl also appears under **Settings > Memory & Context > Memory
+  Provider**; picking it there (or setting `memory.provider: knowl`) is optional and additive
+  — see [hosts](hosts.md).
 - **Zed, JetBrains, Neovim and Kiro** speak the Agent Client Protocol, whose traffic runs
   agent-to-client with no hook to register. Point the editor at `knowl acp -- <agent-command>`
   instead of at the agent.

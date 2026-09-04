@@ -28,7 +28,16 @@ Hermes has a first-class slot for a memory backend -- **Settings > Memory & Cont
 Provider**, beside Mem0, Honcho and the rest -- and this plugin fills it. It is the same
 directory: `knowl init hermes` already installs into `$HERMES_HOME/plugins/`, which is one of the
 four sources Hermes scans for providers, so Knowl appears in that dropdown with no extra step.
-Select it there, or set `memory.provider: knowl` in `config.yaml`, and restart.
+
+1. `knowl init hermes`, then restart Hermes.
+2. **Settings > Memory & Context > Memory Provider > knowl** — or `memory.provider: knowl` in
+   `config.yaml`.
+3. Restart Hermes again.
+
+Check it took with `hermes plugins doctor knowl`, which should report `(standalone)` with 2 tools
+and 7 hooks — that is both halves registered at once. `standalone` is the word that matters: if
+it ever reads `exclusive`, `plugin.yaml` has lost its explicit `kind` and Hermes has stopped
+loading the hooks.
 
 Selecting it is optional and additive. The hooks above run either way; the provider adds the
 three things a hook cannot reach:
