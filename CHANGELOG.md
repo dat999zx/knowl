@@ -34,9 +34,12 @@ an error on open. With that pair aligned, a root is again the only thing a cloud
 `send`, `receive` and `retract` are unchanged. The first two are a person-to-person transfer
 rather than workspace sync; the third acts on one already-published id.
 
-One thing to know before connecting: a cloud workspace is shared, so pointing the machine store at
-a **team** workspace publishes your personal defaults to that team. Connect it to a workspace of
-your own.
+Choosing the workspace is unchanged -- `--workspace <id>`, or the same picker when you belong to
+more than one -- and the machine store publishes on the same terms as a project: `connect` writes
+a pointer and sends nothing, `push` asks first unless given `--yes`. It connects under the name
+`personal`, because with no git remote the identity would otherwise fall through to the directory
+name `.knowl`: unreadable in a listing, and identical for every person, so two people connecting
+their machine stores to one workspace would collide. `--repo` overrides it.
 
 ## 5.20.0 — 2026-09-04
 

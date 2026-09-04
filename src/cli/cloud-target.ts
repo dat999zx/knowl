@@ -3,6 +3,17 @@ import { ProjectNotFoundError } from '../core/errors.js';
 import { globalOnlyNamespaces } from '../store/namespaces.js';
 import { knowlHome } from '../core/paths.js';
 
+/**
+ * What the machine store publishes under, since it has no git remote to derive a name from.
+ *
+ * Without this the identity falls through to the directory name, which is `.knowl` -- unreadable
+ * in a workspace listing and identical for everyone, so two people would collide in one workspace.
+ * Fixed rather than derived from the hostname: a person's laptop and desktop hold one set of
+ * personal defaults, and a per-machine name would split them into two repos that each look
+ * foreign to the other. `knowl cloud connect --global --repo <name>` overrides it.
+ */
+export const GLOBAL_REPO_IDENTITY = 'personal';
+
 export type CloudScope = 'project' | 'global';
 
 export type CloudTarget = {

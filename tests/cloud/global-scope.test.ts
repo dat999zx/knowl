@@ -7,7 +7,8 @@ import { releaseAll } from '../../src/store/connection-pool.js';
 import { globalStorePath, knowlHome } from '../../src/core/paths.js';
 import { ensureGlobalStore } from '../../src/store/global-store.js';
 import { ConfigError, ProjectNotFoundError } from '../../src/core/errors.js';
-import { resolveCloudTarget, scopeNotice, shouldUseGlobalStore } from '../../src/cli/cloud-target.js';
+import { GLOBAL_REPO_IDENTITY, resolveCloudTarget, scopeNotice, shouldUseGlobalStore } from '../../src/cli/cloud-target.js';
+import { resolveRepoIdentity } from '../../src/cloud/repo-identity.js';
 import { DEFAULT_CONFIG, saveConfig } from '../../src/core/config.js';
 
 let testCount = 0;
@@ -97,6 +98,21 @@ describe('cloud commands addressing the machine store', () => {
 
   it('refuses rather than inventing a scope when there is no project and no machine store', async () => {
     await expect(resolveCloudTarget({}, SCRATCH)).rejects.toBeInstanceOf(ProjectNotFoundError);
+  });
+
+  it('publishes under a readable name rather than the directory it happens to live in', () => {
+    // Left to the ordinary fallback, the machine store connects under its DIRECTORY name, which
+    // in a real install is `.knowl`: unreadable in a workspace listing, and the same string for
+    // every person, so two people connecting their machine stores to one workspace collide.
+    const fallback = resolveRepoIdentity(knowlHome());
+    expect(fallback.source).toBe('directory');
+    expect(fallback.identity).toBe(path.basename(knowlHome()));
+    expect(GLOBAL_REPO_IDENTITY).toMatch(/^[a-z][a-z0-9-]*$/);
+
+    // Fixed, not derived from the machine: one person's laptop and desktop hold one set of
+    // personal defaults, and a hostname would split them into two repos foreign to each other.
+    expect(resolveRepoIdentity(knowlHome(), { repo: GLOBAL_REPO_IDENTITY }).identity)
+      .toBe(GLOBAL_REPO_IDENTITY);
   });
 
   it('answers globally only for a missing project, never for a broken one', () => {

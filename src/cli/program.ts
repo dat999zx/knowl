@@ -77,7 +77,7 @@ import {
 } from '../cloud/send/transfer.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { cloudPointer } from '../core/cloud-pointer.js';
-import { resolveCloudTarget, scopeNotice } from './cloud-target.js';
+import { GLOBAL_REPO_IDENTITY, resolveCloudTarget, scopeNotice } from './cloud-target.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -1335,7 +1335,14 @@ cloudCommand
         apiHost: options.api,
         workspaceId: options.workspace as string | undefined,
         remote: options.remote,
-        repo: options.repo,
+        // The machine store has no git remote, so identity would fall through to the directory
+        // name -- which is literally `.knowl`: opaque in a workspace listing, and the SAME for
+        // every person, so two people connecting their machine stores to one workspace would
+        // collide. A fixed name instead, and fixed rather than derived from the hostname on
+        // purpose: your laptop and your desktop hold one set of personal defaults, and deriving
+        // it would split them into two repos that each look foreign to the other. `--repo`
+        // still overrides, as it does anywhere else.
+        repo: options.repo ?? (target.scope === 'global' ? GLOBAL_REPO_IDENTITY : undefined),
       };
 
       // Shared by both entry paths -- the first attempt and the one that follows a pick -- so a

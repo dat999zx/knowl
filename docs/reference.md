@@ -1496,8 +1496,16 @@ on stderr saying so. That inference is deliberately narrow — it applies only w
 project above the directory at all. A project whose config will not parse is an error about that
 project and is reported as one, never quietly answered from your personal defaults.
 
-A cloud workspace is shared, so connecting the machine store to a **team** workspace publishes
-your personal defaults to that team. Connect it to a workspace of your own instead.
+Choosing the workspace works exactly as it does for a repository: pass `--workspace <id>`, or
+pass nothing and pick from the same menu when you belong to more than one. The machine store also
+publishes on the same terms -- `connect` writes a pointer and sends nothing, and `push` asks
+before it sends unless you pass `--yes`.
+
+It connects under the name **`personal`** rather than deriving one, because it has no git remote
+and the directory name is `.knowl` -- unreadable in a listing, and the same for everyone. Fixed
+rather than per-machine on purpose: your laptop and your desktop hold one set of personal
+defaults, and a hostname would file them as two repos that each look foreign to the other.
+`--repo <name>` overrides it.
 
 Every command takes `--api <host>`, and `knowl cloud connect` records the host in the repository's
 config, so `pull`, `push` and `status` remember it afterwards. `knowl cloud login` is per-machine rather
