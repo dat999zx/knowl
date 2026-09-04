@@ -1460,12 +1460,12 @@ reach the server.
 | `knowl cloud login [--api <host>]` | Sign in once, by device code. The credential lives in `~/.knowl`, never in `.knowl/config.json` |
 | `knowl cloud logout [--api <host>]` | Clear the stored credential |
 | `knowl cloud workspaces [--api <host>]` | List the workspaces this machine can reach, before connecting to one |
-| `knowl cloud connect [--workspace <id>] [--remote <name>] [--repo <name>]` | Point this project at a workspace. Publishes nothing |
-| `knowl cloud pull` | Fetch team knowledge into the local replica |
-| `knowl cloud stage [--id <ids...>] [--category <list>] [--apply]` | Queue knowledge for the team. Bare opens the same picker; naming flags dry-runs until `--apply` |
-| `knowl cloud unstage <id> [--forever]` | Take an atom back out of the queue. Publishes and unpublishes nothing; `--forever` also stops it being queued again automatically |
-| `knowl cloud push [--yes]` | Send staged knowledge. Works from any branch; `--yes` is required without a terminal to ask |
-| `knowl cloud autopush <on\|off>` | Record standing consent to push automatically, on this machine only — never written to `.knowl/config.json` |
+| `knowl cloud connect [--workspace <id>] [--remote <name>] [--repo <name>] [--global]` | Point this project at a workspace. Publishes nothing |
+| `knowl cloud pull [--global]` | Fetch team knowledge into the local replica |
+| `knowl cloud stage [--id <ids...>] [--category <list>] [--apply] [--global]` | Queue knowledge for the team. Bare opens the same picker; naming flags dry-runs until `--apply` |
+| `knowl cloud unstage <id> [--forever] [--global]` | Take an atom back out of the queue. Publishes and unpublishes nothing; `--forever` also stops it being queued again automatically |
+| `knowl cloud push [--yes] [--global]` | Send staged knowledge. Works from any branch; `--yes` is required without a terminal to ask |
+| `knowl cloud autopush <on\|off> [--global]` | Record standing consent to push automatically, on this machine only — never written to `.knowl/config.json` |
 | `knowl cloud retract <id> --reason <text>` | Remove a published atom for good. Works from any branch |
 | `knowl cloud send [--id <ids...>] [--query <text>] [--expires-in <hours>] [--words <count>]` | Seal a few atoms for one person and print a code. Expires; collected once |
 | `knowl cloud send --list` / `--revoke <code-or-id>` | What you have in flight and whether it was collected; destroy one early |
@@ -1473,6 +1473,31 @@ reach the server.
 | `knowl cloud status` | What is connected, how stale the replica is, and what is staged |
 
 ### Pointing at a different server
+
+**`--global` syncs the machine-wide store.** The personal-defaults store at `~/.knowl/global.db`
+is not a project, but it is addressed like one: `loadConfig` and `initDb` both substitute the
+machine home onto `~/.knowl/config.json` and `global.db`, so every cloud command reaches it by
+resolving a different root and nothing else changes. `connect`, `stage`, `unstage`, `push`,
+`pull`, `status` and `autopush` all take the flag.
+
+```bash
+knowl init --global            # the machine store, if you have not made one
+knowl cloud login              # already machine-wide: the credential lives in ~/.knowl
+knowl cloud connect --global   # point the machine store at a workspace
+knowl cloud push --global
+```
+
+On a second machine the same three lines plus `knowl cloud pull --global` bring your defaults
+across. `send`, `receive` and `retract` are unchanged: the first two are a person-to-person
+transfer rather than workspace sync, and the third acts on one already-published id.
+
+Run any of them **outside a repository** and the machine store is used automatically, with a line
+on stderr saying so. That inference is deliberately narrow — it applies only when there is no
+project above the directory at all. A project whose config will not parse is an error about that
+project and is reported as one, never quietly answered from your personal defaults.
+
+A cloud workspace is shared, so connecting the machine store to a **team** workspace publishes
+your personal defaults to that team. Connect it to a workspace of your own instead.
 
 Every command takes `--api <host>`, and `knowl cloud connect` records the host in the repository's
 config, so `pull`, `push` and `status` remember it afterwards. `knowl cloud login` is per-machine rather

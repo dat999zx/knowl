@@ -3,6 +3,41 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+**The machine-wide store can sync to a cloud workspace, and `knowl cloud` finds it on its own.**
+Personal defaults were local forever: everything under `src/cloud/` takes a project root and reads
+that project's pointer, so `~/.knowl/global.db` had no route to a workspace and a new laptop
+started empty.
+
+It needed no server change, no schema change and no new gate, because the machine store was
+already almost a project. `loadConfig` has always substituted `~/.knowl/config.json` when handed
+the machine home; `global.db` already carries the cloud ledger tables; publishing stopped
+consulting the git gate on 2026-08-13, so a directory that is not a checkout can still push; and
+`connect --repo` already existed for a project with no git remote. The one thing missing was the
+matching substitution in `initDb`, which resolved `~/.knowl/.knowl/knowl.db` — nobody's store, and
+an error on open. With that pair aligned, a root is again the only thing a cloud command needs.
+
+- **`--global` on `connect`, `stage`, `unstage`, `push`, `pull`, `status` and `autopush`**, the
+  same word `knowl init --global` already uses: act on the machine, not on this directory.
+- **Outside a repository the machine store is used automatically**, with a line on stderr saying
+  so. The inference is narrow on purpose: only when there is no project above the directory at
+  all. A project whose config will not parse is an error about that project, never quietly
+  answered from personal defaults — the same distinction the MCP server draws, and kept as its own
+  named predicate for the same reason: `findProjectRoot` raises exactly one error type, so a
+  widened guard cannot be caught end to end. Verified by mutation, where broadening it passed
+  every behavioural test.
+- **Auto-staging works there too**, and needed no code of its own: with the database seam fixed, a
+  write to the machine store resolves the machine config, finds its pointer and queues the atom
+  exactly as a project write does.
+
+`send`, `receive` and `retract` are unchanged. The first two are a person-to-person transfer
+rather than workspace sync; the third acts on one already-published id.
+
+One thing to know before connecting: a cloud workspace is shared, so pointing the machine store at
+a **team** workspace publishes your personal defaults to that team. Connect it to a workspace of
+your own.
+
 ## 5.20.0 — 2026-09-04
 
 **A global memory layer, and the layered read that makes it reachable.** Knowl has had four

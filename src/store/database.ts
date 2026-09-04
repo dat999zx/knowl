@@ -6,7 +6,7 @@ import * as schema from './schema.js';
 import { DatabaseError } from '../core/errors.js';
 import { resolveStorage } from './storage-roles.js';
 import { acquireClient, releaseAll, releaseClient } from './connection-pool.js';
-import { knowlHome } from '../core/paths.js';
+import { knowlHome, globalStorePath } from '../core/paths.js';
 
 /** Shared type for database connection or transaction context. */
 export type DbConnection = LibSQLDatabase<typeof schema> | Parameters<Parameters<LibSQLDatabase<typeof schema>['transaction']>[0]>[0];
@@ -69,8 +69,22 @@ async function currentProfileFingerprint(configRoot: string): Promise<string | n
 /**
  * Initializes the database connection and runs schema bootstrap.
  */
+/** Whether this root IS the machine home, whose store is `global.db` rather than a project db. */
+export function isKnowlHome(root: string): boolean {
+  return path.resolve(root) === path.resolve(knowlHome());
+}
+
 export async function initDb(projectRoot: string): Promise<LibSQLDatabase<typeof schema>> {
-  return initDbPath(resolveStorage(projectRoot).knowledge, { configRoot: projectRoot });
+  // The machine home is not a project, and its knowledge lives in `global.db` BESIDE the config
+  // rather than in `.knowl/knowl.db` beneath it. `loadConfig` already makes exactly this
+  // substitution for exactly this root (`src/core/config.ts`), so without the matching one here
+  // a caller handing the home to both gets a config from one place and a database from another
+  // -- in practice `~/.knowl/.knowl/knowl.db`, which is nobody's store and fails to open.
+  //
+  // This is what lets the machine store be addressed the way a project is: `cloud push --global`
+  // resolves a root, and everything downstream opens the right file with no further argument.
+  const dbPath = isKnowlHome(projectRoot) ? globalStorePath() : resolveStorage(projectRoot).knowledge;
+  return initDbPath(dbPath, { configRoot: projectRoot });
 }
 
 export async function initDbPath(dbPath: string, options: InitDbOptions = {}): Promise<LibSQLDatabase<typeof schema>> {
