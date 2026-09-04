@@ -56,7 +56,7 @@
     "docs:check": "tsx scripts/generate-docs.ts --check",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "audit:prod": "npm audit --omit=dev --audit-level=critical",
+    "audit:prod": "node scripts/audit-prod.mjs",
     "audit:report": "npm audit --omit=dev --audit-level=high"
   },
   "keywords": [

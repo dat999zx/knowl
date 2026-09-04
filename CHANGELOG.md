@@ -78,6 +78,13 @@ neither did anything else -- 31 tests sat in the repo running nowhere, including
 asserting the hook payload shapes Desktop depends on. They run on the ubuntu lint job's
 preinstalled python via `npm run test:plugin`, stdlib `unittest` only, no pip install.
 
+In the same job, `audit:prod` now retries when the registry is unreachable. `npm audit` exits 1
+both when it finds vulnerabilities and when it cannot reach the audit endpoint at all, and on
+release day npm returned `503 Service Unavailable` on four runs while flapping -- one succeeded
+in between -- burning seven minutes each time on npm's own internal retries. Only the second case
+is retried: a real finding still fails on the first attempt, and an outage that never clears still
+fails the build. The gate is not weakened, it just stops going red when the service is flaky.
+
 **Antigravity recorded nothing, four independent times over, and `knowl fleet` had never listed
 one of its sessions.** The payload is protojson: every key camelCase, the session
 `conversationId`, the root `workspacePaths`, the tool one `toolCall: {name, args}` object. The
