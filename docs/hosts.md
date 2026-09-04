@@ -49,9 +49,26 @@ Claude Code (2.1.257+) and Codex (0.148+) can run a hook as a call to a tool on 
 ## Setup
 
 ```bash
-knowl init                 # detects installed hosts and configures each one
-knowl init copilot         # or name one
-knowl doctor               # what is configured, what is stale
+knowl init                      # detects installed hosts and configures each one
+knowl init copilot              # or name one
+knowl init --host-only hermes   # wire a host and create no store
+knowl doctor                    # what is configured, what is stale
+```
+
+**Two scopes, and which one applies is the host's business, not yours to remember.** Most hosts
+read a file inside the repository — `.mcp.json`, `.codex/hooks.json`, `.cursor/mcp.json` — so
+`knowl init` in each repository is the whole story. Hermes is machine-wide: one plugin and one
+`config.yaml` serve every project, so it is wired once, from anywhere, and later repositories need
+only `knowl init` to create their own store. Re-running `knowl init` inside a repository never
+disturbs a machine-wide host.
+
+A first-time setup for a machine-wide host therefore reads:
+
+```bash
+npm i -g @dat999zx/knowl
+knowl init --host-only hermes   # install the plugin, enable it, add the MCP server
+# restart the host, then, in each repository you want remembered:
+cd my-repo && knowl init
 ```
 
 | Host | MCP config | Hooks |
