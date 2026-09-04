@@ -52,3 +52,50 @@ describe('linking a project to the global store', () => {
     await expect(fs.access(globalStorePath())).resolves.toBeUndefined();
   });
 });
+
+describe('writing to the global namespace', () => {
+  it('demands absolute paths and says they are not indexed', async () => {
+    const { assertGlobalWrite } = await import('../../src/store/global-store.js');
+    // A relative path in a store that spans repositories names nothing.
+    expect(() => assertGlobalWrite(['src/auth.ts'])).toThrow(/absolute/i);
+    expect(assertGlobalWrite([path.join(os.tmpdir(), 'src/auth.ts')])).toMatch(/not indexed/i);
+    expect(assertGlobalWrite([])).toMatch(/not indexed/i);
+  });
+
+  it('writes directly to the global database', async () => {
+    const { ensureGlobalStore } = await import('../../src/store/global-store.js');
+    const { storeKnowledgeItemDeduped } = await import('../../src/store/knowledge-writer.js');
+    const { withDbPath } = await import('../../src/store/database.js');
+    const { queryLayeredKnowledge, configuredNamespaces } = await import('../../src/store/namespaces.js');
+    const { setGlobalNamespace, loadConfig } = await import('../../src/core/config.js');
+
+    const home = path.join(os.tmpdir(), `knowl-link-write-${testCount++}`);
+    const project = path.join(os.tmpdir(), `knowl-link-pwrite-${testCount++}`);
+    const saved = process.env.KNOWL_HOME;
+    try {
+      process.env.KNOWL_HOME = home;
+      await fs.mkdir(path.join(project, '.knowl'), { recursive: true });
+      await saveConfig(project, { ...DEFAULT_CONFIG });
+
+      const { path: storePath } = await ensureGlobalStore();
+      await withDbPath(storePath, async () => {
+        await storeKnowledgeItemDeduped('local', {
+          category: 'constraint',
+          title: 'Global preference',
+          content: 'I prefer pnpm everywhere',
+        });
+      });
+
+      await setGlobalNamespace(project, true);
+      const config = await loadConfig(project);
+      const { items } = await queryLayeredKnowledge(project, 'pnpm preference', configuredNamespaces(project, config), 5);
+      expect(items.some(it => it.title === 'Global preference' && it.namespace === 'global')).toBe(true);
+    } finally {
+      await closeDb().catch(() => {});
+      await releaseAll().catch(() => {});
+      for (const dir of [home, project]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+      if (saved === undefined) delete process.env.KNOWL_HOME; else process.env.KNOWL_HOME = saved;
+    }
+  });
+});
+

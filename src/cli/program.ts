@@ -2526,11 +2526,56 @@ program
   .option('--source-commit <sha>', 'Commit where this was last reviewed')
   .option('--supersedes <id>', 'Id of an active item this replaces')
   .option('--local', 'Never publish this atom to a cloud workspace')
+  .option('--namespace <namespace>', 'project (default) or global', 'project')
   .action(async (content: string, options) => {
     try {
       if (!KNOWLEDGE_CATEGORIES.includes(options.category)) {
         console.error(`Invalid category "${options.category}". Expected one of: ${KNOWLEDGE_CATEGORIES.join(', ')}.`);
         process.exit(1);
+      }
+
+      if (options.namespace === 'global') {
+        const { assertGlobalWrite, ensureGlobalStore } = await import('../store/global-store.js');
+        const note = assertGlobalWrite(options.path ?? []);
+        const { path: storePath } = await ensureGlobalStore();
+        const { withDbPath } = await import('../store/database.js');
+        const { loadConfig } = await import('../core/config.js');
+        const { knowlHome } = await import('../core/paths.js');
+        const config = await loadConfig(knowlHome());
+        // The namespace named is the namespace written. No fallback: naming global and getting
+        // the project store is the contamination this layer exists to avoid.
+        await withDbPath(storePath, async () => {
+          const result = await storeKnowledgeItemDeduped(
+            'local',
+            {
+              category: options.category,
+              title: options.title,
+              content,
+              reasoning: options.reasoning,
+              alternatives: options.alternative,
+              tags: options.tag,
+              source: options.source,
+              sourceCommit: options.sourceCommit,
+              affectedPaths: options.path,
+              confidence: options.confidence,
+              provenance: options.provenance,
+              supersedes: options.supersedes,
+            },
+            `Store ${options.category}: ${options.title}`,
+            config.security,
+          );
+
+          if (result.action === 'duplicate') {
+            console.log(`NOT STORED — already held verbatim as ${result.item.id}. Nothing was written and nothing was lost.`);
+            return;
+          }
+
+          console.log(`Stored ${options.category} ${result.item.id}: ${result.item.title}`);
+          if (result.superseded) console.log(`  Retired ${result.superseded.id}.`);
+          if (options.local) console.log('  Marked local. It will not be published.');
+        });
+        console.log(note);
+        return;
       }
 
       const root = await findProjectRoot(process.cwd());
