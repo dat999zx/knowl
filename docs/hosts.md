@@ -51,7 +51,7 @@ Claude Code (2.1.257+) and Codex (0.148+) can run a hook as a call to a tool on 
 ```bash
 knowl init                      # detects installed hosts and configures each one
 knowl init copilot              # or name one
-knowl init --host-only hermes   # wire a host and create no store
+knowl init --global hermes      # wire a machine-wide host, from anywhere
 knowl doctor                    # what is configured, what is stale
 ```
 
@@ -62,11 +62,16 @@ read a file inside the repository — `.mcp.json`, `.codex/hooks.json`, `.cursor
 only `knowl init` to create their own store. Re-running `knowl init` inside a repository never
 disturbs a machine-wide host.
 
+`knowl init` picks the scope from where you run it: inside a repository it sets that project up,
+and outside one it works on the machine — the personal-defaults store, plus any hosts you name.
+`--global` asks for machine scope explicitly, which is how you wire a machine-wide host from
+inside a repository without that repository being the subject.
+
 A first-time setup for a machine-wide host therefore reads:
 
 ```bash
 npm i -g @dat999zx/knowl
-knowl init --host-only hermes   # install the plugin, enable it, add the MCP server
+knowl init --global hermes      # install the plugin, enable it, add the MCP server
 # restart the host, then, in each repository you want remembered:
 cd my-repo && knowl init
 ```

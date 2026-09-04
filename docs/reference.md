@@ -211,10 +211,14 @@ Reads layer across up to four physical databases, ordered by precedence:
 **Setting it up.** The store is created by either form of `knowl init` and by `knowl link global`, so most people never create it deliberately:
 
 ```bash
-knowl init --global   # from anywhere: the machine store only, no project touched
-knowl init            # in a repository: that project's store, and the global one if missing
-knowl init --host-only claude hermes   # configure agent hosts and create no store at all
+knowl init                 # in a repository: that project's store, and the global one if missing
+knowl init hermes          # outside one: the machine store, and the hosts you name
+knowl init --global hermes # machine scope explicitly, even from inside a repository
 ```
+
+`knowl init` takes its scope from where it runs — the repository you are in, or the machine when
+there is no repository — and `--global` names the machine explicitly. Nothing is scaffolded into a
+directory that is not already a project.
 
 Creating the store does not make any project read it. Linking does, and it is per project so that
 one careless write cannot become visible everywhere at once.
@@ -2497,7 +2501,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 
 | Command | Description |
 | --- | --- |
-| `knowl init [agents...] [--global] [--host-only] [-y\|--yes]` | Initialize or upgrade the project and configure selected agents. Outside a repo, prompts for Project vs Global; `--global` sets up the machine store only, and `--host-only` touches no store |
+| `knowl init [agents...] [--global] [-y\|--yes]` | Initialize or upgrade the project and configure selected agents. Scope follows the directory: a repository sets that project up, anywhere else works on the machine (the personal-defaults store plus any hosts named). `--global` names machine scope explicitly |
 | `knowl upgrade` | Refresh project files, schema, guidance, and `.gitignore` without agent setup |
 | `knowl status` | Show repository, memory, AI, commit, and workspace status |
 | `knowl doctor` | Check project, vector coverage, agent, and workspace readiness |

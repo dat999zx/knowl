@@ -319,26 +319,19 @@ program
   .description('Initialize (or re-run on an existing repo to upgrade) and register agent integrations. On an existing project this performs `knowl upgrade` first, then agent setup.')
   .argument('[agents...]', 'Agent integrations to configure')
   .option('-y, --yes', 'Accept global configuration confirmations')
-  .option('--global', 'Set up the machine-wide personal-defaults store only')
-  .option('--host-only', 'Configure named host integrations and touch no store')
-  .action(async (agents: string[], options: { yes?: boolean; global?: boolean; hostOnly?: boolean }) => {
+  // One axis: which scope this run belongs to. `--global` is the machine — the personal-defaults
+  // store and any hosts named beside it — and it never touches the directory you are standing in.
+  // There was a second flag here (`--host-only`, hosts but no store) and it earned nothing: an
+  // empty `global.db` costs a few kilobytes, `knowl init` in a repository creates one anyway, and
+  // the pair forced a reader to hold two axes in their head to answer "how do I set up Hermes".
+  .option('--global', 'Machine scope: the personal-defaults store, and any hosts named beside it')
+  .action(async (agents: string[], options: { yes?: boolean; global?: boolean }) => {
     const cwd = process.cwd();
     const knowlDir = path.join(cwd, '.knowl');
     const name = path.basename(cwd) || 'My Project';
 
     try {
       parseAgentNames(agents);
-
-      if (options.hostOnly) {
-        const flow = await runAgentInitFlow(cwd, {
-          agentNames: agents,
-          yes: Boolean(options.yes),
-          interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
-        });
-        console.log(formatAgentInitSummary(flow.results));
-        process.exitCode = flow.exitCode;
-        return;
-      }
 
       if (options.global) {
         const { runGlobalInit } = await import('./global-init.js');
@@ -376,7 +369,12 @@ program
 
       const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
       const isInsideRepo = isInsideGitRepo(cwd);
-      let setupTarget = 'project';
+      // Outside a repository the answer is the machine, not this folder. Defaulting to `project`
+      // here meant `knowl init hermes -y` run from a home directory or a Downloads folder
+      // scaffolded a store in it -- silently, under the flag whose whole job is not to ask, and
+      // annoying to undo. Wiring a machine-wide host from wherever you happen to be standing is
+      // the ordinary way to do it, so that path must not leave anything behind.
+      let setupTarget = isInsideRepo ? 'project' : 'global';
 
       // When cwd is not a project and neither flag is given, prompt with the two options
       // (reuse the existing @clack/prompts picker), preselecting Project inside a repository.
