@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knowl-hermes"
+version = "0.1.0"
+description = "Knowl project memory for Hermes Agent: recall before each reply, gate file writes, capture as the session runs. Reaches Hermes Desktop, which config.yaml shell hooks do not."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+authors = [{ name = "Knowl", email = "hello@knowl.cloud" }]
+keywords = ["hermes-agent", "hermes", "memory", "knowl", "plugin", "coding-agent"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Topic :: Software Development",
+]
+
+[project.urls]
+Homepage = "https://knowl.cloud"
+Source = "https://github.com/dat999zx/knowl/tree/main/integrations/hermes"
+Issues = "https://github.com/dat999zx/knowl/issues"
+
+# Hermes discovers pip-installed plugins through this group: the entry-point NAME is the
+# plugin key users put in `plugins.enabled`, and the VALUE is a module exposing register(ctx).
+# Same key as the directory install, so one config block serves both install methods.
+[project.entry-points."hermes_agent.plugins"]
+knowl = "knowl_hermes"
+
+# The plugin source is the directory-install layout (knowl/__init__.py + plugin.yaml), so the
+# same file is what `hermes plugins install` copies and what pip imports as `knowl_hermes`.
+[tool.setuptools]
+packages = ["knowl_hermes"]
+include-package-data = true
+
+[tool.setuptools.package-dir]
+knowl_hermes = "knowl"
+
+[tool.setuptools.package-data]
+knowl_hermes = ["plugin.yaml"]
