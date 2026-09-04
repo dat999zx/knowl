@@ -3,6 +3,25 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
+## Unreleased
+
+**A Hermes session whose folder is not a Knowl project now says so, once.** Every lifecycle
+event returned early and silently in that case, so the plugin loaded, `hermes plugins doctor
+knowl` reported two tools and seven hooks, and nothing recorded or recalled anything -- a state
+indistinguishable from a healthy integration. The common way in is that `knowl init hermes` is
+machine-wide and one-time, while `knowl init` is per repository, so opening a repo that never had
+the second is easy.
+
+The note names the folder and points at `knowl init`, and it is said **once per session** rather
+than once per event -- seven events a turn would make it noise. It is withheld entirely from
+someone with no machine-wide store, where an unsolicited "run knowl init" would be an advert
+rather than a diagnosis.
+
+Two smaller corrections fell out of the same path. The card's heading claimed "no project open
+for this session" even when a folder *was* open, and its advice was "open a repository as this
+session's folder" -- which someone who already had one open reads as a broken diagnosis. Those
+two situations now get different wording, because they need opposite remedies. Closes #250.
+
 ## 5.20.0 — 2026-09-04
 
 **A global memory layer, and the layered read that makes it reachable.** Knowl has had four

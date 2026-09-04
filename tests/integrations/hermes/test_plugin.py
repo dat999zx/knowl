@@ -633,5 +633,73 @@ class ProviderHandoffTest(unittest.TestCase):
                          {"context": "a card"})
 
 
+class UninitialisedFolderTest(unittest.TestCase):
+    """#250. A folder is open, it is not a Knowl project, and every lifecycle event no-ops.
+
+    `hermes plugins doctor knowl` still reports 2 tools and 7 hooks in this state, because it
+    checks registration rather than whether events resolve a project -- so silence here looks
+    exactly like a healthy integration.
+    """
+
+    def setUp(self):
+        self.plugin = load_plugin()
+        self.plugin._Runner.run = lambda _self, event, payload, cwd, timeout=None: (None, 0, "")
+        self.plugin._Runner.query = lambda _self, text, cwd, limit=8, timeout=20.0: self.items
+        self.items = []
+        self.plugin._is_hermes_source_clone = lambda cwd: False
+        self.plugin._resolve_cwd = lambda: os.getcwd()
+        # A folder IS open, and it is not a Knowl project.
+        self.plugin._session_folder = lambda: "/work/some-repo"
+        self.plugin._has_knowl_project = lambda cwd: False
+        self.plugin._has_global_store = lambda: True
+
+    def _hook(self):
+        ctx = FakeCtx()
+        self.plugin.register(ctx)
+        return ctx.hooks["pre_llm_call"]
+
+    def test_it_says_the_folder_is_not_a_knowl_project(self):
+        card = self._hook()(session_id="s", user_message="what do you know?")
+        self.assertIsNotNone(card, "silence here is the whole bug")
+        self.assertIn("not a Knowl project", card["context"])
+        self.assertIn("knowl init", card["context"])
+        self.assertIn("/work/some-repo", card["context"])
+
+    def test_it_says_it_once_per_session_not_once_per_turn(self):
+        """Seven events a turn makes a warning into noise, and noise is what people skip."""
+        hook = self._hook()
+        first = hook(session_id="s", user_message="first turn")
+        second = hook(session_id="s", user_message="second turn")
+        self.assertIn("knowl init", first["context"])
+        self.assertIsNone(second)
+
+    def test_a_different_session_is_told_too(self):
+        hook = self._hook()
+        hook(session_id="s1", user_message="hello")
+        self.assertIn("knowl init", hook(session_id="s2", user_message="hello")["context"])
+
+    def test_it_rides_along_with_the_defaults_when_there_are_any(self):
+        """One card, not two: the note replaces the advice line rather than adding a card."""
+        self.items = [{"title": "I prefer pnpm", "category": "constraint", "content": "everywhere"}]
+        card = self._hook()(session_id="s", user_message="package manager?")
+        self.assertIn("I prefer pnpm", card["context"])
+        self.assertIn("not a Knowl project", card["context"])
+        self.assertNotIn("no project open", card["context"])
+
+    def test_it_stays_quiet_for_someone_who_does_not_use_knowl(self):
+        """Without a machine store this is just an ordinary folder, and the note is an advert."""
+        self.plugin._has_global_store = lambda: False
+        self.assertIsNone(self._hook()(session_id="s", user_message="hello"))
+
+    def test_a_folderless_session_gets_the_other_wording(self):
+        """Telling someone to open a repository when they have one open reads as a broken
+        diagnosis, so the two cases must not share a message."""
+        self.plugin._session_folder = lambda: None
+        self.items = [{"title": "I prefer pnpm", "category": "constraint", "content": "everywhere"}]
+        card = self._hook()(session_id="s", user_message="package manager?")
+        self.assertIn("no project open", card["context"])
+        self.assertNotIn("knowl init", card["context"])
+
+
 if __name__ == "__main__":
     unittest.main()
