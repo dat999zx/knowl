@@ -208,6 +208,43 @@ Reads layer across up to four physical databases, ordered by precedence:
 
 **The global store (`~/.knowl/global.db`).** Stored in the machine's Knowl home (`KNOWL_HOME`), `global.db` is an independent database with the standard schema. It is machine-local (never published or synced to cloud workspaces), keeping machine quirks and personal preferences isolated to this machine.
 
+**Setting it up.** The store is created by either form of `knowl init` and by `knowl link global`, so most people never create it deliberately:
+
+```bash
+knowl init --global   # from anywhere: the machine store only, no project touched
+knowl init            # in a repository: that project's store, and the global one if missing
+knowl init --host-only claude hermes   # configure agent hosts and create no store at all
+```
+
+Creating the store does not make any project read it. Linking does, and it is per project so that
+one careless write cannot become visible everywhere at once.
+
+**What belongs in it.** Global is a personal-defaults layer, not a second place to put project
+truth. Knowledge that is true of *you* or of *this machine*:
+
+- "I prefer pnpm over npm"
+- "this machine's driver breaks on CUDA 12"
+- "every repository here uses conventional commits"
+
+Knowledge that is true of one repository stays in it. "The auth rewrite chose JWT over sessions
+because of X" belongs to that repo: stored globally it is wrong everywhere else, and it dilutes
+retrieval for every project linked to the store. The tell is `affectedPaths` — if an atom names
+files, it almost certainly belongs to the repository that contains them.
+
+**Checking it works.**
+
+```bash
+knowl store "I prefer pnpm over npm" \
+  --category constraint --title "Package manager" --namespace global
+
+cd my-project && knowl link global
+knowl query "package manager"
+```
+
+From a linked project the repository's own answer comes first and the global one follows it. From
+a directory with no project at all, the global answer is the only one — which is the difference
+between a folderless session having memory and having none.
+
 **Linking a project:**
 ```bash
 knowl link global        # Read and write global.db from this project
