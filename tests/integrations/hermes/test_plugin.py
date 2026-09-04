@@ -444,8 +444,14 @@ class PluginTest(unittest.TestCase):
     def test_a_folderless_session_still_gets_a_recall_card(self):
         # The lifecycle path answers nothing without a project, so the card is read directly --
         # otherwise a Home session has memory it is never shown.
+        #
+        # `_session_folder` has to be stubbed, not left ambient: it reports the folder Hermes
+        # opened, and without a stub it returns the directory the test process happens to run
+        # in. That made this a session WITH a folder that merely is not a Knowl project, which
+        # is the other branch and the other wording. None is what folderless actually means.
         self.plugin._has_knowl_project = lambda cwd: False
         self.plugin._has_global_store = lambda: True
+        self.plugin._session_folder = lambda: None
         self.results["__query__"] = [{"title": "I prefer pnpm", "category": "constraint", "content": "everywhere"}]
         ctx = FakeCtx()
         self.plugin.register(ctx)
@@ -535,41 +541,30 @@ class MemoryProviderTest(unittest.TestCase):
             manifest = handle.read()
         self.assertIn("kind: standalone", manifest)
 
-    # -- recall ---------------------------------------------------------------
+    # -- recall belongs to the hook, not here ---------------------------------
 
-    def test_prefetch_builds_a_card_from_the_store(self):
-        self.items = [{"title": "WAL mode is required", "category": "constraint", "content": "sqlite"}]
-        card = self.ctx.provider.prefetch("which journal mode?")
-        self.assertIn("WAL mode is required", card)
-        self.assertIn("project memory", card)
-        self.assertEqual(self.queries[0][0], "which journal mode?")
+    def test_the_provider_does_not_recall(self):
+        """The provider must not implement `prefetch`, `recall_status` or
+        `system_prompt_block`.
 
-    def test_prefetch_says_so_when_there_is_no_project(self):
-        self.plugin._has_knowl_project = lambda cwd: False
-        self.plugin._has_global_store = lambda: True
-        self.items = [{"title": "I prefer pnpm", "category": "constraint", "content": "everywhere"}]
-        card = self.ctx.provider.prefetch("package manager?")
-        self.assertIn("I prefer pnpm", card)
-        self.assertIn("no project open", card.lower())
+        `prefetch` ran `knowl query <the user's literal sentence>` every turn, which is
+        keyword search over conversational prose -- and no other host does this, because
+        `host-hook.ts` keeps prompt text out of the payload entirely. It also produced a card
+        that LOOKED authoritative, which suppresses the knowl_query call the rules ask for
+        (6/6 agents queried on a thin card, 1/6 on a rich one, p=0.008). `system_prompt_block`
+        duplicated the section `register` already publishes, putting the rules in the system
+        prompt twice. `recall_status` only counted what `prefetch` returned.
 
-    def test_prefetch_is_empty_on_a_miss_and_reports_no_recall(self):
-        self.items = []
-        self.assertEqual(self.ctx.provider.prefetch("nothing about this"), "")
-        self.assertIsNone(self.ctx.provider.recall_status())
-
-    def test_recall_status_counts_only_the_last_prefetch(self):
-        """The ABC is explicit that a stale count must never be reported."""
-        self.plugin._RecallStatus = lambda provider_label, count, glyph: (provider_label, count, glyph)
-        self.items = [{"title": "a", "category": "fact", "content": "x"},
-                      {"title": "b", "category": "fact", "content": "y"}]
-        self.ctx.provider.prefetch("something")
-        self.assertEqual(self.ctx.provider.recall_status()[1], 2)
-        self.items = []
-        self.ctx.provider.prefetch("something else")
-        self.assertIsNone(self.ctx.provider.recall_status())
-
-    def test_the_rules_ride_in_the_system_prompt(self):
-        self.assertIn("knowl_query", self.ctx.provider.system_prompt_block())
+        Asserted as absence rather than behaviour: the failure mode is someone adding one
+        back, and a missing test is what let all three ship at once.
+        """
+        provider = self.ctx.provider
+        for method in ("prefetch", "recall_status", "system_prompt_block"):
+            self.assertFalse(
+                type(provider).__dict__.get(method),
+                f"KnowlMemoryProvider must not define {method}: recall is the pre_llm_call "
+                "hook's job on every host. See the class docstring.",
+            )
 
     def test_no_tool_schemas_because_the_hook_pass_already_registers_them(self):
         """Both halves load on a session where Knowl is the selected provider, so returning
@@ -593,44 +588,39 @@ class MemoryProviderTest(unittest.TestCase):
 
 
 class ProviderHandoffTest(unittest.TestCase):
-    """`pre_llm_call` when the provider owns recall. Both halves are loaded together, so the
-    card has to come from exactly one of them."""
+    """`pre_llm_call` is the only recall channel, whatever `memory.provider` says.
+
+    It used to stand aside whenever Knowl was the selected provider, because the provider
+    implemented `prefetch`. That made choosing Knowl in the dropdown silently swap the
+    orientation card for a keyword search on the user's sentence. The provider no longer
+    recalls, so the hook must now inject on every session -- including the one where Knowl
+    IS selected, which is the case that used to go dark.
+    """
 
     def setUp(self):
         self.plugin = load_plugin()
         self.calls = []
         self.plugin._Runner.run = lambda _self, event, payload, cwd, timeout=None: (
-            self.calls.append(event) or (None, 0, "")
+            self.calls.append(event) or ({"context": "a card"}, 0, "")
         )
         self.plugin._Runner.query = lambda _self, text, cwd, limit=8, timeout=20.0: []
         self.plugin._has_knowl_project = lambda cwd: True
         self.plugin._is_hermes_source_clone = lambda cwd: False
         self.plugin._resolve_cwd = lambda: os.getcwd()
 
-    def _hook(self, active_provider):
-        self.plugin._active_memory_provider = lambda: active_provider
+    def _hook(self):
         ctx = FakeCtx()
         self.plugin.register(ctx)
         return ctx.hooks["pre_llm_call"]
 
-    def test_the_hook_stops_injecting_when_the_provider_is_selected(self):
-        self.plugin._Runner.run = lambda _self, event, payload, cwd, timeout=None: (
-            self.calls.append(event) or ({"context": "a card"}, 0, "")
-        )
-        self.assertIsNone(self._hook("knowl")(session_id="s", user_message="hello"))
-
-    def test_but_the_event_still_fires_so_the_session_still_binds(self):
-        """Suppressing the whole hook would take session binding and capture with it -- the
-        card is the only part the provider duplicates."""
-        self._hook("knowl")(session_id="s", user_message="hello")
-        self.assertEqual(self.calls, ["pre_llm_call"])
-
-    def test_the_hook_keeps_the_card_when_another_provider_is_selected(self):
-        self.plugin._Runner.run = lambda _self, event, payload, cwd, timeout=None: (
-            self.calls.append(event) or ({"context": "a card"}, 0, "")
-        )
-        self.assertEqual(self._hook("mem0")(session_id="s", user_message="hello"),
+    def test_the_hook_injects_even_when_knowl_is_the_selected_provider(self):
+        """The regression this whole change is about: this used to return None."""
+        self.assertEqual(self._hook()(session_id="s", user_message="hello"),
                          {"context": "a card"})
+
+    def test_the_event_still_fires_so_the_session_still_binds(self):
+        self._hook()(session_id="s", user_message="hello")
+        self.assertEqual(self.calls, ["pre_llm_call"])
 
 
 class UninitialisedFolderTest(unittest.TestCase):
