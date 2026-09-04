@@ -165,6 +165,13 @@ jobs:
       - name: Benchmark invariants
         run: npm run test:bench
 
+      # The shipped Hermes plugin is Python, so `npm test` never reached it and neither did
+      # anything else: 31 tests sat in the repo running nowhere, including the ones asserting
+      # the hook payload shapes Desktop depends on. Stdlib `unittest` only -- no pip install,
+      # no requirements file -- so it costs a few seconds on the runner's preinstalled python.
+      - name: Hermes plugin tests
+        run: npm run test:plugin
+
       - run: npm run build
       - name: Generated documentation is current
         run: npm run docs:check

@@ -30,6 +30,10 @@ const HERMES_EVENT_MAP: Record<string, NormalizedHookEventName> = {
   pre_verify: 'turn-stop',
   on_session_end: 'turn-stop',
   on_session_finalize: 'session-stop',
+  // Compaction. Hermes fires no hook before it compresses a conversation, so this arrives
+  // from the plugin's MemoryProvider half (`on_pre_compress`) rather than the hook half --
+  // without it a session's knowledge is summarised away before capture ever sees it.
+  on_pre_compress: 'checkpoint',
 };
 
 /**
@@ -40,6 +44,9 @@ const HERMES_EVENT_MAP: Record<string, NormalizedHookEventName> = {
  */
 export const HERMES_PLUGIN_EVENTS = [
   'pre_llm_call', 'pre_tool_call', 'post_tool_call', 'pre_verify', 'on_session_end', 'on_session_finalize',
+  // Only sent when the person selects Knowl as their memory provider; the hook half of the
+  // plugin has no compaction event to forward.
+  'on_pre_compress',
 ] as const;
 
 /**

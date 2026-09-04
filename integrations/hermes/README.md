@@ -20,6 +20,34 @@ The plugin is a ~300-line shim. Each Hermes lifecycle hook builds the JSON that 
 | `pre_verify` (edit turns) | turn-stop | Capture nudge, bounded by Hermes' `max_verify_nudges` |
 | `on_session_end` | turn-stop | Nothing; closes the turn |
 | `on_session_finalize` | session-stop | Nothing; closes the session |
+| `on_pre_compress` | checkpoint | Only as the memory provider (below). Hermes fires no hook before it compresses a conversation, so this is the only way knowledge is captured before the turns carrying it are summarised away |
+
+## As Hermes' memory provider
+
+Hermes has a first-class slot for a memory backend -- **Settings > Memory & Context > Memory
+Provider**, beside Mem0, Honcho and the rest -- and this plugin fills it. It is the same
+directory: `knowl init hermes` already installs into `$HERMES_HOME/plugins/`, which is one of the
+four sources Hermes scans for providers, so Knowl appears in that dropdown with no extra step.
+Select it there, or set `memory.provider: knowl` in `config.yaml`, and restart.
+
+Selecting it is optional and additive. The hooks above run either way; the provider adds the
+three things a hook cannot reach:
+
+- **Recall in the system prompt.** `pre_llm_call` can only append to the *user* message. The
+  provider's `system_prompt_block` and `prefetch` put the rules and the recalled items where
+  instructions belong.
+- **A memory indicator.** `recall_status` drives Hermes' deterministic "recalled N memories"
+  line, which does not depend on the model choosing to mention it.
+- **A harvest before compaction.** `on_pre_compress` checkpoints the session while the turns
+  are still there to read.
+
+Two consequences worth knowing. Hermes runs **one** external provider at a time, so selecting
+Knowl deselects Mem0 or Honcho if one was active. And the recall card then comes from the
+provider only -- the `pre_llm_call` hook still fires, because that is what binds the session and
+carries capture, but it stops injecting so the card is never delivered twice.
+
+The plugin's own `knowl_query` and `knowl_store` tools are registered by the hook half, on every
+session, so they are there whether or not Knowl is the selected provider.
 
 ## Install
 
