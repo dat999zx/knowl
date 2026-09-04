@@ -1,6 +1,6 @@
 # Global Memory Layer Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Make the global memory namespace real: a machine-wide personal-defaults store that a project can link to, that a session with no project can use alone, and that ordinary queries actually read.
 
@@ -42,7 +42,7 @@
 
 ### Task 0: Branch
 
-- [ ] **Step 1: Create the branch**
+- [x] **Step 1: Create the branch**
 
 ```bash
 git checkout -b feat/global-memory main
@@ -61,7 +61,7 @@ git checkout -b feat/global-memory main
 - Produces: `globalStorePath(): string` — `<knowlHome()>/global.db`.
 - Produces: `ensureGlobalStore(): Promise<{ path: string; created: boolean }>` — creates the database and its schema if absent; `created: false` on every later call.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/store/global-namespace.test.ts`:
 
@@ -111,12 +111,12 @@ describe('the global store', () => {
 });
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `npx vitest run tests/store/global-namespace.test.ts`
 Expected: FAIL — `globalStorePath` is not exported.
 
-- [ ] **Step 3: Add the path**
+- [x] **Step 3: Add the path**
 
 In `src/core/paths.ts`, after `knowlHome()`:
 
@@ -135,7 +135,7 @@ export function globalStorePath(): string {
 }
 ```
 
-- [ ] **Step 4: Create the store module**
+- [x] **Step 4: Create the store module**
 
 `src/store/global-store.ts`:
 
@@ -165,12 +165,12 @@ export async function ensureGlobalStore(): Promise<{ path: string; created: bool
 }
 ```
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `npx vitest run tests/store/global-namespace.test.ts`
 Expected: PASS (2 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/core/paths.ts src/store/global-store.ts tests/store/global-namespace.test.ts
@@ -189,7 +189,7 @@ git commit -m "feat(store): the global store path, created idempotently"
 - Produces: `globalNamespaceDescriptor(): NamespaceDescriptor` — the global store by its known path, precedence `RANK.global`.
 - Produces: `globalOnlyNamespaces(): NamespaceDescriptor[]` — `[global]` when the store exists, `[]` when it does not.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/store/global-namespace.test.ts`:
 
@@ -212,12 +212,12 @@ describe('resolution with no project', () => {
 
 (Move the `beforeEach`/`afterEach` above into a shared scope so both `describe` blocks get the temporary home — simplest is to wrap both in one outer `describe`.)
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `npx vitest run tests/store/global-namespace.test.ts`
 Expected: FAIL — `globalOnlyNamespaces` is not exported.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `src/store/namespaces.ts`:
 
@@ -249,12 +249,12 @@ export function globalOnlyNamespaces(): NamespaceDescriptor[] {
 }
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 Run: `npx vitest run tests/store/global-namespace.test.ts`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/store/namespaces.ts tests/store/global-namespace.test.ts
@@ -276,7 +276,7 @@ git commit -m "feat(store): resolve to the global namespace when there is no pro
 
 **Why it matters:** `searchKnowledgeEmbeddings` requires `profileFingerprint` and filters on it, because scoring a 768-dimension query vector against 384-dimension rows is meaningless. Each namespace must therefore be searched with its own identity, not the caller's.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/store/layered-vector.test.ts`:
 
@@ -345,12 +345,12 @@ describe('the layered read spans namespaces', () => {
 });
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `npx vitest run tests/store/layered-vector.test.ts`
 Expected: FAIL — `namespaceFingerprint` is not exported.
 
-- [ ] **Step 3: Implement the fingerprint**
+- [x] **Step 3: Implement the fingerprint**
 
 In `src/store/namespaces.ts`:
 
@@ -396,7 +396,7 @@ export async function namespaceFingerprint(
 }
 ```
 
-- [ ] **Step 4: Forward the vector options per namespace**
+- [x] **Step 4: Forward the vector options per namespace**
 
 Change `queryLayeredKnowledge` to accept and use them:
 
@@ -452,12 +452,12 @@ export async function queryLayeredKnowledge(
 
 Update the two existing call sites (`src/mcp/tools.ts`, and any test) to read `.items`. `queryKnowledgeForAgent` must accept the `vector.profileFingerprint` it forwards — check its options type and thread it to `searchKnowledgeEmbeddings`; it already takes a `vector` option, so this is adding the fingerprint to that shape rather than a new parameter.
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `npx vitest run tests/store/layered-vector.test.ts`
 Expected: PASS (2 tests).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/store/namespaces.ts src/store/agent-query.ts tests/store/layered-vector.test.ts
@@ -475,7 +475,7 @@ git commit -m "feat(store): search each namespace with its own embedding identit
 **Interfaces:**
 - Consumes: `queryLayeredKnowledge(...) -> { items, skipped }` from Task 3.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/store/layered-vector.test.ts`:
 
@@ -489,12 +489,12 @@ it('names the namespaces it could not search instead of narrowing silently', asy
 });
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `npx vitest run tests/store/layered-vector.test.ts`
 Expected: FAIL until Task 3's `skipped` is returned; if Task 3 is complete this passes and the real change is the caller below.
 
-- [ ] **Step 3: Take the gate off the layered path**
+- [x] **Step 3: Take the gate off the layered path**
 
 In `src/mcp/tools.ts`, replace the `layered` condition and its branch:
 
@@ -535,12 +535,12 @@ and replace the `skippedNamespaces` block with the value the reader now reports:
         }
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 Run: `npx vitest run tests/store/ tests/mcp/`
 Expected: PASS. Existing MCP query tests exercise the layered path for the first time; if any assert on lexical-only ordering, fix the assertion, not the reader.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/mcp/tools.ts tests/store/layered-vector.test.ts
@@ -560,7 +560,7 @@ git commit -m "feat(mcp): the layered read runs under vector search, so linked n
 - Produces: `setGlobalNamespace(root: string, enabled: boolean): Promise<void>` — writes `memory.global = { enabled, path: globalStorePath() }`, creating the store when enabling.
 - Produces CLI: `knowl link global` and `knowl link global --off`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `tests/cli/global-link.test.ts`:
 
@@ -610,12 +610,12 @@ describe('linking a project to the global store', () => {
 });
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `npx vitest run tests/cli/global-link.test.ts`
 Expected: FAIL — `setGlobalNamespace` is not exported.
 
-- [ ] **Step 3: Implement the config helper**
+- [x] **Step 3: Implement the config helper**
 
 In `src/core/config.ts`:
 
@@ -644,7 +644,7 @@ export async function setGlobalNamespace(root: string, enabled: boolean): Promis
 }
 ```
 
-- [ ] **Step 4: Add the CLI command**
+- [x] **Step 4: Add the CLI command**
 
 In `src/cli/program.ts`, beside the other top-level commands:
 
@@ -672,12 +672,12 @@ linkCommand
   });
 ```
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `npx vitest run tests/cli/global-link.test.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/core/config.ts src/cli/program.ts tests/cli/global-link.test.ts
@@ -696,7 +696,7 @@ git commit -m "feat(cli): knowl link global, reversibly"
 - Produces CLI: `knowl store <content> --namespace global`, defaulting to `project`.
 - Rule: with `--namespace global`, every `--path` must be absolute, and the result says the paths are not indexed.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/cli/global-link.test.ts`:
 
@@ -713,12 +713,12 @@ describe('writing to the global namespace', () => {
 });
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `npx vitest run tests/cli/global-link.test.ts`
 Expected: FAIL — `assertGlobalWrite` is not exported.
 
-- [ ] **Step 3: Implement the rule**
+- [x] **Step 3: Implement the rule**
 
 In `src/store/global-store.ts`:
 
@@ -745,7 +745,7 @@ export function assertGlobalWrite(paths: string[]): string {
 }
 ```
 
-- [ ] **Step 4: Wire the CLI option**
+- [x] **Step 4: Wire the CLI option**
 
 Add to the `store` command:
 
@@ -769,12 +769,12 @@ and in its action, before writing:
       }
 ```
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `npx vitest run tests/cli/global-link.test.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/store/global-store.ts src/cli/program.ts tests/cli/global-link.test.ts
@@ -793,7 +793,7 @@ git commit -m "feat(cli): knowl store --namespace global, with absolute paths"
 **Interfaces:**
 - Produces CLI: `knowl init` runnable outside a repository, offering **Project** or **Global**; `--global` and `--host-only` skip the prompt.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 describe('setup outside a repository', () => {
@@ -809,12 +809,12 @@ describe('setup outside a repository', () => {
 });
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `npx vitest run tests/cli/global-link.test.ts`
 Expected: FAIL — module not found.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `src/cli/global-init.ts`:
 
@@ -829,12 +829,12 @@ export async function runGlobalInit(): Promise<{ path: string; created: boolean 
 
 In the `init` command: add `--global` and `--host-only`; when the cwd is not a project and neither flag is given, prompt with the two options (reuse the existing `@clack/prompts` picker), preselecting **Project** inside a repository. `--host-only` configures the named host integrations and returns before any store work — which is what a machine-global host such as Hermes actually needs.
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 Run: `npx vitest run tests/cli/`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/cli/ tests/cli/global-link.test.ts
@@ -848,15 +848,15 @@ git commit -m "feat(cli): knowl init runs outside a repository, for the global s
 **Files:**
 - Modify: `docs/reference.md`, `README.md`, `CHANGELOG.md`
 
-- [ ] **Step 1: Reference**
+- [x] **Step 1: Reference**
 
 Document, under memory: the four namespaces and their precedence; `~/.knowl/global.db`; `knowl link global [--off]`; `knowl store --namespace global` and the absolute-path rule; that a session with no project resolves to global alone; and that impact, drift and evidence stay project-only.
 
-- [ ] **Step 2: Changelog**
+- [x] **Step 2: Changelog**
 
 Recreate `## Unreleased` if the last release consumed it, then describe the layer, being explicit that the layered read previously never ran under vector search.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
 ```bash
 npm run docs:check
@@ -868,9 +868,9 @@ git commit -m "docs: the global memory layer"
 
 ### Task 9: Full verification
 
-- [ ] **Step 1:** `npm run build` — exit 0
-- [ ] **Step 2:** `npm test` — all green. Expect churn in MCP query tests: the layered path now runs where it never did.
-- [ ] **Step 3:** `npx eslint .` — clean
-- [ ] **Step 4:** `npm run docs:check` — regions current
-- [ ] **Step 5:** Manual: in a repo, `knowl link global`; `knowl store "I prefer pnpm" --title "Package manager" --category constraint --namespace global`; query from that repo and see it labelled `global` behind the project's own answers; `cd` somewhere with no project and query again.
-- [ ] **Step 6:** Open the PR.
+- [x] **Step 1:** `npm run build` — exit 0
+- [x] **Step 2:** `npm test` — all green. Expect churn in MCP query tests: the layered path now runs where it never did.
+- [x] **Step 3:** `npx eslint .` — clean
+- [x] **Step 4:** `npm run docs:check` — regions current
+- [x] **Step 5:** Manual: in a repo, `knowl link global`; `knowl store "I prefer pnpm" --title "Package manager" --category constraint --namespace global`; query from that repo and see it labelled `global` behind the project's own answers; `cd` somewhere with no project and query again.
+- [x] **Step 6:** Open the PR.
