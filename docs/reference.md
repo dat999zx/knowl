@@ -211,14 +211,14 @@ Reads layer across up to four physical databases, ordered by precedence:
 **Setting it up.** The store is created by either form of `knowl init` and by `knowl link global`, so most people never create it deliberately:
 
 ```bash
-knowl init                 # in a repository: that project's store, and the global one if missing
-knowl init hermes          # outside one: the machine store, and the hosts you name
-knowl init --global hermes # machine scope explicitly, even from inside a repository
+knowl init                 # this directory: its store, and the global one if missing
+knowl init --global        # the machine store only, nothing written here
+knowl init --global hermes # the machine store, and the hosts named beside it
 ```
 
-`knowl init` takes its scope from where it runs — the repository you are in, or the machine when
-there is no repository — and `--global` names the machine explicitly. Nothing is scaffolded into a
-directory that is not already a project.
+`knowl init` initializes the directory you run it in. `--global` switches to machine scope and
+leaves that directory alone, which is how a machine-wide host such as Hermes is wired from
+anywhere.
 
 Creating the store does not make any project read it. Linking does, and it is per project so that
 one careless write cannot become visible everywhere at once.
@@ -2501,7 +2501,7 @@ knowl eval --dataset docs/evals/retrieval-suite.json --json
 
 | Command | Description |
 | --- | --- |
-| `knowl init [agents...] [--global] [-y\|--yes]` | Initialize or upgrade the project and configure selected agents. Scope follows the directory: a repository sets that project up, anywhere else works on the machine (the personal-defaults store plus any hosts named). `--global` names machine scope explicitly |
+| `knowl init [agents...] [--global] [-y\|--yes]` | Initialize or upgrade the project in this directory and configure selected agents. `--global` switches to machine scope: the personal-defaults store plus any hosts named, with nothing written into the current directory |
 | `knowl upgrade` | Refresh project files, schema, guidance, and `.gitignore` without agent setup |
 | `knowl status` | Show repository, memory, AI, commit, and workspace status |
 | `knowl doctor` | Check project, vector coverage, agent, and workspace readiness |

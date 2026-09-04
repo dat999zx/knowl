@@ -33,11 +33,10 @@ What that unlocks:
   with no folder open -- resolve to global alone, which is the difference between having memory
   there and having none. Only when there is genuinely no project: a repository whose config is
   malformed is an error, never quietly answered from someone's personal defaults.
-- **`knowl init` runs anywhere**, taking its scope from where you run it: a repository sets
-  that project up, and anywhere else works on the machine — the personal-defaults store plus
-  any hosts you name, which is how a machine-wide host like Hermes is wired in one command
-  from any directory. `--global` names machine scope explicitly. Nothing is ever scaffolded
-  into a directory that is not already a project.
+- **`knowl init --global` runs anywhere**, setting up the machine-wide store and any hosts
+  named beside it without writing anything into the current directory — which is how a
+  machine-wide host such as Hermes is wired in one command. Plain `knowl init` still
+  initializes the directory you run it in.
 
 **Hermes Agent is driven by a plugin now, and it reaches Hermes Desktop.** 5.19.0 wired Hermes up through the `hooks.<event>` shell commands its `config.yaml` accepts. Those are terminal-only: the `serve` backend Hermes Desktop launches takes a fast path that never calls `register_from_config`, so not one of them is registered there (upstream hermes-agent#69825), and `hermes hooks doctor` reports them healthy regardless because it reads the config file rather than the live registry. Python plugins load from `agent/agent_init.py`, which every path builds an agent through. So `knowl init hermes` now installs [`integrations/hermes/knowl/`](integrations/hermes/README.md) into the Hermes plugins directory, enables it in `config.yaml` beside the MCP entry, and removes the shell hooks the previous version wrote — registering both would send every event twice. The plugin sends exactly what a shell hook would have sent, and adds three things a subprocess cannot: the project resolves from Hermes' per-session working directory instead of the backend's, the memory rules ride in the system prompt, and a file write gets a same-turn impact card appended to its result. Restart Hermes after `knowl init hermes` to load it.
 

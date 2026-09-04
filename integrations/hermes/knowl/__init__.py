@@ -715,7 +715,7 @@ def register(ctx: Any) -> None:
     for schema, handler in ((QUERY_SCHEMA, knowl_query), (STORE_SCHEMA, knowl_store)):
         try:
             ctx.register_tool(
-                name=schema["name"], toolset="knowl", schema=schema, handler=handler,
+                name=schema["name"], toolset="knowl-memory", schema=schema, handler=handler,
                 description=schema["description"], emoji="🧠",
             )
         except Exception as exc:  # noqa: BLE001 -- a tool clash must not stop the hooks

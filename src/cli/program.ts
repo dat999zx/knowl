@@ -369,12 +369,12 @@ program
 
       const interactive = Boolean(process.stdin.isTTY && process.stdout.isTTY);
       const isInsideRepo = isInsideGitRepo(cwd);
-      // Outside a repository the answer is the machine, not this folder. Defaulting to `project`
-      // here meant `knowl init hermes -y` run from a home directory or a Downloads folder
-      // scaffolded a store in it -- silently, under the flag whose whole job is not to ask, and
-      // annoying to undo. Wiring a machine-wide host from wherever you happen to be standing is
-      // the ordinary way to do it, so that path must not leave anything behind.
-      let setupTarget = isInsideRepo ? 'project' : 'global';
+      // `knowl init` means "initialize here", inside a git repository or not -- a plain directory
+      // is a legitimate project and initializing one is the whole job of this command. The
+      // interactive picker below offers the machine instead; `--global` names it outright. What
+      // this must NOT do is quietly choose the machine on the non-interactive path, which would
+      // turn `knowl init` in a fresh directory into a command that created nothing there.
+      let setupTarget = 'project';
 
       // When cwd is not a project and neither flag is given, prompt with the two options
       // (reuse the existing @clack/prompts picker), preselecting Project inside a repository.

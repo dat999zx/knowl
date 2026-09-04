@@ -62,10 +62,10 @@ read a file inside the repository — `.mcp.json`, `.codex/hooks.json`, `.cursor
 only `knowl init` to create their own store. Re-running `knowl init` inside a repository never
 disturbs a machine-wide host.
 
-`knowl init` picks the scope from where you run it: inside a repository it sets that project up,
-and outside one it works on the machine — the personal-defaults store, plus any hosts you name.
-`--global` asks for machine scope explicitly, which is how you wire a machine-wide host from
-inside a repository without that repository being the subject.
+`knowl init` initializes the directory you run it in — that is its whole job, git repository or
+not. `--global` asks for machine scope instead: the personal-defaults store plus any hosts you
+name, and nothing written into the current directory. That is how a machine-wide host is wired
+from wherever you happen to be standing.
 
 A first-time setup for a machine-wide host therefore reads:
 
