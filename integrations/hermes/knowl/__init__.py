@@ -59,6 +59,14 @@ CONTEXT_CHAR_BUDGET = 9_500
 # The engine's Hermes profile gates exactly these tools (src/session/hosts/hermes.ts).
 WRITE_TOOLS = frozenset({"write_file", "patch"})
 
+# Hermes namespaces an MCP server's tools as ``mcp__<serverName>__<tool>``, and
+# ``knowl init hermes`` writes the server under the name ``knowl``. Renaming it there only
+# means the project root is not injected, which is the error the server already reports --
+# never a call answered from the wrong repository.
+MCP_TOOL_PREFIX = "mcp__knowl__"
+# Read by `callToolForRoot` in src/mcp/tools.ts, and accepted only by `serve --host hermes`.
+PROJECT_ROOT_ARG = "__projectRoot"
+
 DEFAULT_TIMEOUT_SECONDS = 30
 POST_TOOL_TIMEOUT_SECONDS = 15
 
@@ -515,8 +523,22 @@ def register(ctx: Any) -> None:
         logger.debug("knowl pre_llm_call: no context for session %s", session_id)
         return None
 
-    # -- write gate. Only the two file-write tools; everything else is no opinion.
+    # -- write gate, and the project root every MCP call needs.
+    #
+    # `mcp__knowl__*` reaches a server Hermes started once, from a directory that is not any
+    # project, and shared by every session -- so without help its tools answer "No Knowl project
+    # found" while the store is healthy. Hermes lets a `pre_tool_call` hook rewrite a call's
+    # arguments before dispatch, so the session's own directory rides along on every such call
+    # and the server acts on the right repository, per call, however many sessions are open.
+    # The model neither sees nor sets this: no tool schema declares it.
     def pre_tool_call(tool_name: str = "", args: Optional[Dict[str, Any]] = None, session_id: str = "", **_: Any):
+        if isinstance(tool_name, str) and tool_name.startswith(MCP_TOOL_PREFIX):
+            cwd = project_cwd()
+            if cwd is None:
+                return None
+            merged = dict(args or {})
+            merged[PROJECT_ROOT_ARG] = cwd
+            return {"action": "modify", "args": merged}
         if tool_name not in WRITE_TOOLS:
             return None
         try:

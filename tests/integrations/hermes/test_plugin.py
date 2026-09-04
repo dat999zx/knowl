@@ -180,6 +180,28 @@ class PluginTest(unittest.TestCase):
         out = self.ctx.hooks["pre_tool_call"](tool_name="patch", args={}, session_id="s")
         self.assertEqual(out["action"], "block")
 
+    # -- the project root every MCP call carries --------------------------------
+
+    def test_mcp_calls_carry_the_session_project_root(self):
+        out = self.ctx.hooks["pre_tool_call"](
+            tool_name="mcp__knowl__knowl_query", args={"query": "x"}, session_id="s"
+        )
+        self.assertEqual(out["action"], "modify")
+        self.assertEqual(out["args"]["query"], "x")
+        self.assertEqual(out["args"][self.plugin.PROJECT_ROOT_ARG], os.getcwd())
+        # Injection is local: it must not spend a subprocess on the tool-call path.
+        self.assertEqual(self.calls, [])
+
+    def test_mcp_calls_are_left_alone_outside_a_knowl_project(self):
+        # Better the server's own honest "no project here" than a root we invented.
+        self.plugin._has_knowl_project = lambda cwd: False
+        ctx = FakeCtx()
+        self.plugin.register(ctx)
+        self.assertIsNone(ctx.hooks["pre_tool_call"](tool_name="mcp__knowl__knowl_query", args={}, session_id="s"))
+
+    def test_other_servers_tools_are_untouched(self):
+        self.assertIsNone(self.ctx.hooks["pre_tool_call"](tool_name="mcp__github__create_issue", args={}, session_id="s"))
+
     def test_gate_ignores_tools_that_do_not_write(self):
         self.assertIsNone(self.ctx.hooks["pre_tool_call"](tool_name="read_file", args={}, session_id="s"))
         self.assertIsNone(self.ctx.hooks["pre_tool_call"](tool_name="terminal", args={}, session_id="s"))
