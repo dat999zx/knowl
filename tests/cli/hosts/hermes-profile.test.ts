@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { hostProfile } from '../../../src/session/hosts/index.js';
+import { HERMES_PLUGIN_EVENTS } from '../../../src/session/hosts/hermes.js';
 
 describe('hermes profile', () => {
   const profile = hostProfile('hermes');
 
-  it('maps Hermes shell-hook events, with two routes into turn-stop', () => {
-    expect(profile.normalizedEvent('on_session_start')).toBe('session-start');
+  it('maps Hermes hook events, with two routes into turn-stop', () => {
+    // Not mapped on purpose: binding the session there spends the bootstrap card on an event
+    // whose return value Hermes discards, and the first real turn then gets nothing.
+    expect(profile.normalizedEvent('on_session_start')).toBeUndefined();
     expect(profile.normalizedEvent('pre_llm_call')).toBe('turn-start');
     expect(profile.normalizedEvent('pre_tool_call')).toBe('tool-precheck');
     expect(profile.normalizedEvent('post_tool_call')).toBe('session-event');
@@ -18,15 +21,19 @@ describe('hermes profile', () => {
     expect(profile.normalizedEvent('subagent_stop')).toBeUndefined();
   });
 
-  it('registers the lifecycle events and keeps the prompt event separate', () => {
-    expect([...profile.hookEvents]).toEqual([
-      'on_session_start', 'pre_tool_call', 'post_tool_call', 'pre_verify', 'on_session_end', 'on_session_finalize',
-    ]);
+  it('registers no hooks file, because the plugin is the channel', () => {
+    expect(profile.hookEvents).toEqual([]);
+    expect(profile.hookConfigStyle).toBe('none');
     expect(profile.promptEvent).toBe('pre_llm_call');
-    expect(profile.hookEvents).not.toContain('pre_llm_call');
-    expect(profile.hookConfigStyle).toBe('hermes-yaml');
     expect(profile.nativeOutput).toBe(true);
     expect(profile.lifecycleClaimable).toBe(false);
+  });
+
+  it('accepts every event the shipped plugin forwards', () => {
+    for (const event of HERMES_PLUGIN_EVENTS) {
+      expect(profile.normalizedEvent(event), event).toBeDefined();
+    }
+    expect(HERMES_PLUGIN_EVENTS).not.toContain('on_session_start');
   });
 
   it('refuses and nudges with the Claude Stop shape Hermes accepts, plus exit 2', () => {

@@ -1,6 +1,6 @@
 # Knowl for Hermes Agent (Python plugin)
 
-Project memory for [Hermes Agent](https://hermes-agent.nousresearch.com) that reaches **Hermes Desktop**, which the shell hooks written by `knowl init hermes` do not (Hermes' `serve` backend never registers `config.yaml` shell hooks; NousResearch/hermes-agent #69825, open as of v0.21.0 and confirmed live on 2026-09-04).
+Project memory for [Hermes Agent](https://hermes-agent.nousresearch.com). This is the channel `knowl init hermes` installs, and the only one that reaches **Hermes Desktop**: Hermes' `serve` backend never registers the `config.yaml` shell hooks it otherwise accepts (NousResearch/hermes-agent #69825, open as of v0.21.0 and confirmed live on 2026-09-04), while Python plugins load on every path.
 
 The plugin is a ~300-line shim. Each Hermes lifecycle hook builds the JSON that Hermes would have piped to a shell hook and runs `knowl agent-hook hermes <event> --json`, so the Knowl engine's Hermes host profile does all the work. What the shim adds:
 
@@ -28,15 +28,20 @@ Requires Hermes Agent v0.21.0+ and `@dat999zx/knowl` 5.19.0+ (the release with t
 The plugin ships inside the npm package too: after `npm install -g @dat999zx/knowl` it is at `<global node_modules>/@dat999zx/knowl/integrations/hermes/`, so `python <that path>/install.py` works without cloning this repo.
 
 ```powershell
-# 1. the Knowl CLI (skip if `knowl --version` already prints 5.19.0 or newer)
-npm install -g @dat999zx/knowl
-
-# 2. the plugin, either way:
-python integrations/hermes/install.py          # a) copies knowl/ into <HERMES_HOME>/plugins/knowl and prints the config block
-uv pip install --python <HERMES_HOME>/hermes-agent/venv/Scripts/python.exe knowl-hermes   # b) into Hermes' own venv; found via the hermes_agent.plugins entry point
+npm install -g @dat999zx/knowl   # the release that ships this plugin, or newer
+knowl init hermes                # copies the plugin, enables it, writes the MCP entry
 ```
 
-Pick one. Both register under the plugin key `knowl`; installing both makes Hermes load the directory copy and warn about the duplicate.
+That is the supported path: it installs the plugin into `<Hermes home>/plugins/knowl/`, sets `plugins.enabled: [knowl]` and `mcp_servers.knowl` in `config.yaml`, and removes any shell hooks an older Knowl left behind. **Restart Hermes afterwards** so it loads the plugin.
+
+Two manual routes exist for installs that do not go through the npm package:
+
+```powershell
+python integrations/hermes/install.py          # copies knowl/ into <HERMES_HOME>/plugins/knowl and prints the config block
+uv pip install --python <HERMES_HOME>/hermes-agent/venv/Scripts/python.exe knowl-hermes   # into Hermes' own venv, via the hermes_agent.plugins entry point
+```
+
+Both register under the plugin key `knowl`; installing two of them makes Hermes load the directory copy and warn about the duplicate.
 
 Then add to `<HERMES_HOME>/config.yaml` (`%LOCALAPPDATA%\hermes\config.yaml` on Windows, `~/.hermes/config.yaml` elsewhere). If the file already has a `plugins:` key, merge into it instead of adding a second one:
 

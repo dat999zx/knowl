@@ -44,6 +44,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("hermes.plugins.knowl")
@@ -60,6 +61,16 @@ WRITE_TOOLS = frozenset({"write_file", "patch"})
 
 DEFAULT_TIMEOUT_SECONDS = 30
 POST_TOOL_TIMEOUT_SECONDS = 15
+
+# Hermes bounds every ``pre_tool_call`` callback and, alone among its hooks, fails **closed**
+# when one overruns: ``_HOOK_TIMEOUT_FAIL_CLOSED_HOOKS = {"pre_tool_call"}`` in
+# hermes_cli/plugins.py, default bound 30s. So this callback must always answer first. Waiting
+# the same 30s our other calls get is a race whose loser is the user's write being blocked with
+# a reason nobody wrote -- the exact inversion of "a broken memory layer never breaks a turn".
+# The margin is subtracted from whatever bound Hermes is actually configured with.
+GATE_TIMEOUT_MARGIN_SECONDS = 5.0
+MIN_GATE_TIMEOUT_SECONDS = 3.0
+DEFAULT_HOOK_CALLBACK_TIMEOUT = 30.0
 
 # Rendered into the system prompt once per session (Hermes freezes it). Tool
 # names are the namespaced form Hermes gives MCP tools, and the tool_search line
@@ -107,6 +118,21 @@ def _resolve_knowl_command(ctx: Any) -> List[str]:
         if found:
             return [found]
     return ["npx", "-y", "@dat999zx/knowl"]
+
+
+def _hermes_hook_callback_timeout() -> float:
+    """Hermes' own ``plugins.hook_callback_timeout``, or its 30s default."""
+    try:
+        from hermes_cli.config import load_config_readonly  # type: ignore
+
+        plugins_cfg = (load_config_readonly() or {}).get("plugins")
+        if isinstance(plugins_cfg, dict) and "hook_callback_timeout" in plugins_cfg:
+            configured = float(plugins_cfg["hook_callback_timeout"])
+            if configured > 0:
+                return configured
+    except Exception:
+        pass
+    return DEFAULT_HOOK_CALLBACK_TIMEOUT
 
 
 def _hermes_home() -> Optional[str]:
@@ -176,6 +202,12 @@ class _Runner:
         self._command: Optional[List[str]] = None
         self._lock = threading.Lock()
         self.timeout = float(_setting(ctx, "timeout_seconds", DEFAULT_TIMEOUT_SECONDS) or DEFAULT_TIMEOUT_SECONDS)
+        # Strictly under Hermes' fail-closed bound, so the gate always answers before Hermes
+        # gives up and blocks the write for us. See GATE_TIMEOUT_MARGIN_SECONDS.
+        self.gate_timeout = max(
+            MIN_GATE_TIMEOUT_SECONDS,
+            min(self.timeout, _hermes_hook_callback_timeout() - GATE_TIMEOUT_MARGIN_SECONDS),
+        )
 
     @property
     def command(self) -> List[str]:
@@ -253,14 +285,28 @@ class _Runner:
             logger.debug("knowl query failed: %s", exc)
             return []
         out = (proc.stdout or "").strip()
-        start = out.find("[")
+        start = min((i for i in (out.find("["), out.find("{")) if i >= 0), default=-1)
         if proc.returncode != 0 or start < 0:
             return []
         try:
-            items = json.loads(out[start:])
+            parsed = json.loads(out[start:])
         except ValueError:
             return []
-        return [i for i in items if isinstance(i, dict)] if isinstance(items, list) else []
+        # Two shapes, and only one of them was handled. A repository on its own answers with a
+        # bare array; one linked into a workspace answers with an object keyed by repo name
+        # (KNOWL.md, "Linked repositories"). Slicing from the first "[" and parsing produced
+        # "Extra data" on the keyed shape, so `query` returned nothing and the impact card was
+        # silently dead in exactly the repositories that have neighbours.
+        if isinstance(parsed, dict):
+            items: List[Any] = []
+            for value in parsed.values():
+                if isinstance(value, list):
+                    items.extend(value)
+        elif isinstance(parsed, list):
+            items = parsed
+        else:
+            return []
+        return [i for i in items if isinstance(i, dict)]
 
 
 def _written_path(args: Dict[str, Any]) -> str:
@@ -272,7 +318,12 @@ def _written_path(args: Dict[str, Any]) -> str:
 
 
 def _norm(p: str) -> str:
-    return p.replace("\\", "/").lstrip("./").lower()
+    # A leading "./" only. `lstrip("./")` strips the character *set*, so ".github/ci.yml" came
+    # back as "github/ci.yml" and every dot-directory compared equal to its undotted twin.
+    normalized = p.replace("\\", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized.lower()
 
 
 def _relative_to(path: str, cwd: str) -> str:
@@ -389,7 +440,9 @@ def register(ctx: Any) -> None:
         if tool_name not in WRITE_TOOLS:
             return None
         try:
-            data, code, err = fire("pre_tool_call", session_id, tool_name=tool_name, tool_input=args or {})
+            data, code, err = fire(
+                "pre_tool_call", session_id, timeout=runner.gate_timeout, tool_name=tool_name, tool_input=args or {}
+            )
         except Exception as exc:
             logger.debug("knowl pre_tool_call: %s", exc)
             return None
@@ -412,8 +465,12 @@ def register(ctx: Any) -> None:
     #    are appended to the tool result, so the model sees "this file carries stored
     #    knowledge" before its next step instead of on the next turn. Shell hooks cannot do
     #    this: Hermes only reads a bare string here, which a subprocess cannot return.
-    impact_seen: set = set()
+    # (session, file) pairs already carded, so one file cards once per session. Bounded because
+    # a Desktop backend is a long-lived process serving many sessions: an unbounded set here is
+    # a slow leak in a plugin whose whole promise is that it costs the host nothing.
+    impact_seen: "OrderedDict[Tuple[str, str], None]" = OrderedDict()
     impact_lock = threading.Lock()
+    IMPACT_SEEN_MAX = 512
 
     def transform_tool_result(tool_name: str = "", args: Optional[Dict[str, Any]] = None, result: Any = None, session_id: str = "", **_: Any):
         if tool_name not in WRITE_TOOLS or not isinstance(result, str):
@@ -426,11 +483,13 @@ def register(ctx: Any) -> None:
             if cwd is None:
                 return None
             rel = _relative_to(written, cwd)
-            key = (session_id, rel.lower())
+            key = (str(session_id), rel.lower())
             with impact_lock:
                 if key in impact_seen:
                     return None
-                impact_seen.add(key)
+                impact_seen[key] = None
+                while len(impact_seen) > IMPACT_SEEN_MAX:
+                    impact_seen.popitem(last=False)
             stem = os.path.splitext(os.path.basename(rel))[0].replace("-", " ").replace("_", " ")
             items = runner.query(f"{rel} {stem}", cwd, limit=8)
             hits = [i for i in items if _covers(i.get("affectedPaths"), rel)]

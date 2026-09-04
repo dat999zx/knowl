@@ -60,12 +60,6 @@ export interface HostProfile {
     | 'openhands-toplevel'
     /** `{hooks: {event: [{command, ...}]}}` -- a flat command list, no matcher. Cursor, Windsurf. */
     | 'flat-commands'
-    /**
-     * `hooks: {event: [{command, matcher?, timeout}]}` inside the host's own YAML config, beside
-     * its MCP list. Written by the host's adapter through the YAML document merge, not by
-     * `mergeHookConfig`, because the file is the person's whole configuration and not ours.
-     */
-    | 'hermes-yaml'
     | 'none';
   /**
    * The process exit status this host reads as a refusal, when its deny channel is the exit
