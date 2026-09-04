@@ -37,9 +37,7 @@ const stringValue = (value: unknown, max = MAX_STRING): string | undefined =>
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 
-function requireProjectRoot(host: HookHost, raw: Record<string, unknown>): string {
-  const declared = stringValue(hostProfile(host).projectRoot?.(raw));
-  if (declared) return path.resolve(declared);
+function requireProjectRoot(raw: Record<string, unknown>): string {
   const cwd = stringValue(raw.cwd);
   if (cwd) return path.resolve(cwd);
   const roots = Array.isArray(raw.workspace_roots) ? raw.workspace_roots : [];
@@ -332,11 +330,14 @@ function validateNormalizedHostHook(input: NormalizedHostHook): NormalizedHostHo
   return input;
 }
 
-function normalizeHostHookUnchecked(host: string, eventName: string, raw: Record<string, unknown>): NormalizedHostHook {
+function normalizeHostHookUnchecked(host: string, eventName: string, payload: Record<string, unknown>): NormalizedHostHook {
   if (!isHookHost(host)) throw new Error(`Unsupported hook host: ${host}`);
   const normalizedHost = host;
   const profile = hostProfile(normalizedHost);
-  const projectRoot = requireProjectRoot(normalizedHost, raw);
+  // Before anything reads a field: a host whose payload uses other names says so once here,
+  // rather than in every extractor below. See `normalizePayload`.
+  const raw = profile.normalizePayload?.(payload) ?? payload;
+  const projectRoot = requireProjectRoot(raw);
   const identity = profile.identity(raw);
   if (!identity.externalSessionId) throw new IncompleteHostHookPayloadError('Host hook payload requires a session id.');
   const ids = { externalSessionId: identity.externalSessionId, externalTurnId: identity.externalTurnId };

@@ -18,6 +18,31 @@ export const ANTIGRAVITY_HOOK_EVENTS = [
 ] as const;
 
 /**
+ * The two events whose handlers wrap in `{matcher, hooks}`; the other three take a bare handler.
+ *
+ * Antigravity's reference is explicit that only the tool events have a matcher target and that
+ * `PreInvocation`, `PostInvocation` and `Stop` are "Flat (list of handler objects directly)".
+ * Writing the grouped shape there produces a file it parses and ignores, which is how the
+ * integration shipped with three of its five events -- including the only one that starts a
+ * session -- registered and dead.
+ */
+export const ANTIGRAVITY_GROUPED_EVENTS: ReadonlySet<string> = new Set(['PreToolUse', 'PostToolUse']);
+
+/**
+ * The write tools, read off a real install's trajectory rather than guessed.
+ *
+ * The previous list was `write_file`, `edit_file`, `WriteFile`, `EditFile` and
+ * `replace_file_content` -- four names Antigravity has never emitted and one it has. Its
+ * reference says tool names are the step type lowercased with `CORTEX_STEP_TYPE_` stripped, so
+ * the PascalCase half could not have been right; the two real names it was missing account for
+ * more than a third of the writes in the transcripts these were read from.
+ */
+const ANTIGRAVITY_WRITE_TOOLS = ['replace_file_content', 'multi_replace_file_content', 'write_to_file'] as const;
+
+const record = (value: unknown): Record<string, unknown> | undefined =>
+  value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
+
+/**
  * Antigravity's context channel: steps spliced into the conversation trajectory.
  *
  * `ephemeralMessage` is the transient variant -- the other two are `userMessage`, which would
@@ -68,15 +93,40 @@ export const antigravityProfile: HostProfile = {
   lifecycleClaimable: false,
   midTurnDeliveryVerified: false,
   hookConfigStyle: 'antigravity-nested',
-  // Not quoted from a reference -- Antigravity documents its hook payload, not its agent's tool
-  // vocabulary. A wrong name costs detection here and nothing else: the gate degrades to "no
-  // opinion", which is its designed failure direction.
-  readsFiles: (_event, tool) => ['read_file', 'view_file', 'ReadFile'].includes(tool),
-  writesFiles: (_event, tool) =>
-    ['write_file', 'edit_file', 'replace_file_content', 'WriteFile', 'EditFile'].includes(tool),
+  // Observed, not guessed: `view_file` is the only read tool that names a single file, and the
+  // three writes are the whole write vocabulary. `grep_search` and `list_dir` read too, but not
+  // a file the read-set could record.
+  readsFiles: (_event, tool) => tool === 'view_file',
+  // The list, not a predicate: `toolWritesFile` and the pre-tool matcher then read the same
+  // three names, so the gate can never want to refuse a tool the host was told not to announce.
+  writeTools: ANTIGRAVITY_WRITE_TOOLS,
+  /**
+   * protojson, so every key is camelCase and the tool arrives as one object.
+   *
+   * `conversationId` is the session -- the previous three fallbacks (`session_id`,
+   * `conversation_id`, `thread_id`) were snake_case and Antigravity sends none of them, so
+   * every event failed the session-id check. The tool split is `toolCall: {name, args}` where
+   * the rest of the pipeline reads `tool_name`/`tool_input`, and the arguments are PascalCase:
+   * `TargetFile` on all three writes, `AbsolutePath` on the read, `CommandLine` on the shell.
+   * `workspacePaths` is the root, and missing it is what threw on every event.
+   */
+  normalizePayload(raw) {
+    const call = record(raw.toolCall);
+    const args = record(call?.args) ?? {};
+    const roots = Array.isArray(raw.workspacePaths) ? raw.workspacePaths : [];
+    return {
+      ...raw,
+      ...(roots.length > 0 ? { workspace_roots: roots } : {}),
+      ...(call?.name !== undefined ? { tool_name: call.name } : {}),
+      // `Query` is `grep_search`'s pattern, and it is here for the same reason the shared
+      // discriminator list exists: without it two searches inside the debounce window
+      // normalise to one event and the second is dropped with its change card.
+      ...(call ? { tool_input: { file_path: args.TargetFile ?? args.AbsolutePath, command: args.CommandLine, query: args.Query } } : {}),
+    };
+  },
   identity(raw): HostIdentity {
     return {
-      externalSessionId: hostString(raw.session_id) ?? hostString(raw.conversation_id) ?? hostString(raw.thread_id),
+      externalSessionId: hostString(raw.conversationId) ?? hostString(raw.conversation_id),
       externalTurnId: hostString(raw.turn_id) ?? hostString(raw.generation_id),
       ...agentIdentityFrom(raw),
     };
@@ -84,8 +134,11 @@ export const antigravityProfile: HostProfile = {
   normalizedEvent(hostEvent) {
     return ANTIGRAVITY_EVENT_MAP[hostEvent];
   },
+  // `run_command`, not `bash`/`shell`. The shared helper knows the two Anthropic-shaped names
+  // and neither is Antigravity's, so every command it ran normalised to a nameless checkpoint:
+  // no command text, no exit code, and nothing for the fleet to fingerprint a shared failure on.
   isShellEvent(_hostEvent, toolName) {
-    return toolNameIsShell(toolName);
+    return toolName === 'run_command' || toolNameIsShell(toolName);
   },
   startContext(_event, context) {
     return injectEphemeral(context);

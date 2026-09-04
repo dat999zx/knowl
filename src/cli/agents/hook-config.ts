@@ -1,6 +1,7 @@
 import { readTextIfExists, MergeStatus, writeWithBackup } from './files.js';
 import { HookHost } from './host-hook.js';
 import { hostProfile } from '../../session/hosts/index.js';
+import { ANTIGRAVITY_GROUPED_EVENTS } from '../../session/hosts/antigravity.js';
 import { KNOWL_MCP_SERVER_KEY } from '../../core/knowl-guidance.js';
 import { HOOK_TOOL_NAME, type HookTransport } from '../../core/hooks-transport.js';
 
@@ -428,6 +429,25 @@ export async function verifyFlatHookConfig(
  */
 const ANTIGRAVITY_HOOK_NAME = 'knowl';
 
+/**
+ * One event's handlers, in the shape Antigravity's reference gives *that* event.
+ *
+ * Two shapes in one file: the tool events wrap in `{matcher, hooks}`, and `PreInvocation`,
+ * `PostInvocation` and `Stop` are a bare handler list. Reusing `nestedEntry` for all five wrote
+ * the wrapper everywhere, which Antigravity parses and ignores -- so the three invocation
+ * events, including the only one that bootstraps a session, were registered and dead.
+ *
+ * No `statusMessage` either: its handler schema is `type`, `command`, `timeout` and nothing
+ * else, and a key a host does not define is usually ignored and occasionally fatal to parsing
+ * the whole file -- which would take every other hook set in it down too.
+ */
+function antigravityEntries(platform: NodeJS.Platform, host: HookHost, event: string): Record<string, unknown>[] {
+  const handler = { type: 'command', command: knowlHookCommand(platform, host, event), timeout: 30 };
+  return ANTIGRAVITY_GROUPED_EVENTS.has(event)
+    ? [{ matcher: nestedMatcher(host, event, '.*'), hooks: [handler] }]
+    : [handler];
+}
+
 export async function mergeAntigravityHookConfig(
   configPath: string,
   platform: NodeJS.Platform,
@@ -436,7 +456,7 @@ export async function mergeAntigravityHookConfig(
   const existing = await readTextIfExists(configPath);
   const config = existing === undefined ? {} as Record<string, unknown> : JSON.parse(existing) as Record<string, unknown>;
   const ours: Record<string, unknown> = {};
-  for (const event of hostProfile(host).hookEvents) ours[event] = [nestedEntry(platform, host, event)];
+  for (const event of hostProfile(host).hookEvents) ours[event] = antigravityEntries(platform, host, event);
   const next = { ...config, [ANTIGRAVITY_HOOK_NAME]: ours };
   if (existing !== undefined && equal(config, next)) return 'unchanged';
   const hadOwnEntry = config[ANTIGRAVITY_HOOK_NAME] !== undefined;
@@ -453,7 +473,8 @@ export async function verifyAntigravityHookConfig(
     const config = JSON.parse(await readTextIfExists(configPath) ?? '{}') as Record<string, any>;
     const ours = config[ANTIGRAVITY_HOOK_NAME];
     return Boolean(ours) && hostProfile(host).hookEvents.every(event => Array.isArray(ours[event])
-      && ours[event].some((entry: unknown) => equal(entry, nestedEntry(platform, host, event))));
+      && antigravityEntries(platform, host, event)
+        .every(wanted => ours[event].some((entry: unknown) => equal(entry, wanted))));
   } catch {
     return false;
   }

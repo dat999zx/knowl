@@ -172,6 +172,29 @@ describe('host profile registry', () => {
     expect(profile.midTurnContext('x')).toBeUndefined();
   });
 
+  it('reads no payload field the stdin allowlist throws away', async () => {
+    // The failure this pins killed Antigravity outright and left Windsurf one fallback short:
+    // a profile reads a field, `readLifecyclePayload` drops it before the profile ever runs,
+    // and the event dies on "requires a session id" -- which the hook entry swallows in
+    // silence, so the host reports nothing, logs nothing, and looks exactly like one nobody
+    // configured. Neither side is wrong on its own; only the pair is, which is why this asks
+    // them together rather than asserting a list.
+    const { readLifecyclePayload } = await import('../../../src/cli/agents/lifecycle.js');
+    const { Readable } = await import('node:stream');
+
+    for (const host of ALL_HOSTS) {
+      const profile = hostProfile(host);
+      const read = new Set<string>();
+      const spy = new Proxy({}, { get: (_t, key) => { if (typeof key === 'string') read.add(key); return undefined; } });
+      profile.identity(spy as Record<string, unknown>);
+      profile.normalizePayload?.(spy as Record<string, unknown>);
+      // A truthy value per key, so a survivor is visible and a dropped key is absent.
+      const sent = Object.fromEntries([...read].map(key => [key, 'x']));
+      const kept = await readLifecyclePayload(Readable.from([JSON.stringify(sent)]) as never);
+      for (const key of read) expect(kept, `${host} reads ${key}, which stdin drops`).toHaveProperty(key);
+    }
+  });
+
   it('extracts identity from each host\'s own payload keys', () => {
     expect(hostProfile('claude').identity({ session_id: 's', agent_id: 'a', agent_type: 'Explore' }))
       .toEqual({ externalSessionId: 's', externalTurnId: undefined, agentId: 'a', agentType: 'Explore' });

@@ -73,8 +73,14 @@ export const codexProfile: HostProfile = {
   normalizedEvent(hostEvent) {
     return PASCAL_EVENT_MAP_WITH_PRETOOL[hostEvent];
   },
+  // `shell` is not the only name, and by volume it is not the main one. Across this machine's
+  // codex sessions the shell tool is called `shell_command` 14,329 times, `shell` 2,059 and
+  // `exec_command` 1,174; all three are in the shipped codex.exe 0.149.1. The shared helper
+  // knows `bash` and `shell`, so two thirds of every codex command normalised to a nameless
+  // checkpoint -- no command text, no exit code, and nothing for the fleet to fingerprint a
+  // shared failure on. `apply_patch` is unaffected; it was never routed through here.
   isShellEvent(_hostEvent, toolName) {
-    return toolNameIsShell(toolName);
+    return toolNameIsShell(toolName) || toolName === 'shell_command' || toolName === 'exec_command';
   },
   startContext(event, context) {
     return hookSpecificOutput(startEventName(event), context);

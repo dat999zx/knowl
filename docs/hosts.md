@@ -66,7 +66,13 @@ knowl doctor               # what is configured, what is stale
 | Claude Desktop | platform config directory | — |
 | Hermes Agent | `config.yaml` in the Hermes home (global) | a plugin in `<Hermes home>/plugins/knowl/` |
 
-† Antigravity is two products reading two files. The IDE's "View raw config" opens `~/.gemini/antigravity/mcp_config.json`; the `agy` CLI reads `~/.gemini/config/mcp_config.json`, which Gemini CLI's migration often leaves at 0 bytes — an empty file, not a broken one. Both are confirmed against real installs, and `knowl init antigravity` writes both. The hooks path and event names are still quoted from Google's reference rather than observed.
+† Antigravity is two products reading two files. The IDE's "View raw config" opens `~/.gemini/antigravity/mcp_config.json`; the `agy` CLI reads `~/.gemini/config/mcp_config.json`, which Gemini CLI's migration often leaves at 0 bytes — an empty file, not a broken one. Both are confirmed against real installs, and `knowl init antigravity` writes both.
+
+The hooks path, event names, payload and tool vocabulary are now read off an installed bundle (`~/.gemini/antigravity/builtin/skills/agy-customizations/docs/hooks.md` plus its conversation transcripts, 2026-09-04) rather than quoted. Three things that reference settles, each of which had produced a working-looking integration that recorded nothing:
+
+- **Only `PreToolUse` and `PostToolUse` take a `{matcher, hooks}` wrapper.** `PreInvocation`, `PostInvocation` and `Stop` are a flat handler list. Wrapped, Antigravity parses them and does not run them.
+- **The payload is protojson**: every key camelCase, the session under `conversationId`, the root under `workspacePaths`, and the tool as one `toolCall: {name, args}` object whose arguments are PascalCase (`TargetFile`, `AbsolutePath`, `CommandLine`). Knowl's stdin allowlist and normalizer both speak snake_case, so every event arrived with no session id and no root — see `normalizePayload` on the host profile.
+- **The tool names are lowercase step types**: `replace_file_content`, `multi_replace_file_content`, `write_to_file` write; `view_file` reads; `run_command` is the shell.
 
 **Codex** hooks are behind `[features].codex_hooks = true` in `~/.codex/config.toml`, are experimental, and **do not run on Windows at all**. Everything else works there; only the hook-driven capabilities are unavailable. Because of that, Codex — like Antigravity and Windsurf, whose MCP entry is global while their hooks are per project — keeps the conditional lifecycle card rather than being told outright that its hooks own the session.
 
