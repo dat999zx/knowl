@@ -1,24 +1,10 @@
-import crypto from 'node:crypto';
 import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import Parser from 'tree-sitter';
 import { CodeSymbol, CodeSymbolEdge, CodeSymbolKind } from '../core/types.js';
-import { CODE_EXTENSIONS, languageForExtension } from './languages.js';
+import { CODE_EXTENSIONS, Extracted, extractSymbols, hash } from './extract.js';
 import { getClient, withClientTransaction } from '../store/database.js';
-
-type SyntaxNode = Parser.SyntaxNode;
-type IndexedSymbol = CodeSymbol & { signatureHash: string | null };
-
-const hash = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
-const locator = (filePath: string, qualifiedName: string) => `symbol://${filePath}#${qualifiedName}`;
-const lineRange = (node: SyntaxNode) => ({
-  startLine: node.startPosition.row + 1,
-  endLine: node.endPosition.row + (node.endPosition.column === 0 ? 0 : 1),
-});
-const signature = (node: SyntaxNode) => node.text.split('{', 1)[0].replace(/\s+/g, ' ').trim().slice(0, 240) || null;
-const nameOf = (node: SyntaxNode) => node.childForFieldName('name')?.text ?? node.namedChildren.find(child => ['identifier', 'type_identifier', 'property_identifier'].includes(child.type))?.text;
 
 /**
  * Directory names the index never descends into, at any depth.
@@ -29,24 +15,10 @@ const nameOf = (node: SyntaxNode) => node.childForFieldName('name')?.text ?? nod
  * write-triggered `indexFile('dist/bundle.js')` would happily index it, and the store would hold
  * symbols the full pass then deletes on its next run. One list, one answer.
  */
-const EXCLUDED_DIRECTORIES = new Set(['.git', '.knowl', 'dist', 'node_modules']);
-
-/**
- * How much source to hand tree-sitter per read.
- *
- * `Parser.parse` accepts a string, and handed one it copies the whole thing into a single
- * fixed buffer whose default is 32 KB -- past that the native binding throws a bare
- * `Error: Invalid argument` with no mention of size. `src/cli/program.ts` (110 KB),
- * `src/mcp/tools.ts` (93 KB), `src/store/{agent-query,portability,bootstrap}.ts` and
- * `src/transcripts/index-pass.ts` are all over it, so the six largest files in this repo were
- * the six the index could not see, and `knowl index-code` failed on the first one it reached.
- *
- * The callback form has no such ceiling: tree-sitter asks for the next slice and we answer one
- * chunk at a time, so the buffer never has to hold more than this. A size rather than a guess
- * at the file's own -- `{ bufferSize: text.length }` also works, but it makes the largest file
- * in the repo decide the allocation.
- */
-const PARSE_CHUNK_BYTES = 16 * 1024;
+// `vendor` and `venv` are skipped at any depth for every language: overwhelmingly third-party, and a
+// first-party directory by either name loses its rows on the next pass of either entry point rather
+// than gaining junk.
+const EXCLUDED_DIRECTORIES = new Set(['.git', '.knowl', 'dist', 'node_modules', '__pycache__', '.venv', 'venv', 'vendor']);
 
 function ignored(root: string, file: string): boolean {
   if (!existsSync(path.join(root, '.git'))) return false;
@@ -72,122 +44,6 @@ async function walkCodeFiles(root: string, directory = root): Promise<string[]> 
   return files;
 }
 
-function addSymbol(symbols: IndexedSymbol[], filePath: string, qualifiedName: string, kind: CodeSymbolKind, node: SyntaxNode) {
-  const summary = signature(node);
-  symbols.push({ locator: locator(filePath, qualifiedName), filePath, qualifiedName, kind, ...lineRange(node), signature: summary, signatureHash: summary ? hash(summary) : null });
-}
-
-function collectClassMembers(symbols: IndexedSymbol[], filePath: string, className: string, declaration: SyntaxNode) {
-  const body = declaration.namedChildren.find(child => child.type === 'class_body');
-  for (const member of body?.namedChildren ?? []) {
-    if (!['method_definition', 'public_field_definition'].includes(member.type)) continue;
-    const memberName = nameOf(member);
-    if (memberName) addSymbol(symbols, filePath, `${className}.${memberName}`, 'method', member);
-  }
-}
-
-function collectDeclaration(symbols: IndexedSymbol[], filePath: string, node: SyntaxNode): string | null {
-  if (node.type === 'class_declaration') {
-    const name = nameOf(node);
-    if (!name) return null;
-    addSymbol(symbols, filePath, name, 'class', node);
-    collectClassMembers(symbols, filePath, name, node);
-    return name;
-  }
-  if (node.type === 'function_declaration') {
-    const name = nameOf(node);
-    if (!name) return null;
-    addSymbol(symbols, filePath, name, 'function', node);
-    return name;
-  }
-  if (node.type === 'lexical_declaration' || node.type === 'variable_declaration') {
-    for (const declarator of node.namedChildren.filter(child => child.type === 'variable_declarator')) {
-      const name = nameOf(declarator);
-      const value = declarator.childForFieldName('value');
-      if (name && value?.type === 'arrow_function') {
-        addSymbol(symbols, filePath, name, 'variable', declarator);
-        return name;
-      }
-    }
-  }
-  return null;
-}
-
-function collectExportSpecifiers(symbols: IndexedSymbol[], edges: CodeSymbolEdge[], filePath: string, clause: SyntaxNode) {
-  for (const specifier of clause.namedChildren.filter(child => child.type === 'export_specifier')) {
-    const names = specifier.namedChildren.filter(child => ['identifier', 'type_identifier'].includes(child.type));
-    const source = names[0]?.text;
-    const exported = names.at(-1)?.text;
-    if (!source || !exported) continue;
-    addSymbol(symbols, filePath, `export:${exported}`, 'export', specifier);
-    edges.push({ fromLocator: locator(filePath, `export:${exported}`), toLocator: locator(filePath, source), kind: 'exports' });
-  }
-}
-
-function extractSymbols(filePath: string, text: string): { symbols: IndexedSymbol[]; edges: CodeSymbolEdge[] } {
-  const parser = new Parser();
-  const language = languageForExtension(path.extname(filePath));
-  if (!language) return { symbols: [], edges: [] };
-  parser.setLanguage(language);
-  const symbols: IndexedSymbol[] = [];
-  const edges: CodeSymbolEdge[] = [];
-  const root = parser.parse(offset => text.slice(offset, offset + PARSE_CHUNK_BYTES)).rootNode;
-
-  for (const node of root.namedChildren) {
-    if (node.type === 'import_statement') {
-      const source = node.namedChildren.find(child => child.type === 'string')?.text.replace(/^['"]|['"]$/g, '');
-      if (!source) continue;
-      const name = `import:${source}`;
-      addSymbol(symbols, filePath, name, 'import', node);
-      edges.push({ fromLocator: locator(filePath, name), toLocator: `module://${source}`, kind: 'imports' });
-      continue;
-    }
-
-    if (node.type === 'export_statement') {
-      const declaration = node.namedChildren.find(child => ['class_declaration', 'function_declaration', 'lexical_declaration', 'variable_declaration'].includes(child.type));
-      const exportedName = declaration ? collectDeclaration(symbols, filePath, declaration) : null;
-      if (exportedName) {
-        addSymbol(symbols, filePath, `export:${exportedName}`, 'export', node);
-        edges.push({ fromLocator: locator(filePath, `export:${exportedName}`), toLocator: locator(filePath, exportedName), kind: 'exports' });
-      }
-      const clause = node.namedChildren.find(child => child.type === 'export_clause');
-      if (clause) collectExportSpecifiers(symbols, edges, filePath, clause);
-      continue;
-    }
-
-    collectDeclaration(symbols, filePath, node);
-  }
-  return { symbols: firstPerLocator(symbols), edges };
-}
-
-/**
- * One symbol per locator, keeping the first.
- *
- * `code_symbols.locator` is the primary key and the insert is a plain `INSERT`, so a file that
- * yields the same locator twice aborted the whole index with
- * `SQLITE_CONSTRAINT_PRIMARYKEY: UNIQUE constraint failed`. It is not a rare shape: an import
- * symbol is named after its module specifier, so `import type { A } from './x.js'` beside
- * `import { b } from './x.js'` is a collision, and ten files in this repo's own `src/` had one.
- * TypeScript overload sets collide the same way -- every signature declares the same name.
- *
- * Dropped here rather than with `INSERT OR IGNORE` because the duplicate is not a database
- * concern: two `import` statements for one module *are* one dependency, and the extractor is
- * where that is known. Doing it in SQL would also silently keep whichever row happened to be
- * inserted first, which is the same answer arrived at by accident.
- *
- * Edges need no matching pass: they address symbols by locator, so an edge that referred to a
- * dropped duplicate refers to the survivor by construction, and the edge insert is already
- * `INSERT OR IGNORE`.
- */
-function firstPerLocator(symbols: IndexedSymbol[]): IndexedSymbol[] {
-  const seen = new Set<string>();
-  return symbols.filter(symbol => {
-    if (seen.has(symbol.locator)) return false;
-    seen.add(symbol.locator);
-    return true;
-  });
-}
-
 /** The rows for one file, with no transaction of its own: every caller is already inside one. */
 async function deleteIndexedFileRows(filePath: string) {
   const client = getClient();
@@ -199,7 +55,7 @@ async function deleteIndexedFileRows(filePath: string) {
   await client.execute({ sql: 'DELETE FROM code_files WHERE path = ?', args: [filePath] });
 }
 
-async function replaceIndexedFileRows(filePath: string, contentHash: string, extracted: ReturnType<typeof extractSymbols>) {
+async function replaceIndexedFileRows(filePath: string, contentHash: string, extracted: Extracted) {
   const client = getClient();
   await deleteIndexedFileRows(filePath);
   await client.execute({ sql: 'INSERT INTO code_files (path, content_hash, updated_at) VALUES (?, ?, ?)', args: [filePath, contentHash, new Date().toISOString()] });
@@ -246,7 +102,7 @@ async function deleteIndexedFile(filePath: string) {
   await withClientTransaction(() => deleteIndexedFileRows(filePath));
 }
 
-async function replaceIndexedFile(filePath: string, contentHash: string, extracted: ReturnType<typeof extractSymbols>) {
+async function replaceIndexedFile(filePath: string, contentHash: string, extracted: Extracted) {
   await withClientTransaction(() => replaceIndexedFileRows(filePath, contentHash, extracted));
 }
 
@@ -317,12 +173,14 @@ async function forgetIndexedFile(filePath: string): Promise<void> {
  * Everything ineligible returns quietly rather than throwing: a trigger hands this whatever path a
  * tool touched, so a `.md` file, a directory, `node_modules/`, a gitignored artifact and a path
  * outside the repo are all ordinary traffic, not caller errors. A throw here would surface as a
- * failed hook on an event that was never ours to act on. The one non-quiet case is a path that
- * has gone from disk: that is a real index update, so its rows are removed.
+ * failed hook on an event that was never ours to act on. Two cases are not quiet: a path that has
+ * gone from disk, and a code file under a directory the walk refuses. Both are real index updates
+ * -- the second because the refused list grows, and a row indexed before its directory joined it
+ * would otherwise sit frozen until someone ran the full pass by hand -- so their rows are removed.
  *
- * A gitignored path is a no-op even if the index somehow holds it -- the full pass's
- * reconciliation already deletes anything the walk no longer yields, so the cleanup exists and
- * does not need a second, contradictory implementation on the hot path.
+ * A gitignored path is still a no-op even if the index somehow holds it: knowing that costs a
+ * `git` spawn, and the full pass's reconciliation already deletes anything the walk no longer
+ * yields.
  *
  * Opens its own transaction, so it must not be called from inside one (`withClientTransaction`
  * refuses to nest).
@@ -332,8 +190,8 @@ export async function indexFile(root: string, filePath: string): Promise<void> {
   // `path.relative` answers `..`-prefixed for a path above the root, and on Windows an absolute
   // path for one on another drive. Either way it is not in this repo and has no locator here.
   if (!relativePath || relativePath === '..' || relativePath.startsWith('../') || path.isAbsolute(relativePath)) return;
-  if (relativePath.split('/').some(segment => EXCLUDED_DIRECTORIES.has(segment))) return;
   if (!CODE_EXTENSIONS.has(path.extname(relativePath))) return;
+  if (relativePath.split('/').some(segment => EXCLUDED_DIRECTORIES.has(segment))) return forgetIndexedFile(relativePath);
 
   // Deletion is decided before the ignore test on purpose: `ignored` spawns a `git` process, and
   // a path that is gone needs no rule to tell us it should not be in the index.

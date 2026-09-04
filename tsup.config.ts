@@ -36,6 +36,8 @@ export default defineConfig({
     'tree-sitter',
     'tree-sitter-javascript',
     'tree-sitter-typescript',
+    'tree-sitter-python',
+    'tree-sitter-go',
     '@huggingface/transformers',
   ],
   noExternal: [

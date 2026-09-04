@@ -561,7 +561,7 @@ knowl doctor                           # setup, retrieval, and registration
   `knowl status` dates those instead, by how long since anyone last *restated* them, and names the
   ones furthest past their own category's cadence. It ranks rather than flags: for prose there is
   no evidence a claim became false, only the absence of anyone reaffirming it.
-- **Code intelligence** — incremental Tree-sitter index over `.ts` / `.tsx` / `.js` / `.jsx`, so
+- **Code intelligence** — incremental Tree-sitter index over TypeScript, JavaScript, Python and Go, so
   evidence can point at `symbol://` locators, not just line numbers. `knowl index-code`
 - **Secret-safe writes** — every write is screened for detected secrets, sensitive paths, and
   oversized content before it lands. Long-lived memory is the last place a credential should end up.

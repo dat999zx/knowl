@@ -124,6 +124,9 @@ describe('isChurnPath', () => {
     'README.md',
     '.github/workflows/ci.yml',
     'dist/index.js',
+    'go.sum',
+    'services/api/poetry.lock',
+    'uv.lock',
   ])('treats %s as churn', (candidate) => {
     expect(isChurnPath(candidate)).toBe(true);
   });
@@ -133,6 +136,8 @@ describe('isChurnPath', () => {
     'src/cli/program.ts',
     'tests/store/gc.test.ts',
     'docs/reference.md',
+    'go.mod',
+    'pyproject.toml',
   ])('does not treat %s as churn', (candidate) => {
     expect(isChurnPath(candidate)).toBe(false);
   });
