@@ -456,3 +456,26 @@ export function shouldSendDriftReminder(drift: number, every: number, backoff: b
   const step = drift / every + 1;
   return (step & (step - 1)) === 0;
 }
+
+/**
+ * Link this project to the machine's global store, or unlink it.
+ *
+ * Per project on purpose. A machine-wide "every project sees global" default would make one
+ * careless write visible everywhere, which is the contamination the governing decision rejected
+ * when it turned down a single merged cross-project pool.
+ *
+ * Unlinking sets `enabled: false` rather than deleting the key, and never touches the store: the
+ * decision is meant to be reversible, and a store deleted by a config change would not be.
+ */
+export async function setGlobalNamespace(root: string, enabled: boolean): Promise<void> {
+  const { globalStorePath } = await import('./paths.js');
+  if (enabled) {
+    const { ensureGlobalStore } = await import('../store/global-store.js');
+    await ensureGlobalStore();
+  }
+  const config = await loadConfig(root);
+  await saveConfig(root, {
+    ...config,
+    memory: { ...config.memory, global: { enabled, path: globalStorePath() } },
+  });
+}

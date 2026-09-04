@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 import { spawnWorkLoopCommand } from './windows-spawn.js';
 import { PACKAGE_NAME, PACKAGE_VERSION } from '../version.js';
 import { checkForUpdate, formatUpdateNotice, isUpdateCheckEnabled } from '../core/version-check.js';
-import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, hasAiConfigured } from '../core/config.js';
+import { NEW_PROJECT_CONFIG, findProjectRoot, isProjectRoot, loadConfig, saveConfig, setGlobalNamespace, hasAiConfigured } from '../core/config.js';
 import {
   installKnowlProjectGuidance,
   KnowlProjectGuidanceInstallResult,
@@ -2484,6 +2484,28 @@ program
       await closeDb();
     } catch (error: any) {
       console.error(`❌ Error recording decision: ${error.message}`);
+      process.exit(1);
+    }
+  });
+
+const linkCommand = program
+  .command('link')
+  .description('Link this project to a shared memory layer');
+
+linkCommand
+  .command('global')
+  .description('Read and write the machine-wide personal-defaults store from this project')
+  .option('--off', 'Unlink; the store itself is left alone')
+  .action(async (options: { off?: boolean }) => {
+    try {
+      const root = await findProjectRoot(process.cwd());
+      await setGlobalNamespace(root, !options.off);
+      const { globalStorePath } = await import('../core/paths.js');
+      console.log(options.off
+        ? `Unlinked from ${globalStorePath()}. The store was not changed.`
+        : `Linked to ${globalStorePath()}. Project knowledge still answers first.`);
+    } catch (error: any) {
+      console.error(`Error: ${error.message}`);
       process.exit(1);
     }
   });
