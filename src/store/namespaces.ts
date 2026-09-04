@@ -1,5 +1,7 @@
+import fsSync from 'node:fs';
 import path from 'node:path';
 import type { KnowledgeCategory, KnowledgeItem, KnowledgeStatus, ProjectConfig } from '../core/types.js';
+import { globalStorePath } from '../core/paths.js';
 import { withDbPath } from './database.js';
 import { queryKnowledgeForAgent } from './agent-query.js';
 import { resolveStorage } from './storage-roles.js';
@@ -12,6 +14,29 @@ const RANK: Record<MemoryNamespace, number> = { session: 1, project: 2, organiza
 
 export function projectNamespace(root: string): NamespaceDescriptor { return { namespace: 'project', databasePath: resolveStorage(root).knowledge, precedence: RANK.project }; }
 export function sessionNamespace(root: string): NamespaceDescriptor { return { namespace: 'session', databasePath: resolveStorage(root).session, precedence: RANK.session }; }
+
+/** The global store as a namespace, addressed by its known path rather than a project's config. */
+export function globalNamespaceDescriptor(): NamespaceDescriptor {
+  return { namespace: 'global', databasePath: globalStorePath(), precedence: RANK.global };
+}
+
+/**
+ * The namespaces available when there is no project at all -- `knowl` outside a repository, or a
+ * host session with no folder open.
+ *
+ * Global alone, and only when it exists: a machine that never created one has no memory here, and
+ * saying so is better than an empty answer from a store that was never made.
+ *
+ * Deliberately NOT a fallback. Nothing calls this when a project was found and failed to open --
+ * a broken project is an error, and answering it from the personal-defaults layer would be the
+ * cross-project contamination this layer exists to avoid.
+ */
+export function globalOnlyNamespaces(): NamespaceDescriptor[] {
+  const descriptor = globalNamespaceDescriptor();
+  // `optional` is what lets the layered reader swallow a namespace's failure. Here it is the only
+  // store, so a failure has to surface.
+  return fsSync.existsSync(descriptor.databasePath) ? [{ ...descriptor, optional: false }] : [];
+}
 export function namespacePrecedence<T extends { namespace: MemoryNamespace }>(items: T[]): T[] { return [...items].sort((a, b) => RANK[a.namespace] - RANK[b.namespace]); }
 
 export function defaultNamespaces(root: string): NamespaceDescriptor[] {
