@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { commandExistsOnPath } from '../cli/agents/command-exists.js';
+import { commandExistsOnPath } from '../core/command-exists.js';
 
 const execFileAsync = promisify(execFile);
 
