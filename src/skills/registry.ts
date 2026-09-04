@@ -211,6 +211,8 @@ export async function createSkillPackage(projectRoot: string, input: CreateSkill
     version: 1,
     createdAt: now,
     updatedAt: now,
+    ...(input.requires ? { requires: input.requires } : {}),
+    provenance: input.provenance || 'authored locally',
   };
   const markdown = input.markdown || `# ${input.name}\n\nPurpose: ${input.purpose}\n`;
 
@@ -260,6 +262,7 @@ async function readManifest(skillDir: string, expectedName: string): Promise<Ski
   }
   manifest.entrypoints = normalizeEntrypoints(manifest.entrypoints);
   manifest.triggers = manifest.triggers || [];
+  manifest.provenance = manifest.provenance || 'authored locally';
   return manifest;
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { interpolate, resolveBinding } from '../../src/skills/bindings.js';
+import { assertPinned, interpolate, resolveBinding } from '../../src/skills/bindings.js';
 
 const manifest = {
   name: 'release', purpose: 'cut a release', version: 1, entrypoints: {},
@@ -30,5 +30,12 @@ describe('bindings fill a playbook in', () => {
     for (const bad of ['${env.PATH}', '${process.cwd()}', '$(whoami)', '${inputs.nope}']) {
       expect(() => interpolate([bad], { test_command: 'npm test' }), bad).toThrow();
     }
+  });
+
+  it('refuses a pinned binding when the playbook has moved on, naming both versions', () => {
+    expect(() => assertPinned({ ...manifest, version: 4 }, { version: 3 }))
+      .toThrow(/pinned to 3.*now 4/i);
+    expect(() => assertPinned({ ...manifest, version: 3 }, { version: 3 })).not.toThrow();
+    expect(() => assertPinned({ ...manifest, version: 4 }, {})).not.toThrow();   // unpinned: fine
   });
 });
