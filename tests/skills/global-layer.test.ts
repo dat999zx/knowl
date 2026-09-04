@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { globalSkillsRoot } from '../../src/skills/paths.js';
-import { createSkillPackage, listSkillPackages, readSkillPackage } from '../../src/skills/registry.js';
+import { listSkillPackages, readSkillPackage } from '../../src/skills/registry.js';
 import { formatRunBanner } from '../../src/skills/run-banner.js';
 
 const HOME = path.join(os.tmpdir(), 'knowl-gs-home');

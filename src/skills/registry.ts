@@ -394,12 +394,6 @@ function scriptCommand(scriptPath: string, args: string[]): { command: string; a
   return { command: scriptPath, args };
 }
 
-function runScript(projectRoot: string, scriptPath: string, args: string[], env: NodeJS.ProcessEnv) {
-  const command = scriptCommand(scriptPath, args);
-  const child = spawnSync(command.command, command.args, spawnLimits(projectRoot, env));
-  return { child, commandText: [command.command, ...command.args].join(' ') };
-}
-
 function childToAttempt(entrypoint: string, commandText: string, child: ReturnType<typeof spawnSync>): SkillRunAttempt {
   return {
     entrypoint,

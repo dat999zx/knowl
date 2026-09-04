@@ -165,7 +165,7 @@ export async function assertBindingNotSelfApproved(projectRoot: string, name: st
   if (!localExists) return;
 
   const configPath = path.join(projectRoot, '.knowl', 'config.json');
-  let config: any = {};
+  let config: any;
   try {
     config = JSON.parse(await fs.readFile(configPath, 'utf-8'));
   } catch {
