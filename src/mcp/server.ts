@@ -15,6 +15,8 @@ import {
   mcpServerInstructions,
 } from '../core/knowl-guidance.js';
 import { beginStartupTrace, finishStartupTrace, serveBanner, tracePhase } from '../core/startup-trace.js';
+import { knowlHome } from '../core/paths.js';
+import { globalOnlyNamespaces } from '../store/namespaces.js';
 
 export { KNOWL_MCP_TOOL_NAMES };
 
@@ -178,7 +180,13 @@ export async function startMcpServer(options: { host?: string } = {}): Promise<v
         initError = `Automatic initialization failed: ${scaffoldError.message}`;
       }
     } else {
-      initError = error.message;
+      if (globalOnlyNamespaces().length > 0) {
+        projectRoot = null;
+        config = await tracePhase('globalLoadConfig', () => loadConfig(knowlHome()));
+        initError = null;
+      } else {
+        initError = error.message;
+      }
     }
   }
 
@@ -187,22 +195,26 @@ export async function startMcpServer(options: { host?: string } = {}): Promise<v
   const ready = (async () => {
     if (initError) return;
     try {
-      // Init DB. AI is optional and initialized lazily only for AI-backed tools.
-      await tracePhase('initDb', () => initDb(projectRoot!));
+      if (projectRoot) {
+        // Init DB. AI is optional and initialized lazily only for AI-backed tools.
+        await tracePhase('initDb', () => initDb(projectRoot!));
 
-      // Get project details
-      project = await tracePhase('getProject', () => getProjectByRootPath(projectRoot!));
-      if (autoInitialized) {
-        // The scaffold above made the directory a root; this finishes what init would have:
-        // the machine registry entry and the `.gitignore` line. Not gated on `!project`,
-        // because `getProjectByRootPath` synthesizes the local project for any root — a
-        // truthy project says nothing about whether those two side effects ever happened.
-        // Behind the handshake because it opens the database, which is the work the connect
-        // deadline must not wait on.
-        project = await tracePhase('adoptProject', () => adoptProject(projectRoot!));
-      }
-      if (!project) {
-        throw new Error('Knowl project is not initialized. Run "knowl init" first.');
+        // Get project details
+        project = await tracePhase('getProject', () => getProjectByRootPath(projectRoot!));
+        if (autoInitialized) {
+          // The scaffold above made the directory a root; this finishes what init would have:
+          // the machine registry entry and the `.gitignore` line. Not gated on `!project`,
+          // because `getProjectByRootPath` synthesizes the local project for any root — a
+          // truthy project says nothing about whether those two side effects ever happened.
+          // Behind the handshake because it opens the database, which is the work the connect
+          // deadline must not wait on.
+          project = await tracePhase('adoptProject', () => adoptProject(projectRoot!));
+        }
+        if (!project) {
+          throw new Error('Knowl project is not initialized. Run "knowl init" first.');
+        }
+      } else {
+        project = { id: 'local', name: 'global', rootPath: knowlHome() };
       }
     } catch (error: any) {
       initError = error.message;

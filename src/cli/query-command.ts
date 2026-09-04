@@ -6,6 +6,8 @@ import { queryKnowledgeBase } from '../store/queries.js';
 import { queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { peerVectorResolver } from '../ai/embeddings.js';
+import { knowlHome } from '../core/paths.js';
+import { configuredNamespaces, globalOnlyNamespaces, queryLayeredKnowledge } from '../store/namespaces.js';
 
 /**
  * How many results `knowl query` returns when no `--limit` is given.
@@ -17,7 +19,7 @@ import { peerVectorResolver } from '../ai/embeddings.js';
  */
 export const CLI_QUERY_LIMIT = 20;
 
-export type CliQueryItem = KnowledgeItem & { repo?: string; score?: number; cosine?: number; abstained?: boolean };
+export type CliQueryItem = KnowledgeItem & { repo?: string; score?: number; cosine?: number; abstained?: boolean; namespace?: string };
 
 export type CliQueryResult = {
   /**
@@ -84,8 +86,8 @@ function withRankerVerdict<T extends { explanation?: { finalScore?: number; abst
  * ranker does not implement it.
  */
 export async function runCliQuery(input: {
-  projectRoot: string;
-  projectId: string;
+  projectRoot?: string;
+  projectId?: string;
   query?: string;
   limit?: number;
   asOf?: string;
@@ -96,16 +98,20 @@ export async function runCliQuery(input: {
   // query across repos has no defined semantics, and the ranker has no notion of a point in
   // time -- so this path is deliberately the old one.
   if (input.asOf) {
-    return flat(await queryKnowledgeBase(input.projectId, {
+    if (!input.projectRoot) {
+      return flat([]);
+    }
+    return flat(await queryKnowledgeBase(input.projectId ?? 'local', {
       query: input.query, limit: input.limit, asOf: input.asOf,
     }));
   }
 
-  const config = await loadConfig(input.projectRoot).catch(() => null);
+  const effectiveRoot = input.projectRoot ?? knowlHome();
+  const config = await loadConfig(effectiveRoot).catch(() => null);
   let vector: RankOptions['vector'];
   if (input.query && config && isVectorSearchEnabled(config)) {
     try {
-      const embedder = await createLocalEmbeddingProvider(config, input.projectRoot);
+      const embedder = await createLocalEmbeddingProvider(config, effectiveRoot);
       const embedding = await embedder.embedQuery(input.query);
       vector = {
         enabled: true,
@@ -119,7 +125,7 @@ export async function runCliQuery(input: {
     }
   }
 
-  const active = await resolveWorkspace(input.projectRoot, config ?? undefined);
+  const active = input.projectRoot ? await resolveWorkspace(input.projectRoot, config ?? undefined) : null;
   if (active) {
     const federated = await queryFederated({
       workspace: active, query: input.query ?? '', limit, vector,
@@ -139,5 +145,22 @@ export async function runCliQuery(input: {
     };
   }
 
-  return flat((await rankKnowledge(input.projectId, { query: input.query, limit, vector })).map(withRankerVerdict));
+  const descriptors = input.projectRoot
+    ? configuredNamespaces(input.projectRoot, config ?? undefined)
+    : globalOnlyNamespaces();
+
+  if (descriptors.length > 0) {
+    const layered = await queryLayeredKnowledge(
+      effectiveRoot,
+      input.query ?? '',
+      descriptors,
+      limit,
+      'cli',
+      {},
+      vector,
+    );
+    return flat(layered.items.map(withRankerVerdict));
+  }
+
+  return flat((await rankKnowledge(input.projectId ?? 'local', { query: input.query, limit, vector })).map(withRankerVerdict));
 }

@@ -800,10 +800,23 @@ function timestampOption(raw: unknown, flag: string): string | undefined {
 
 program.command('query').argument('[query]').description('Search project memory by keywords').option('--as-of <timestamp>').option('--limit <count>').action(async (query, options) => {
   try {
-    const root = await findProjectRoot(process.cwd());
-    await initDb(root);
-    const project = await repo.getProjectByRootPath(root);
-    if (!project) throw new Error('Project not found in database.');
+    let root: string | undefined;
+    let projectId: string = 'local';
+    try {
+      root = await findProjectRoot(process.cwd());
+      await initDb(root);
+      const project = await repo.getProjectByRootPath(root);
+      if (!project) throw new Error('Project not found in database.');
+      projectId = project.id;
+    } catch (err: any) {
+      const { globalOnlyNamespaces } = await import('../store/namespaces.js');
+      if (globalOnlyNamespaces().length > 0) {
+        root = undefined;
+        projectId = 'local';
+      } else {
+        throw err;
+      }
+    }
     const limit = numericOption(options.limit, '--limit');
     const asOf = timestampOption(options.asOf, '--as-of');
 
@@ -812,7 +825,7 @@ program.command('query').argument('[query]').description('Search project memory 
     // while knowl_query used the shared ranker, and the workspace branch used the ranker while
     // the solo branch did not -- the same command disagreeing with itself.
     const { items, groups, unshown, shape, skipped } = await runCliQuery({
-      projectRoot: root, projectId: project.id, query, limit, asOf,
+      projectRoot: root, projectId, query, limit, asOf,
     });
 
     // Keyed by repo the moment a linked repo contributes a row, and a bare array otherwise --

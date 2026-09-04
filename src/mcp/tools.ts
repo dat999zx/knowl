@@ -8,7 +8,8 @@ import { KNOWLEDGE_CATEGORIES, ProjectConfig, KnowledgeCategory, KnowledgeItem, 
 import { resolveWorkspace } from '../workspace/resolve.js';
 import { assertOwnedItem, findForeignItem } from '../workspace/ownership.js';
 import { withRepoContext } from '../workspace/act-as.js';
-import { getProjectRoot as ambientProjectRoot } from '../store/database.js';
+import { getProjectRoot as ambientProjectRoot, withDbPath } from '../store/database.js';
+import { globalStorePath, knowlHome } from '../core/paths.js';
 import { flattenGroups, queryFederated, type FederatedResult } from '../workspace/federated-query.js';
 import { recordDemandEventBestEffort } from '../workspace/demand-ledger.js';
 import { hasAiConfigured } from '../core/config.js';
@@ -43,7 +44,7 @@ import { formatPendingHandoffContext, recordDeliberateHandoff } from '../session
 import { createResumePoint, formatResumeBrief, listResumePoints, readResumePoint } from '../session/resume-points.js';
 import { resumeInstruction } from '../session/resume-keys.js';
 import { finalizeMemorySession } from '../store/session-finalizer.js';
-import { configuredNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
+import { configuredNamespaces, globalOnlyNamespaces, namespaceDescriptor, queryLayeredKnowledge, withNamespaceDatabase } from '../store/namespaces.js';
 import { isTranscriptFallbackEnabled, isTranscriptSearchEnabled } from '../transcripts/config.js';
 import { hasIndexableArchive } from '../transcripts/paths.js';
 import { handleSessionList, handleTranscriptRead, handleTranscriptSearch, NO_TRANSCRIPT_MATCHES_PREFIX } from '../transcripts/mcp-handlers.js';
@@ -574,7 +575,10 @@ export function registerTools(
       }
       
       else if (name === 'knowl_state') {
-        const hierarchy = await getHierarchicalKnowledge(projectId!);
+        const getHierarchy = () => getHierarchicalKnowledge(projectId!);
+        const hierarchy = !projectRoot
+          ? await withDbPath(globalStorePath(), getHierarchy)
+          : await getHierarchy();
         const { maxChars } = args as any;
         const md = formatHierarchyToMarkdown(hierarchy, { maxChars });
         // Names the linked repos without quoting their content: an agent should know a
@@ -593,10 +597,13 @@ export function registerTools(
 
       else if (name === 'knowl_recent') {
         const { itemLimit, commitLimit, maxChars } = args as any;
-        const context = await getRecentContext(projectId!, {
+        const getRecent = () => getRecentContext(projectId!, {
           itemLimit,
           commitLimit,
         });
+        const context = !projectRoot
+          ? await withDbPath(globalStorePath(), getRecent)
+          : await getRecent();
         return {
           content: [{ type: 'text', text: formatRecentContextToMarkdown(context, { maxChars }) }],
         };
@@ -610,6 +617,13 @@ export function registerTools(
         }
         try { await assertOwnedTargets([supersedes], projectRoot, config); }
         catch (error) { return { isError: true, content: [{ type: 'text', text: (error as Error).message }] }; }
+
+        let globalNote: string | null = null;
+        if (!projectRoot || namespace === 'global') {
+          const { assertGlobalWrite, ensureGlobalStore } = await import('../store/global-store.js');
+          globalNote = assertGlobalWrite(affectedPaths ?? []);
+          await ensureGlobalStore();
+        }
 
         const store = () => storeKnowledgeItemDeduped(
           projectId!,
@@ -634,9 +648,15 @@ export function registerTools(
           `Store ${category}: ${title}`,
           config?.security,
         );
-        const result = namespace === 'project'
-          ? await store()
-          : await withNamespaceDatabase(namespaceDescriptor(projectRoot!, namespace, config ?? undefined), store);
+
+        let result;
+        if (!projectRoot || namespace === 'global') {
+          result = await withDbPath(globalStorePath(), store);
+        } else if (namespace === 'project') {
+          result = await store();
+        } else {
+          result = await withNamespaceDatabase(namespaceDescriptor(projectRoot!, namespace, config ?? undefined), store);
+        }
 
         if (result.action === 'duplicate') {
           return {
@@ -658,7 +678,8 @@ export function registerTools(
           content: [{
             type: 'text',
             text: `Successfully stored ${category} ${result.item.id}${describeWriteReconciliation(result)}`
-              + (local === true ? ' Marked local: it will not be published to the team.' : ''),
+              + (local === true ? ' Marked local: it will not be published to the team.' : '')
+              + (globalNote ? `\n${globalNote}` : ''),
           }],
         };
       }
@@ -861,9 +882,10 @@ export function registerTools(
           // tests/mcp/query-pointer-surface.test.ts — federate this path and that test fails.
           return { content: [{ type: 'text', text: compactMcpJson(items.map(item => compactItemResponse(item))) }] };
         }
+        const effectiveRoot = projectRoot ?? knowlHome();
         let vector;
-        if (config && projectRoot && query && isVectorSearchEnabled(config)) {
-          const embedder = await createLocalEmbeddingProvider(config, projectRoot);
+        if (config && effectiveRoot && query && isVectorSearchEnabled(config)) {
+          const embedder = await createLocalEmbeddingProvider(config, effectiveRoot);
           const embedding = await embedder.embedQuery(query);
           vector = {
             enabled: true,
@@ -887,10 +909,13 @@ export function registerTools(
         // namespace was written to and never read from. Each namespace now carries its own
         // embedding identity (`namespaceFingerprint`), so vector search spans them; `explain`
         // still falls through, because its per-term reporting is single-store by construction.
-        const layered = Boolean(projectRoot) && !explain;
+        const descriptors = projectRoot
+          ? configuredNamespaces(projectRoot, config ?? undefined)
+          : globalOnlyNamespaces();
+        const layered = descriptors.length > 0 && !explain;
         const layeredResult = layered
           ? await queryLayeredKnowledge(
-            projectRoot!, query ?? '', configuredNamespaces(projectRoot!, config ?? undefined),
+            effectiveRoot, query ?? '', descriptors,
             limit ?? DEFAULT_RESULT_LIMIT, 'mcp',
             { category: category as KnowledgeCategory, status: status as KnowledgeStatus, tags },
             vector,
@@ -898,7 +923,9 @@ export function registerTools(
           : null;
         const items = layeredResult
           ? layeredResult.items
-          : await queryKnowledgeForAgentExplained(projectId!, queryOptions);
+          : (projectRoot
+            ? await queryKnowledgeForAgentExplained(projectId!, queryOptions)
+            : await withDbPath(globalStorePath(), () => queryKnowledgeForAgentExplained('local', queryOptions)));
 
         // Reported by the reader rather than inferred here: it is the only code that knows which
         // namespaces it actually reached.

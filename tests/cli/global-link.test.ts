@@ -121,3 +121,63 @@ describe('setup outside a repository', () => {
   });
 });
 
+describe('CLI query with global layer', () => {
+  it('returns project item ahead of global item in a linked project, and queries global outside project', async () => {
+    const { ensureGlobalStore } = await import('../../src/store/global-store.js');
+    const { storeKnowledgeItemDeduped } = await import('../../src/store/knowledge-writer.js');
+    const { withDbPath, initDb } = await import('../../src/store/database.js');
+    const { setGlobalNamespace } = await import('../../src/core/config.js');
+    const { runCliQuery } = await import('../../src/cli/query-command.js');
+    const repo = await import('../../src/store/repository.js');
+
+    const home = path.join(os.tmpdir(), `knowl-link-cli-home-${testCount++}`);
+    const project = path.join(os.tmpdir(), `knowl-link-cli-project-${testCount++}`);
+    const saved = process.env.KNOWL_HOME;
+    try {
+      process.env.KNOWL_HOME = home;
+      await fs.mkdir(path.join(project, '.knowl'), { recursive: true });
+      await saveConfig(project, { ...DEFAULT_CONFIG });
+      await initDb(project);
+      await repo.createProject(project, 'cli-test');
+
+      // Project item
+      await storeKnowledgeItemDeduped('local', {
+        category: 'constraint',
+        title: 'Project package manager',
+        content: 'This project uses yarn',
+      });
+
+      // Global item
+      const { path: storePath } = await ensureGlobalStore();
+      await withDbPath(storePath, async () => {
+        await storeKnowledgeItemDeduped('local', {
+          category: 'constraint',
+          title: 'Preferred package manager',
+          content: 'I prefer pnpm everywhere',
+        });
+      });
+
+      await setGlobalNamespace(project, true);
+
+      // Query from project
+      const result = await runCliQuery({ projectRoot: project, projectId: 'local', query: 'package manager' });
+      expect(result.items.length).toBeGreaterThanOrEqual(2);
+      expect(result.items[0].title).toBe('Project package manager');
+      expect(result.items[0].namespace).toBe('project');
+      expect(result.items.some(it => it.title === 'Preferred package manager' && it.namespace === 'global')).toBe(true);
+
+      // Query outside project
+      const outsideResult = await runCliQuery({ query: 'package manager' });
+      expect(outsideResult.items.length).toBeGreaterThanOrEqual(1);
+      expect(outsideResult.items[0].title).toBe('Preferred package manager');
+      expect(outsideResult.items[0].namespace).toBe('global');
+    } finally {
+      await closeDb().catch(() => {});
+      await releaseAll().catch(() => {});
+      for (const dir of [home, project]) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+      if (saved === undefined) delete process.env.KNOWL_HOME; else process.env.KNOWL_HOME = saved;
+    }
+  });
+});
+
+

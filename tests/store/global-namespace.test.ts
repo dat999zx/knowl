@@ -56,4 +56,66 @@ describe('the global store', () => {
       expect(namespaces[0].optional).toBeFalsy();
     });
   });
+
+  describe('MCP server in a project-less session', () => {
+    it('stores to and queries from global store when projectRoot is null', async () => {
+      await ensureGlobalStore();
+      const { createMcpServer } = await import('../../src/mcp/server.js');
+
+      class InMemoryTransport {
+        onclose?: () => void;
+        onerror?: (error: Error) => void;
+        onmessage?: (message: any) => void;
+        onSend?: (message: any) => void;
+        async start(): Promise<void> {}
+        async send(message: any): Promise<void> { if (this.onSend) this.onSend(message); }
+        async close(): Promise<void> { if (this.onclose) this.onclose(); }
+      }
+
+      const server = createMcpServer('local', null, { version: 1 });
+      const transport = new InMemoryTransport();
+      await server.connect(transport as any);
+
+      const runTool = (name: string, args: any) => new Promise<any>((resolve) => {
+        transport.onSend = (msg: any) => {
+          if (msg.id === 'tool-req') resolve(msg);
+        };
+        transport.onmessage!({
+          jsonrpc: '2.0',
+          id: 'tool-req',
+          method: 'tools/call',
+          params: { name, arguments: args },
+        });
+      });
+
+      // Store in global
+      const storeRes = await runTool('knowl_store', {
+        category: 'decision',
+        title: 'Global editor preference',
+        content: 'I prefer neovim',
+      });
+      expect(storeRes.result?.isError).toBeFalsy();
+      expect(storeRes.result?.content[0].text).toContain('Successfully stored decision');
+
+      // Query from global
+      const queryRes = await runTool('knowl_query', {
+        query: 'editor preference',
+      });
+      expect(queryRes.result?.isError).toBeFalsy();
+      const items = JSON.parse(queryRes.result?.content[0].text);
+      expect(items.length).toBeGreaterThan(0);
+      expect(items[0].title).toBe('Global editor preference');
+
+      // State from global
+      const stateRes = await runTool('knowl_state', {});
+      expect(stateRes.result?.isError).toBeFalsy();
+      expect(stateRes.result?.content[0].text).toContain('Global editor preference');
+
+      // Recent from global
+      const recentRes = await runTool('knowl_recent', {});
+      expect(recentRes.result?.isError).toBeFalsy();
+      expect(recentRes.result?.content[0].text).toContain('Global editor preference');
+    });
+  });
 });
+
