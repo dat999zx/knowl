@@ -5,6 +5,22 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+**A Hermes session whose folder is not a Knowl project now says so, once.** Every lifecycle
+event returned early and silently in that case, so the plugin loaded, `hermes plugins doctor
+knowl` reported two tools and seven hooks, and nothing recorded or recalled anything -- a state
+indistinguishable from a healthy integration. The common way in is that `knowl init hermes` is
+machine-wide and one-time, while `knowl init` is per repository, so opening a repo that never had
+the second is easy.
+
+The note names the folder and points at `knowl init`, and it is said **once per session** rather
+than once per event -- seven events a turn would make it noise. It is withheld entirely from
+someone with no machine-wide store, where an unsolicited "run knowl init" would be an advert
+rather than a diagnosis.
+
+Two smaller corrections fell out of the same path. The card's heading claimed "no project open
+for this session" even when a folder *was* open, and its advice was "open a repository as this
+session's folder" -- which someone who already had one open reads as a broken diagnosis. Those
+two situations now get different wording, because they need opposite remedies. Closes #250.
 **The machine-wide store can sync to a cloud workspace, and `knowl cloud` finds it on its own.**
 Personal defaults were local forever: everything under `src/cloud/` takes a project root and reads
 that project's pointer, so `~/.knowl/global.db` had no route to a workspace and a new laptop
@@ -40,6 +56,7 @@ a pointer and sends nothing, `push` asks first unless given `--yes`. It connects
 `personal`, because with no git remote the identity would otherwise fall through to the directory
 name `.knowl`: unreadable in a listing, and identical for every person, so two people connecting
 their machine stores to one workspace would collide. `--repo` overrides it.
+
 
 ## 5.20.0 — 2026-09-04
 
