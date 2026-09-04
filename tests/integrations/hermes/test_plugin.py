@@ -146,14 +146,59 @@ class PluginTest(unittest.TestCase):
         _s_schema, store = self.ctx.tools["knowl_store"]
         self.assertIn("error", json.loads(store({"content": "c", "title": "t"})))
 
-    def test_tools_say_so_outside_a_knowl_project(self):
+    def test_tools_answer_from_the_machine_store_when_there_is_no_project(self):
+        """A folderless session still has the personal-defaults layer to read and write."""
         self.plugin._has_knowl_project = lambda cwd: False
+        self.plugin._has_global_store = lambda: True
+        ctx = FakeCtx()
+        self.plugin.register(ctx)
+
+        self.results["__cli__"] = (0, json.dumps([{"id": "1", "title": "I prefer pnpm"}]), "")
+        _q, query = ctx.tools["knowl_query"]
+        self.assertEqual(len(json.loads(query({"query": "package manager"}))["items"]), 1)
+
+        # A write with no repository to own it belongs to the machine, and says so outright
+        # rather than landing wherever a default happens to point.
+        self.results["__cli__"] = (0, "Stored fact abc: t", "")
+        _s, store = ctx.tools["knowl_store"]
+        self.assertTrue(json.loads(store({"content": "c", "title": "t", "category": "fact"}))["ok"])
+        args, _cwd = self.cli_calls[-1]
+        self.assertEqual(args[args.index("--namespace") + 1], "global")
+
+    def test_tools_say_so_with_no_project_and_no_machine_store(self):
+        self.plugin._has_knowl_project = lambda cwd: False
+        self.plugin._has_global_store = lambda: False
         ctx = FakeCtx()
         self.plugin.register(ctx)
         for name in ("knowl_query", "knowl_store"):
             _schema, handler = ctx.tools[name]
             error = json.loads(handler({"query": "x", "content": "c", "title": "t", "category": "fact"}))["error"]
-            self.assertIn("No Knowl project", error)
+            self.assertIn("No Knowl memory", error)
+
+    def test_the_machine_home_is_not_mistaken_for_a_project(self):
+        """`~/.knowl` exists on every machine that has run Knowl, and is not a project.
+
+        Accepting any `.knowl` directory reported every path under the user's home as a project,
+        so the plugin fired hooks the engine could only refuse.
+        """
+        home = os.path.join(os.sep, "fake-home")
+        knowl_home = os.path.join(home, ".knowl")
+        project = os.path.join(home, "repo")
+        plugin = load_plugin()
+        plugin._knowl_home = lambda: knowl_home
+        # Only these two directories exist, so the walk cannot wander into the real home --
+        # a temp directory would, because %TEMP% lives under it on Windows.
+        present = {os.path.normcase(knowl_home), os.path.normcase(os.path.join(project, ".knowl"))}
+        plugin.os.path.isdir = lambda p: os.path.normcase(p) in present
+
+        try:
+            # The machine home is not a project, so nothing under it becomes one by inheritance.
+            self.assertFalse(plugin._has_knowl_project(home))
+            self.assertFalse(plugin._has_knowl_project(os.path.join(home, "Documents")))
+            # A real project below it is still found.
+            self.assertTrue(plugin._has_knowl_project(project))
+        finally:
+            plugin.os.path.isdir = os.path.isdir
 
     # -- payload shape --------------------------------------------------------
 
