@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { globalSkillsRoot } from '../../src/skills/paths.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage } from '../../src/skills/registry.js';
+import { formatRunBanner } from '../../src/skills/run-banner.js';
 
 const HOME = path.join(os.tmpdir(), 'knowl-gs-home');
 const PROJECT = path.join(os.tmpdir(), 'knowl-gs-project');
@@ -43,5 +44,17 @@ describe('global skills layer under project skills', () => {
     expect(listed.find(s => s.name === 'release')?.layer).toBe('project');
     // And reading resolves to the shadowing one, so "which will run" is never a guess.
     expect((await readSkillPackage(PROJECT, 'release')).manifest.purpose).toBe('project release');
+  });
+
+  it('shows the fully resolved command before running it', () => {
+    const banner = formatRunBanner({
+      name: 'release', layer: 'global', version: 3, approvedAt: '2026-09-01',
+      command: 'bash ~/.knowl/skills/release/release.sh "npm test" "main"',
+      cwd: 'D:/coding/knowl', capabilities: ['process', 'publish'], preconditions: ['clean_worktree'],
+    });
+    expect(banner).toContain('npm test');          // substituted, not the template
+    expect(banner).not.toContain('${inputs.');
+    expect(banner).toContain('publish');           // what it intends to do
+    expect(banner).toContain('global');            // which layer will run
   });
 });

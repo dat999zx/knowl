@@ -92,7 +92,8 @@ import { checkpointWorkLoop, finishWorkLoop, startWorkLoop, WorkLoopMemoryHit } 
 import { checkKnowledgeDrift, DriftCheckResult, getCurrentGitCommit, listChangedFilesSince, listRenamedPathsSince } from '../store/drift.js';
 import { indexSkillPackage, recordSkillRun } from '../skills/knowledge-index.js';
 import { createSkillPackage, listSkillPackages, readSkillPackage, runSkillPackage, SkillEntrypoint } from '../skills/registry.js';
-import { approveSkill, listTrust, revokeSkill } from '../skills/trust.js';
+import { approveSkill, listTrust, revokeSkill, requiresStrongerApproval } from '../skills/trust.js';
+import { globalSkillsRoot } from '../skills/paths.js';
 import { auditKnowledgeStore } from '../store/integrity.js';
 import { createSnapshot, restoreSnapshot } from '../store/snapshots.js';
 import { isEvidenceStale, listEvidenceForItem, resolveSymbolEvidence } from '../store/evidence-repository.js';
@@ -4075,7 +4076,7 @@ skillCommand
         return;
       }
       for (const skill of skills) {
-        console.log(`${skill.name}\t${skill.purpose}`);
+        console.log(`${skill.name}\t${skill.purpose}\t(${skill.layer})`);
       }
     } catch (error: any) {
       console.error(`Error listing skills: ${error.message}`);
@@ -4092,6 +4093,9 @@ skillCommand
       const root = await findProjectRoot(process.cwd());
       const skill = await readSkillPackage(root, name);
       console.log(JSON.stringify(skill.manifest, null, 2));
+      if (skill.manifest.provenance) {
+        console.log(`\nProvenance: ${skill.manifest.provenance}`);
+      }
       console.log('');
       console.log(skill.markdown);
     } catch (error: any) {
@@ -4179,14 +4183,36 @@ skillCommand
   .description('Approve a skill package for execution, pinned to its current contents')
   .argument('<name>', 'Skill package name')
   .option('--entrypoint <name...>', 'Approve only these entrypoints (defaults to all)')
+  .option('--global', 'Approve at the machine-wide global skill root')
+  .option('-y, --yes', 'Confirm stronger capabilities without interactive prompt')
   .action(async (name, options) => {
     try {
-      const root = await findProjectRoot(process.cwd());
+      const root = options.global ? globalSkillsRoot() : await findProjectRoot(process.cwd());
+      const skill = await readSkillPackage(options.global ? globalSkillsRoot() : root, name);
+      const stronger = requiresStrongerApproval(skill.manifest.requires?.capabilities || []);
+      if (stronger.length > 0 && !options.yes) {
+        const answer = await askConfirm(
+          `Skill "${name}" declares capabilities with external effects: ${stronger.join(', ')}. Approve execution?`,
+          {
+            acceptHint: 'Approve execution with declared capabilities',
+            declineHint: 'Decline approval',
+          },
+        );
+        if (answer === 'no-tty') {
+          console.error(`Skill "${name}" declares capabilities requiring confirmation: ${stronger.join(', ')}. Re-run with --yes to approve.`);
+          process.exit(1);
+        }
+        if (answer === 'declined') {
+          console.log('Approval declined.');
+          return;
+        }
+      }
+
       const record = await approveSkill(root, name, {
         approvedBy: `cli:${process.env.USER ?? process.env.USERNAME ?? 'unknown'}`,
         allowedEntrypoints: options.entrypoint,
       });
-      console.log(`Approved skill "${name}".`);
+      console.log(`Approved skill "${name}"${options.global ? ' (global)' : ''}.`);
       console.log(`Hash: ${record.approvedHash}`);
       console.log(`Entrypoints: ${record.allowedEntrypoints.join(', ')}`);
       console.log('Any change to the package revokes this approval.');
@@ -4200,9 +4226,10 @@ skillCommand
   .command('revoke')
   .description('Withdraw approval for a skill package')
   .argument('<name>', 'Skill package name')
-  .action(async name => {
+  .option('--global', 'Withdraw approval at the machine-wide global skill root')
+  .action(async (name, options) => {
     try {
-      const root = await findProjectRoot(process.cwd());
+      const root = options.global ? globalSkillsRoot() : await findProjectRoot(process.cwd());
       const removed = await revokeSkill(root, name);
       console.log(removed ? `Revoked skill "${name}".` : `Skill "${name}" was not approved.`);
     } catch (error: any) {
@@ -4214,9 +4241,10 @@ skillCommand
 skillCommand
   .command('trust')
   .description('List approved skill packages')
-  .action(async () => {
+  .option('--global', 'List approvals at the machine-wide global skill root')
+  .action(async (options) => {
     try {
-      const root = await findProjectRoot(process.cwd());
+      const root = options.global ? globalSkillsRoot() : await findProjectRoot(process.cwd());
       const trust = await listTrust(root);
       const names = Object.keys(trust).sort();
       if (names.length === 0) {

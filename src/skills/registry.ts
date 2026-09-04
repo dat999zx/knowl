@@ -3,7 +3,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import { globalSkillsRoot } from './paths.js';
-import { assertSkillApproved } from './trust.js';
+import { assertSkillApproved, assertBindingNotSelfApproved, readTrust } from './trust.js';
+import { resolveBinding, interpolate, assertPinned, type SkillBinding } from './bindings.js';
+import { checkPreconditions } from './preconditions.js';
+import { formatRunBanner } from './run-banner.js';
+import { loadConfig } from '../core/config.js';
+import type { ProjectConfig } from '../core/types.js';
 import {
   SAFE_SKILL_NAME, normalizeSkillFilePath, validateSkillName,
 } from '../core/skill-paths.js';
@@ -412,6 +417,41 @@ export async function runSkillPackage(
   const skill = await readSkillPackage(projectRoot, name);
   const attempts: SkillRunAttempt[] = [];
 
+  let config: ProjectConfig | null = null;
+  try {
+    config = await loadConfig(projectRoot);
+  } catch {
+    // Config not present or invalid
+  }
+  const binding: SkillBinding | undefined = config?.skills?.[name];
+
+  if (skill.layer === 'global') {
+    await assertBindingNotSelfApproved(projectRoot, name);
+    if (!binding) {
+      const bound = resolveBinding(skill.manifest, undefined);
+      if ('missing' in bound && bound.missing.length > 0) {
+        throw new Error(
+          `Skill "${name}" is a global skill and has not been bound in this project. Missing required input${bound.missing.length > 1 ? 's' : ''}: ${bound.missing.join(', ')}. Add "skills.${name}" to .knowl/config.json.`,
+        );
+      }
+      throw new Error(
+        `Skill "${name}" is a global skill and is not bound in this project. Bind it in .knowl/config.json under "skills.${name}" before running.`,
+      );
+    }
+  }
+
+  if (binding) {
+    assertPinned(skill.manifest, binding);
+  }
+
+  const bindingResult = resolveBinding(skill.manifest, binding);
+  if ('missing' in bindingResult) {
+    throw new Error(
+      `Skill "${name}" is missing required input${bindingResult.missing.length > 1 ? 's' : ''}: ${bindingResult.missing.join(', ')}. Bind in project config under "skills.${name}.inputs".`,
+    );
+  }
+  const inputValues = 'values' in bindingResult ? bindingResult.values : {};
+
   async function runNamed(nameToRun: string): Promise<SkillRunAttempt> {
     const entrypoint = skill.manifest.entrypoints[nameToRun];
     if (!entrypoint) {
@@ -431,17 +471,60 @@ export async function runSkillPackage(
 
     // A human approved these exact bytes for this entrypoint, or nothing runs. Checked here
     // rather than at the call sites because this is the only path that spawns a process.
-    await assertSkillApproved(projectRoot, name, nameToRun);
+    const trustRoot = skill.layer === 'global' ? globalSkillsRoot() : projectRoot;
+    await assertSkillApproved(trustRoot, name, nameToRun);
+    const trustRecord = await readTrust(trustRoot, name);
+    const approvedAt = trustRecord?.approvedAt ? trustRecord.approvedAt.slice(0, 10) : undefined;
+
+    // Check preconditions fail-closed
+    const rawPreconditions = skill.manifest.requires?.preconditions ?? [];
+    const interpolatedPreconditions = interpolate(rawPreconditions, inputValues);
+    const precondResult = await checkPreconditions(interpolatedPreconditions, { cwd: projectRoot });
+    if (!precondResult.ok) {
+      throw new Error(
+        `Precondition failed for skill "${name}": ${precondResult.failed} (${precondResult.reason})`,
+      );
+    }
 
     const env = skillEnvironment(projectRoot, skill);
-    const { child, commandText } = entrypoint.type === 'shell'
-      ? { child: runShell(projectRoot, entrypoint.command, env), commandText: entrypoint.command }
-      : runScript(
-          projectRoot,
-          resolveSkillFile(skill.path, entrypoint.path),
-          [...(entrypoint.args || []), ...args],
-          env
-        );
+
+    let child: ReturnType<typeof spawnSync>;
+    let commandText: string;
+
+    if (entrypoint.type === 'shell') {
+      commandText = interpolate([entrypoint.command], inputValues)[0];
+      const banner = formatRunBanner({
+        name: skill.manifest.name,
+        layer: skill.layer,
+        version: skill.manifest.version,
+        approvedAt,
+        command: commandText,
+        cwd: projectRoot,
+        capabilities: skill.manifest.requires?.capabilities,
+        preconditions: interpolatedPreconditions,
+      });
+      console.log(banner);
+      child = runShell(projectRoot, commandText, env);
+    } else {
+      const scriptPath = resolveSkillFile(skill.path, entrypoint.path);
+      const combinedArgs = [...(entrypoint.args || []), ...args];
+      const interpolatedArgs = interpolate(combinedArgs, inputValues);
+      const cmd = scriptCommand(scriptPath, interpolatedArgs);
+      commandText = [cmd.command, ...cmd.args].join(' ');
+      const banner = formatRunBanner({
+        name: skill.manifest.name,
+        layer: skill.layer,
+        version: skill.manifest.version,
+        approvedAt,
+        command: commandText,
+        cwd: projectRoot,
+        capabilities: skill.manifest.requires?.capabilities,
+        preconditions: interpolatedPreconditions,
+      });
+      console.log(banner);
+      child = spawnSync(cmd.command, cmd.args, spawnLimits(projectRoot, env));
+    }
+
     const attempt = childToAttempt(nameToRun, commandText, child);
     attempts.push(attempt);
     return attempt;
