@@ -712,6 +712,14 @@ def register(ctx: Any) -> None:
         logger.info("knowl_store: %s", out.strip()[:160])
         return json.dumps({"ok": True, "result": out.strip()[:400]}, ensure_ascii=False)
 
+    # The toolset name must NOT be `knowl`, which is the MCP server's name.
+    #
+    # Measured on 2026-09-04 against a real Desktop backend: with `toolset="knowl"` the session's
+    # catalogue held 19 tools and every `mcp__knowl__*` one was gone -- `tool_search` could not
+    # find them and `tool_call` reported them unavailable, while the log still said the server had
+    # registered 37. Renaming the toolset brought the catalogue back to 56 with the MCP tools
+    # searchable again. A plugin toolset that shadows a connected MCP server takes its whole
+    # surface down, silently, and the log gives no hint -- so this name is load-bearing.
     for schema, handler in ((QUERY_SCHEMA, knowl_query), (STORE_SCHEMA, knowl_store)):
         try:
             ctx.register_tool(
