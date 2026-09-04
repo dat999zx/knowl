@@ -3,12 +3,12 @@ import path from 'node:path';
 import type { KnowledgeCategory, KnowledgeItem, KnowledgeStatus, ProjectConfig } from '../core/types.js';
 import { globalStorePath, knowlHome } from '../core/paths.js';
 import { withDbPath } from './database.js';
-import { queryKnowledgeForAgent } from './agent-query.js';
+import { queryKnowledgeForAgent, queryKnowledgeForAgentExplained } from './agent-query.js';
 import { resolveStorage } from './storage-roles.js';
 
 export type MemoryNamespace = 'session' | 'project' | 'organization' | 'global';
 export type NamespaceDescriptor = { namespace: MemoryNamespace; databasePath: string; precedence: number; optional?: boolean };
-export type NamespacedKnowledgeItem = KnowledgeItem & { namespace: MemoryNamespace };
+export type NamespacedKnowledgeItem = KnowledgeItem & { namespace: MemoryNamespace; explanation?: unknown };
 
 const RANK: Record<MemoryNamespace, number> = { session: 1, project: 2, organization: 3, global: 4 };
 
@@ -141,14 +141,21 @@ export async function queryLayeredKnowledge(
   const seen = new Set<string>();
   for (const descriptor of namespacePrecedence(descriptors)) {
     try {
+      if (descriptor.optional && !fsSync.existsSync(descriptor.databasePath)) {
+        throw new Error(`Optional database at "${descriptor.databasePath}" does not exist.`);
+      }
       // Each namespace is searched with ITS identity. A namespace whose profile cannot be
       // resolved is skipped and named -- never scored against the caller's vectors.
-      const fingerprint = vector?.enabled ? await namespaceFingerprint(descriptor, root) : null;
+      const fingerprint = vector?.enabled
+        ? ((descriptor.namespace === 'project' || descriptor.namespace === 'session') && (vector as any).profileFingerprint
+            ? (vector as any).profileFingerprint
+            : await namespaceFingerprint(descriptor, root))
+        : null;
       if (vector?.enabled && !fingerprint) {
         skipped.push(descriptor.namespace);
         continue;
       }
-      const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgent('local', {
+      const items = await withNamespaceDatabase(descriptor, () => queryKnowledgeForAgentExplained('local', {
         query,
         limit,
         surface,

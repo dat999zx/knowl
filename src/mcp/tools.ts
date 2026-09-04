@@ -882,30 +882,27 @@ export function registerTools(
           surface: 'mcp',
           vector,
         };
-        const layered = Boolean(projectRoot) && !explain && !vector?.enabled;
-        const items = layered
-          // Filters travel with the query. queryLayeredKnowledge has always taken them and
-          // this call has always omitted them, so `status`, `tags` and `category` were dropped
-          // on the default path -- byte-identical responses with and without, against a tool
-          // description that promises they filter.
-          ? await queryLayeredKnowledge(projectRoot!, query ?? '', configuredNamespaces(projectRoot!, config ?? undefined), limit ?? DEFAULT_RESULT_LIMIT, 'mcp', {
-            category: category as KnowledgeCategory,
-            status: status as KnowledgeStatus,
-            tags,
-          })
-          // Explained on both branches now. `explain` decides what is REPORTED, never what is
-          // computed: the ranker produced a score either way, and the non-explain path threw
-          // it away one line before the response was built.
+        // Was `Boolean(projectRoot) && !explain && !vector?.enabled` -- which meant the layered
+        // read never ran in the default configuration, so a linked global or organization
+        // namespace was written to and never read from. Each namespace now carries its own
+        // embedding identity (`namespaceFingerprint`), so vector search spans them; `explain`
+        // still falls through, because its per-term reporting is single-store by construction.
+        const layered = Boolean(projectRoot) && !explain;
+        const layeredResult = layered
+          ? await queryLayeredKnowledge(
+            projectRoot!, query ?? '', configuredNamespaces(projectRoot!, config ?? undefined),
+            limit ?? DEFAULT_RESULT_LIMIT, 'mcp',
+            { category: category as KnowledgeCategory, status: status as KnowledgeStatus, tags },
+            vector,
+          )
+          : null;
+        const items = layeredResult
+          ? layeredResult.items
           : await queryKnowledgeForAgentExplained(projectId!, queryOptions);
 
-        // Only the layered path spans namespaces. Vector search and explain both fall
-        // through to the ambient project database, so knowledge in other namespaces is
-        // absent from these results. Spanning namespaces under vector search needs one
-        // workspace-wide embedding identity first: searchKnowledgeEmbeddings filters on
-        // provider and model, and that filter is load-bearing because cosine similarity
-        // across different dimensions is meaningless. Until then, say what was skipped
-        // rather than let the scope narrow silently.
-        let skippedNamespaces: string[] = [];
+        // Reported by the reader rather than inferred here: it is the only code that knows which
+        // namespaces it actually reached.
+        let skippedNamespaces: string[] = layeredResult ? layeredResult.skipped : [];
         if (!layered && projectRoot) {
           try {
             skippedNamespaces = configuredNamespaces(projectRoot, config ?? undefined)
@@ -985,7 +982,7 @@ export function registerTools(
         // federation did not replace that result, which it does whenever a workspace is active.
         const scored = Boolean(vector?.enabled && vector.embedding);
         const scoreOf = (item: any): number | UncalibratedScore | undefined => {
-          if (layered && !active) return uncalibratedScore('layered namespaces');
+          if (layered && !active && !scored) return uncalibratedScore('layered namespaces');
           const explanation = item.explanation as
             | { finalScore?: number; uncalibrated?: 'lexical-only' | 'not embedded' }
             | undefined;

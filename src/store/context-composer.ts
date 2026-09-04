@@ -91,7 +91,7 @@ export async function composeContext(projectId: string, request: ContextRequest)
     // Descriptors are passed explicitly. They used to be omitted, taking queryLayeredKnowledge's
     // config-free default, which meant context composition and MCP query could read different
     // namespace sets with nothing reporting the divergence.
-    ? await queryLayeredKnowledge(request.namespaceRoot, query ?? '', defaultNamespaces(request.namespaceRoot), 30, 'context_composer')
+    ? (await queryLayeredKnowledge(request.namespaceRoot, query ?? '', defaultNamespaces(request.namespaceRoot), 30, 'context_composer')).items
     : await queryKnowledgeForAgent(projectId, { query, limit: 30, surface: 'context_composer', vector });
 
   // Pinned, but no longer unranked: a constraint the query actually reached keeps the position

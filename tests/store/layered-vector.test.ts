@@ -66,4 +66,12 @@ describe('the layered read spans namespaces', () => {
     expect(project).toBeTruthy();
     expect(global).toBeTruthy();
   });
+
+  it('names the namespaces it could not search instead of narrowing silently', async () => {
+    const unreachable = { namespace: 'organization' as const, databasePath: path.join(HOME, 'nope.db'), precedence: 3, optional: true };
+    const { skipped } = await queryLayeredKnowledge(
+      PROJECT, 'deploy', [projectNamespace(PROJECT), unreachable], 5, 'test', {},
+    );
+    expect(skipped).toContain('organization');
+  });
 });
