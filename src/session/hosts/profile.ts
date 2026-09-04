@@ -184,18 +184,24 @@ export interface HostProfile {
    */
   readonly lifecycleClaimable?: boolean;
   /**
-   * The working directory this event happened in, if this host does not name it `cwd`.
+   * This host's payload restated in the field names the normalizer reads, if the two differ.
    *
-   * `cwd` then `workspace_roots[0]` was hardcoded for every host, and it is the one field with
-   * no graceful degradation: a host that names it something else throws
-   * `IncompleteHostHookPayloadError` on *every* event, which the hook entry deliberately
-   * swallows in silence -- so the integration reports nothing, logs nothing, and looks exactly
-   * like a host nobody has configured.
+   * The normalizer speaks one vocabulary -- `cwd`/`workspace_roots`, `tool_name`, `tool_input`,
+   * `command`, `file_path` -- and every host read so far either speaks it or a documented
+   * alias of it. Antigravity does not: its payload is protojson, so the root is
+   * `workspacePaths`, the tool is one `toolCall: {name, args}` object, and its arguments are
+   * PascalCase (`TargetFile`, `CommandLine`). Five extractors would each need a host-shaped
+   * fallback; one mapping here is the same fix once.
    *
-   * Optional because the two default names cover every host read so far. It exists so the next
-   * one can say so in its profile rather than having the default quietly decide for it.
+   * The root is the field with no graceful degradation -- miss it and every event throws
+   * `IncompleteHostHookPayloadError`, which the hook entry swallows in silence, so the
+   * integration reports nothing, logs nothing, and looks exactly like a host nobody has
+   * configured. Everything else degrades quietly instead: an unmapped tool name means no write
+   * detected and no gate, which is worse to diagnose and cheaper to survive.
+   *
+   * Runs after the stdin allowlist, so a key this returns has to be allowlisted there first.
    */
-  projectRoot?: (raw: Record<string, unknown>) => string | undefined;
+  normalizePayload?: (raw: Record<string, unknown>) => Record<string, unknown>;
   identity(raw: Record<string, unknown>): HostIdentity;
   normalizedEvent(hostEvent: string): NormalizedHookEventName | undefined;
   isShellEvent(hostEvent: string, toolName: string): boolean;

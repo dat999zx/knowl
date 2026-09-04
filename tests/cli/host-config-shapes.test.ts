@@ -224,7 +224,14 @@ describe('the deny path each host actually declared', () => {
       ['codex', 'PreToolUse', { session_id: 's', tool_name: 'apply_patch' }],
       ['copilot', 'preToolUse', { session_id: 's', tool_name: 'str_replace' }],
       ['openhands', 'pre_tool_use', { conversation_id: 's', tool_name: 'str_replace_editor' }],
-      ['antigravity', 'PreToolUse', { session_id: 's', tool_name: 'edit_file' }],
+      // protojson, and the whole row is a different vocabulary: `conversationId` for the
+      // session and one `toolCall` object for the tool. This row used to read `session_id` and
+      // `edit_file` -- neither of which Antigravity has ever sent -- so it pinned a contract
+      // that could not fire against a real install.
+      ['antigravity', 'PreToolUse', {
+        conversationId: 's',
+        toolCall: { name: 'replace_file_content', args: { TargetFile: path.join(root, 'src/a.ts') } },
+      }],
       // Windsurf names the action and sends no tool name at all.
       ['windsurf', 'pre_write_code', { conversation_id: 's' }],
     ];

@@ -12,7 +12,10 @@ const sessionEventTypes: SessionEventType[] = ['start', 'command', 'test', 'erro
 const MAX_RETAINED_STRING = 2_000;
 const MAX_RETAINED_ARRAY_ITEMS = 50;
 const ROOT_FIELDS = new Set([
-  'session_id', 'sessionId', 'thread_id', 'turn_id', 'turnId', 'conversation_id', 'generation_id', 'cwd', 'workspace_roots',
+  // `cascade_id` is Windsurf's third identity fallback and was read by its profile while this
+  // list dropped it -- harmless only for as long as Windsurf also sends one of the first two.
+  'session_id', 'sessionId', 'thread_id', 'turn_id', 'turnId', 'conversation_id', 'cascade_id', 'generation_id',
+  'cwd', 'workspace_roots',
   'title', 'query', 'agent', 'type', 'status', 'summary', 'command', 'exit_code', 'exitCode', 'passed',
   'message', 'code', 'text', 'changedPaths', 'changed_paths', 'commit', 'file_path', 'filePath', 'path', 'notebook_path',
   'tool_name', 'toolName', 'error', 'error_code', 'error_message', 'tool_input', 'toolInput', 'tool_response', 'toolResponse',
@@ -25,6 +28,13 @@ const ROOT_FIELDS = new Set([
   // a hook that computes from a field it never receives passes every test that bypasses stdin.
   // Neither reaches `payload`; see `errorText` / `assistantMessage` on NormalizedHostHook.
   'prompt', 'last_assistant_message',
+  // Antigravity's payload is protojson: every key camelCase, the session under
+  // `conversationId`, the root under `workspacePaths`, and the tool nested in `toolCall`
+  // rather than split across `tool_name`/`tool_input`. This list is an allowlist, so before
+  // these three lines every Antigravity hook arrived with no session id and no root and threw
+  // `IncompleteHostHookPayloadError` -- which the entry swallows in silence, so the host looked
+  // exactly like one nobody had configured. `normalizePayload` restates them downstream.
+  'conversationId', 'workspacePaths', 'toolCall',
 ]);
 /**
  * Keys whose LAST characters matter more than their first.
@@ -54,6 +64,7 @@ const NESTED_FIELDS: Record<string, Set<string>> = {
   tool_response: new Set(['exit_code', 'exitCode', 'stdout', 'stderr']),
   toolResponse: new Set(['exit_code', 'exitCode', 'stdout', 'stderr']),
   error: new Set(['code', 'type', 'message', 'error']),
+  toolCall: new Set(['name', 'args']),
 };
 // Fields kept inside an allowlisted array of objects, e.g. tool_input.atoms[i].
 // Without this, allowing `atoms` above would retain whole atom bodies; only the
@@ -61,7 +72,16 @@ const NESTED_FIELDS: Record<string, Set<string>> = {
 const NESTED_ARRAY_ITEM_FIELDS: Record<string, Set<string>> = {
   atoms: new Set(['title']),
 };
-const ARRAY_FIELDS = new Set(['workspace_roots', 'changedPaths', 'changed_paths', 'file_paths', 'filePaths']);
+const ARRAY_FIELDS = new Set(['workspace_roots', 'workspacePaths', 'changedPaths', 'changed_paths', 'file_paths', 'filePaths']);
+/**
+ * The `toolCall.args` leaves Antigravity's normalizer reads, and nothing else.
+ *
+ * Named individually rather than allowed wholesale, because the sibling keys are the file's new
+ * contents (`CodeContent`, `ReplacementContent`, `ReplacementChunks`). Every other host's tool
+ * arguments are allowlisted down to the fields that are actually read; letting one host's
+ * arguments through by their parent would put whole file bodies in this process for no reader.
+ */
+const TOOL_CALL_ARG_FIELDS = new Set(['TargetFile', 'AbsolutePath', 'CommandLine', 'Query']);
 
 function shouldDiscardPath(stack: Array<string | number | null>): boolean {
   if (stack.length === 0) return false;
@@ -76,6 +96,11 @@ function shouldDiscardPath(stack: Array<string | number | null>): boolean {
   if (stack.length >= 4 && typeof stack[2] === 'number') {
     // A field of an object inside an allowlisted array. Nothing deeper is ever kept.
     return stack.length > 4 || !NESTED_ARRAY_ITEM_FIELDS[String(stack[1])]?.has(String(stack[3]));
+  }
+  // `toolCall.args` is the one allowlisted pair with a third level worth keeping, and the one
+  // whose siblings are file contents. Everything under it is named or dropped.
+  if (parent === 'toolCall' && stack.length > 2) {
+    return stack.length > 3 || stack[1] !== 'args' || !TOOL_CALL_ARG_FIELDS.has(String(stack[2]));
   }
   if (NESTED_FIELDS[parent]) return !NESTED_FIELDS[parent].has(String(stack[1]));
   return true;
