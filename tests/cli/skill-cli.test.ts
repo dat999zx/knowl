@@ -87,4 +87,124 @@ describe('CLI learned skills', () => {
     expect(agents).toContain('knowl_skill_read');
     expect(agents).toContain('knowl_skill_run');
   }, 120_000);
+
+  it('global playbook lifecycle: unbound refusal, binding, global approval, precondition check, and hash invalidation', async () => {
+    const GLOBAL_HOME = path.join(os.tmpdir(), 'knowl-cli-global-home');
+    const PROJECT_DIR = path.join(os.tmpdir(), 'knowl-cli-global-project');
+    await fs.rm(GLOBAL_HOME, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(PROJECT_DIR, { recursive: true, force: true }).catch(() => {});
+    await fs.mkdir(path.join(GLOBAL_HOME, 'skills', 'deploy_task'), { recursive: true });
+    await fs.mkdir(path.join(PROJECT_DIR, '.knowl'), { recursive: true });
+
+    execSync('git init', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    execSync('git config user.email "test@example.com"', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    await fs.writeFile(path.join(PROJECT_DIR, 'README.md'), '# Project\n');
+    execSync('git add .', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    execSync('git commit -m "initial commit"', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    execSync(`node "${CLI_PATH}" init --yes`, { cwd: PROJECT_DIR, env: { ...process.env, KNOWL_HOME: GLOBAL_HOME }, encoding: 'utf-8', stdio: 'pipe' });
+    execSync('git add .', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    execSync('git commit -m "commit knowl init"', { cwd: PROJECT_DIR, stdio: 'pipe' });
+
+    const playbookYaml = [
+      'name: deploy_task',
+      'purpose: Deploy application',
+      'version: 1',
+      'requires:',
+      '  inputs:',
+      '    target_env:',
+      '      description: Target environment',
+      '  preconditions:',
+      '    - clean_worktree',
+      '  capabilities:',
+      '    - process',
+      'entrypoints:',
+      '  default:',
+      '    type: shell',
+      '    autoRun: true',
+      '    command: node -e "console.log(\'DEPLOYED_${inputs.target_env}\')"',
+    ].join('\n') + '\n';
+
+    await fs.writeFile(path.join(GLOBAL_HOME, 'skills', 'deploy_task', 'skill.yaml'), playbookYaml, 'utf8');
+
+    const env = { ...process.env, KNOWL_HOME: GLOBAL_HOME };
+
+    // 1. Run unbound: refused, names missing input
+    let unboundFailed = false;
+    try {
+      execSync(`node "${CLI_PATH}" skill run deploy_task`, { cwd: PROJECT_DIR, env, encoding: 'utf-8', stdio: 'pipe' });
+    } catch (err: any) {
+      unboundFailed = true;
+      const out = (err.stderr || '') + (err.stdout || '');
+      expect(out).toMatch(/target_env/);
+      expect(out).toMatch(/missing/i);
+    }
+    expect(unboundFailed).toBe(true);
+
+    // 2. Bind in project config
+    const config = {
+      skills: {
+        deploy_task: {
+          inputs: {
+            target_env: 'production',
+          },
+        },
+      },
+    };
+    await fs.writeFile(path.join(PROJECT_DIR, '.knowl', 'config.json'), JSON.stringify(config, null, 2), 'utf8');
+
+    // 3. Approve global playbook
+    const approveOutput = execSync(`node "${CLI_PATH}" skill approve deploy_task --global`, {
+      cwd: PROJECT_DIR,
+      env,
+      encoding: 'utf-8',
+    });
+    expect(approveOutput).toContain('Approved skill "deploy_task"');
+    expect(approveOutput).toMatch(/Hash: sha256:[0-9a-f]{64}/);
+
+    // 4. Run with dirty worktree: refused, names clean_worktree precondition
+    await fs.writeFile(path.join(PROJECT_DIR, 'uncommitted.txt'), 'dirty');
+    let dirtyFailed = false;
+    try {
+      execSync(`node "${CLI_PATH}" skill run deploy_task`, { cwd: PROJECT_DIR, env, encoding: 'utf-8', stdio: 'pipe' });
+    } catch (err: any) {
+      dirtyFailed = true;
+      const out = (err.stderr || '') + (err.stdout || '');
+      expect(out).toMatch(/clean_worktree/);
+    }
+    expect(dirtyFailed).toBe(true);
+
+    // 5. Commit and run: banner shows resolved command, execution succeeds
+    execSync('git add .', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    execSync('git commit -m "clean worktree"', { cwd: PROJECT_DIR, stdio: 'pipe' });
+
+    const runOutput = execSync(`node "${CLI_PATH}" skill run deploy_task`, {
+      cwd: PROJECT_DIR,
+      env,
+      encoding: 'utf-8',
+    });
+    expect(runOutput).toContain('knowl skill run deploy_task');
+    expect(runOutput).toContain('production');
+    expect(runOutput).toContain('clean_worktree');
+    expect(runOutput).toContain('DEPLOYED_production');
+
+    // 6. Edit playbook: approval is invalidated
+    await fs.writeFile(
+      path.join(GLOBAL_HOME, 'skills', 'deploy_task', 'skill.yaml'),
+      playbookYaml + '# modified\n',
+      'utf8',
+    );
+    let modifiedFailed = false;
+    try {
+      execSync(`node "${CLI_PATH}" skill run deploy_task`, { cwd: PROJECT_DIR, env, encoding: 'utf-8', stdio: 'pipe' });
+    } catch (err: any) {
+      modifiedFailed = true;
+      const out = (err.stderr || '') + (err.stdout || '');
+      expect(out).toMatch(/changed since it was approved/i);
+    }
+    expect(modifiedFailed).toBe(true);
+
+    await fs.rm(GLOBAL_HOME, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(PROJECT_DIR, { recursive: true, force: true }).catch(() => {});
+  }, 120_000);
 });
