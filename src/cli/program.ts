@@ -77,6 +77,7 @@ import {
 } from '../cloud/send/transfer.js';
 import { cloudStatus, formatCloudStatus } from '../cloud/status.js';
 import { cloudPointer } from '../core/cloud-pointer.js';
+import { GLOBAL_REPO_IDENTITY, resolveCloudTarget, scopeNotice } from './cloud-target.js';
 import { verifyCustomModel } from '../ai/model-probe.js';
 import { announceProfileChange, shadowedByPresetNotice } from './config/profile-change.js';
 import { DEFAULT_DIVERGENCE_POLICY, DIVERGENCE_POLICIES } from '../store/import-policy.js';
@@ -1120,9 +1121,13 @@ cloudCommand
   .option('--id <ids...>', 'Item ids to stage')
   .option('--category <list>', 'Comma-separated categories (quote the list on Windows)')
   .option('--apply', 'Actually stage; without this the command is a dry run')
+  .option('--global', 'Act on the machine-wide store (~/.knowl) instead of this repository')
   .action(async options => {
     try {
-      const root = await findProjectRoot(process.cwd());
+      const target = await resolveCloudTarget(options);
+      const root = target.root;
+      const notice = scopeNotice(target);
+      if (notice) console.error(notice);
       const config = await loadConfig(root);
 
       // Checked before the picker rather than after, so a disconnected repo gets the one answer
@@ -1276,9 +1281,13 @@ cloudCommand
   .argument('<id>', 'The item to take out of the queue')
   .description('Take an atom out of the push queue. Does not unpublish it')
   .option('--forever', 'Also exclude it, so nothing stages it again automatically')
+  .option('--global', 'Act on the machine-wide store (~/.knowl) instead of this repository')
   .action(async (id: string, options) => {
     try {
-      const root = await findProjectRoot(process.cwd());
+      const target = await resolveCloudTarget(options);
+      const root = target.root;
+      const notice = scopeNotice(target);
+      if (notice) console.error(notice);
       const config = await loadConfig(root);
       const pointer = cloudPointer(config);
       if (!pointer) {
@@ -1315,15 +1324,26 @@ cloudCommand
   .option('--remote <name>', 'Git remote to derive the project identity from (default: origin)')
   .option('--repo <name>', 'Name this project yourself, for one with no git remote')
   .option('--no-auto-stage', 'Do not stage new knowledge automatically; stage it explicitly instead')
+  .option('--global', 'Act on the machine-wide store (~/.knowl) instead of this repository')
   .action(async options => {
     try {
-      const root = await findProjectRoot(process.cwd());
+      const target = await resolveCloudTarget(options);
+      const root = target.root;
+      const notice = scopeNotice(target);
+      if (notice) console.error(notice);
       const connectInput = {
         projectRoot: root,
         apiHost: options.api,
         workspaceId: options.workspace as string | undefined,
         remote: options.remote,
-        repo: options.repo,
+        // The machine store has no git remote, so identity would fall through to the directory
+        // name -- which is literally `.knowl`: opaque in a workspace listing, and the SAME for
+        // every person, so two people connecting their machine stores to one workspace would
+        // collide. A fixed name instead, and fixed rather than derived from the hostname on
+        // purpose: your laptop and your desktop hold one set of personal defaults, and deriving
+        // it would split them into two repos that each look foreign to the other. `--repo`
+        // still overrides, as it does anywhere else.
+        repo: options.repo ?? (target.scope === 'global' ? GLOBAL_REPO_IDENTITY : undefined),
       };
 
       // Shared by both entry paths -- the first attempt and the one that follows a pick -- so a
@@ -1422,9 +1442,13 @@ cloudCommand
 cloudCommand
   .command('pull')
   .description('Fetch team knowledge into this machine\'s local replica')
-  .action(async () => {
+  .option('--global', 'Act on the machine-wide store (~/.knowl) instead of this repository')
+  .action(async (options: { global?: boolean }) => {
     try {
-      const root = await findProjectRoot(process.cwd());
+      const target = await resolveCloudTarget(options);
+      const root = target.root;
+      const notice = scopeNotice(target);
+      if (notice) console.error(notice);
       const config = await loadConfig(root);
       const result = await runPull({ projectRoot: root, config });
 
@@ -1460,9 +1484,13 @@ cloudCommand
   .command('push')
   .description('Send staged knowledge. Works from any branch')
   .option('-y, --yes', 'Skip the confirmation. Required when there is no terminal to ask')
+  .option('--global', 'Act on the machine-wide store (~/.knowl) instead of this repository')
   .action(async options => {
     try {
-      const root = await findProjectRoot(process.cwd());
+      const target = await resolveCloudTarget(options);
+      const root = target.root;
+      const notice = scopeNotice(target);
+      if (notice) console.error(notice);
       const config = await loadConfig(root);
 
       // Captured before anything is shown, and sent unchanged. A live re-read at send time is
@@ -1837,9 +1865,13 @@ cloudCommand
 cloudCommand
   .command('status')
   .description('Report the workspace, the replica and what is staged (makes no network call)')
-  .action(async () => {
+  .option('--global', 'Act on the machine-wide store (~/.knowl) instead of this repository')
+  .action(async (options: { global?: boolean }) => {
     try {
-      const root = await findProjectRoot(process.cwd());
+      const target = await resolveCloudTarget(options);
+      const root = target.root;
+      const notice = scopeNotice(target);
+      if (notice) console.error(notice);
       const config = await loadConfig(root);
       console.log(formatCloudStatus(await cloudStatus(root, config)));
     } catch (error: any) {
