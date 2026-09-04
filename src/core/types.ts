@@ -396,6 +396,7 @@ export interface ProjectConfig {
     organization?: { enabled?: boolean; path?: string };
     global?: { enabled?: boolean; path?: string };
   };
+  skills?: Record<string, { inputs?: Record<string, string>; version?: number }>;
   /**
    * Pointer to a Knowl Cloud workspace. Never a credential -- this file is deliberately
    * force-committable so the pointer travels with a clone, and `isConfigTrackedByGit`

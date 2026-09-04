@@ -21,6 +21,14 @@ export type SkillEntrypoint =
       autoRun?: boolean;
     };
 
+export type SkillCapability = 'process' | 'network' | 'write' | 'publish' | 'delete';
+
+export interface SkillRequires {
+  capabilities?: SkillCapability[];
+  inputs?: Record<string, { description?: string; default?: string }>;
+  preconditions?: string[];
+}
+
 export interface SkillManifest {
   name: string;
   purpose: string;
@@ -29,6 +37,8 @@ export interface SkillManifest {
   version: number;
   createdAt: string;
   updatedAt: string;
+  requires?: SkillRequires;
+  provenance?: string;
 }
 
 export interface SkillFileInput {
@@ -43,6 +53,8 @@ export interface CreateSkillPackageInput {
   triggers?: string[];
   files?: SkillFileInput[];
   entrypoints?: Record<string, SkillEntrypoint>;
+  requires?: SkillRequires;
+  provenance?: string;
 }
 
 export interface SkillSummary {
