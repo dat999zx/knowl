@@ -3,7 +3,7 @@ import path from 'node:path';
 import type { KnowledgeCategory, KnowledgeItem, KnowledgeStatus, ProjectConfig } from '../core/types.js';
 import { globalStorePath, knowlHome } from '../core/paths.js';
 import { withDbPath } from './database.js';
-import { queryKnowledgeForAgent, queryKnowledgeForAgentExplained } from './agent-query.js';
+import { queryKnowledgeForAgentExplained } from './agent-query.js';
 import { resolveStorage } from './storage-roles.js';
 
 export type MemoryNamespace = 'session' | 'project' | 'organization' | 'global';
