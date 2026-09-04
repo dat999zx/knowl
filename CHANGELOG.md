@@ -5,6 +5,23 @@ Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; s
 
 ## Unreleased
 
+**A Hermes session whose folder is not a Knowl project now says so, once.** Every lifecycle
+event returned early and silently in that case, so the plugin loaded, `hermes plugins doctor
+knowl` reported two tools and seven hooks, and nothing recorded or recalled anything -- a state
+indistinguishable from a healthy integration. The common way in is that `knowl init hermes` is
+machine-wide and one-time, while `knowl init` is per repository, so opening a repo that never had
+the second is easy.
+
+The note names the folder and points at `knowl init`, and it is said **once per session** rather
+than once per event -- seven events a turn would make it noise. It is withheld entirely from
+someone with no machine-wide store, where an unsolicited "run knowl init" would be an advert
+rather than a diagnosis.
+
+Two smaller corrections fell out of the same path. The card's heading claimed "no project open
+for this session" even when a folder *was* open, and its advice was "open a repository as this
+session's folder" -- which someone who already had one open reads as a broken diagnosis. Those
+two situations now get different wording, because they need opposite remedies. Closes #250.
+
 **Global skills: reusable playbooks with project bindings.** A skill can now live once on the machine (`~/.knowl/skills/<name>/`) as a reusable playbook, while each repository provides its own commands and paths via project bindings in `.knowl/config.json`. A playbook and a binding are two keys: neither runs anything alone.
 - **Layering and Shadowing**: Project skills shadow global skills of the same name. `knowl skill list` identifies whether each skill is `project` or `global`.
 - **`requires` block**: Manifests (`skill.yaml` or `skill.json`) declare `inputs`, `capabilities` (`process`, `network`, `write`, `publish`, `delete`), and fail-closed `preconditions` (`clean_worktree`, `on_branch:<name>`, `command_exists:<bin>`).
@@ -26,6 +43,7 @@ Both safe routes remain, and the refusal names them. Every bound input is now ex
 `KNOWL_SKILL_INPUT_<NAME>`, which the command reads rather than the shell parsing it; or use a
 `script` entrypoint, whose arguments are passed as an array and never reach a shell. Script
 entrypoints are unaffected, which is what the documented example already used.
+
 
 ## 5.20.0 — 2026-09-04
 
