@@ -97,14 +97,15 @@ describe('CLI learned skills', () => {
     await fs.mkdir(path.join(PROJECT_DIR, '.knowl'), { recursive: true });
 
     execSync('git init', { cwd: PROJECT_DIR, stdio: 'pipe' });
-    execSync('git config user.name "Test"', { cwd: PROJECT_DIR, stdio: 'pipe' });
-    execSync('git config user.email "test@example.com"', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    // Identity on the invocation, never written to a config file -- see
+    // tests/architecture/git-identity.test.ts for what a written one costs.
+    const AS_TEST = 'git -c user.name="Test" -c user.email="test@example.com"';
     await fs.writeFile(path.join(PROJECT_DIR, 'README.md'), '# Project\n');
     execSync('git add .', { cwd: PROJECT_DIR, stdio: 'pipe' });
-    execSync('git commit -m "initial commit"', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    execSync(`${AS_TEST} commit -m "initial commit"`, { cwd: PROJECT_DIR, stdio: 'pipe' });
     execSync(`node "${CLI_PATH}" init --yes`, { cwd: PROJECT_DIR, env: { ...process.env, KNOWL_HOME: GLOBAL_HOME }, encoding: 'utf-8', stdio: 'pipe' });
     execSync('git add .', { cwd: PROJECT_DIR, stdio: 'pipe' });
-    execSync('git commit -m "commit knowl init"', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    execSync(`${AS_TEST} commit -m "commit knowl init"`, { cwd: PROJECT_DIR, stdio: 'pipe' });
 
     const playbookYaml = [
       'name: deploy_task',
@@ -120,11 +121,17 @@ describe('CLI learned skills', () => {
       '    - process',
       'entrypoints:',
       '  default:',
-      '    type: shell',
+      '    type: script',
+      '    path: deploy.js',
+      '    args: ["${inputs.target_env}"]',
       '    autoRun: true',
-      '    command: node -e "console.log(\'DEPLOYED_${inputs.target_env}\')"',
     ].join('\n') + '\n';
 
+    await fs.writeFile(
+      path.join(GLOBAL_HOME, 'skills', 'deploy_task', 'deploy.js'),
+      "console.log('DEPLOYED_' + process.argv[2]);\n",
+      'utf8',
+    );
     await fs.writeFile(path.join(GLOBAL_HOME, 'skills', 'deploy_task', 'skill.yaml'), playbookYaml, 'utf8');
 
     const env = { ...process.env, KNOWL_HOME: GLOBAL_HOME };
@@ -176,7 +183,7 @@ describe('CLI learned skills', () => {
 
     // 5. Commit and run: banner shows resolved command, execution succeeds
     execSync('git add .', { cwd: PROJECT_DIR, stdio: 'pipe' });
-    execSync('git commit -m "clean worktree"', { cwd: PROJECT_DIR, stdio: 'pipe' });
+    execSync(`${AS_TEST} commit -m "clean worktree"`, { cwd: PROJECT_DIR, stdio: 'pipe' });
 
     const runOutput = execSync(`node "${CLI_PATH}" skill run deploy_task`, {
       cwd: PROJECT_DIR,
