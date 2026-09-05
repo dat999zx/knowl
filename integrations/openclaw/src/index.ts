@@ -5,6 +5,30 @@ import { OpenClawEngineManager, safely, withDeadline } from './engine.js';
 
 export { OpenClawEngineManager, safely, withDeadline };
 
+/**
+ * The workspace a hook event belongs to.
+ *
+ * OpenClaw's hook contexts do not all carry a directory: `PluginHookGatewayContext` and
+ * `PluginHookAgentContext` declare `workspaceDir`, but `PluginHookToolContext` and
+ * `PluginHookSessionContext` do not -- they identify a run by `sessionKey`/`agentId` and
+ * nothing else. Reading `ctx.workspaceDir` unconditionally therefore type-errors on half
+ * the hooks and, worse, silently falls through to `process.cwd()` at runtime, which in a
+ * gateway holding several workspaces is whichever directory the gateway happens to be in.
+ *
+ * So the event is asked first (it carries `cwd` on the hooks that know one), the context
+ * second, and `process.cwd()` last -- and the caller decides what an unresolvable workspace
+ * means. `getHandle` answers `null` for a directory that is not a Knowl project, so a wrong
+ * guess degrades to "no memory this turn" rather than to another project's database.
+ */
+function resolveWorkspace(event: unknown, ctx: unknown): string {
+  const fromEvent = (event as { cwd?: unknown } | undefined)?.cwd;
+  if (typeof fromEvent === 'string' && fromEvent) return fromEvent;
+  const c = ctx as { workspaceDir?: unknown; cwd?: unknown } | undefined;
+  if (typeof c?.workspaceDir === 'string' && c.workspaceDir) return c.workspaceDir;
+  if (typeof c?.cwd === 'string' && c.cwd) return c.cwd;
+  return process.cwd();
+}
+
 const MAX_IMPACT_SEEN = 512;
 const impactSeen = new Map<string, true>();
 
@@ -146,10 +170,7 @@ export default definePluginEntry({
     // Fixed orientation card is prepended to context. Never derives queries from prompt prose.
     api.on('before_prompt_build', async (event, ctx) => {
       return await safely(async () => {
-        const cwd = (event as Record<string, unknown>)?.cwd as string | undefined
-          ?? ctx?.workspaceDir
-          ?? (ctx as Record<string, unknown>)?.cwd as string | undefined
-          ?? process.cwd();
+        const cwd = resolveWorkspace(event, ctx);
 
         const handle = await manager.getHandle(cwd);
         if (!handle) return undefined;
@@ -191,10 +212,7 @@ export default definePluginEntry({
       'before_tool_call',
       async (event, ctx) => {
         return await safely(async () => {
-          const cwd = (event as Record<string, unknown>)?.cwd as string | undefined
-            ?? ctx?.workspaceDir
-            ?? (ctx as Record<string, unknown>)?.cwd as string | undefined
-            ?? process.cwd();
+          const cwd = resolveWorkspace(event, ctx);
 
           const handle = await manager.getHandle(cwd);
           if (!handle) return undefined;
@@ -307,10 +325,7 @@ export default definePluginEntry({
     // Return value is ignored by host, but handler must await inside safely without floating promises.
     api.on('after_tool_call', async (event, ctx) => {
       await safely(async () => {
-        const cwd = (event as Record<string, unknown>)?.cwd as string | undefined
-          ?? ctx?.workspaceDir
-          ?? (ctx as Record<string, unknown>)?.cwd as string | undefined
-          ?? process.cwd();
+        const cwd = resolveWorkspace(event, ctx);
 
         const handle = await manager.getHandle(cwd);
         if (!handle) return;
@@ -344,10 +359,7 @@ export default definePluginEntry({
     // Bounded under 10s (host has 30s timeout, runs on serialized notification queue in Codex harness).
     api.on('before_compaction', async (event, ctx) => {
       await safely(async () => {
-        const cwd = (event as Record<string, unknown>)?.cwd as string | undefined
-          ?? ctx?.workspaceDir
-          ?? (ctx as Record<string, unknown>)?.cwd as string | undefined
-          ?? process.cwd();
+        const cwd = resolveWorkspace(event, ctx);
 
         const handle = await manager.getHandle(cwd);
         if (!handle) return;
@@ -375,10 +387,7 @@ export default definePluginEntry({
     // Warms workspace handle in memory so initial write gate avoids cold open latency.
     api.on('session_start', async (event, ctx) => {
       await safely(async () => {
-        const cwd = (event as Record<string, unknown>)?.cwd as string | undefined
-          ?? ctx?.workspaceDir
-          ?? (ctx as Record<string, unknown>)?.cwd as string | undefined
-          ?? process.cwd();
+        const cwd = resolveWorkspace(event, ctx);
 
         const handle = await manager.warmWorkspace(cwd);
         if (!handle) return;
@@ -404,22 +413,24 @@ export default definePluginEntry({
     // Session / agent shutdown: maps session_end & agent_end -> turn-stop.
     // Bound by 1.5s under OpenClaw's 2-second total shutdown drain budget.
     for (const hookName of ['session_end', 'agent_end'] as const) {
-      api.on(hookName, async (event, ctx) => {
+      // Typed per hook name, so the loop variable does not collapse the handler's
+      // parameters to `any`: `api.on` is overloaded per event and a union of names
+      // widens both arguments. The bodies only read what `resolveWorkspace` accepts.
+      api.on(hookName, async (event: unknown, ctx: unknown) => {
         await safely(async () => {
-          const cwd = (event as Record<string, unknown>)?.cwd as string | undefined
-            ?? ctx?.workspaceDir
-            ?? (ctx as Record<string, unknown>)?.cwd as string | undefined
-            ?? process.cwd();
+          const cwd = resolveWorkspace(event, ctx);
 
           const handle = await manager.getHandle(cwd);
           if (!handle) return;
 
+          const c = ctx as Record<string, unknown> | undefined;
+          const e = event as Record<string, unknown> | undefined;
           const raw: Record<string, unknown> = {
             cwd,
-            sessionId: ctx?.sessionId ?? ctx?.sessionKey ?? (event as Record<string, unknown>)?.sessionId ?? (event as Record<string, unknown>)?.sessionKey ?? 'openclaw-session',
-            turnId: (event as Record<string, unknown>)?.turnId ?? (event as Record<string, unknown>)?.runId ?? ctx?.runId,
-            agentId: ctx?.agentId ?? (event as Record<string, unknown>)?.agentId,
-            agentType: (event as Record<string, unknown>)?.agentType,
+            sessionId: c?.sessionId ?? c?.sessionKey ?? e?.sessionId ?? e?.sessionKey ?? 'openclaw-session',
+            turnId: e?.turnId ?? e?.runId ?? c?.runId,
+            agentId: c?.agentId ?? e?.agentId,
+            agentType: e?.agentType,
           };
 
           const payload = readLifecyclePayloadObject(raw);

@@ -113,7 +113,6 @@
     "@types/node": "^22.10.7",
     "drizzle-kit": "^0.31.10",
     "eslint": "^10.9.1",
-    "openclaw": "^2026.9.1",
     "tsup": "^8.3.5",
     "tsx": "^4.23.8",
     "typescript": "^5.7.3",
