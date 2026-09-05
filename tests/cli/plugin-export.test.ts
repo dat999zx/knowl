@@ -57,7 +57,12 @@ describe('plugin export and built artifact verification', () => {
     const consumerRequire = createRequire(path.join(consumerDir, 'package.json'));
     const pluginResolvedPath = consumerRequire.resolve('@dat999zx/knowl/plugin');
     pluginModule = await import(pathToFileURL(pluginResolvedPath).href);
-  }, 120_000);
+    // 300s, not the default: this hook runs a real `npm pack` and a real `npm install` of the
+    // resulting tarball into a scratch consumer, which is the only way to prove the exports map
+    // resolves the way it will for a user. That is ~54s on an idle machine and comfortably past
+    // 120s once the rest of the suite is running in parallel, where it timed out. The budget is
+    // for the package manager, not for anything this test asserts.
+  }, 300_000);
 
   afterAll(async () => {
     if (scratchDir && existsSync(scratchDir)) {

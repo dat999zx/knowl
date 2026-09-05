@@ -6,6 +6,13 @@ export default defineConfig({
     alias: {
       '@dat999zx/knowl/plugin': path.resolve('./dist/plugin.js'),
       '@dat999zx/knowl': path.resolve('./dist/index.js'),
+      // `openclaw` is a PEER dependency of integrations/openclaw and is deliberately absent
+      // here: the host refuses a second registry copy of itself inside a managed plugin
+      // project and relinks its own node_modules after install. Without this alias the
+      // OpenClaw suite passes only on a machine that happens to have OpenClaw installed --
+      // it died on CI's ubuntu and macOS legs with ERR_MODULE_NOT_FOUND while passing on the
+      // developer's Windows box, which had it left over from a live install.
+      'openclaw/plugin-sdk/plugin-entry': path.resolve('./tests/integrations/openclaw/plugin-entry-stub.ts'),
     },
   },
   test: {
