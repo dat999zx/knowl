@@ -1,271 +1,329 @@
 # OpenClaw: an in-process plugin, and the library export it needs
 
-Date: 2026-09-05
+Date: 2026-09-05 (rewritten same day after adversarial review)
 Status: draft for review
-Supersedes: Tasks 4–6 of `docs/superpowers/plans/2026-09-03-harness-integrations.md`, which
-designed a Cline-style subprocess shell-out for OpenClaw.
+Supersedes: Tasks 4–6 of `docs/superpowers/plans/2026-09-03-harness-integrations.md`, and the
+first draft of this file at `347186d`, whose impact-card design was built on a misread hook.
 Governed by: constraint `6676fd41b5dc410c` — recall is the turn-start hook's fixed orientation
 card, never a query built from the user's prompt text.
-Depends on: nothing unbuilt. The engine exists; only its front door is missing.
+Requires: 5.21.1's `openProjectScope` (PR #258), without which this design corrupts data.
 
-## Why this is not the 2026-09-03 design
+## Why in-process
 
-That plan gave OpenClaw the same shape Cline and Hermes have: a small translator that spawns
-`knowl agent-hook <host> <event> --json` once per event and reads JSON off stdout.
+One argument, and it is the write gate.
 
-Hermes has that shape because it has no choice. Its plugin is Python — `subprocess.run`,
-`shutil.which("knowl.cmd")` at `integrations/hermes/knowl/__init__.py:233` — and Python cannot
-import TypeScript. The shell-out is its ceiling, not its design.
+`before_tool_call` is the only hook the agent **blocks on**. `handleHostLifecycleEvent` routes
+`tool-precheck` to `runWriteGate` before every tool call. Measured 2026-09-05:
 
-OpenClaw is TypeScript on Node, the same runtime Knowl is written in. Verified at source
-2026-09-05 (atom `35421756dd5c4dc1`): root `package.json` declares
-`engines.node: ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0"`, `packageManager: pnpm@12.1.0`,
-`scripts.start: node openclaw.mjs`. `docs/install/bun.md` states plainly that "Node remains
-OpenClaw's primary, default, and recommended runtime"; Bun 1.4+ is an opt-in that additionally
-requires WAL-reset-safe `node:sqlite`, and `bun install` cannot resolve the repo's pnpm workspace
-at all. That engine range sits entirely inside Knowl's own `>=22`.
+| | subprocess | in-process |
+| --- | --- | --- |
+| write gate (real decision) | 118 ms | 0.68 ms |
+| non-write (nothing to decide) | 118 ms | 0.04 ms |
 
-Choosing the subprocess here would be adopting Hermes' limitation on purpose. Two things follow
-from being in-process, and neither is available to any subprocess plugin:
+The subprocess **cannot short-circuit**. It must boot Node, load the bundle and open SQLite
+before it can discover the tool was a `read` and answer "accepted". At a few hundred tool calls
+per session that is 20–25 seconds of latency sitting directly in front of the user, spent
+overwhelmingly on events that had nothing to decide. In-process, `toolWritesFile` returns before
+the database is touched.
 
-- **A returned value, not text.** `integrations/hermes/knowl/__init__.py:893` records the
-  limitation verbatim: Hermes "only reads a bare string here, which a subprocess cannot return."
-- **A warm database.** Measured on the maintainer's machine 2026-09-05: 187 ms median just to
-  spawn `node dist/index.js --version` (5 runs: 182/182/187/188/4739). That is the floor per hook
-  event, paid hundreds of times a session, before any work happens.
+Two arguments the first draft made, withdrawn:
 
-The cost is process isolation: an engine fault now lands inside OpenClaw's gateway. The plan's
-existing rule — *a hook failure must allow the action* — stops being defensive and becomes
-load-bearing. Every handler wraps its body and swallows.
+- **"187 ms per event."** That benchmarked `node dist/index.js --version`, a command nothing runs.
+  The real per-event cost through `agent-hook` is 118–120 ms, of which 36 ms is the bare `node -e 0`
+  process floor. In-process still pays ~32 ms of real capture work. The honest saving on the common
+  *background* event is ~88 ms, not 187 ms — worth having, not worth restructuring for.
+- **"A subprocess cannot return an object."** It can; `runAgentHook` already returns JSON on stdout.
+  The quote it rested on describes the shape of *Hermes'* Python hook API, not a property of
+  subprocesses. See "the impact card" below, where the premise collapsed entirely.
+
+**The cost.** Process isolation. An engine fault lands inside OpenClaw's gateway. libsql is a
+native addon; a segfault there takes the whole gateway with it, and no amount of try/catch
+prevents that. This is knowingly accepted, not mitigated.
+
+## The prerequisite that already shipped
+
+The first draft assumed independent per-project handles existed. They did not. `initDb()`
+overwrote a module-global context, so a gateway holding two workspaces wrote project A's rows into
+project B's file — silently, no error, no log. `closeDb()` on one handle tore down every other.
+
+Both were fixed in **5.21.1** (`openProjectScope` / `withProjectScope`, refcounted, releasing
+through `releaseClient`). Every handle method in this design runs inside a scope. Nothing here may
+call `initDb`, `initDbPath` or `closeDb` — those own the process-wide context and belong to the CLI.
+
+## Why not `registerMemoryCapability`
+
+OpenClaw ships two exclusive slots — `registerContextEngine(id, factory)` and
+`registerMemoryCapability(capability)` — and `sdk-overview.md` calls the latter "the exclusive
+memory-plugin API". A memory product for OpenClaw appears to belong there. It does not.
+
+**Exclusive means one active at a time.** Registering it would displace whatever the user already
+runs — `memory-core`, Honcho — and take ownership of recall, semantic search, promotion, dreaming
+and the memory runtime. Knowl does not do those jobs. Knowl holds a repository's engineering truth;
+their memory plugin holds the conversation. Displacing one with the other loses a capability the
+user chose and replaces it with something aimed at a different question.
+
+OpenClaw already documents the shape for this. `memory-wiki` is a bundled plugin that "does not
+replace the active memory plugin. Recall, promotion, indexing, and dreaming stay owned by the
+configured memory plugin… `memory-wiki` sits beside it." That is Knowl's position exactly.
+
+So: generic hooks, beside the memory plugin, displacing nothing. Recorded here because silence read
+as an oversight in review.
+
+Two adjacent slots deliberately not used, for the same reason plus one more:
+
+- **`registerTrustedToolPolicy`** — runs before ordinary `before_tool_call` and is documented for
+  "host-trusted gates such as workspace policy". Knowl's write gate is arguably that. Rejected for
+  v1: it requires `contracts.trustedToolPolicies` plus explicit enablement, and a memory tool
+  claiming a trusted policy tier before it has a track record is a bigger ask than the feature is
+  worth. Revisit if users report ordering conflicts.
+- **`registerMemoryPromptSupplement` / `registerMemoryPromptPreparation`** — purpose-built for
+  prompt text depending on async plugin state. Plausible carrier for the orientation card and worth
+  a spike, but it binds Knowl into the memory-plugin surface this section just declined.
 
 ## Part 1 — the library export
 
-### The problem, exactly
+### The problem
 
-`@dat999zx/knowl` has no library entry. `package.json` declares `bin: { knowl: "dist/index.js" }`
-and `main: "dist/index.js"`; `exports` is **undefined**. And `dist/index.js` is the CLI: `src/index.ts`
-opens `#!/usr/bin/env node` and its module body dispatches on `process.argv[2]` immediately. Importing
-it does not expose an API — it runs the CLI.
+`@dat999zx/knowl` has no library entry. `bin` and `main` both point at `dist/index.js`, `exports`
+is undefined, and `src/index.ts` is a `#!/usr/bin/env node` shebang that dispatches on
+`process.argv[2]` in its module body. Importing it runs the CLI.
 
-### The engine is already a library
+### What is already shared, and what is not
 
-This is not a refactor. `src/mcp/server.ts` already imports `initDb`, `getProjectByRootPath` and
-`registerTools` directly from core modules rather than shelling out; the CLI does the same. Both
-protocol surfaces are already thin adapters over a shared engine, which is what the project's
-"maintain thin protocol boundaries" goal asks for. The work is to name a front door, not to build
-one.
+`handleHostLifecycleEvent` (`src/session/host-lifecycle.ts:940`) really is one importable call
+returning `HostLifecycleResult`. `runAgentHook` is a thin shell around it: read stdin, resolve the
+project, delegate, print. For **lifecycle**, this is naming a door.
 
-`runAgentHook(host, event)` in `src/cli/agent-hook.ts` is itself a shell: it reads stdin, resolves
-the project (`findProjectRoot` → `assertKnowledgeDatabasePresent` → `initDb` →
-`getProjectByRootPath`), delegates to **`handleHostLifecycleEvent(project.id, normalized)`**, and
-prints JSON. Everything a host plugin needs is that one call; the stdin/stdout wrapper is the only
-thing the CLI adds.
+For **query and store it is not**, and the first draft was wrong to imply otherwise. There is no
+shared engine function: `src/mcp/tools.ts` holds ~330 lines of query logic — embedder construction,
+layered namespace reads, federation across linked repos, score calibration, foreign-item
+suppression — and `knowl_store` owns category validation, `assertOwnedTargets`, and namespace
+routing. A library `query()` either reimplements that (a second answer to ranking) or is
+deliberately dumber than `knowl_query`.
+
+**Decision: it is deliberately dumber, and says so.** The plugin's in-process `knowl_query` is a
+convenience so a user need not run a second server; anyone wanting federation and vector search
+runs the MCP server, which is unchanged and still carries all 36 tools. The plugin's tool
+description must say which it is.
 
 ### The surface
-
-Three entries. Parity is not reduced by keeping it small — the Hermes plugin, the most complete
-integration shipped, invokes exactly three CLI verbs across its 1,100 lines
-(`agent-hook` at :387, `query` at :445 and :1000, `store` at :1022) and nothing else.
 
 ```ts
 // @dat999zx/knowl  →  exports["./plugin"]
 export async function openProject(cwd: string): Promise<ProjectHandle | null>;
-// resolves the root, asserts the database exists, opens it, returns a handle that keeps
-// the connection warm. null when cwd is not a Knowl project — never throws for that case.
-
 export interface ProjectHandle {
-  lifecycle(event: NormalizedHostHook): Promise<LifecycleResult>;  // handleHostLifecycleEvent
+  lifecycle(event: NormalizedHostHook): Promise<LifecycleResult>;
   query(text: string, opts?: { limit?: number }): Promise<QueryResult[]>;
   store(atom: StoreInput): Promise<StoreResult>;
-  close(): Promise<void>;
+  release(): Promise<void>;   // releaseClient, never closeDb
+}
+export function normalizeHostHook(host, event, payload): NormalizedHostHook;
+export function readLifecyclePayloadObject(raw: unknown): LifecyclePayload;
+```
+
+Every method body runs inside `withProjectScope`. `release()` is per-handle.
+
+**`openProject` must not collapse two errors into one.** `runAgentHook` distinguishes them
+deliberately: `ProjectNotFoundError` is silent (not a Knowl repo — return `null`), while
+`MissingKnowledgeDatabaseError` still speaks up (your database vanished — throw). Returning bare
+`null` for both destroys the distinction `src/cli/database-presence.ts` exists to preserve.
+
+**`readLifecyclePayloadObject` is not optional.** Both existing in-process callers route raw
+payloads through `readLifecyclePayload` before normalising, and `hook-over-mcp.ts:118` says why:
+"it is the allowlist, and a second copy of it here would be a second answer to what a hook may
+carry." It enforces `ROOT_FIELDS`, `MAX_RETAINED_STRING=2000`, `MAX_RETAINED_ARRAY_ITEMS=50`.
+Exporting only the normaliser lets a plugin hand the engine arbitrary unbounded fields — including
+prompt text — which then reach `memory_session_events`, breaking the "never prompts, never
+transcripts" promise this spec invokes below. The existing function takes a stream, so the library
+needs an object-shaped equivalent.
+
+**`hook-over-mcp.ts` is the real precedent** for an in-process caller and the plugin should mirror
+two guards it already has: the self-call guard (skip the hook's own tool event) and the
+project-scope guard (ignore events whose cwd resolves to a sibling checkout).
+
+### The exports map is a breaking change
+
+Verified by experiment, not inspection: packing the repo and installing the tarball with OpenClaw's
+exact flags, `dist/index.js`, `dist/plugin.js`, `package.json` and
+`integrations/cline/knowl-plugin.mjs` all resolve today. A three-entry map breaks the last three
+with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+
+The casualty is real and documented: `integrations/cline/knowl-plugin.mjs` is the published Cline
+install path, named in `docs/hosts.md:138`, `docs/reference.md:2390` and `CHANGELOG.md:985`.
+
+Minimum non-breaking map, verified to restore all five paths:
+
+```json
+{
+  ".": "./dist/index.js",
+  "./plugin": "./dist/plugin.js",
+  "./package.json": "./package.json",
+  "./integrations/*": "./integrations/*",
+  "./dist/*": "./dist/*"
 }
 ```
 
-`normalizeHostHook(host, event, payload)` is exported alongside so a plugin builds a payload the
-engine already accepts, rather than reimplementing the shape.
+Keep `main` for old resolvers. The tsup change is just adding `src/plugin.ts` to `entry`; code
+splitting is already on, so the two entries share chunks and the CLI bundle is unaffected.
 
-MCP is untouched and stays the channel for the other 33 tools. The library is the automatic
-lifecycle path plus the two tools a plugin offers in-process so a user need not run a second
-server — the same two Hermes bundles.
+### Version skew
 
-### Packaging constraints
+Verified safe in both directions. An older engine on a newer schema fails cleanly before any
+migration touches the file (`assertSchemaSupported` runs at `bootstrap.ts:1261`). A newer migration
+level with the same schema version opens, writes, and correctly does not stamp the level down.
 
-- **`exports` must be additive.** Adding an `exports` map to a package that had none makes every
-  previously-reachable deep path unreachable. Enumerate what already resolves against `dist/`
-  before writing it, and include `"./package.json": "./package.json"` — omitting it is a known
-  papercut already recorded against `@knowl/ai-sdk`.
-- **`dependencies`, never `peerDependencies`.** OpenClaw installs plugins with
-  `npm install --omit=dev --omit=peer --legacy-peer-deps --ignore-scripts --no-audit --no-fund`
-  into `~/.openclaw/npm/projects/<encoded-package>` (`docs/plugins/dependency-resolution.md`). A
-  peer dependency would simply not be installed.
-- **`--ignore-scripts` is survived, not accidentally.** `tree-sitter@0.21.1` builds with
-  `prebuildify --napi --strip` and resolves at require time through `node-gyp-build` against
-  shipped `prebuilds/{darwin-arm64,darwin-x64,linux-x64,win32-x64}`; `libsql@0.5.29` receives its
-  binaries as ordinary per-platform `optionalDependencies` (`@libsql/win32-x64-msvc` and 8
-  siblings). Neither needs an install script. Any future native dependency that *downloads* a
-  binary in `postinstall` breaks this path.
-- **N-API, so no ABI risk.** Both native dependencies are N-API and therefore ABI-stable across
-  Node majors by contract, not compiled per `MODULE_VERSION`. The earlier concern was overstated.
-- **No competing SQLite addon.** OpenClaw uses Node's built-in `node:sqlite`
-  (`src/infra/node-sqlite.ts`, `src/cron/store/schema.ts`, `src/infra/kysely-sync.ts`), so libsql
-  is the only native SQLite addon in the process. Loading the two side by side remains unproven
-  and is a Task-1 verification, not an assumption.
-- **The engine cannot be bundled flat.** `tsup.config.ts` marks `libsql`, all four tree-sitter
-  packages and `@huggingface/transformers` external, and explains why: libsql reaches its binding
-  through a dynamic `require('@neon-rs/load')` that esbuild cannot follow, and bundling it fails at
-  runtime with *"Dynamic require of \"@neon-rs/load\" is not supported"*. The plugin ships as a
-  package with a dependency tree, not a single file.
-- **tree-sitter and embeddings stay lazy.** A plugin doing only lifecycle/query/store may never
-  load either, leaving libsql as the single native dependency actually in play.
+**But `SchemaTooNewError` cannot be the guard.** `KNOWL_SCHEMA_VERSION` has been bumped exactly once
+ever while `KNOWL_MIGRATION_LEVEL` has reached 16 — the guard has never fired in practice, and the
+policy is to bump the level. So the plugin reads `KNOWL_MIGRATION_LEVEL` off the file and disables
+itself with a readable reason when the file's level exceeds the bundled engine's.
 
-### Version skew, which is new
-
-Today Knowl is a program: one build owns the database. As an importable library it becomes a
-dependency users pin, so a plugin carrying engine 5.21 and a CLI at 5.30 can open the same SQLite
-file. The code anticipates this — `KNOWL_MIGRATION_LEVEL = 16`, `SchemaTooNewError`, and
-`src/store/bootstrap.ts:1243` reasoning explicitly about two builds sharing a file — but the case
-moves from rare to routine. Every future migration must stay honest about it, and
-`SchemaTooNewError` must surface through the plugin as a clean disable with a readable reason,
-never as a gateway crash.
+Separately: `initDbPath` catches every error and rethrows `DatabaseError`, so the
+`SchemaTooNewError` **class is lost at the library boundary**. Either preserve the cause or
+re-classify at the plugin entry — string-matching an error message is not an answer.
 
 ## Part 2 — the plugin
 
 ### Shape
 
 `definePluginEntry` from `openclaw/plugin-sdk/plugin-entry`; `package.json` carries
-`openclaw.extensions: ["./index.ts"]` plus an `openclaw.plugin.json` manifest with
-`activation.onStartup`. `register(api)` is **synchronous** and registers every handler; handlers
-themselves may be async except the two synchronous persistence hooks. Plugin settings are read as
-`api.pluginConfig` inside the closure — not `event.context.pluginConfig`.
+`openclaw.extensions` and an `openclaw.plugin.json` manifest with `activation.onStartup`.
+`register(api)` is synchronous. Use `api.on(...)` — `api.registerHook(...)` is a different internal
+system that warns and never fires for typed names. Settings come from `api.pluginConfig` inside the
+closure.
 
-Use `api.on(...)` for everything. `api.registerHook(...)` is a different internal system:
-registering a typed name there logs a warning and the typed runner never invokes it.
+**Dependencies, with one exception the first draft got backwards.** OpenClaw installs plugins with
+`npm install --omit=dev --omit=peer --legacy-peer-deps --ignore-scripts --no-audit --no-fund`, so
+ordinary dependencies must be real `dependencies`. But a plugin importing `openclaw/plugin-sdk/*`
+**must** declare `openclaw` as a `peerDependency`: OpenClaw refuses to install a second registry
+copy of the host and relinks `node_modules/openclaw` itself after install.
 
-### Both permission gates are required
+`--ignore-scripts` is survived because tree-sitter ships `prebuildify` prebuilds resolved at require
+time and libsql's binaries arrive as per-platform `optionalDependencies`. Any future dependency that
+*downloads* a binary in `postinstall` breaks this. Evaluate
+`openclaw.release.bundleRuntimeDependencies: false` — the documented opt-out native-heavy packages
+use so npm resolves per-platform binaries at install time.
 
-A non-bundled plugin needs `plugins.entries.knowl.hooks.allowConversationAccess: true` for
-`before_prompt_build`, `agent_turn_prepare`, `before_agent_finalize` and `agent_end`. Separately,
-`allowPromptInjection` (default allowed) gates `before_prompt_build`, `agent_turn_prepare`,
-`heartbeat_prompt_contribution` and durable next-turn injections. `before_prompt_build` needs
-**both**. Without them the plugin registers and silently does nothing — the failure mode to detect
-in `doctor`, not in a bug report.
+### Permissions
+
+`before_prompt_build` needs **both** `allowConversationAccess` (non-bundled plugins) and
+`allowPromptInjection`.
+
+**Missing them is not silent** — the first draft said it was. OpenClaw rejects the registration and
+records a `warn` diagnostic, surfaced by `openclaw plugins inspect <id> --runtime --json`. So the
+plugin ships no bespoke doctor line; `knowl init openclaw` writes both gates and the troubleshooting
+step is the host's existing command.
 
 ### Hook map
 
-| Hermes hook | OpenClaw hook | Kind | Notes |
+| Hermes | OpenClaw | Kind | Note |
 | --- | --- | --- | --- |
-| `pre_llm_call` | `before_prompt_build` | Modify | Returns `prependContext`. Fixed card only. |
-| `pre_tool_call` | `before_tool_call` | Gate | `{ block: true, blockReason }`. `opts.matcher` on canonical ids. |
-| `post_tool_call` | `after_tool_call` | Observe | Return ignored. Computes and caches the impact card. |
-| `transform_tool_result` | `tool_result_persist` | Sync | Returns `{ message }`. Reads the cache. |
-| `on_pre_compress` | `before_compaction` | Observe | Fire-and-forget checkpoint. |
-| `on_session_end` / `on_session_finalize` | `session_end`, `agent_end`, `gateway_stop` | Observe | `session_end.reason` ∈ new/reset/idle/daily/compaction/deleted/shutdown/restart/unknown. |
+| `pre_llm_call` | `before_prompt_build` | Modify | `prependContext`, fixed card only |
+| `pre_tool_call` | `before_tool_call` | Gate | `{ block, blockReason }`, `matcher` on canonical ids |
+| `transform_tool_result` | **`registerAgentToolResultMiddleware`** | async | see below |
+| `post_tool_call` | `after_tool_call` | Observe | capture |
+| `on_pre_compress` | `before_compaction` | Observe | **bounded**, see below |
+| session end | `session_end`, `agent_end`, `gateway_stop` | Observe | 2 s total drain budget |
+| — | `session_start`, `before_reset` | Observe | bind / rebind |
 
-`session_start` also exists (Observe) and binds the session.
+### The impact card — the first draft was wrong
+
+It mapped `transform_tool_result` onto `tool_result_persist` and then built an elaborate
+async-precompute-plus-sync-cache workaround around that hook's synchronicity. **The premise was
+false.** `tool_result_persist` rewrites the *transcript* copy of a tool result, not the copy the
+model reads in the current run: its output feeds `appendMessageAndCacheTranscriptSeq(...)` while the
+model's live context is a separate in-memory array. The card would have reached the model on a later
+turn's replay, if ever. The one shipped consumer uses it to redact secrets from persistence.
+
+The correct seam is **`api.registerAgentToolResultMiddleware(...)`** — "for async tool-result
+transforms that must run before OpenClaw or Codex feeds tool output back into the model." It is
+async and runtime-neutral, so the entire cache workaround is deleted. Cost: declare
+`contracts.agentToolResultMiddleware` and require explicit enablement.
+
+Model-visible text still goes in `content`, never only `details` — OpenClaw strips `details` before
+provider replay and compaction.
 
 ### The recall card, and the trap
 
-`before_prompt_build` receives the current prompt and session messages, and can return
-`prependContext`, `appendContext`, `systemPrompt`, `prependSystemContext`, `appendSystemContext`
-or `toolsAllow`. It is the obvious place to run a search on what the user just typed. **It must
-not.**
+`before_prompt_build` emits the fixed orientation card: `turn-start` → `bootstrapWithHandoff` —
+bound session, pending handoff, recent state, budget-capped. It must **never** build a query from
+the prompt. That is the defect PR #257 fixed on Hermes: the provider slot took the user's literal
+sentence and keyword-searched it. Prompt text may be passed as a signal; it never becomes the query.
 
-That is exactly the defect PR #257 fixed one host over: Knowl's Hermes MemoryProvider took the
-user's literal sentence and ran `knowl query <sentence> --limit 5`, which is keyword search over
-conversational prose. `src/cli/agents/host-hook.ts` keeps prompt text out of the hook payload
-deliberately — only a derived `correctionSignal` boolean crosses — and the product's "never
-prompts, never transcripts" promise rests on that.
+`before_prompt_build`, `agent_turn_prepare` and `heartbeat_prompt_contribution` are three
+independent hooks, not one slot — but their context additions **concatenate in priority order**, so
+two publishers duplicate. This spec uses `before_prompt_build` alone. (`heartbeat_prompt_contribution`
+fires only on heartbeat turns, so it cannot double on an ordinary user turn — but it can on a
+heartbeat.)
 
-So this hook emits the same fixed orientation card every other host gets: `turn-start` →
-`bootstrapWithHandoff` — the bound session, the pending handoff, recent project state, budget-
-capped. Prompt text may be *passed* as a signal (Hermes forwards it capped at 4000 chars) but
-never becomes the query string.
+### The write gate, and the safety contract the first draft had backwards
 
-**Exactly one hook may carry the card.** `before_prompt_build`, `agent_turn_prepare` and
-`heartbeat_prompt_contribution` are three surfaces onto the same slot; two of them publishing the
-same block is how the Hermes rules section appeared in the system prompt twice. This spec chooses
-`before_prompt_build` and the other two carry nothing.
+`before_tool_call` returns `{ block: true, blockReason }`. `block: true` is terminal;
+`block: false` is **no decision**, not an allow. `blockReason` does reach the model — it becomes the
+blocked tool result's text content.
 
-Ordering on embedded/CLI paths is: drain queued injections → `agent_turn_prepare` → heartbeat
-contribution → ordinary `before_prompt_build` → finalized tool policy → authorized prompt
-enrichment. `agent_turn_prepare` and injection draining are **not** wired into the Codex or
-Copilot prompt paths.
+**The plan's rule "a hook failure must allow the action" is not OpenClaw's contract.**
+`before_tool_call` is documented **fail-closed** on a 15-second budget: throw or exceed it and the
+user's write is *blocked*. Worse, a timed-out handler keeps running — hook callbacks get no
+cancellation signal. A cold libsql open or a first-call migration crossing 15 s would deny writes
+while the work continues.
 
-`{ requiresToolAuthority: true }` moves the handler into a second post-policy phase with
-`ctx.toolAuthority`. Knowl's card is not tool-backed, so the ordinary phase is correct; noted
-because it is the right slot if retrieval ever must respect the turn's tool policy.
+Therefore:
 
-### The impact card: async work, synchronous hook
+- The gate handler carries its **own internal deadline**, well under 15 s, and answers "accepted" on
+  its own timeout rather than letting the host's fail-closed budget decide.
+- `knowl init openclaw` writes an explicit `plugins.entries.knowl.hooks.timeouts.before_tool_call`
+  rather than inheriting the default.
+- First open is warmed at `session_start`, not lazily inside the gate.
 
-The one genuinely hard constraint. `tool_result_persist` returns `{ message }` to replace a tool
-result — the true counterpart of Hermes' `transform_tool_result` — but it is **synchronous**:
-"Do not make their handlers `async`: returned promises are ignored with a warning." Knowl's
-engine entry is async, so the card cannot be computed inside it.
+`event.derivedPaths` is documented as possibly incomplete or over-approximate — a hint, never the
+sole basis for a refusal. Codex relays **reject** parameter rewrites and fail closed when one is
+attempted, so the gate must never return `params`.
 
-Therefore: `after_tool_call` (async, Observe) computes the card and writes it into a small
-per-`toolCallId` cache; `tool_result_persist` (sync) reads that cache and, on a hit, returns the
-message with the card appended to `content`. A miss returns nothing and the turn is unaffected.
-The cache is bounded and evicted on `session_end`.
+### Two host budgets that constrain the observers
 
-Two rules for the returned message:
+- **`before_compaction` carries a 30 s per-handler timeout**, and in the Codex harness runs on the
+  serialized notification queue where a hung handler "freezes every later codex notification —
+  including `turn/completed`". The checkpoint must be bounded, not merely fire-and-forget.
+- **`session_end` has a 2-second *total* drain budget** shared across all sessions and handlers.
+  Anything that must survive belongs in the write path, not a flush at the end.
 
-- Model-visible text goes in **`content`**, never only in `details`. OpenClaw strips
-  `toolResult.details` before provider replay and compaction, and caps persisted details
-  (`persistedDetailsTruncated: true`).
-- These hooks operate on OpenClaw-owned transcript writes and do **not** rewrite Codex-native tool
-  records.
+### No handler may float a promise
 
-### The write veto
+`before_compaction` and `after_tool_call` ignore return values, which invites fire-and-forget. A
+floated rejection escapes the enclosing try/catch and Node's default `--unhandled-rejections=throw`
+kills the gateway. Every handler awaits its own work inside its own try/catch, or pushes onto an
+explicitly drained queue with a terminal `.catch()`.
 
-`before_tool_call` returns `{ block: true, blockReason }`. `block: true` is terminal and skips
-lower-priority handlers; `block: false` is *no decision*, not an allow. `event.derivedPaths` gives
-best-effort target paths for well-known envelopes such as `apply_patch` — useful, but documented
-as possibly incomplete or over-approximate, so it is a hint and never the sole basis for a
-refusal.
-
-`opts.matcher` takes canonical tool ids (`exec`, `apply_patch`, `spawn_agent`); wildcards and
-blanks are invalid. This is the same "do not even start the work for a non-write" optimisation
-Knowl's `writeTools` matcher already makes.
-
-`requireApproval` is available and deliberately unused: Knowl's refusal is a policy answer, not a
-user prompt.
-
-Codex native tool relays support blocking and observation but **reject parameter rewrites**, so
-the veto must never depend on returning `params`.
-
-### Surfaces available here that Hermes has no equivalent for
-
-Out of scope for v1, recorded so they are not rediscovered:
-`api.session.workflow.enqueueNextTurnInjection(...)` for durable next-turn context (drained before
-prompt hooks, `idempotencyKey` dedupes, dropped when the plugin has prompt injection disabled),
-and `api.session.state.registerSessionExtension(...)` for plugin-owned session state projected
-into Control UI through `pluginExtensions`.
+The plugin must **not** install a process-level `unhandledRejection` listener. Silently changing
+crash policy inside someone else's gateway is worse than the defect it hides.
 
 ## What ships
 
-- `exports` map and `src/plugin.ts` in this repo, plus tests that import the built artifact the
-  way a consumer will.
+- `exports` map (with the wildcards above) and `src/plugin.ts`, tested by importing the built
+  artifact the way a consumer will.
 - `integrations/openclaw/` — `package.json`, `openclaw.plugin.json`, `index.ts`.
-- `knowl init openclaw` — merges the plugin entry and both permission gates into `openclaw.json`,
-  never overwriting a user's file; reports a file it cannot parse instead of replacing it.
-- An `openclaw` `HostProfile` in `src/session/hosts/`, registered in `index.ts`, with capability
-  expressed by member presence rather than a boolean.
+- `knowl init openclaw` — merges the plugin entry, both permission gates, and the
+  `before_tool_call` timeout into `openclaw.json`, never overwriting a user's file.
+- An `openclaw` `HostProfile` in `src/session/hosts/`.
 
 ## Verification
 
 Beyond `npm run build`, `npm test`, `npx eslint .`:
 
-1. **libsql loads beside `node:sqlite` in one process.** The single unproven native assumption.
-   Prove it before anything else.
-2. **The install path, not a link.** `openclaw plugins install npm-pack:<tgz>` — the documented way
-   to prove the managed package install shape, including `--ignore-scripts`. A `--link` install
-   does not exercise it.
-3. **`openclaw plugins inspect knowl --runtime --json`** shows every hook registered.
-4. **The card appears once.** Grep the built prompt for the rules block; two copies means the
-   double-publish bug.
-5. **The card is prompt-independent.** Two different prompts in the same session produce the same
-   orientation card. This is the regression test for #257, one host over.
-6. **A blocked write is refused and the reason reaches the model.**
-7. **Missing permission gates produce an actionable `doctor` line, not silence.**
+1. **libsql loads beside OpenClaw's built-in `node:sqlite` in one process** — the only unproven
+   native assumption. Must cover both addons holding the same directory under WAL, not just module
+   load. Gates everything else.
+2. **Install via `openclaw plugins install npm-pack:<tgz>`**, not `--link` — only that path
+   exercises the real `--ignore-scripts` managed install.
+3. **`openclaw plugins inspect knowl --runtime --json`** shows every hook registered and no blocked
+   registrations.
+4. **The card appears once** in the built prompt.
+5. **The card is prompt-independent** — two different prompts in one session produce the same card.
+   The regression test for #257, one host over.
+6. **A blocked write is refused and `blockReason` reaches the model.**
+7. **Two workspaces open in one gateway** write to their own databases. The 5.21.1 regression, at
+   the plugin layer.
+8. **A stalled engine does not deny a write** — the internal deadline fires before the host's
+   fail-closed budget.
 
-Default hybrid reload hot-reloads hook *policy*; code changes need a Gateway restart.
+Hybrid reload hot-reloads hook policy; code changes need a Gateway restart.
