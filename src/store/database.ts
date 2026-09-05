@@ -74,17 +74,26 @@ export function isKnowlHome(root: string): boolean {
   return path.resolve(root) === path.resolve(knowlHome());
 }
 
+/**
+ * The knowledge database a project root is addressed by.
+ *
+ * The machine home is not a project, and its knowledge lives in `global.db` BESIDE the config
+ * rather than in `.knowl/knowl.db` beneath it. `loadConfig` already makes exactly this
+ * substitution for exactly this root (`src/core/config.ts`), so without the matching one here
+ * a caller handing the home to both gets a config from one place and a database from another
+ * -- in practice `~/.knowl/.knowl/knowl.db`, which is nobody's store and fails to open.
+ *
+ * This is what lets the machine store be addressed the way a project is: `cloud push --global`
+ * resolves a root, and everything downstream opens the right file with no further argument.
+ * Shared by `initDb` and `openProjectScope` so the ambient and the scoped route to a project
+ * cannot disagree about which file it is.
+ */
+function projectDatabasePath(projectRoot: string): string {
+  return isKnowlHome(projectRoot) ? globalStorePath() : resolveStorage(projectRoot).knowledge;
+}
+
 export async function initDb(projectRoot: string): Promise<LibSQLDatabase<typeof schema>> {
-  // The machine home is not a project, and its knowledge lives in `global.db` BESIDE the config
-  // rather than in `.knowl/knowl.db` beneath it. `loadConfig` already makes exactly this
-  // substitution for exactly this root (`src/core/config.ts`), so without the matching one here
-  // a caller handing the home to both gets a config from one place and a database from another
-  // -- in practice `~/.knowl/.knowl/knowl.db`, which is nobody's store and fails to open.
-  //
-  // This is what lets the machine store be addressed the way a project is: `cloud push --global`
-  // resolves a root, and everything downstream opens the right file with no further argument.
-  const dbPath = isKnowlHome(projectRoot) ? globalStorePath() : resolveStorage(projectRoot).knowledge;
-  return initDbPath(dbPath, { configRoot: projectRoot });
+  return initDbPath(projectDatabasePath(projectRoot), { configRoot: projectRoot });
 }
 
 export async function initDbPath(dbPath: string, options: InitDbOptions = {}): Promise<LibSQLDatabase<typeof schema>> {
@@ -191,6 +200,118 @@ export async function withRepoRoot<T>(projectRoot: string, run: () => Promise<T>
     // Same rule as `withDbPath`: a database nothing had open before this call is not one the
     // caller asked to keep pooled.
     if (!previous) await releaseClient(dbPath);
+  }
+}
+
+/**
+ * A project held open by ONE consumer, with no claim on the process-wide context.
+ *
+ * `initDb` writes to a single module-global handle, and `getDb`/`getClient` read it. That is
+ * correct for every consumer shipped today, because every one of them opens exactly one project
+ * per process: the CLI is one-shot, and the MCP server binds a project at startup and hops
+ * namespaces with `withDbPath`. It is silently wrong the moment two projects are open at once.
+ * Reproduced 2026-09-05: `initDb(A)` then `initDb(B)` in one process, and a write issued by the
+ * caller that thought it held A landed in B's file -- A's store empty, B's holding A's row, no
+ * error and no log line anywhere. `closeDb` compounds it, because it calls `releaseAll`: the
+ * first consumer to finish tore down every other consumer's connection, and the survivors got
+ * `Database has not been initialized` from a call they had made correctly.
+ *
+ * A scope is the pair that fixes both. `run` executes its body inside the same
+ * `AsyncLocalStorage` the namespace hop already uses, so the ambient reads every repository
+ * function does resolve to THIS project rather than to whoever opened last -- the same mechanism
+ * `withDbPath` and `withRepoRoot` were given for the same class of bug one level down. `release`
+ * maps to `releaseClient`, which finishes with one database and leaves the pool alone.
+ *
+ * Additive on purpose. The global handle is untouched: nothing here assigns `globalContext`, so
+ * a scope opened beside a live CLI or server is invisible to it, and `initDb`/`closeDb` keep
+ * behaving exactly as they did. What this unblocks is the in-process library export, where a
+ * long-running gateway holds several workspaces open in one address space and the subprocess
+ * boundary that has been hiding the defect is gone.
+ */
+export type ProjectScope = {
+  /** The project root this scope resolves config and ownership from. */
+  readonly projectRoot: string;
+  /** The database file this scope's writes reach. */
+  readonly databasePath: string;
+  /** Run `body` with this project ambient, whatever else the process has open. */
+  run<T>(body: () => Promise<T>): Promise<T>;
+  /** Done with this project. Idempotent, and never touches another scope's connection. */
+  release(): Promise<void>;
+};
+
+/**
+ * How many scopes are holding each database open.
+ *
+ * Two sessions in one folder is the ordinary case for a gateway, not an edge one, and the pool
+ * is keyed by path -- so both scopes are handed the same client and the first to release would
+ * close the connection the second is still using. Counted rather than deduplicated because the
+ * scopes are genuinely independent: neither knows the other exists, and either may outlive it.
+ *
+ * A path the ambient context is also using is never released here at all. `initDb` put that
+ * client in the pool for the whole process, and closing it because a scope finished would break
+ * the CLI or server that opened it -- the same tearing-down this type exists to stop, in the
+ * other direction.
+ */
+const scopeHolders = new Map<string, number>();
+
+export async function openProjectScope(projectRoot: string): Promise<ProjectScope> {
+  const root = path.resolve(projectRoot);
+  const dbPath = path.resolve(projectDatabasePath(root));
+
+  const client = await acquireClient(dbPath, {
+    profileFingerprint: await currentProfileFingerprint(root),
+  });
+  scopeHolders.set(dbPath, (scopeHolders.get(dbPath) ?? 0) + 1);
+
+  const context: DbContext = {
+    db: drizzle(client, { schema }),
+    client,
+    projectRoot: root,
+    configRoot: root,
+    databasePath: dbPath,
+  };
+
+  let released = false;
+  return {
+    projectRoot: root,
+    databasePath: dbPath,
+    run: <T>(body: () => Promise<T>): Promise<T> => {
+      if (released) {
+        throw new DatabaseError(`Project scope for "${root}" has been released. Open a new one.`);
+      }
+      return scopedContext.run(context, body);
+    },
+    release: async (): Promise<void> => {
+      // Idempotent because a consumer's own teardown path is rarely the only one: a gateway
+      // releases on shutdown and on error, and a second release must not decrement a count
+      // some other scope is relying on.
+      if (released) return;
+      released = true;
+      const holders = (scopeHolders.get(dbPath) ?? 1) - 1;
+      if (holders > 0) {
+        scopeHolders.set(dbPath, holders);
+        return;
+      }
+      scopeHolders.delete(dbPath);
+      if (globalContext && globalContext.databasePath === dbPath) return;
+      await releaseClient(dbPath);
+    },
+  };
+}
+
+/**
+ * Open a project, run one body against it, and release it.
+ *
+ * The shape most callers want: `openProjectScope` exists for a consumer that keeps a project
+ * warm across many calls, and a caller doing one piece of work in another project should not
+ * have to get the `finally` right to avoid leaking a connection.
+ */
+export async function withProjectScope<T>(projectRoot: string, run: () => Promise<T>): Promise<T> {
+  const scope = await openProjectScope(projectRoot);
+  try {
+    return await scope.run(run);
+  } finally {
+    await scope.release();
   }
 }
 
@@ -334,6 +455,12 @@ export function getConfigRoot(): string {
 
 /**
  * Closes the database connection.
+ *
+ * Process-wide, deliberately: this is the shutdown of the store, and its counterpart is
+ * `initDb` rather than `openProjectScope`. A consumer holding scopes therefore must not call
+ * it -- `release()` is that consumer's teardown, and it closes one database rather than the
+ * pool. Same rule the MCP server already follows, stated here because a scope makes it
+ * reachable from a second kind of caller.
  */
 export async function closeDb(): Promise<void> {
   if (globalContext) {
