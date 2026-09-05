@@ -1,6 +1,6 @@
 export class KnowlError extends Error {
-  constructor(message: string, public readonly code: string) {
-    super(message);
+  constructor(message: string, public readonly code: string, options?: ErrorOptions) {
+    super(message, options);
     this.name = 'KnowlError';
   }
 }
@@ -13,8 +13,8 @@ export class ConfigError extends KnowlError {
 }
 
 export class DatabaseError extends KnowlError {
-  constructor(message: string) {
-    super(message, 'DATABASE_ERROR');
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, 'DATABASE_ERROR', options);
     this.name = 'DatabaseError';
   }
 }

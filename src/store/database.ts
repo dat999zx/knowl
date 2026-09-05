@@ -114,7 +114,7 @@ export async function initDbPath(dbPath: string, options: InitDbOptions = {}): P
     };
     return globalContext.db;
   } catch (error: any) {
-    throw new DatabaseError(`Failed to initialize database at "${dbPath}": ${error.message}`);
+    throw new DatabaseError(`Failed to initialize database at "${dbPath}": ${error.message}`, { cause: error });
   }
 }
 
