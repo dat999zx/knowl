@@ -3,7 +3,7 @@
 Notable changes to `@dat999zx/knowl`. Versions before 2.1.0 predate this file; see the
 [git tags](https://github.com/dat999zx/knowl/tags) for that history.
 
-## Unreleased
+## 5.21.1 — 2026-09-05
 
 **A project can be held open per consumer, without the process-global handle deciding for
 everyone.** `initDb` writes to one module-level context and `getDb`/`getClient` read it, so two
