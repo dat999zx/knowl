@@ -114,6 +114,10 @@ export const hermesProfile: HostProfile = {
   // list entries in the person's config. Not empty because the host has no lifecycle -- the
   // events it sends are in HERMES_PLUGIN_EVENTS, and the map above is what accepts them.
   hookEvents: [],
+  // The runtime channel, which `hookEvents` cannot express: these arrive from the plugin on
+  // every session, and a conformance check reading only the empty list above concluded this
+  // host had no tool event and skipped the assertion written for it.
+  pluginEvents: HERMES_PLUGIN_EVENTS,
   promptEvent: 'pre_llm_call',
   sharesSessionBinding: true,
   nativeOutput: true,

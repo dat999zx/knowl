@@ -148,14 +148,30 @@ that maps `post_tool_call → session-event` and returns `undefined` from `midTu
 satisfies both assertions vacuously, because both are `if (capability)` guards and the stub has
 no capability to trigger them.
 
-That is exactly hermes (`hermes.ts:29` maps `post_tool_call: 'session-event'`) and openclaw
-(`openclaw.ts:35` maps `after_tool_call: 'session-event'`). Both register the attachment point.
-Both return `undefined`. Both pass.
+That is exactly hermes and openclaw. Both map a tool event — `hermes.ts:29` maps
+`post_tool_call → session-event`, `openclaw.ts:35` maps `after_tool_call → session-event` — and
+both return `undefined`. Both pass.
+
+**And there is a second layer, found only by running the check.** The first attempt at this
+assertion keyed on `profile.hookEvents`, which is empty for both hosts (`hermes.ts:116`,
+`openclaw.ts:54`). `hookEvents` means *"events `knowl init` writes into a config file"* — stated
+in `hermes.ts:42` — and a plugin host has no such file: its events reach the engine through the
+plugin. So an assertion asking `hookEvents` whether the host has a tool event gets `false` for
+precisely the two hosts it was written to catch, returns early, and passes 109/109.
+
+That is the same defect one level down: a check that cannot fire, written to catch checks that
+cannot fire. `hookEvents` never appears in `src/session/host-lifecycle.ts` at all — it is
+install-time metadata, and reading it as a runtime capability is a category error.
+
+The fix is a `pluginEvents` declaration on the profile plus a `hostSendsNormalizedEvent(profile,
+event)` helper that asks the union. The pre-existing assertion at `:158` needs the same
+treatment, and urgently: it reads `hookEvents` too, so the moment Phase 2 gives Hermes a real
+envelope, `envelope ⇒ tool event` inverts and **fails** on a host that genuinely has one.
 
 The missing assertion is the converse of `:151`:
 
-> a host that registers a `session-event` tool event MUST return a mid-turn envelope, or
-> declare in the profile why it cannot.
+> a host that sends a `session-event` tool event MUST return a mid-turn envelope, or declare in
+> the profile why it cannot.
 
 The escape hatch matters: `claude-desktop` legitimately has neither (pinned separately at
 `:170`), and `cursor` deliberately has an envelope with unverified delivery so the MCP fallback
@@ -163,10 +179,10 @@ keeps talking to it. The rule is not "every host must deliver" — it is **"a ho
 somewhere to put a card must either put one there or say why not."**
 
 This reframes Phase 1. The work is not writing a conformance suite from nothing; it is adding
-the one implication that closes the loop, plus the vendor-event fixtures that the Copilot
-finding (`3f1fa7ebec504083`) shows are still missing. The existing Codex assertion at `:89` is
-the model to copy — it pins event names against a dated inspection of the shipped binary, which
-is precisely the check Copilot never got.
+the one implication that closes the loop, fixing the predicate both sides depend on, plus the
+vendor-event fixtures that the Copilot finding (`3f1fa7ebec504083`) shows are still missing. The
+existing Codex assertion at `:89` is the model to copy — it pins event names against a dated
+inspection of the shipped binary, which is precisely the check Copilot never got.
 
 ## What this does not do
 

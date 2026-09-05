@@ -17,6 +17,7 @@ export const genericProfile: HostProfile = {
   sharesSessionBinding: false,
   nativeOutput: false,
   midTurnDeliveryVerified: false,
+  midTurnUnavailableReason: 'The host-neutral contract emits JSON lifecycle results directly, with no host envelope.',
   hookConfigStyle: 'none',
   identity(raw): HostIdentity {
     return {
