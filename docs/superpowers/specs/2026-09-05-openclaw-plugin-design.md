@@ -310,9 +310,16 @@ crash policy inside someone else's gateway is worse than the defect it hides.
 
 Beyond `npm run build`, `npm test`, `npx eslint .`:
 
-1. **libsql loads beside OpenClaw's built-in `node:sqlite` in one process** — the only unproven
-   native assumption. Must cover both addons holding the same directory under WAL, not just module
-   load. Gates everything else.
+1. ~~**libsql loads beside OpenClaw's built-in `node:sqlite` in one process**~~ — **DONE
+   2026-09-05, passed.** Node 24.15.0, knowl 5.21.1 from the registry, `node:sqlite` opened first
+   and held open throughout. Both engines opened their own databases in one directory under WAL
+   (51 interleaved writes each, both intact) and then **the same file**, each seeing the other's
+   row, sidecars correct. Against the real `knowl init` store: 37 tables read, `journal_mode=wal`,
+   200 interleaved gateway-writes + engine-reads in 247 ms, a row written and read back while
+   `node:sqlite` held its own. `tree-sitter` loaded in the same process, and an external `knowl`
+   CLI ran against the same repo concurrently. Clean shutdown.
+   This does **not** prove a libsql *abort* is survivable — a segfault still takes the gateway, and
+   that remains the accepted cost.
 2. **Install via `openclaw plugins install npm-pack:<tgz>`**, not `--link` — only that path
    exercises the real `--ignore-scripts` managed install.
 3. **`openclaw plugins inspect knowl --runtime --json`** shows every hook registered and no blocked
